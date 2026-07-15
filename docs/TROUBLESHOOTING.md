@@ -1,11 +1,55 @@
 # トラブルシューティング
 
+## `setup.bat` が失敗する
+
+最初に、エラーが出た状態でも `setup.bat` をもう一度実行します。途中まで導入済みの項目は再利用されます。
+
+### wingetが見つからない
+
+Microsoft Storeの「アプリ インストーラー」を更新し、新しいPowerShellで次を確認します。
+
+~~~powershell
+winget --version
+~~~
+
+### PythonまたはFFmpegを導入した直後に見つからない
+
+セットアップ画面を閉じ、`setup.bat` を再実行します。FFmpegは検出した場所を `.local/ffmpeg_path.txt` に保存し、`start.bat` が起動時にPATHへ追加します。
+
+CLIを同じPowerShellで実行してFFmpegが見つからない場合:
+
+~~~powershell
+$env:Path = "$(Get-Content .\.local\ffmpeg_path.txt);$env:Path"
+ffmpeg -version
+ffprobe -version
+~~~
+
+### WhisperXまたはPyTorchの導入で止まる
+
+- 通信が安定した状態で再実行する
+- 十分な空き容量を確保する
+- 処理中にセットアップ画面を閉じない
+
+依存環境だけを最初から作り直す場合は `.venv` を削除して再実行します。動画、音声、GUI設定、話者色設定は削除されません。
+
+~~~powershell
+Remove-Item -Recurse -Force .\.venv
+.\setup.bat
+~~~
+
+## `start.bat` で「not set up yet」と表示される
+
+`.venv/Scripts/python.exe` がありません。`setup.bat` を実行し、`Setup verification passed.` まで完了させてください。
+
+## GUIに依存ツール不足が表示される
+
+`SOURCE SETUP` の `RECHECK` を押します。解消しない場合はGUIを閉じて `setup.bat` を再実行し、その後 `start.bat` から起動してください。
 ## `No videos found in video_import`
 
 `src.batch` は `video_import/` 直下の動画だけを検索し、サブフォルダを再帰検索しません。
 
-- `video_import/input.mkv` を処理する: `python -m src.batch --run`
-- `video_import/game_session_01/input.mkv` を処理する: `python -m src.craig_pipeline game_session_01 --run`
+- `video_import/input.mkv` を処理する: `.\.venv\Scripts\python.exe -m src.batch --run`
+- `video_import/game_session_01/input.mkv` を処理する: `.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --run`
 
 ## `ffprobe ... returned non-zero exit status 1`
 
@@ -23,7 +67,7 @@ ffprobe -v error ".\video_import\game_session_01\実際のファイル名.mkv"
 対象フォルダ直下に対応動画がない、または複数あります。複数ある場合:
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --video ".\video_import\game_session_01\対象.mkv"
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --video ".\video_import\game_session_01\対象.mkv"
 ~~~
 
 ## `No Craig audio directory found` / `Multiple Craig audio directories found`
@@ -35,7 +79,7 @@ python -m src.craig_pipeline game_session_01 --video ".\video_import\game_sessio
 音声フォルダに `1-` で始まるファイルを置くか、基準音声名を指定します。
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --reference-audio 1-speaker-a.flac
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --reference-audio 1-speaker-a.flac
 ~~~
 
 ## オフセットや同期先トラックがおかしい
@@ -50,19 +94,23 @@ python -m src.craig_pipeline game_session_01 --reference-audio 1-speaker-a.flac
 読みやすい日本語分割に両方必要です。未導入時は粗い文字数分割へフォールバックせず、明示的に停止します。
 
 ~~~powershell
-python -m pip install -r requirements.txt
-python -c "import budoux; import janome; print('ok')"
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -c "import budoux; import janome; print('ok')"
 ~~~
 
 ## WhisperXが見つからない
 
 ~~~powershell
-python -m pip show whisperx
-python -m pip install whisperx
-python -c "import whisperx; print('ok')"
+.\.venv\Scripts\python.exe -m pip show whisperx
+.\.venv\Scripts\python.exe -m pip install whisperx
+.\.venv\Scripts\python.exe -c "import whisperx; print('ok')"
 ~~~
 
 GUIを起動する `python` と同じ環境へインストールしてください。WhisperXの `Scripts` ディレクトリをPATHへ追加する必要はありません。
+
+## WhisperX実行が途中で失敗する
+
+出力先の `*.whisperx.log` を確認します。失敗時も標準出力・標準エラーと終了コードをUTF-8で保存します。
 
 ## GPUを使わない / GPU負荷が低い
 
@@ -75,7 +123,7 @@ GUIを起動する `python` と同じ環境へインストールしてくださ�
 - CPU後処理: 次の話者のWhisperXと並行実行
 
 ~~~powershell
-python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
+.\.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
 ffmpeg -hide_banner -encoders | Select-String nvenc
 ~~~
 
@@ -87,7 +135,7 @@ ffmpeg -hide_banner -encoders | Select-String nvenc
 - GPUが使えない場合は `device=cpu`, `compute_type=int8` に切り替える
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --model medium --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --model medium --run
 ~~~
 
 ## `Cache hit` になり文字起こしが変わらない
@@ -95,7 +143,7 @@ python -m src.craig_pipeline game_session_01 --model medium --run
 標準動作です。既存transcript JSONを再利用しています。認識モデルやVADを変更して再文字起こしする場合:
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --no-skip-existing-transcripts --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --no-skip-existing-transcripts --run
 ~~~
 
 色、改行、字幕タイミングの後処理だけを変更した場合はキャッシュ再利用のままで構いません。
@@ -105,7 +153,7 @@ python -m src.craig_pipeline game_session_01 --no-skip-existing-transcripts --ru
 `subtitle_max_gap_seconds` を少し大きくします。
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --subtitle-max-gap-seconds 0.2 --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --subtitle-max-gap-seconds 0.2 --run
 ~~~
 
 現在の設定値は `0.1` です。まず `0.15`〜`0.25` 程度で比較します。
@@ -115,7 +163,7 @@ python -m src.craig_pipeline game_session_01 --subtitle-max-gap-seconds 0.2 --ru
 `subtitle_end_padding_seconds` を確認します。現在値は `0.08` です。
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --subtitle-end-padding-seconds 0.04 --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --subtitle-end-padding-seconds 0.04 --run
 ~~~
 
 WhisperXが無音を直前の1文字へ含めた場合は後段で補正します。それでも認識セグメント自体が不正確なら、`--no-skip-existing-transcripts` を付けてVAD設定を変えた比較が必要です。
@@ -131,7 +179,7 @@ WhisperXが無音を直前の1文字へ含めた場合は後段で補正しま�
 `*.craig.no_speech.json` の `no_speech_ranges` が空なら、Craig音声のノイズが発話扱いになっている可能性があります。閾値を少し上げます。
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --cut-no-speech --speech-threshold-db -35 --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --cut-no-speech --speech-threshold-db -35 --run
 ~~~
 
 ## 会話の頭や末尾まで切れる
@@ -139,7 +187,7 @@ python -m src.craig_pipeline game_session_01 --cut-no-speech --speech-threshold-
 前後余白を増やすか、カット対象の最短秒数を長くします。
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --cut-no-speech --speech-padding-seconds 0.4 --no-speech-min-seconds 2.0 --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --cut-no-speech --speech-padding-seconds 0.4 --no-speech-min-seconds 2.0 --run
 ~~~
 
 `-35dB` のように閾値を上げすぎると小さい声を無音と判定しやすくなります。まず `speech_padding_seconds` を調整し、その後に閾値を変更します。
@@ -149,7 +197,7 @@ python -m src.craig_pipeline game_session_01 --cut-no-speech --speech-padding-se
 標準は `-16 LUFS` です。より負の値にすると小さく、0に近づけると大きくなります。
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --audio-target-lufs -18 --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --audio-target-lufs -18 --run
 ~~~
 
 正規化そのものを止める場合は `--no-audio-normalize` を使います。
@@ -165,7 +213,7 @@ python -m src.craig_pipeline game_session_01 --audio-target-lufs -18 --run
 容量を許容してさらに画質を上げる場合:
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --nvenc-cq 16 --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --nvenc-cq 16 --run
 ~~~
 
 `CQ` を2下げると容量が大きく増える場合があります。まず標準の `18` で確認してください。会話なしカット時も現在は1回だけエンコードします。

@@ -4,6 +4,8 @@ out/
 __pycache__/
 *.pyc
 .gui/
+.local/
+.venv/
 /assets/speaker_colors.json
 .env
 .env.*

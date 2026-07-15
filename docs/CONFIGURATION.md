@@ -2,7 +2,9 @@
 
 ## 読み込み規則
 
-標準設定は `assets/runtime_config.json` です。各コマンドは `shared` を読み、その後に同名セクションを上書きします。
+CLIの標準設定は `assets/runtime_config.json` です。各コマンドは `shared` を読み、その後に同名セクションを上書きします。
+
+GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `SAVE PRESET` または `START RENDER` で更新され、Git管理されません。
 
 ~~~text
 shared
@@ -12,7 +14,7 @@ craig_pipeline / batch / pipeline
 実行値
 ~~~
 
-優先順位は `CLI > コマンド別設定 > shared > コード既定値` です。
+CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値` です。GUI設定は `.gui/runtime_config.json` 内の `shared` と `craig_pipeline` を使用します。
 
 ## shared
 
@@ -57,6 +59,7 @@ craig_pipeline / batch / pipeline
 | `alignment_offset_adjustment` | `0.0` | 自動検出した同期オフセットへ加える補正秒数 |
 | `video_codec` | `h264_nvenc` | 字幕焼き込みの動画codec |
 | `audio_codec` | `copy` | フィルタなしの場合の音声codec |
+| `output_audio_track` | `0:a:0` | 完成動画へ入れる動画側の音声トラック |
 | `nvenc_preset` | `p5` | NVENCの速度・品質プリセット |
 | `nvenc_cq` | `18` | NVENC固定品質。通常は18、容量優先なら19〜21 |
 | `x264_crf` | `18` | libx264使用時の固定品質 |
@@ -85,7 +88,10 @@ Craig音声は話者分離済みなので、通常はHugging Faceトークンも
 | `diarize_track` | WhisperX話者分離を行うトラック配列 |
 | `op_file`, `ed_file` | 任意のOP/ED動画 |
 | `video_codec`, `audio_codec` | FFmpeg codec |
+| `output_audio_track` | 完成動画へ入れる本編音声。標準は `0:a:0` |
 | `audio_normalize` | OP/本編/EDの音量正規化 |
+
+OP/本編/EDは本編と同じフレームレート・タイムベース・48kHzステレオへ正規化してから連結します。音声のないOP/EDには無音トラックを補います。
 
 `diarize_track` を設定する場合のみHugging Faceトークンが必要です。トークンは設定ファイルやCLI引数へ保存せず、`HF_TOKEN` 環境変数から渡してください。
 
@@ -101,7 +107,7 @@ Craig音声は話者分離済みなので、通常はHugging Faceトークンも
 NVENCは `VBR + CQ 18 + High profile + spatial/temporal AQ` を標準使用します。ビットレートを低く固定しないため、動きの多いゲーム画面では必要な分だけビットレートが上がり、輪郭のジャギーやブロックノイズを抑えます。
 
 ~~~powershell
-python -c "import torch; print(torch.cuda.is_available())"
+.\.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available())"
 ffmpeg -hide_banner -encoders | Select-String nvenc
 ~~~
 
@@ -138,7 +144,7 @@ Copy-Item .\assets\speaker_colors.example.json .\assets\speaker_colors.json
 一時的にCLIで上書きする場合:
 
 ~~~powershell
-python -m src.craig_pipeline game_session_01 --track-color "craig:speaker-a=#FFD966" --run
+.\.venv\Scripts\python.exe -m src.craig_pipeline game_session_01 --track-color "craig:speaker-a=#FFD966" --run
 ~~~
 
 色変更だけなら既存transcript JSONを再利用できます。

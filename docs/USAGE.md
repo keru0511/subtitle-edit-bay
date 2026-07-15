@@ -42,6 +42,17 @@ PowerShellから実行する場合:
 `setup.bat` は不足しているPython 3.10とFFmpegをwingetで導入し、`.venv` に必要なPython依存をインストールします。CUDAを利用できない初回環境では、GUI設定を `device=cpu`、`compute_type=int8`、`video_codec=libx264` にします。
 
 セットアップは再実行可能です。既存の動画、音声、話者色、`.gui/runtime_config.json` は上書きしません。
+
+### アップデート
+
+`git clone` した環境では `update.bat` を実行します。
+
+~~~powershell
+.\update.bat
+~~~
+
+Git clone環境では、追跡対象ファイルにローカル変更がないことを確認し、`git pull --ff-only` で更新します。ZIP環境ではGitHubから最新の `main.zip` をダウンロードしてアプリファイルを更新します。ZIP更新前のファイルは `.local/update_backups/` に保存されます。どちらも動画、生成物、GUI設定、仮想環境、話者色を変更せず、最後に依存関係を再確認します。
+
 ## 1. 手動セットアップ
 
 自動セットアップを使わない場合は、次を手動で用意します。

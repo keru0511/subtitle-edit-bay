@@ -27,6 +27,17 @@ PowerShellから実行する場合もコマンドは同じです。
 `setup.bat` はwingetで不足しているPython 3.10とFFmpegを導入し、WhisperX・PyTorch・GUI依存を `.venv` へインストールします。FFmpegの場所は `.local` に記録します。インターネット接続と十分な空き容量が必要で、WhisperXとPyTorchの導入には時間がかかります。
 
 CUDAを利用できないPCでは、初回GUI設定をCPUと `libx264` へ自動で切り替えます。セットアップは再実行可能で、動画、音声、話者色、既存GUI設定は上書きしません。
+
+## アップデート
+
+GitHubから `git clone` した環境では、`update.bat` をダブルクリックすると最新版を取得し、依存関係も更新します。
+
+~~~powershell
+.\update.bat
+~~~
+
+Git clone環境では、追跡対象ファイルにローカル変更がある場合は安全のため停止します。ZIP環境ではGitHubから最新の `main.zip` を取得し、更新前のアプリファイルを `.local/update_backups/` に保存してから上書きします。どちらの方式でも `video_import/`、`video_export/`、`.gui/`、`.venv/`、話者色などのローカルデータは保持されます。
+
 ## 手動セットアップ
 
 Python 3.10とFFmpeg/ffprobeを手動で用意し、プロジェクト専用の `.venv` にWhisperXと字幕レイアウト依存を導入します。

@@ -1,5 +1,21 @@
 # トラブルシューティング
 
+## `update.bat` が失敗する
+
+`update.bat` はGit clone版とZIP版を自動判定します。ZIP版ではGitHubから最新版を取得するため、インターネット接続が必要です。ダウンロードに失敗する場合は、ブラウザでリポジトリへアクセスできることを確認してください。
+
+`Tracked files have local changes` と表示された場合は、Git clone版の追跡対象ファイルに編集があります。内容をコミットまたは退避してから再実行します。動画、生成物、`.gui/runtime_config.json` はGit管理外なので判定対象になりません。
+
+`git pull failed` と表示された場合は、remoteと現在のブランチを確認します。
+
+~~~powershell
+git remote -v
+git branch --show-current
+git pull --ff-only
+~~~
+
+ZIP版は更新前のアプリファイルを `.local/update_backups/<日時>/` に保存します。更新後に問題が出た場合の確認用として利用できます。
+
 ## `setup.bat` が失敗する
 
 最初に、エラーが出た状態でも `setup.bat` をもう一度実行します。途中まで導入済みの項目は再利用されます。

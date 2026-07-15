@@ -1,0 +1,855 @@
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from src.assemble_video import build_concat_command, build_loudnorm_filter, build_normalize_command, optional_clip, write_concat_manifest
+from src.batch import derive_export_paths, derive_merged_export_paths, iter_video_files
+from src.burn_subs import build_ass_filter, build_ffmpeg_command
+from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
+from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
+from src.color_config import load_speaker_color_map
+from src.render_ass import format_ass_time, normalize_text, parse_track_color_args, render_ass
+from unittest import mock
+
+from src.subtitle_packer import break_candidates, pack_segment_pages, pack_segments, split_into_atomic_units
+from src.video_encoding import build_video_encoding_args
+from src.transcribe import (
+    build_extract_audio_command,
+    build_whisperx_command,
+    expected_log_path,
+    expected_transcript_path,
+    validate_hf_token,
+)
+from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
+
+
+class RenderAssTests(unittest.TestCase):
+    def test_format_ass_time_uses_centiseconds(self) -> None:
+        self.assertEqual(format_ass_time(65.43), "0:01:05.43")
+
+    def test_normalize_text_wraps_and_truncates_for_visibility(self) -> None:
+        text = r"\u3053\u308c\u306f\u304b\u306a\u308a\u9577\u3044\u5b57\u5e55\u30c6\u30ad\u30b9\u30c8\u3067\u753b\u9762\u306e\u5916\u306b\u306f\u307f\u51fa\u3055\u306a\u3044\u3088\u3046\u306b\u81ea\u52d5\u3067\u6298\u308a\u8fd4\u3057\u3066\u307b\u3057\u3044\u3067\u3059".encode("ascii").decode("unicode_escape")
+        wrapped = normalize_text(text, max_width=12, max_lines=2)
+        self.assertIn(r"\N", wrapped)
+        self.assertIn(r"\u2026".encode("ascii").decode("unicode_escape"), wrapped)
+
+    def test_normalize_text_uses_budoux_boundary_for_two_lines(self) -> None:
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return [
+                    r"\u3053\u3053\u3067\u6575\u304c\u6765\u308b\u304b\u3089".encode("ascii").decode("unicode_escape"),
+                    r"\u4e00\u56de\u5f15\u3044\u305f\u307b\u3046\u304c\u3044\u3044\u304b\u3082\u3057\u308c\u306a\u3044".encode("ascii").decode("unicode_escape"),
+                ]
+
+        text = r"\u3053\u3053\u3067\u6575\u304c\u6765\u308b\u304b\u3089\u4e00\u56de\u5f15\u3044\u305f\u307b\u3046\u304c\u3044\u3044\u304b\u3082\u3057\u308c\u306a\u3044".encode("ascii").decode("unicode_escape")
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            wrapped = normalize_text(text, max_width=24, max_lines=2)
+
+        self.assertEqual(
+            wrapped,
+            r"\u3053\u3053\u3067\u6575\u304c\u6765\u308b\u304b\u3089".encode("ascii").decode("unicode_escape") +
+            r"\N" +
+            r"\u4e00\u56de\u5f15\u3044\u305f\u307b\u3046\u304c\u3044\u3044\u304b\u3082\u3057\u308c\u306a\u3044".encode("ascii").decode("unicode_escape"),
+        )
+
+    def test_normalize_text_avoids_particle_at_line_start(self) -> None:
+        text = r"\u305d\u308c\u306f\u4eca\u3084\u308b\u306e\u306f\u3061\u3087\u3063\u3068\u5371\u306a\u3044\u304b\u3082\u3057\u308c\u306a\u3044".encode("ascii").decode("unicode_escape")
+        wrapped = normalize_text(text, max_width=18, max_lines=2)
+        self.assertNotIn(r"\N" + r"\u306f".encode("ascii").decode("unicode_escape"), wrapped)
+        self.assertNotIn(r"\N" + r"\u304c".encode("ascii").decode("unicode_escape"), wrapped)
+        self.assertNotIn(r"\N" + r"\u3092".encode("ascii").decode("unicode_escape"), wrapped)
+
+    def test_normalize_text_avoids_small_tsu_at_line_start(self) -> None:
+        text = r"\u305d\u308c\u306f\u4eca\u3084\u308b\u306e\u306f\u3061\u3087\u3063\u3068\u5371\u306a\u3044\u304b\u3082\u3057\u308c\u306a\u3044".encode("ascii").decode("unicode_escape")
+        wrapped = normalize_text(text, max_width=18, max_lines=2)
+        self.assertNotIn(r"\N" + r"\u3063".encode("ascii").decode("unicode_escape"), wrapped)
+
+    def test_normalize_text_prefers_balanced_break_for_short_duration(self) -> None:
+        text = "ABCDEFGHIJKLMN"
+        with mock.patch("src.subtitle_packer.break_candidates", return_value=[6, 7]):
+            with mock.patch("src.subtitle_packer.candidate_kind_bonus", side_effect=lambda text, idx: -50 if idx == 6 else 0):
+                long_wrapped = normalize_text(text, max_width=8, max_lines=2, display_duration=3.0)
+                short_wrapped = normalize_text(text, max_width=8, max_lines=2, display_duration=0.4)
+
+        self.assertEqual(long_wrapped, r"ABCDEF\NGHIJKLMN")
+        self.assertEqual(short_wrapped, r"ABCDEFG\NHIJKLMN")
+
+    def test_normalize_text_does_not_split_ascii_word(self) -> None:
+        text = r"\u3053\u308c\u306fOBS\u3092\u4ecb\u3055\u305a\u306b\u3053\u306eDiscord\u4e0a\u3067\u3053\u3044\u3064\u304c\u9332\u97f3\u3057\u3066\u304f\u308c\u308b\u3063\u3066\u3053\u3068?".encode("ascii").decode("unicode_escape")
+        wrapped = normalize_text(text, max_width=24, max_lines=2)
+        self.assertIn("Discord", wrapped)
+        self.assertNotIn(r"D\Niscord", wrapped)
+
+    def test_normalize_text_keeps_punctuation_with_same_line(self) -> None:
+        text = r"\u3086\u304d\u3068\u3053\u308c\u3069\u3046\u306a\u3063\u3068\u3093\u306e?".encode("ascii").decode("unicode_escape")
+        wrapped = normalize_text(text, max_width=24, max_lines=2)
+        self.assertEqual(wrapped, text)
+
+    def test_normalize_text_truncation_rebalances_without_tiny_line(self) -> None:
+        text = r"\u3053\u308c\u306fOBS\u3092\u4ecb\u3055\u305a\u306b\u3053\u306eDiscord\u4e0a\u3067\u3053\u3044\u3064\u304c\u9332\u97f3\u3057\u3066\u304f\u308c\u308b\u3063\u3066\u3053\u3068?".encode("ascii").decode("unicode_escape")
+        wrapped = normalize_text(text, max_width=24, max_lines=2)
+        left, right = wrapped.split("\\N", 1)
+        self.assertGreater(len(left), 3)
+        self.assertTrue(right.endswith(r"\u2026".encode("ascii").decode("unicode_escape")))
+
+    def test_pack_segment_pages_split_long_duration_segment(self) -> None:
+        text = r"\u306f\u3058\u3081\u308b\u3051\u3069\u79fb\u52d5\u3057\u3066\u3067\u3082\u56de\u5fa9\u3057\u3066\u3067\u3082\u96a0\u308c\u308b".encode("ascii").decode("unicode_escape")
+        pages = pack_segment_pages({"start": 0.0, "end": 5.0, "speaker": "Oz", "text": text, "max_width": 18})
+
+        self.assertGreaterEqual(len(pages), 2)
+        self.assertLess(float(pages[0]["end"]) - float(pages[0]["start"]), 5.0)
+
+    def test_pack_segments_uses_page_split_before_rendering(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 4.0, "speaker": "Oz", "text": "ignored"}
+            ]
+        }
+
+        with mock.patch("src.subtitle_packer.pack_segment_pages", return_value=[
+            {"start": 0.0, "end": 1.5, "speaker": "Oz", "text": "first page", "max_width": 12},
+            {"start": 1.5, "end": 3.0, "speaker": "Oz", "text": "second page", "max_width": 12},
+        ]):
+            events = pack_segments(data)
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].text, "first page")
+        self.assertEqual(events[1].text, "second page")
+
+    def test_pack_segments_does_not_repack_layout_packed_segments(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "speaker": "Oz",
+                    "text": "already packed",
+                    "layout_packed": True,
+                }
+            ]
+        }
+
+        with mock.patch("src.subtitle_packer.pack_segment_pages") as pack_pages:
+            events = pack_segments(data)
+
+        pack_pages.assert_not_called()
+        self.assertEqual([event.text for event in events], ["already packed"])
+
+    def test_pack_segments_normalizes_text_before_rendering(self) -> None:
+        text = r"\u3053\u3053\u304b\u3089\u9006\u3055\u3093\u3068\u60aa\u3044\u3063\u3066\u8a00\u3046\u306e\u304b\u306a\u3061\u3087\u3063\u3068\u9577\u3081\u306e\u5b57\u5e55\u3067\u3059".encode("ascii").decode("unicode_escape")
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": text, "max_width": 18}
+            ]
+        }
+
+        with mock.patch("src.subtitle_packer.pack_segment_pages", return_value=[
+            {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": text, "max_width": 18}
+        ]):
+            events = pack_segments(data)
+
+        self.assertEqual(len(events), 1)
+        self.assertIn(r"\N", events[0].text)
+        self.assertEqual(events[0].metadata["source_text"], text)
+
+    def test_split_into_atomic_units_uses_budoux_chunks(self) -> None:
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return ["ab", "cd", "ef"]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            units = split_into_atomic_units("abcdef")
+
+        self.assertEqual(units, ["ab", "cd", "ef"])
+
+    def test_break_candidates_include_budoux_boundaries(self) -> None:
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return ["ab", "cd", "ef"]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            candidates = break_candidates("abcdef", 24)
+
+        self.assertIn(2, candidates)
+        self.assertIn(4, candidates)
+
+    def test_parse_track_color_args_parses_mapping(self) -> None:
+        mapping = parse_track_color_args(["0:a:1=#FFFFFF", "0:a:3=#A8FFF6"])
+        self.assertEqual(mapping["0:a:1"], "#FFFFFF")
+        self.assertEqual(mapping["0:a:3"], "#A8FFF6")
+
+    def test_render_ass_can_override_color_per_track(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "hello", "layout_row": 0, "source_track": "0:a:1"}
+            ]
+        }
+
+        output = render_ass(data, track_color_map={"0:a:1": "#112233"})
+
+        self.assertIn("Style: Track_0_a_1", output)
+        self.assertIn("Style: Track_0_a_1,Arial,52,&H00FFFFFF,&H0000FFFF,&H00332211", output)
+        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Track_0_a_1,Oz,0,0,34,,hello", output)
+
+    def test_render_ass_can_override_color_per_speaker_from_config(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "C", "text": "hello", "layout_row": 0, "source_track": "craig:speaker-d", "source_speaker": "speaker-d"}
+            ]
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "speaker_colors.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "speakers": {
+                            "speaker-d": {"color": "#2244FF", "aliases": ["guest-d"]}
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
+
+        self.assertIn("Style: Speaker_speaker_d", output)
+        self.assertIn("Style: Speaker_speaker_d,Arial,50,&H00FFFFFF,&H0000FFFF,&H00FF4422", output)
+        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_speaker_d,C,0,0,34,,hello", output)
+
+    def test_render_ass_prefers_file_name_color_mapping(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "hello", "layout_row": 0, "source_file": "1-speaker-a.aac", "source_speaker": "speaker-a"}
+            ]
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "speaker_colors.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "files": {
+                            "1-speaker-a.aac": {"color": "#123456"}
+                        },
+                        "speakers": {
+                            "speaker-a": {"color": "#abcdef"}
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
+
+        self.assertIn("Style: Speaker_1_speaker_a_aac", output)
+        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,52,&H00FFFFFF,&H0000FFFF,&H00563412", output)
+        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_1_speaker_a_aac,Oz,0,0,34,,hello", output)
+
+    def test_pack_segments_preserves_source_speaker_metadata(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "hello", "layout_row": 0, "source_speaker": "speaker-a"}
+            ]
+        }
+
+        events = pack_segments(data)
+
+        self.assertEqual(events[0].metadata["source_speaker"], "speaker-a")
+        self.assertEqual(events[0].metadata["source_file"], "")
+
+    def test_render_ass_outputs_bottom_stack_styles_and_margins(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "hello", "layout_row": 0},
+                {"start": 1.0, "end": 2.0, "speaker": "Guest", "text": "tsukkomi", "layout_row": 1},
+                {"start": 2.0, "end": 3.0, "speaker": "Guest", "text": "wow", "emphasis": "shout", "layout_row": 2},
+            ]
+        }
+
+        output = render_ass(data)
+
+        self.assertIn("Style: Guest", output)
+        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Oz,Oz,0,0,34,,hello", output)
+        self.assertIn("Dialogue: 1,0:00:01.00,0:00:02.00,Guest,Guest,0,0,190,,tsukkomi", output)
+        self.assertIn("Dialogue: 2,0:00:02.00,0:00:03.00,ShoutGuest,Guest,0,0,346,,wow", output)
+
+    def test_build_ffmpeg_command_uses_ass_filter(self) -> None:
+        command = build_ffmpeg_command("input.mp4", "out\\sample.ass", "out/final.mp4")
+        self.assertEqual(command[0], "ffmpeg")
+        self.assertIn("ass='out/sample.ass'", command)
+        self.assertIn("out/final.mp4", command)
+
+    def test_build_ass_filter_escapes_windows_path(self) -> None:
+        self.assertEqual(build_ass_filter(r"C:\work\sample.ass"), r"ass='C\:/work/sample.ass'")
+
+    def test_build_ffmpeg_command_uses_high_quality_nvenc(self) -> None:
+        command = build_ffmpeg_command(
+            "input.mp4",
+            "out/sample.ass",
+            "out/final.mp4",
+            video_codec="h264_nvenc",
+            nvenc_cq=18,
+        )
+        self.assertIn("-cq", command)
+        self.assertEqual(command[command.index("-cq") + 1], "18")
+        self.assertEqual(command[command.index("-profile:v") + 1], "high")
+        self.assertIn("-spatial-aq", command)
+        self.assertIn("-temporal-aq", command)
+
+    def test_build_video_encoding_args_rejects_invalid_quality(self) -> None:
+        with self.assertRaises(ValueError):
+            build_video_encoding_args("h264_nvenc", nvenc_cq=52)
+
+    def test_build_normalize_command_uses_loudnorm(self) -> None:
+        command = build_normalize_command("op.mp4", "out/op.normalized.mp4", 1920, 1080, audio_normalize=True)
+        self.assertEqual(command[0], "ffmpeg")
+        self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", command)
+        self.assertIn("out/op.normalized.mp4", command)
+
+    def test_build_loudnorm_filter_accepts_custom_targets(self) -> None:
+        self.assertEqual(build_loudnorm_filter(-14.0, 9.0, -1.0), "loudnorm=I=-14:LRA=9:TP=-1")
+
+    def test_build_ffmpeg_command_applies_audio_filter(self) -> None:
+        command = build_ffmpeg_command(
+            "input.mp4",
+            "out/sample.ass",
+            "out/final.mp4",
+            audio_codec="aac",
+            audio_filter="loudnorm=I=-16:LRA=11:TP=-1.5",
+        )
+        self.assertIn("-af", command)
+        self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", command)
+        self.assertIn("aac", command)
+        self.assertIn("48000", command)
+
+    def test_build_normalize_command_can_use_nvenc(self) -> None:
+        command = build_normalize_command("op.mp4", "out/op.normalized.mp4", 1920, 1080, video_codec="h264_nvenc", nvenc_preset="p4")
+        self.assertIn("h264_nvenc", command)
+        self.assertIn("-preset", command)
+        self.assertIn("p4", command)
+        self.assertIn("-cq", command)
+        self.assertIn("-profile:v", command)
+
+    def test_build_concat_command_uses_concat_demuxer(self) -> None:
+        command = build_concat_command("out/concat.txt", "out/final.mp4")
+        self.assertEqual(command[:4], ["ffmpeg", "-y", "-f", "concat"])
+        self.assertIn("out/final.mp4", command)
+
+    def test_write_concat_manifest_writes_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            first = base / "a.mp4"
+            second = base / "b.mp4"
+            first.write_text("x", encoding="utf-8")
+            second.write_text("x", encoding="utf-8")
+            manifest = write_concat_manifest([str(first), str(second)], str(base / "concat.txt"))
+            text = manifest.read_text(encoding="utf-8")
+            self.assertIn(first.resolve().as_posix(), text)
+            self.assertIn(second.resolve().as_posix(), text)
+
+    def test_optional_clip_returns_existing_path_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            clip = Path(temp_dir) / "op.mp4"
+            clip.write_text("x", encoding="utf-8")
+            self.assertEqual(optional_clip(str(clip)), clip)
+            self.assertIsNone(optional_clip(str(Path(temp_dir) / "missing.mp4")))
+
+    def test_extract_command_maps_requested_track(self) -> None:
+        command = build_extract_audio_command("input.mkv", "out/audio.wav", "0:a:1")
+        self.assertEqual(command[5], "0:a:1")
+        self.assertIn("pcm_s16le", command)
+
+    def test_whisperx_command_uses_environment_token_without_exposing_it(self) -> None:
+        with mock.patch.dict("os.environ", {"HF_TOKEN": "secret-token"}, clear=False):
+            command = build_whisperx_command(
+                "out/audio.wav",
+                "out",
+                model="large-v3",
+                device="cpu",
+                compute_type="int8",
+                diarize=True,
+                min_speakers=3,
+                max_speakers=3,
+                vad_onset=0.3,
+                vad_offset=0.15,
+            )
+        self.assertEqual(command[:3], [sys.executable, "-m", "whisperx"])
+        self.assertIn("--diarize", command)
+        self.assertNotIn("--hf_token", command)
+        self.assertNotIn("secret-token", command)
+        self.assertIn("--min_speakers", command)
+        self.assertIn("--vad_onset", command)
+        self.assertIn("--vad_offset", command)
+
+    def test_validate_hf_token_requires_environment_variable(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(SystemExit):
+                validate_hf_token(diarize=True)
+
+    def test_expected_paths_match_audio_stem(self) -> None:
+        transcript = expected_transcript_path("out/input.0_a_1.wav", "out")
+        log_path = expected_log_path("out/input.0_a_1.wav", "out")
+        self.assertEqual(str(transcript).replace("\\", "/"), "out/input.0_a_1.json")
+        self.assertEqual(str(log_path).replace("\\", "/"), "out/input.0_a_1.whisperx.log")
+
+    def test_derive_pipeline_paths_uses_track_suffix(self) -> None:
+        audio, transcript, ass_path = derive_pipeline_paths("input.mkv", "out", "0:a:2")
+        self.assertEqual(str(audio).replace("\\", "/"), "out/input.0_a_2.wav")
+        self.assertEqual(str(transcript).replace("\\", "/"), "out/input.0_a_2.json")
+        self.assertEqual(str(ass_path).replace("\\", "/"), "out/input.0_a_2.ass")
+
+    def test_derive_export_paths_creates_video_export_layout(self) -> None:
+        work_dir, final_video = derive_export_paths("video_import/input.mkv", "video_export", "0:a:1")
+        self.assertEqual(str(work_dir).replace("\\", "/"), "video_export/input")
+        self.assertEqual(str(final_video).replace("\\", "/"), "video_export/input/input.0_a_1.subtitled.mp4")
+
+    def test_derive_merged_export_paths_creates_single_video_layout(self) -> None:
+        work_dir, final_video = derive_merged_export_paths("video_import/input.mkv", "video_export")
+        self.assertEqual(str(work_dir).replace("\\", "/"), "video_export/input")
+        self.assertEqual(str(final_video).replace("\\", "/"), "video_export/input/input.merged.subtitled.mp4")
+
+    def test_iter_video_files_filters_supported_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            (base / "a.mkv").write_text("x", encoding="utf-8")
+            (base / "b.mp4").write_text("x", encoding="utf-8")
+            (base / "op.mp4").write_text("x", encoding="utf-8")
+            (base / "ed.mp4").write_text("x", encoding="utf-8")
+            (base / "c.txt").write_text("x", encoding="utf-8")
+            files = iter_video_files(temp_dir)
+            self.assertEqual([path.name for path in files], ["a.mkv", "b.mp4"])
+
+    def test_build_ass_from_transcript_writes_ass_file(self) -> None:
+        sample = {"segments": [{"start": 0.1, "end": 0.9, "speaker": "Oz", "text": "test line", "layout_row": 0}]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            transcript_path = Path(temp_dir) / "sample.json"
+            ass_path = Path(temp_dir) / "sample.ass"
+            transcript_path.write_text(json.dumps(sample), encoding="utf-8")
+
+            result = build_ass_from_transcript(str(transcript_path), str(ass_path))
+
+            self.assertEqual(result, ass_path)
+            self.assertIn("test line", ass_path.read_text(encoding="utf-8"))
+
+    def test_run_media_to_ass_many_preserves_track_order(self) -> None:
+        calls: list[str] = []
+
+        def fake_run_media_to_ass(input_media: str, audio_track: str, output_dir: str, **_: object) -> Path:
+            calls.append(audio_track)
+            return Path(output_dir) / f"{Path(input_media).stem}.{audio_track.replace(':', '_')}.ass"
+
+        import src.pipeline as pipeline
+
+        original = pipeline.run_media_to_ass
+        pipeline.run_media_to_ass = fake_run_media_to_ass
+        try:
+            results = run_media_to_ass_many("input.mkv", ["0:a:1", "0:a:3"], "out")
+        finally:
+            pipeline.run_media_to_ass = original
+
+        self.assertEqual(calls, ["0:a:1", "0:a:3"])
+        self.assertEqual([str(path).replace("\\", "/") for path in results], ["out/input.0_a_1.ass", "out/input.0_a_3.ass"])
+
+    def test_normalize_diarize_tracks_requires_environment_token(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(SystemExit):
+                normalize_diarize_tracks({"0:a:3"})
+        with mock.patch.dict("os.environ", {"HF_TOKEN": "secret-token"}, clear=False):
+            self.assertEqual(normalize_diarize_tracks({"0:a:3"}), {"0:a:3"})
+
+    def test_speaker_for_track_defaults_guest_without_diarization(self) -> None:
+        self.assertEqual(speaker_for_track("0:a:1", None), "Oz")
+        self.assertEqual(speaker_for_track("0:a:3", None, None), "Guest")
+
+    def test_split_segment_breaks_long_text_into_shorter_units(self) -> None:
+        segment = {"start": 0.0, "end": 8.0, "text": "あの怪物でかいぞ!怪物にも個体差がある。だが対処法は同じだ。撃て!", "speaker": "Oz", "source_track": "0:a:1", "max_width": 22}
+        parts = split_segment(segment)
+        self.assertGreater(len(parts), 3)
+        self.assertTrue(all((part["end"] - part["start"]) <= 3.6 for part in parts))
+
+    def test_split_segment_uses_word_timing_when_available(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 4.0,
+            "text": "こんにちは。さようなら。",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 8,
+            "words": [
+                {"word": "こんにちは。", "start": 0.2, "end": 1.0},
+                {"word": "さようなら。", "start": 1.1, "end": 1.8},
+            ],
+        }
+        parts = split_segment(segment)
+        self.assertGreaterEqual(len(parts), 2)
+        self.assertGreaterEqual(parts[0]["start"], 0.2)
+        self.assertAlmostEqual(parts[-1]["end"], 1.88, places=2)
+
+    def test_pack_segment_pages_uses_two_line_page_capacity(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.0,
+            "text": "abcdefghijkl",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 6,
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return ["abcdef", "ghijkl"]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment)
+
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["text"], "abcdefghijkl")
+
+    def test_normalize_text_uses_morpheme_boundary_when_budoux_has_none(self) -> None:
+        text = r"\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9\u3067\u304d\u308b\u3088\u3046\u306b\u306a\u308b\u3068\u3046\u3093\u3046\u3093\u3046\u3093\u305d\u3046".encode("ascii").decode("unicode_escape")
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            wrapped = normalize_text(text, max_width=28, max_lines=2)
+
+        self.assertNotIn(r"\u3088".encode("ascii").decode("unicode_escape") + r"\N" + r"\u3046".encode("ascii").decode("unicode_escape"), wrapped)
+        self.assertNotIn(r"\u30c0\u30a6\u30f3".encode("ascii").decode("unicode_escape") + r"\N", wrapped)
+
+    def test_pack_segment_pages_infers_silence_from_stretched_character(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.0,
+            "text": "abcdeUVWXY",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "a", "start": 0.0, "end": 0.1},
+                {"word": "b", "start": 0.1, "end": 0.2},
+                {"word": "c", "start": 0.2, "end": 0.3},
+                {"word": "d", "start": 0.3, "end": 0.4},
+                {"word": "e", "start": 0.4, "end": 1.4},
+                {"word": "UVWXY", "start": 1.4, "end": 1.9},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return ["abcde", "UVWXY"] if text == "abcdeUVWXY" else [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.1)
+
+        self.assertEqual([part["text"] for part in parts], ["abcde", "UVWXY"])
+        self.assertLess(parts[0]["end"], parts[1]["start"])
+
+    def test_pack_segment_pages_keeps_trailing_conjunction_with_previous_text(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.0,
+            "text": "abcde" + r"\u304b\u3089".encode("ascii").decode("unicode_escape"),
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "abcde", "start": 0.0, "end": 0.5},
+                {"word": r"\u304b\u3089".encode("ascii").decode("unicode_escape"), "start": 1.2, "end": 1.5},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                suffix = r"\u304b\u3089".encode("ascii").decode("unicode_escape")
+                return ["abcde", suffix] if text == "abcde" + suffix else [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.1)
+
+        self.assertEqual(len(parts), 1)
+        self.assertTrue(parts[0]["text"].endswith(r"\u304b\u3089".encode("ascii").decode("unicode_escape")))
+
+    def test_pack_segment_pages_rejoins_single_characters_into_short_utterance(self) -> None:
+        prefix = r"\u304a\u3081\u3048".encode("ascii").decode("unicode_escape")
+        first = r"\u306f".encode("ascii").decode("unicode_escape")
+        second = r"\u3044".encode("ascii").decode("unicode_escape")
+        segment = {
+            "start": 0.0,
+            "end": 2.0,
+            "text": prefix + first + second,
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": prefix, "start": 0.0, "end": 0.3},
+                {"word": first, "start": 1.0, "end": 1.8},
+                {"word": second, "start": 1.8, "end": 1.9},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                full_text = prefix + first + second
+                return [prefix, first, second] if text == full_text else [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.1)
+
+        self.assertEqual([part["text"] for part in parts], [prefix, first + second])
+
+    def test_pack_segment_pages_requires_japanese_layout_dependencies(self) -> None:
+        segment = {"start": 0.0, "end": 1.0, "text": "hello", "max_width": 28}
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "pip install -r requirements.txt"):
+                pack_segment_pages(segment)
+
+    def test_pack_segment_pages_snaps_large_word_gap_to_natural_boundary(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.5,
+            "text": "abcdeUVWXY",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "abcde", "start": 0.0, "end": 0.5},
+                {"word": "UVWXY", "start": 0.9, "end": 1.4},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return ["abcde", "UVWXY"]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.32)
+
+        self.assertEqual(len(parts), 2)
+        self.assertLess(parts[0]["end"], parts[1]["start"] + 0.01)
+
+    def test_pack_segment_pages_splits_on_large_word_gap(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.5,
+            "text": "abcdeUVWXY",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "abcde", "start": 0.0, "end": 0.5},
+                {"word": "UVWXY", "start": 0.9, "end": 1.4},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return ["abcde", "UVWXY"]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.32)
+
+        self.assertEqual(len(parts), 2)
+        self.assertLess(parts[0]["end"], parts[1]["start"] + 0.01)
+
+    def test_pack_segment_pages_keeps_small_word_gap_together(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.5,
+            "text": "abcdeUVWXY",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "abcde", "start": 0.0, "end": 0.5},
+                {"word": "UVWXY", "start": 0.75, "end": 1.4},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.32)
+
+        self.assertEqual(len(parts), 1)
+
+    def test_pack_segment_pages_trims_end_using_word_timing_padding(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 3.0,
+            "text": "abcde",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "abcde", "start": 0.2, "end": 0.7},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_end_padding_seconds=0.08)
+
+        self.assertEqual(len(parts), 1)
+        self.assertAlmostEqual(parts[0]["end"], 0.78, places=2)
+
+    def test_pack_segment_pages_respects_min_duration_after_trim(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 1.0,
+            "text": "??",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "??", "start": 0.2, "end": 0.25},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_end_padding_seconds=0.08, subtitle_min_duration_seconds=0.35)
+
+        self.assertEqual(len(parts), 1)
+        self.assertAlmostEqual(parts[0]["end"] - parts[0]["start"], 0.35, places=2)
+
+    def test_pack_segment_pages_caps_single_long_word_duration(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 12.0,
+            "text": "longword",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+            "words": [
+                {"word": "longword", "start": 0.2, "end": 10.0},
+            ],
+        }
+
+        class FakeParser:
+            def parse(self, text: str) -> list[str]:
+                return [text]
+
+        with mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()):
+            parts = pack_segment_pages(segment, subtitle_end_padding_seconds=0.08)
+
+        self.assertEqual(len(parts), 1)
+        self.assertAlmostEqual(parts[0]["end"] - parts[0]["start"], 2.8, places=2)
+
+    def test_split_segment_keeps_short_sentence_together(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.4,
+            "text": "うわ! それ危ない。",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+        }
+        parts = split_segment(segment)
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["text"], "うわ!それ危ない。")
+
+    def test_split_segment_allows_two_short_sentences_together(self) -> None:
+        segment = {
+            "start": 0.0,
+            "end": 2.6,
+            "text": "行くぞ。準備して。",
+            "speaker": "Oz",
+            "source_track": "0:a:1",
+            "max_width": 28,
+        }
+        parts = split_segment(segment)
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["text"], "行くぞ。準備して。")
+
+    def test_assign_bottom_rows_drops_shortest_without_shifting_time(self) -> None:
+        segments = [
+            {"start": 0.0, "end": 2.0, "speaker": "Guest", "text": "longer line", "layout_row": 0, "filter_reasons": []},
+            {"start": 0.2, "end": 1.6, "speaker": "Guest", "text": "mid line", "layout_row": 0, "filter_reasons": []},
+            {"start": 0.3, "end": 1.4, "speaker": "Oz", "text": "short", "layout_row": 0, "filter_reasons": []},
+            {"start": 0.4, "end": 0.9, "speaker": "Guest", "text": "tiny", "layout_row": 0, "filter_reasons": []},
+        ]
+        assigned, overflow = assign_bottom_rows(segments)
+        self.assertEqual(len(assigned), 3)
+        self.assertEqual(len(overflow), 1)
+        self.assertEqual(overflow[0]["text"], "tiny")
+        self.assertIn("overflow_dropped", overflow[0]["filter_reasons"])
+        self.assertEqual(sorted(set(segment["layout_row"] for segment in assigned)), [0, 1, 2])
+
+    def test_assign_bottom_rows_reserves_two_rows_for_two_line_caption(self) -> None:
+        segments = [
+            {"start": 0.0, "end": 2.0, "speaker": "A", "text": "abcdefghijklmno", "layout_row": 0, "max_width": 12, "filter_reasons": []},
+            {"start": 0.2, "end": 1.0, "speaker": "Oz", "text": "short", "layout_row": 0, "max_width": 28, "filter_reasons": []},
+        ]
+
+        assigned, overflow = assign_bottom_rows(segments)
+
+        self.assertEqual(len(overflow), 0)
+        by_text = {segment["text"]: segment for segment in assigned}
+        self.assertEqual(by_text["abcdefghijklmno"]["layout_row"], 0)
+        self.assertEqual(by_text["abcdefghijklmno"]["layout_row_span"], 2)
+        self.assertEqual(by_text["short"]["layout_row"], 2)
+
+    def test_merge_transcripts_filters_nonspeech_and_keeps_guest_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            track1 = base / "track1.json"
+            track3 = base / "track3.json"
+            track1.write_text(json.dumps({"segments": [{"start": 2.0, "end": 3.0, "text": "oz line"}]}), encoding="utf-8")
+            track3.write_text(json.dumps({"segments": [
+                {"start": 1.0, "end": 2.0, "text": "guest line"},
+                {"start": 4.0, "end": 9.0, "text": "ガンマ型のアッシュはかなりの大型です 戦闘車両やコンバットフレームの天敵か"}
+            ]}), encoding="utf-8")
+
+            merged, filtered = merge_transcripts({"0:a:1": str(track1), "0:a:3": str(track3)})
+
+            self.assertTrue(all(segment["layout_row"] in {0, 1, 2} for segment in merged["segments"]))
+            self.assertTrue(any(segment["speaker"] == "Guest" for segment in merged["segments"]))
+            self.assertGreater(len(filtered["segments"]), 0)
+            self.assertTrue(any("game_terms" in ",".join(segment["filter_reasons"]) for segment in filtered["segments"]))
+
+    def test_write_youtube_texts_creates_title_and_description_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            merged_path = Path(temp_dir) / "sample.merged.json"
+            merged_path.write_text(
+                json.dumps(
+                    {
+                        "segments": [
+                            {"start": 12.0, "end": 13.8, "speaker": "Oz", "text": "うわ! ボス来た!"},
+                            {"start": 26.0, "end": 28.0, "speaker": "Guest", "text": "ここで突っ込むの危ないって!"},
+                            {"start": 45.0, "end": 47.5, "speaker": "Guest", "text": "最後に逆転できそう!"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            title_path, description_path = write_youtube_texts(str(merged_path))
+
+            self.assertTrue(title_path.exists())
+            self.assertTrue(description_path.exists())
+            self.assertIn("【実況】", title_path.read_text(encoding="utf-8"))
+            self.assertIn("おすすめタイトル案:", description_path.read_text(encoding="utf-8"))
+
+    def test_derive_youtube_text_paths_uses_merged_stem(self) -> None:
+        title_path, description_path = derive_youtube_text_paths("video_export/input/input.merged.json")
+        self.assertEqual(str(title_path).replace("\\", "/"), "video_export/input/input.youtube_title.txt")
+        self.assertEqual(str(description_path).replace("\\", "/"), "video_export/input/input.youtube_description.txt")
+
+
+if __name__ == "__main__":
+    unittest.main()

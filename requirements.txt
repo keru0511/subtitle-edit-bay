@@ -1,0 +1,3 @@
+budoux>=0.7,<1
+janome>=0.5,<1
+PySide6>=6.8,<7

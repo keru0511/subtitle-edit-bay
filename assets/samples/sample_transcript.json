@@ -1,0 +1,28 @@
+{
+  "segments": [
+    {
+      "start": 0.42,
+      "end": 2.68,
+      "speaker": "Oz",
+      "text": "よし、今日はこのステージを攻略していきます。",
+      "emphasis": "normal",
+      "position": "bottom"
+    },
+    {
+      "start": 2.8,
+      "end": 4.6,
+      "speaker": "A",
+      "text": "いやそれ毎回言って負けてるやつだろ。",
+      "emphasis": "normal",
+      "position": "top"
+    },
+    {
+      "start": 5.1,
+      "end": 6.7,
+      "speaker": "Oz",
+      "text": "うわあああ落ちた",
+      "emphasis": "shout",
+      "position": "bottom"
+    }
+  ]
+}

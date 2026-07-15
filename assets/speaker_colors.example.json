@@ -1,0 +1,26 @@
+{
+  "files": {
+    "1-speaker-a.flac": {
+      "color": "#FFD966",
+      "aliases": ["1-speaker-a.aac", "1-speaker-a.m4a", "1-speaker-a.wav"]
+    },
+    "2-speaker-b.flac": {
+      "color": "#F6B26B",
+      "aliases": ["2-speaker-b.aac", "2-speaker-b.m4a", "2-speaker-b.wav"]
+    },
+    "3-speaker-c.flac": {
+      "color": "#93C47D",
+      "aliases": ["3-speaker-c.aac", "3-speaker-c.m4a", "3-speaker-c.wav"]
+    },
+    "4-speaker-d.flac": {
+      "color": "#6FA8DC",
+      "aliases": ["4-speaker-d.aac", "4-speaker-d.m4a", "4-speaker-d.wav"]
+    }
+  },
+  "speakers": {
+    "speaker-a": {"color": "#FFD966", "aliases": ["host"]},
+    "speaker-b": {"color": "#F6B26B", "aliases": ["guest-1"]},
+    "speaker-c": {"color": "#93C47D", "aliases": ["guest-2"]},
+    "speaker-d": {"color": "#6FA8DC", "aliases": ["guest-3"]}
+  }
+}

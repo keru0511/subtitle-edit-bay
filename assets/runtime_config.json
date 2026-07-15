@@ -1,0 +1,67 @@
+{
+  "shared": {
+    "model": "large-v3",
+    "device": "cuda",
+    "compute_type": "float16",
+    "language": "ja",
+    "vad_onset": 0.35,
+    "vad_offset": 0.2,
+    "width": 1920,
+    "height": 1080,
+    "nvenc_cq": 18,
+    "x264_crf": 18,
+    "subtitle_max_gap_seconds": 0.1,
+    "subtitle_end_padding_seconds": 0.08,
+    "subtitle_min_duration_seconds": 0.35
+  },
+  "pipeline": {
+    "audio_track": [
+      "0:a:1",
+      "0:a:3"
+    ],
+    "output_dir": "out",
+    "diarize_track": [],
+    "min_speakers": 3,
+    "max_speakers": 3,
+    "track_color": []
+  },
+  "batch": {
+    "input_dir": "video_import",
+    "output_dir": "video_export",
+    "audio_track": [
+      "0:a:1",
+      "0:a:3"
+    ],
+    "diarize_track": [],
+    "track_color": [],
+    "op_file": "video_import/op.mp4",
+    "ed_file": "video_import/ed.mp4",
+    "video_codec": "h264_nvenc",
+    "audio_codec": "aac",
+    "nvenc_preset": "p5",
+    "audio_normalize": true
+  },
+  "craig_pipeline": {
+    "input_root": "video_import",
+    "export_root": "video_export",
+    "reference_track": null,
+    "reference_audio": null,
+    "alignment_sample_rate": 120,
+    "alignment_offset_adjustment": 0.0,
+    "video_codec": "h264_nvenc",
+    "audio_codec": "copy",
+    "nvenc_preset": "p5",
+    "audio_normalize": true,
+    "audio_target_lufs": -16.0,
+    "audio_loudness_range": 11.0,
+    "audio_true_peak_db": -1.5,
+    "cut_no_speech": false,
+    "no_speech_min_seconds": 1.2,
+    "speech_padding_seconds": 0.25,
+    "speech_threshold_db": "-40dB",
+    "speech_min_clip_seconds": 0.25,
+    "postprocess_workers": 4,
+    "skip_existing_transcripts": true,
+    "track_color": []
+  }
+}

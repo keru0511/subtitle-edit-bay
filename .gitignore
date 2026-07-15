@@ -1,0 +1,15 @@
+video_import/
+video_export/
+out/
+__pycache__/
+*.pyc
+.gui/
+/assets/speaker_colors.json
+.env
+.env.*
+!.env.example
+*.log
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+Thumbs.db

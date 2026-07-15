@@ -39,6 +39,7 @@ DEFAULT_VAD_ONSET = 0.35
 DEFAULT_VAD_OFFSET = 0.2
 DEFAULT_VIDEO_CODEC = "libx264"
 DEFAULT_AUDIO_CODEC = "copy"
+DEFAULT_OUTPUT_AUDIO_TRACK = "0:a:0"
 DEFAULT_FILTERED_AUDIO_CODEC = "aac"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_AUDIO_NORMALIZE = True
@@ -385,6 +386,7 @@ def run_craig_pipeline(
     alignment_sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE,
     video_codec: str = "libx264",
     audio_codec: str = "copy",
+    output_audio_track: str = DEFAULT_OUTPUT_AUDIO_TRACK,
     nvenc_preset: str = "p5",
     nvenc_cq: int = DEFAULT_NVENC_CQ,
     x264_crf: int = DEFAULT_X264_CRF,
@@ -559,6 +561,7 @@ def run_craig_pipeline(
             x264_crf=x264_crf,
             audio_filter=loudnorm_filter,
             video_filter=build_ass_filter(str(cut_ass_path)),
+            audio_track=output_audio_track,
         )
     else:
         burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter else audio_codec
@@ -574,6 +577,7 @@ def run_craig_pipeline(
             nvenc_cq=nvenc_cq,
             x264_crf=x264_crf,
             audio_filter=loudnorm_filter,
+            audio_track=output_audio_track,
         )
 
     return {
@@ -613,6 +617,7 @@ def main() -> None:
     parser.add_argument("--alignment-sample-rate", type=int, default=None, help="Resample rate used for audio alignment.")
     parser.add_argument("--video-codec", default=None, help="FFmpeg video codec such as libx264 or h264_nvenc.")
     parser.add_argument("--audio-codec", default=None, help="FFmpeg audio codec for the burned video.")
+    parser.add_argument("--output-audio-track", default=None, help="Video audio track included in the final output, such as 0:a:0.")
     parser.add_argument("--nvenc-preset", default=None, help="NVENC preset used when --video-codec ends with _nvenc.")
     parser.add_argument("--nvenc-cq", type=int, default=None, help="NVENC constant quality target; lower is higher quality.")
     parser.add_argument("--x264-crf", type=int, default=None, help="libx264 constant quality target; lower is higher quality.")
@@ -658,6 +663,7 @@ def main() -> None:
     alignment_sample_rate = int(resolve_option(args.alignment_sample_rate, config, "alignment_sample_rate", DEFAULT_ALIGNMENT_SAMPLE_RATE))
     video_codec = resolve_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
     audio_codec = resolve_option(args.audio_codec, config, "audio_codec", DEFAULT_AUDIO_CODEC)
+    output_audio_track = resolve_option(args.output_audio_track, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK)
     nvenc_preset = resolve_option(args.nvenc_preset, config, "nvenc_preset", DEFAULT_NVENC_PRESET)
     nvenc_cq = int(resolve_option(args.nvenc_cq, config, "nvenc_cq", DEFAULT_NVENC_CQ))
     x264_crf = int(resolve_option(args.x264_crf, config, "x264_crf", DEFAULT_X264_CRF))
@@ -710,6 +716,7 @@ def main() -> None:
         print("Transcription commands will be generated under:")
         print(Path(output_dir) / "transcripts")
         print(f"Video quality: {video_codec}, NVENC CQ {nvenc_cq}, x264 CRF {x264_crf}")
+        print(f"Output audio track: {output_audio_track}")
         print(f"Audio normalization: {'enabled' if audio_normalize else 'disabled'} ({audio_target_lufs:g} LUFS)")
         print(f"Cut no-speech ranges: {'enabled' if cut_no_speech else 'disabled'}")
         if cut_no_speech:
@@ -737,6 +744,7 @@ def main() -> None:
         alignment_sample_rate=alignment_sample_rate,
         video_codec=video_codec,
         audio_codec=audio_codec,
+        output_audio_track=output_audio_track,
         nvenc_preset=nvenc_preset,
         nvenc_cq=nvenc_cq,
         x264_crf=x264_crf,

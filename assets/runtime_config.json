@@ -38,6 +38,7 @@
     "ed_file": "video_import/ed.mp4",
     "video_codec": "h264_nvenc",
     "audio_codec": "aac",
+    "output_audio_track": "0:a:0",
     "nvenc_preset": "p5",
     "audio_normalize": true
   },
@@ -50,6 +51,7 @@
     "alignment_offset_adjustment": 0.0,
     "video_codec": "h264_nvenc",
     "audio_codec": "copy",
+    "output_audio_track": "0:a:0",
     "nvenc_preset": "p5",
     "audio_normalize": true,
     "audio_target_lufs": -16.0,

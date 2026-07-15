@@ -12,6 +12,7 @@ SILENCE_START_RE = re.compile(r"silence_start:\s*([0-9]+(?:\.[0-9]+)?)")
 SILENCE_END_RE = re.compile(r"silence_end:\s*([0-9]+(?:\.[0-9]+)?)")
 DEFAULT_VIDEO_CODEC = "libx264"
 DEFAULT_AUDIO_CODEC = "aac"
+DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
 
@@ -180,13 +181,14 @@ def build_concat_filter(
     keep_ranges: list[tuple[float, float]],
     audio_filter: str | None = None,
     video_filter: str | None = None,
+    audio_track: str = DEFAULT_AUDIO_TRACK,
 ) -> str:
     video_parts: list[str] = []
     audio_parts: list[str] = []
     concat_inputs: list[str] = []
     for index, (start, end) in enumerate(keep_ranges):
         video_parts.append(f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{index}]")
-        audio_parts.append(f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
+        audio_parts.append(f"[{audio_track}]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
         concat_inputs.append(f"[v{index}][a{index}]")
     video_output = "[vcat]" if video_filter else "[v]"
     audio_output = "[acat]" if audio_filter else "[a]"
@@ -212,6 +214,7 @@ def build_silence_cut_command(
     audio_filter: str | None = None,
     video_filter: str | None = None,
     filter_script_path: str | None = None,
+    audio_track: str = DEFAULT_AUDIO_TRACK,
 ) -> list[str]:
     if not keep_ranges:
         raise ValueError("At least one keep range is required.")
@@ -220,6 +223,7 @@ def build_silence_cut_command(
         keep_ranges,
         audio_filter=audio_filter,
         video_filter=video_filter,
+        audio_track=audio_track,
     )
     command = [
         "ffmpeg",
@@ -254,12 +258,13 @@ def cut_media_ranges(
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
     video_filter: str | None = None,
+    audio_track: str = DEFAULT_AUDIO_TRACK,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
     filter_script.write_text(
-        build_concat_filter(keep_ranges, audio_filter=audio_filter, video_filter=video_filter),
+        build_concat_filter(keep_ranges, audio_filter=audio_filter, video_filter=video_filter, audio_track=audio_track),
         encoding="utf-8",
     )
     try:
@@ -275,6 +280,7 @@ def cut_media_ranges(
             audio_filter=audio_filter,
             video_filter=video_filter,
             filter_script_path=str(filter_script),
+            audio_track=audio_track,
         )
         subprocess.run(command, check=True)
     finally:
@@ -320,6 +326,7 @@ def cut_silence(
     nvenc_cq: int = DEFAULT_NVENC_CQ,
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
+    audio_track: str = DEFAULT_AUDIO_TRACK,
 ) -> Path:
     media_duration = probe_media_duration(input_path)
     silence_ranges = detect_silence(
@@ -344,6 +351,7 @@ def cut_silence(
         nvenc_cq=nvenc_cq,
         x264_crf=x264_crf,
         audio_filter=audio_filter,
+        audio_track=audio_track,
     )
 
 
@@ -355,6 +363,7 @@ def main() -> None:
     parser.add_argument("--silence-duration", type=float, default=0.4, help="Minimum silence duration in seconds.")
     parser.add_argument("--padding", type=float, default=0.08, help="Speech padding around cut boundaries.")
     parser.add_argument("--min-clip-duration", type=float, default=0.25, help="Minimum kept clip duration in seconds.")
+    parser.add_argument("--audio-track", default=DEFAULT_AUDIO_TRACK, help="Audio track included in the output, such as 0:a:0.")
     parser.add_argument("--run", action="store_true", help="Execute instead of printing the command.")
     args = parser.parse_args()
 
@@ -371,7 +380,7 @@ def main() -> None:
         padding=args.padding,
         min_clip_duration=args.min_clip_duration,
     )
-    command = build_silence_cut_command(args.input, args.output, keep_ranges)
+    command = build_silence_cut_command(args.input, args.output, keep_ranges, audio_track=args.audio_track)
 
     if not args.run:
         print(f"Duration: {media_duration:.3f}s")
@@ -388,6 +397,7 @@ def main() -> None:
         silence_duration=args.silence_duration,
         padding=args.padding,
         min_clip_duration=args.min_clip_duration,
+        audio_track=args.audio_track,
     )
     print(result)
 

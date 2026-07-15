@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .assemble_video import assemble_video, optional_clip
+from .assemble_video import assemble_video, optional_clip, probe_media_duration
 from .burn_subs import run_ffmpeg_burn
 from .pipeline import run_media_to_merged_ass
 from .render_ass import parse_track_color_args
@@ -29,6 +29,7 @@ DEFAULT_OP_FILE = "video_import/op.mp4"
 DEFAULT_ED_FILE = "video_import/ed.mp4"
 DEFAULT_VIDEO_CODEC = "libx264"
 DEFAULT_AUDIO_CODEC = "aac"
+DEFAULT_OUTPUT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_SUBTITLE_MAX_GAP_SECONDS = 0.32
 DEFAULT_SUBTITLE_END_PADDING_SECONDS = 0.08
@@ -79,6 +80,7 @@ def process_video(
     audio_normalize: bool,
     video_codec: str,
     audio_codec: str,
+    output_audio_track: str,
     nvenc_preset: str,
     nvenc_cq: int,
     x264_crf: int,
@@ -88,6 +90,8 @@ def process_video(
     subtitle_min_duration_seconds: float,
 ) -> Path:
     work_dir, final_video = derive_merged_export_paths(video_path, export_root)
+    op_clip = optional_clip(op_file)
+    youtube_timestamp_offset_seconds = probe_media_duration(str(op_clip)) if op_clip else 0.0
     _, merged_ass, _ = run_media_to_merged_ass(
         video_path,
         audio_tracks,
@@ -107,6 +111,7 @@ def process_video(
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        youtube_timestamp_offset_seconds=youtube_timestamp_offset_seconds,
     )
     main_subtitled = work_dir / f"{Path(video_path).stem}.main.subtitled.mp4"
     run_ffmpeg_burn(
@@ -115,6 +120,7 @@ def process_video(
         str(main_subtitled),
         video_codec=video_codec,
         audio_codec="copy",
+        audio_track=output_audio_track,
         nvenc_preset=nvenc_preset,
         nvenc_cq=nvenc_cq,
         x264_crf=x264_crf,
@@ -157,6 +163,7 @@ def main() -> None:
     parser.add_argument("--ed-file", default=None, help="Optional ED clip path.")
     parser.add_argument("--video-codec", default=None, help="FFmpeg video codec such as libx264 or h264_nvenc.")
     parser.add_argument("--audio-codec", default=None, help="FFmpeg audio codec for normalized clips.")
+    parser.add_argument("--output-audio-track", default=None, help="Main-video audio track included in the final output, such as 0:a:0.")
     parser.add_argument("--nvenc-preset", default=None, help="NVENC preset used when --video-codec ends with _nvenc.")
     parser.add_argument("--nvenc-cq", type=int, default=None, help="NVENC constant quality target; lower is higher quality.")
     parser.add_argument("--x264-crf", type=int, default=None, help="libx264 constant quality target; lower is higher quality.")
@@ -187,6 +194,7 @@ def main() -> None:
     ed_file = resolve_option(args.ed_file, config, "ed_file", DEFAULT_ED_FILE)
     video_codec = resolve_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
     audio_codec = resolve_option(args.audio_codec, config, "audio_codec", DEFAULT_AUDIO_CODEC)
+    output_audio_track = resolve_option(args.output_audio_track, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK)
     nvenc_preset = resolve_option(args.nvenc_preset, config, "nvenc_preset", DEFAULT_NVENC_PRESET)
     nvenc_cq = int(resolve_option(args.nvenc_cq, config, "nvenc_cq", DEFAULT_NVENC_CQ))
     x264_crf = int(resolve_option(args.x264_crf, config, "x264_crf", DEFAULT_X264_CRF))
@@ -211,6 +219,7 @@ def main() -> None:
             work_dir, final_video = derive_merged_export_paths(str(video), str(output_dir))
             print(f"INPUT  : {video}")
             print(f"TRACKS : {' '.join(audio_tracks)}")
+            print(f"AUDIO  : {output_audio_track}")
             print(f"OP     : {optional_clip(op_file) or 'disabled'}")
             print(f"ED     : {optional_clip(ed_file) or 'disabled'}")
             print(f"WORKDIR: {work_dir}")
@@ -240,6 +249,7 @@ def main() -> None:
             audio_normalize=audio_normalize,
             video_codec=video_codec,
             audio_codec=audio_codec,
+            output_audio_track=output_audio_track,
             nvenc_preset=nvenc_preset,
             nvenc_cq=nvenc_cq,
             x264_crf=x264_crf,

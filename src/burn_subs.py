@@ -8,6 +8,7 @@ from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_enco
 
 DEFAULT_VIDEO_CODEC = "libx264"
 DEFAULT_AUDIO_CODEC = "copy"
+DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
 
@@ -27,12 +28,17 @@ def build_ffmpeg_command(
     nvenc_cq: int = DEFAULT_NVENC_CQ,
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
+    audio_track: str = DEFAULT_AUDIO_TRACK,
 ) -> list[str]:
     command = [
         "ffmpeg",
         "-y",
         "-i",
         video,
+        "-map",
+        "0:v:0",
+        "-map",
+        audio_track,
         "-vf",
         build_ass_filter(subtitle),
         "-c:v",
@@ -55,6 +61,7 @@ def run_ffmpeg_burn(
     nvenc_cq: int = DEFAULT_NVENC_CQ,
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
+    audio_track: str = DEFAULT_AUDIO_TRACK,
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +76,7 @@ def run_ffmpeg_burn(
             nvenc_cq=nvenc_cq,
             x264_crf=x264_crf,
             audio_filter=audio_filter,
+            audio_track=audio_track,
         ),
         check=True,
     )
@@ -82,15 +90,16 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="Output video path.")
     parser.add_argument("--video-codec", default=DEFAULT_VIDEO_CODEC, help="Video codec such as libx264 or h264_nvenc.")
     parser.add_argument("--audio-codec", default=DEFAULT_AUDIO_CODEC, help="Audio codec such as copy or aac.")
+    parser.add_argument("--audio-track", default=DEFAULT_AUDIO_TRACK, help="Audio track included in the output, such as 0:a:0.")
     parser.add_argument("--nvenc-preset", default=DEFAULT_NVENC_PRESET, help="NVENC preset used when --video-codec ends with _nvenc.")
     parser.add_argument("--nvenc-cq", type=int, default=DEFAULT_NVENC_CQ, help="NVENC constant quality target; lower is higher quality.")
     parser.add_argument("--x264-crf", type=int, default=DEFAULT_X264_CRF, help="libx264 constant quality target; lower is higher quality.")
     parser.add_argument("--run", action="store_true", help="Execute instead of printing the command.")
     args = parser.parse_args()
 
-    command = build_ffmpeg_command(args.video, args.subtitle, args.output, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf)
+    command = build_ffmpeg_command(args.video, args.subtitle, args.output, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf, audio_track=args.audio_track)
     if args.run:
-        print(run_ffmpeg_burn(args.video, args.subtitle, args.output, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf))
+        print(run_ffmpeg_burn(args.video, args.subtitle, args.output, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf, audio_track=args.audio_track))
         return
     print(" ".join(f'"{part}"' if " " in part else part for part in command))
 

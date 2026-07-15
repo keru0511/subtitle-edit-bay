@@ -103,11 +103,27 @@ def expected_log_path(audio_path: str, output_dir: str) -> Path:
 
 
 def run_command_with_utf8_log(command: list[str], log_path: str) -> None:
-    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        )
+    except OSError as error:
+        path.write_text(f"Failed to start process: {error}\n", encoding="utf-8")
+        raise
+
     log_text = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
+    if result.returncode:
+        log_text += f"\nProcess exited with code {result.returncode}.\n"
     path.write_text(log_text, encoding="utf-8")
+    result.check_returncode()
 
 
 def print_streams(streams: list[dict[str, object]]) -> None:

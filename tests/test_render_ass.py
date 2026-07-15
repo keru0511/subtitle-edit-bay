@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ from src.transcribe import (
     build_whisperx_command,
     expected_log_path,
     expected_transcript_path,
+    run_command_with_utf8_log,
     validate_hf_token,
 )
 from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
@@ -280,6 +282,8 @@ class RenderAssTests(unittest.TestCase):
         command = build_ffmpeg_command("input.mp4", "out\\sample.ass", "out/final.mp4")
         self.assertEqual(command[0], "ffmpeg")
         self.assertIn("ass='out/sample.ass'", command)
+        self.assertEqual(command[command.index("-map") + 1], "0:v:0")
+        self.assertIn("0:a:0", command)
         self.assertIn("out/final.mp4", command)
 
     def test_build_ass_filter_escapes_windows_path(self) -> None:
@@ -306,8 +310,23 @@ class RenderAssTests(unittest.TestCase):
     def test_build_normalize_command_uses_loudnorm(self) -> None:
         command = build_normalize_command("op.mp4", "out/op.normalized.mp4", 1920, 1080, audio_normalize=True)
         self.assertEqual(command[0], "ffmpeg")
-        self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", command)
+        self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", command[command.index("-af") + 1])
+        self.assertIn("fps=60", command[command.index("-vf") + 1])
+        self.assertIn("0:v:0", command)
+        self.assertIn("0:a:0", command)
         self.assertIn("out/op.normalized.mp4", command)
+
+    def test_build_normalize_command_adds_silent_audio_when_missing(self) -> None:
+        command = build_normalize_command(
+            "silent-op.mp4",
+            "out/op.normalized.mp4",
+            1920,
+            1080,
+            has_audio=False,
+        )
+        self.assertIn("anullsrc=channel_layout=stereo:sample_rate=48000", command)
+        self.assertIn("1:a:0", command)
+        self.assertIn("-shortest", command)
 
     def test_build_loudnorm_filter_accepts_custom_targets(self) -> None:
         self.assertEqual(build_loudnorm_filter(-14.0, 9.0, -1.0), "loudnorm=I=-14:LRA=9:TP=-1")
@@ -335,7 +354,11 @@ class RenderAssTests(unittest.TestCase):
 
     def test_build_concat_command_uses_concat_demuxer(self) -> None:
         command = build_concat_command("out/concat.txt", "out/final.mp4")
-        self.assertEqual(command[:4], ["ffmpeg", "-y", "-f", "concat"])
+        self.assertEqual(command[:2], ["ffmpeg", "-y"])
+        self.assertEqual(command[command.index("-f") + 1], "concat")
+        self.assertIn("+genpts", command)
+        self.assertIn("0:v:0", command)
+        self.assertIn("0:a:0", command)
         self.assertIn("out/final.mp4", command)
 
     def test_write_concat_manifest_writes_absolute_paths(self) -> None:
@@ -838,12 +861,33 @@ class RenderAssTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            title_path, description_path = write_youtube_texts(str(merged_path))
+            title_path, description_path = write_youtube_texts(
+                str(merged_path),
+                timestamp_offset_seconds=8.0,
+            )
 
             self.assertTrue(title_path.exists())
             self.assertTrue(description_path.exists())
             self.assertIn("【実況】", title_path.read_text(encoding="utf-8"))
-            self.assertIn("おすすめタイトル案:", description_path.read_text(encoding="utf-8"))
+            description = description_path.read_text(encoding="utf-8")
+            self.assertIn("おすすめタイトル案:", description)
+            self.assertIn("00:20", description)
+
+    def test_run_command_with_utf8_log_preserves_failed_process_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "whisperx.log"
+            completed = subprocess.CompletedProcess(["whisperx"], 7, stdout="partial output", stderr="failure detail")
+            with mock.patch("src.transcribe.subprocess.run", return_value=completed) as run_mock:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_command_with_utf8_log(["whisperx"], str(log_path))
+
+            child_env = run_mock.call_args.kwargs["env"]
+            self.assertEqual(child_env["PYTHONIOENCODING"], "utf-8")
+            self.assertEqual(child_env["PYTHONUTF8"], "1")
+            log_text = log_path.read_text(encoding="utf-8")
+            self.assertIn("partial output", log_text)
+            self.assertIn("failure detail", log_text)
+            self.assertIn("code 7", log_text)
 
     def test_derive_youtube_text_paths_uses_merged_stem(self) -> None:
         title_path, description_path = derive_youtube_text_paths("video_export/input/input.merged.json")

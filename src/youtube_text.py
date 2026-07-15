@@ -102,7 +102,12 @@ def build_title_candidates(segments: list[dict], video_stem: str, limit: int = 3
     return candidates
 
 
-def build_description_text(segments: list[dict], title_candidates: list[str], video_stem: str) -> str:
+def build_description_text(
+    segments: list[dict],
+    title_candidates: list[str],
+    video_stem: str,
+    timestamp_offset_seconds: float = 0.0,
+) -> str:
     picks = interesting_segments(segments, limit=5)
     speakers = sorted({segment.get("speaker", "UNKNOWN") for segment in segments})
     keywords = extract_keywords(picks or segments)
@@ -130,7 +135,7 @@ def build_description_text(segments: list[dict], title_candidates: list[str], vi
         lines.append("")
         lines.append("見どころメモ:")
         for segment in picks[:3]:
-            start = float(segment.get("start", 0.0))
+            start = max(0.0, float(segment.get("start", 0.0)) + timestamp_offset_seconds)
             mm = int(start // 60)
             ss = int(start % 60)
             lines.append(f"- {mm:02d}:{ss:02d} {segment.get('speaker', 'UNKNOWN')}: {clean_text(segment['text'])}")
@@ -152,7 +157,7 @@ def derive_youtube_text_paths(merged_json_path: str) -> tuple[Path, Path]:
     return base_dir / f"{stem}.youtube_title.txt", base_dir / f"{stem}.youtube_description.txt"
 
 
-def write_youtube_texts(merged_json_path: str) -> tuple[Path, Path]:
+def write_youtube_texts(merged_json_path: str, timestamp_offset_seconds: float = 0.0) -> tuple[Path, Path]:
     data = load_merged_transcript(merged_json_path)
     segments = data.get("segments", [])
     merged_path = Path(merged_json_path)
@@ -160,7 +165,12 @@ def write_youtube_texts(merged_json_path: str) -> tuple[Path, Path]:
     title_path, description_path = derive_youtube_text_paths(merged_json_path)
 
     titles = build_title_candidates(segments, video_stem)
-    description = build_description_text(segments, titles, video_stem)
+    description = build_description_text(
+        segments,
+        titles,
+        video_stem,
+        timestamp_offset_seconds=timestamp_offset_seconds,
+    )
 
     title_path.write_text("\n".join(titles).strip() + "\n", encoding="utf-8")
     description_path.write_text(description, encoding="utf-8")

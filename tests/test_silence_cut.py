@@ -100,6 +100,10 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("atrim=start=2.000:end=3.500", filter_text)
         self.assertIn("concat=n=2:v=1:a=1[v][a]", filter_text)
 
+    def test_build_concat_filter_uses_explicit_audio_track(self) -> None:
+        filter_text = build_concat_filter([(0.0, 1.2)], audio_track="0:a:3")
+        self.assertIn("[0:a:3]atrim=start=0.000:end=1.200", filter_text)
+
     def test_build_concat_filter_applies_audio_filter_after_concat(self) -> None:
         filter_text = build_concat_filter([(0.0, 1.2)], audio_filter="loudnorm=I=-16:LRA=11:TP=-1.5")
         self.assertIn("concat=n=1:v=1:a=1[v][acat]", filter_text)

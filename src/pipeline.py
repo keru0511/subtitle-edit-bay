@@ -194,6 +194,7 @@ def run_media_to_merged_ass(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    youtube_timestamp_offset_seconds: float = 0.0,
 ) -> tuple[Path, Path, Path | None]:
     work_dir = Path(output_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -242,7 +243,10 @@ def run_media_to_merged_ass(
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
-    write_youtube_texts(str(merged_json))
+    write_youtube_texts(
+        str(merged_json),
+        timestamp_offset_seconds=youtube_timestamp_offset_seconds,
+    )
     return merged_json, merged_ass, filtered_json
 
 

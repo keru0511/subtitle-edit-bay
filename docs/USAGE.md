@@ -94,43 +94,101 @@ $env:HF_TOKEN = [Net.NetworkCredential]::new("", $secureToken).Password
 
 ## GUI: Subtitle Edit Bay
 
-通常は `start.bat` でデスクトップGUIを起動します。
+通常は `start.bat` で起動します。
 
 ~~~powershell
 .\start.bat
 ~~~
 
-手動起動する場合:
+画面右下の処理は次の3段階です。
 
-~~~powershell
-.\.venv\Scripts\python.exe -m src.gui
+1. `1 TRANSCRIBE`: 動画と話者音声を同期し、WhisperX文字起こし、実波形生成、編集プロジェクト作成までを実行
+2. `2 EDIT SUBTITLES`: 動画と同期した表・タイムラインで字幕を編集
+3. `3 RENDER VIDEO`: 保存済みプロジェクトからASSを再生成し、動画へ焼き付け
+
+文字起こし完了時に `<動画名>.subtitle-project.json` が作成され、自動的にエディターで開かれます。raw WhisperX JSONと自動生成した `craig.merged.json` は入力記録として残り、ユーザー編集はプロジェクトJSONだけへ保存されます。このため、編集後に `RENDER VIDEO` を何度実行してもWhisperXは起動しません。
+
+### 字幕エディター
+
+表では字幕ごとに次を変更できます。
+
+- 字幕本文
+- 開始時刻と終了時刻（秒、小数第3位まで）
+- 話者
+- 自動算出された文字サイズ倍率（50〜200%）
+
+タイムラインは話者ごとの実音声波形と字幕ブロックを表示します。ブロック本体をドラッグすると区間全体を移動でき、選択中ブロックの白い左右端をドラッグすると開始・終了時刻を変更できます。`ZOOM` で時間軸を拡大縮小し、`SNAP` で10ms〜1000msのグリッドを指定します。移動先が別字幕の開始・終了端に近い場合は、その端へもスナップします。`SNAP=0` はスナップ無効です。
+
+`+ CAPTION` は現在の再生位置へ字幕を追加し、`SPLIT` は選択字幕を再生位置で分割、`DELETE` は削除します。`UNDO` / `REDO` は最大100操作を保持します。キーボードでは `Ctrl+Z`、`Ctrl+Y`、`Ctrl+S`、`Delete` を使用できます。
+
+編集は変更後700msでプロジェクトへ自動保存されます。ヘッダーの `● EDITED` は保存待ち、`✓ SAVED` は保存済みです。`BUILD ASS` は動画を書き出さず `<動画名>.edited.ass` を作り、画面内の字幕プレビューにも本文・話者色・字幕単位のサイズ倍率を反映します。
+
+### プロジェクトを開き直す
+
+`OPEN PROJECT` から `*.subtitle-project.json` を選択すると、保存済みの動画、存在する話者音声、出力先、字幕、波形を復元します。素材を移動・削除した場合も字幕本文は開けますが、動画プレビューや再レンダーには元動画が必要です。
+
+プロジェクトの主要項目:
+
+~~~text
+schema_version / project_type
+video / audio_sources / speakers
+transcription        # raw transcript、同期オフセット、モデル情報
+subtitle_settings    # 基準サイズ、音量連動幅、字幕タイミング
+segments             # 編集の正本。ID、本文、時刻、話者、手動上書き状態
+waveforms            # GUI表示用に縮約した実音声ピーク
+render_settings      # 最後に使った書き出し設定
 ~~~
 
-起動時に `ffmpeg`・`ffprobe`・現在のPython環境のWhisperXを検査します。不足中は同期解析とレンダーを開始できません。導入後に `SOURCE SETUP` の `RECHECK` を押すと、GUIを再起動せず再検査できます。
+プロジェクト内の時刻は常に元動画基準です。`無音部分をカット` を有効にした場合だけ、レンダー時に字幕と動画を同じkeep rangeで再配置します。これにより、カット設定を変えても編集済みの元タイムラインは失われません。
 
-Edit Bayでは次の操作ができます。
+### CLIで段階実行
 
-- 起動ごとに空の入力状態から開始
-- `SOURCE SETUP` から動画・複数の話者音声・出力先を個別指定
-- 動画と音声を各ドロップ領域へドラッグ＆ドロップ
-- 基準にする話者音声と、照合する動画音声トラックを選択
-- `ANALYZE SYNC` で自動オフセット、最終オフセット、照合スコアを事前確認
-- 元動画のプレビュー、シークバーによる再生位置の移動、話者別音声ファイルの確認
-- 話者ごとの字幕枠色をパレットから変更
-- GPU/CPU、Whisperモデル、画質、字幕タイミングを設定
-- 全話者共通の字幕基準文字サイズと、発話音量による拡大・縮小幅を設定
-- Inspectorの設定へマウスを重ねて、日本語の説明と値変更の影響を確認
-- 音量正規化と会話なし区間カットを切り替え
-- パイプラインの工程、経過時間、ログを確認
-- 処理の停止と出力フォルダの表示
+GUIと同じ処理は `src.subtitle_workflow` から独立実行できます。`--audio-file` は話者数だけ繰り返します。
 
-`SOURCE SETUP` は起動直後に自動で開きます。動画と音声は別フォルダにあっても構いません。話者音声は複数ファイルを一度にドロップでき、不要なファイルは一覧右端の `×` で除外できます。出力先も毎回、存在するフォルダを指定します。
+~~~powershell
+.\.venv\Scripts\python.exe -m src.subtitle_workflow transcribe `
+  --video ".\video_import\game.mkv" `
+  --audio-file ".\audio\1-alice.flac" `
+  --audio-file ".\audio\2-bob.flac" `
+  --reference-audio ".\audio\1-alice.flac" `
+  --output-dir ".\video_export\game" `
+  --config ".\assets\runtime_config.json" `
+  --run
+~~~
 
-同期先が不明なら動画音声トラックは `自動検出（推奨）` のままにします。固定したい場合は `0:a:0` などを選びます。`手動オフセット補正` は自動検出値に加算され、正の値で字幕を後ろ、負の値で前へ移動します。通常は `0.000` のままで構いません。
+既存の `*.subtitle-project.json` がある場合、文字起こしフェーズは手動編集を守るため上書きを拒否します。意図的に作り直す場合だけCLIへ `--overwrite-project` を追加してください。GUIでは開いているプロジェクトがある間 `TRANSCRIBE` は無効になり、別の動画・出力先を選ぶと新しい処理へ切り替わります。
 
-`Base font size` は全話者共通の基準文字サイズです。`Volume scaling` は各話者の普段の音量を基準に発話ごとのサイズを変える幅で、`20%` なら約80〜120%、`0%` なら固定サイズになります。
+編集済みプロジェクトからASSだけを再生成:
 
-`SAVE PRESET` または `START RENDER` を押すと、GPU・字幕・画質などの処理設定だけが `.gui/runtime_config.json` に保存されます。動画・音声・出力先・同期基準のパスは保存されず、次回起動時は再指定が必要です。このファイルはGit管理されません。
+~~~powershell
+.\.venv\Scripts\python.exe -m src.subtitle_workflow ass `
+  --project ".\video_export\game\game.subtitle-project.json"
+~~~
+
+編集済みプロジェクトから動画を書き出し:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m src.subtitle_workflow render `
+  --project ".\video_export\game\game.subtitle-project.json" `
+  --config ".\assets\runtime_config.json" `
+  --run
+~~~
+
+主な出力:
+
+~~~text
+video_export/game/
+├─ transcripts/
+│  ├─ 1-alice.json
+│  └─ 1-alice.whisperx.log
+├─ game.craig.merged.json
+├─ game.craig.filtered.json
+├─ game.subtitle-project.json       # ユーザー編集の正本
+├─ game.edited.ass                  # BUILD ASS / RENDERで再生成
+└─ game.edited.subtitled.mp4        # RENDER VIDEOの出力
+~~~
+
+GUIの処理設定だけは `.gui/runtime_config.json` に保存されます。素材と字幕の復元にはGUI設定ではなくプロジェクトJSONを使用します。
 
 ## 2. 推奨: Craig分離音声
 

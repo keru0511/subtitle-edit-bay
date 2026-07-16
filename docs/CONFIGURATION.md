@@ -4,7 +4,7 @@
 
 CLIの標準設定は `assets/runtime_config.json` です。各コマンドは `shared` を読み、その後に同名セクションを上書きします。
 
-GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `SAVE PRESET` または `START RENDER` で更新され、Git管理されません。
+GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `SAVE SETTINGS`、`TRANSCRIBE`、`RENDER VIDEO` で更新され、Git管理されません。素材パスと編集字幕はここへ保存せず、出力先の `*.subtitle-project.json` へ保存します。
 
 ~~~text
 shared
@@ -15,6 +15,22 @@ craig_pipeline / batch / pipeline
 ~~~
 
 CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値` です。GUI設定は `.gui/runtime_config.json` 内の `shared` と `craig_pipeline` を使用します。
+
+## 編集プロジェクトと設定の責務
+
+`*.subtitle-project.json` はruntime configではなく、動画1本に対する編集データです。`schema_version=1` を持ち、字幕ID、本文、元動画基準の開始・終了時刻、話者、音量から算出したサイズ倍率、手動上書きフラグ、表示用波形、同期結果を保存します。
+
+| 保存先 | 保存するもの | 再生成時の扱い |
+|---|---|---|
+| `transcripts/*.json` | WhisperXのraw認識結果 | 再文字起こししない限り不変 |
+| `*.craig.merged.json` | 自動整形直後の字幕 | プロジェクト作成時の入力記録 |
+| `*.subtitle-project.json` | ユーザー編集の正本 | ASS・動画の唯一の編集入力 |
+| `*.edited.ass` | ASS生成物 | `BUILD ASS` / renderで上書き可能 |
+| `*.edited.subtitled.mp4` | 完成動画 | renderで上書き可能 |
+
+プロジェクトの `subtitle_settings.font_size` は全字幕の基準値、各segmentの `subtitle_font_scale` は字幕単位の倍率です。文字起こし時は話者内の相対音量から自動設定され、エディターで変更すると `manual_font_scale=true` になります。話者単位の文字サイズ設定は使用しません。
+
+編集保存は一時ファイルへ書いてから置換するため、保存途中の終了で正本を部分書き込みしません。GUIは変更から700ms後に自動保存し、Undo/Redo履歴は実行中のGUIセッション内で最大100操作保持します。
 
 ## shared
 

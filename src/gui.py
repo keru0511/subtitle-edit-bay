@@ -1,470 +1,530 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 import subprocess
 import sys
-from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import replace
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from PySide6.QtCore import Property, QProcess, QProcessEnvironment, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QFileDialog
 
-from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
-from .craig_pipeline import (
-    DEFAULT_ALIGNMENT_SAMPLE_RATE,
-    DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
-    resolve_alignment,
+from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
+from .gui_state import build_gui_render_command, build_gui_transcribe_command
+from .subtitle_project import (
+    MIN_SEGMENT_DURATION_SECONDS,
+    SubtitleProjectError,
+    derive_project_path,
+    load_project,
+    normalize_segment,
+    save_project,
+    validate_project,
 )
-from .gui_state import (
-    AUDIO_EXTENSIONS,
-    SOURCE_CONFIG_KEYS,
-    VIDEO_EXTENSIONS,
-    SourceSelection,
-    build_gui_command,
-    build_gui_runtime_config,
-    build_speaker_entries_from_files,
-    write_gui_runtime_config,
-)
-from .runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
-from .runtime_dependencies import check_runtime_dependencies
-from .transcribe import probe_audio_streams
-
-APP_TITLE = "Subtitle Edit Bay"
+from .subtitle_workflow import build_project_ass
 
 
-class EditBayBackend(QApplication):
-    sourceSelectionChanged = Signal()
-    dependenciesChanged = Signal()
-    speakersChanged = Signal()
-    audioTracksChanged = Signal()
-    alignmentChanged = Signal()
-    alignmentComputed = Signal(object)
-    alignmentFailed = Signal(str)
-    settingsChanged = Signal()
-    runningChanged = Signal()
-    statusChanged = Signal()
-    progressChanged = Signal()
-    logChanged = Signal()
-    elapsedChanged = Signal()
+class EditBayBackend(LegacyEditBayBackend):
+    projectChanged = Signal()
+    segmentsChanged = Signal()
+    historyChanged = Signal()
+    selectionChanged = Signal()
+    activeJobChanged = Signal()
+    assPathChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
-        super().__init__(argv)
-        self.setApplicationName(APP_TITLE)
-        self.setOrganizationName("Subtitle Edit Bay")
+        self._project: dict[str, Any] | None = None
+        self._project_path = ""
+        self._project_dirty = False
+        self._undo_stack: list[list[dict[str, Any]]] = []
+        self._redo_stack: list[list[dict[str, Any]]] = []
+        self._selected_segment_index = -1
+        self._active_job = ""
+        self._ass_path = ""
+        self._loading_project_sources = False
+        super().__init__(argv, workspace_root=workspace_root)
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setSingleShot(True)
+        self.autosave_timer.setInterval(700)
+        self.autosave_timer.timeout.connect(self._autosave_project)
 
-        self.workspace_root = (workspace_root or Path(__file__).resolve().parent.parent).resolve()
-        self.gui_config_path = self.workspace_root / ".gui" / "runtime_config.json"
-        self.color_config_path = self.workspace_root / "assets" / "speaker_colors.json"
-        self._base_config = load_runtime_config(DEFAULT_RUNTIME_CONFIG)
-        self._config = load_runtime_config(self.gui_config_path) if self.gui_config_path.exists() else self._base_config
-        self._source_selection = SourceSelection()
-        self._dependencies = check_runtime_dependencies()
-        self._speakers: list[dict[str, str]] = []
-        self._audio_tracks: list[dict[str, str]] = self._default_audio_tracks()
-        self._alignment_result = self._empty_alignment_result()
-        self._alignment_busy = False
-        self._settings = self._settings_from_config(self._config)
-        self._running = False
-        self._status = "動画・話者音声・出力先を指定してください"
-        self._stage = "READY"
-        self._progress = 0.0
-        self._log = ""
-        self._elapsed_seconds = 0
-        self._cancel_requested = False
-        self._alignment_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="alignment")
+    @Property(bool, notify=projectChanged)
+    def projectLoaded(self) -> bool:
+        return self._project is not None
 
-        self.alignmentComputed.connect(self._apply_alignment_result)
-        self.alignmentFailed.connect(self._apply_alignment_error)
-        self.aboutToQuit.connect(self._shutdown_executor)
+    @Property(str, notify=projectChanged)
+    def projectPath(self) -> str:
+        return self._project_path
 
-        self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self.process.readyReadStandardOutput.connect(self._read_process_output)
-        self.process.started.connect(self._process_started)
-        self.process.finished.connect(self._process_finished)
-        self.process.errorOccurred.connect(self._process_error)
+    @Property(str, notify=projectChanged)
+    def projectName(self) -> str:
+        return Path(self._project_path).name if self._project_path else ""
 
-        self.elapsed_timer = QTimer(self)
-        self.elapsed_timer.setInterval(1000)
-        self.elapsed_timer.timeout.connect(self._tick_elapsed)
-        self._update_source_status()
+    @Property(bool, notify=projectChanged)
+    def projectDirty(self) -> bool:
+        return self._project_dirty
 
-    @staticmethod
-    def _default_audio_tracks() -> list[dict[str, str]]:
-        return [{"selector": "", "label": "自動検出（推奨）"}]
+    @Property("QVariantList", notify=segmentsChanged)
+    def subtitleSegments(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            return []
+        return deepcopy(self._project.get("segments", []))
 
-    @staticmethod
-    def _empty_alignment_result(status: str = "未解析") -> dict[str, Any]:
-        return {
-            "status": status,
-            "track": "",
-            "detected_offset": 0.0,
-            "adjustment": 0.0,
-            "offset": 0.0,
-            "score": 0.0,
+    @Property("QVariantList", notify=projectChanged)
+    def projectSpeakers(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            return []
+        return deepcopy(self._project.get("speakers", []))
+
+    @Property("QVariantList", notify=projectChanged)
+    def subtitleWaveforms(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            return []
+        return deepcopy(self._project.get("waveforms", []))
+
+    @Property(float, notify=projectChanged)
+    def projectDuration(self) -> float:
+        if self._project is None:
+            return 0.0
+        video_duration = float(self._project.get("video", {}).get("duration_seconds", 0.0))
+        segment_duration = max((float(item["end"]) for item in self._project.get("segments", [])), default=0.0)
+        return max(video_duration, segment_duration)
+
+    @Property(bool, notify=historyChanged)
+    def canUndo(self) -> bool:
+        return bool(self._undo_stack)
+
+    @Property(bool, notify=historyChanged)
+    def canRedo(self) -> bool:
+        return bool(self._redo_stack)
+
+    @Property(int, notify=selectionChanged)
+    def selectedSegmentIndex(self) -> int:
+        return self._selected_segment_index
+
+    @Property(str, notify=activeJobChanged)
+    def activeJob(self) -> str:
+        return self._active_job
+
+    @Property(str, notify=assPathChanged)
+    def assPath(self) -> str:
+        return self._ass_path
+
+    def _set_source_selection(self, selection: Any) -> None:
+        super()._set_source_selection(selection)
+        if self._loading_project_sources or self._project is None:
+            return
+        project_video = str(Path(str(self._project.get("video", {}).get("path", ""))).resolve())
+        selected_video = str(Path(selection.video).resolve()) if selection.video else ""
+        project_audio = {
+            str(Path(str(item.get("path", ""))).resolve())
+            for item in self._project.get("audio_sources", [])
+            if item.get("path")
         }
+        selected_audio = {str(Path(path).resolve()) for path in selection.audio_files}
+        project_output = str(Path(str(self._project.get("output_dir", ""))).resolve())
+        selected_output = str(Path(selection.output_dir).resolve()) if selection.output_dir else ""
+        if (
+            (selected_video and selected_video != project_video)
+            or selected_audio != project_audio
+            or (selected_output and selected_output != project_output)
+        ):
+            self._clear_project()
 
-    @staticmethod
-    def _local_path(value: str) -> Path:
-        url = QUrl(value)
-        return Path(url.toLocalFile()) if url.isLocalFile() else Path(value)
+    def _default_project_path(self) -> Path | None:
+        selection = self._source_selection
+        if not selection.video or not selection.output_dir:
+            return None
+        return derive_project_path(selection.video, selection.output_dir)
 
-    def _settings_from_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        shared = payload.get("shared", {})
-        craig = payload.get("craig_pipeline", {})
-        return {
-            "model": shared.get("model", "large-v3"),
-            "device": shared.get("device", "cuda"),
-            "compute_type": shared.get("compute_type", "float16"),
-            "language": shared.get("language", "ja"),
-            "nvenc_cq": int(shared.get("nvenc_cq", 18)),
-            "x264_crf": int(shared.get("x264_crf", 18)),
-            "subtitle_font_size": int(shared.get("subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE)),
-            "subtitle_volume_scale_percent": float(craig.get("subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)),
-            "subtitle_max_gap_seconds": float(shared.get("subtitle_max_gap_seconds", 0.1)),
-            "subtitle_end_padding_seconds": float(shared.get("subtitle_end_padding_seconds", 0.08)),
-            "subtitle_min_duration_seconds": float(shared.get("subtitle_min_duration_seconds", 0.35)),
-            "video_codec": craig.get("video_codec", "h264_nvenc"),
-            "audio_normalize": bool(craig.get("audio_normalize", True)),
-            "audio_target_lufs": float(craig.get("audio_target_lufs", -16.0)),
-            "cut_no_speech": bool(craig.get("cut_no_speech", False)),
-            "no_speech_min_seconds": float(craig.get("no_speech_min_seconds", 1.2)),
-            "speech_padding_seconds": float(craig.get("speech_padding_seconds", 0.25)),
-            "postprocess_workers": int(craig.get("postprocess_workers", 4)),
-            "alignment_offset_adjustment": float(craig.get("alignment_offset_adjustment", 0.0)),
-        }
+    def _clear_project(self) -> None:
+        if self._project_dirty:
+            self.saveProject()
+        self._project = None
+        self._project_path = ""
+        self._project_dirty = False
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._selected_segment_index = -1
+        self.projectChanged.emit()
+        self.segmentsChanged.emit()
+        self.historyChanged.emit()
+        self.selectionChanged.emit()
 
-    @Property("QVariantMap", notify=sourceSelectionChanged)
-    def sourceSelection(self) -> dict[str, Any]:
-        return self._source_selection.to_dict()
-
-    @Property("QVariantMap", notify=dependenciesChanged)
-    def dependencyStatus(self) -> dict[str, Any]:
-        return self._dependencies.to_dict()
-
-    @Property("QVariantList", notify=speakersChanged)
-    def speakers(self) -> list[dict[str, str]]:
-        return list(self._speakers)
-
-    @Property("QVariantList", notify=audioTracksChanged)
-    def audioTracks(self) -> list[dict[str, str]]:
-        return list(self._audio_tracks)
-
-    @Property("QVariantMap", notify=alignmentChanged)
-    def alignmentResult(self) -> dict[str, Any]:
-        return dict(self._alignment_result)
-
-    @Property(bool, notify=alignmentChanged)
-    def alignmentBusy(self) -> bool:
-        return self._alignment_busy
-
-    @Property("QVariantMap", notify=settingsChanged)
-    def settings(self) -> dict[str, Any]:
-        return dict(self._settings)
-
-    @Property(bool, notify=runningChanged)
-    def running(self) -> bool:
-        return self._running
-
-    @Property(str, notify=statusChanged)
-    def status(self) -> str:
-        return self._status
-
-    @Property(str, notify=statusChanged)
-    def stage(self) -> str:
-        return self._stage
-
-    @Property(float, notify=progressChanged)
-    def progress(self) -> float:
-        return self._progress
-
-    @Property(str, notify=logChanged)
-    def logText(self) -> str:
-        return self._log
-
-    @Property(str, notify=elapsedChanged)
-    def elapsed(self) -> str:
-        hours, remainder = divmod(self._elapsed_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-    @Property(str, notify=sourceSelectionChanged)
-    def previewUrl(self) -> str:
-        if not self._source_selection.video:
-            return ""
-        return QUrl.fromLocalFile(self._source_selection.video).toString()
-
-    def _set_source_selection(self, selection: SourceSelection) -> None:
-        previous = self._source_selection
-        video_changed = previous.video != selection.video
-        media_changed = video_changed or previous.audio_files != selection.audio_files
-        self._source_selection = selection
-        self._speakers = build_speaker_entries_from_files(selection.audio_files, self.color_config_path)
-
-        if video_changed:
-            self._probe_audio_tracks(selection.video)
-        if media_changed:
-            self._alignment_result = self._empty_alignment_result()
-            self.alignmentChanged.emit()
-
-        self.sourceSelectionChanged.emit()
-        self.speakersChanged.emit()
-        self._update_source_status()
-
-    def _update_source_status(self) -> None:
-        if not self._dependencies.ready:
-            missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行ツールが不足しています: {missing}", "SETUP")
-        elif not self._source_selection.video:
-            self._set_status("動画をドロップしてください", "INPUT")
-        elif not self._source_selection.audio_files:
-            self._set_status("1つ以上の話者音声をドロップしてください", "INPUT")
-        elif not self._source_selection.output_dir:
-            self._set_status("出力先フォルダを指定してください", "INPUT")
-        else:
-            self._set_status(f"入力準備完了: {len(self._speakers)}人の話者音声", "READY")
-
-    def _probe_audio_tracks(self, video_path: str) -> None:
-        tracks = self._default_audio_tracks()
-        if self._dependencies.ffprobe and video_path and Path(video_path).is_file():
-            try:
-                for audio_index, stream in enumerate(probe_audio_streams(video_path)):
-                    selector = f"0:a:{audio_index}"
-                    tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
-                    title = str(tags.get("title", "")).strip()
-                    codec = str(stream.get("codec_name", "audio"))
-                    channels = stream.get("channels", "?")
-                    detail = title or f"{codec} / {channels}ch"
-                    tracks.append({"selector": selector, "label": f"{selector}  {detail}"})
-            except (OSError, subprocess.SubprocessError, ValueError) as error:
-                self._set_status(f"動画音声トラックを取得できません: {error}", "CHECK")
-        self._audio_tracks = tracks
-        self.audioTracksChanged.emit()
-
-    @Slot()
-    def refreshDependencies(self) -> None:
-        self._dependencies = check_runtime_dependencies()
-        self.dependenciesChanged.emit()
-        if self._source_selection.video:
-            self._probe_audio_tracks(self._source_selection.video)
-        self._update_source_status()
-    @Slot()
-    def browseVideoFile(self) -> None:
-        start_dir = str(Path(self._source_selection.video).parent) if self._source_selection.video else str(self.workspace_root)
-        path, _ = QFileDialog.getOpenFileName(
-            None,
-            "動画ファイルを選択",
-            start_dir,
-            "Video files (*.mkv *.mp4 *.mov *.webm);;All files (*)",
-        )
-        if path:
-            self.setVideoFile(path)
-
-    @Slot(str)
-    def setVideoFile(self, path: str) -> None:
-        video = self._local_path(path)
-        if not video.is_file() or video.suffix.lower() not in VIDEO_EXTENSIONS:
-            self._set_status("対応する動画ファイルを指定してください", "CHECK")
-            return
-        self._set_source_selection(replace(self._source_selection, video=str(video.resolve())))
-
-    @Slot()
-    def browseAudioFiles(self) -> None:
-        if self._source_selection.audio_files:
-            start_dir = str(Path(self._source_selection.audio_files[0]).parent)
-        else:
-            start_dir = str(self.workspace_root)
-        paths, _ = QFileDialog.getOpenFileNames(
-            None,
-            "話者音声ファイルを選択",
-            start_dir,
-            "Audio files (*.aac *.flac *.wav *.m4a);;All files (*)",
-        )
-        if paths:
-            self.setAudioFiles(paths, True)
-
-    @Slot("QVariantList", bool)
-    def setAudioFiles(self, paths: list[Any], append: bool) -> None:
-        valid_files: list[str] = []
-        for value in paths:
-            audio = self._local_path(str(value))
-            if audio.is_file() and audio.suffix.lower() in AUDIO_EXTENSIONS:
-                valid_files.append(str(audio.resolve()))
-        if not valid_files:
-            self._set_status("対応する話者音声ファイルを指定してください", "CHECK")
-            return
-
-        existing = list(self._source_selection.audio_files) if append else []
-        combined = sorted(
-            dict.fromkeys([*existing, *valid_files]),
-            key=lambda path: (Path(path).name.casefold(), path.casefold()),
-        )
-        self._set_source_selection(replace(self._source_selection, audio_files=tuple(combined)))
-
-    @Slot(int)
-    def removeAudioFile(self, index: int) -> None:
-        audio_files = list(self._source_selection.audio_files)
-        if not 0 <= index < len(audio_files):
-            return
-        audio_files.pop(index)
-        self._set_source_selection(replace(self._source_selection, audio_files=tuple(audio_files)))
-
-    @Slot()
-    def clearAudioFiles(self) -> None:
-        if self._running:
-            return
-        self._set_source_selection(replace(self._source_selection, audio_files=()))
-
-    @Slot()
-    def browseOutputDirectory(self) -> None:
-        start_dir = self._source_selection.output_dir or str(self.workspace_root)
-        folder = QFileDialog.getExistingDirectory(None, "出力先を選択", start_dir)
-        if folder:
-            self.setOutputDirectory(folder)
-
-    @Slot(str)
-    def setOutputDirectory(self, path: str) -> None:
-        output = self._local_path(path)
-        if not output.is_dir():
-            self._set_status("存在する出力フォルダを指定してください", "CHECK")
-            return
-        self._set_source_selection(replace(self._source_selection, output_dir=str(output.resolve())))
+    def _try_load_default_project(self) -> bool:
+        if self._loading_project_sources:
+            return False
+        path = self._default_project_path()
+        if path is not None and path.is_file():
+            return self._load_project_path(path, update_sources=False)
+        if path is not None and self._project_path and Path(self._project_path).resolve() != path.resolve():
+            self._clear_project()
+        return False
 
     @Slot()
     def resetSources(self) -> None:
-        if self._running:
-            return
-        self._source_selection = SourceSelection()
-        self._speakers = []
-        self._audio_tracks = self._default_audio_tracks()
-        self._alignment_result = self._empty_alignment_result()
-        self.sourceSelectionChanged.emit()
-        self.speakersChanged.emit()
-        self.audioTracksChanged.emit()
-        self.alignmentChanged.emit()
-        self._update_source_status()
-
-    @Slot(int, str)
-    def updateSpeakerColor(self, index: int, color: str) -> None:
-        if not 0 <= index < len(self._speakers):
-            return
-        self._speakers[index] = {**self._speakers[index], "color": color.upper()}
-        self.speakersChanged.emit()
-
-    @Slot(str, str, float)
-    def analyzeAlignment(self, reference_audio: str, reference_track: str, adjustment: float) -> None:
-        if self._alignment_busy:
-            return
-        self.refreshDependencies()
-        if not self._dependencies.ffmpeg or not self._dependencies.ffprobe:
-            self._set_status("同期解析にはffmpegとffprobeが必要です", "SETUP")
-            return
-        video = self._source_selection.video
-        if not Path(video).is_file() or not Path(reference_audio).is_file():
-            self._set_status("同期解析には動画と基準音声が必要です", "CHECK")
-            return
-
-        self._alignment_busy = True
-        self._alignment_result = self._empty_alignment_result("解析中")
-        self._alignment_result["adjustment"] = float(adjustment)
-        self.alignmentChanged.emit()
-        self._set_status("基準音声と動画トラックを同期解析しています", "ALIGN")
-        future = self._alignment_executor.submit(
-            self._calculate_alignment,
-            video,
-            reference_audio,
-            reference_track,
-            float(adjustment),
-        )
-        future.add_done_callback(self._alignment_finished)
-
-    def _calculate_alignment(
-        self,
-        video: str,
-        reference_audio: str,
-        reference_track: str,
-        adjustment: float,
-    ) -> dict[str, Any]:
-        matched_track, detected_offset, score = resolve_alignment(
-            video,
-            reference_audio,
-            reference_track or None,
-            DEFAULT_ALIGNMENT_SAMPLE_RATE,
-        )
-        return {
-            "status": "解析完了",
-            "track": matched_track,
-            "detected_offset": detected_offset,
-            "adjustment": adjustment,
-            "offset": detected_offset + adjustment,
-            "score": score,
-        }
-
-    def _alignment_finished(self, future: Future[dict[str, Any]]) -> None:
-        try:
-            self.alignmentComputed.emit(future.result())
-        except Exception as error:
-            self.alignmentFailed.emit(str(error))
-
-    @Slot(object)
-    def _apply_alignment_result(self, result: dict[str, Any]) -> None:
-        self._alignment_busy = False
-        self._alignment_result = dict(result)
-        self.alignmentChanged.emit()
-        self._set_status(
-            f"同期完了: {result['track']} / offset {float(result['offset']):+.3f}s",
-            "READY",
-        )
+        super().resetSources()
+        if not self._loading_project_sources and self._project is not None:
+            self._clear_project()
 
     @Slot(str)
-    def _apply_alignment_error(self, message: str) -> None:
-        self._alignment_busy = False
-        self._alignment_result = self._empty_alignment_result("解析失敗")
-        self._alignment_result["error"] = message
-        self.alignmentChanged.emit()
-        self._set_status(f"同期解析に失敗しました: {message}", "ERROR")
+    def setVideoFile(self, path: str) -> None:
+        super().setVideoFile(path)
+        self._try_load_default_project()
+
+    @Slot(str)
+    def setOutputDirectory(self, path: str) -> None:
+        super().setOutputDirectory(path)
+        self._try_load_default_project()
+
+    @Slot()
+    def browseProjectFile(self) -> None:
+        start_dir = self._source_selection.output_dir or str(self.workspace_root)
+        path, _ = QFileDialog.getOpenFileName(
+            None,
+            "字幕編集プロジェクトを開く",
+            start_dir,
+            "Subtitle projects (*.subtitle-project.json);;JSON files (*.json)",
+        )
+        if path:
+            self.loadProject(path)
+
+    @Slot(str)
+    def loadProject(self, path: str) -> None:
+        candidate = self._local_path(path)
+        self._load_project_path(candidate, update_sources=True)
+
+    def _load_project_path(self, path: Path, *, update_sources: bool) -> bool:
+        try:
+            project = load_project(path)
+        except (OSError, json.JSONDecodeError, SubtitleProjectError, TypeError, ValueError) as error:
+            self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
+            return False
+        self._project = project
+        self._project_path = str(path.resolve())
+        self._project_dirty = False
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._selected_segment_index = 0 if project.get("segments") else -1
+        if update_sources:
+            self._loading_project_sources = True
+            try:
+                video = Path(str(project.get("video", {}).get("path", "")))
+                if video.is_file():
+                    super().setVideoFile(str(video))
+                output_dir = Path(str(project.get("output_dir", path.parent)))
+                if output_dir.is_dir():
+                    super().setOutputDirectory(str(output_dir))
+                audio_files = [str(item.get("path", "")) for item in project.get("audio_sources", [])]
+                existing_audio = [item for item in audio_files if Path(item).is_file()]
+                if existing_audio:
+                    super().setAudioFiles(existing_audio, False)
+            finally:
+                self._loading_project_sources = False
+        self.projectChanged.emit()
+        self.segmentsChanged.emit()
+        self.historyChanged.emit()
+        self.selectionChanged.emit()
+        self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
+        return True
+
+    def _record_history(self) -> None:
+        if self._project is None:
+            return
+        self._undo_stack.append(deepcopy(self._project["segments"]))
+        if len(self._undo_stack) > 100:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+        self.historyChanged.emit()
+
+    def _mark_project_dirty(self) -> None:
+        if self._project is None:
+            return
+        self._project_dirty = True
+        self.projectChanged.emit()
+        self.autosave_timer.start()
+
+    def _replace_segments(self, segments: list[dict[str, Any]], selected_id: str | None = None) -> None:
+        if self._project is None:
+            return
+        self._project["segments"] = segments
+        validate_project(self._project)
+        if selected_id:
+            self._selected_segment_index = next(
+                (index for index, item in enumerate(self._project["segments"]) if item["id"] == selected_id),
+                -1,
+            )
+        elif self._selected_segment_index >= len(self._project["segments"]):
+            self._selected_segment_index = len(self._project["segments"]) - 1
+        self.segmentsChanged.emit()
+        self.selectionChanged.emit()
+        self._mark_project_dirty()
+
+    @Slot(int)
+    def selectSegment(self, index: int) -> None:
+        count = len(self._project.get("segments", [])) if self._project else 0
+        resolved = index if 0 <= index < count else -1
+        if resolved != self._selected_segment_index:
+            self._selected_segment_index = resolved
+            self.selectionChanged.emit()
+
+    def _edit_number(self, value: Any, label: str) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            self._set_status(f"{label}には数値を入力してください", "CHECK")
+            return None
+        if not math.isfinite(number):
+            self._set_status(f"{label}には有限の数値を入力してください", "CHECK")
+            return None
+        return number
+
+    @Slot(int, "QVariantMap")
+    def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+        if self._project is None or not 0 <= index < len(self._project["segments"]):
+            return
+        current = self._project["segments"][index]
+        updated = deepcopy(current)
+        if "text" in changes:
+            updated["text"] = str(changes["text"]).strip()
+            updated["manual_text"] = True
+            updated.pop("words", None)
+        if "start" in changes or "end" in changes:
+            start_value = self._edit_number(changes.get("start", updated["start"]), "開始時刻")
+            end_value = self._edit_number(changes.get("end", updated["end"]), "終了時刻")
+            if start_value is None or end_value is None:
+                return
+            start = max(0.0, start_value)
+            end = end_value
+            if end < start + MIN_SEGMENT_DURATION_SECONDS:
+                end = start + MIN_SEGMENT_DURATION_SECONDS
+            updated["start"] = round(start, 3)
+            updated["end"] = round(end, 3)
+            updated["manual_timing"] = True
+            updated.pop("words", None)
+        if "speaker" in changes:
+            style = str(changes["speaker"])
+            updated["speaker"] = style
+            updated["manual_speaker"] = True
+            speaker = next((item for item in self._project.get("speakers", []) if item.get("style") == style), None)
+            if speaker:
+                updated["source_speaker"] = speaker.get("name", "")
+                updated["source_file"] = speaker.get("file_name", "")
+                updated["source_track"] = speaker.get("track_key", "")
+        if "subtitle_font_scale" in changes:
+            font_scale = self._edit_number(changes["subtitle_font_scale"], "文字サイズ倍率")
+            if font_scale is None:
+                return
+            updated["subtitle_font_scale"] = max(0.1, min(4.0, font_scale))
+            updated["manual_font_scale"] = True
+        if updated == current:
+            return
+        selected_id = current["id"]
+        self._record_history()
+        segments = deepcopy(self._project["segments"])
+        segments[index] = normalize_segment(updated, index)
+        self._replace_segments(segments, selected_id)
+
+    def _snap_time(self, value: float, moving_index: int, grid_seconds: float) -> float:
+        snapped = max(0.0, value)
+        if grid_seconds > 0:
+            snapped = round(snapped / grid_seconds) * grid_seconds
+        tolerance = max(0.04, grid_seconds * 0.65)
+        if self._project is not None:
+            edges = [
+                float(edge)
+                for index, segment in enumerate(self._project["segments"])
+                if index != moving_index
+                for edge in (segment["start"], segment["end"])
+            ]
+            if edges:
+                nearest = min(edges, key=lambda edge: abs(edge - value))
+                if abs(nearest - value) <= tolerance:
+                    snapped = nearest
+        return round(max(0.0, snapped), 3)
+
+    @Slot(int, float, float, float)
+    def moveSegment(self, index: int, start: float, end: float, snap_seconds: float) -> None:
+        if self._project is None or not 0 <= index < len(self._project["segments"]):
+            return
+        duration = max(MIN_SEGMENT_DURATION_SECONDS, end - start)
+        snapped_start = self._snap_time(start, index, max(0.0, snap_seconds))
+        snapped_end = snapped_start + duration
+        self.updateSegment(index, {"start": snapped_start, "end": snapped_end})
+
+    @Slot(int, float, float)
+    def resizeSegmentStart(self, index: int, start: float, snap_seconds: float) -> None:
+        if self._project is None or not 0 <= index < len(self._project["segments"]):
+            return
+        segment = self._project["segments"][index]
+        snapped = self._snap_time(start, index, max(0.0, snap_seconds))
+        self.updateSegment(index, {"start": min(snapped, float(segment["end"]) - MIN_SEGMENT_DURATION_SECONDS)})
+
+    @Slot(int, float, float)
+    def resizeSegmentEnd(self, index: int, end: float, snap_seconds: float) -> None:
+        if self._project is None or not 0 <= index < len(self._project["segments"]):
+            return
+        segment = self._project["segments"][index]
+        snapped = self._snap_time(end, index, max(0.0, snap_seconds))
+        self.updateSegment(index, {"end": max(snapped, float(segment["start"]) + MIN_SEGMENT_DURATION_SECONDS)})
+
+    @Slot(float)
+    def addSegment(self, at_seconds: float) -> None:
+        if self._project is None:
+            return
+        speakers = self._project.get("speakers", [])
+        speaker = speakers[0] if speakers else {"style": "Oz", "name": "", "track_key": "", "file_name": ""}
+        start = max(0.0, float(at_seconds))
+        segment = normalize_segment(
+            {
+                "id": f"subtitle-{uuid4().hex[:12]}",
+                "start": start,
+                "end": start + 2.0,
+                "text": "新しい字幕",
+                "speaker": speaker.get("style", "Oz"),
+                "source_speaker": speaker.get("name", ""),
+                "source_track": speaker.get("track_key", ""),
+                "source_file": speaker.get("file_name", ""),
+                "manual_text": True,
+                "manual_timing": True,
+            },
+            len(self._project["segments"]),
+        )
+        self._record_history()
+        self._replace_segments([*deepcopy(self._project["segments"]), segment], segment["id"])
+
+    @Slot()
+    def deleteSelectedSegment(self) -> None:
+        if self._project is None or not 0 <= self._selected_segment_index < len(self._project["segments"]):
+            return
+        self._record_history()
+        segments = deepcopy(self._project["segments"])
+        segments.pop(self._selected_segment_index)
+        self._replace_segments(segments)
+
+    @Slot(float)
+    def splitSelectedSegment(self, at_seconds: float) -> None:
+        if self._project is None or not 0 <= self._selected_segment_index < len(self._project["segments"]):
+            return
+        index = self._selected_segment_index
+        segment = deepcopy(self._project["segments"][index])
+        split_at = float(at_seconds)
+        if not float(segment["start"]) + MIN_SEGMENT_DURATION_SECONDS < split_at < float(segment["end"]) - MIN_SEGMENT_DURATION_SECONDS:
+            self._set_status("再生位置を選択字幕の途中へ移動してください", "CHECK")
+            return
+        text = str(segment.get("text", ""))
+        midpoint = max(1, min(len(text) - 1, round(len(text) * (split_at - segment["start"]) / (segment["end"] - segment["start"])))) if len(text) > 1 else len(text)
+        first = {**segment, "end": split_at, "text": text[:midpoint].strip(), "manual_text": True, "manual_timing": True}
+        second = {**segment, "id": f"subtitle-{uuid4().hex[:12]}", "start": split_at, "text": text[midpoint:].strip(), "manual_text": True, "manual_timing": True}
+        first.pop("words", None)
+        second.pop("words", None)
+        self._record_history()
+        segments = deepcopy(self._project["segments"])
+        segments[index:index + 1] = [first, second]
+        self._replace_segments(segments, second["id"])
+
+    @Slot()
+    def undoSubtitleEdit(self) -> None:
+        if self._project is None or not self._undo_stack:
+            return
+        self._redo_stack.append(deepcopy(self._project["segments"]))
+        segments = self._undo_stack.pop()
+        self._replace_segments(segments)
+        self.historyChanged.emit()
+
+    @Slot()
+    def redoSubtitleEdit(self) -> None:
+        if self._project is None or not self._redo_stack:
+            return
+        self._undo_stack.append(deepcopy(self._project["segments"]))
+        segments = self._redo_stack.pop()
+        self._replace_segments(segments)
+        self.historyChanged.emit()
+
+    @Slot()
+    def saveProject(self) -> None:
+        if self._project is None or not self._project_path:
+            return
+        try:
+            save_project(self._project_path, self._project)
+        except (OSError, SubtitleProjectError) as error:
+            self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
+            return
+        self._project_dirty = False
+        self.projectChanged.emit()
+        self._set_status("字幕編集を保存しました", "SAVED")
+
+    def _autosave_project(self) -> None:
+        if self._project_dirty:
+            self.saveProject()
+
+    def _update_project_settings(self, settings: dict[str, Any]) -> None:
+        if self._project is None:
+            return
+        subtitle = self._project.setdefault("subtitle_settings", {})
+        subtitle.update(
+            {
+                "font_size": int(settings.get("subtitle_font_size", subtitle.get("font_size", 50))),
+                "volume_scale_percent": float(settings.get("subtitle_volume_scale_percent", subtitle.get("volume_scale_percent", 20.0))),
+                "max_gap_seconds": float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
+                "end_padding_seconds": float(settings.get("subtitle_end_padding_seconds", subtitle.get("end_padding_seconds", 0.08))),
+                "min_duration_seconds": float(settings.get("subtitle_min_duration_seconds", subtitle.get("min_duration_seconds", 0.35))),
+            }
+        )
+        self._mark_project_dirty()
 
     @Slot("QVariantMap")
-    def saveSettings(self, settings: dict[str, Any]) -> None:
-        persistent_settings = dict(settings)
-        for key in SOURCE_CONFIG_KEYS:
-            persistent_settings.pop(key, None)
-        self._settings.update(persistent_settings)
-        payload = build_gui_runtime_config(self._base_config, self._settings, self._speakers)
-        write_gui_runtime_config(self.gui_config_path, payload)
-        self._config = payload
-        self.settingsChanged.emit()
-        self._set_status("GUI設定を保存しました", "SAVED")
+    def buildSubtitlePreview(self, settings: dict[str, Any]) -> None:
+        if self._project is None:
+            return
+        self._update_project_settings(settings)
+        self.saveProject()
+        try:
+            output = build_project_ass(self._project_path)
+        except (OSError, ValueError) as error:
+            self._set_status(f"ASSを生成できません: {error}", "ERROR")
+            return
+        self._ass_path = str(output.resolve())
+        self.assPathChanged.emit()
+        self._set_status(f"ASSプレビューを生成しました: {output.name}", "ASS")
+
+    def _start_command(self, command: list[str], job: str, status: str) -> None:
+        self._active_job = job
+        self.activeJobChanged.emit()
+        self._log = f"> {subprocess.list2cmdline(command)}\n"
+        self.logChanged.emit()
+        self._progress = 0.02
+        self.progressChanged.emit()
+        self._elapsed_seconds = 0
+        self._cancel_requested = False
+        self.elapsedChanged.emit()
+        self._set_status(status, "STARTING")
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONUTF8", "1")
+        environment.insert("PYTHONUNBUFFERED", "1")
+        self.process.setProcessEnvironment(environment)
+        self.process.setWorkingDirectory(str(self.workspace_root))
+        self.process.start(command[0], command[1:])
 
     @Slot("QVariantMap")
-    def startProcessing(self, settings: dict[str, Any]) -> None:
+    def startTranscription(self, settings: dict[str, Any]) -> None:
         if self._running:
             return
-
         self.refreshDependencies()
-        if not self._dependencies.ready:
-            missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
-            return
-
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
-        if not Path(selection.video).is_file() or not audio_files:
-            self._set_status("動画と1つ以上の話者音声を指定してください", "CHECK")
+        if not Path(selection.video).is_file() or not audio_files or not selection.output_dir:
+            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
             return
-        if not selection.output_dir:
-            self._set_status("出力先を指定してください", "CHECK")
-            return
-
         reference_audio = str(settings.get("reference_audio") or audio_files[0])
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
         self.saveSettings(settings)
-        command = build_gui_command(
+        command = build_gui_transcribe_command(
             self.gui_config_path,
             video=selection.video,
             audio_files=audio_files,
@@ -473,84 +533,41 @@ class EditBayBackend(QApplication):
             reference_track=reference_track,
             alignment_offset_adjustment=adjustment,
         )
-        self._log = f"> {subprocess.list2cmdline(command)}\n"
-        self.logChanged.emit()
-        self._progress = 0.02
-        self.progressChanged.emit()
-        self._elapsed_seconds = 0
-        self._cancel_requested = False
-        self.elapsedChanged.emit()
-        self._set_status("パイプラインを起動しています", "STARTING")
+        self._start_command(command, "transcribe", "文字起こしを開始しています")
 
-        environment = QProcessEnvironment.systemEnvironment()
-        environment.insert("PYTHONUTF8", "1")
-        environment.insert("PYTHONUNBUFFERED", "1")
-        self.process.setProcessEnvironment(environment)
-        self.process.setWorkingDirectory(str(self.workspace_root))
-        self.process.start(command[0], command[1:])
+    @Slot("QVariantMap")
+    def startProcessing(self, settings: dict[str, Any]) -> None:
+        self.startTranscription(settings)
 
-    @Slot()
-    def cancelProcessing(self) -> None:
-        if not self._running:
+    @Slot("QVariantMap")
+    def renderVideo(self, settings: dict[str, Any]) -> None:
+        if self._running or self._project is None:
             return
-        self._cancel_requested = True
-        self._set_status("停止を要求しています", "STOPPING")
-        if os.name == "nt" and self.process.processId():
-            subprocess.run(
-                ["taskkill", "/PID", str(self.process.processId()), "/T"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-            )
-        else:
-            self.process.terminate()
-        QTimer.singleShot(5000, self._kill_if_running)
-
-    def _kill_if_running(self) -> None:
-        if self.process.state() != QProcess.ProcessState.NotRunning:
-            if os.name == "nt" and self.process.processId():
-                subprocess.run(
-                    ["taskkill", "/PID", str(self.process.processId()), "/T", "/F"],
-                    capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                    check=False,
-                )
-            else:
-                self.process.kill()
-
-    @Slot()
-    def openOutputFolder(self) -> None:
-        if not self._source_selection.output_dir:
-            return
-        output = Path(self._source_selection.output_dir)
-        output.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
+        self.saveSettings(settings)
+        self._update_project_settings(settings)
+        self.saveProject()
+        command = build_gui_render_command(self.gui_config_path, project_path=self._project_path)
+        self._start_command(command, "render", "編集済み字幕の動画を書き出しています")
 
     def _process_started(self) -> None:
         self._running = True
         self.runningChanged.emit()
         self.elapsed_timer.start()
-        self._set_status("音声と映像を解析しています", "ALIGN")
-
-    def _read_process_output(self) -> None:
-        data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        if not data:
-            return
-        normalized = data.replace("\r", "\n")
-        self._log = (self._log + normalized)[-50000:]
-        self.logChanged.emit()
-        self._update_stage(normalized)
+        if self._active_job == "transcribe":
+            self._set_status("文字起こしと編集プロジェクト作成を実行しています", "TRANSCRIBE")
+        else:
+            self._set_status("編集済み字幕を動画へ焼き付けています", "ENCODE")
 
     def _update_stage(self, output: str) -> None:
         markers = [
-            ("Resolving alignment", "ALIGN", "基準音声を同期しています", 0.08),
-            ("Starting WhisperX", "WHISPERX", "GPUで文字起こししています", 0.22),
-            ("CPU postprocess", "LAYOUT", "字幕を整形しています", 0.58),
-            ("Refining merged", "LAYOUT", "字幕ページを組み立てています", 0.66),
-            ("Writing ASS", "ASS", "字幕スタイルを書き出しています", 0.72),
-            ("Detecting speech", "SPEECH", "発話区間を検出しています", 0.78),
-            ("Rendering subtitles", "ENCODE", "字幕を焼き込みながら出力しています", 0.84),
-            ("Burning subtitles", "ENCODE", "字幕を焼き込みながら出力しています", 0.84),
+            ("Resolving alignment", "ALIGN", "動画と話者音声を同期しています", 0.08),
+            ("Starting WhisperX", "WHISPERX", "文字起こししています", 0.22),
+            ("Refining merged", "LAYOUT", "編集用字幕を組み立てています", 0.64),
+            ("Building waveform", "WAVEFORM", "タイムライン波形を作成しています", 0.78),
+            ("Project ready", "PROJECT", "編集プロジェクトを保存しています", 0.92),
+            ("ASS preview ready", "ASS", "ASS字幕を生成しています", 0.3),
+            ("Rendering edited", "ENCODE", "字幕を動画へ焼き付けています", 0.45),
+            ("Render complete", "ENCODE", "動画を書き出しました", 0.96),
         ]
         for marker, stage, status, progress in markers:
             if marker in output:
@@ -562,35 +579,27 @@ class EditBayBackend(QApplication):
         self.elapsed_timer.stop()
         self._running = False
         self.runningChanged.emit()
+        completed_job = self._active_job
+        self._active_job = ""
+        self.activeJobChanged.emit()
         if self._cancel_requested:
             self._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
             self._progress = 1.0
             self.progressChanged.emit()
-            self._set_status("動画の生成が完了しました", "COMPLETE")
+            if completed_job == "transcribe":
+                loaded = self._try_load_default_project()
+                self._set_status("文字起こし完了。字幕を編集できます" if loaded else "文字起こしが完了しました", "EDIT")
+            else:
+                self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
             self._set_status(f"処理が終了しました（終了コード {exit_code}）", "ERROR")
-
-    def _process_error(self, _error: QProcess.ProcessError) -> None:
-        if not self._running and self.process.state() == QProcess.ProcessState.NotRunning:
-            self._set_status(self.process.errorString(), "ERROR")
-
-    def _tick_elapsed(self) -> None:
-        self._elapsed_seconds += 1
-        self.elapsedChanged.emit()
-
-    def _set_status(self, status: str, stage: str) -> None:
-        self._status = status
-        self._stage = stage
-        self.statusChanged.emit()
-
-    def _shutdown_executor(self) -> None:
-        self._alignment_executor.shutdown(wait=False, cancel_futures=True)
 
 
 def main() -> None:
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
     app = EditBayBackend(sys.argv)
+    app.setApplicationName(APP_TITLE)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("backend", app)
     qml_path = Path(__file__).resolve().parent / "ui" / "Main.qml"

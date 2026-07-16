@@ -61,9 +61,11 @@ GUIは通常 `start.bat` で起動します。手動で起動する場合は次�
 
 起動時に `ffmpeg`・`ffprobe`・WhisperXを検査します。不足している場合は `SOURCE SETUP` に導入案内が表示され、インストール後は `RECHECK` で再検査できます。
 
-GUIは毎回空の入力画面から始まります。`SOURCE SETUP` へ動画・複数の話者音声・出力先をドラッグ＆ドロップし、基準音声、動画音声トラック、同期オフセットを確認・調整します。素材パスは保存されません。
+GUIは処理を `1 TRANSCRIBE`、`2 EDIT SUBTITLES`、`3 RENDER VIDEO` の3段階に分けています。動画・複数の話者音声・出力先を指定して文字起こしすると、raw transcriptとは別に `*.subtitle-project.json` が作成されます。このプロジェクトがユーザー編集の正本で、ASSと完成動画は何度でも作り直せます。
 
-Inspectorでは全話者共通の字幕基準サイズと、発話音量に応じた拡大・縮小幅を設定できます。音量連動を `0%` にすると固定サイズになります。
+字幕エディターでは、動画を再生しながらテキスト・開始時刻・終了時刻・話者・字幕ごとのサイズ倍率を表形式で変更できます。実波形付きタイムラインでは字幕ブロックの移動と左右端のリサイズができ、ズーム、グリッド／字幕端スナップ、追加、分割、削除、Undo/Redo、700ms後の自動保存に対応します。`BUILD ASS` は動画を書き出さず、編集済みASSと画面内プレビューだけを更新します。
+
+設定欄では全話者共通の字幕基準サイズと、発話音量に応じた拡大・縮小幅を指定できます。音量連動を `0%` にすると固定サイズになります。文字起こし後は話者ごとの自動倍率を字幕単位で手動上書きできます。
 
 Craig用の入力は次のように配置します。
 
@@ -102,6 +104,7 @@ video_import/
 
 | コマンド | 入力配置 | 用途 |
 |---|---|---|
+| `.\.venv\Scripts\python.exe -m src.subtitle_workflow <phase>` | 動画・話者音声または編集プロジェクト | 文字起こし／編集／動画出力を独立実行 |
 | `.\.venv\Scripts\python.exe -m src.craig_pipeline <target>` | `video_import/<target>/` のサブフォルダ | Craigの話者別音声を動画へ同期 |
 | `.\.venv\Scripts\python.exe -m src.batch` | `video_import/` 直下の動画 | MKV内の複数音声トラックを一括処理 |
 | `.\.venv\Scripts\python.exe -m src.pipeline` | `--input` で動画を1本指定 | 単発の音声トラック処理とASS生成 |
@@ -112,6 +115,9 @@ video_import/
 ## 主な構成
 
 - `src/craig_pipeline.py`: Craig音声の同期、文字起こし、字幕統合、焼き込み
+- `src/subtitle_workflow.py`: 文字起こし・ASS生成・動画書き出しの独立フェーズ
+- `src/subtitle_project.py`: 編集プロジェクトの検証、保存、波形データ
+- `src/gui.py` / `src/ui/Main.qml`: 表形式編集、動画同期タイムライン、Undo/Redo
 - `src/subtitle_packer.py`: BudouXとJanomeを使ったページ分割・2行レイアウト
 - `src/merge_transcripts.py`: 複数話者の時系列統合と重なり配置
 - `src/render_ass.py`: ASS生成と話者色の適用

@@ -243,3 +243,17 @@ WhisperXが無音を直前の1文字へ含めた場合は後段で補正しま�
 ## 生成動画はGit管理されるか
 
 `video_import/`, `video_export/`, `out/` は `.gitignore` 対象です。元動画、生成動画、transcriptキャッシュはコミットされません。
+
+## `EDIT SUBTITLES` が押せない
+
+編集用の `*.subtitle-project.json` がまだ開かれていません。`1 TRANSCRIBE` が正常終了するまで待つか、ヘッダーの `OPEN PROJECT` から既存プロジェクトを選択します。rawの `transcripts/*.json` や `*.craig.merged.json` は編集プロジェクトではありません。
+
+## 編集した字幕が動画へ反映されない
+
+編集後はGUIの `3 RENDER VIDEO`、または `src.subtitle_workflow render --project ... --run` を使用します。従来の `src.craig_pipeline --run` はraw transcriptから従来の `*.craig.ass` を再生成する互換経路で、`*.subtitle-project.json` の手動編集を読みません。
+
+`BUILD ASS` は `*.edited.ass` を更新するだけで動画は変更しません。動画まで更新する場合は、その後に `RENDER VIDEO` を実行してください。
+
+## プロジェクトは開くが動画・波形が表示されない
+
+プロジェクト内の `video.path` / `audio_sources[].path` が指す素材を移動または削除していないか確認します。字幕本文と時刻は引き続き編集できますが、動画プレビューには元動画、波形の再作成と無音カットには元の話者音声が必要です。素材を元の場所へ戻すか、同じ素材で再度 `TRANSCRIBE` して新しいプロジェクトを作成します。

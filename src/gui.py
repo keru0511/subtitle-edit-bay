@@ -13,7 +13,12 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from .craig_pipeline import DEFAULT_ALIGNMENT_SAMPLE_RATE, resolve_alignment
+from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
+from .craig_pipeline import (
+    DEFAULT_ALIGNMENT_SAMPLE_RATE,
+    DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
+    resolve_alignment,
+)
 from .gui_state import (
     AUDIO_EXTENSIONS,
     SOURCE_CONFIG_KEYS,
@@ -118,6 +123,8 @@ class EditBayBackend(QApplication):
             "language": shared.get("language", "ja"),
             "nvenc_cq": int(shared.get("nvenc_cq", 18)),
             "x264_crf": int(shared.get("x264_crf", 18)),
+            "subtitle_font_size": int(shared.get("subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE)),
+            "subtitle_volume_scale_percent": float(craig.get("subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)),
             "subtitle_max_gap_seconds": float(shared.get("subtitle_max_gap_seconds", 0.1)),
             "subtitle_end_padding_seconds": float(shared.get("subtitle_end_padding_seconds", 0.08)),
             "subtitle_min_duration_seconds": float(shared.get("subtitle_min_duration_seconds", 0.35)),

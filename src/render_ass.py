@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from .ass_template import build_ass_header
+from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE, build_ass_header
 from .color_config import load_speaker_color_map, normalize_color_key
 from .models import SubtitleEvent
 from .subtitle_packer import (
@@ -24,8 +24,8 @@ DEFAULT_SPEAKER_STYLE = {
     "B": "B",
     "C": "C",
 }
-ROW_MARGIN_MAP = {0: 34, 1: 190, 2: 346}
-DEFAULT_ROW_MARGIN = 502
+ROW_MARGIN_BASE = 34
+ROW_MARGIN_STEP = 156
 
 
 def format_ass_time(seconds: float) -> str:
@@ -134,13 +134,18 @@ def render_dialogue(
     event: SubtitleEvent,
     speaker_color_map: dict[str, str] | None = None,
     track_color_map: dict[str, str] | None = None,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    row_margin_step: int = ROW_MARGIN_STEP,
 ) -> str:
     style = infer_style(event, speaker_color_map=speaker_color_map, track_color_map=track_color_map)
-    margin_v = ROW_MARGIN_MAP.get(event.layer, DEFAULT_ROW_MARGIN)
+    font_scale = max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0)))
+    scaled_font_size = max(3, round(subtitle_font_size * font_scale))
+    dialogue_text = event.text if scaled_font_size == subtitle_font_size else f"{{\\fs{scaled_font_size}}}{event.text}"
+    margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step
     return (
         "Dialogue: "
         f"{event.layer},{format_ass_time(event.start)},{format_ass_time(event.end)},"
-        f"{style},{event.speaker},0,0,{margin_v},,{event.text}"
+        f"{style},{event.speaker},0,0,{margin_v},,{dialogue_text}"
     )
 
 
@@ -153,6 +158,7 @@ def render_ass(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
 ) -> str:
     events = parse_segments(
         data,
@@ -160,18 +166,32 @@ def render_ass(
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
+    max_font_scale = max(
+        (max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0))) for event in events),
+        default=1.0,
+    )
+    row_margin_step = round(
+        ROW_MARGIN_STEP * max(1.0, subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * max_font_scale)
+    )
     resolved_speaker_color_map = load_speaker_color_map() if speaker_color_map is None else speaker_color_map
     style_overrides = build_track_style_overrides(
         events,
         speaker_color_map=resolved_speaker_color_map,
         track_color_map=track_color_map,
     )
-    lines = [build_ass_header(width=width, height=height, style_overrides=style_overrides)]
+    lines = [build_ass_header(
+        width=width,
+        height=height,
+        style_overrides=style_overrides,
+        subtitle_font_size=subtitle_font_size,
+    )]
     lines.extend(
         render_dialogue(
             event,
             speaker_color_map=resolved_speaker_color_map,
             track_color_map=track_color_map,
+            subtitle_font_size=subtitle_font_size,
+            row_margin_step=row_margin_step,
         )
         for event in events
     )
@@ -184,11 +204,18 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="Path to output ASS file.")
     parser.add_argument("--width", type=int, default=1920, help="Video width.")
     parser.add_argument("--height", type=int, default=1080, help="Video height.")
+    parser.add_argument("--subtitle-font-size", type=int, default=DEFAULT_SUBTITLE_FONT_SIZE, help="Base ASS subtitle font size.")
     parser.add_argument("--track-color", action="append", default=[], help="Per-track subtitle color like 0:a:1=#FFFFFF.")
     args = parser.parse_args()
 
     data = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    ass = render_ass(data, width=args.width, height=args.height, track_color_map=parse_track_color_args(args.track_color))
+    ass = render_ass(
+        data,
+        width=args.width,
+        height=args.height,
+        subtitle_font_size=args.subtitle_font_size,
+        track_color_map=parse_track_color_args(args.track_color),
+    )
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

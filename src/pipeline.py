@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .merge_transcripts import write_merged_transcript
 from .render_ass import parse_track_color_args, render_ass
 from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
@@ -45,6 +46,7 @@ def build_ass_from_transcript(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
 ) -> Path:
     data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
     ass_text = render_ass(
@@ -55,6 +57,7 @@ def build_ass_from_transcript(
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        subtitle_font_size=subtitle_font_size,
     )
     output_path = Path(ass_output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +100,7 @@ def run_media_to_ass(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
 ) -> Path:
     work_dir = Path(output_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -128,6 +132,7 @@ def run_media_to_ass(
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        subtitle_font_size=subtitle_font_size,
     )
 
 
@@ -149,6 +154,7 @@ def run_media_to_ass_many(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
 ) -> list[Path]:
     diarize_tracks = normalize_diarize_tracks(diarize_tracks)
     return [
@@ -170,6 +176,7 @@ def run_media_to_ass_many(
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+            subtitle_font_size=subtitle_font_size,
         )
         for audio_track in audio_tracks
     ]
@@ -195,6 +202,7 @@ def run_media_to_merged_ass(
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     youtube_timestamp_offset_seconds: float = 0.0,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
 ) -> tuple[Path, Path, Path | None]:
     work_dir = Path(output_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -242,6 +250,7 @@ def run_media_to_merged_ass(
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        subtitle_font_size=subtitle_font_size,
     )
     write_youtube_texts(
         str(merged_json),
@@ -324,6 +333,7 @@ def main() -> None:
     parser.add_argument("--vad-onset", type=float, default=None, help="VAD onset threshold passed to WhisperX.")
     parser.add_argument("--vad-offset", type=float, default=None, help="VAD offset threshold passed to WhisperX.")
     parser.add_argument("--track-color", action="append", default=None, help="Per-track subtitle color like 0:a:1=#FFFFFF.")
+    parser.add_argument("--subtitle-font-size", type=int, default=None, help="Base ASS subtitle font size.")
     parser.add_argument("--subtitle-max-gap-seconds", type=float, default=None, help="Split subtitles when the gap between words reaches this many seconds.")
     parser.add_argument("--subtitle-end-padding-seconds", type=float, default=None, help="Extra time to keep a subtitle after the last word ends.")
     parser.add_argument("--subtitle-min-duration-seconds", type=float, default=None, help="Minimum subtitle duration after end trimming.")
@@ -348,6 +358,7 @@ def main() -> None:
     vad_onset = resolve_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
     vad_offset = resolve_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
     track_color_map = parse_track_color_args(resolve_list_option(args.track_color, config, "track_color", []))
+    subtitle_font_size = int(resolve_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE))
     subtitle_max_gap_seconds = float(resolve_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS))
     subtitle_end_padding_seconds = float(resolve_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS))
     subtitle_min_duration_seconds = float(resolve_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS))
@@ -361,6 +372,7 @@ def main() -> None:
             width=width,
             height=height,
             track_color_map=track_color_map,
+            subtitle_font_size=subtitle_font_size,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
@@ -413,6 +425,7 @@ def main() -> None:
         vad_onset=vad_onset,
         vad_offset=vad_offset,
         track_color_map=track_color_map,
+        subtitle_font_size=subtitle_font_size,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .assemble_video import assemble_video, optional_clip, probe_media_duration
 from .burn_subs import run_ffmpeg_burn
 from .pipeline import run_media_to_merged_ass
@@ -85,6 +86,7 @@ def process_video(
     nvenc_cq: int,
     x264_crf: int,
     track_color_map: dict[str, str] | None,
+    subtitle_font_size: int,
     subtitle_max_gap_seconds: float,
     subtitle_end_padding_seconds: float,
     subtitle_min_duration_seconds: float,
@@ -108,6 +110,7 @@ def process_video(
         vad_onset=vad_onset,
         vad_offset=vad_offset,
         track_color_map=track_color_map,
+        subtitle_font_size=subtitle_font_size,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
@@ -159,6 +162,7 @@ def main() -> None:
     parser.add_argument("--vad-onset", type=float, default=None, help="VAD onset threshold passed to WhisperX.")
     parser.add_argument("--vad-offset", type=float, default=None, help="VAD offset threshold passed to WhisperX.")
     parser.add_argument("--track-color", action="append", default=None, help="Per-track subtitle color like 0:a:1=#FFFFFF.")
+    parser.add_argument("--subtitle-font-size", type=int, default=None, help="Base ASS subtitle font size.")
     parser.add_argument("--op-file", default=None, help="Optional OP clip path.")
     parser.add_argument("--ed-file", default=None, help="Optional ED clip path.")
     parser.add_argument("--video-codec", default=None, help="FFmpeg video codec such as libx264 or h264_nvenc.")
@@ -190,6 +194,7 @@ def main() -> None:
     vad_onset = resolve_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
     vad_offset = resolve_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
     track_color_map = parse_track_color_args(resolve_list_option(args.track_color, config, "track_color", []))
+    subtitle_font_size = int(resolve_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE))
     op_file = resolve_option(args.op_file, config, "op_file", DEFAULT_OP_FILE)
     ed_file = resolve_option(args.ed_file, config, "ed_file", DEFAULT_ED_FILE)
     video_codec = resolve_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
@@ -254,6 +259,7 @@ def main() -> None:
             nvenc_cq=nvenc_cq,
             x264_crf=x264_crf,
             track_color_map=track_color_map,
+            subtitle_font_size=subtitle_font_size,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,

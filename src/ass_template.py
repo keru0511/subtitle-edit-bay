@@ -1,18 +1,20 @@
 ﻿from __future__ import annotations
 
+DEFAULT_SUBTITLE_FONT_SIZE = 50
+
 STYLE_DEFINITIONS = {
-    "Oz": "Style: Oz,Arial,52,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
+    "Oz": "Style: Oz,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
     "Guest": "Style: Guest,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
     "A": "Style: A,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
     "B": "Style: B,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
     "C": "Style: C,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
-    "UNKNOWN": "Style: UNKNOWN,Arial,48,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
-    "ShoutOz": "Style: ShoutOz,Arial,62,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,116,116,0,0,1,4,2,2,36,36,34,1",
-    "ShoutGuest": "Style: ShoutGuest,Arial,60,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,116,116,0,0,1,4,2,2,36,36,34,1",
-    "ShoutA": "Style: ShoutA,Arial,60,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,116,116,0,0,1,4,2,2,36,36,34,1",
-    "ShoutB": "Style: ShoutB,Arial,60,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,116,116,0,0,1,4,2,2,36,36,34,1",
-    "ShoutC": "Style: ShoutC,Arial,60,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,116,116,0,0,1,4,2,2,36,36,34,1",
-    "ShoutUNKNOWN": "Style: ShoutUNKNOWN,Arial,58,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,116,116,0,0,1,4,2,2,36,36,34,1",
+    "UNKNOWN": "Style: UNKNOWN,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
+    "ShoutOz": "Style: ShoutOz,Arial,50,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,100,100,0,0,1,4,2,2,36,36,34,1",
+    "ShoutGuest": "Style: ShoutGuest,Arial,50,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,100,100,0,0,1,4,2,2,36,36,34,1",
+    "ShoutA": "Style: ShoutA,Arial,50,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,100,100,0,0,1,4,2,2,36,36,34,1",
+    "ShoutB": "Style: ShoutB,Arial,50,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,100,100,0,0,1,4,2,2,36,36,34,1",
+    "ShoutC": "Style: ShoutC,Arial,50,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,100,100,0,0,1,4,2,2,36,36,34,1",
+    "ShoutUNKNOWN": "Style: ShoutUNKNOWN,Arial,50,&H00FFFFFF,&H0000FFFF,&H000000FF,&H66000000,-1,0,0,0,100,100,0,0,1,4,2,2,36,36,34,1",
 }
 
 
@@ -43,8 +45,22 @@ def build_extra_style_definitions(style_overrides: dict[str, tuple[str, str]] | 
     return [clone_style_definition(base_style, style_name, color) for style_name, (base_style, color) in style_overrides.items()]
 
 
-def build_ass_header(width: int = 1920, height: int = 1080, style_overrides: dict[str, tuple[str, str]] | None = None) -> str:
-    styles = "\n".join(list(STYLE_DEFINITIONS.values()) + build_extra_style_definitions(style_overrides))
+def apply_subtitle_font_size(style_definition: str, subtitle_font_size: int) -> str:
+    if subtitle_font_size < 3:
+        raise ValueError("subtitle_font_size must be at least 3")
+    fields = style_definition.split(",")
+    fields[2] = str(int(fields[2]) + subtitle_font_size - DEFAULT_SUBTITLE_FONT_SIZE)
+    return ",".join(fields)
+
+
+def build_ass_header(
+    width: int = 1920,
+    height: int = 1080,
+    style_overrides: dict[str, tuple[str, str]] | None = None,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+) -> str:
+    style_definitions = list(STYLE_DEFINITIONS.values()) + build_extra_style_definitions(style_overrides)
+    styles = "\n".join(apply_subtitle_font_size(style, subtitle_font_size) for style in style_definitions)
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"

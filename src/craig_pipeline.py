@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .assemble_video import build_loudnorm_filter
 from .burn_subs import build_ass_filter, run_ffmpeg_burn
 from .merge_transcripts import is_short_reaction, max_width_for_speaker, refine_segments
@@ -55,6 +56,9 @@ DEFAULT_SPEECH_DETECT_SILENCE_SECONDS = 0.1
 DEFAULT_SUBTITLE_MAX_GAP_SECONDS = 0.32
 DEFAULT_SUBTITLE_END_PADDING_SECONDS = 0.08
 DEFAULT_SUBTITLE_MIN_DURATION_SECONDS = 0.35
+DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT = 20.0
+SUBTITLE_VOLUME_SAMPLE_RATE = 1000
+SUBTITLE_VOLUME_RANGE_DB = 12.0
 DEFAULT_INPUT_ROOT = "video_import"
 DEFAULT_EXPORT_ROOT = "video_export"
 SUPPORTED_VIDEO_EXTENSIONS = {".mkv", ".mp4", ".mov", ".webm"}
@@ -192,6 +196,37 @@ def decode_audio_samples(input_path: str, sample_rate: int = DEFAULT_ALIGNMENT_S
     return np.frombuffer(result.stdout, dtype=np.float32)
 
 
+def calculate_segment_volume_levels(
+    audio_path: str,
+    segments: list[dict],
+    sample_rate: int = SUBTITLE_VOLUME_SAMPLE_RATE,
+) -> list[float]:
+    if not segments:
+        return []
+    try:
+        samples = decode_audio_samples(audio_path, sample_rate=sample_rate)
+    except (OSError, subprocess.CalledProcessError):
+        return [0.0] * len(segments)
+
+    loudness_db: list[float] = []
+    for segment in segments:
+        start_sample = max(0, round(float(segment.get("start", 0.0)) * sample_rate))
+        end_sample = min(samples.size, max(start_sample + 1, round(float(segment.get("end", 0.0)) * sample_rate)))
+        window = samples[start_sample:end_sample]
+        if window.size == 0:
+            loudness_db.append(-120.0)
+            continue
+        window_float = window.astype(np.float64, copy=False)
+        rms = float(np.sqrt(np.mean(window_float * window_float)))
+        loudness_db.append(20.0 * float(np.log10(max(rms, 1e-6))))
+
+    median_db = float(np.median(loudness_db))
+    return [
+        float(np.clip((value - median_db) / SUBTITLE_VOLUME_RANGE_DB, -1.0, 1.0))
+        for value in loudness_db
+    ]
+
+
 def prepare_alignment_signal(samples: np.ndarray) -> np.ndarray:
     if samples.size == 0:
         return samples
@@ -293,11 +328,18 @@ def build_craig_segments_for_transcript(
     transcript_path: str,
     style_map: dict[str, str],
     offset_seconds: float,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_volume_scale_percent: float = 0.0,
 ) -> list[dict]:
+    if subtitle_font_size < 3:
+        raise ValueError("subtitle_font_size must be at least 3")
+    if not 0.0 <= subtitle_volume_scale_percent <= 80.0:
+        raise ValueError("subtitle_volume_scale_percent must be between 0 and 80")
+
     speaker_name = parse_craig_speaker_name(audio_path)
     speaker_style = style_map[speaker_name]
     data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
-    segments: list[dict] = []
+    prepared_segments: list[tuple[dict, dict, str]] = []
     for segment in data.get("segments", []):
         text = segment.get("text", "").strip()
         if not text:
@@ -305,6 +347,17 @@ def build_craig_segments_for_transcript(
         shifted = shift_segment(segment, offset_seconds)
         if shifted is None:
             continue
+        prepared_segments.append((segment, shifted, text))
+
+    volume_levels = (
+        calculate_segment_volume_levels(audio_path, [segment for segment, _shifted, _text in prepared_segments])
+        if subtitle_volume_scale_percent > 0.0
+        else [0.0] * len(prepared_segments)
+    )
+    segments: list[dict] = []
+    for (segment, shifted, text), volume_level in zip(prepared_segments, volume_levels):
+        font_scale = 1.0 + volume_level * subtitle_volume_scale_percent / 100.0
+        effective_font_scale = subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * font_scale
         segments.append(
             {
                 "start": float(shifted["start"]),
@@ -314,7 +367,9 @@ def build_craig_segments_for_transcript(
                 "emphasis": "shout" if is_short_reaction(text) and any(mark in text for mark in EMPHASIS_MARKERS) else segment.get("emphasis", "normal"),
                 "position": "bottom",
                 "layout_row": 0,
-                "max_width": max_width_for_speaker(speaker_style),
+                "max_width": max(8, round(max_width_for_speaker(speaker_style) / effective_font_scale)),
+                "subtitle_volume_level": volume_level,
+                "subtitle_font_scale": font_scale,
                 "source_track": f"craig:{speaker_name}",
                 "source_speaker": speaker_name,
                 "source_file": Path(audio_path).name,
@@ -405,6 +460,8 @@ def run_craig_pipeline(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
     selected_audio_files: list[str] | None = None,
     alignment_offset_adjustment: float = DEFAULT_ALIGNMENT_OFFSET_ADJUSTMENT,
 ) -> dict[str, Path | str | float | None]:
@@ -452,6 +509,8 @@ def run_craig_pipeline(
                 str(transcript_path),
                 style_map,
                 offset_seconds,
+                subtitle_font_size,
+                subtitle_volume_scale_percent,
             )
 
         for audio_file in audio_files:
@@ -476,6 +535,7 @@ def run_craig_pipeline(
         str(merged_json),
         str(ass_path),
         track_color_map=track_color_map,
+        subtitle_font_size=subtitle_font_size,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
@@ -541,6 +601,7 @@ def run_craig_pipeline(
             str(cut_merged_json),
             str(cut_ass_path),
             track_color_map=track_color_map,
+            subtitle_font_size=subtitle_font_size,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
@@ -633,6 +694,8 @@ def main() -> None:
     parser.add_argument("--skip-existing-transcripts", action=argparse.BooleanOptionalAction, default=None, help="Reuse transcript JSON when it already exists.")
     parser.add_argument("--postprocess-workers", type=int, default=None, help="CPU worker count used to postprocess completed transcripts while the next audio is transcribing.")
     parser.add_argument("--track-color", action="append", default=None, help="Per-track subtitle color like craig:speaker-a=#FFFFFF.")
+    parser.add_argument("--subtitle-font-size", type=int, default=None, help="Base ASS subtitle font size.")
+    parser.add_argument("--subtitle-volume-scale-percent", type=float, default=None, help="Maximum font-size change for quiet and loud speech.")
     parser.add_argument("--subtitle-max-gap-seconds", type=float, default=None, help="Split subtitles when the gap between words reaches this many seconds.")
     parser.add_argument("--subtitle-end-padding-seconds", type=float, default=None, help="Extra time to keep a subtitle after the last word ends.")
     parser.add_argument("--subtitle-min-duration-seconds", type=float, default=None, help="Minimum subtitle duration after end trimming.")
@@ -679,6 +742,8 @@ def main() -> None:
     skip_existing_transcripts = resolve_bool_option(args.skip_existing_transcripts, config, "skip_existing_transcripts", True)
     postprocess_workers = int(resolve_option(args.postprocess_workers, config, "postprocess_workers", DEFAULT_POSTPROCESS_WORKERS))
     track_color_map = parse_track_color_args(resolve_list_option(args.track_color, config, "track_color", []))
+    subtitle_font_size = int(resolve_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE))
+    subtitle_volume_scale_percent = float(resolve_option(args.subtitle_volume_scale_percent, config, "subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT))
     subtitle_max_gap_seconds = float(resolve_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS))
     subtitle_end_padding_seconds = float(resolve_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS))
     subtitle_min_duration_seconds = float(resolve_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS))
@@ -760,6 +825,8 @@ def main() -> None:
         skip_existing_transcripts=skip_existing_transcripts,
         postprocess_workers=postprocess_workers,
         track_color_map=track_color_map,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_volume_scale_percent=subtitle_volume_scale_percent,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,

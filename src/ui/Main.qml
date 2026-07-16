@@ -52,6 +52,8 @@ ApplicationWindow {
             "language": "ja",
             "nvenc_cq": Math.round(qualitySlider.value),
             "x264_crf": Math.round(qualitySlider.value),
+            "subtitle_font_size": fontSizeSpin.value,
+            "subtitle_volume_scale_percent": volumeScaleSpin.value,
             "subtitle_max_gap_seconds": Number(gapField.text),
             "subtitle_end_padding_seconds": Number(paddingField.text),
             "subtitle_min_duration_seconds": Number(minDurationField.text),
@@ -71,6 +73,8 @@ ApplicationWindow {
     function syncSettings() {
         var value = root.appBackend.settings
         qualitySlider.value = Number(value.nvenc_cq || 18)
+        fontSizeSpin.value = Number(value.subtitle_font_size || 50)
+        volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
         gapField.text = Number(value.subtitle_max_gap_seconds || 0.1).toFixed(2)
         paddingField.text = Number(value.subtitle_end_padding_seconds || 0.08).toFixed(2)
         minDurationField.text = Number(value.subtitle_min_duration_seconds || 0.35).toFixed(2)
@@ -1003,6 +1007,38 @@ ApplicationWindow {
                             BodyText { text: "Speech padding"; Layout.fillWidth: true }
                             EditField { id: speechPaddingField; Layout.preferredWidth: 74; text: "0.25"; helpText: "発話の前後に残す余白です。短すぎると声の頭や語尾を切りやすく、長すぎると無音が多く残ります。" }
                             Text { text: "SEC"; color: root.textMuted; font.pixelSize: 10 }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+                        SectionLabel { text: "SUBTITLE SIZE" }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            BodyText { text: "Base font size"; Layout.fillWidth: true }
+                            SpinBox {
+                                id: fontSizeSpin
+                                from: 32
+                                to: 96
+                                value: 50
+                                editable: true
+                                Layout.preferredWidth: 100
+                                hoverEnabled: true
+                                HelpToolTip { anchorTarget: fontSizeSpin; active: fontSizeSpin.hovered; text: "字幕の基準文字サイズです。全話者に同じ値を使い、発話音量による倍率をこのサイズへ適用します。標準は50です。" }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            BodyText { text: "Volume scaling"; Layout.fillWidth: true }
+                            SpinBox {
+                                id: volumeScaleSpin
+                                from: 0
+                                to: 50
+                                value: 20
+                                editable: true
+                                Layout.preferredWidth: 100
+                                hoverEnabled: true
+                                HelpToolTip { anchorTarget: volumeScaleSpin; active: volumeScaleSpin.hovered; text: "話者ごとの普段の音量を基準に、静かな発話を小さく、大きな発話を大きくする幅です。20ならおよそ80〜120%で変化し、0なら音量連動を無効にします。" }
+                            }
+                            Text { text: "%"; color: root.textMuted; font.pixelSize: 10 }
                         }
 
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }

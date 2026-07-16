@@ -6,6 +6,7 @@ import numpy as np
 from src.craig_pipeline import (
     build_craig_segments_for_transcript,
     build_speaker_style_map,
+    calculate_segment_volume_levels,
     estimate_offset,
     list_craig_audio_files,
     merge_craig_transcripts,
@@ -34,6 +35,34 @@ class CraigPipelineTests(unittest.TestCase):
     def test_normalize_db_threshold_accepts_number_or_ffmpeg_value(self) -> None:
         self.assertEqual(normalize_db_threshold(-40), "-40dB")
         self.assertEqual(normalize_db_threshold("-35dB"), "-35dB")
+
+    def test_calculate_segment_volume_levels_is_relative_to_speaker_median(self) -> None:
+        samples = np.concatenate([
+            np.full(10, 0.1, dtype=np.float32),
+            np.full(10, 0.8, dtype=np.float32),
+        ])
+        segments = [{"start": 0.0, "end": 1.0}, {"start": 1.0, "end": 2.0}]
+
+        with mock.patch("src.craig_pipeline.decode_audio_samples", return_value=samples):
+            levels = calculate_segment_volume_levels("speaker.flac", segments, sample_rate=10)
+
+        self.assertLess(levels[0], 0.0)
+        self.assertGreater(levels[1], 0.0)
+        self.assertTrue(all(-1.0 <= level <= 1.0 for level in levels))
+
+    def test_build_craig_segments_applies_volume_font_scale(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            transcript_path = Path(temp_dir) / "1-speaker-a.json"
+            transcript_path.write_text(json.dumps({"segments": [{"start": 0.0, "end": 1.0, "text": "loud"}]}), encoding="utf-8")
+            with mock.patch("src.craig_pipeline.calculate_segment_volume_levels", return_value=[1.0]):
+                segments = build_craig_segments_for_transcript("1-speaker-a.flac", str(transcript_path), {"speaker-a": "Oz"}, 0.0, 50, 20.0)
+
+        self.assertAlmostEqual(segments[0]["subtitle_font_scale"], 1.2)
+        self.assertEqual(segments[0]["max_width"], 23)
 
     def test_normalize_db_threshold_rejects_invalid_value(self) -> None:
         with self.assertRaises(SystemExit):

@@ -192,7 +192,7 @@ class RenderAssTests(unittest.TestCase):
         output = render_ass(data, track_color_map={"0:a:1": "#112233"})
 
         self.assertIn("Style: Track_0_a_1", output)
-        self.assertIn("Style: Track_0_a_1,Arial,52,&H00FFFFFF,&H0000FFFF,&H00332211", output)
+        self.assertIn("Style: Track_0_a_1,Arial,50,&H00FFFFFF,&H0000FFFF,&H00332211", output)
         self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Track_0_a_1,Oz,0,0,34,,hello", output)
 
     def test_render_ass_can_override_color_per_speaker_from_config(self) -> None:
@@ -247,8 +247,40 @@ class RenderAssTests(unittest.TestCase):
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
         self.assertIn("Style: Speaker_1_speaker_a_aac", output)
-        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,52,&H00FFFFFF,&H0000FFFF,&H00563412", output)
+        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,50,&H00FFFFFF,&H0000FFFF,&H00563412", output)
         self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_1_speaker_a_aac,Oz,0,0,34,,hello", output)
+
+    def test_render_ass_applies_base_size_and_per_caption_volume_scale(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "speaker": "Oz",
+                    "text": "loud",
+                    "layout_row": 0,
+                    "layout_packed": True,
+                    "subtitle_font_scale": 1.2,
+                },
+                {
+                    "start": 1.0,
+                    "end": 2.0,
+                    "speaker": "Guest",
+                    "text": "also loud",
+                    "layout_row": 1,
+                    "layout_packed": True,
+                    "subtitle_font_scale": 1.2,
+                }
+            ]
+        }
+
+        output = render_ass(data, subtitle_font_size=60)
+
+        self.assertIn("Style: Oz,Arial,60", output)
+        self.assertIn("Style: Guest,Arial,60", output)
+        self.assertIn("Style: ShoutGuest,Arial,60", output)
+        self.assertIn(r",,{\fs72}loud", output)
+        self.assertIn(r",0,0,259,,{\fs72}also loud", output)
 
     def test_pack_segments_preserves_source_speaker_metadata(self) -> None:
         data = {

@@ -66,6 +66,7 @@ def build_gui_runtime_config(
 
     for key in (
         "model", "device", "compute_type", "language", "nvenc_cq", "x264_crf",
+        "subtitle_font_size",
         "subtitle_max_gap_seconds", "subtitle_end_padding_seconds", "subtitle_min_duration_seconds",
     ):
         if key in settings:
@@ -73,6 +74,7 @@ def build_gui_runtime_config(
 
     for key in (
         "video_codec", "audio_normalize", "audio_target_lufs", "cut_no_speech",
+        "subtitle_volume_scale_percent",
         "no_speech_min_seconds", "speech_padding_seconds", "postprocess_workers",
         "alignment_offset_adjustment",
     ):

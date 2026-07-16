@@ -29,6 +29,7 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `width`, `height` | `1920`, `1080` | ASSの基準解像度 |
 | `nvenc_cq` | `18` | NVENC固定品質。小さいほど高画質・大容量 |
 | `x264_crf` | `18` | libx264固定品質。小さいほど高画質・大容量 |
+| `subtitle_font_size` | `50` | 全話者共通の字幕基準文字サイズ |
 | `subtitle_max_gap_seconds` | `0.1` | 単語間の無音をページ境界候補にする秒数 |
 | `subtitle_end_padding_seconds` | `0.08` | 最後の単語後に残す字幕余白 |
 | `subtitle_min_duration_seconds` | `0.35` | 極端に短い字幕の表示下限 |
@@ -72,10 +73,13 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `speech_padding_seconds` | `0.25` | 発話の前後に残す秒数 |
 | `speech_threshold_db` | `-40dB` | 各Craig音声を無音とみなす閾値 |
 | `speech_min_clip_seconds` | `0.25` | 残す動画断片の最短秒数 |
+| `subtitle_volume_scale_percent` | `20.0` | 話者内の相対音量による文字サイズ変化幅。20なら約80〜120% |
 | `postprocess_workers` | `4` | GPU文字起こし中に使うCPU後処理ワーカー |
 | `skip_existing_transcripts` | `true` | 既存JSONを再利用 |
 
 Craig音声は話者分離済みなので、通常はHugging FaceトークンもWhisperX diarizationも不要です。
+
+字幕サイズは話者名では変えません。`subtitle_font_size` を全話者の基準とし、各話者自身の発話音量の中央値との差から `subtitle_volume_scale_percent` の範囲で拡大・縮小します。`0` にすると音量連動を無効化し、すべて基準サイズになります。文字サイズを変更した場合は、画面からはみ出しにくいよう1行の文字数も合わせて調整されます。
 
 `audio_normalize=true` または `cut_no_speech=true` では音声フィルタが必要なため、最終音声は `audio_codec=copy` ではなくAACになります。`cut_no_speech` はゲーム音ではなく全Craig話者音声の和集合を使うため、ゲーム音が鳴り続けていても会話がない区間を判定できます。判定結果は `*.craig.no_speech.json` で確認できます。
 

@@ -14,6 +14,8 @@ ApplicationWindow {
     property int snapMilliseconds: 100
     property var subtitleSegmentCache: root.appBackend.subtitleSegments
     property var projectSpeakerCache: root.appBackend.projectSpeakers
+    property bool editorMode: false
+    property bool settingsExpanded: false
 
     width: 1520
     height: 940
@@ -91,13 +93,13 @@ ApplicationWindow {
         if (!root.appBackend.dependencyStatus.ready)
             return "実行ツールが不足しています: " + root.appBackend.dependencyStatus.missing.join(", ")
         if (!root.appBackend.sourceSelection.video)
-            return "SOURCESで動画を指定してください"
+            return "素材設定で動画を指定してください"
         if (root.appBackend.speakers.length === 0)
-            return "SOURCESで1つ以上の話者音声を指定してください"
+            return "素材設定で1つ以上の話者音声を指定してください"
         if (!root.appBackend.sourceSelection.output_dir)
-            return "SOURCESで出力先フォルダを指定してください"
+            return "素材設定で出力先フォルダを指定してください"
         if (root.appBackend.projectLoaded)
-            return "文字起こし済みです。やり直す場合はSOURCESで入力を変更してください"
+            return ""
         return ""
     }
 
@@ -108,6 +110,28 @@ ApplicationWindow {
         var segment = root.appBackend.subtitleSegments[index]
         var seconds = Number(positionMs) / 1000
         return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
+    }
+
+    function workflowStepNumber() {
+        if (root.appBackend.running && root.appBackend.activeJob === "render")
+            return 4
+        if (root.appBackend.projectLoaded)
+            return 3
+        if (root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready)
+            return 2
+        return 1
+    }
+
+    function openEditorScreen() {
+        editorPlayer.source = root.appBackend.previewUrl
+        editorPlayer.position = mainPlayer.position
+        root.editorMode = true
+    }
+
+    function closeEditorScreen() {
+        mainPlayer.position = editorPlayer.position
+        editorPlayer.pause()
+        root.editorMode = false
     }
 
     function stamp(seconds) {
@@ -150,10 +174,10 @@ ApplicationWindow {
 
     component PanelTitle: Text {
         color: root.textMuted
-        font.family: "Bahnschrift"
+        font.family: "Yu Gothic UI"
         font.pixelSize: 10
         font.weight: Font.Bold
-        font.letterSpacing: 1.5
+        font.letterSpacing: 1.0
     }
 
     component SmallButton: Button {
@@ -162,7 +186,7 @@ ApplicationWindow {
         contentItem: Text {
             text: smallControl.text
             color: smallControl.enabled ? root.textPrimary : "#59635D"
-            font.family: "Bahnschrift"
+            font.family: "Yu Gothic UI"
             font.pixelSize: 10
             font.weight: Font.DemiBold
             horizontalAlignment: Text.AlignHCenter
@@ -484,7 +508,8 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: 62
+        height: root.editorMode ? 0 : 62
+        visible: !root.editorMode
         color: "#101512"
         border.color: root.border
         RowLayout {
@@ -495,7 +520,7 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 0
                 Text { text: "SUBTITLE EDIT BAY"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 18; font.weight: Font.Bold; font.letterSpacing: 1.5 }
-                Text { text: "TRANSCRIBE  /  EDIT  /  RENDER"; color: root.acid; font.family: "Bahnschrift"; font.pixelSize: 9; font.letterSpacing: 1.2 }
+                Text { text: "素材  /  文字起こし  /  字幕編集  /  書き出し"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
             }
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 30; color: root.border }
             ColumnLayout {
@@ -508,18 +533,20 @@ ApplicationWindow {
                     font.family: "Yu Gothic UI"; font.pixelSize: 12; elide: Text.ElideMiddle
                 }
                 Text {
-                    text: root.appBackend.projectDirty ? "● AUTOSAVE PENDING" : (root.appBackend.projectLoaded ? "✓ SAVED" : "文字起こし後に自動作成")
+                    text: root.appBackend.projectDirty ? "● 保存待ち" : (root.appBackend.projectLoaded ? "✓ 保存済み" : "文字起こし後に自動作成")
                     color: root.appBackend.projectDirty ? root.amber : root.textMuted
-                    font.family: "Bahnschrift"; font.pixelSize: 9
+                    font.family: "Yu Gothic UI"; font.pixelSize: 9
                 }
             }
-            SmallButton { text: "OPEN PROJECT"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
-            SmallButton { text: "SOURCES"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
+            SmallButton { text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
+            SmallButton { text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             Rectangle { Layout.preferredWidth: 9; Layout.preferredHeight: 9; radius: 5; color: root.appBackend.running ? root.amber : root.acid }
         }
     }
 
     RowLayout {
+        objectName: "mainWorkspace"
+        visible: !root.editorMode
         anchors.fill: parent
         anchors.margins: 12
         spacing: 10
@@ -534,11 +561,11 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 14
                 spacing: 10
-                PanelTitle { text: "SOURCE & SPEAKERS" }
+                PanelTitle { text: "素材と話者" }
                 Rectangle {
                     Layout.fillWidth: true; Layout.preferredHeight: 70; radius: 9; color: root.raised; border.color: root.border
                     Column { anchors.fill: parent; anchors.margins: 10; spacing: 3
-                        Text { text: "VIDEO"; color: root.textMuted; font.pixelSize: 9; font.family: "Bahnschrift" }
+                        Text { text: "動画"; color: root.textMuted; font.pixelSize: 9; font.family: "Yu Gothic UI" }
                         Text { width: parent.width; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                         Text { width: parent.width; text: root.appBackend.sourceSelection.output_dir || "出力先未選択"; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                     }
@@ -563,19 +590,19 @@ ApplicationWindow {
                     }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                PanelTitle { text: "ALIGNMENT" }
+                PanelTitle { text: "音声同期" }
                 ComboBox { id: referenceCombo; Layout.fillWidth: true; model: root.appBackend.speakers; textRole: "file_name"; valueRole: "path" }
                 ComboBox { id: trackCombo; Layout.fillWidth: true; model: root.appBackend.audioTracks; textRole: "label"; valueRole: "selector" }
                 RowLayout { Layout.fillWidth: true
                     TimeField { id: manualOffsetField; Layout.fillWidth: true; text: "0.000"; validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 } }
                     SmallButton {
-                        text: root.appBackend.alignmentBusy ? "ANALYZING" : "SYNC"
+                        text: root.appBackend.alignmentBusy ? "解析中" : "同期解析"
                         enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
                         onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
                     }
                 }
                 Text { Layout.fillWidth: true; text: root.appBackend.alignmentResult.status + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "s" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
-                SmallButton { Layout.fillWidth: true; text: "CHANGE SOURCES"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
+                SmallButton { Layout.fillWidth: true; text: "素材を変更"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             }
         }
 
@@ -584,6 +611,29 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 10
 
+            Rectangle {
+                objectName: "workflowStepper"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 68
+                radius: 12; color: root.panel; border.color: root.border
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 8
+                    Repeater {
+                        model: ["素材", "文字起こし", "字幕編集", "書き出し"]
+                        delegate: ColumnLayout {
+                            id: stepDelegate
+                            required property int index
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 3
+                            Rectangle { Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 28; Layout.preferredHeight: 28; radius: 14; color: root.workflowStepNumber() >= stepDelegate.index + 1 ? root.acid : "#27312C"; border.color: root.workflowStepNumber() === stepDelegate.index + 1 ? root.textPrimary : root.border; Text { anchors.centerIn: parent; text: stepDelegate.index + 1; color: root.workflowStepNumber() >= stepDelegate.index + 1 ? "#10140F" : root.textMuted; font.weight: Font.Bold } }
+                            Text { Layout.fillWidth: true; text: stepDelegate.modelData; color: root.workflowStepNumber() === stepDelegate.index + 1 ? root.textPrimary : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter }
+                        }
+                    }
+                }
+            }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -608,32 +658,8 @@ ApplicationWindow {
                     Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
                     RowLayout { Layout.fillWidth: true
                         ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "NO VIDEO"; color: root.textPrimary; font.pixelSize: 11; font.family: "Bahnschrift"; elide: Text.ElideMiddle }
+                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                         Text { text: root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000); color: root.textMuted; font.pixelSize: 10; font.family: "Cascadia Mono" }
-                    }
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(270, 86 + Math.max(1, root.appBackend.projectSpeakers.length) * 42)
-                radius: 12; color: root.panel; border.color: root.border
-                ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 7
-                    RowLayout { Layout.fillWidth: true
-                        PanelTitle { text: "EDITABLE TIMELINE" }
-                        Item { Layout.fillWidth: true }
-                        Text { text: root.appBackend.subtitleSegments.length + " CAPTIONS"; color: root.textMuted; font.pixelSize: 9; font.family: "Bahnschrift" }
-                        Text { text: "ZOOM"; color: root.textMuted; font.pixelSize: 9 }
-                        Slider { Layout.preferredWidth: 110; from: 12; to: 120; value: root.timelinePixelsPerSecond; onMoved: root.timelinePixelsPerSecond = value }
-                        SmallButton { text: "OPEN EDITOR"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: editorPopup.open() }
-                    }
-                    SubtitleTimeline {
-                        Layout.fillWidth: true; Layout.fillHeight: true
-                        player: mainPlayer
-                        pixelsPerSecond: root.timelinePixelsPerSecond
-                        snapSeconds: root.snapMilliseconds / 1000
-                        editable: root.appBackend.projectLoaded && !root.appBackend.running
-                        onSegmentActivated: function(index) { mainPlayer.position = root.appBackend.subtitleSegments[index].start * 1000 }
                     }
                 }
             }
@@ -659,68 +685,78 @@ ApplicationWindow {
             Layout.fillHeight: true
             radius: 12; color: root.panel; border.color: root.border
             ColumnLayout { anchors.fill: parent; spacing: 0
-                Text { Layout.margins: 14; text: "WORKFLOW & SETTINGS"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 1.1 }
+                RowLayout {
+                    Layout.fillWidth: true; Layout.preferredHeight: 56; Layout.maximumHeight: 56; Layout.margins: 12
+                    Text { Layout.fillWidth: true; text: "次の操作"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 15; font.weight: Font.Bold }
+                    SmallButton { objectName: "settingsToggleButton"; text: root.settingsExpanded ? "設定を閉じる" : "詳細設定"; onClicked: root.settingsExpanded = !root.settingsExpanded }
+                }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                ScrollView { Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                ScrollView { objectName: "advancedSettingsPanel"; visible: root.settingsExpanded; Layout.fillWidth: true; Layout.fillHeight: root.settingsExpanded; Layout.preferredHeight: root.settingsExpanded ? 320 : 0; Layout.maximumHeight: root.settingsExpanded ? 420 : 0; clip: true
                     ColumnLayout { width: 286; x: 16; spacing: 10
                         Item { Layout.preferredHeight: 2 }
-                        PanelTitle { text: "ENGINE" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Device"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Whisper"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "CPU workers"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
+                        PanelTitle { text: "文字起こしエンジン" }
+                        RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "SUBTITLE" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Base font"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; from: 32; to: 96; value: 50 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Volume ratio"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Word gap"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "End padding"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Min duration"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
+                        PanelTitle { text: "字幕" }
+                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; from: 32; to: 96; value: 50 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "音量サイズ比率"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "最短表示時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "VIDEO & AUDIO" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Codec"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: codecCombo; model: ["h264_nvenc", "libx264"]; Layout.preferredWidth: 132 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Quality"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; from: 14; to: 28; value: 18 } }
+                        PanelTitle { text: "動画・音声" }
+                        RowLayout { Layout.fillWidth: true; Text { text: "動画コーデック"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: codecCombo; model: ["h264_nvenc", "libx264"]; Layout.preferredWidth: 132 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "画質"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; from: 14; to: 28; value: 18 } }
                         Switch { id: normalizeSwitch; text: "音量を正規化"; checked: true }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Target LUFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "目標LUFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }
                         Switch { id: silenceSwitch; text: "無音部分をカット" }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "Minimum silence"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; Layout.preferredWidth: 76; text: "1.2" } }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "Speech padding"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; Layout.preferredWidth: 76; text: "0.25" } }
+                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "最短無音時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; Layout.preferredWidth: 76; text: "1.2" } }
+                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "発話余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; Layout.preferredWidth: 76; text: "0.25" } }
                         Item { Layout.preferredHeight: 6 }
                     }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                ColumnLayout { Layout.fillWidth: true; Layout.margins: 12; spacing: 7
+                ColumnLayout { objectName: "workflowActions"; Layout.fillWidth: true; Layout.fillHeight: false; Layout.margins: 12; spacing: 7
+                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕を確認してから動画を書き出します" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
                     Button {
                         id: transcribeButton
                         objectName: "transcribeButton"
-                        Layout.fillWidth: true; Layout.preferredHeight: 42
+                        Layout.fillWidth: true; Layout.preferredHeight: 46; visible: !root.appBackend.projectLoaded || root.appBackend.activeJob === "transcribe"
                         enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && !root.appBackend.projectLoaded
-                        text: root.appBackend.activeJob === "transcribe" ? "TRANSCRIBING..." : "1  TRANSCRIBE"
+                        text: root.appBackend.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
                         onClicked: root.appBackend.startTranscription(root.currentSettings())
+                        contentItem: Text { text: transcribeButton.text; color: transcribeButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: transcribeButton.enabled ? root.acid : "#252C28" }
                     }
                     Button {
                         id: editButton
                         objectName: "editSubtitlesButton"
-                        Layout.fillWidth: true; Layout.preferredHeight: 42
+                        Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded
                         enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                        text: "2  EDIT SUBTITLES"
-                        onClicked: editorPopup.open()
+                        text: "字幕を編集する"
+                        onClicked: root.openEditorScreen()
+                        contentItem: Text { text: editButton.text; color: editButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: editButton.enabled ? root.acid : "#252C28" }
                     }
                     Button {
                         id: renderButton
                         objectName: "renderVideoButton"
-                        Layout.fillWidth: true; Layout.preferredHeight: 42
+                        Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded || root.appBackend.activeJob === "render"
                         enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                        text: root.appBackend.activeJob === "render" ? "RENDERING..." : "3  RENDER VIDEO"
+                        text: root.appBackend.activeJob === "render" ? "動画を書き出し中..." : "動画を書き出す"
                         onClicked: root.appBackend.renderVideo(root.currentSettings())
-                        contentItem: Text { text: renderButton.text; color: renderButton.enabled ? "#10140F" : "#68716B"; font.family: "Bahnschrift"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        background: Rectangle { radius: 8; color: renderButton.enabled ? root.acid : "#252C28" }
+                        contentItem: Text { text: renderButton.text; color: renderButton.enabled ? root.textPrimary : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: renderButton.enabled ? root.raised : "#252C28"; border.color: renderButton.enabled ? root.border : "#252C28" }
                     }
                     Text { objectName: "workflowBlockReason"; Layout.fillWidth: true; text: root.transcriptionBlockReason(); visible: text.length > 0; color: root.amber; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.Wrap }
                     RowLayout { Layout.fillWidth: true
-                        SmallButton { Layout.fillWidth: true; text: root.appBackend.running ? "STOP" : "SAVE SETTINGS"; onClicked: root.appBackend.running ? root.appBackend.cancelProcessing() : root.appBackend.saveSettings(root.currentSettings()) }
-                        SmallButton { objectName: "outputFolderButton"; Layout.fillWidth: true; text: "OUTPUT"; enabled: Boolean(root.appBackend.sourceSelection.output_dir); onClicked: root.appBackend.openOutputFolder() }
+                        SmallButton { Layout.fillWidth: true; text: root.appBackend.running ? "停止" : "設定を保存"; onClicked: root.appBackend.running ? root.appBackend.cancelProcessing() : root.appBackend.saveSettings(root.currentSettings()) }
+                        SmallButton { objectName: "outputFolderButton"; Layout.fillWidth: true; text: "出力先を開く"; enabled: Boolean(root.appBackend.sourceSelection.output_dir); onClicked: root.appBackend.openOutputFolder() }
                     }
                 }
+                Item { visible: !root.settingsExpanded; Layout.fillHeight: true; Layout.preferredHeight: 1; Layout.maximumHeight: 100000 }
             }
         }
     }
@@ -731,7 +767,7 @@ ApplicationWindow {
         width: 620; height: 520; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
         background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
         ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
-            RowLayout { Layout.fillWidth: true; Text { text: "SOURCE SETUP"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? 62 : 0
@@ -750,12 +786,12 @@ ApplicationWindow {
                         font.pixelSize: 10
                         wrapMode: Text.Wrap
                     }
-                    SmallButton { text: "RECHECK"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
+                    SmallButton { text: "再確認"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
                 }
             }
-            PanelTitle { text: "VIDEO" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "BROWSE"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
-            PanelTitle { text: "SPEAKER AUDIO" }
+            PanelTitle { text: "動画" }
+            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
+            PanelTitle { text: "話者音声" }
             ListView {
                 id: sourceAudioList
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5; model: root.appBackend.speakers
@@ -763,31 +799,30 @@ ApplicationWindow {
                     RowLayout { anchors.fill: parent; anchors.margins: 7; Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 22; radius: 3; color: sourceAudioDelegate.modelData.color } Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle } ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) } }
                 }
             }
-            RowLayout { Layout.fillWidth: true; SmallButton { text: "ADD AUDIO"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "CLEAR"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
-            PanelTitle { text: "OUTPUT DIRECTORY" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "BROWSE"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { text: "DONE"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
+            PanelTitle { text: "出力先フォルダ" }
+            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { text: "完了"; onClicked: sourcePopup.close() } }
         }
     }
 
-    Popup {
-        id: editorPopup
-        anchors.centerIn: Overlay.overlay
-        width: root.width - 36
-        height: root.height - 36
-        modal: true
-        focus: true
-        padding: 0
-        closePolicy: Popup.CloseOnEscape
-        onOpened: {
-            editorPlayer.source = root.appBackend.previewUrl
-            editorPlayer.position = mainPlayer.position
+    Rectangle {
+        id: editorPage
+        objectName: "editorPage"
+        anchors.fill: parent
+        visible: root.editorMode
+        z: 100
+        color: "#0D1210"
+        border.color: "#46564E"
+        focus: visible
+        Keys.onEscapePressed: root.closeEditorScreen()
+        onVisibleChanged: {
+            if (visible) {
+                editorPlayer.source = root.appBackend.previewUrl
+                editorPlayer.position = mainPlayer.position
+                forceActiveFocus()
+            }
         }
-        onClosed: {
-            mainPlayer.position = editorPlayer.position
-            editorPlayer.pause()
-        }
-        background: Rectangle { radius: 14; color: "#0D1210"; border.color: "#46564E" }
 
         MediaPlayer {
             id: editorPlayer
@@ -802,17 +837,17 @@ ApplicationWindow {
             spacing: 0
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
-                Text { text: "SUBTITLE EDITOR"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.3 }
-                Text { text: root.appBackend.projectDirty ? "● EDITED" : "✓ SAVED"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Bahnschrift"; font.pixelSize: 9 }
+                Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
+                Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.appBackend.stage + " · " + root.appBackend.status; color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { text: "UNDO"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                SmallButton { text: "REDO"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
-                SmallButton { text: "+ CAPTION"; onClicked: root.appBackend.addSegment(editorPlayer.position / 1000) }
-                SmallButton { objectName: "splitCaptionButton"; text: "SPLIT"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
-                SmallButton { text: "DELETE"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
-                SmallButton { text: "SAVE"; onClicked: root.appBackend.saveProject() }
-                SmallButton { text: "BUILD ASS"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
-                ToolButton { text: "×"; onClicked: editorPopup.close() }
+                SmallButton { text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
+                SmallButton { text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
+                SmallButton { text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(editorPlayer.position / 1000) }
+                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
+                SmallButton { text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
+                SmallButton { text: "保存"; onClicked: root.appBackend.saveProject() }
+                SmallButton { text: "ASSを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; onClicked: root.closeEditorScreen() }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
 
@@ -829,17 +864,17 @@ ApplicationWindow {
                             RowLayout { Layout.fillWidth: true
                                 ToolButton { text: editorPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: editorPlayer.playbackState === MediaPlayer.PlayingState ? editorPlayer.pause() : editorPlayer.play() }
                                 Text { Layout.fillWidth: true; text: root.stamp(editorPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
-                                Text { text: root.activeCaptions(editorPlayer.position).length + " active"; color: root.textMuted; font.pixelSize: 10 }
+                                Text { text: root.activeCaptions(editorPlayer.position).length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
                             }
                         }
                     }
                     RowLayout { Layout.fillWidth: true
-                        PanelTitle { text: "TIMELINE" }
+                        PanelTitle { text: "タイムライン" }
                         Item { Layout.fillWidth: true }
-                        Text { text: "SNAP"; color: root.textMuted; font.pixelSize: 9 }
+                        Text { text: "スナップ"; color: root.textMuted; font.pixelSize: 9 }
                         SpinBox { id: snapSpin; from: 0; to: 1000; stepSize: 10; value: root.snapMilliseconds; editable: true; onValueModified: root.snapMilliseconds = value }
                         Text { text: "ms"; color: root.textMuted; font.pixelSize: 9 }
-                        Text { text: "ZOOM"; color: root.textMuted; font.pixelSize: 9 }
+                        Text { text: "表示倍率"; color: root.textMuted; font.pixelSize: 9 }
                         Slider { Layout.preferredWidth: 140; from: 16; to: 180; value: root.editorPixelsPerSecond; onMoved: root.editorPixelsPerSecond = value }
                     }
                     SubtitleTimeline {
@@ -860,9 +895,9 @@ ApplicationWindow {
                     Layout.preferredWidth: 540; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
                     ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 7
                         RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "CAPTION TABLE" }
+                            PanelTitle { text: "字幕一覧" }
                             Item { Layout.fillWidth: true }
-                            Text { text: "TEXT / START / END / SPEAKER / SIZE"; color: root.textMuted; font.family: "Bahnschrift"; font.pixelSize: 8 }
+                            Text { text: "開始 / 終了 / 話者 / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                         }
                         ListView {
                             id: captionTable
@@ -917,10 +952,10 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { sequence: StandardKey.Undo; enabled: root.appBackend.projectLoaded; onActivated: root.appBackend.undoSubtitleEdit() }
-    Shortcut { sequence: StandardKey.Redo; enabled: root.appBackend.projectLoaded; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequence: StandardKey.Save; enabled: root.appBackend.projectLoaded; onActivated: root.appBackend.saveProject() }
-    Shortcut { sequence: "Delete"; enabled: editorPopup.opened && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
+    Shortcut { sequence: StandardKey.Undo; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
+    Shortcut { sequence: StandardKey.Redo; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
+    Shortcut { sequence: StandardKey.Save; enabled: root.editorMode; onActivated: root.appBackend.saveProject() }
+    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
 
     Connections {
         target: root.appBackend

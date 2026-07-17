@@ -4,7 +4,7 @@
 
 CLIの標準設定は `assets/runtime_config.json` です。各コマンドは `shared` を読み、その後に同名セクションを上書きします。
 
-GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `SAVE SETTINGS`、`TRANSCRIBE`、`RENDER VIDEO` で更新され、Git管理されません。素材パスと編集字幕はここへ保存せず、出力先の `*.subtitle-project.json` へ保存します。
+GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `設定を保存`、`文字起こしを開始`、`動画を書き出す` で更新され、Git管理されません。素材パスと編集字幕はここへ保存せず、出力先の `*.subtitle-project.json` へ保存します。
 
 ~~~text
 shared
@@ -25,7 +25,7 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `transcripts/*.json` | WhisperXのraw認識結果 | 再文字起こししない限り不変 |
 | `*.craig.merged.json` | 自動整形直後の字幕 | プロジェクト作成時の入力記録 |
 | `*.subtitle-project.json` | ユーザー編集の正本 | ASS・動画の唯一の編集入力 |
-| `*.edited.ass` | ASS生成物 | `BUILD ASS` / renderで上書き可能 |
+| `*.edited.ass` | ASS生成物 | `ASSを更新` / renderで上書き可能 |
 | `*.edited.subtitled.mp4` | 完成動画 | renderで上書き可能 |
 
 プロジェクトの `subtitle_settings.font_size` は全字幕の基準値、各segmentの `subtitle_font_scale` は字幕単位の倍率です。文字起こし時は話者内の相対音量から自動設定され、エディターで変更すると `manual_font_scale=true` になります。話者単位の文字サイズ設定は使用しません。

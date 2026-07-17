@@ -59,16 +59,16 @@ Remove-Item -Recurse -Force .\.venv
 
 ## GUIに依存ツール不足が表示される
 
-`SOURCE SETUP` の `RECHECK` を押します。解消しない場合はGUIを閉じて `setup.bat` を再実行し、その後 `start.bat` から起動してください。
+`素材設定` の `再確認` を押します。解消しない場合はGUIを閉じて `setup.bat` を再実行し、その後 `start.bat` から起動してください。
 
 ## GUIのボタンが無効、または押しても処理されない
 
-`WORKFLOW & SETTINGS` のボタン下に表示される理由を確認します。
+右側の `次の操作` に表示される理由を確認します。
 
-- `1 TRANSCRIBE`: 動画、1つ以上の話者音声、出力先、実行ツールがすべて必要
-- `2 EDIT SUBTITLES` / `3 RENDER VIDEO`: 文字起こし後の編集プロジェクトが必要
-- `SPLIT`: 字幕を選択し、再生位置をその字幕の開始・終了から0.05秒以上内側へ置く
-- `OUTPUT`: 出力先フォルダの指定が必要
+- `文字起こしを開始`: 動画、1つ以上の話者音声、出力先、実行ツールがすべて必要
+- `字幕を編集する` / `動画を書き出す`: 文字起こし後の編集プロジェクトが必要
+- `分割`: 字幕を選択し、再生位置をその字幕の開始・終了から0.05秒以上内側へ置く
+- `出力先を開く`: 出力先フォルダの指定が必要
 
 文字起こしまたは動画出力の処理中は、入力の食い違いを防ぐためソース変更と字幕編集がロックされます。編集画面で保存やASS生成に失敗した場合は、画面上部に `CHECK` または `ERROR` と理由が表示されます。
 
@@ -256,15 +256,15 @@ WhisperXが無音を直前の1文字へ含めた場合は後段で補正しま�
 
 `video_import/`, `video_export/`, `out/` は `.gitignore` 対象です。元動画、生成動画、transcriptキャッシュはコミットされません。
 
-## `EDIT SUBTITLES` が押せない
+## `字幕を編集する` が押せない
 
-編集用の `*.subtitle-project.json` がまだ開かれていません。`1 TRANSCRIBE` が正常終了するまで待つか、ヘッダーの `OPEN PROJECT` から既存プロジェクトを選択します。rawの `transcripts/*.json` や `*.craig.merged.json` は編集プロジェクトではありません。
+編集用の `*.subtitle-project.json` がまだ開かれていません。`文字起こしを開始` が正常終了するまで待つか、ヘッダーの `プロジェクトを開く` から既存プロジェクトを選択します。rawの `transcripts/*.json` や `*.craig.merged.json` は編集プロジェクトではありません。
 
 ## 編集した字幕が動画へ反映されない
 
-編集後はGUIの `3 RENDER VIDEO`、または `src.subtitle_workflow render --project ... --run` を使用します。従来の `src.craig_pipeline --run` はraw transcriptから従来の `*.craig.ass` を再生成する互換経路で、`*.subtitle-project.json` の手動編集を読みません。
+編集後はGUIの `動画を書き出す`、または `src.subtitle_workflow render --project ... --run` を使用します。従来の `src.craig_pipeline --run` はraw transcriptから従来の `*.craig.ass` を再生成する互換経路で、`*.subtitle-project.json` の手動編集を読みません。
 
-`BUILD ASS` は `*.edited.ass` を更新するだけで動画は変更しません。動画まで更新する場合は、その後に `RENDER VIDEO` を実行してください。
+`ASSを更新` は `*.edited.ass` を更新するだけで動画は変更しません。動画まで更新する場合は、その後に `動画を書き出す` を実行してください。
 
 ## プロジェクトは開くが動画・波形が表示されない
 

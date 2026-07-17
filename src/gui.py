@@ -183,6 +183,9 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def browseProjectFile(self) -> None:
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            return
         start_dir = self._source_selection.output_dir or str(self.workspace_root)
         path, _ = QFileDialog.getOpenFileName(
             None,
@@ -195,6 +198,9 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(str)
     def loadProject(self, path: str) -> None:
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            return
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
 
@@ -445,18 +451,20 @@ class EditBayBackend(LegacyEditBayBackend):
         self._replace_segments(segments)
         self.historyChanged.emit()
 
-    @Slot()
-    def saveProject(self) -> None:
+    @Slot(result=bool)
+    def saveProject(self) -> bool:
         if self._project is None or not self._project_path:
-            return
+            self._set_status("保存する字幕編集プロジェクトがありません", "CHECK")
+            return False
         try:
             save_project(self._project_path, self._project)
         except (OSError, SubtitleProjectError) as error:
             self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
-            return
+            return False
         self._project_dirty = False
         self.projectChanged.emit()
         self._set_status("字幕編集を保存しました", "SAVED")
+        return True
 
     def _autosave_project(self) -> None:
         if self._project_dirty:
@@ -482,7 +490,8 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._project is None:
             return
         self._update_project_settings(settings)
-        self.saveProject()
+        if not self.saveProject():
+            return
         try:
             output = build_project_ass(self._project_path)
         except (OSError, ValueError) as error:
@@ -515,6 +524,10 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._running:
             return
         self.refreshDependencies()
+        if not self._dependencies.ready:
+            missing = ", ".join(self._dependencies.missing())
+            self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
+            return
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
         if not Path(selection.video).is_file() or not audio_files or not selection.output_dir:
@@ -545,7 +558,8 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         self.saveSettings(settings)
         self._update_project_settings(settings)
-        self.saveProject()
+        if not self.saveProject():
+            return
         command = build_gui_render_command(self.gui_config_path, project_path=self._project_path)
         self._start_command(command, "render", "編集済み字幕の動画を書き出しています")
 

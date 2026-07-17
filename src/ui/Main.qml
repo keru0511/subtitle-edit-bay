@@ -85,6 +85,30 @@ ApplicationWindow {
         codecCombo.currentIndex = Math.max(0, codecCombo.find(value.video_codec || "h264_nvenc"))
         manualOffsetField.text = Number(value.alignment_offset_adjustment || 0).toFixed(3)
     }
+    function transcriptionBlockReason() {
+        if (root.appBackend.running)
+            return "処理中です。完了または停止するまで入力と編集は変更できません"
+        if (!root.appBackend.dependencyStatus.ready)
+            return "実行ツールが不足しています: " + root.appBackend.dependencyStatus.missing.join(", ")
+        if (!root.appBackend.sourceSelection.video)
+            return "SOURCESで動画を指定してください"
+        if (root.appBackend.speakers.length === 0)
+            return "SOURCESで1つ以上の話者音声を指定してください"
+        if (!root.appBackend.sourceSelection.output_dir)
+            return "SOURCESで出力先フォルダを指定してください"
+        if (root.appBackend.projectLoaded)
+            return "文字起こし済みです。やり直す場合はSOURCESで入力を変更してください"
+        return ""
+    }
+
+    function canSplitSelectedSegment(positionMs) {
+        var index = root.appBackend.selectedSegmentIndex
+        if (index < 0 || index >= root.appBackend.subtitleSegments.length)
+            return false
+        var segment = root.appBackend.subtitleSegments[index]
+        var seconds = Number(positionMs) / 1000
+        return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
+    }
 
     function stamp(seconds) {
         var safe = Math.max(0, Number(seconds) || 0)
@@ -489,8 +513,8 @@ ApplicationWindow {
                     font.family: "Bahnschrift"; font.pixelSize: 9
                 }
             }
-            SmallButton { text: "OPEN PROJECT"; onClicked: root.appBackend.browseProjectFile() }
-            SmallButton { text: "SOURCES"; onClicked: sourcePopup.open() }
+            SmallButton { text: "OPEN PROJECT"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
+            SmallButton { text: "SOURCES"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             Rectangle { Layout.preferredWidth: 9; Layout.preferredHeight: 9; radius: 5; color: root.appBackend.running ? root.amber : root.acid }
         }
     }
@@ -546,12 +570,12 @@ ApplicationWindow {
                     TimeField { id: manualOffsetField; Layout.fillWidth: true; text: "0.000"; validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 } }
                     SmallButton {
                         text: root.appBackend.alignmentBusy ? "ANALYZING" : "SYNC"
-                        enabled: !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
+                        enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
                         onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
                     }
                 }
                 Text { Layout.fillWidth: true; text: root.appBackend.alignmentResult.status + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "s" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
-                SmallButton { Layout.fillWidth: true; text: "CHANGE SOURCES"; onClicked: sourcePopup.open() }
+                SmallButton { Layout.fillWidth: true; text: "CHANGE SOURCES"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             }
         }
 
@@ -601,14 +625,14 @@ ApplicationWindow {
                         Text { text: root.appBackend.subtitleSegments.length + " CAPTIONS"; color: root.textMuted; font.pixelSize: 9; font.family: "Bahnschrift" }
                         Text { text: "ZOOM"; color: root.textMuted; font.pixelSize: 9 }
                         Slider { Layout.preferredWidth: 110; from: 12; to: 120; value: root.timelinePixelsPerSecond; onMoved: root.timelinePixelsPerSecond = value }
-                        SmallButton { text: "OPEN EDITOR"; enabled: root.appBackend.projectLoaded; onClicked: editorPopup.open() }
+                        SmallButton { text: "OPEN EDITOR"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: editorPopup.open() }
                     }
                     SubtitleTimeline {
                         Layout.fillWidth: true; Layout.fillHeight: true
                         player: mainPlayer
                         pixelsPerSecond: root.timelinePixelsPerSecond
                         snapSeconds: root.snapMilliseconds / 1000
-                        editable: root.appBackend.projectLoaded
+                        editable: root.appBackend.projectLoaded && !root.appBackend.running
                         onSegmentActivated: function(index) { mainPlayer.position = root.appBackend.subtitleSegments[index].start * 1000 }
                     }
                 }
@@ -691,9 +715,10 @@ ApplicationWindow {
                         contentItem: Text { text: renderButton.text; color: renderButton.enabled ? "#10140F" : "#68716B"; font.family: "Bahnschrift"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: renderButton.enabled ? root.acid : "#252C28" }
                     }
+                    Text { objectName: "workflowBlockReason"; Layout.fillWidth: true; text: root.transcriptionBlockReason(); visible: text.length > 0; color: root.amber; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.Wrap }
                     RowLayout { Layout.fillWidth: true
                         SmallButton { Layout.fillWidth: true; text: root.appBackend.running ? "STOP" : "SAVE SETTINGS"; onClicked: root.appBackend.running ? root.appBackend.cancelProcessing() : root.appBackend.saveSettings(root.currentSettings()) }
-                        SmallButton { Layout.fillWidth: true; text: "OUTPUT"; onClicked: root.appBackend.openOutputFolder() }
+                        SmallButton { objectName: "outputFolderButton"; Layout.fillWidth: true; text: "OUTPUT"; enabled: Boolean(root.appBackend.sourceSelection.output_dir); onClicked: root.appBackend.openOutputFolder() }
                     }
                 }
             }
@@ -725,22 +750,22 @@ ApplicationWindow {
                         font.pixelSize: 10
                         wrapMode: Text.Wrap
                     }
-                    SmallButton { text: "RECHECK"; onClicked: root.appBackend.refreshDependencies() }
+                    SmallButton { text: "RECHECK"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
                 }
             }
             PanelTitle { text: "VIDEO" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "BROWSE"; onClicked: root.appBackend.browseVideoFile() } }
+            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "BROWSE"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
             PanelTitle { text: "SPEAKER AUDIO" }
             ListView {
                 id: sourceAudioList
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5; model: root.appBackend.speakers
                 delegate: Rectangle { id: sourceAudioDelegate; required property int index; required property var modelData; width: sourceAudioList.width; height: 38; radius: 7; color: root.raised
-                    RowLayout { anchors.fill: parent; anchors.margins: 7; Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 22; radius: 3; color: sourceAudioDelegate.modelData.color } Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle } ToolButton { text: "×"; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) } }
+                    RowLayout { anchors.fill: parent; anchors.margins: 7; Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 22; radius: 3; color: sourceAudioDelegate.modelData.color } Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle } ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) } }
                 }
             }
-            RowLayout { Layout.fillWidth: true; SmallButton { text: "ADD AUDIO"; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "CLEAR"; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
+            RowLayout { Layout.fillWidth: true; SmallButton { text: "ADD AUDIO"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "CLEAR"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
             PanelTitle { text: "OUTPUT DIRECTORY" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "BROWSE"; onClicked: root.appBackend.browseOutputDirectory() } }
+            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "BROWSE"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { text: "DONE"; onClicked: sourcePopup.close() } }
         }
     }
@@ -779,11 +804,11 @@ ApplicationWindow {
                 Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
                 Text { text: "SUBTITLE EDITOR"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.3 }
                 Text { text: root.appBackend.projectDirty ? "● EDITED" : "✓ SAVED"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Bahnschrift"; font.pixelSize: 9 }
-                Item { Layout.fillWidth: true }
+                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.appBackend.stage + " · " + root.appBackend.status; color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
                 SmallButton { text: "UNDO"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
                 SmallButton { text: "REDO"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
                 SmallButton { text: "+ CAPTION"; onClicked: root.appBackend.addSegment(editorPlayer.position / 1000) }
-                SmallButton { text: "SPLIT"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
+                SmallButton { objectName: "splitCaptionButton"; text: "SPLIT"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
                 SmallButton { text: "DELETE"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                 SmallButton { text: "SAVE"; onClicked: root.appBackend.saveProject() }
                 SmallButton { text: "BUILD ASS"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }

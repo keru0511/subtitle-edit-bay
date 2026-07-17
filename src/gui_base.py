@@ -254,6 +254,9 @@ class EditBayBackend(QApplication):
         self._update_source_status()
     @Slot()
     def browseVideoFile(self) -> None:
+        if self._running:
+            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            return
         start_dir = str(Path(self._source_selection.video).parent) if self._source_selection.video else str(self.workspace_root)
         path, _ = QFileDialog.getOpenFileName(
             None,
@@ -266,6 +269,9 @@ class EditBayBackend(QApplication):
 
     @Slot(str)
     def setVideoFile(self, path: str) -> None:
+        if self._running:
+            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            return
         video = self._local_path(path)
         if not video.is_file() or video.suffix.lower() not in VIDEO_EXTENSIONS:
             self._set_status("対応する動画ファイルを指定してください", "CHECK")
@@ -274,6 +280,9 @@ class EditBayBackend(QApplication):
 
     @Slot()
     def browseAudioFiles(self) -> None:
+        if self._running:
+            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            return
         if self._source_selection.audio_files:
             start_dir = str(Path(self._source_selection.audio_files[0]).parent)
         else:
@@ -289,6 +298,9 @@ class EditBayBackend(QApplication):
 
     @Slot("QVariantList", bool)
     def setAudioFiles(self, paths: list[Any], append: bool) -> None:
+        if self._running:
+            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            return
         valid_files: list[str] = []
         for value in paths:
             audio = self._local_path(str(value))
@@ -307,6 +319,9 @@ class EditBayBackend(QApplication):
 
     @Slot(int)
     def removeAudioFile(self, index: int) -> None:
+        if self._running:
+            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            return
         audio_files = list(self._source_selection.audio_files)
         if not 0 <= index < len(audio_files):
             return
@@ -321,6 +336,9 @@ class EditBayBackend(QApplication):
 
     @Slot()
     def browseOutputDirectory(self) -> None:
+        if self._running:
+            self._set_status("処理中は出力先を変更できません", "BUSY")
+            return
         start_dir = self._source_selection.output_dir or str(self.workspace_root)
         folder = QFileDialog.getExistingDirectory(None, "出力先を選択", start_dir)
         if folder:
@@ -328,6 +346,9 @@ class EditBayBackend(QApplication):
 
     @Slot(str)
     def setOutputDirectory(self, path: str) -> None:
+        if self._running:
+            self._set_status("処理中は出力先を変更できません", "BUSY")
+            return
         output = self._local_path(path)
         if not output.is_dir():
             self._set_status("存在する出力フォルダを指定してください", "CHECK")
@@ -357,6 +378,9 @@ class EditBayBackend(QApplication):
 
     @Slot(str, str, float)
     def analyzeAlignment(self, reference_audio: str, reference_track: str, adjustment: float) -> None:
+        if self._running:
+            self._set_status("処理中は同期解析を開始できません", "BUSY")
+            return
         if self._alignment_busy:
             return
         self.refreshDependencies()
@@ -521,10 +545,16 @@ class EditBayBackend(QApplication):
     @Slot()
     def openOutputFolder(self) -> None:
         if not self._source_selection.output_dir:
+            self._set_status("先に出力先フォルダを指定してください", "CHECK")
             return
         output = Path(self._source_selection.output_dir)
-        output.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            self._set_status(f"出力先フォルダを準備できません: {error}", "ERROR")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(output))):
+            self._set_status("出力先フォルダを開けませんでした", "ERROR")
 
     def _process_started(self) -> None:
         self._running = True

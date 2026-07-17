@@ -200,6 +200,11 @@ class SubtitleEditorBackendTests(unittest.TestCase):
     def test_edit_undo_redo_and_autosave(self) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from src.gui import EditBayBackend
+        from src.gui_state import SourceSelection
+        from PySide6.QtCore import QPoint, QPointF, Qt
+        from PySide6.QtQml import QQmlApplicationEngine
+        from PySide6.QtQuick import QQuickItem
+        from PySide6.QtTest import QTest
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -221,8 +226,69 @@ class SubtitleEditorBackendTests(unittest.TestCase):
             self.assertEqual(app.subtitleSegments[0]["text"], "before")
             app.redoSubtitleEdit()
             self.assertEqual(app.subtitleSegments[0]["text"], "after")
-            app.saveProject()
+            self.assertTrue(app.saveProject())
             self.assertEqual(load_project(path)["segments"][0]["text"], "after")
+
+            app.openOutputFolder()
+            self.assertEqual(app.stage, "CHECK")
+            self.assertIn("出力先", app.status)
+
+            second_video = root / "second.mkv"
+            second_video.write_bytes(b"video")
+            app.setVideoFile(str(video))
+            selected_video = app.sourceSelection["video"]
+            app._running = True
+            app.setVideoFile(str(second_video))
+            self.assertEqual(app.sourceSelection["video"], selected_video)
+            self.assertEqual(app.stage, "BUSY")
+            app._running = False
+
+            app.updateSegment(0, {"text": "unsaved"})
+            with patch("src.gui.save_project", side_effect=OSError("disk full")):
+                self.assertFalse(app.saveProject())
+                self.assertEqual(app.stage, "ERROR")
+
+            with (
+                patch("src.gui.save_project", side_effect=OSError("disk full")),
+                patch("src.gui.build_project_ass") as build_ass,
+            ):
+                app.buildSubtitlePreview(app.settings)
+                build_ass.assert_not_called()
+
+            with patch("src.gui.save_project", side_effect=OSError("disk full")), patch.object(app, "_start_command") as start:
+                app.renderVideo(app.settings)
+                start.assert_not_called()
+            app.autosave_timer.stop()
+
+            app._source_selection = SourceSelection()
+            app.sourceSelectionChanged.emit()
+            engine = QQmlApplicationEngine()
+            engine.rootContext().setContextProperty("backend", app)
+            qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+            engine.load(qml_path)
+            self.assertTrue(engine.rootObjects())
+            window = engine.rootObjects()[0]
+            window.setWidth(1220)
+            window.setHeight(760)
+            app.processEvents()
+
+            output_button = window.findChild(QQuickItem, "outputFolderButton")
+            self.assertFalse(output_button.isEnabled())
+            workflow_reason = window.findChild(QQuickItem, "workflowBlockReason")
+            self.assertTrue(workflow_reason.isVisible())
+            self.assertIn("動画", workflow_reason.property("text"))
+
+            edit_button = window.findChild(QQuickItem, "editSubtitlesButton")
+            center = edit_button.mapToScene(QPointF(edit_button.width() / 2, edit_button.height() / 2))
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=QPoint(round(center.x()), round(center.y())))
+            app.processEvents()
+            split_button = window.findChild(QQuickItem, "splitCaptionButton")
+            self.assertFalse(split_button.isEnabled())
+            editor_status = window.findChild(QQuickItem, "editorStatusText")
+            self.assertTrue(editor_status.isVisible())
+            self.assertIn("ERROR", editor_status.property("text"))
+            window.close()
+            app.processEvents()
             app._shutdown_executor()
 
 

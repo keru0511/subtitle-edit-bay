@@ -60,6 +60,18 @@ Remove-Item -Recurse -Force .\.venv
 ## GUIに依存ツール不足が表示される
 
 `SOURCE SETUP` の `RECHECK` を押します。解消しない場合はGUIを閉じて `setup.bat` を再実行し、その後 `start.bat` から起動してください。
+
+## GUIのボタンが無効、または押しても処理されない
+
+`WORKFLOW & SETTINGS` のボタン下に表示される理由を確認します。
+
+- `1 TRANSCRIBE`: 動画、1つ以上の話者音声、出力先、実行ツールがすべて必要
+- `2 EDIT SUBTITLES` / `3 RENDER VIDEO`: 文字起こし後の編集プロジェクトが必要
+- `SPLIT`: 字幕を選択し、再生位置をその字幕の開始・終了から0.05秒以上内側へ置く
+- `OUTPUT`: 出力先フォルダの指定が必要
+
+文字起こしまたは動画出力の処理中は、入力の食い違いを防ぐためソース変更と字幕編集がロックされます。編集画面で保存やASS生成に失敗した場合は、画面上部に `CHECK` または `ERROR` と理由が表示されます。
+
 ## `No videos found in video_import`
 
 `src.batch` は `video_import/` 直下の動画だけを検索し、サブフォルダを再帰検索しません。

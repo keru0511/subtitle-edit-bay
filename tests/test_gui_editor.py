@@ -1,0 +1,565 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from copy import deepcopy
+from pathlib import Path
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QProcess, Qt
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickItem
+from PySide6.QtTest import QTest
+
+from src.gui import EditBayBackend
+from src.gui_state import SourceSelection
+from src.runtime_dependencies import RuntimeDependencyStatus
+from src.subtitle_project import (
+    MIN_SEGMENT_DURATION_SECONDS,
+    create_project,
+    load_project,
+    save_project,
+)
+
+
+class GuiEditorRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._workspace = tempfile.TemporaryDirectory()
+        cls._workspace_root = Path(cls._workspace.name)
+        cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
+        cls._base_settings = deepcopy(cls.app.settings)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.app.autosave_timer.stop()
+        cls.app.elapsed_timer.stop()
+        cls.app._shutdown_executor()
+        cls._workspace.cleanup()
+
+    def setUp(self) -> None:
+        self.root = self._workspace_root / self._testMethodName
+        self.root.mkdir(parents=True)
+        self._engines: list[QQmlApplicationEngine] = []
+
+        app = self.app
+        app.autosave_timer.stop()
+        app.elapsed_timer.stop()
+        app.workspace_root = self.root
+        app.gui_config_path = self.root / ".gui" / "runtime_config.json"
+        app.color_config_path = self.root / "assets" / "speaker_colors.json"
+        app._project = None
+        app._project_path = ""
+        app._project_dirty = False
+        app._undo_stack.clear()
+        app._redo_stack.clear()
+        app._selected_segment_index = -1
+        app._active_job = ""
+        app._ass_path = ""
+        app._loading_project_sources = False
+        app._source_selection = SourceSelection()
+        app._speakers = []
+        app._audio_tracks = app._default_audio_tracks()
+        app._alignment_result = app._empty_alignment_result()
+        app._alignment_busy = False
+        app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True)
+        app._settings = deepcopy(self._base_settings)
+        app._running = False
+        app._status = "動画・話者音声・出力先を指定してください"
+        app._stage = "READY"
+        app._progress = 0.0
+        app._log = ""
+        app._elapsed_seconds = 0
+        app._cancel_requested = False
+
+    def tearDown(self) -> None:
+        for engine in self._engines:
+            for window in engine.rootObjects():
+                window.close()
+                window.deleteLater()
+            engine.clearComponentCache()
+            engine.deleteLater()
+        self.app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.app.processEvents()
+        self.app.autosave_timer.stop()
+        self.app.elapsed_timer.stop()
+        self.app._project_dirty = False
+        self.app._running = False
+        self.app._active_job = ""
+        self.app._cancel_requested = False
+
+    def _make_project(
+        self,
+        *,
+        segments: list[dict[str, object]] | None = None,
+        include_missing_audio: bool = False,
+    ) -> tuple[Path, Path, Path]:
+        video = self.root / "game.mkv"
+        video.write_bytes(b"video")
+        audio = self.root / "1-alice.flac"
+        audio.write_bytes(b"audio")
+        output = self.root / "export"
+        output.mkdir(exist_ok=True)
+
+        speakers = [
+            {
+                "name": "Alice",
+                "style": "Speaker_Alice",
+                "file_name": audio.name,
+                "track_key": "craig:Alice",
+                "color": "#7FD957",
+                "path": str(audio),
+            },
+            {
+                "name": "Bob",
+                "style": "Speaker_Bob",
+                "file_name": "2-bob.flac",
+                "track_key": "craig:Bob",
+                "color": "#FFD966",
+                "path": str(self.root / "2-bob.flac"),
+            },
+        ]
+        audio_sources = [{"path": str(audio)}]
+        if include_missing_audio:
+            audio_sources.append({"path": str(self.root / "missing.flac")})
+        project = create_project(
+            video_path=video,
+            output_dir=output,
+            audio_sources=audio_sources,
+            speakers=speakers,
+            segments=segments
+            or [
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "abcdefgh",
+                    "speaker": "Speaker_Alice",
+                    "words": [{"word": "abcdefgh", "start": 0, "end": 4}],
+                }
+            ],
+            duration_seconds=30,
+        )
+        path = output / "game.subtitle-project.json"
+        save_project(path, project)
+        return path, video, audio
+
+    def _load_project(self, **kwargs: object) -> Path:
+        path, _, _ = self._make_project(**kwargs)
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.app.autosave_timer.stop()
+        return path
+
+    def _set_ready_sources(self) -> tuple[Path, Path, Path]:
+        video = self.root / "game.mkv"
+        video.write_bytes(b"video")
+        audio = self.root / "1-alice.flac"
+        audio.write_bytes(b"audio")
+        output = self.root / "export"
+        output.mkdir(exist_ok=True)
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+            self.app.setAudioFiles([str(audio)], False)
+            self.app.setOutputDirectory(str(output))
+        return video, audio, output
+
+    def _load_qml(self) -> tuple[QQmlApplicationEngine, QObject]:
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("backend", self.app)
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        engine.load(qml_path)
+        self.assertTrue(engine.rootObjects())
+        window = engine.rootObjects()[0]
+        window.setWidth(1220)
+        window.setHeight(760)
+        self.app.processEvents()
+        self._engines.append(engine)
+        return engine, window
+
+    def _quick_item(self, window: QObject, name: str) -> QQuickItem:
+        item = window.findChild(QQuickItem, name)
+        self.assertIsNotNone(item, name)
+        return item
+
+    def _click(self, window: QObject, item: QQuickItem) -> None:
+        self.assertGreater(item.width(), 0, item.objectName())
+        self.assertGreater(item.height(), 0, item.objectName())
+        center = item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
+        QTest.mouseClick(
+            window,
+            Qt.MouseButton.LeftButton,
+            pos=QPoint(round(center.x()), round(center.y())),
+        )
+        self.app.processEvents()
+
+    def test_project_load_restores_only_existing_sources(self) -> None:
+        path, video, audio = self._make_project(include_missing_audio=True)
+
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=True))
+
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.assertEqual(self.app.sourceSelection["output_dir"], str(path.parent.resolve()))
+        self.assertEqual(self.app.sourceSelection["audio_files"], [str(audio.resolve())])
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        self.assertEqual(self.app.stage, "EDIT")
+
+    def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
+        self._load_project()
+
+        self.app.updateSegment(
+            0,
+            {
+                "text": " edited ",
+                "start": -2,
+                "end": -2,
+                "speaker": "Speaker_Bob",
+                "subtitle_font_scale": 9,
+            },
+        )
+
+        segment = self.app.subtitleSegments[0]
+        self.assertEqual(segment["text"], "edited")
+        self.assertEqual(segment["start"], 0)
+        self.assertEqual(segment["end"], MIN_SEGMENT_DURATION_SECONDS)
+        self.assertEqual(segment["speaker"], "Speaker_Bob")
+        self.assertEqual(segment["source_speaker"], "Bob")
+        self.assertEqual(segment["subtitle_font_scale"], 4.0)
+        self.assertTrue(segment["manual_text"])
+        self.assertTrue(segment["manual_timing"])
+        self.assertTrue(segment["manual_speaker"])
+        self.assertTrue(segment["manual_font_scale"])
+        self.assertNotIn("words", segment)
+
+    def test_invalid_numeric_edits_preserve_segment_and_report_check(self) -> None:
+        self._load_project()
+        original = deepcopy(self.app.subtitleSegments[0])
+
+        self.app.updateSegment(0, {"start": "not-a-number"})
+        self.assertEqual(self.app.subtitleSegments[0], original)
+        self.assertEqual(self.app.stage, "CHECK")
+
+        self.app.updateSegment(0, {"subtitle_font_scale": float("nan")})
+        self.assertEqual(self.app.subtitleSegments[0], original)
+        self.assertEqual(self.app.stage, "CHECK")
+
+    def test_add_delete_and_selection_round_trip(self) -> None:
+        self._load_project()
+
+        self.app.addSegment(5.0)
+        self.assertEqual(len(self.app.subtitleSegments), 2)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        added = self.app.subtitleSegments[1]
+        self.assertEqual(added["start"], 5.0)
+        self.assertEqual(added["end"], 7.0)
+        self.assertEqual(added["speaker"], "Speaker_Alice")
+
+        self.app.deleteSelectedSegment()
+        self.assertEqual(len(self.app.subtitleSegments), 1)
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+
+    def test_split_accepts_middle_and_rejects_segment_boundaries(self) -> None:
+        self._load_project()
+
+        self.app.splitSelectedSegment(2.0)
+        segments = self.app.subtitleSegments
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0]["end"], 2.0)
+        self.assertEqual(segments[1]["start"], 2.0)
+        self.assertEqual(segments[0]["text"] + segments[1]["text"], "abcdefgh")
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
+        self.app.selectSegment(0)
+        self.app.splitSelectedSegment(0.01)
+        self.assertEqual(len(self.app.subtitleSegments), 2)
+        self.assertEqual(self.app.stage, "CHECK")
+
+    def test_timeline_move_and_resize_snap_to_grid_and_neighbor_edges(self) -> None:
+        self._load_project(
+            segments=[
+                {"id": "first", "start": 0, "end": 1, "text": "first", "speaker": "Speaker_Alice"},
+                {"id": "second", "start": 2, "end": 3, "text": "second", "speaker": "Speaker_Bob"},
+            ]
+        )
+
+        self.app.moveSegment(0, 1.96, 2.96, 0.1)
+        self.assertEqual((self.app.subtitleSegments[0]["start"], self.app.subtitleSegments[0]["end"]), (2.0, 3.0))
+
+        self.app.undoSubtitleEdit()
+        self.app.resizeSegmentEnd(0, 1.96, 0.1)
+        self.assertEqual(self.app.subtitleSegments[0]["end"], 2.0)
+
+        self.app.undoSubtitleEdit()
+        self.app.resizeSegmentStart(1, 1.04, 0.1)
+        self.assertEqual(self.app.subtitleSegments[1]["start"], 1.0)
+
+    def test_undo_redo_save_and_write_failures_are_guarded(self) -> None:
+        path = self._load_project()
+
+        self.app.openOutputFolder()
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertIn("出力先", self.app.status)
+
+        self.app.updateSegment(0, {"text": "after"})
+        self.app.undoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "abcdefgh")
+        self.app.redoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "after")
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(load_project(path)["segments"][0]["text"], "after")
+
+        self.app.updateSegment(0, {"text": "unsaved"})
+        with patch("src.gui.save_project", side_effect=OSError("disk full")):
+            self.assertFalse(self.app.saveProject())
+            self.assertEqual(self.app.stage, "ERROR")
+
+        with (
+            patch("src.gui.save_project", side_effect=OSError("disk full")),
+            patch("src.gui.build_project_ass") as build_ass,
+        ):
+            self.app.buildSubtitlePreview(self.app.settings)
+            build_ass.assert_not_called()
+
+        with (
+            patch.object(self.app, "saveSettings"),
+            patch("src.gui.save_project", side_effect=OSError("disk full")),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self.app.renderVideo(self.app.settings)
+            start.assert_not_called()
+
+    def test_preview_updates_project_settings_and_ass_path(self) -> None:
+        path = self._load_project()
+        ass_path = self.root / "game.edited.ass"
+        settings = {
+            **self.app.settings,
+            "subtitle_font_size": 72,
+            "subtitle_volume_scale_percent": 35,
+            "subtitle_max_gap_seconds": 0.2,
+            "subtitle_end_padding_seconds": 0.04,
+            "subtitle_min_duration_seconds": 0.5,
+        }
+
+        with patch("src.gui.build_project_ass", return_value=ass_path):
+            self.app.buildSubtitlePreview(settings)
+
+        subtitle = load_project(path)["subtitle_settings"]
+        self.assertEqual(subtitle["font_size"], 72)
+        self.assertEqual(subtitle["volume_scale_percent"], 35)
+        self.assertEqual(subtitle["max_gap_seconds"], 0.2)
+        self.assertEqual(self.app.assPath, str(ass_path.resolve()))
+        self.assertEqual(self.app.stage, "ASS")
+
+    def test_transcription_validates_dependencies_and_required_sources(self) -> None:
+        with patch.object(self.app, "refreshDependencies"):
+            self.app._dependencies = RuntimeDependencyStatus(False, True, True)
+            self.app.startTranscription(self.app.settings)
+            self.assertEqual(self.app.stage, "SETUP")
+
+            self.app._dependencies = RuntimeDependencyStatus(True, True, True)
+            self.app.startTranscription(self.app.settings)
+            self.assertEqual(self.app.stage, "CHECK")
+            self.assertIn("動画", self.app.status)
+
+    def test_transcription_and_render_start_independent_phase_commands(self) -> None:
+        _, audio, _ = self._set_ready_sources()
+        settings = {
+            **self.app.settings,
+            "reference_audio": str(audio),
+            "reference_track": "0:a:1",
+            "alignment_offset_adjustment": 0.25,
+        }
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "saveSettings"),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self.app.startTranscription(settings)
+
+        transcribe_command, transcribe_job, _ = start.call_args.args
+        self.assertEqual(transcribe_job, "transcribe")
+        self.assertIn("transcribe", transcribe_command)
+        self.assertNotIn("render", transcribe_command)
+        self.assertIn("0:a:1", transcribe_command)
+
+        self._load_project()
+        with (
+            patch.object(self.app, "saveSettings"),
+            patch.object(self.app, "saveProject", return_value=True),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self.app.renderVideo(settings)
+
+        render_command, render_job, _ = start.call_args.args
+        self.assertEqual(render_job, "render")
+        self.assertIn("render", render_command)
+        self.assertNotIn("--audio-file", render_command)
+
+    def test_process_finish_handles_transcribe_render_cancel_and_error(self) -> None:
+        video, _, output = self._set_ready_sources()
+        path, _, _ = self._make_project()
+        expected_path = output / "game.subtitle-project.json"
+        if path != expected_path:
+            save_project(expected_path, load_project(path))
+
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.stage, "EDIT")
+        self.assertEqual(self.app.progress, 1.0)
+        self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(Path(self.app.projectPath), expected_path.resolve())
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.stage, "COMPLETE")
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = True
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.stage, "CANCELLED")
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = False
+        self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("7", self.app.status)
+
+    def test_running_source_changes_are_blocked_and_reset_clears_project(self) -> None:
+        self._load_project()
+        original = self.root / "original.mkv"
+        original.write_bytes(b"video")
+        second = self.root / "second.mkv"
+        second.write_bytes(b"video")
+        self.app._source_selection = SourceSelection(video=str(original.resolve()))
+
+        self.app._running = True
+        self.app.setVideoFile(str(second))
+        self.assertEqual(self.app.sourceSelection["video"], str(original.resolve()))
+        self.assertEqual(self.app.stage, "BUSY")
+
+        self.app._running = False
+        self.app.resetSources()
+        self.assertFalse(self.app.projectLoaded)
+        self.assertEqual(self.app.sourceSelection["video"], "")
+
+    def test_qml_workflow_state_matrix(self) -> None:
+        _, window = self._load_qml()
+        transcribe = self._quick_item(window, "transcribeButton")
+        edit = self._quick_item(window, "editSubtitlesButton")
+        render = self._quick_item(window, "renderVideoButton")
+        reason = self._quick_item(window, "workflowBlockReason")
+        output = self._quick_item(window, "outputFolderButton")
+
+        self.assertTrue(transcribe.isVisible())
+        self.assertFalse(transcribe.isEnabled())
+        self.assertFalse(edit.isVisible())
+        self.assertFalse(render.isVisible())
+        self.assertTrue(reason.isVisible())
+        self.assertIn("動画", reason.property("text"))
+        self.assertFalse(output.isEnabled())
+
+        self._set_ready_sources()
+        self.assertTrue(transcribe.isEnabled())
+        self.assertFalse(reason.isVisible())
+        self.assertTrue(output.isEnabled())
+
+        self.app._source_selection = SourceSelection()
+        self.app._speakers = []
+        self.app.sourceSelectionChanged.emit()
+        self.app.speakersChanged.emit()
+
+        path, _, _ = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.app.processEvents()
+        self.assertFalse(transcribe.isVisible())
+        self.assertTrue(edit.isVisible())
+        self.assertTrue(render.isVisible())
+        self.assertTrue(edit.isEnabled())
+        self.assertTrue(render.isEnabled())
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app.activeJobChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(edit.isEnabled())
+        self.assertFalse(render.isEnabled())
+
+    def test_qml_settings_round_trip_and_expanded_layout_fit(self) -> None:
+        _, window = self._load_qml()
+        self._load_project()
+        panel = self._quick_item(window, "advancedSettingsPanel")
+        toggle = self._quick_item(window, "settingsToggleButton")
+        self.assertFalse(panel.isVisible())
+
+        self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
+        actions = self._quick_item(window, "workflowActions")
+        self.assertLessEqual(panel.y() + panel.height(), actions.y() + 1)
+        self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
+
+        self._quick_item(window, "fontSizeSpin").setProperty("value", 72)
+        self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
+        self._click(window, self._quick_item(window, "saveSettingsButton"))
+        self.assertEqual(self.app.settings["subtitle_font_size"], 72)
+        self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 30)
+
+        self._click(window, toggle)
+        self.assertFalse(panel.isVisible())
+
+    def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        popup = window.findChild(QObject, "sourcePopup")
+        self.assertIsNotNone(popup)
+        self.assertTrue(popup.property("opened"))
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+        self.assertFalse(popup.property("opened"))
+
+        main = self._quick_item(window, "mainWorkspace")
+        editor = self._quick_item(window, "editorPage")
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.assertFalse(main.isVisible())
+        self.assertTrue(editor.isVisible())
+
+        toolbar_names = [
+            "undoCaptionButton",
+            "redoCaptionButton",
+            "addCaptionButton",
+            "splitCaptionButton",
+            "deleteCaptionButton",
+            "saveProjectButton",
+            "buildAssButton",
+            "editorBackButton",
+        ]
+        for name in toolbar_names:
+            item = self._quick_item(window, name)
+            top_left = item.mapToScene(QPointF(0, 0))
+            self.assertGreater(item.width(), 0, name)
+            self.assertGreaterEqual(top_left.x(), 0, name)
+            self.assertGreaterEqual(top_left.y(), 0, name)
+            self.assertLessEqual(top_left.x() + item.width(), window.width() + 1, name)
+            self.assertLessEqual(top_left.y() + item.height(), window.height() + 1, name)
+
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        self.assertTrue(main.isVisible())
+        self.assertFalse(editor.isVisible())
+
+
+if __name__ == "__main__":
+    unittest.main()

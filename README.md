@@ -131,6 +131,8 @@ video_import/
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ~~~
 
+Qt GUIテストはオフスクリーンで通常のテストに含まれます。字幕編集、工程別ボタン状態、最小画面での操作、QML lintまで上の1コマンドで確認でき、追加の環境変数は不要です。
+
 `video_import/`、`video_export/`、`out/`、`assets/speaker_colors.json` はGit管理対象外です。APIキー、Hugging Faceトークン、生成動画をコミットしないでください。
 
 ## License

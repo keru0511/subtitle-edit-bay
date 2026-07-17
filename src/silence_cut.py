@@ -5,6 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 
@@ -28,21 +29,6 @@ def build_silencedetect_command(input_path: str, noise: str = "-35dB", duration:
         "null",
         "-",
     ]
-
-
-def probe_media_duration(input_path: str) -> float:
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        input_path,
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-    return float((result.stdout or "0").strip())
 
 
 def parse_silencedetect_output(log_text: str, media_duration: float | None = None) -> list[tuple[float, float]]:

@@ -10,17 +10,10 @@ from .subtitle_packer import (
     pack_segment_pages,
 )
 
-TARGET_MIN_DURATION = 0.8
-TARGET_MAX_DURATION = 2.8
-ABSOLUTE_MAX_DURATION = 3.6
 BOTTOM_MAX_WIDTH = 28
 OZ_MAX_WIDTH = 28
 OTHER_MAX_WIDTH = 24
-MAX_UNIT_WIDTH = 20
 MAX_BOTTOM_ROWS = 3
-PUNCTUATION_BREAKS = "。！？!?\n"
-SOFT_BREAKS = "、,"
-CONNECTORS = ["でも", "だけど", "けど", "だから", "なので", "だが", "しかし", "そして", "それで", "ただ", "ただし", "あと", "じゃあ"]
 STRICT_FILTER_PATTERNS = [
     "ご視聴ありがとうございました",
     "by h",
@@ -62,10 +55,6 @@ def text_width(text: str) -> int:
     return sum(display_width(char) for char in text)
 
 
-def normalize_alignment_text(text: str) -> str:
-    return "".join(str(text).split())
-
-
 def max_width_for_speaker(speaker: str) -> int:
     return OZ_MAX_WIDTH if speaker == "Oz" else OTHER_MAX_WIDTH
 
@@ -77,152 +66,6 @@ def is_short_reaction(text: str) -> bool:
     if text_width(normalized) <= 8:
         return True
     return any(marker in normalized for marker in SHORT_REACTION_MARKERS)
-
-
-def split_by_width(text: str, max_width: int = MAX_UNIT_WIDTH) -> list[str]:
-    parts: list[str] = []
-    current: list[str] = []
-    current_width = 0
-    for char in text:
-        char_width = display_width(char)
-        if current and current_width + char_width > max_width:
-            parts.append("".join(current).strip())
-            current = [char]
-            current_width = char_width
-        else:
-            current.append(char)
-            current_width += char_width
-    if current:
-        parts.append("".join(current).strip())
-    return [part for part in parts if part]
-
-
-def split_by_connectors(text: str) -> list[str]:
-    pieces = [text]
-    for connector in CONNECTORS:
-        next_pieces: list[str] = []
-        for piece in pieces:
-            replaced = piece.replace(connector, f"|{connector}")
-            next_pieces.extend(part for part in replaced.split("|") if part)
-        pieces = next_pieces
-    return pieces
-
-
-def split_into_atomic_units(text: str) -> list[str]:
-    normalized = " ".join(text.split())
-    if not normalized:
-        return []
-
-    chunks: list[str] = []
-    current: list[str] = []
-    for char in normalized:
-        current.append(char)
-        if char in PUNCTUATION_BREAKS or char in SOFT_BREAKS:
-            chunks.append("".join(current).strip())
-            current = []
-    if current:
-        chunks.append("".join(current).strip())
-
-    connector_split: list[str] = []
-    for chunk in chunks:
-        connector_split.extend(split_by_connectors(chunk))
-
-    final_units: list[str] = []
-    for chunk in connector_split:
-        if not any(mark in chunk for mark in PUNCTUATION_BREAKS + SOFT_BREAKS) and text_width(chunk) > MAX_UNIT_WIDTH:
-            final_units.extend(split_by_width(chunk, MAX_UNIT_WIDTH))
-        else:
-            final_units.append(chunk)
-    return [unit for unit in final_units if unit]
-
-
-def duration_for_width(width: int, total_width: int, total_duration: float) -> float:
-    if total_width <= 0:
-        return total_duration
-    return total_duration * (width / total_width)
-
-
-def build_character_timeline(words: list[dict] | None) -> list[dict]:
-    timeline: list[dict] = []
-    for word in words or []:
-        normalized = normalize_alignment_text(word.get("word", ""))
-        start = word.get("start")
-        end = word.get("end")
-        if not normalized or start is None or end is None:
-            continue
-
-        start_time = float(start)
-        end_time = float(end)
-        if end_time <= start_time:
-            continue
-
-        duration = end_time - start_time
-        length = len(normalized)
-        for index, _ in enumerate(normalized):
-            char_start = start_time + duration * (index / length)
-            char_end = start_time + duration * ((index + 1) / length)
-            timeline.append({"start": char_start, "end": char_end})
-    return timeline
-
-
-def build_timed_units_from_width(segment: dict, units: list[str], start: float, end: float) -> list[dict]:
-    total_duration = max(0.01, end - start)
-    widths = [max(1, text_width(unit)) for unit in units]
-    total_width = sum(widths)
-
-    timed_units: list[dict] = []
-    cursor = start
-    for index, unit in enumerate(units):
-        raw_duration = duration_for_width(widths[index], total_width, total_duration)
-        next_cursor = end if index == len(units) - 1 else min(end, cursor + raw_duration)
-        timed_units.append({**segment, "start": cursor, "end": next_cursor, "text": unit})
-        cursor = next_cursor
-    return timed_units
-
-
-def build_timed_units_from_words(segment: dict, units: list[str], start: float, end: float) -> list[dict]:
-    timeline = build_character_timeline(segment.get("words"))
-    if not timeline:
-        return []
-
-    unit_lengths = [max(1, len(normalize_alignment_text(unit))) for unit in units]
-    total_unit_length = sum(unit_lengths)
-    total_chars = len(timeline)
-    if total_unit_length <= 0 or total_chars <= 0:
-        return []
-
-    timed_units: list[dict] = []
-    cursor = 0
-    consumed_units = 0
-    for index, unit in enumerate(units):
-        consumed_units += unit_lengths[index]
-        if index == len(units) - 1:
-            next_cursor = total_chars
-        else:
-            next_cursor = round(total_chars * (consumed_units / total_unit_length))
-            min_next = cursor + 1
-            max_next = total_chars - (len(units) - index - 1)
-            next_cursor = max(min_next, min(next_cursor, max_next))
-
-        char_slice = timeline[cursor:next_cursor]
-        if not char_slice:
-            return []
-
-        timed_units.append(
-            {
-                **segment,
-                "start": max(start, float(char_slice[0]["start"])),
-                "end": min(end, float(char_slice[-1]["end"])),
-                "text": unit,
-            }
-        )
-        cursor = next_cursor
-    return timed_units
-
-
-def is_sentence_like(text: str) -> bool:
-    normalized = text.strip()
-    return bool(normalized) and normalized[-1] in PUNCTUATION_BREAKS
 
 
 def split_segment(

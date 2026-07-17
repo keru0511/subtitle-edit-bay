@@ -1,16 +1,30 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 import json
 import math
 import os
 import subprocess
 import sys
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from PySide6.QtCore import Property, QProcess, QProcessEnvironment, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import (
+    Property,
+    QAbstractListModel,
+    QModelIndex,
+    QObject,
+    QProcess,
+    QProcessEnvironment,
+    QTimer,
+    Qt,
+    QUrl,
+    Signal,
+    Slot,
+)
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
@@ -19,34 +33,197 @@ from .gui_state import build_gui_render_command, build_gui_transcribe_command
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     SubtitleProjectError,
+    assign_project_layout_rows,
     derive_project_path,
     load_project,
     normalize_segment,
     save_project,
-    validate_project,
 )
 from .subtitle_workflow import build_project_ass
 
 
+class SubtitleListModel(QAbstractListModel):
+    SegmentIdRole = Qt.ItemDataRole.UserRole + 1
+    StartRole = SegmentIdRole + 1
+    EndRole = SegmentIdRole + 2
+    TextRole = SegmentIdRole + 3
+    SpeakerRole = SegmentIdRole + 4
+    LayoutRowRole = SegmentIdRole + 5
+    FontScaleRole = SegmentIdRole + 6
+
+    _ROLE_NAMES = {
+        SegmentIdRole: b"segmentId",
+        StartRole: b"start",
+        EndRole: b"end",
+        TextRole: b"text",
+        SpeakerRole: b"speaker",
+        LayoutRowRole: b"layoutRow",
+        FontScaleRole: b"subtitleFontScale",
+    }
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._segments: list[dict[str, Any]] = []
+
+    def roleNames(self) -> dict[int, bytes]:
+        return self._ROLE_NAMES
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._segments)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid() or not 0 <= index.row() < len(self._segments):
+            return None
+        segment = self._segments[index.row()]
+        if role == self.SegmentIdRole:
+            return str(segment["id"])
+        if role == self.StartRole:
+            return float(segment["start"])
+        if role == self.EndRole:
+            return float(segment["end"])
+        if role == self.TextRole:
+            return str(segment.get("text", ""))
+        if role == self.SpeakerRole:
+            return str(segment.get("speaker", ""))
+        if role == self.LayoutRowRole:
+            return int(segment.get("layout_row", 0))
+        if role == self.FontScaleRole:
+            return float(segment.get("subtitle_font_scale", 1.0))
+        return None
+
+    def set_segments(self, segments: list[dict[str, Any]]) -> None:
+        incoming = list(segments)
+        old_ids = [str(item["id"]) for item in self._segments]
+        new_ids = [str(item["id"]) for item in incoming]
+
+        if old_ids == new_ids:
+            changed = [
+                index
+                for index, (old, new) in enumerate(zip(self._segments, incoming))
+                if old != new
+            ]
+            self._segments = incoming
+            if changed:
+                range_start = range_end = changed[0]
+                for index in changed[1:]:
+                    if index == range_end + 1:
+                        range_end = index
+                        continue
+                    self.dataChanged.emit(
+                        self.index(range_start, 0),
+                        self.index(range_end, 0),
+                        list(self._ROLE_NAMES),
+                    )
+                    range_start = range_end = index
+                self.dataChanged.emit(
+                    self.index(range_start, 0),
+                    self.index(range_end, 0),
+                    list(self._ROLE_NAMES),
+                )
+            return
+
+        if len(new_ids) == len(old_ids) + 1:
+            insert_at = next(
+                (index for index, item in enumerate(new_ids) if index >= len(old_ids) or old_ids[index] != item),
+                len(old_ids),
+            )
+            if old_ids == new_ids[:insert_at] + new_ids[insert_at + 1:]:
+                self.beginInsertRows(QModelIndex(), insert_at, insert_at)
+                self._segments = incoming
+                self.endInsertRows()
+                self.dataChanged.emit(
+                    self.index(0, 0),
+                    self.index(len(incoming) - 1, 0),
+                    list(self._ROLE_NAMES),
+                )
+                return
+
+        if len(old_ids) == len(new_ids) + 1:
+            remove_at = next(
+                (index for index, item in enumerate(old_ids) if index >= len(new_ids) or new_ids[index] != item),
+                len(new_ids),
+            )
+            if new_ids == old_ids[:remove_at] + old_ids[remove_at + 1:]:
+                self.beginRemoveRows(QModelIndex(), remove_at, remove_at)
+                self._segments = incoming
+                self.endRemoveRows()
+                if incoming:
+                    self.dataChanged.emit(
+                        self.index(0, 0),
+                        self.index(len(incoming) - 1, 0),
+                        list(self._ROLE_NAMES),
+                    )
+                return
+
+        if len(old_ids) == len(new_ids) and set(old_ids) == set(new_ids):
+            first_mismatch = next(
+                index for index, item in enumerate(new_ids) if old_ids[index] != item
+            )
+            moves = [
+                (old_ids.index(new_ids[first_mismatch]), first_mismatch),
+                (first_mismatch, new_ids.index(old_ids[first_mismatch])),
+            ]
+            for source, destination in moves:
+                candidate = list(old_ids)
+                moved = candidate.pop(source)
+                candidate.insert(destination, moved)
+                if candidate != new_ids:
+                    continue
+                destination_child = destination + 1 if source < destination else destination
+                self.beginMoveRows(
+                    QModelIndex(),
+                    source,
+                    source,
+                    QModelIndex(),
+                    destination_child,
+                )
+                self._segments = incoming
+                self.endMoveRows()
+                if incoming:
+                    self.dataChanged.emit(
+                        self.index(0, 0),
+                        self.index(len(incoming) - 1, 0),
+                        list(self._ROLE_NAMES),
+                    )
+                return
+
+        self.beginResetModel()
+        self._segments = incoming
+        self.endResetModel()
+
+
 class EditBayBackend(LegacyEditBayBackend):
     projectChanged = Signal()
+    projectDataChanged = Signal()
     segmentsChanged = Signal()
     historyChanged = Signal()
     selectionChanged = Signal()
     activeJobChanged = Signal()
     assPathChanged = Signal()
+    autosaveCompleted = Signal(int, str, str)
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
         self._project_path = ""
         self._project_dirty = False
-        self._undo_stack: list[list[dict[str, Any]]] = []
-        self._redo_stack: list[list[dict[str, Any]]] = []
+        self._undo_stack: list[dict[str, Any]] = []
+        self._redo_stack: list[dict[str, Any]] = []
         self._selected_segment_index = -1
         self._active_job = ""
         self._ass_path = ""
         self._loading_project_sources = False
         super().__init__(argv, workspace_root=workspace_root)
+        self._subtitle_model = SubtitleListModel(self)
+        self._segment_starts: list[float] = []
+        self._segment_prefix_max_end: list[float] = []
+        self._project_revision = 0
+        self._autosave_future: Future[Path] | None = None
+        self._autosave_revision = -1
+        self._autosave_path = ""
+        self._autosave_pending = False
+        self._ignored_autosaves: set[tuple[int, str]] = set()
+        self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
+        self.autosaveCompleted.connect(self._finish_autosave)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setSingleShot(True)
         self.autosave_timer.setInterval(700)
@@ -74,19 +251,95 @@ class EditBayBackend(LegacyEditBayBackend):
             return []
         return deepcopy(self._project.get("segments", []))
 
-    @Property("QVariantList", notify=projectChanged)
+    @Property(QObject, constant=True)
+    def subtitleModel(self) -> QObject:
+        return self._subtitle_model
+
+    @Property(int, notify=segmentsChanged)
+    def segmentCount(self) -> int:
+        return len(self._project.get("segments", [])) if self._project else 0
+
+    def _sync_subtitle_model(self) -> None:
+        segments = self._project.get("segments", []) if self._project else []
+        self._subtitle_model.set_segments(segments)
+        self._segment_starts = [float(item["start"]) for item in segments]
+        prefix: list[float] = []
+        max_end = 0.0
+        for segment in segments:
+            max_end = max(max_end, float(segment["end"]))
+            prefix.append(max_end)
+        self._segment_prefix_max_end = prefix
+
+    @staticmethod
+    def _segment_view(segment: dict[str, Any], source_index: int | None = None) -> dict[str, Any]:
+        view = {
+            "id": str(segment["id"]),
+            "start": float(segment["start"]),
+            "end": float(segment["end"]),
+            "text": str(segment.get("text", "")),
+            "speaker": str(segment.get("speaker", "")),
+            "layout_row": int(segment.get("layout_row", 0)),
+            "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),
+        }
+        if source_index is not None:
+            view["sourceIndex"] = source_index
+        return view
+
+    @Slot(int, result="QVariantMap")
+    def segmentAt(self, index: int) -> dict[str, Any]:
+        segments = self._project.get("segments", []) if self._project else []
+        if not 0 <= index < len(segments):
+            return {}
+        return self._segment_view(segments[index], index)
+
+    @Slot(float, result="QVariantList")
+    def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
+        segments = self._project.get("segments", []) if self._project else []
+        if not segments:
+            return []
+        position = max(0.0, float(seconds))
+        index = bisect_right(self._segment_starts, position) - 1
+        active: list[dict[str, Any]] = []
+        while index >= 0 and self._segment_prefix_max_end[index] >= position:
+            segment = segments[index]
+            if float(segment["end"]) >= position:
+                active.append(self._segment_view(segment, index))
+            index -= 1
+        active.reverse()
+        return active
+
+    @Slot(float, float, result="QVariantList")
+    def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
+        segments = self._project.get("segments", []) if self._project else []
+        if not segments:
+            return []
+        viewport_start = max(0.0, float(start))
+        viewport_end = max(viewport_start, float(end))
+        first = bisect_left(self._segment_starts, viewport_start)
+        while first > 0 and self._segment_prefix_max_end[first - 1] >= viewport_start:
+            first -= 1
+        visible: list[dict[str, Any]] = []
+        for index in range(first, len(segments)):
+            segment = segments[index]
+            if float(segment["start"]) > viewport_end:
+                break
+            if float(segment["end"]) >= viewport_start:
+                visible.append(self._segment_view(segment, index))
+        return visible
+
+    @Property("QVariantList", notify=projectDataChanged)
     def projectSpeakers(self) -> list[dict[str, Any]]:
         if self._project is None:
             return []
         return deepcopy(self._project.get("speakers", []))
 
-    @Property("QVariantList", notify=projectChanged)
+    @Property("QVariantList", notify=projectDataChanged)
     def subtitleWaveforms(self) -> list[dict[str, Any]]:
         if self._project is None:
             return []
         return deepcopy(self._project.get("waveforms", []))
 
-    @Property(float, notify=projectChanged)
+    @Property(float, notify=segmentsChanged)
     def projectDuration(self) -> float:
         if self._project is None:
             return 0.0
@@ -150,7 +403,10 @@ class EditBayBackend(LegacyEditBayBackend):
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._selected_segment_index = -1
+        self._project_revision += 1
+        self._sync_subtitle_model()
         self.projectChanged.emit()
+        self.projectDataChanged.emit()
         self.segmentsChanged.emit()
         self.historyChanged.emit()
         self.selectionChanged.emit()
@@ -213,6 +469,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project = project
         self._project_path = str(path.resolve())
         self._project_dirty = False
+        self._project_revision += 1
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._selected_segment_index = 0 if project.get("segments") else -1
@@ -231,17 +488,30 @@ class EditBayBackend(LegacyEditBayBackend):
                     super().setAudioFiles(existing_audio, False)
             finally:
                 self._loading_project_sources = False
+        self._sync_subtitle_model()
         self.projectChanged.emit()
+        self.projectDataChanged.emit()
         self.segmentsChanged.emit()
         self.historyChanged.emit()
         self.selectionChanged.emit()
         self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
         return True
 
-    def _record_history(self) -> None:
-        if self._project is None:
+    def _record_history(
+        self,
+        before: list[dict[str, Any]],
+        after: list[dict[str, Any]],
+        reflow_layout: bool = True,
+    ) -> None:
+        if self._project is None or (not before and not after):
             return
-        self._undo_stack.append(deepcopy(self._project["segments"]))
+        self._undo_stack.append(
+            {
+                "before": deepcopy(before),
+                "after": deepcopy(after),
+                "reflow_layout": reflow_layout,
+            }
+        )
         if len(self._undo_stack) > 100:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
@@ -250,15 +520,29 @@ class EditBayBackend(LegacyEditBayBackend):
     def _mark_project_dirty(self) -> None:
         if self._project is None:
             return
+        self._project_revision += 1
         self._project_dirty = True
         self.projectChanged.emit()
         self.autosave_timer.start()
 
-    def _replace_segments(self, segments: list[dict[str, Any]], selected_id: str | None = None) -> None:
+    def _replace_segments(
+        self,
+        segments: list[dict[str, Any]],
+        selected_id: str | None = None,
+        *,
+        reflow_layout: bool = True,
+    ) -> None:
         if self._project is None:
             return
-        self._project["segments"] = segments
-        validate_project(self._project)
+        if self._autosave_future is not None and not self._autosave_future.done():
+            segments = [dict(item) for item in segments]
+        ordered = sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
+        ids = [str(item["id"]) for item in ordered]
+        if len(ids) != len(set(ids)):
+            raise SubtitleProjectError("segment ids must be unique")
+        self._project["segments"] = (
+            assign_project_layout_rows(ordered) if reflow_layout else ordered
+        )
         if selected_id:
             self._selected_segment_index = next(
                 (index for index, item in enumerate(self._project["segments"]) if item["id"] == selected_id),
@@ -266,9 +550,40 @@ class EditBayBackend(LegacyEditBayBackend):
             )
         elif self._selected_segment_index >= len(self._project["segments"]):
             self._selected_segment_index = len(self._project["segments"]) - 1
+        self._sync_subtitle_model()
         self.segmentsChanged.emit()
         self.selectionChanged.emit()
         self._mark_project_dirty()
+
+    def _commit_segment_change(
+        self,
+        before: list[dict[str, Any]],
+        after: list[dict[str, Any]],
+        selected_id: str | None = None,
+        *,
+        reflow_layout: bool = True,
+    ) -> None:
+        if self._project is None:
+            return
+        affected_ids = {str(item["id"]) for item in [*before, *after]}
+        segments = [item for item in self._project["segments"] if str(item["id"]) not in affected_ids]
+        segments.extend(after)
+        self._record_history(before, after, reflow_layout)
+        self._replace_segments(segments, selected_id, reflow_layout=reflow_layout)
+
+    def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
+        if self._project is None:
+            return
+        affected_ids = {
+            str(item["id"])
+            for item in [*entry.get("before", []), *entry.get("after", [])]
+        }
+        segments = [item for item in self._project["segments"] if str(item["id"]) not in affected_ids]
+        segments.extend(deepcopy(entry.get(state, [])))
+        self._replace_segments(
+            segments,
+            reflow_layout=bool(entry.get("reflow_layout", True)),
+        )
 
     @Slot(int)
     def selectSegment(self, index: int) -> None:
@@ -295,10 +610,12 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         current = self._project["segments"][index]
         updated = deepcopy(current)
+        reflow_layout = False
         if "text" in changes:
             updated["text"] = str(changes["text"]).strip()
             updated["manual_text"] = True
             updated.pop("words", None)
+            reflow_layout = True
         if "start" in changes or "end" in changes:
             start_value = self._edit_number(changes.get("start", updated["start"]), "開始時刻")
             end_value = self._edit_number(changes.get("end", updated["end"]), "終了時刻")
@@ -312,6 +629,7 @@ class EditBayBackend(LegacyEditBayBackend):
             updated["end"] = round(end, 3)
             updated["manual_timing"] = True
             updated.pop("words", None)
+            reflow_layout = True
         if "speaker" in changes:
             style = str(changes["speaker"])
             updated["speaker"] = style
@@ -330,10 +648,12 @@ class EditBayBackend(LegacyEditBayBackend):
         if updated == current:
             return
         selected_id = current["id"]
-        self._record_history()
-        segments = deepcopy(self._project["segments"])
-        segments[index] = normalize_segment(updated, index)
-        self._replace_segments(segments, selected_id)
+        self._commit_segment_change(
+            [current],
+            [normalize_segment(updated, index)],
+            selected_id,
+            reflow_layout=reflow_layout,
+        )
 
     def _snap_time(self, value: float, moving_index: int, grid_seconds: float) -> float:
         snapped = max(0.0, value)
@@ -400,17 +720,13 @@ class EditBayBackend(LegacyEditBayBackend):
             },
             len(self._project["segments"]),
         )
-        self._record_history()
-        self._replace_segments([*deepcopy(self._project["segments"]), segment], segment["id"])
+        self._commit_segment_change([], [segment], segment["id"])
 
     @Slot()
     def deleteSelectedSegment(self) -> None:
         if self._project is None or not 0 <= self._selected_segment_index < len(self._project["segments"]):
             return
-        self._record_history()
-        segments = deepcopy(self._project["segments"])
-        segments.pop(self._selected_segment_index)
-        self._replace_segments(segments)
+        self._commit_segment_change([self._project["segments"][self._selected_segment_index]], [])
 
     @Slot(float)
     def splitSelectedSegment(self, at_seconds: float) -> None:
@@ -428,27 +744,28 @@ class EditBayBackend(LegacyEditBayBackend):
         second = {**segment, "id": f"subtitle-{uuid4().hex[:12]}", "start": split_at, "text": text[midpoint:].strip(), "manual_text": True, "manual_timing": True}
         first.pop("words", None)
         second.pop("words", None)
-        self._record_history()
-        segments = deepcopy(self._project["segments"])
-        segments[index:index + 1] = [first, second]
-        self._replace_segments(segments, second["id"])
+        self._commit_segment_change(
+            [segment],
+            [normalize_segment(first, index), normalize_segment(second, index + 1)],
+            second["id"],
+        )
 
     @Slot()
     def undoSubtitleEdit(self) -> None:
         if self._project is None or not self._undo_stack:
             return
-        self._redo_stack.append(deepcopy(self._project["segments"]))
-        segments = self._undo_stack.pop()
-        self._replace_segments(segments)
+        entry = self._undo_stack.pop()
+        self._redo_stack.append(entry)
+        self._apply_history_entry(entry, "before")
         self.historyChanged.emit()
 
     @Slot()
     def redoSubtitleEdit(self) -> None:
         if self._project is None or not self._redo_stack:
             return
-        self._undo_stack.append(deepcopy(self._project["segments"]))
-        segments = self._redo_stack.pop()
-        self._replace_segments(segments)
+        entry = self._redo_stack.pop()
+        self._undo_stack.append(entry)
+        self._apply_history_entry(entry, "after")
         self.historyChanged.emit()
 
     @Slot(result=bool)
@@ -456,33 +773,113 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._project is None or not self._project_path:
             self._set_status("保存する字幕編集プロジェクトがありません", "CHECK")
             return False
+        self.autosave_timer.stop()
+        self._wait_for_autosave()
         try:
-            save_project(self._project_path, self._project)
-        except (OSError, SubtitleProjectError) as error:
+            save_project(self._project_path, self._project, project_is_validated=True)
+        except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
             return False
+        self._sync_subtitle_model()
         self._project_dirty = False
         self.projectChanged.emit()
         self._set_status("字幕編集を保存しました", "SAVED")
         return True
 
     def _autosave_project(self) -> None:
-        if self._project_dirty:
+        if not self._project_dirty or self._project is None or not self._project_path:
+            return
+        if self._autosave_future is not None:
+            self._autosave_pending = True
+            return
+
+        snapshot = {
+            key: (list(value) if key == "segments" else deepcopy(value))
+            for key, value in self._project.items()
+        }
+        revision = self._project_revision
+        path = self._project_path
+        self._autosave_revision = revision
+        self._autosave_path = path
+        self._autosave_pending = False
+        future = self._autosave_executor.submit(
+            save_project,
+            path,
+            snapshot,
+            project_is_validated=True,
+            update_project=False,
+        )
+        self._autosave_future = future
+
+        def report_completion(done: Future[Path]) -> None:
+            try:
+                done.result()
+                error = ""
+            except Exception as failure:
+                error = str(failure)
+            self.autosaveCompleted.emit(revision, path, error)
+
+        future.add_done_callback(report_completion)
+
+    @Slot(int, str, str)
+    def _finish_autosave(self, revision: int, path: str, error: str) -> None:
+        token = (revision, path)
+        if token in self._ignored_autosaves:
+            self._ignored_autosaves.discard(token)
+            return
+        self._autosave_future = None
+        pending = self._autosave_pending
+        self._autosave_pending = False
+        if error:
+            self._set_status(f"繝励Ο繧ｸ繧ｧ繧ｯ繝医ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
+            return
+        if (
+            self._project is not None
+            and path == self._project_path
+            and revision == self._project_revision
+        ):
+            self._project_dirty = False
+            self.projectChanged.emit()
+            return
+        if pending or self._project_dirty:
+            QTimer.singleShot(0, self._autosave_project)
+
+    def _wait_for_autosave(self) -> None:
+        future = self._autosave_future
+        if future is None:
+            return
+        token = (self._autosave_revision, self._autosave_path)
+        self._ignored_autosaves.add(token)
+        try:
+            future.result()
+        except Exception:
+            pass
+        if self._autosave_future is future:
+            self._autosave_future = None
+        self._autosave_pending = False
+
+    def _shutdown_executor(self) -> None:
+        if hasattr(self, "autosave_timer"):
+            self.autosave_timer.stop()
+        if getattr(self, "_project_dirty", False) and getattr(self, "_project_path", ""):
             self.saveProject()
+        if hasattr(self, "_autosave_executor"):
+            self._wait_for_autosave()
+            self._autosave_executor.shutdown(wait=True, cancel_futures=False)
+        super()._shutdown_executor()
 
     def _update_project_settings(self, settings: dict[str, Any]) -> None:
         if self._project is None:
             return
-        subtitle = self._project.setdefault("subtitle_settings", {})
-        subtitle.update(
-            {
-                "font_size": int(settings.get("subtitle_font_size", subtitle.get("font_size", 50))),
-                "volume_scale_percent": float(settings.get("subtitle_volume_scale_percent", subtitle.get("volume_scale_percent", 20.0))),
-                "max_gap_seconds": float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
-                "end_padding_seconds": float(settings.get("subtitle_end_padding_seconds", subtitle.get("end_padding_seconds", 0.08))),
-                "min_duration_seconds": float(settings.get("subtitle_min_duration_seconds", subtitle.get("min_duration_seconds", 0.35))),
-            }
-        )
+        subtitle = self._project.get("subtitle_settings", {})
+        self._project["subtitle_settings"] = {
+            **subtitle,
+            "font_size": int(settings.get("subtitle_font_size", subtitle.get("font_size", 50))),
+            "volume_scale_percent": float(settings.get("subtitle_volume_scale_percent", subtitle.get("volume_scale_percent", 20.0))),
+            "max_gap_seconds": float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
+            "end_padding_seconds": float(settings.get("subtitle_end_padding_seconds", subtitle.get("end_padding_seconds", 0.08))),
+            "min_duration_seconds": float(settings.get("subtitle_min_duration_seconds", subtitle.get("min_duration_seconds", 0.35))),
+        }
         self._mark_project_dirty()
 
     @Slot("QVariantMap")
@@ -495,7 +892,7 @@ class EditBayBackend(LegacyEditBayBackend):
         try:
             output = build_project_ass(self._project_path)
         except (OSError, ValueError) as error:
-            self._set_status(f"ASSを生成できません: {error}", "ERROR")
+            self._set_status(f"自動保存に失敗しました: {error}", "ERROR")
             return
         self._ass_path = str(output.resolve())
         self.assPathChanged.emit()

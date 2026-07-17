@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import unicodedata
@@ -92,21 +93,55 @@ def _display_width(text: str) -> int:
 
 def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Reflow edited overlaps without dropping captions when more than three rows are needed."""
-    row_end_times: list[float] = []
+    row_is_free: list[bool] = []
+    release_queue: list[tuple[float, int]] = []
+    free_rows: list[int] = []
+    free_pairs: list[int] = []
+
+    def release_finished(start: float) -> None:
+        while release_queue and release_queue[0][0] <= start:
+            _, row = heapq.heappop(release_queue)
+            row_is_free[row] = True
+            heapq.heappush(free_rows, row)
+            if row > 0 and row_is_free[row - 1]:
+                heapq.heappush(free_pairs, row - 1)
+            if row + 1 < len(row_is_free) and row_is_free[row + 1]:
+                heapq.heappush(free_pairs, row)
+
+    def take_free_row() -> int:
+        while free_rows and not row_is_free[free_rows[0]]:
+            heapq.heappop(free_rows)
+        if free_rows:
+            return heapq.heappop(free_rows)
+        row_is_free.append(False)
+        return len(row_is_free) - 1
+
+    def take_free_pair() -> int:
+        while free_pairs:
+            row = free_pairs[0]
+            if row + 1 < len(row_is_free) and row_is_free[row] and row_is_free[row + 1]:
+                break
+            heapq.heappop(free_pairs)
+        existing_pair = free_pairs[0] if free_pairs else None
+        trailing_pair = len(row_is_free) - 1 if row_is_free and row_is_free[-1] else len(row_is_free)
+        if existing_pair is not None and existing_pair <= trailing_pair:
+            return heapq.heappop(free_pairs)
+        if trailing_pair == len(row_is_free):
+            row_is_free.extend((False, False))
+        else:
+            row_is_free.append(False)
+        return trailing_pair
+
     for segment in sorted(segments, key=lambda item: (item["start"], item["end"], item["id"])):
         span = 2 if _display_width(str(segment.get("text", ""))) > int(segment.get("max_width", 24)) else 1
         start = float(segment["start"])
-        base_row = 0
-        while True:
-            while len(row_end_times) < base_row + span:
-                row_end_times.append(0.0)
-            if all(row_end_times[row] <= start for row in range(base_row, base_row + span)):
-                break
-            base_row += 1
+        release_finished(start)
+        base_row = take_free_pair() if span == 2 else take_free_row()
         segment["layout_row"] = base_row
         segment["layout_row_span"] = span
         for row in range(base_row, base_row + span):
-            row_end_times[row] = float(segment["end"])
+            row_is_free[row] = False
+            heapq.heappush(release_queue, (float(segment["end"]), row))
     return segments
 
 
@@ -200,22 +235,35 @@ def load_project(path: str | Path) -> dict[str, Any]:
     return validate_project(payload)
 
 
-def save_project(path: str | Path, project: dict[str, Any]) -> Path:
+def save_project(
+    path: str | Path,
+    project: dict[str, Any],
+    *,
+    project_is_validated: bool = False,
+    update_project: bool = True,
+) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    payload = validate_project(deepcopy(project))
+    payload = deepcopy(project) if update_project else project
+    if not project_is_validated:
+        payload = validate_project(payload)
     payload["updated_at"] = utc_timestamp()
     temporary = output.with_name(f".{output.name}.tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(output)
-    project.clear()
-    project.update(payload)
+    if update_project:
+        project.clear()
+        project.update(payload)
     return output
 
 
-def project_to_transcript(project: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    validated = validate_project(deepcopy(project))
-    return {"segments": [deepcopy(segment) for segment in validated["segments"] if segment["text"]]}
+def project_to_transcript(
+    project: dict[str, Any],
+    *,
+    project_is_validated: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    source = project if project_is_validated else validate_project(deepcopy(project))
+    return {"segments": [deepcopy(segment) for segment in source["segments"] if segment["text"]]}
 
 
 def waveform_peaks_from_samples(samples: np.ndarray, bins: int = DEFAULT_WAVEFORM_BINS) -> list[float]:

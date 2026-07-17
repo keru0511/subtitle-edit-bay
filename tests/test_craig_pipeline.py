@@ -8,6 +8,7 @@ from src.craig_pipeline import (
     build_speaker_style_map,
     calculate_segment_volume_levels,
     estimate_offset,
+    find_best_reference_track,
     list_craig_audio_files,
     merge_craig_transcripts,
     normalize_db_threshold,
@@ -18,6 +19,7 @@ from src.craig_pipeline import (
     resolve_reference_audio_path,
     shift_segment,
     transcribe_audio_file,
+    transcribe_craig_audio_files,
 )
 
 
@@ -202,6 +204,57 @@ class CraigPipelineTests(unittest.TestCase):
         offset_seconds, score = estimate_offset(reference, candidate, sample_rate=10)
         self.assertAlmostEqual(offset_seconds, 0.2, places=3)
         self.assertGreater(score, 0.0)
+
+    def test_reference_fft_is_reused_across_candidate_tracks(self) -> None:
+        reference = np.array([1.0, 0.2, 0.0], dtype=np.float32)
+        candidate = np.array([0.0, 1.0, 0.2, 0.0], dtype=np.float32)
+
+        def fake_decode(_path, sample_rate=120, stream_selector=None):
+            return candidate if stream_selector else reference
+
+        with (
+            mock.patch("src.craig_pipeline.probe_audio_streams", return_value=[{}, {}]),
+            mock.patch("src.craig_pipeline.decode_audio_samples", side_effect=fake_decode),
+            mock.patch("src.craig_pipeline.np.fft.rfft", wraps=np.fft.rfft) as rfft,
+        ):
+            matched, _offset, _score = find_best_reference_track("video.mkv", "reference.flac")
+
+        self.assertEqual(matched, "0:a:0")
+        self.assertEqual(rfft.call_count, 3)
+
+    def test_shared_transcription_batch_preserves_audio_order(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            audio_files = [root / "1-a.flac", root / "2-b.flac"]
+            for audio in audio_files:
+                audio.write_bytes(b"audio")
+
+            def fake_transcribe(audio_path, output_dir, **_kwargs):
+                path = Path(output_dir) / f"{Path(audio_path).stem}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}", encoding="utf-8")
+                return path
+
+            def fake_build(audio_path, _transcript, _styles, _offset, *_args):
+                return [{"id": Path(audio_path).stem, "text": Path(audio_path).name}]
+
+            with (
+                mock.patch("src.craig_pipeline.transcribe_audio_file", side_effect=fake_transcribe),
+                mock.patch("src.craig_pipeline.build_craig_segments_for_transcript", side_effect=fake_build),
+            ):
+                result = transcribe_craig_audio_files(
+                    audio_files,
+                    root / "transcripts",
+                    {"a": "Oz", "b": "A"},
+                    0.25,
+                    postprocess_workers=2,
+                )
+
+        self.assertEqual([item["id"] for item in result.segments], ["1-a", "2-b"])
+        self.assertEqual(list(result.transcript_map), [str(path.resolve()) for path in audio_files])
 
     def test_shift_segment_applies_offset_to_segment_and_words(self) -> None:
         shifted = shift_segment(

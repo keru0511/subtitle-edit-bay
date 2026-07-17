@@ -12,8 +12,11 @@ ApplicationWindow {
     property real timelinePixelsPerSecond: 34
     property real editorPixelsPerSecond: 64
     property int snapMilliseconds: 100
-    property var subtitleSegmentCache: root.appBackend.subtitleSegments
     property var projectSpeakerCache: root.appBackend.projectSpeakers
+    property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
+    property real editorPositionCache: 0
+    property real editorTimelineScrollX: 0
+    property real editorCaptionScrollY: 0
     property bool editorMode: false
     property bool settingsExpanded: false
 
@@ -105,9 +108,10 @@ ApplicationWindow {
 
     function canSplitSelectedSegment(positionMs) {
         var index = root.appBackend.selectedSegmentIndex
-        if (index < 0 || index >= root.appBackend.subtitleSegments.length)
+        var segmentCount = root.appBackend.segmentCount
+        if (index < 0 || index >= segmentCount)
             return false
-        var segment = root.appBackend.subtitleSegments[index]
+        var segment = root.appBackend.segmentAt(index)
         var seconds = Number(positionMs) / 1000
         return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
     }
@@ -123,14 +127,12 @@ ApplicationWindow {
     }
 
     function openEditorScreen() {
-        editorPlayer.source = root.appBackend.previewUrl
-        editorPlayer.position = mainPlayer.position
+        root.editorPositionCache = mainPlayer.position
         root.editorMode = true
     }
 
     function closeEditorScreen() {
-        mainPlayer.position = editorPlayer.position
-        editorPlayer.pause()
+        mainPlayer.position = root.editorPositionCache
         root.editorMode = false
     }
 
@@ -150,17 +152,6 @@ ApplicationWindow {
                 return speakers[i].color
         }
         return root.amber
-    }
-
-    function activeCaptions(positionMs) {
-        var seconds = positionMs / 1000
-        var active = []
-        var segments = root.subtitleSegmentCache
-        for (var i = 0; i < segments.length; ++i) {
-            if (segments[i].start <= seconds && segments[i].end >= seconds)
-                active.push(segments[i])
-        }
-        return active
     }
 
     function laneForStyle(style) {
@@ -215,9 +206,33 @@ ApplicationWindow {
     }
 
     component SubtitleOverlay: Item {
+        id: overlayRoot
         property MediaPlayer player
+        property var activeSegments: []
+        property string activeSignature: ""
+
+        function refreshActiveSegments() {
+            var candidates = root.appBackend.activeSubtitleSegments(
+                overlayRoot.player ? overlayRoot.player.position / 1000 : 0
+            )
+            var signature = JSON.stringify(candidates)
+            if (signature !== overlayRoot.activeSignature) {
+                overlayRoot.activeSignature = signature
+                overlayRoot.activeSegments = candidates
+            }
+        }
+
+        onPlayerChanged: overlayRoot.refreshActiveSegments()
+        Connections {
+            target: overlayRoot.player
+            function onPositionChanged() { overlayRoot.refreshActiveSegments() }
+        }
+        Connections {
+            target: root.appBackend
+            function onSegmentsChanged() { overlayRoot.refreshActiveSegments() }
+        }
         Repeater {
-            model: root.activeCaptions(parent.player ? parent.player.position : 0)
+            model: overlayRoot.activeSegments
             delegate: Text {
                 required property var modelData
                 width: Math.min(implicitWidth + 30, parent.width - 30)
@@ -244,7 +259,33 @@ ApplicationWindow {
         property real snapSeconds: 0.1
         property int laneHeight: 42
         property bool editable: true
+        property alias viewportX: timelineFlick.contentX
+        property var visibleSegments: []
+        property var visibleRulerTicks: []
+
+        function refreshViewport() {
+            if (timelineRoot.pixelsPerSecond <= 0)
+                return
+            var pixels = timelineRoot.pixelsPerSecond
+            var padding = Math.max(2, timelineFlick.width / pixels * 0.25)
+            var viewportStart = Math.max(0, timelineFlick.contentX / pixels - padding)
+            var viewportEnd = (timelineFlick.contentX + timelineFlick.width) / pixels + padding
+            timelineRoot.visibleSegments = root.appBackend.visibleSubtitleSegments(viewportStart, viewportEnd)
+
+            var ticks = []
+            var firstTick = Math.max(0, Math.floor(viewportStart / 10) * 10)
+            var lastTick = Math.ceil(viewportEnd / 10) * 10
+            for (var tick = firstTick; tick <= lastTick; tick += 10)
+                ticks.push(tick)
+            timelineRoot.visibleRulerTicks = ticks
+        }
+
+        onPixelsPerSecondChanged: timelineRoot.refreshViewport()
         signal segmentActivated(int index)
+        Connections {
+            target: root.appBackend
+            function onSegmentsChanged() { Qt.callLater(timelineRoot.refreshViewport) }
+        }
 
         color: "#0E1311"
         border.color: root.border
@@ -259,7 +300,10 @@ ApplicationWindow {
             interactive: true
             boundsBehavior: Flickable.StopAtBounds
             contentWidth: Math.max(width, root.appBackend.projectDuration * timelineRoot.pixelsPerSecond + 120)
-            contentHeight: 28 + Math.max(1, root.appBackend.projectSpeakers.length) * timelineRoot.laneHeight
+            contentHeight: 28 + Math.max(1, root.projectSpeakerCache.length) * timelineRoot.laneHeight
+            onContentXChanged: timelineRoot.refreshViewport()
+            onWidthChanged: timelineRoot.refreshViewport()
+            Component.onCompleted: timelineRoot.refreshViewport()
 
             Item {
                 id: timelineCanvas
@@ -276,18 +320,18 @@ ApplicationWindow {
                 }
 
                 Repeater {
-                    model: Math.ceil(root.appBackend.projectDuration / 10) + 1
+                    model: timelineRoot.visibleRulerTicks
                     delegate: Item {
                         id: rulerTick
-                        required property int index
-                        x: rulerTick.index * 10 * timelineRoot.pixelsPerSecond
+                        required property var modelData
+                        x: Number(modelData) * timelineRoot.pixelsPerSecond
                         width: 1
                         height: timelineCanvas.height
                         Rectangle { anchors.fill: parent; color: "#26302B" }
                         Text {
                             x: 4
                             y: 3
-                            text: root.stamp(rulerTick.index * 10)
+                            text: root.stamp(rulerTick.modelData)
                             color: root.textMuted
                             font.family: "Cascadia Mono"
                             font.pixelSize: 9
@@ -296,7 +340,7 @@ ApplicationWindow {
                 }
 
                 Repeater {
-                    model: root.appBackend.projectSpeakers
+                    model: root.projectSpeakerCache
                     delegate: Rectangle {
                         required property int index
                         y: 28 + index * timelineRoot.laneHeight
@@ -308,7 +352,7 @@ ApplicationWindow {
                 }
 
                 Repeater {
-                    model: root.appBackend.subtitleWaveforms
+                    model: root.subtitleWaveformCache
                     delegate: Item {
                         id: waveDelegate
                         required property var modelData
@@ -318,45 +362,61 @@ ApplicationWindow {
                         width: Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond
                         height: timelineRoot.laneHeight - 6
                         opacity: 0.3
-                        Repeater {
-                            model: waveDelegate.modelData.peaks || []
-                            delegate: Rectangle {
-                                required property int index
-                                required property var modelData
-                                x: index * waveDelegate.width / Math.max(1, waveDelegate.modelData.peaks.length)
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Math.max(1, waveDelegate.width / Math.max(1, waveDelegate.modelData.peaks.length) - 0.5)
-                                height: Math.max(1, Number(modelData) * parent.height)
-                                color: waveDelegate.modelData.color || root.amber
+                        Canvas {
+                            anchors.fill: parent
+                            property var peaks: waveDelegate.modelData.peaks || []
+                            property color waveformColor: waveDelegate.modelData.color || root.amber
+                            onPeaksChanged: requestPaint()
+                            onWaveformColorChanged: requestPaint()
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onPaint: {
+                                var context = getContext("2d")
+                                context.clearRect(0, 0, width, height)
+                                if (peaks.length === 0)
+                                    return
+                                context.fillStyle = waveformColor
+                                var step = width / peaks.length
+                                var barWidth = Math.max(1, step - 0.5)
+                                for (var i = 0; i < peaks.length; ++i) {
+                                    var barHeight = Math.max(1, Number(peaks[i]) * height)
+                                    context.fillRect(
+                                        i * step,
+                                        (height - barHeight) / 2,
+                                        barWidth,
+                                        barHeight
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
                 Repeater {
-                    model: root.appBackend.subtitleSegments
+                    model: timelineRoot.visibleSegments
                     delegate: Rectangle {
                         id: captionClip
-                        required property int index
                         required property var modelData
+                        property int sourceIndex: Number(modelData.sourceIndex)
+                        property var segment: modelData.segment
                         property real originalX: 0
                         property real originalWidth: 0
                         property real pointerStart: 0
-                        x: Number(modelData.start) * timelineRoot.pixelsPerSecond
-                        y: 31 + root.laneForStyle(modelData.speaker) * timelineRoot.laneHeight
-                        width: Math.max(10, (Number(modelData.end) - Number(modelData.start)) * timelineRoot.pixelsPerSecond)
+                        x: Number(segment.start) * timelineRoot.pixelsPerSecond
+                        y: 31 + root.laneForStyle(segment.speaker) * timelineRoot.laneHeight
+                        width: Math.max(10, (Number(segment.end) - Number(segment.start)) * timelineRoot.pixelsPerSecond)
                         height: timelineRoot.laneHeight - 7
                         radius: 6
-                        color: root.speakerColor(modelData.speaker)
-                        opacity: root.appBackend.selectedSegmentIndex === index ? 1 : 0.78
-                        border.color: root.appBackend.selectedSegmentIndex === index ? root.textPrimary : "#66101010"
-                        border.width: root.appBackend.selectedSegmentIndex === index ? 2 : 1
+                        color: root.speakerColor(segment.speaker)
+                        opacity: root.appBackend.selectedSegmentIndex === sourceIndex ? 1 : 0.78
+                        border.color: root.appBackend.selectedSegmentIndex === sourceIndex ? root.textPrimary : "#66101010"
+                        border.width: root.appBackend.selectedSegmentIndex === sourceIndex ? 2 : 1
 
                         Text {
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
-                            text: captionClip.modelData.text
+                            text: captionClip.segment.text
                             color: "#10140F"
                             font.family: "Yu Gothic UI"
                             font.pixelSize: 10
@@ -377,11 +437,11 @@ ApplicationWindow {
                             drag.minimumX: 0
                             drag.maximumX: Math.max(0, timelineCanvas.width - captionClip.width)
                             onPressed: {
-                                root.appBackend.selectSegment(captionClip.index)
-                                timelineRoot.segmentActivated(captionClip.index)
+                                root.appBackend.selectSegment(captionClip.sourceIndex)
+                                timelineRoot.segmentActivated(captionClip.sourceIndex)
                             }
                             onReleased: root.appBackend.moveSegment(
-                                captionClip.index,
+                                captionClip.sourceIndex,
                                 captionClip.x / timelineRoot.pixelsPerSecond,
                                 (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
                                 timelineRoot.snapSeconds
@@ -397,7 +457,7 @@ ApplicationWindow {
                             height: parent.height
                             radius: 3
                             color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.index
+                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.sourceIndex
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.SizeHorCursor
@@ -414,7 +474,7 @@ ApplicationWindow {
                                     captionClip.width = captionClip.originalWidth - (captionClip.x - captionClip.originalX)
                                 }
                                 onReleased: root.appBackend.resizeSegmentStart(
-                                    captionClip.index,
+                                    captionClip.sourceIndex,
                                     captionClip.x / timelineRoot.pixelsPerSecond,
                                     timelineRoot.snapSeconds
                                 )
@@ -430,7 +490,7 @@ ApplicationWindow {
                             height: parent.height
                             radius: 3
                             color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.index
+                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.sourceIndex
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.SizeHorCursor
@@ -444,7 +504,7 @@ ApplicationWindow {
                                     captionClip.width = Math.max(4, captionClip.originalWidth + pointer - captionClip.pointerStart)
                                 }
                                 onReleased: root.appBackend.resizeSegmentEnd(
-                                    captionClip.index,
+                                    captionClip.sourceIndex,
                                     (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
                                     timelineRoot.snapSeconds
                                 )
@@ -469,6 +529,11 @@ ApplicationWindow {
                     }
                 }
             }
+            Connections {
+                target: root
+                function onSubtitleSegmentCacheChanged() { Qt.callLater(timelineRoot.refreshViewport) }
+            }
+
             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOn }
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
         }
@@ -480,7 +545,7 @@ ApplicationWindow {
             width: 86
             topPadding: 28
             Repeater {
-                model: root.appBackend.projectSpeakers
+                model: root.projectSpeakerCache
                 delegate: Rectangle {
                     id: laneLabel
                     required property var modelData
@@ -817,25 +882,35 @@ ApplicationWindow {
         border.color: "#46564E"
         focus: visible
         Keys.onEscapePressed: root.closeEditorScreen()
-        onVisibleChanged: {
-            if (visible) {
-                editorPlayer.source = root.appBackend.previewUrl
-                editorPlayer.position = mainPlayer.position
-                forceActiveFocus()
-            }
-        }
+        onVisibleChanged: if (visible) forceActiveFocus()
 
-        MediaPlayer {
-            id: editorPlayer
-            videoOutput: editorVideo
-            audioOutput: AudioOutput { volume: 0.75 }
-            onPositionChanged: if (!editorSeek.pressed) editorSeek.value = position
-            onDurationChanged: editorSeek.to = Math.max(1, duration)
-        }
-
-        ColumnLayout {
+        Loader {
+            id: editorLoader
             anchors.fill: parent
-            spacing: 0
+            active: root.editorMode
+            sourceComponent: editorContentComponent
+        }
+
+        Component {
+            id: editorContentComponent
+            Item {
+                MediaPlayer {
+                    id: editorPlayer
+                    videoOutput: editorVideo
+                    audioOutput: AudioOutput { volume: 0.75 }
+                    source: root.appBackend.previewUrl
+                    Component.onCompleted: position = root.editorPositionCache
+                    onPositionChanged: {
+                        root.editorPositionCache = position
+                        if (!editorSeek.pressed)
+                            editorSeek.value = position
+                    }
+                    onDurationChanged: editorSeek.to = Math.max(1, duration)
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
@@ -859,13 +934,13 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; radius: 10; color: "#060806"; border.color: root.border; clip: true
                         VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
-                        SubtitleOverlay { anchors.fill: editorVideo; player: editorPlayer }
+                        SubtitleOverlay { id: editorOverlay; anchors.fill: editorVideo; player: editorPlayer }
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
                             Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: editorPlayer.position = value }
                             RowLayout { Layout.fillWidth: true
                                 ToolButton { text: editorPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: editorPlayer.playbackState === MediaPlayer.PlayingState ? editorPlayer.pause() : editorPlayer.play() }
                                 Text { Layout.fillWidth: true; text: root.stamp(editorPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
-                                Text { text: root.activeCaptions(editorPlayer.position).length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
+                                Text { text: editorOverlay.activeSegments.length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
                             }
                         }
                     }
@@ -879,14 +954,17 @@ ApplicationWindow {
                         Slider { Layout.preferredWidth: 140; from: 16; to: 180; value: root.editorPixelsPerSecond; onMoved: root.editorPixelsPerSecond = value }
                     }
                     SubtitleTimeline {
+                        objectName: "editorTimeline"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(320, 90 + Math.max(1, root.appBackend.projectSpeakers.length) * 42)
+                        Layout.preferredHeight: Math.min(320, 90 + Math.max(1, root.projectSpeakerCache.length) * 42)
                         player: editorPlayer
                         pixelsPerSecond: root.editorPixelsPerSecond
                         snapSeconds: root.snapMilliseconds / 1000
                         editable: true
+                        Component.onCompleted: Qt.callLater(function() { viewportX = root.editorTimelineScrollX })
+                        onViewportXChanged: root.editorTimelineScrollX = viewportX
                         onSegmentActivated: function(index) {
-                            var segment = root.appBackend.subtitleSegments[index]
+                            var segment = root.appBackend.segmentAt(index)
                             if (segment) editorPlayer.position = Number(segment.start) * 1000
                         }
                     }
@@ -903,42 +981,50 @@ ApplicationWindow {
                         ListView {
                             id: captionTable
                             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5
-                            model: root.appBackend.subtitleSegments
+                            model: root.appBackend.subtitleModel
                             currentIndex: root.appBackend.selectedSegmentIndex
+                            Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
+                            onContentYChanged: root.editorCaptionScrollY = contentY
                             onCurrentIndexChanged: if (currentIndex >= 0) root.appBackend.selectSegment(currentIndex)
                             delegate: Rectangle {
                                 id: captionRow
                                 required property int index
-                                required property var modelData
+                                required property string segmentId
+                                required property real start
+                                required property real end
+                                required property string text
+                                required property string speaker
+                                required property int layoutRow
+                                required property real subtitleFontScale
                                 width: captionTable.width; height: 92; radius: 8
                                 color: root.appBackend.selectedSegmentIndex === index ? "#263326" : root.raised
                                 border.color: root.appBackend.selectedSegmentIndex === index ? root.acid : root.border
-                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); editorPlayer.position = Number(captionRow.modelData.start) * 1000 } }
+                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); editorPlayer.position = captionRow.start * 1000 } }
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 7; spacing: 5
                                     RowLayout { Layout.fillWidth: true; spacing: 5
                                         Text { text: String(captionRow.index + 1).padStart(4, "0"); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9 }
-                                        TimeField { Layout.preferredWidth: 72; text: Number(captionRow.modelData.start).toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"start": Number(text)}) }
-                                        TimeField { Layout.preferredWidth: 72; text: Number(captionRow.modelData.end).toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"end": Number(text)}) }
+                                        TimeField { Layout.preferredWidth: 72; text: captionRow.start.toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"start": Number(text)}) }
+                                        TimeField { Layout.preferredWidth: 72; text: captionRow.end.toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"end": Number(text)}) }
                                         ComboBox {
                                             Layout.preferredWidth: 105
-                                            model: root.appBackend.projectSpeakers
+                                            model: root.projectSpeakerCache
                                             textRole: "name"
                                             valueRole: "style"
                                             Component.onCompleted: {
-                                                for (var i = 0; i < count; ++i) if (valueAt(i) === captionRow.modelData.speaker) currentIndex = i
+                                                for (var i = 0; i < count; ++i) if (valueAt(i) === captionRow.speaker) currentIndex = i
                                             }
                                             onActivated: root.appBackend.updateSegment(captionRow.index, {"speaker": currentValue})
                                         }
                                         SpinBox {
                                             Layout.preferredWidth: 82; from: 50; to: 200; stepSize: 5
-                                            value: Math.round(Number(captionRow.modelData.subtitle_font_scale || 1) * 100)
+                                            value: Math.round(captionRow.subtitleFontScale * 100)
                                             onValueModified: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_scale": value / 100})
                                         }
                                         Text { text: "%"; color: root.textMuted; font.pixelSize: 9 }
                                     }
                                     TextField {
                                         Layout.fillWidth: true
-                                        text: captionRow.modelData.text
+                                        text: captionRow.text
                                         color: root.textPrimary; selectionColor: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12
                                         onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"text": text})
                                         background: Rectangle { radius: 6; color: "#101512"; border.color: parent.activeFocus ? root.acid : root.border }
@@ -947,6 +1033,15 @@ ApplicationWindow {
                             }
                             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
                         }
+                    }
+                }
+            }
+                }
+                Connections {
+                    target: root.appBackend
+                    function onSegmentsChanged() {
+                        if (root.appBackend.selectedSegmentIndex >= 0)
+                            captionTable.positionViewAtIndex(root.appBackend.selectedSegmentIndex, ListView.Contain)
                     }
                 }
             }
@@ -961,16 +1056,13 @@ ApplicationWindow {
     Connections {
         target: root.appBackend
         function onSettingsChanged() { root.syncSettings() }
-        function onSegmentsChanged() {
-            if (captionTable && root.appBackend.selectedSegmentIndex >= 0)
-                captionTable.positionViewAtIndex(root.appBackend.selectedSegmentIndex, ListView.Contain)
-        }
     }
 
-    Component.onCompleted: root.syncSettings()
+    Component.onCompleted: {
+        root.syncSettings()
+    }
     onClosing: {
         root.appBackend.saveProject()
         mainPlayer.stop()
-        editorPlayer.stop()
     }
 }

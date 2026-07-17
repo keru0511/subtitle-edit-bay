@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from src.craig_pipeline import CraigTranscriptionBatch
 from src.gui_state import build_gui_render_command, build_gui_transcribe_command
 from src.subtitle_project import (
     SubtitleProjectError,
@@ -88,12 +89,6 @@ class SubtitleWorkflowTests(unittest.TestCase):
             video.write_bytes(b"video")
             audio.write_bytes(b"audio")
 
-            def fake_transcribe(_audio, output_dir, **_kwargs):
-                path = Path(output_dir) / "1-alice.json"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps({"segments": [{"start": 0, "end": 1, "text": "hi"}]}), encoding="utf-8")
-                return path
-
             fake_segment = {
                 "start": 0.25,
                 "end": 1.25,
@@ -104,10 +99,14 @@ class SubtitleWorkflowTests(unittest.TestCase):
                 "source_file": audio.name,
                 "layout_packed": True,
             }
+            transcript_path = root / "export" / "transcripts" / "1-alice.json"
+            transcription = CraigTranscriptionBatch(
+                {str(audio.resolve()): str(transcript_path.resolve())},
+                [fake_segment],
+            )
             with (
                 patch("src.subtitle_workflow.resolve_alignment", return_value=("0:a:0", 0.25, 0.9)),
-                patch("src.subtitle_workflow.transcribe_audio_file", side_effect=fake_transcribe),
-                patch("src.subtitle_workflow.build_craig_segments_for_transcript", return_value=[fake_segment]),
+                patch("src.subtitle_workflow.transcribe_craig_audio_files", return_value=transcription),
                 patch("src.subtitle_workflow.refine_segments", return_value=([fake_segment], [])),
                 patch("src.subtitle_workflow._build_waveforms", return_value=[]),
                 patch("src.subtitle_workflow.probe_media_duration", return_value=30.0),
@@ -139,14 +138,13 @@ class SubtitleWorkflowTests(unittest.TestCase):
             project_path = root / "game.subtitle-project.json"
             save_project(project_path, project)
 
-            def fake_build(transcript_path, ass_path, **kwargs):
-                payload = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+            def fake_build(payload, ass_path, **kwargs):
                 self.assertEqual(payload["segments"][0]["text"], "edited")
                 self.assertEqual(kwargs["subtitle_font_size"], 64)
                 Path(ass_path).write_text("ASS", encoding="utf-8")
                 return Path(ass_path)
 
-            with patch("src.subtitle_workflow.build_ass_from_transcript", side_effect=fake_build):
+            with patch("src.subtitle_workflow.build_ass_from_data", side_effect=fake_build):
                 result = build_project_ass(project_path)
 
             self.assertEqual(result.read_text(encoding="utf-8"), "ASS")
@@ -170,7 +168,7 @@ class SubtitleWorkflowTests(unittest.TestCase):
             with (
                 patch("src.subtitle_workflow.build_project_ass", return_value=ass_path),
                 patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
-                patch("src.subtitle_workflow.transcribe_audio_file") as transcribe,
+                patch("src.subtitle_workflow.transcribe_craig_audio_files") as transcribe,
             ):
                 output = render_project_video(project_path, audio_normalize=False)
 
@@ -178,6 +176,33 @@ class SubtitleWorkflowTests(unittest.TestCase):
             burn.assert_called_once()
             self.assertFalse(transcribe.called)
             self.assertEqual(load_project(project_path)["render_settings"]["last_output"], str(output.resolve()))
+
+    def test_render_reuses_loaded_project_for_ass_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[{"start": 0, "end": 1, "text": "edited", "speaker": "Oz"}],
+            )
+            project_path = root / "game.subtitle-project.json"
+            save_project(project_path, project)
+
+            def fake_build(_transcript, ass_path, **_kwargs):
+                Path(ass_path).write_text("ASS", encoding="utf-8")
+                return Path(ass_path)
+
+            with (
+                patch("src.subtitle_workflow.load_project", wraps=load_project) as load,
+                patch("src.subtitle_workflow.build_ass_from_data", side_effect=fake_build),
+                patch("src.subtitle_workflow.run_ffmpeg_burn"),
+            ):
+                render_project_video(project_path, audio_normalize=False)
+
+            self.assertEqual(load.call_count, 1)
+
 
     def test_gui_phase_commands_are_independent(self) -> None:
         transcribe = build_gui_transcribe_command(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -33,20 +32,18 @@ from .craig_pipeline import (
     DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
     DEFAULT_VAD_OFFSET,
     DEFAULT_VAD_ONSET,
-    build_craig_segments_for_transcript,
     build_speaker_style_map,
     decode_audio_samples,
-    expected_audio_transcript_path,
     normalize_db_threshold,
     parse_craig_speaker_name,
     resolve_alignment,
     resolve_craig_audio_files,
     resolve_reference_audio_path,
-    transcribe_audio_file,
+    transcribe_craig_audio_files,
     write_json,
 )
 from .merge_transcripts import refine_segments
-from .pipeline import build_ass_from_transcript
+from .pipeline import build_ass_from_data
 from .render_ass import parse_track_color_args
 from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
@@ -170,6 +167,7 @@ def transcribe_to_project(
         )
     colors = dict(track_color_map or {})
     style_map = build_speaker_style_map(resolved_audio)
+    speakers = _project_speakers(resolved_audio, style_map, colors)
     log_progress(f"Resolving alignment from {reference_path.name}")
     matched_track, offset_seconds, score = resolve_alignment(
         video_path,
@@ -181,53 +179,40 @@ def transcribe_to_project(
     log_progress(f"Alignment ready at {offset_seconds:+.3f}s on {matched_track}")
 
     transcript_dir = output / "transcripts"
-    transcript_map: dict[str, str] = {}
-    segment_futures: dict[str, Any] = {}
-    merged_segments: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=max(1, postprocess_workers)) as executor:
-        for audio_file in resolved_audio:
-            expected = expected_audio_transcript_path(str(audio_file), str(transcript_dir))
-            if skip_existing_transcripts and expected.exists():
-                log_progress(f"Cache hit for {audio_file.name}")
-            else:
-                log_progress(f"Starting WhisperX for {audio_file.name} on {device}/{compute_type}")
-            transcript = transcribe_audio_file(
-                str(audio_file),
-                str(transcript_dir),
-                model=model,
-                device=device,
-                compute_type=compute_type,
-                language=language,
-                vad_onset=vad_onset,
-                vad_offset=vad_offset,
-                skip_existing=skip_existing_transcripts,
-            )
-            transcript_map[str(audio_file.resolve())] = str(transcript.resolve())
-            segment_futures[str(audio_file)] = executor.submit(
-                build_craig_segments_for_transcript,
-                str(audio_file),
-                str(transcript),
-                style_map,
-                offset_seconds,
-                subtitle_font_size,
-                subtitle_volume_scale_percent,
-            )
-        for audio_file in resolved_audio:
-            segments = segment_futures[str(audio_file)].result()
-            merged_segments.extend(segments)
-            log_progress(f"Prepared {len(segments)} captions for {audio_file.name}")
-
-    log_progress("Refining merged subtitle segments")
-    refined, filtered = refine_segments(
-        merged_segments,
-        subtitle_max_gap_seconds=subtitle_max_gap_seconds,
-        subtitle_end_padding_seconds=subtitle_end_padding_seconds,
-        subtitle_min_duration_seconds=subtitle_min_duration_seconds,
-    )
+    with ThreadPoolExecutor(max_workers=1) as waveform_executor:
+        waveform_future = waveform_executor.submit(
+            _build_waveforms,
+            resolved_audio,
+            speakers,
+            offset_seconds,
+        )
+        transcription = transcribe_craig_audio_files(
+            resolved_audio,
+            transcript_dir,
+            style_map,
+            offset_seconds,
+            model=model,
+            device=device,
+            compute_type=compute_type,
+            language=language,
+            vad_onset=vad_onset,
+            vad_offset=vad_offset,
+            skip_existing_transcripts=skip_existing_transcripts,
+            postprocess_workers=postprocess_workers,
+            subtitle_font_size=subtitle_font_size,
+            subtitle_volume_scale_percent=subtitle_volume_scale_percent,
+        )
+        log_progress("Refining merged subtitle segments")
+        refined, filtered = refine_segments(
+            transcription.segments,
+            subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+            subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+            subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        )
+        waveforms = waveform_future.result()
+    transcript_map = transcription.transcript_map
     merged_path = write_json(str(output / f"{Path(video_path).stem}.craig.merged.json"), {"segments": refined})
     filtered_path = write_json(str(output / f"{Path(video_path).stem}.craig.filtered.json"), {"segments": filtered})
-    speakers = _project_speakers(resolved_audio, style_map, colors)
-    waveforms = _build_waveforms(resolved_audio, speakers, offset_seconds)
     try:
         duration_seconds = probe_media_duration(video_path)
     except (OSError, subprocess.CalledProcessError, ValueError):
@@ -268,31 +253,45 @@ def transcribe_to_project(
     return project_path
 
 
+def _ass_build_options(
+    project: dict[str, Any],
+    subtitle_font_size: int | None = None,
+) -> dict[str, Any]:
+    settings = project.get("subtitle_settings", {})
+    colors = {
+        str(item.get("track_key", "")): str(item.get("color", ""))
+        for item in project.get("speakers", [])
+        if item.get("track_key") and item.get("color")
+    }
+    return {
+        "track_color_map": colors,
+        "subtitle_font_size": int(subtitle_font_size or settings.get("font_size", 50)),
+        "subtitle_max_gap_seconds": float(
+            settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)
+        ),
+        "subtitle_end_padding_seconds": float(
+            settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)
+        ),
+        "subtitle_min_duration_seconds": float(
+            settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)
+        ),
+    }
+
+
 def build_project_ass(
     project_path: str | Path,
     output_path: str | Path | None = None,
     *,
     subtitle_font_size: int | None = None,
+    _project: dict[str, Any] | None = None,
 ) -> Path:
-    project = load_project(project_path)
-    settings = project.get("subtitle_settings", {})
-    font_size = int(subtitle_font_size or settings.get("font_size", 50))
-    transcript_path = Path(project_path).with_name(f".{Path(project_path).stem}.render.json")
-    write_json(str(transcript_path), project_to_transcript(project))
-    colors = {str(item.get("track_key", "")): str(item.get("color", "")) for item in project.get("speakers", []) if item.get("track_key") and item.get("color")}
+    project = _project if _project is not None else load_project(project_path)
     output = Path(output_path) if output_path else derive_ass_path(project_path)
-    try:
-        build_ass_from_transcript(
-            str(transcript_path),
-            str(output),
-            track_color_map=colors,
-            subtitle_font_size=font_size,
-            subtitle_max_gap_seconds=float(settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
-            subtitle_end_padding_seconds=float(settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),
-            subtitle_min_duration_seconds=float(settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)),
-        )
-    finally:
-        transcript_path.unlink(missing_ok=True)
+    build_ass_from_data(
+        project_to_transcript(project, project_is_validated=True),
+        str(output),
+        **_ass_build_options(project, subtitle_font_size),
+    )
     log_progress(f"ASS preview ready: {output}")
     return output
 
@@ -321,24 +320,31 @@ def render_project_video(
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
-    ass_path = build_project_ass(project_path)
+    ass_path = build_project_ass(project_path, _project=project)
     output = Path(output_path) if output_path else derive_render_path(project_path)
     loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
 
     if cut_no_speech:
         offset_seconds = float(project.get("transcription", {}).get("offset_seconds", 0.0))
         speech_ranges: list[tuple[float, float]] = []
-        for source in project.get("audio_sources", []):
-            source_path = str(source.get("path", ""))
-            if Path(source_path).is_file():
-                log_progress(f"Detecting speech in {Path(source_path).name}")
-                speech_ranges.extend(
-                    detect_speech_ranges(
-                        source_path,
-                        noise=normalize_db_threshold(speech_threshold_db),
-                        duration=DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
-                    )
-                )
+        source_paths = [
+            str(source.get("path", ""))
+            for source in project.get("audio_sources", [])
+            if Path(str(source.get("path", ""))).is_file()
+        ]
+        for source_path in source_paths:
+            log_progress(f"Detecting speech in {Path(source_path).name}")
+
+        def detect_source(source_path: str) -> list[tuple[float, float]]:
+            return detect_speech_ranges(
+                source_path,
+                noise=normalize_db_threshold(speech_threshold_db),
+                duration=DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
+            )
+
+        with ThreadPoolExecutor(max_workers=max(1, min(4, len(source_paths)))) as executor:
+            for source_ranges in executor.map(detect_source, source_paths):
+                speech_ranges.extend(source_ranges)
         duration = float(project.get("video", {}).get("duration_seconds", 0.0)) or probe_media_duration(video_path)
         no_speech_ranges, keep_ranges = build_no_speech_plan(
             duration,
@@ -350,24 +356,14 @@ def render_project_video(
         )
         if not keep_ranges:
             raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
-        cut_json = Path(project_path).with_name(f".{Path(project_path).stem}.cut.json")
         cut_ass = Path(project_path).with_name(f".{Path(project_path).stem}.cut.ass")
-        write_json(str(cut_json), {"segments": retime_segments_for_keep_ranges(project_to_transcript(project)["segments"], keep_ranges)})
+        transcript = project_to_transcript(project, project_is_validated=True)
+        cut_transcript = {"segments": retime_segments_for_keep_ranges(transcript["segments"], keep_ranges)}
         try:
-            settings = project.get("subtitle_settings", {})
-            colors = {
-                str(item.get("track_key", "")): str(item.get("color", ""))
-                for item in project.get("speakers", [])
-                if item.get("track_key") and item.get("color")
-            }
-            build_ass_from_transcript(
-                str(cut_json),
+            build_ass_from_data(
+                cut_transcript,
                 str(cut_ass),
-                track_color_map=colors,
-                subtitle_font_size=int(settings.get("font_size", 50)),
-                subtitle_max_gap_seconds=float(settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
-                subtitle_end_padding_seconds=float(settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),
-                subtitle_min_duration_seconds=float(settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)),
+                **_ass_build_options(project),
             )
             log_progress(f"Rendering edited video and cutting {len(no_speech_ranges)} silent ranges")
             cut_media_ranges(
@@ -384,7 +380,6 @@ def render_project_video(
                 audio_track=output_audio_track,
             )
         finally:
-            cut_json.unlink(missing_ok=True)
             cut_ass.unlink(missing_ok=True)
     else:
         log_progress(f"Rendering edited subtitles to {output.name}")

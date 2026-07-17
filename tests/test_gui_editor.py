@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -21,6 +23,7 @@ from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
+    assign_project_layout_rows,
     create_project,
     load_project,
     save_project,
@@ -334,6 +337,182 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app.renderVideo(self.app.settings)
             start.assert_not_called()
 
+    def test_history_stores_only_changed_segments_and_reuses_unchanged_entries(self) -> None:
+        segments = [
+            {
+                "id": f"segment-{index}",
+                "start": index * 1.5,
+                "end": index * 1.5 + 1.0,
+                "text": f"caption-{index}",
+                "speaker": "Speaker_Alice",
+            }
+            for index in range(500)
+        ]
+        self._load_project(segments=segments)
+        untouched = self.app._project["segments"][250]
+
+        self.app.updateSegment(0, {"text": "changed"})
+
+        self.assertEqual(len(self.app._undo_stack), 1)
+        entry = self.app._undo_stack[0]
+        self.assertEqual([item["id"] for item in entry["before"]], ["segment-0"])
+        self.assertEqual([item["id"] for item in entry["after"]], ["segment-0"])
+        current_untouched = next(item for item in self.app._project["segments"] if item["id"] == "segment-250")
+        self.assertIs(current_untouched, untouched)
+
+    def test_diff_history_restores_overlap_layout_rows(self) -> None:
+        self._load_project(
+            segments=[
+                {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
+                {"id": "second", "start": 1, "end": 3, "text": "second", "speaker": "Speaker_Bob"},
+                {"id": "third", "start": 3, "end": 5, "text": "third", "speaker": "Speaker_Alice"},
+            ]
+        )
+        original = self.app.subtitleSegments
+
+        self.app.updateSegment(0, {"end": 1})
+        edited = self.app.subtitleSegments
+        self.assertNotEqual(
+            [item["layout_row"] for item in edited],
+            [item["layout_row"] for item in original],
+        )
+
+        self.app.undoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, original)
+        self.app.redoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, edited)
+
+
+    def test_diff_history_round_trips_add_delete_and_split(self) -> None:
+        self._load_project()
+        original = self.app.subtitleSegments
+
+        self.app.addSegment(5.0)
+        added = self.app.subtitleSegments
+        self.app.undoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, original)
+        self.app.redoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, added)
+
+        self.app.deleteSelectedSegment()
+        deleted = self.app.subtitleSegments
+        self.app.undoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, added)
+        self.app.redoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, deleted)
+
+        self.app.selectSegment(0)
+        self.app.splitSelectedSegment((deleted[0]["start"] + deleted[0]["end"]) / 2)
+        split = self.app.subtitleSegments
+        self.app.undoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, deleted)
+        self.app.redoSubtitleEdit()
+        self.assertEqual(self.app.subtitleSegments, split)
+
+    def test_subtitle_model_and_range_queries_expose_only_ui_fields(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 2,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                    "words": [{"word": "first", "start": 0, "end": 2}],
+                },
+                {
+                    "id": "second",
+                    "start": 4,
+                    "end": 5,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+
+        model = self.app._subtitle_model
+        self.assertEqual(model.rowCount(), 2)
+        first_index = model.index(0, 0)
+        self.assertEqual(model.data(first_index, model.TextRole), "first")
+
+        active = self.app.activeSubtitleSegments(1.0)
+        visible = self.app.visibleSubtitleSegments(3.5, 5.5)
+        self.assertEqual([item["id"] for item in active], ["first"])
+        self.assertEqual([item["id"] for item in visible], ["second"])
+        self.assertNotIn("words", active[0])
+        self.assertEqual(visible[0]["sourceIndex"], 1)
+
+        self.app.updateSegment(0, {"text": "updated"})
+        self.assertEqual(model.rowCount(), 2)
+        self.assertEqual(model.data(model.index(0, 0), model.TextRole), "updated")
+
+    def test_subtitle_model_tracks_a_timing_reorder_without_stale_rows(self) -> None:
+        self._load_project(
+            segments=[
+                {"id": "first", "start": 0, "end": 1, "text": "first", "speaker": "Speaker_Alice"},
+                {"id": "second", "start": 2, "end": 3, "text": "second", "speaker": "Speaker_Alice"},
+                {"id": "third", "start": 4, "end": 5, "text": "third", "speaker": "Speaker_Alice"},
+            ]
+        )
+
+        self.app.updateSegment(0, {"start": 5, "end": 6})
+
+        model = self.app._subtitle_model
+        ids = [
+            model.data(model.index(index, 0), model.SegmentIdRole)
+            for index in range(model.rowCount())
+        ]
+        self.assertEqual(ids, ["second", "third", "first"])
+        self.assertEqual(self.app.selectedSegmentIndex, 2)
+
+    def test_speaker_and_font_edits_skip_timeline_row_reflow(self) -> None:
+        self._load_project()
+        with patch("src.gui.assign_project_layout_rows", wraps=assign_project_layout_rows) as reflow:
+            self.app.updateSegment(
+                0,
+                {"speaker": "Speaker_Bob", "subtitle_font_scale": 1.5},
+            )
+            reflow.assert_not_called()
+
+            self.app.updateSegment(0, {"text": "layout changed"})
+            reflow.assert_called_once()
+
+    def test_async_autosave_coalesces_edits_and_keeps_snapshot_stable(self) -> None:
+        self._load_project()
+        started = threading.Event()
+        release = threading.Event()
+        saved_texts: list[str] = []
+
+        def fake_save(path, project, **_kwargs):
+            if not started.is_set():
+                started.set()
+                release.wait(timeout=2)
+            saved_texts.append(project["segments"][0]["text"])
+            return Path(path)
+
+        with patch("src.gui.save_project", side_effect=fake_save):
+            self.app.updateSegment(0, {"text": "first edit"})
+            self.app.autosave_timer.stop()
+            self.app._autosave_project()
+            self.assertTrue(started.wait(timeout=1))
+
+            self.app.updateSegment(0, {"text": "second edit"})
+            self.app.autosave_timer.stop()
+            self.app._autosave_project()
+            release.set()
+
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                self.app.processEvents()
+                future = self.app._autosave_future
+                if len(saved_texts) >= 2 and (future is None or future.done()):
+                    self.app.processEvents()
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(saved_texts, ["first edit", "second edit"])
+        self.assertFalse(self.app.projectDirty)
+
     def test_preview_updates_project_settings_and_ass_path(self) -> None:
         path = self._load_project()
         ass_path = self.root / "game.edited.ass"
@@ -519,6 +698,41 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._click(window, toggle)
         self.assertFalse(panel.isVisible())
+
+    def test_qml_editor_content_is_loaded_only_when_opened(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.assertIsNone(window.findChild(QQuickItem, "editorTimeline"))
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+
+        self.assertIsNotNone(window.findChild(QQuickItem, "editorTimeline"))
+
+    def test_qml_timeline_instantiates_only_visible_captions(self) -> None:
+        segments = [
+            {
+                "id": f"caption-{index}",
+                "start": index * 1.5,
+                "end": index * 1.5 + 1.0,
+                "text": f"caption-{index}",
+                "speaker": "Speaker_Alice",
+            }
+            for index in range(500)
+        ]
+        self._load_project(segments=segments)
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        timeline = self._quick_item(window, "editorTimeline")
+        visible = timeline.property("visibleSegments")
+        if hasattr(visible, "toVariant"):
+            visible = visible.toVariant()
+
+        self.assertGreater(len(visible), 0)
+        self.assertLess(len(visible), len(segments))
+        self.assertEqual(visible[0]["sourceIndex"], 0)
+
+
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()

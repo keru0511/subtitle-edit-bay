@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,8 +14,10 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
             root = Path(temp_dir)
             video = root / "game.mkv"
             audio = root / "1-alice.flac"
+            second_audio = root / "2-bob.flac"
             video.write_bytes(b"video")
             audio.write_bytes(b"audio")
+            second_audio.write_bytes(b"audio")
             speaker = {
                 "name": "alice",
                 "style": "Oz",
@@ -23,12 +26,21 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
                 "file_name": audio.name,
                 "path": str(audio),
             }
+            second_speaker = {
+                **speaker,
+                "name": "bob",
+                "style": "A",
+                "track_key": "craig:bob",
+                "color": "#6FA8DC",
+                "file_name": second_audio.name,
+                "path": str(second_audio),
+            }
             project = create_project(
                 video_path=video,
                 output_dir=root,
                 duration_seconds=4,
-                audio_sources=[speaker],
-                speakers=[speaker],
+                audio_sources=[speaker, second_speaker],
+                speakers=[speaker, second_speaker],
                 segments=[{
                     "start": 0.25,
                     "end": 0.75,
@@ -55,17 +67,26 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
                 Path(output).write_text("CUT ASS", encoding="utf-8")
                 return Path(output)
 
+            speech_barrier = threading.Barrier(2)
+            def fake_detect(_path, **_kwargs):
+                speech_barrier.wait(timeout=1)
+                return [(0.0, 1.0)]
+
             with (
                 patch("src.subtitle_workflow.build_project_ass", return_value=normal_ass),
-                patch("src.subtitle_workflow.detect_speech_ranges", return_value=[(0.0, 1.0)]),
+                patch("src.subtitle_workflow.detect_speech_ranges", side_effect=fake_detect) as detect,
                 patch("src.subtitle_workflow.build_no_speech_plan", return_value=([(1.0, 4.0)], [(0.0, 1.0)])),
-                patch("src.subtitle_workflow.build_ass_from_transcript", side_effect=fake_build_ass),
+                patch("src.subtitle_workflow.build_ass_from_data", side_effect=fake_build_ass),
                 patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
             ):
                 render_project_video(project_path, cut_no_speech=True, audio_normalize=False)
 
             self.assertEqual(ass_kwargs["subtitle_font_size"], 72)
-            self.assertEqual(ass_kwargs["track_color_map"], {"craig:alice": "#FFD966"})
+            self.assertEqual(
+                ass_kwargs["track_color_map"],
+                {"craig:alice": "#FFD966", "craig:bob": "#6FA8DC"},
+            )
+            self.assertEqual(detect.call_count, 2)
             cut_media.assert_called_once()
 
 

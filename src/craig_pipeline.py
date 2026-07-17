@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,13 @@ from .silence_cut import (
     probe_media_duration,
     retime_segments_for_keep_ranges,
 )
-from .transcribe import build_whisperx_command, expected_log_path, probe_audio_streams, run_command_with_utf8_log
+from .transcribe import (
+    build_whisperx_command,
+    expected_log_path,
+    expected_transcript_path,
+    probe_audio_streams,
+    run_command_with_utf8_log,
+)
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 
 DEFAULT_STYLE_SEQUENCE = ["Oz", "A", "B", "C"]
@@ -238,13 +245,22 @@ def prepare_alignment_signal(samples: np.ndarray) -> np.ndarray:
     return signal
 
 
-def estimate_offset(reference_signal: np.ndarray, candidate_signal: np.ndarray, sample_rate: int) -> tuple[float, float]:
+def _estimate_offset_with_reference_fft(
+    reference_signal: np.ndarray,
+    candidate_signal: np.ndarray,
+    sample_rate: int,
+    reference_fft_cache: dict[int, np.ndarray],
+) -> tuple[float, float]:
     if reference_signal.size == 0 or candidate_signal.size == 0:
         raise ValueError("Alignment signals must be non-empty.")
 
     fft_size = 1 << (reference_signal.size + candidate_signal.size - 2).bit_length()
+    reference_fft = reference_fft_cache.get(fft_size)
+    if reference_fft is None:
+        reference_fft = np.fft.rfft(reference_signal[::-1], fft_size)
+        reference_fft_cache[fft_size] = reference_fft
     correlation = np.fft.irfft(
-        np.fft.rfft(candidate_signal, fft_size) * np.fft.rfft(reference_signal[::-1], fft_size),
+        np.fft.rfft(candidate_signal, fft_size) * reference_fft,
         fft_size,
     )[: reference_signal.size + candidate_signal.size - 1]
     best_index = int(np.argmax(correlation))
@@ -254,17 +270,27 @@ def estimate_offset(reference_signal: np.ndarray, candidate_signal: np.ndarray, 
     return lag_samples / sample_rate, normalized_score
 
 
+def estimate_offset(reference_signal: np.ndarray, candidate_signal: np.ndarray, sample_rate: int) -> tuple[float, float]:
+    return _estimate_offset_with_reference_fft(reference_signal, candidate_signal, sample_rate, {})
+
+
 def find_best_reference_track(video_path: str, reference_audio_path: str, sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE) -> tuple[str, float, float]:
     streams = probe_audio_streams(video_path)
     reference_signal = prepare_alignment_signal(decode_audio_samples(reference_audio_path, sample_rate=sample_rate))
     best_track = ""
     best_offset = 0.0
     best_score = float("-inf")
+    reference_fft_cache: dict[int, np.ndarray] = {}
 
     for order, _stream in enumerate(streams):
         track_selector = f"0:a:{order}"
         candidate_signal = prepare_alignment_signal(decode_audio_samples(video_path, sample_rate=sample_rate, stream_selector=track_selector))
-        offset_seconds, score = estimate_offset(reference_signal, candidate_signal, sample_rate)
+        offset_seconds, score = _estimate_offset_with_reference_fft(
+            reference_signal,
+            candidate_signal,
+            sample_rate,
+            reference_fft_cache,
+        )
         if score > best_score:
             best_track = track_selector
             best_offset = offset_seconds
@@ -275,9 +301,7 @@ def find_best_reference_track(video_path: str, reference_audio_path: str, sample
     return best_track, best_offset, best_score
 
 
-def expected_audio_transcript_path(audio_path: str, output_dir: str) -> Path:
-    return Path(output_dir) / f"{Path(audio_path).stem}.json"
-
+expected_audio_transcript_path = expected_transcript_path
 
 def transcribe_audio_file(
     audio_path: str,
@@ -321,6 +345,72 @@ def resolve_alignment(
         offset_seconds, score = estimate_offset(reference_signal, candidate_signal, sample_rate)
         return reference_track, offset_seconds, score
     return find_best_reference_track(video_path, reference_audio_path, sample_rate=sample_rate)
+
+
+@dataclass(frozen=True)
+class CraigTranscriptionBatch:
+    transcript_map: dict[str, str]
+    segments: list[dict]
+
+
+def transcribe_craig_audio_files(
+    audio_files: list[Path],
+    transcript_dir: Path,
+    style_map: dict[str, str],
+    offset_seconds: float,
+    *,
+    model: str = DEFAULT_MODEL,
+    device: str = DEFAULT_DEVICE,
+    compute_type: str = DEFAULT_COMPUTE_TYPE,
+    language: str = DEFAULT_LANGUAGE,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
+    skip_existing_transcripts: bool = True,
+    postprocess_workers: int = DEFAULT_POSTPROCESS_WORKERS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
+) -> CraigTranscriptionBatch:
+    """Run WhisperX serially while overlapping CPU-only caption postprocessing."""
+    transcript_map: dict[str, str] = {}
+    segment_futures: dict[str, object] = {}
+    merged_segments: list[dict] = []
+    with ThreadPoolExecutor(max_workers=max(1, postprocess_workers)) as executor:
+        for audio_file in audio_files:
+            expected_path = expected_audio_transcript_path(str(audio_file), str(transcript_dir))
+            if skip_existing_transcripts and expected_path.exists():
+                log_progress(f"Cache hit for {audio_file.name}; reusing {expected_path.name}")
+            else:
+                log_progress(f"Starting WhisperX for {audio_file.name} on {device}/{compute_type}")
+            transcript_path = transcribe_audio_file(
+                str(audio_file),
+                str(transcript_dir),
+                model=model,
+                device=device,
+                compute_type=compute_type,
+                language=language,
+                vad_onset=vad_onset,
+                vad_offset=vad_offset,
+                skip_existing=skip_existing_transcripts,
+            )
+            transcript_map[str(audio_file.resolve())] = str(transcript_path.resolve())
+            segment_futures[str(audio_file)] = executor.submit(
+                build_craig_segments_for_transcript,
+                str(audio_file),
+                str(transcript_path),
+                style_map,
+                offset_seconds,
+                subtitle_font_size,
+                subtitle_volume_scale_percent,
+            )
+
+        for audio_file in audio_files:
+            built_segments = segment_futures[str(audio_file)].result()
+            merged_segments.extend(built_segments)
+            log_progress(
+                f"Finished CPU postprocess for {audio_file.name} "
+                f"({len(built_segments)} segments)"
+            )
+    return CraigTranscriptionBatch(transcript_map, merged_segments)
 
 
 def build_craig_segments_for_transcript(
@@ -480,43 +570,23 @@ def run_craig_pipeline(
     log_progress(f"Matched {matched_track} with offset {offset_seconds:.3f}s (score={score:.3f})")
 
     transcript_dir = Path(output_dir) / "transcripts"
-    transcript_map: dict[str, str] = {}
-    segment_futures: dict[str, object] = {}
-    merged_segments: list[dict] = []
-    with ThreadPoolExecutor(max_workers=max(1, postprocess_workers)) as executor:
-        for audio_file in audio_files:
-            expected_path = expected_audio_transcript_path(str(audio_file), str(transcript_dir))
-            if skip_existing_transcripts and expected_path.exists():
-                log_progress(f"Cache hit for {audio_file.name}; reusing {expected_path.name}")
-            else:
-                log_progress(f"Starting WhisperX for {audio_file.name} on {device}/{compute_type}")
-            transcript_path = transcribe_audio_file(
-                str(audio_file),
-                str(transcript_dir),
-                model=model,
-                device=device,
-                compute_type=compute_type,
-                language=language,
-                vad_onset=vad_onset,
-                vad_offset=vad_offset,
-                skip_existing=skip_existing_transcripts,
-            )
-            transcript_map[str(audio_file)] = str(transcript_path)
-            log_progress(f"Queueing CPU postprocess for {audio_file.name}")
-            segment_futures[str(audio_file)] = executor.submit(
-                build_craig_segments_for_transcript,
-                str(audio_file),
-                str(transcript_path),
-                style_map,
-                offset_seconds,
-                subtitle_font_size,
-                subtitle_volume_scale_percent,
-            )
-
-        for audio_file in audio_files:
-            built_segments = segment_futures[str(audio_file)].result()
-            merged_segments.extend(built_segments)
-            log_progress(f"Finished CPU postprocess for {audio_file.name} ({len(built_segments)} segments)")
+    transcription = transcribe_craig_audio_files(
+        audio_files,
+        transcript_dir,
+        style_map,
+        offset_seconds,
+        model=model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        vad_onset=vad_onset,
+        vad_offset=vad_offset,
+        skip_existing_transcripts=skip_existing_transcripts,
+        postprocess_workers=postprocess_workers,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_volume_scale_percent=subtitle_volume_scale_percent,
+    )
+    merged_segments = transcription.segments
 
     log_progress("Refining merged subtitle segments")
     refined, filtered = refine_segments(

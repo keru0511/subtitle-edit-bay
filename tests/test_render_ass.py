@@ -14,7 +14,16 @@ from src.color_config import load_speaker_color_map
 from src.render_ass import format_ass_time, normalize_text, parse_track_color_args, render_ass
 from unittest import mock
 
-from src.subtitle_packer import break_candidates, pack_segment_pages, pack_segments, split_into_atomic_units
+from src.subtitle_packer import (
+    break_candidates,
+    budoux_boundaries,
+    pack_segment_pages,
+    pack_segments,
+    score_break,
+    score_truncated_break,
+    split_into_atomic_units,
+    text_width,
+)
 from src.video_encoding import build_video_encoding_args
 from src.transcribe import (
     build_extract_audio_command,
@@ -28,6 +37,26 @@ from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
 
 
 class RenderAssTests(unittest.TestCase):
+    def test_boundary_and_width_helpers_reuse_bounded_caches(self) -> None:
+        budoux_boundaries.cache_clear()
+        text_width.cache_clear()
+        with mock.patch("src.subtitle_packer.parse_budoux_chunks", return_value=["abc", "def"]) as parse:
+            self.assertEqual(budoux_boundaries("abcdef"), {3})
+            self.assertEqual(budoux_boundaries("abcdef"), {3})
+        budoux_boundaries.cache_clear()
+        self.assertEqual(parse.call_count, 1)
+
+        self.assertEqual(text_width("subtitle"), 8)
+        self.assertEqual(text_width("subtitle"), 8)
+        self.assertGreaterEqual(text_width.cache_info().hits, 1)
+
+    def test_truncated_break_scoring_matches_standard_scoring(self) -> None:
+        text = "ABCDEFGHIJKLMN"
+        self.assertEqual(
+            score_truncated_break(text, 7, 8, display_duration=0.7),
+            score_break(text, 7, 8, display_duration=0.7),
+        )
+
     def test_format_ass_time_uses_centiseconds(self) -> None:
         self.assertEqual(format_ass_time(65.43), "0:01:05.43")
 

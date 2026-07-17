@@ -37,8 +37,8 @@ DEFAULT_VAD_ONSET = 0.35
 DEFAULT_VAD_OFFSET = 0.2
 
 
-def build_ass_from_transcript(
-    transcript_path: str,
+def build_ass_from_data(
+    data: dict,
     ass_output: str,
     width: int = 1920,
     height: int = 1080,
@@ -48,7 +48,6 @@ def build_ass_from_transcript(
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
 ) -> Path:
-    data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
     ass_text = render_ass(
         data,
         width=width,
@@ -63,6 +62,31 @@ def build_ass_from_transcript(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(ass_text, encoding="utf-8")
     return output_path
+
+
+def build_ass_from_transcript(
+    transcript_path: str,
+    ass_output: str,
+    width: int = 1920,
+    height: int = 1080,
+    track_color_map: dict[str, str] | None = None,
+    subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
+    subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
+    subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+) -> Path:
+    data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+    return build_ass_from_data(
+        data,
+        ass_output,
+        width=width,
+        height=height,
+        track_color_map=track_color_map,
+        subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+        subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+        subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        subtitle_font_size=subtitle_font_size,
+    )
 
 
 def derive_pipeline_paths(input_media: str, output_dir: str, audio_track: str) -> tuple[Path, Path, Path]:

@@ -6,6 +6,7 @@ import subprocess
 from fractions import Fraction
 from pathlib import Path
 
+from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 VIDEO_CODEC = "libx264"
@@ -92,21 +93,6 @@ def probe_has_audio(input_path: str) -> bool:
     ]
     result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     return bool(result.stdout.strip())
-
-
-def probe_media_duration(input_path: str) -> float:
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        input_path,
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-    return max(0.0, float(result.stdout.strip()))
 
 
 def build_normalize_command(

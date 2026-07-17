@@ -40,6 +40,21 @@ CLAUSE_BREAK_TOKENS = (
     "\u3068\u304b",
     "\u3063\u3066",
 )
+LEADING_BOUNDARY_PENALTIES = {
+    "\u3055\u3093": 14,
+    "\u304f\u3093": 14,
+    "\u3061\u3083\u3093": 14,
+    "\u304c": 10,
+    "\u3092": 10,
+    "\u306b": 10,
+    "\u3067": 8,
+    "\u3068": 8,
+    "\u306e": 8,
+    "\u306f": 10,
+    "\u3082": 8,
+    "\u3066": 8,
+    "\u3060": 8,
+}
 try:
     import budoux  # type: ignore
 except ImportError:
@@ -93,6 +108,7 @@ def display_width(char: str) -> int:
     return 2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1
 
 
+@lru_cache(maxsize=16384)
 def text_width(text: str) -> int:
     return sum(display_width(char) for char in text)
 
@@ -163,6 +179,7 @@ def chunk_boundaries(text: str, chunks: list[str]) -> set[int]:
     return boundaries
 
 
+@lru_cache(maxsize=4096)
 def budoux_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, parse_budoux_chunks(text))
 
@@ -184,22 +201,7 @@ def leading_boundary_penalty(text: str, break_index: int) -> int:
     right = text[break_index:].lstrip()
     if not right:
         return 0
-    penalties = {
-        "\u3055\u3093": 14,
-        "\u304f\u3093": 14,
-        "\u3061\u3083\u3093": 14,
-        "\u304c": 10,
-        "\u3092": 10,
-        "\u306b": 10,
-        "\u3067": 8,
-        "\u3068": 8,
-        "\u306e": 8,
-        "\u306f": 10,
-        "\u3082": 8,
-        "\u3066": 8,
-        "\u3060": 8,
-    }
-    for token, penalty in penalties.items():
+    for token, penalty in LEADING_BOUNDARY_PENALTIES.items():
         if right.startswith(token):
             return penalty
     return 0
@@ -413,47 +415,7 @@ def has_awkward_boundary(left: str, right: str) -> bool:
 
 
 def score_truncated_break(text: str, break_index: int, max_width: int, display_duration: float | None = None) -> tuple[int, int, int, int, int, int, int, int]:
-    left = text[:break_index].rstrip()
-    right = text[break_index:].lstrip()
-    left_width = text_width(left)
-    right_width = text_width(right)
-    overflow_penalty = max(0, left_width - max_width) + max(0, right_width - max_width)
-    width_balance_penalty = abs(left_width - right_width)
-    tiny_line_penalty = 0
-    if left_width <= 5 or right_width <= 5:
-        tiny_line_penalty += 18
-    if left_width <= 3 or right_width <= 3:
-        tiny_line_penalty += 36
-    if left_width <= 2 or right_width <= 2:
-        tiny_line_penalty += 60
-
-    previous_char = left[-1] if left else ""
-    next_char = right[0] if right else ""
-    boundary_penalty = 0
-    if next_char in LEADING_AVOID_CHARS:
-        boundary_penalty += 8
-    if previous_char in TRAILING_AVOID_CHARS:
-        boundary_penalty += 6
-    if right[:2] in RIGHT_BOUNDARY_AVOID_WORDS or right[:1] in RIGHT_BOUNDARY_AVOID_WORDS:
-        boundary_penalty += 10
-    if left[-2:] in LEFT_BOUNDARY_AVOID_WORDS or left[-1:] in LEFT_BOUNDARY_AVOID_WORDS:
-        boundary_penalty += 3
-    boundary_penalty += connected_char_penalty(previous_char, next_char)
-
-    natural_midpoint_penalty = abs(break_index - len(text) // 2)
-    candidate_bonus = candidate_kind_bonus(text, break_index)
-    leading_penalty = leading_boundary_penalty(text, break_index)
-    timing_penalty = timing_balance_penalty(left_width, right_width, display_duration)
-    return (
-        overflow_penalty,
-        timing_penalty,
-        tiny_line_penalty,
-        candidate_bonus,
-        boundary_penalty + leading_penalty,
-        width_balance_penalty,
-        natural_midpoint_penalty,
-        break_index,
-    )
+    return score_break(text, break_index, max_width, display_duration=display_duration)
 
 
 def build_truncated_two_line_candidate(lines: list[str], max_width: int, max_lines: int, display_duration: float | None = None) -> list[str] | None:

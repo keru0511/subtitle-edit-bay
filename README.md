@@ -4,13 +4,26 @@
 
 現在の推奨運用は、Craigで話者ごとに分離した音声を動画へ同期する `craig_pipeline` です。
 
+## Windows版を使う（推奨）
+
+プログラミング環境の準備は不要です。[最新リリース](https://github.com/keru0511/subtitle-edit-bay/releases/latest)を開き、Assetsから `SubtitleEditBay-Setup.exe` をダウンロードして実行してください。
+
+[SubtitleEditBay-Setup.exeを直接ダウンロード](https://github.com/keru0511/subtitle-edit-bay/releases/latest/download/SubtitleEditBay-Setup.exe)
+
+初版のインストーラーは、インストール中にPython、FFmpeg、WhisperXなどの実行環境をネットワーク経由でセットアップする場合があります。インターネット接続と十分な空き容量を確保し、完了するまで画面を閉じないでください。配布ページに掲載された注意事項がある場合は、そちらも確認してください。
+
+開発者向けの公開手順は[リリースガイド](docs/RELEASING.md)にまとめています。
+
 ## ドキュメント
 
 - [利用ガイド](docs/USAGE.md): セットアップ、入力配置、実行、再実行、出力確認
 - [設定ガイド](docs/CONFIGURATION.md): GPU、字幕タイミング、色、話者分離、codec
 - [トラブルシューティング](docs/TROUBLESHOOTING.md): よくあるエラーと切り分け
+- [リリースガイド](docs/RELEASING.md): バージョンタグ、GitHub Releases、公開後確認
 
-## Windowsかんたんセットアップ
+## ZIP版セットアップ（開発・代替経路）
+
+通常の利用者は上記のWindows版インストーラーを使用してください。インストーラーを利用できない場合や、ソースコードから動作確認する場合は次の手順を使用できます。
 
 1. GitHubからZIPをダウンロードして展開する
 2. 初回だけ `setup.bat` をダブルクリックする

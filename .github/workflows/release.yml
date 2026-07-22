@@ -1,0 +1,176 @@
+name: Release Windows installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (for example, v1.2.3)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+
+    steps:
+      - name: Validate release tag
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\z') {
+              throw "Release tag must use the vX.Y.Z format without leading zeroes: $env:RELEASE_TAG"
+          }
+
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" --silent
+          if ($LASTEXITCODE -ne 0) {
+              throw "Release tag does not exist in the repository: $env:RELEASE_TAG"
+          }
+
+          $version = $env:RELEASE_TAG.Substring(1)
+          "tag=$env:RELEASE_TAG" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "artifact_name=subtitle-edit-bay-$version-windows-installer" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install numpy
+
+      - name: Run tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Ensure Inno Setup compiler
+        shell: pwsh
+        run: |
+          $compiler = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+          if (-not $compiler) {
+              choco install innosetup --yes --no-progress
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Inno Setup installation failed with exit code $LASTEXITCODE."
+              }
+              $candidate = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+              if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                  throw "Inno Setup compiler was not found after installation: $candidate"
+              }
+              $compilerPath = $candidate
+          }
+          else {
+              $compilerPath = $compiler.Source
+          }
+          "INNO_SETUP_COMPILER=$compilerPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $releaseDirectory = Join-Path $env:RUNNER_TEMP "subtitle-edit-bay-release"
+          $installerPath = Join-Path $releaseDirectory "SubtitleEditBay-Setup.exe"
+          New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
+
+          & ./scripts/build_installer.ps1 `
+              -Version "${{ steps.release.outputs.version }}" `
+              -OutputPath $installerPath
+          if ($LASTEXITCODE -ne 0) {
+              throw "Installer build failed with exit code $LASTEXITCODE."
+          }
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+              throw "Installer build did not produce $installerPath."
+          }
+
+          $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  SubtitleEditBay-Setup.exe" | Set-Content `
+              -LiteralPath "$installerPath.sha256" `
+              -Encoding ascii `
+              -NoNewline
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: |
+            ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe
+            ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      artifact_name: ${{ steps.release.outputs.artifact_name }}
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download tested installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: dist
+
+      - name: Verify installer checksum
+        working-directory: dist
+        run: sha256sum --check SubtitleEditBay-Setup.exe.sha256
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          assets=(
+            "dist/SubtitleEditBay-Setup.exe"
+            "dist/SubtitleEditBay-Setup.exe.sha256"
+          )
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Subtitle Edit Bay $RELEASE_VERSION" \
+              --generate-notes
+          fi

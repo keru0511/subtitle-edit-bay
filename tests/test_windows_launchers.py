@@ -30,6 +30,8 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("--force-reinstall", setup)
         self.assertIn("--no-deps", setup)
         self.assertIn("-m pip check", setup)
+        self.assertIn('$ErrorActionPreference = "Continue"', setup)
+        self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
 
     def test_update_supports_git_and_zip_distributions(self) -> None:
         launcher = (ROOT / "update.bat").read_text(encoding="utf-8")

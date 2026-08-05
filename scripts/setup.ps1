@@ -1,4 +1,8 @@
-$ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1 turns text written to stderr by native programs into
+# error records. Native exit codes are checked explicitly throughout this
+# script, so let those commands finish while keeping PowerShell cmdlets strict.
+$ErrorActionPreference = "Continue"
+$PSDefaultParameterValues["*:ErrorAction"] = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 function Find-Python310 {

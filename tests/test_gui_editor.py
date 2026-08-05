@@ -533,6 +533,23 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(model.data(model.index(0, 0), model.TextRole), "updated")
         self.assertEqual(model.data(model.index(0, 0), model.FontFamilyRole), "Yu Gothic")
 
+    def test_playback_time_selects_latest_active_subtitle_and_keeps_last_in_gaps(self) -> None:
+        self._load_project(
+            segments=[
+                {"id": "first", "start": 0, "end": 3, "text": "first", "speaker": "Speaker_Alice"},
+                {"id": "overlap", "start": 1, "end": 2, "text": "overlap", "speaker": "Speaker_Bob"},
+                {"id": "later", "start": 5, "end": 6, "text": "later", "speaker": "Speaker_Alice"},
+            ]
+        )
+
+        self.assertEqual(self.app.segmentIndexAtTime(0.5), 0)
+        self.app.selectSegmentAtTime(1.5)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        self.app.selectSegmentAtTime(4.0)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        self.app.selectSegmentAtTime(5.5)
+        self.assertEqual(self.app.selectedSegmentIndex, 2)
+
     def test_subtitle_model_tracks_a_timing_reorder_without_stale_rows(self) -> None:
         self._load_project(
             segments=[

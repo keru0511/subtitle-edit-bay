@@ -56,6 +56,16 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn('objectName: "sourcePanelSetupButton"', qml)
         self.assertNotIn('text: "素材を変更"', qml)
 
+    def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn("root.appBackend.selectSegmentAtTime(editorPlayer.position / 1000)", qml)
+        self.assertIn("timelineRoot.followPlaybackPosition(timelineRoot.player.position)", qml)
+        self.assertIn('objectName: "captionTable"', qml)
+        self.assertIn("function onSelectionChanged()", qml)
+        self.assertIn("positionViewAtIndex(selectedIndex, ListView.Contain)", qml)
+
     def test_source_drag_and_drop_is_wired_to_backend(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")

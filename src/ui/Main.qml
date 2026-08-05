@@ -370,11 +370,38 @@ ApplicationWindow {
             timelineRoot.visibleRulerTicks = ticks
         }
 
+        function followPlaybackPosition(positionMs) {
+            if (timelineRoot.pixelsPerSecond <= 0 || timelineFlick.width <= 0)
+                return
+            var targetX = Math.max(0, Number(positionMs) / 1000 * timelineRoot.pixelsPerSecond)
+            var viewportWidth = timelineFlick.width
+            var anchorX = viewportWidth * 0.35
+            var currentX = timelineFlick.contentX
+            var desiredX = currentX
+            if (targetX < currentX || targetX > currentX + viewportWidth)
+                desiredX = targetX - anchorX
+            else if (timelineRoot.player
+                     && timelineRoot.player.playbackState === MediaPlayer.PlayingState
+                     && targetX > currentX + anchorX)
+                desiredX = targetX - anchorX
+            var maximumX = Math.max(0, timelineFlick.contentWidth - viewportWidth)
+            desiredX = Math.max(0, Math.min(maximumX, desiredX))
+            if (Math.abs(desiredX - currentX) > 0.5)
+                timelineFlick.contentX = desiredX
+        }
+
         onPixelsPerSecondChanged: timelineRoot.refreshViewport()
         signal segmentActivated(int index)
         Connections {
             target: root.appBackend
             function onSegmentsChanged() { Qt.callLater(timelineRoot.refreshViewport) }
+        }
+        Connections {
+            target: timelineRoot.player
+            function onPositionChanged() {
+                if (timelineRoot.player)
+                    timelineRoot.followPlaybackPosition(timelineRoot.player.position)
+            }
         }
 
         color: "#0E1311"
@@ -1026,6 +1053,7 @@ ApplicationWindow {
                         root.editorPositionCache = editorPlayer.position
                         if (!editorSeek.pressed)
                             editorSeek.value = editorPlayer.position
+                        root.appBackend.selectSegmentAtTime(editorPlayer.position / 1000)
                     }
                     onDurationChanged: editorSeek.to = Math.max(1, editorPlayer.duration)
                 }
@@ -1141,7 +1169,13 @@ ApplicationWindow {
                         }
                         ListView {
                             id: captionTable
+                            objectName: "captionTable"
                             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5
+                            function revealSelectedCaption() {
+                                var selectedIndex = root.appBackend.selectedSegmentIndex
+                                if (selectedIndex >= 0)
+                                    positionViewAtIndex(selectedIndex, ListView.Contain)
+                            }
                             model: root.appBackend.subtitleModel
                             currentIndex: root.appBackend.selectedSegmentIndex
                             Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
@@ -1226,8 +1260,10 @@ ApplicationWindow {
                 Connections {
                     target: root.appBackend
                     function onSegmentsChanged() {
-                        if (root.appBackend.selectedSegmentIndex >= 0)
-                            captionTable.positionViewAtIndex(root.appBackend.selectedSegmentIndex, ListView.Contain)
+                        Qt.callLater(function() { captionTable.revealSelectedCaption() })
+                    }
+                    function onSelectionChanged() {
+                        Qt.callLater(function() { captionTable.revealSelectedCaption() })
                     }
                 }
             }

@@ -682,6 +682,26 @@ class EditBayBackend(LegacyEditBayBackend):
             self._selected_segment_index = resolved
             self.selectionChanged.emit()
 
+    @Slot(float, result=int)
+    def segmentIndexAtTime(self, seconds: float) -> int:
+        segments = self._project.get("segments", []) if self._project else []
+        if not segments:
+            return -1
+        position = max(0.0, float(seconds))
+        index = bisect_right(self._segment_starts, position) - 1
+        while index >= 0 and self._segment_prefix_max_end[index] >= position:
+            segment = segments[index]
+            if float(segment["start"]) <= position <= float(segment["end"]):
+                return index
+            index -= 1
+        return -1
+
+    @Slot(float)
+    def selectSegmentAtTime(self, seconds: float) -> None:
+        index = self.segmentIndexAtTime(seconds)
+        if index >= 0:
+            self.selectSegment(index)
+
     def _edit_number(self, value: Any, label: str) -> float | None:
         try:
             number = float(value)

@@ -28,13 +28,14 @@ class SubtitleProjectTests(unittest.TestCase):
             video_path="video.mkv",
             output_dir="out",
             segments=[
-                {"start": 2, "end": 1, "text": " hello ", "speaker": "A"},
+                {"start": 2, "end": 1, "text": " hello ", "speaker": "A", "subtitle_font_family": "Yu Mincho"},
                 {"id": "kept", "start": 0, "end": 1, "text": "first", "speaker": "Oz"},
             ],
         )
 
         self.assertEqual([item["id"] for item in project["segments"]], ["kept", "subtitle-000001"])
         self.assertEqual(project["segments"][1]["text"], "hello")
+        self.assertEqual(project["segments"][1]["subtitle_font_family"], "Yu Mincho")
         self.assertGreater(project["segments"][1]["end"], project["segments"][1]["start"])
         self.assertTrue(all(item["layout_packed"] for item in project["segments"]))
 

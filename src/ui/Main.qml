@@ -248,7 +248,7 @@ ApplicationWindow {
                 anchors.bottomMargin: 26 + Number(modelData.layout_row || 0) * 54
                 text: modelData.text
                 color: root.speakerColor(modelData.speaker)
-                font.family: "Yu Gothic UI"
+                font.family: modelData.subtitle_font_family || "Yu Gothic UI"
                 font.pixelSize: Math.max(14, Math.round(22 * Number(modelData.subtitle_font_scale || 1)))
                 font.weight: Font.Bold
                 horizontalAlignment: Text.AlignHCenter
@@ -425,7 +425,7 @@ ApplicationWindow {
                             anchors.rightMargin: 8
                             text: captionClip.segment.text
                             color: "#10140F"
-                            font.family: "Yu Gothic UI"
+                            font.family: captionClip.segment.subtitle_font_family || "Yu Gothic UI"
                             font.pixelSize: 10
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
@@ -988,12 +988,12 @@ ApplicationWindow {
                 }
 
                 Rectangle {
-                    Layout.preferredWidth: 540; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
+                    Layout.preferredWidth: 620; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
                     ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 7
                         RowLayout { Layout.fillWidth: true
                             PanelTitle { text: "字幕一覧" }
                             Item { Layout.fillWidth: true }
-                            Text { text: "開始 / 終了 / 話者 / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
+                            Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                         }
                         ListView {
                             id: captionTable
@@ -1013,6 +1013,7 @@ ApplicationWindow {
                                 required property string speaker
                                 required property int layoutRow
                                 required property real subtitleFontScale
+                                required property string subtitleFontFamily
                                 width: captionTable.width; height: 92; radius: 8
                                 color: root.appBackend.selectedSegmentIndex === index ? "#263326" : root.raised
                                 border.color: root.appBackend.selectedSegmentIndex === index ? root.acid : root.border
@@ -1032,6 +1033,29 @@ ApplicationWindow {
                                             }
                                             onActivated: root.appBackend.updateSegment(captionRow.index, {"speaker": currentValue})
                                         }
+                                        ComboBox {
+                                            id: captionFontCombo
+                                            objectName: "captionFontCombo"
+                                            Layout.preferredWidth: 130
+                                            model: root.appBackend.fontChoices
+                                            textRole: "label"
+                                            valueRole: "family"
+                                            function syncCurrentFont() {
+                                                for (var i = 0; i < count; ++i) {
+                                                    if (valueAt(i) === captionRow.subtitleFontFamily) {
+                                                        currentIndex = i
+                                                        return
+                                                    }
+                                                }
+                                                currentIndex = 0
+                                            }
+                                            Component.onCompleted: syncCurrentFont()
+                                            Connections {
+                                                target: captionRow
+                                                function onSubtitleFontFamilyChanged() { captionFontCombo.syncCurrentFont() }
+                                            }
+                                            onActivated: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_family": currentValue})
+                                        }
                                         SpinBox {
                                             Layout.preferredWidth: 82; from: 50; to: 200; stepSize: 5
                                             value: Math.round(captionRow.subtitleFontScale * 100)
@@ -1042,7 +1066,7 @@ ApplicationWindow {
                                     TextField {
                                         Layout.fillWidth: true
                                         text: captionRow.text
-                                        color: root.textPrimary; selectionColor: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12
+                                        color: root.textPrimary; selectionColor: root.acid; font.family: captionRow.subtitleFontFamily || "Yu Gothic UI"; font.pixelSize: 12
                                         onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"text": text})
                                         background: Rectangle { radius: 6; color: "#101512"; border.color: parent.activeFocus ? root.acid : root.border }
                                     }

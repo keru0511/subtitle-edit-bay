@@ -63,6 +63,11 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
     text = str(segment.get("text", "")).strip()
     speaker = str(segment.get("speaker", "Oz")).strip() or "Oz"
     font_scale = max(0.1, min(4.0, _finite_number(segment.get("subtitle_font_scale", 1.0), "segment.subtitle_font_scale")))
+    font_family = "".join(
+        char
+        for char in str(segment.get("subtitle_font_family", "")).strip()
+        if char >= " " and char != "\x7f"
+    )[:256]
     normalized = deepcopy(segment)
     normalized.update(
         {
@@ -76,12 +81,14 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
             "layout_row": max(0, int(segment.get("layout_row", 0))),
             "max_width": max(4, int(segment.get("max_width", 24))),
             "subtitle_font_scale": round(font_scale, 4),
+            "subtitle_font_family": font_family,
             "subtitle_volume_level": float(segment.get("subtitle_volume_level", 0.0)),
             "layout_packed": True,
             "manual_text": bool(segment.get("manual_text", False)),
             "manual_timing": bool(segment.get("manual_timing", False)),
             "manual_speaker": bool(segment.get("manual_speaker", False)),
             "manual_font_scale": bool(segment.get("manual_font_scale", False)),
+            "manual_font_family": bool(segment.get("manual_font_family", False)),
         }
     )
     return normalized

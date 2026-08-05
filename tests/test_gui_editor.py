@@ -18,7 +18,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
-from src.gui import EditBayBackend
+from src.gui import EditBayBackend, build_font_choices
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -201,6 +201,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.app.processEvents()
 
+    def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
+        choices = build_font_choices(["Yu Gothic", "@Yu Gothic", " arial ", "Arial", ""])
+
+        self.assertEqual(choices[0]["family"], "")
+        self.assertEqual([item["family"] for item in choices[1:]], ["arial", "Yu Gothic"])
+
     def test_project_load_restores_only_existing_sources(self) -> None:
         path, video, audio = self._make_project(include_missing_audio=True)
 
@@ -224,6 +230,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 "end": -2,
                 "speaker": "Speaker_Bob",
                 "subtitle_font_scale": 9,
+                "subtitle_font_family": "Yu Mincho",
             },
         )
 
@@ -234,10 +241,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(segment["speaker"], "Speaker_Bob")
         self.assertEqual(segment["source_speaker"], "Bob")
         self.assertEqual(segment["subtitle_font_scale"], 4.0)
+        self.assertEqual(segment["subtitle_font_family"], "Yu Mincho")
         self.assertTrue(segment["manual_text"])
         self.assertTrue(segment["manual_timing"])
         self.assertTrue(segment["manual_speaker"])
         self.assertTrue(segment["manual_font_scale"])
+        self.assertTrue(segment["manual_font_family"])
         self.assertNotIn("words", segment)
 
     def test_invalid_numeric_edits_preserve_segment_and_report_check(self) -> None:
@@ -442,9 +451,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertNotIn("words", active[0])
         self.assertEqual(visible[0]["sourceIndex"], 1)
 
-        self.app.updateSegment(0, {"text": "updated"})
+        self.app.updateSegment(0, {"text": "updated", "subtitle_font_family": "Yu Gothic"})
         self.assertEqual(model.rowCount(), 2)
         self.assertEqual(model.data(model.index(0, 0), model.TextRole), "updated")
+        self.assertEqual(model.data(model.index(0, 0), model.FontFamilyRole), "Yu Gothic")
 
     def test_subtitle_model_tracks_a_timing_reorder_without_stale_rows(self) -> None:
         self._load_project(
@@ -470,7 +480,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with patch("src.gui.assign_project_layout_rows", wraps=assign_project_layout_rows) as reflow:
             self.app.updateSegment(
                 0,
-                {"speaker": "Speaker_Bob", "subtitle_font_scale": 1.5},
+                {"speaker": "Speaker_Bob", "subtitle_font_scale": 1.5, "subtitle_font_family": "Yu Mincho"},
             )
             reflow.assert_not_called()
 

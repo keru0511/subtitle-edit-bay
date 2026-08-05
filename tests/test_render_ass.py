@@ -311,6 +311,25 @@ class RenderAssTests(unittest.TestCase):
         self.assertIn(r",,{\fs72}loud", output)
         self.assertIn(r",0,0,259,,{\fs72}also loud", output)
 
+    def test_render_ass_applies_font_family_per_caption(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "speaker": "Oz",
+                    "text": "hello",
+                    "layout_packed": True,
+                    "subtitle_font_scale": 1.2,
+                    "subtitle_font_family": r"Yu{\} Mincho",
+                }
+            ]
+        }
+
+        output = render_ass(data)
+
+        self.assertIn(r",,{\fnYu Mincho\fs60}hello", output)
+
     def test_pack_segments_preserves_source_speaker_metadata(self) -> None:
         data = {
             "segments": [

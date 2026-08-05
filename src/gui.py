@@ -25,6 +25,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
@@ -42,6 +43,20 @@ from .subtitle_project import (
 from .subtitle_workflow import build_project_ass
 
 
+def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
+    unique: dict[str, str] = {}
+    for value in font_families:
+        family = str(value).strip()
+        if not family or family.startswith("@"):
+            continue
+        unique.setdefault(family.casefold(), family)
+    families = sorted(unique.values(), key=str.casefold)
+    return [
+        {"label": "既定フォント", "family": ""},
+        *({"label": family, "family": family} for family in families),
+    ]
+
+
 class SubtitleListModel(QAbstractListModel):
     SegmentIdRole = Qt.ItemDataRole.UserRole + 1
     StartRole = SegmentIdRole + 1
@@ -50,6 +65,7 @@ class SubtitleListModel(QAbstractListModel):
     SpeakerRole = SegmentIdRole + 4
     LayoutRowRole = SegmentIdRole + 5
     FontScaleRole = SegmentIdRole + 6
+    FontFamilyRole = SegmentIdRole + 7
 
     _ROLE_NAMES = {
         SegmentIdRole: b"segmentId",
@@ -58,6 +74,7 @@ class SubtitleListModel(QAbstractListModel):
         TextRole: b"text",
         SpeakerRole: b"speaker",
         LayoutRowRole: b"layoutRow",
+        FontFamilyRole: b"subtitleFontFamily",
         FontScaleRole: b"subtitleFontScale",
     }
 
@@ -89,6 +106,8 @@ class SubtitleListModel(QAbstractListModel):
             return int(segment.get("layout_row", 0))
         if role == self.FontScaleRole:
             return float(segment.get("subtitle_font_scale", 1.0))
+        if role == self.FontFamilyRole:
+            return str(segment.get("subtitle_font_family", ""))
         return None
 
     def set_segments(self, segments: list[dict[str, Any]]) -> None:
@@ -213,6 +232,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._ass_path = ""
         self._loading_project_sources = False
         super().__init__(argv, workspace_root=workspace_root)
+        self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
         self._segment_starts: list[float] = []
         self._segment_prefix_max_end: list[float] = []
@@ -255,6 +275,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def subtitleModel(self) -> QObject:
         return self._subtitle_model
 
+    @Property("QVariantList", constant=True)
+    def fontChoices(self) -> list[dict[str, str]]:
+        return deepcopy(self._font_choices)
+
     @Property(int, notify=segmentsChanged)
     def segmentCount(self) -> int:
         return len(self._project.get("segments", [])) if self._project else 0
@@ -280,6 +304,7 @@ class EditBayBackend(LegacyEditBayBackend):
             "speaker": str(segment.get("speaker", "")),
             "layout_row": int(segment.get("layout_row", 0)),
             "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),
+            "subtitle_font_family": str(segment.get("subtitle_font_family", "")),
         }
         if source_index is not None:
             view["sourceIndex"] = source_index
@@ -645,6 +670,10 @@ class EditBayBackend(LegacyEditBayBackend):
                 return
             updated["subtitle_font_scale"] = max(0.1, min(4.0, font_scale))
             updated["manual_font_scale"] = True
+        if "subtitle_font_family" in changes:
+            font_family = str(changes["subtitle_font_family"]).strip()
+            updated["subtitle_font_family"] = font_family
+            updated["manual_font_family"] = bool(font_family)
         if updated == current:
             return
         selected_id = current["id"]

@@ -1074,6 +1074,7 @@ def pack_event(segment: dict, default_max_width: int = 24) -> SubtitleEvent | No
             "max_width": max_width,
             "display_duration": display_duration,
             "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),
+            "subtitle_font_family": str(segment.get("subtitle_font_family", "")),
             "source_track": str(segment.get("source_track", "")),
             "source_speaker": str(segment.get("source_speaker", "")),
             "source_file": str(segment.get("source_file", "")),

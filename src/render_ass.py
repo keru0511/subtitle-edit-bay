@@ -130,6 +130,14 @@ def parse_segments(
     )
 
 
+def sanitize_ass_font_family(value: object) -> str:
+    return "".join(
+        char
+        for char in str(value).strip()
+        if char not in "{}\\" and char >= " " and char != "\x7f"
+    )[:256]
+
+
 def render_dialogue(
     event: SubtitleEvent,
     speaker_color_map: dict[str, str] | None = None,
@@ -140,7 +148,13 @@ def render_dialogue(
     style = infer_style(event, speaker_color_map=speaker_color_map, track_color_map=track_color_map)
     font_scale = max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0)))
     scaled_font_size = max(3, round(subtitle_font_size * font_scale))
-    dialogue_text = event.text if scaled_font_size == subtitle_font_size else f"{{\\fs{scaled_font_size}}}{event.text}"
+    font_family = sanitize_ass_font_family(event.metadata.get("subtitle_font_family", ""))
+    overrides = ""
+    if font_family:
+        overrides += f"\\fn{font_family}"
+    if scaled_font_size != subtitle_font_size:
+        overrides += f"\\fs{scaled_font_size}"
+    dialogue_text = f"{{{overrides}}}{event.text}" if overrides else event.text
     margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step
     return (
         "Dialogue: "

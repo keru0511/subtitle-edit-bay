@@ -29,6 +29,15 @@ class QmlStaticTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, output)
         self.assertNotIn("Warning:", output)
 
+    def test_caption_font_selector_is_wired_to_backend(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "captionFontCombo"', qml)
+        self.assertIn("model: root.appBackend.fontChoices", qml)
+        self.assertIn('"subtitle_font_family": currentValue', qml)
+        self.assertIn('font.family: modelData.subtitle_font_family || "Yu Gothic UI"', qml)
+
 
 if __name__ == "__main__":
     unittest.main()

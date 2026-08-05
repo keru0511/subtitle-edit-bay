@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QProcess, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QProcess, Qt, qInstallMessageHandler
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
@@ -796,6 +796,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreater(len(visible), 0)
         self.assertLess(len(visible), len(segments))
         self.assertEqual(visible[0]["sourceIndex"], 0)
+
+    def test_qml_timeline_refresh_does_not_access_destroyed_segment_data(self) -> None:
+        self._load_project()
+        messages: list[str] = []
+        previous_handler = qInstallMessageHandler(
+            lambda _message_type, _context, message: messages.append(message)
+        )
+        try:
+            _, window = self._load_qml()
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            timeline = self._quick_item(window, "editorTimeline")
+            timeline.setProperty(
+                "visibleSegments",
+                [
+                    {
+                        "sourceIndex": 0,
+                        "segment": {
+                            "start": 0.0,
+                            "end": 1.0,
+                            "text": "caption",
+                            "speaker": "Speaker_Alice",
+                            "subtitle_font_family": "",
+                        },
+                    }
+                ],
+            )
+            self.app.processEvents()
+            timeline.setProperty("visibleSegments", [])
+            self.app.processEvents()
+        finally:
+            qInstallMessageHandler(previous_handler)
+
+        type_errors = [message for message in messages if "TypeError" in message]
+        self.assertEqual(type_errors, [], "\n".join(type_errors))
 
     def test_editor_render_action_returns_to_main_and_starts_render(self) -> None:
         self._load_project()

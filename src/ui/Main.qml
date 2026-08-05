@@ -226,6 +226,49 @@ ApplicationWindow {
         }
     }
 
+    component CompactSpinBox: SpinBox {
+        id: compactSpin
+        implicitWidth: 106
+        implicitHeight: 34
+        editable: true
+        font.family: "Cascadia Mono"
+        font.pixelSize: 11
+        contentItem: TextInput {
+            z: 1
+            text: compactSpin.textFromValue(compactSpin.value, compactSpin.locale)
+            color: root.textPrimary
+            selectionColor: root.acid
+            selectedTextColor: "#10140F"
+            horizontalAlignment: Qt.AlignHCenter
+            verticalAlignment: Qt.AlignVCenter
+            readOnly: !compactSpin.editable
+            validator: compactSpin.validator
+            inputMethodHints: Qt.ImhFormattedNumbersOnly
+            leftPadding: 31
+            rightPadding: 31
+        }
+        up.indicator: Rectangle {
+            x: compactSpin.width - width
+            width: 30
+            height: compactSpin.height
+            color: compactSpin.up.pressed ? "#303B35" : "transparent"
+            border.color: root.border
+            Text { anchors.centerIn: parent; text: "+"; color: root.textPrimary; font.pixelSize: 18 }
+        }
+        down.indicator: Rectangle {
+            width: 30
+            height: compactSpin.height
+            color: compactSpin.down.pressed ? "#303B35" : "transparent"
+            border.color: root.border
+            Text { anchors.centerIn: parent; text: "−"; color: root.textPrimary; font.pixelSize: 18 }
+        }
+        background: Rectangle {
+            radius: 6
+            color: "#101512"
+            border.color: compactSpin.activeFocus ? root.acid : root.border
+        }
+    }
+
     component TimeField: TextField {
         id: timeControl
         horizontalAlignment: TextInput.AlignRight
@@ -270,15 +313,17 @@ ApplicationWindow {
         Repeater {
             model: overlayRoot.activeSegments
             delegate: Text {
+                id: overlayCaption
                 required property var modelData
+                property var segmentData: modelData || ({})
                 width: Math.min(implicitWidth + 30, parent.width - 30)
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: 26 + Number(modelData.layout_row || 0) * 54
-                text: modelData.text
-                color: root.speakerColor(modelData.speaker)
-                font.family: modelData.subtitle_font_family || "Yu Gothic UI"
-                font.pixelSize: Math.max(14, Math.round(22 * Number(modelData.subtitle_font_scale || 1)))
+                anchors.bottomMargin: 26 + Number(segmentData.layout_row || 0) * 54
+                text: segmentData.text || ""
+                color: root.speakerColor(segmentData.speaker || "")
+                font.family: segmentData.subtitle_font_family || "Yu Gothic UI"
+                font.pixelSize: Math.max(14, Math.round(22 * Number(segmentData.subtitle_font_scale || 1)))
                 font.weight: Font.Bold
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
@@ -433,17 +478,18 @@ ApplicationWindow {
                     delegate: Rectangle {
                         id: captionClip
                         required property var modelData
-                        property int sourceIndex: Number(modelData.sourceIndex)
-                        property var segment: modelData.segment
+                        property int sourceIndex: modelData ? Number(modelData.sourceIndex) : -1
+                        property var segment: modelData && modelData.segment ? modelData.segment : ({})
                         property real originalX: 0
                         property real originalWidth: 0
                         property real pointerStart: 0
-                        x: Number(segment.start) * timelineRoot.pixelsPerSecond
-                        y: 31 + root.laneForStyle(segment.speaker) * timelineRoot.laneHeight
-                        width: Math.max(10, (Number(segment.end) - Number(segment.start)) * timelineRoot.pixelsPerSecond)
+                        visible: sourceIndex >= 0 && segment.start !== undefined && segment.end !== undefined
+                        x: Number(segment.start || 0) * timelineRoot.pixelsPerSecond
+                        y: 31 + root.laneForStyle(segment.speaker || "") * timelineRoot.laneHeight
+                        width: Math.max(10, (Number(segment.end || 0) - Number(segment.start || 0)) * timelineRoot.pixelsPerSecond)
                         height: timelineRoot.laneHeight - 7
                         radius: 6
-                        color: root.speakerColor(segment.speaker)
+                        color: root.speakerColor(segment.speaker || "")
                         opacity: root.appBackend.selectedSegmentIndex === sourceIndex ? 1 : 0.78
                         border.color: root.appBackend.selectedSegmentIndex === sourceIndex ? root.textPrimary : "#66101010"
                         border.width: root.appBackend.selectedSegmentIndex === sourceIndex ? 2 : 1
@@ -452,7 +498,7 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
-                            text: captionClip.segment.text
+                            text: captionClip.segment.text || ""
                             color: "#10140F"
                             font.family: captionClip.segment.subtitle_font_family || "Yu Gothic UI"
                             font.pixelSize: 10
@@ -713,7 +759,7 @@ ApplicationWindow {
                     }
                 }
                 Text { Layout.fillWidth: true; text: root.appBackend.alignmentResult.status + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "s" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
-                SmallButton { Layout.fillWidth: true; text: "素材を変更"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
+                SmallButton { objectName: "sourcePanelSetupButton"; Layout.fillWidth: true; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             }
         }
 
@@ -758,7 +804,7 @@ ApplicationWindow {
                     source: root.appBackend.previewUrl
                     videoOutput: mainVideo
                     audioOutput: AudioOutput { volume: 0.7 }
-                    onPositionChanged: if (!mainSeek.pressed) mainSeek.value = position
+                    onPositionChanged: if (!mainSeek.pressed) mainSeek.value = mainPlayer.position
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
@@ -947,9 +993,9 @@ ApplicationWindow {
                     source: root.appBackend.previewUrl
                     Component.onCompleted: position = root.editorPositionCache
                     onPositionChanged: {
-                        root.editorPositionCache = position
+                        root.editorPositionCache = editorPlayer.position
                         if (!editorSeek.pressed)
-                            editorSeek.value = position
+                            editorSeek.value = editorPlayer.position
                     }
                     onDurationChanged: editorSeek.to = Math.max(1, editorPlayer.duration)
                 }
@@ -1124,8 +1170,9 @@ ApplicationWindow {
                                             }
                                             onActivated: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_family": currentValue})
                                         }
-                                        SpinBox {
-                                            Layout.preferredWidth: 82; from: 50; to: 200; stepSize: 5
+                                        CompactSpinBox {
+                                            objectName: "captionSizeSpin"
+                                            Layout.preferredWidth: 106; from: 50; to: 200; stepSize: 5
                                             value: Math.round(captionRow.subtitleFontScale * 100)
                                             onValueModified: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_scale": value / 100})
                                         }

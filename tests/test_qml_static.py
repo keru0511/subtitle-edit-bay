@@ -36,7 +36,25 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "captionFontCombo"', qml)
         self.assertIn("model: root.appBackend.fontChoices", qml)
         self.assertIn('"subtitle_font_family": currentValue', qml)
-        self.assertIn('font.family: modelData.subtitle_font_family || "Yu Gothic UI"', qml)
+        self.assertIn('font.family: segmentData.subtitle_font_family || "Yu Gothic UI"', qml)
+
+    def test_timeline_delegate_and_position_handlers_are_safe_during_refresh(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn("property var segment: modelData && modelData.segment ? modelData.segment : ({})", qml)
+        self.assertIn("visible: sourceIndex >= 0 && segment.start !== undefined", qml)
+        self.assertIn("mainSeek.value = mainPlayer.position", qml)
+        self.assertIn("editorSeek.value = editorPlayer.position", qml)
+
+    def test_caption_size_control_and_source_labels_are_readable_and_consistent(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn("component CompactSpinBox: SpinBox", qml)
+        self.assertIn('objectName: "captionSizeSpin"', qml)
+        self.assertIn('objectName: "sourcePanelSetupButton"', qml)
+        self.assertNotIn('text: "素材を変更"', qml)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"

@@ -925,6 +925,12 @@ class EditBayBackend(LegacyEditBayBackend):
             missing = ", ".join(self._dependencies.missing())
             self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
             return
+        if str(settings.get("device") or self._settings.get("device")) == "cuda" and not self._dependencies.cuda:
+            self._set_status(
+                "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください",
+                "SETUP",
+            )
+            return
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
         if not Path(selection.video).is_file() or not audio_files or not selection.output_dir:

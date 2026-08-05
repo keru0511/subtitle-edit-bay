@@ -105,25 +105,36 @@ def expected_log_path(audio_path: str, output_dir: str) -> Path:
 def run_command_with_utf8_log(command: list[str], log_path: str) -> None:
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,
-            env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+            bufsize=1,
+            env=environment,
         )
     except OSError as error:
         path.write_text(f"Failed to start process: {error}\n", encoding="utf-8")
         raise
 
-    log_text = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
-    if result.returncode:
-        log_text += f"\nProcess exited with code {result.returncode}.\n"
-    path.write_text(log_text, encoding="utf-8")
-    result.check_returncode()
+    with path.open("w", encoding="utf-8") as log_file:
+        if process.stdout is not None:
+            for line in process.stdout:
+                print(line, end="", flush=True)
+                log_file.write(line)
+                log_file.flush()
+            process.stdout.close()
+        return_code = process.wait()
+        if return_code:
+            exit_message = f"\nProcess exited with code {return_code}.\n"
+            print(exit_message, end="", flush=True)
+            log_file.write(exit_message)
+            log_file.flush()
+            raise subprocess.CalledProcessError(return_code, command)
 
 
 def print_streams(streams: list[dict[str, object]]) -> None:

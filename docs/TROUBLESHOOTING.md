@@ -140,6 +140,24 @@ GUIを起動する `python` と同じ環境へインストールしてくださ�
 
 出力先の `*.whisperx.log` を確認します。失敗時も標準出力・標準エラーと終了コードをUTF-8で保存します。
 
+
+## CUDAを選ぶと文字起こしがすぐ終了する
+
+WhisperXログに `Torch not compiled with CUDA enabled` と出る場合、NVIDIA GPUではなく `.venv` のPyTorchがCPU版になっています。
+
+1. GUIを閉じる
+2. `setup.bat` を再実行する
+3. `Setup verification passed.` と `CUDA: available` を確認する
+4. `start.bat` からGUIを起動し直す
+
+~~~powershell
+.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+~~~
+
+最後が `True` なら修復済みです。NVIDIA GPU検出時はPyTorch 2.8.0 CUDA 12.8版とWhisperX 3.8.6をセットアップが自動導入します。
+
+GUIもCUDA設定とPyTorchの不一致を開始前に検出します。処理中のWhisperX出力は画面と `transcripts/*.whisperx.log` へ同時に記録され、同期解析の遅延通知がエラー表示を上書きすることはありません。
+
 ## GPUを使わない / GPU負荷が低い
 
 処理工程ごとに使う資源が異なります。

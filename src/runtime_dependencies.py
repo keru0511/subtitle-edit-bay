@@ -11,6 +11,7 @@ class RuntimeDependencyStatus:
     ffmpeg: bool
     ffprobe: bool
     whisperx: bool
+    cuda: bool = False
 
     @property
     def ready(self) -> bool:
@@ -38,12 +39,28 @@ def check_runtime_dependencies() -> RuntimeDependencyStatus:
         ffmpeg=shutil.which("ffmpeg") is not None,
         ffprobe=shutil.which("ffprobe") is not None,
         whisperx=importlib.util.find_spec("whisperx") is not None,
+        cuda=_torch_cuda_available(),
     )
 
 
-def format_dependency_error(status: RuntimeDependencyStatus, require_whisperx: bool = True) -> str:
+def _torch_cuda_available() -> bool:
+    if importlib.util.find_spec("torch") is None:
+        return False
+    try:
+        import torch
+    except (ImportError, OSError):
+        return False
+    return bool(torch.cuda.is_available())
+
+
+def format_dependency_error(
+    status: RuntimeDependencyStatus,
+    require_whisperx: bool = True,
+    device: str | None = None,
+) -> str:
     missing = status.missing(require_whisperx=require_whisperx)
-    if not missing:
+    cuda_missing = require_whisperx and device == "cuda" and not status.cuda
+    if not missing and not cuda_missing:
         return ""
 
     hints: list[str] = []
@@ -51,4 +68,7 @@ def format_dependency_error(status: RuntimeDependencyStatus, require_whisperx: b
         hints.append("Install FFmpeg and add both ffmpeg and ffprobe to PATH.")
     if "whisperx" in missing:
         hints.append("Install WhisperX in this Python environment: python -m pip install whisperx")
-    return f"Missing runtime dependencies: {', '.join(missing)}. {' '.join(hints)}"
+    if cuda_missing:
+        hints.append("CUDA was selected but this PyTorch build cannot use it. Run setup.bat again or select CPU.")
+    missing_label = ", ".join(missing) if missing else "CUDA-enabled PyTorch"
+    return f"Missing runtime dependencies: {missing_label}. {' '.join(hints)}"

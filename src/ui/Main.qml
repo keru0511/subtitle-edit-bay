@@ -95,6 +95,8 @@ ApplicationWindow {
             return "処理中です。完了または停止するまで入力と編集は変更できません"
         if (!root.appBackend.dependencyStatus.ready)
             return "実行ツールが不足しています: " + root.appBackend.dependencyStatus.missing.join(", ")
+        if (deviceCombo.currentText === "cuda" && !root.appBackend.dependencyStatus.cuda)
+            return "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください"
         if (!root.appBackend.sourceSelection.video)
             return "素材設定で動画を指定してください"
         if (root.appBackend.speakers.length === 0)
@@ -718,7 +720,7 @@ ApplicationWindow {
                     videoOutput: mainVideo
                     audioOutput: AudioOutput { volume: 0.7 }
                     onPositionChanged: if (!mainSeek.pressed) mainSeek.value = position
-                    onDurationChanged: mainSeek.to = Math.max(1, duration)
+                    onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
                 SubtitleOverlay { anchors.fill: mainVideo; player: mainPlayer }
@@ -794,7 +796,7 @@ ApplicationWindow {
                         id: transcribeButton
                         objectName: "transcribeButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: !root.appBackend.projectLoaded || root.appBackend.activeJob === "transcribe"
-                        enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && !root.appBackend.projectLoaded
+                        enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda) && !root.appBackend.projectLoaded
                         text: root.appBackend.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
                         onClicked: root.appBackend.startTranscription(root.currentSettings())
                         contentItem: Text { text: transcribeButton.text; color: transcribeButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -910,7 +912,7 @@ ApplicationWindow {
                         if (!editorSeek.pressed)
                             editorSeek.value = position
                     }
-                    onDurationChanged: editorSeek.to = Math.max(1, duration)
+                    onDurationChanged: editorSeek.to = Math.max(1, editorPlayer.duration)
                 }
 
                 ColumnLayout {

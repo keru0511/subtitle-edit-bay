@@ -23,6 +23,13 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn('"Gyan.FFmpeg"', setup)
         self.assertIn("-m pip install", setup)
         self.assertIn("check_runtime_dependencies", setup)
+        self.assertIn('Get-Command "nvidia-smi.exe"', setup)
+        self.assertIn("https://download.pytorch.org/whl/cu128", setup)
+        self.assertIn('$whisperXVersion = "3.8.6"', setup)
+        self.assertIn('$torchVersion = "2.8.0"', setup)
+        self.assertIn("--force-reinstall", setup)
+        self.assertIn("--no-deps", setup)
+        self.assertIn("-m pip check", setup)
 
     def test_update_supports_git_and_zip_distributions(self) -> None:
         launcher = (ROOT / "update.bat").read_text(encoding="utf-8")

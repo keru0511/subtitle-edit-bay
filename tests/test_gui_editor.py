@@ -70,7 +70,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._audio_tracks = app._default_audio_tracks()
         app._alignment_result = app._empty_alignment_result()
         app._alignment_busy = False
-        app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True)
+        app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=True)
         app._settings = deepcopy(self._base_settings)
         app._running = False
         app._status = "動画・話者音声・出力先を指定してください"
@@ -541,7 +541,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app.startTranscription(self.app.settings)
             self.assertEqual(self.app.stage, "SETUP")
 
-            self.app._dependencies = RuntimeDependencyStatus(True, True, True)
+            self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=False)
+            self.app.startTranscription({**self.app.settings, "device": "cuda"})
+            self.assertEqual(self.app.stage, "SETUP")
+            self.assertIn("CUDA", self.app.status)
+
+            self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
             self.app.startTranscription(self.app.settings)
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("動画", self.app.status)
@@ -616,6 +621,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
+
+    def test_delayed_alignment_result_does_not_hide_process_error(self) -> None:
+        self.app._status = "WhisperX failed"
+        self.app._stage = "ERROR"
+        self.app._apply_alignment_result({"track": "0:a:1", "offset": 0.5})
+
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertEqual(self.app.status, "WhisperX failed")
+        self.assertEqual(self.app.alignmentResult["track"], "0:a:1")
 
     def test_running_source_changes_are_blocked_and_reset_clears_project(self) -> None:
         self._load_project()

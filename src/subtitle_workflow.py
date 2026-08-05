@@ -452,7 +452,12 @@ def main() -> None:
         if not args.run:
             print(derive_project_path(args.video, args.output_dir))
             return
-        dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=True)
+        device = resolve_option(None, config, "device", DEFAULT_DEVICE)
+        dependency_error = format_dependency_error(
+            check_runtime_dependencies(),
+            require_whisperx=True,
+            device=device,
+        )
         if dependency_error:
             raise SystemExit(dependency_error)
         track_colors = parse_track_color_args(resolve_list_option(None, config, "track_color", []))
@@ -472,7 +477,7 @@ def main() -> None:
             reference_track=args.reference_track,
             alignment_offset_adjustment=float(resolve_option(args.alignment_offset_adjustment, config, "alignment_offset_adjustment", 0.0)),
             model=resolve_option(None, config, "model", DEFAULT_MODEL),
-            device=resolve_option(None, config, "device", DEFAULT_DEVICE),
+            device=device,
             compute_type=resolve_option(None, config, "compute_type", DEFAULT_COMPUTE_TYPE),
             language=resolve_option(None, config, "language", DEFAULT_LANGUAGE),
             vad_onset=float(resolve_option(None, config, "vad_onset", DEFAULT_VAD_ONSET)),

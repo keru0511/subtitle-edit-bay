@@ -66,6 +66,15 @@ function Install-WithWinget {
     }
 }
 
+function Test-NvidiaGpu {
+    $nvidiaSmi = Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue
+    if (-not $nvidiaSmi) {
+        return $false
+    }
+    & $nvidiaSmi.Source -L *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 Write-Host "Subtitle Edit Bay setup"
 Write-Host "This can take a while because WhisperX and PyTorch are large."
 
@@ -109,8 +118,41 @@ Write-Host "Installing Subtitle Edit Bay dependencies..."
 & $venvPython -m pip install -r "requirements.txt"
 if ($LASTEXITCODE -ne 0) { throw "requirements.txt installation failed." }
 
-Write-Host "Installing WhisperX..."
-& $venvPython -m pip install whisperx
+$nvidiaGpuAvailable = Test-NvidiaGpu
+$whisperXVersion = "3.8.6"
+$torchVersion = "2.8.0"
+$torchVisionVersion = "0.23.0"
+$torchAudioVersion = "2.8.0"
+$cudaTorchIndex = "https://download.pytorch.org/whl/cu128"
+
+if ($nvidiaGpuAvailable) {
+    $cudaAlreadyAvailable = & $venvPython -c "import importlib.util; has_torch = importlib.util.find_spec('torch') is not None; print('true' if has_torch and __import__('torch').cuda.is_available() else 'false')"
+    $torchPackages = @(
+        "torch==$torchVersion",
+        "torchvision==$torchVisionVersion",
+        "torchaudio==$torchAudioVersion"
+    )
+    $pipArguments = @(
+        "-m",
+        "pip",
+        "install"
+    ) + $torchPackages + @(
+        "--index-url",
+        $cudaTorchIndex
+    )
+    if ($cudaAlreadyAvailable.Trim() -ne "true") {
+        Write-Host "CPU-only PyTorch detected. Replacing it with the CUDA build..."
+        $pipArguments += @("--force-reinstall", "--no-deps")
+    } else {
+        Write-Host "CUDA-enabled PyTorch detected. Verifying pinned versions..."
+    }
+
+    & $venvPython @pipArguments
+    if ($LASTEXITCODE -ne 0) { throw "CUDA-enabled PyTorch installation failed." }
+}
+
+Write-Host "Installing WhisperX $whisperXVersion..."
+& $venvPython -m pip install "whisperx==$whisperXVersion"
 if ($LASTEXITCODE -ne 0) { throw "WhisperX installation failed." }
 
 if (-not (Test-Path -LiteralPath "assets\speaker_colors.json")) {
@@ -119,6 +161,9 @@ if (-not (Test-Path -LiteralPath "assets\speaker_colors.json")) {
 
 $cudaAvailable = & $venvPython -c "import torch; print('true' if torch.cuda.is_available() else 'false')"
 if ($LASTEXITCODE -ne 0) { throw "PyTorch verification failed." }
+if ($nvidiaGpuAvailable -and $cudaAvailable.Trim() -ne "true") {
+    throw "An NVIDIA GPU was detected, but CUDA-enabled PyTorch is unavailable. Re-run setup.bat after checking the NVIDIA driver and network connection."
+}
 
 if (-not (Test-Path -LiteralPath ".gui\runtime_config.json")) {
     New-Item -ItemType Directory -Path ".gui" -Force | Out-Null
@@ -130,6 +175,9 @@ if (-not (Test-Path -LiteralPath ".gui\runtime_config.json")) {
     }
     $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath ".gui\runtime_config.json" -Encoding UTF8
 }
+
+& $venvPython -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Python dependency verification failed." }
 
 & $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict(); print(status.to_dict())"
 if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed." }

@@ -39,7 +39,9 @@ PowerShellから実行する場合もコマンドは同じです。
 
 `setup.bat` はwingetで不足しているPython 3.10とFFmpegを導入し、WhisperX・PyTorch・GUI依存を `.venv` へインストールします。FFmpegの場所は `.local` に記録します。インターネット接続と十分な空き容量が必要で、WhisperXとPyTorchの導入には時間がかかります。
 
-CUDAを利用できないPCでは、初回GUI設定をCPUと `libx264` へ自動で切り替えます。セットアップは再実行可能で、動画、音声、話者色、既存GUI設定は上書きしません。
+NVIDIA GPUを検出した場合は、WhisperX 3.8.6と互換性のあるPyTorch 2.8.0のCUDA 12.8版を自動導入します。CPU版PyTorchへ置き換わった環境も、`setup.bat` の再実行で修復できます。
+
+CUDAを利用できないPCでは、初回GUI設定をCPUと `libx264` へ自動で切り替えます。セットアップは再実行可能で、動画、音声、話者色、既存GUI設定は上書きしません。CUDA設定とPyTorchが一致しない場合、GUIは文字起こしを開始せず修復方法を表示します。
 
 ## アップデート
 
@@ -59,7 +61,8 @@ Python 3.10とFFmpeg/ffprobeを手動で用意し、プロジェクト専用の 
 py -3.10 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install whisperx
+.\.venv\Scripts\python.exe -m pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+.\.venv\Scripts\python.exe -m pip install whisperx==3.8.6
 .\.venv\Scripts\python.exe --version
 ffmpeg -version
 ffprobe -version

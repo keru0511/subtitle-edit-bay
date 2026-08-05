@@ -9,14 +9,16 @@ from src.runtime_dependencies import (
 
 
 class RuntimeDependencyTests(unittest.TestCase):
+    @mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=True)
     @mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=object())
     @mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe")
-    def test_check_runtime_dependencies_reports_ready(self, _which: mock.Mock, _find_spec: mock.Mock) -> None:
+    def test_check_runtime_dependencies_reports_ready(self, _which: mock.Mock, _find_spec: mock.Mock, _cuda: mock.Mock) -> None:
         status = check_runtime_dependencies()
 
         self.assertTrue(status.ready)
         self.assertEqual(status.missing(), [])
         self.assertTrue(status.to_dict()["ready"])
+        self.assertTrue(status.cuda)
 
     def test_format_dependency_error_includes_install_hints(self) -> None:
         status = RuntimeDependencyStatus(ffmpeg=False, ffprobe=False, whisperx=False)
@@ -27,6 +29,14 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertIn("ffprobe", message)
         self.assertIn("whisperx", message)
         self.assertIn("pip install whisperx", message)
+
+    def test_cuda_device_requires_cuda_enabled_pytorch(self) -> None:
+        status = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=False)
+
+        message = format_dependency_error(status, device="cuda")
+
+        self.assertIn("CUDA-enabled PyTorch", message)
+        self.assertIn("setup.bat", message)
 
     def test_dry_run_does_not_require_whisperx(self) -> None:
         status = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=False)

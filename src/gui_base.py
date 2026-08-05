@@ -439,6 +439,8 @@ class EditBayBackend(QApplication):
         self._alignment_busy = False
         self._alignment_result = dict(result)
         self.alignmentChanged.emit()
+        if self._running or self._stage == "ERROR":
+            return
         self._set_status(
             f"同期完了: {result['track']} / offset {float(result['offset']):+.3f}s",
             "READY",
@@ -450,6 +452,8 @@ class EditBayBackend(QApplication):
         self._alignment_result = self._empty_alignment_result("解析失敗")
         self._alignment_result["error"] = message
         self.alignmentChanged.emit()
+        if self._running or self._stage == "ERROR":
+            return
         self._set_status(f"同期解析に失敗しました: {message}", "ERROR")
 
     @Slot("QVariantMap")

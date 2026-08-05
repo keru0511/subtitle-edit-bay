@@ -937,18 +937,21 @@ class RenderAssTests(unittest.TestCase):
     def test_run_command_with_utf8_log_preserves_failed_process_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / "whisperx.log"
-            completed = subprocess.CompletedProcess(["whisperx"], 7, stdout="partial output", stderr="failure detail")
-            with mock.patch("src.transcribe.subprocess.run", return_value=completed) as run_mock:
+            command = [
+                sys.executable,
+                "-c",
+                "import sys; print('partial output', flush=True); print('failure detail', file=sys.stderr, flush=True); raise SystemExit(7)",
+            ]
+            with mock.patch("builtins.print") as streamed:
                 with self.assertRaises(subprocess.CalledProcessError):
-                    run_command_with_utf8_log(["whisperx"], str(log_path))
+                    run_command_with_utf8_log(command, str(log_path))
 
-            child_env = run_mock.call_args.kwargs["env"]
-            self.assertEqual(child_env["PYTHONIOENCODING"], "utf-8")
-            self.assertEqual(child_env["PYTHONUTF8"], "1")
             log_text = log_path.read_text(encoding="utf-8")
             self.assertIn("partial output", log_text)
             self.assertIn("failure detail", log_text)
             self.assertIn("code 7", log_text)
+            streamed_text = "".join(str(call.args[0]) for call in streamed.call_args_list)
+            self.assertIn("partial output", streamed_text)
 
     def test_derive_youtube_text_paths_uses_merged_stem(self) -> None:
         title_path, description_path = derive_youtube_text_paths("video_export/input/input.merged.json")

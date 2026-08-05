@@ -819,7 +819,11 @@ def main() -> None:
     subtitle_min_duration_seconds = float(resolve_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS))
     run = resolve_bool_option(args.run, config, "run", False)
 
-    dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=run)
+    dependency_error = format_dependency_error(
+        check_runtime_dependencies(),
+        require_whisperx=run,
+        device=device if run else None,
+    )
     if dependency_error:
         raise SystemExit(dependency_error)
 

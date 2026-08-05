@@ -39,7 +39,9 @@ PowerShellから実行する場合:
 | `.gui/runtime_config.json` | GPU/CPU判定を反映したGUI設定 | 対象外 |
 | `assets/speaker_colors.json` | 個人用の話者色設定 | 対象外 |
 
-`setup.bat` は不足しているPython 3.10とFFmpegをwingetで導入し、`.venv` に必要なPython依存をインストールします。CUDAを利用できない初回環境では、GUI設定を `device=cpu`、`compute_type=int8`、`video_codec=libx264` にします。
+`setup.bat` は不足しているPython 3.10とFFmpegをwingetで導入し、`.venv` に必要なPython依存をインストールします。NVIDIA GPUを検出すると、WhisperX 3.8.6向けのPyTorch 2.8.0 CUDA 12.8版を導入し、`torch.cuda.is_available()` と依存整合性を検証します。
+
+CUDAを利用できない初回環境では、GUI設定を `device=cpu`、`compute_type=int8`、`video_codec=libx264` にします。既存環境でCPU版PyTorchへ置き換わった場合は、`setup.bat` を再実行するとCUDA版へ修復されます。
 
 セットアップは再実行可能です。既存の動画、音声、話者色、`.gui/runtime_config.json` は上書きしません。
 
@@ -73,7 +75,8 @@ OpenAI APIキーは不要です。文字起こしはローカルのWhisperXを�
 py -3.10 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install whisperx
+.\.venv\Scripts\python.exe -m pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+.\.venv\Scripts\python.exe -m pip install whisperx==3.8.6
 .\.venv\Scripts\python.exe --version
 ffmpeg -version
 ffprobe -version
@@ -90,7 +93,7 @@ $env:HF_TOKEN = [Net.NetworkCredential]::new("", $secureToken).Password
 
 トークンは子のWhisperXプロセスへ環境変数として継承され、dry-runやコマンド表示には出力されません。
 
-`assets/runtime_config.json` の標準設定はCUDAです。`setup.bat` はCUDAを利用できない初回環境だけ、GUI用の `.gui/runtime_config.json` をCPU設定で作成します。手動セットアップで最後の確認が `False` なら、[設定ガイド](CONFIGURATION.md)を見てCPU設定へ変更してください。CUDA対応PyTorchの導入方法はGPU・CUDAバージョンに依存するため、既存環境に合うものを使用します。
+`assets/runtime_config.json` の標準設定はCUDAです。`setup.bat` はNVIDIA GPUへCUDA版PyTorchを導入し、CUDAを利用できない初回環境だけGUI用の `.gui/runtime_config.json` をCPU設定で作成します。GUIは起動時と文字起こし開始前にCUDA利用可否を再検査し、不一致時は開始ボタン付近に修復案内を表示します。
 
 ## GUI: Subtitle Edit Bay
 

@@ -109,7 +109,7 @@ $env:HF_TOKEN = [Net.NetworkCredential]::new("", $secureToken).Password
 
 `詳細設定` を押すと、処理デバイス、Whisperモデル、字幕サイズ、音量連動、動画・音声設定を開閉できます。通常は閉じたまま、工程とプレビューを確認できます。
 
-文字起こし完了時に `<動画名>.subtitle-project.json` が作成されます。`字幕を編集する` を押すと専用の編集画面へ切り替わります。raw WhisperX JSONと自動生成した `craig.merged.json` は入力記録として残り、ユーザー編集はプロジェクトJSONだけへ保存されます。このため、編集後に `動画を書き出す` を何度実行してもWhisperXは起動しません。
+文字起こし完了時に `<動画名>.subtitle-project.json` が作成されます。`字幕を編集する` を押すと専用の編集画面へ切り替わります。raw WhisperX JSONと自動生成した `craig.merged.json` は入力記録として残り、ユーザー編集はプロジェクトJSONだけへ保存されます。このため、編集後に `字幕を焼き付ける` を何度実行してもWhisperXは起動しません。
 
 ### 字幕エディター
 

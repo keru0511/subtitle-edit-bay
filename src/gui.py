@@ -1000,7 +1000,12 @@ class EditBayBackend(LegacyEditBayBackend):
             self.progressChanged.emit()
             if completed_job == "transcribe":
                 loaded = self._try_load_default_project()
-                self._set_status("文字起こし完了。字幕を編集できます" if loaded else "文字起こしが完了しました", "EDIT")
+                self._set_status(
+                    "文字起こし完了。字幕を確認して動画へ焼き付けられます"
+                    if loaded
+                    else "文字起こしが完了しました。編集プロジェクトを開いてください",
+                    "EDIT" if loaded else "CHECK",
+                )
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:

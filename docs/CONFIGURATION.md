@@ -4,7 +4,7 @@
 
 CLIの標準設定は `assets/runtime_config.json` です。各コマンドは `shared` を読み、その後に同名セクションを上書きします。
 
-GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `設定を保存`、`文字起こしを開始`、`動画を書き出す` で更新され、Git管理されません。素材パスと編集字幕はここへ保存せず、出力先の `*.subtitle-project.json` へ保存します。
+GUIは `.gui/runtime_config.json` をローカル設定として使います。`setup.bat` はこのファイルが存在しない場合だけ作成し、CUDAを利用できないPCではCPUと `libx264` を選びます。GUIの `設定を保存`、`文字起こしを開始`、`字幕を焼き付ける` で更新され、Git管理されません。素材パスと編集字幕はここへ保存せず、出力先の `*.subtitle-project.json` へ保存します。
 
 ~~~text
 shared

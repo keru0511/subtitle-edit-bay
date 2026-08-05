@@ -593,6 +593,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
         self.assertTrue(self.app.projectLoaded)
         self.assertEqual(self.app.stage, "EDIT")
+        self.assertIn("焼き付け", self.app.status)
         self.assertEqual(self.app.progress, 1.0)
         self.assertEqual(self.app.activeJob, "")
         self.assertEqual(Path(self.app.projectPath), expected_path.resolve())
@@ -666,6 +667,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(transcribe.isVisible())
         self.assertTrue(edit.isVisible())
         self.assertTrue(render.isVisible())
+        self.assertIn("焼き付け", render.property("text"))
         self.assertTrue(edit.isEnabled())
         self.assertTrue(render.isEnabled())
 
@@ -732,7 +734,28 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertLess(len(visible), len(segments))
         self.assertEqual(visible[0]["sourceIndex"], 0)
 
+    def test_editor_render_action_returns_to_main_and_starts_render(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        main = self._quick_item(window, "mainWorkspace")
+        editor = self._quick_item(window, "editorPage")
 
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        render = self._quick_item(window, "editorRenderButton")
+        self.assertIn("焼き付け", render.property("text"))
+
+        with (
+            patch.object(self.app, "saveSettings"),
+            patch.object(self.app, "saveProject", return_value=True),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self._click(window, render)
+
+        self.assertTrue(main.isVisible())
+        self.assertFalse(editor.isVisible())
+        render_command, render_job, _ = start.call_args.args
+        self.assertEqual(render_job, "render")
+        self.assertIn("render", render_command)
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()
@@ -759,6 +782,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "deleteCaptionButton",
             "saveProjectButton",
             "buildAssButton",
+            "editorRenderButton",
             "editorBackButton",
         ]
         for name in toolbar_names:

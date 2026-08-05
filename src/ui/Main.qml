@@ -136,6 +136,11 @@ ApplicationWindow {
         root.editorMode = false
     }
 
+    function renderFromEditor() {
+        root.closeEditorScreen()
+        root.appBackend.renderVideo(root.currentSettings())
+    }
+
     function stamp(seconds) {
         var safe = Math.max(0, Number(seconds) || 0)
         var hours = Math.floor(safe / 3600)
@@ -784,7 +789,7 @@ ApplicationWindow {
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 ColumnLayout { objectName: "workflowActions"; Layout.fillWidth: true; Layout.fillHeight: false; Layout.margins: 12; spacing: 7
-                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕を確認してから動画を書き出します" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕を編集するか、このまま動画へ焼き付けられます" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
                     Button {
                         id: transcribeButton
                         objectName: "transcribeButton"
@@ -810,7 +815,7 @@ ApplicationWindow {
                         objectName: "renderVideoButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded || root.appBackend.activeJob === "render"
                         enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                        text: root.appBackend.activeJob === "render" ? "動画を書き出し中..." : "動画を書き出す"
+                        text: root.appBackend.activeJob === "render" ? "字幕を焼き付け中..." : "字幕を焼き付けて動画を書き出す"
                         onClicked: root.appBackend.renderVideo(root.currentSettings())
                         contentItem: Text { text: renderButton.text; color: renderButton.enabled ? root.textPrimary : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: renderButton.enabled ? root.raised : "#252C28"; border.color: renderButton.enabled ? root.border : "#252C28" }
@@ -923,6 +928,16 @@ ApplicationWindow {
                 SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
                 SmallButton { objectName: "buildAssButton"; text: "ASSを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                Button {
+                    id: editorRenderButton
+                    objectName: "editorRenderButton"
+                    implicitHeight: 34
+                    text: root.appBackend.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
+                    enabled: root.appBackend.projectLoaded && !root.appBackend.running
+                    onClicked: root.renderFromEditor()
+                    contentItem: Text { text: editorRenderButton.text; color: editorRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { radius: 7; color: editorRenderButton.enabled ? root.acid : "#252C28" }
+                }
                 SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; onClicked: root.closeEditorScreen() }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }

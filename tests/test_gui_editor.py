@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QProcess, Qt, qInstallMessageHandler
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QProcess, Qt, QUrl, qInstallMessageHandler
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
@@ -219,6 +219,45 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.sourceSelection["audio_files"], [str(audio.resolve())])
         self.assertEqual(self.app.selectedSegmentIndex, 0)
         self.assertEqual(self.app.stage, "EDIT")
+
+    def test_dropped_source_files_are_classified_as_video_and_audio(self) -> None:
+        video = self.root / "capture.mkv"
+        video.write_bytes(b"video")
+        alice = self.root / "1-alice.flac"
+        alice.write_bytes(b"audio")
+        bob = self.root / "2-bob.wav"
+        bob.write_bytes(b"audio")
+        unsupported = self.root / "notes.txt"
+        unsupported.write_text("ignore", encoding="utf-8")
+
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.importDroppedSourceFiles(
+                [
+                    QUrl.fromLocalFile(str(video.resolve())),
+                    alice.resolve().as_uri(),
+                    bob.resolve().as_uri(),
+                    unsupported.resolve().as_uri(),
+                ]
+            )
+
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.assertEqual(
+            self.app.sourceSelection["audio_files"],
+            [str(alice.resolve()), str(bob.resolve())],
+        )
+        self.assertEqual([speaker["name"] for speaker in self.app.speakers], ["alice", "bob"])
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertIn("未対応ファイル1件", self.app.status)
+
+    def test_drop_rejects_sources_while_processing(self) -> None:
+        video = self.root / "capture.mkv"
+        video.write_bytes(b"video")
+        self.app._running = True
+
+        self.app.importDroppedSourceFiles([video.resolve().as_uri()])
+
+        self.assertEqual(self.app.sourceSelection["video"], "")
+        self.assertEqual(self.app.stage, "BUSY")
 
     def test_source_speaker_color_is_saved_and_reloaded(self) -> None:
         _, audio, _ = self._set_ready_sources()

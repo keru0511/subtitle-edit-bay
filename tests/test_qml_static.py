@@ -53,8 +53,17 @@ class QmlStaticTests(unittest.TestCase):
 
         self.assertIn("component CompactSpinBox: SpinBox", qml)
         self.assertIn('objectName: "captionSizeSpin"', qml)
-        self.assertIn('objectName: "sourcePanelSetupButton"', qml)
+        self.assertNotIn('objectName: "sourcePanelSetupButton"', qml)
         self.assertNotIn('text: "素材を変更"', qml)
+
+    def test_source_drag_and_drop_is_wired_to_backend(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "globalSourceDropArea"', qml)
+        self.assertIn('objectName: "sourcePopupDropTarget"', qml)
+        self.assertIn("root.appBackend.importDroppedSourceFiles(drop.urls)", qml)
+        self.assertIn("drop.acceptProposedAction()", qml)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"

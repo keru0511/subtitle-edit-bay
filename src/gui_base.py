@@ -110,9 +110,10 @@ class EditBayBackend(QApplication):
         }
 
     @staticmethod
-    def _local_path(value: str) -> Path:
-        url = QUrl(value)
-        return Path(url.toLocalFile()) if url.isLocalFile() else Path(value)
+    def _local_path(value: object) -> Path:
+        raw_value = str(value)
+        url = value if isinstance(value, QUrl) else QUrl(raw_value)
+        return Path(url.toLocalFile()) if url.isLocalFile() else Path(raw_value)
 
     def _settings_from_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         shared = payload.get("shared", {})
@@ -317,6 +318,46 @@ class EditBayBackend(QApplication):
             key=lambda path: (Path(path).name.casefold(), path.casefold()),
         )
         self._set_source_selection(replace(self._source_selection, audio_files=tuple(combined)))
+
+    @Slot("QVariantList")
+    def importDroppedSourceFiles(self, values: list[Any]) -> None:
+        if self._running:
+            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            return
+
+        video_files: list[str] = []
+        audio_files: list[str] = []
+        ignored_count = 0
+        for value in values:
+            source = self._local_path(value)
+            if not source.is_file():
+                ignored_count += 1
+                continue
+            resolved = str(source.resolve())
+            if source.suffix.lower() in VIDEO_EXTENSIONS:
+                video_files.append(resolved)
+            elif source.suffix.lower() in AUDIO_EXTENSIONS:
+                audio_files.append(resolved)
+            else:
+                ignored_count += 1
+
+        if not video_files and not audio_files:
+            self._set_status("対応する動画または話者音声をドロップしてください", "CHECK")
+            return
+
+        if video_files:
+            self.setVideoFile(video_files[0])
+        if audio_files:
+            self.setAudioFiles(audio_files, True)
+
+        skipped_videos = max(0, len(video_files) - 1)
+        if skipped_videos or ignored_count:
+            details: list[str] = []
+            if skipped_videos:
+                details.append(f"追加の動画{skipped_videos}件")
+            if ignored_count:
+                details.append(f"未対応ファイル{ignored_count}件")
+            self._set_status(f"{'、'.join(details)}を無視し、対応する素材を追加しました", "CHECK")
 
     @Slot(int)
     def removeAudioFile(self, index: int) -> None:

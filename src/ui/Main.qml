@@ -22,6 +22,7 @@ ApplicationWindow {
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
+    property bool acceptingSourceDrop: false
 
     width: 1520
     height: 940
@@ -72,6 +73,14 @@ ApplicationWindow {
             root.colorTarget = ""
             root.colorTargetIndex = -1
         }
+    }
+
+    function importSourceDrop(drop) {
+        root.acceptingSourceDrop = false
+        if (!drop.hasUrls)
+            return
+        root.appBackend.importDroppedSourceFiles(drop.urls)
+        drop.acceptProposedAction()
     }
 
     function currentSettings() {
@@ -759,7 +768,6 @@ ApplicationWindow {
                     }
                 }
                 Text { Layout.fillWidth: true; text: root.appBackend.alignmentResult.status + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "s" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
-                SmallButton { objectName: "sourcePanelSetupButton"; Layout.fillWidth: true; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             }
         }
 
@@ -945,6 +953,28 @@ ApplicationWindow {
                         wrapMode: Text.Wrap
                     }
                     SmallButton { text: "再確認"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
+                }
+            }
+            Rectangle {
+                objectName: "sourcePopupDropTarget"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 68
+                radius: 9
+                color: sourcePopupDropArea.containsDrag ? "#263326" : root.raised
+                border.color: sourcePopupDropArea.containsDrag ? root.acid : root.border
+                border.width: sourcePopupDropArea.containsDrag ? 2 : 1
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 3
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画・話者音声をここにドロップ"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画1件と複数の音声を自動判別します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                }
+                DropArea {
+                    id: sourcePopupDropArea
+                    anchors.fill: parent
+                    enabled: !root.appBackend.running
+                    onEntered: function(drag) { drag.accepted = drag.hasUrls }
+                    onDropped: function(drop) { root.importSourceDrop(drop) }
                 }
             }
             PanelTitle { text: "動画" }
@@ -1202,6 +1232,36 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 22
+        z: 999
+        visible: root.acceptingSourceDrop
+        radius: 16
+        color: "#E6121715"
+        border.color: root.acid
+        border.width: 3
+        Column {
+            anchors.centerIn: parent
+            spacing: 8
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "素材をドロップして追加"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 24; font.weight: Font.Bold }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画または話者音声"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+        }
+    }
+    DropArea {
+        id: globalSourceDropArea
+        objectName: "globalSourceDropArea"
+        anchors.fill: parent
+        z: 1000
+        enabled: !root.appBackend.running
+        onEntered: function(drag) {
+            root.acceptingSourceDrop = drag.hasUrls
+            drag.accepted = drag.hasUrls
+        }
+        onExited: root.acceptingSourceDrop = false
+        onDropped: function(drop) { root.importSourceDrop(drop) }
     }
 
     Shortcut { sequence: StandardKey.Undo; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }

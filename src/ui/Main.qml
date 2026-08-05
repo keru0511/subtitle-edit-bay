@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtMultimedia
 
@@ -19,6 +20,8 @@ ApplicationWindow {
     property real editorCaptionScrollY: 0
     property bool editorMode: false
     property bool settingsExpanded: false
+    property string colorTarget: ""
+    property int colorTargetIndex: -1
 
     width: 1520
     height: 940
@@ -44,6 +47,32 @@ ApplicationWindow {
     readonly property color acid: "#C8FF3D"
     readonly property color amber: "#FFB547"
     readonly property color danger: "#FF6B5F"
+
+    function openSpeakerColorPicker(target, index, currentColor) {
+        root.colorTarget = target
+        root.colorTargetIndex = index
+        speakerColorDialog.selectedColor = currentColor || "#FFFFFF"
+        speakerColorDialog.open()
+    }
+
+    ColorDialog {
+        id: speakerColorDialog
+        objectName: "speakerColorDialog"
+        title: "話者の字幕色を選択"
+        onAccepted: {
+            var colorValue = selectedColor.toString()
+            if (root.colorTarget === "source")
+                root.appBackend.updateSpeakerColor(root.colorTargetIndex, colorValue)
+            else if (root.colorTarget === "project")
+                root.appBackend.updateProjectSpeakerColor(root.colorTargetIndex, colorValue)
+            root.colorTarget = ""
+            root.colorTargetIndex = -1
+        }
+        onRejected: {
+            root.colorTarget = ""
+            root.colorTargetIndex = -1
+        }
+    }
 
     function currentSettings() {
         return {
@@ -652,7 +681,17 @@ ApplicationWindow {
                         required property var modelData
                         width: speakerSourceList.width; height: 48; radius: 8; color: root.raised
                         RowLayout { anchors.fill: parent; anchors.margins: 8; spacing: 8
-                            Rectangle { Layout.preferredWidth: 8; Layout.preferredHeight: 28; radius: 4; color: speakerSourceDelegate.modelData.color }
+                            Button {
+                                id: sourceSpeakerColorButton
+                                objectName: "sourceSpeakerColorButton"
+                                Layout.preferredWidth: 28; Layout.preferredHeight: 30
+                                enabled: !root.appBackend.running
+                                onClicked: root.openSpeakerColorPicker("source", speakerSourceDelegate.index, speakerSourceDelegate.modelData.color)
+                                contentItem: Rectangle { radius: 5; color: speakerSourceDelegate.modelData.color; border.color: root.textPrimary; border.width: 1 }
+                                background: Rectangle { radius: 6; color: "transparent"; border.color: sourceSpeakerColorButton.hovered ? root.acid : root.border }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "字幕色を変更"
+                            }
                             ColumnLayout { Layout.fillWidth: true; spacing: 0
                                 Text { Layout.fillWidth: true; text: speakerSourceDelegate.modelData.name; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideRight }
                                 Text { Layout.fillWidth: true; text: speakerSourceDelegate.modelData.file_name; color: root.textMuted; font.pixelSize: 9; font.family: "Bahnschrift"; elide: Text.ElideMiddle }
@@ -990,6 +1029,35 @@ ApplicationWindow {
                 Rectangle {
                     Layout.preferredWidth: 620; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
                     ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 7
+                        RowLayout { Layout.fillWidth: true
+                            PanelTitle { text: "話者ごとの字幕色" }
+                            Item { Layout.fillWidth: true }
+                            Text { text: "色を押して変更"; color: root.textMuted; font.pixelSize: 8 }
+                        }
+                        ListView {
+                            id: projectSpeakerColorList
+                            objectName: "projectSpeakerColorList"
+                            Layout.fillWidth: true; Layout.preferredHeight: 36
+                            orientation: ListView.Horizontal; spacing: 6; clip: true
+                            model: root.projectSpeakerCache
+                            delegate: Button {
+                                id: projectSpeakerColorButton
+                                required property int index
+                                required property var modelData
+                                width: 128; height: 34
+                                enabled: !root.appBackend.running
+                                onClicked: root.openSpeakerColorPicker("project", index, modelData.color)
+                                contentItem: Row {
+                                    spacing: 6
+                                    Rectangle { width: 20; height: 20; radius: 5; color: projectSpeakerColorButton.modelData.color; border.color: root.textPrimary }
+                                    Text { width: 94; text: projectSpeakerColorButton.modelData.name; color: root.textPrimary; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+                                }
+                                background: Rectangle { radius: 7; color: projectSpeakerColorButton.hovered ? "#27312C" : root.raised; border.color: projectSpeakerColorButton.hovered ? root.acid : root.border }
+                                ToolTip.visible: hovered
+                                ToolTip.text: modelData.name + " の字幕色を変更"
+                            }
+                            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                        }
                         RowLayout { Layout.fillWidth: true
                             PanelTitle { text: "字幕一覧" }
                             Item { Layout.fillWidth: true }

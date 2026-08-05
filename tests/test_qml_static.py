@@ -38,6 +38,16 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('"subtitle_font_family": currentValue', qml)
         self.assertIn('font.family: modelData.subtitle_font_family || "Yu Gothic UI"', qml)
 
+    def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "speakerColorDialog"', qml)
+        self.assertIn('objectName: "sourceSpeakerColorButton"', qml)
+        self.assertIn('objectName: "projectSpeakerColorList"', qml)
+        self.assertIn("updateSpeakerColor(root.colorTargetIndex", qml)
+        self.assertIn("updateProjectSpeakerColor(root.colorTargetIndex", qml)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import threading
@@ -218,6 +219,43 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.sourceSelection["audio_files"], [str(audio.resolve())])
         self.assertEqual(self.app.selectedSegmentIndex, 0)
         self.assertEqual(self.app.stage, "EDIT")
+
+    def test_source_speaker_color_is_saved_and_reloaded(self) -> None:
+        _, audio, _ = self._set_ready_sources()
+
+        self.app.updateSpeakerColor(0, "#12abef")
+
+        self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
+        payload = json.loads(self.app.color_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["files"][audio.name]["color"], "#12ABEF")
+        self.assertEqual(payload["speakers"]["alice"]["color"], "#12ABEF")
+
+        self.app.setAudioFiles([str(audio)], False)
+        self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
+
+    def test_invalid_source_speaker_color_is_rejected(self) -> None:
+        self._set_ready_sources()
+        original = self.app.speakers[0]["color"]
+
+        self.app.updateSpeakerColor(0, "not-a-color")
+
+        self.assertEqual(self.app.speakers[0]["color"], original)
+        self.assertEqual(self.app.stage, "ERROR")
+
+    def test_project_speaker_color_updates_preview_waveform_and_project(self) -> None:
+        self._load_project()
+        self.app._project["waveforms"] = [
+            {"style": "Speaker_Alice", "speaker": "Alice", "color": "#7FD957"}
+        ]
+
+        self.app.updateProjectSpeakerColor(0, "#445566")
+        self.app.autosave_timer.stop()
+
+        self.assertEqual(self.app.projectSpeakers[0]["color"], "#445566")
+        self.assertEqual(self.app.subtitleWaveforms[0]["color"], "#445566")
+        self.assertTrue(self.app.projectDirty)
+        payload = json.loads(self.app.color_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["speakers"]["Alice"]["color"], "#445566")
 
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()
@@ -733,6 +771,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
 
         self.assertIsNotNone(window.findChild(QQuickItem, "editorTimeline"))
+        self.assertIsNotNone(window.findChild(QQuickItem, "projectSpeakerColorList"))
 
     def test_qml_timeline_instantiates_only_visible_captions(self) -> None:
         segments = [

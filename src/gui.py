@@ -29,6 +29,7 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
+from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_state import build_gui_render_command, build_gui_transcribe_command
 from .subtitle_project import (
@@ -391,6 +392,69 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(str, notify=assPathChanged)
     def assPath(self) -> str:
         return self._ass_path
+
+    def _apply_project_speaker_color(self, index: int, color: str) -> bool:
+        if self._project is None or not 0 <= index < len(self._project.get("speakers", [])):
+            return False
+        current = self._project["speakers"][index]
+        if str(current.get("color", "")).upper() == color:
+            return False
+        updated = {**current, "color": color}
+        self._project["speakers"][index] = updated
+        style = str(updated.get("style", ""))
+        name = str(updated.get("name", ""))
+        for waveform in self._project.get("waveforms", []):
+            if waveform.get("style") == style or waveform.get("speaker") == name:
+                waveform["color"] = color
+
+        source_changed = False
+        for source_index, source in enumerate(self._speakers):
+            if (
+                source.get("path") == updated.get("path")
+                or source.get("file_name") == updated.get("file_name")
+                or source.get("name") == name
+            ):
+                self._speakers[source_index] = {**source, "color": color}
+                source_changed = True
+        if source_changed:
+            self.speakersChanged.emit()
+        self.projectDataChanged.emit()
+        self._mark_project_dirty()
+        return True
+
+    def _source_speaker_color_updated(self, speaker: dict[str, str]) -> None:
+        if self._project is None:
+            return
+        index = next((
+            index
+            for index, project_speaker in enumerate(self._project.get("speakers", []))
+            if (
+                project_speaker.get("path") == speaker.get("path")
+                or project_speaker.get("file_name") == speaker.get("file_name")
+                or project_speaker.get("name") == speaker.get("name")
+            )
+        ), -1)
+        if index >= 0:
+            self._apply_project_speaker_color(index, str(speaker["color"]))
+
+    @Slot(int, str)
+    def updateProjectSpeakerColor(self, index: int, color: str) -> None:
+        if self._running or self._project is None or not 0 <= index < len(self._project.get("speakers", [])):
+            return
+        speaker = self._project["speakers"][index]
+        try:
+            normalized = normalize_rgb_color(color)
+            save_speaker_color(
+                self.color_config_path,
+                file_name=str(speaker.get("file_name", "")),
+                speaker_name=str(speaker.get("name", "")),
+                color=normalized,
+            )
+        except (OSError, ValueError, TypeError) as error:
+            self._set_status(f"話者色を保存できません: {error}", "ERROR")
+            return
+        self._apply_project_speaker_color(index, normalized)
+        self._set_status(f"{speaker.get('name', '話者')} の字幕色を保存しました", "SAVED")
 
     def _set_source_selection(self, selection: Any) -> None:
         super()._set_source_selection(selection)

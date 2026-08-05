@@ -14,6 +14,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
+from .color_config import normalize_rgb_color, save_speaker_color
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
     DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
@@ -369,12 +370,30 @@ class EditBayBackend(QApplication):
         self.alignmentChanged.emit()
         self._update_source_status()
 
+    def _source_speaker_color_updated(self, speaker: dict[str, str]) -> None:
+        pass
+
     @Slot(int, str)
     def updateSpeakerColor(self, index: int, color: str) -> None:
-        if not 0 <= index < len(self._speakers):
+        if self._running or not 0 <= index < len(self._speakers):
             return
-        self._speakers[index] = {**self._speakers[index], "color": color.upper()}
+        speaker = self._speakers[index]
+        try:
+            normalized = normalize_rgb_color(color)
+            save_speaker_color(
+                self.color_config_path,
+                file_name=speaker.get("file_name", ""),
+                speaker_name=speaker.get("name", ""),
+                color=normalized,
+            )
+        except (OSError, ValueError, TypeError) as error:
+            self._set_status(f"話者色を保存できません: {error}", "ERROR")
+            return
+        updated = {**speaker, "color": normalized}
+        self._speakers[index] = updated
         self.speakersChanged.emit()
+        self._source_speaker_color_updated(updated)
+        self._set_status(f"{updated.get('name', '話者')} の字幕色を保存しました", "SAVED")
 
     @Slot(str, str, float)
     def analyzeAlignment(self, reference_audio: str, reference_track: str, adjustment: float) -> None:

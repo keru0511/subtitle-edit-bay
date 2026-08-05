@@ -221,7 +221,7 @@ class RenderAssTests(unittest.TestCase):
         output = render_ass(data, track_color_map={"0:a:1": "#112233"})
 
         self.assertIn("Style: Track_0_a_1", output)
-        self.assertIn("Style: Track_0_a_1,Arial,50,&H00FFFFFF,&H0000FFFF,&H00332211", output)
+        self.assertIn("Style: Track_0_a_1,Arial,50,&H00332211,&H0000FFFF,&H00000000", output)
         self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Track_0_a_1,Oz,0,0,34,,hello", output)
 
     def test_render_ass_can_override_color_per_speaker_from_config(self) -> None:
@@ -247,7 +247,7 @@ class RenderAssTests(unittest.TestCase):
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
         self.assertIn("Style: Speaker_speaker_d", output)
-        self.assertIn("Style: Speaker_speaker_d,Arial,50,&H00FFFFFF,&H0000FFFF,&H00FF4422", output)
+        self.assertIn("Style: Speaker_speaker_d,Arial,50,&H00FF4422,&H0000FFFF,&H00000000", output)
         self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_speaker_d,C,0,0,34,,hello", output)
 
     def test_render_ass_prefers_file_name_color_mapping(self) -> None:
@@ -276,7 +276,7 @@ class RenderAssTests(unittest.TestCase):
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
         self.assertIn("Style: Speaker_1_speaker_a_aac", output)
-        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,50,&H00FFFFFF,&H0000FFFF,&H00563412", output)
+        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,50,&H00563412,&H0000FFFF,&H00000000", output)
         self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_1_speaker_a_aac,Oz,0,0,34,,hello", output)
 
     def test_render_ass_applies_base_size_and_per_caption_volume_scale(self) -> None:

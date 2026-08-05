@@ -32,10 +32,11 @@ def normalize_ass_color(color: str) -> str:
     return f"&H00{blue}{green}{red}".upper()
 
 
-def clone_style_definition(base_style: str, new_name: str, outline_color: str) -> str:
+def clone_style_definition(base_style: str, new_name: str, primary_color: str) -> str:
     fields = STYLE_DEFINITIONS[base_style].split(",")
     fields[0] = f"Style: {new_name}"
-    fields[5] = normalize_ass_color(outline_color)
+    fields[3] = normalize_ass_color(primary_color)
+    fields[5] = "&H00000000"
     return ",".join(fields)
 
 

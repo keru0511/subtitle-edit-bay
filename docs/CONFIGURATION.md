@@ -133,7 +133,7 @@ ffmpeg -hide_banner -encoders | Select-String nvenc
 
 ## 話者色
 
-`assets/speaker_colors.example.json` を `assets/speaker_colors.json` へコピーして使用します。個人用の `speaker_colors.json` はGit管理対象外です。設定は `files` と `speakers` の2種類を持ちます。
+GUIの素材画面または字幕編集画面で話者の色を押すと、カラーピッカーから字幕色を変更できます。選択色は話者名と音声ファイル名に紐づけて `assets/speaker_colors.json` へ保存され、次回起動時も維持されます。個人用の `speaker_colors.json` はGit管理対象外です。手動編集する場合は `assets/speaker_colors.example.json` をコピーし、`files` と `speakers` の2種類で指定できます。
 
 ~~~powershell
 Copy-Item .\assets\speaker_colors.example.json .\assets\speaker_colors.json
@@ -142,7 +142,7 @@ Copy-Item .\assets\speaker_colors.example.json .\assets\speaker_colors.json
 - `speakers`: `speaker-a` のような解析後の話者名で指定
 - `aliases`: 拡張子違いや短縮名を同じ色へ割り当て
 
-字幕文字は常に白で、指定色はASSの枠線に使われます。
+指定色は字幕文字本体へ使われ、可読性を保つため黒い枠線を付けます。色は字幕単位ではなく話者単位で固定されます。
 
 ~~~json
 {

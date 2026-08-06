@@ -34,7 +34,9 @@ jobs:
       - name: Install Qt runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libpulse0
+          sudo apt-get install --yes --no-install-recommends \
+            libegl1 \
+            libpulse0
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5

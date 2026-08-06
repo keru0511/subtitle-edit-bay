@@ -53,6 +53,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-latest", workflow)
         self.assertIn("name: Install Qt runtime dependencies", workflow)
         self.assertIn("libpulse0", workflow)
+        self.assertIn("libegl1", workflow)
         self.assertIn("name: Build Windows installer", workflow)
         self.assertIn("needs: test", workflow)
         self.assertIn("scripts/build_installer.ps1", workflow)

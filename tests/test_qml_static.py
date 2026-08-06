@@ -78,6 +78,7 @@ class QmlStaticTests(unittest.TestCase):
     def test_audio_mixer_is_wired_to_project_channels(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")
+        mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]
 
         self.assertIn('objectName: "audioMixerOpenButton"', qml)
         self.assertIn('objectName: "mixerPage"', qml)
@@ -95,12 +96,17 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("audioBufferOutput: modelData.preview_buffer_output", qml)
         self.assertIn("root.appBackend.audioPreviewLevels[modelData.id]", qml)
         self.assertIn("root.editorPositionCache = mixerPlayer.position", qml)
+        self.assertIn("property int requestedAudioTrack", mixer_block)
+        self.assertIn("if (!hasPendingSync || audioTracks.length <= requestedAudioTrack)", mixer_block)
+        self.assertIn("activeAudioTrack = requestedAudioTrack", mixer_block)
+        self.assertIn("onTracksChanged: applyPendingSync()", mixer_block)
+        self.assertIn("onSeekableChanged: applyPendingSync()", mixer_block)
+        self.assertNotIn("activeAudioTrack: Number(", mixer_block)
         self.assertIn("orientation: Qt.Vertical", qml)
         self.assertIn("model: root.appBackend.audioMixerChannels", qml)
         self.assertIn("updateAudioMixChannel", qml)
         self.assertIn("resetAudioMixer", qml)
         self.assertNotIn('objectName: "audioMixerPopup"', qml)
-        mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]
         self.assertNotIn("Qt.callLater", mixer_block)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:

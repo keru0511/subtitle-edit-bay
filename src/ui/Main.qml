@@ -1088,22 +1088,18 @@ ApplicationWindow {
                         return
                     var target = mixerPlayer.position - Number(player.previewOffsetMilliseconds || 0)
                     if (target < 0) {
-                        player.pause()
-                        if (forcePosition || player.position !== 0)
-                            player.position = 0
+                        player.scheduleSync(0, true, false)
                         return
                     }
                     if (player.duration > 0 && target >= player.duration) {
-                        player.pause()
-                        player.position = player.duration
+                        player.scheduleSync(player.duration, true, false)
                         return
                     }
-                    if (forcePosition || Math.abs(player.position - target) > 180)
-                        player.position = target
-                    if (mixerPlayer.playbackState === MediaPlayer.PlayingState)
-                        player.play()
-                    else
-                        player.pause()
+                    player.scheduleSync(
+                        target,
+                        forcePosition,
+                        mixerPlayer.playbackState === MediaPlayer.PlayingState
+                    )
                 }
 
                 function syncPreviewPlayers(forcePosition) {
@@ -1153,8 +1149,42 @@ ApplicationWindow {
                         required property var modelData
                         property real previewOffsetMilliseconds: Number(modelData.preview_offset_seconds || 0) * 1000
                         property real previewVolume: Number(modelData.preview_volume || 0)
+                        property int requestedAudioTrack: Number(modelData.preview_audio_track_index || 0)
+                        property real pendingSyncPosition: 0
+                        property bool pendingForcePosition: false
+                        property bool pendingPlayback: false
+                        property bool hasPendingSync: false
+
+                        function scheduleSync(target, forcePosition, shouldPlay) {
+                            pendingSyncPosition = Math.max(0, Number(target || 0))
+                            pendingForcePosition = pendingForcePosition || Boolean(forcePosition)
+                            pendingPlayback = Boolean(shouldPlay)
+                            hasPendingSync = true
+                            applyPendingSync()
+                        }
+
+                        function applyPendingSync() {
+                            if (!hasPendingSync || audioTracks.length <= requestedAudioTrack)
+                                return
+                            if (activeAudioTrack !== requestedAudioTrack)
+                                activeAudioTrack = requestedAudioTrack
+                            var target = duration > 0
+                                ? Math.min(duration, pendingSyncPosition)
+                                : pendingSyncPosition
+                            if (target > 0 && !seekable)
+                                return
+                            if (pendingForcePosition || Math.abs(position - target) > 180)
+                                position = target
+                            var shouldPlay = pendingPlayback && (duration <= 0 || target < duration)
+                            hasPendingSync = false
+                            pendingForcePosition = false
+                            if (shouldPlay)
+                                play()
+                            else
+                                pause()
+                        }
+
                         source: modelData.preview_url || ""
-                        activeAudioTrack: Number(modelData.preview_audio_track_index || 0)
                         audioOutput: AudioOutput {
                             objectName: "mixerPreviewAudioOutput"
                             volume: mixerPreviewPlayer.previewVolume
@@ -1162,6 +1192,9 @@ ApplicationWindow {
                         // qmllint disable missing-type
                         audioBufferOutput: modelData.preview_buffer_output
                         // qmllint enable missing-type
+                        onTracksChanged: applyPendingSync()
+                        onSeekableChanged: applyPendingSync()
+                        onMediaStatusChanged: applyPendingSync()
                     }
                     onObjectAdded: function(index, object) {
                         mixerContent.syncPreviewPlayer(object, true)

@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQml.Models
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
@@ -1082,11 +1083,42 @@ ApplicationWindow {
             Item {
                 id: mixerContent
 
-                function togglePlayback() {
+                function syncPreviewPlayer(player, forcePosition) {
+                    if (!player)
+                        return
+                    var target = mixerPlayer.position - Number(player.previewOffsetMilliseconds || 0)
+                    if (target < 0) {
+                        player.pause()
+                        if (forcePosition || player.position !== 0)
+                            player.position = 0
+                        return
+                    }
+                    if (player.duration > 0 && target >= player.duration) {
+                        player.pause()
+                        player.position = player.duration
+                        return
+                    }
+                    if (forcePosition || Math.abs(player.position - target) > 180)
+                        player.position = target
                     if (mixerPlayer.playbackState === MediaPlayer.PlayingState)
-                        mixerPlayer.pause()
+                        player.play()
                     else
+                        player.pause()
+                }
+
+                function syncPreviewPlayers(forcePosition) {
+                    for (var index = 0; index < mixerPreviewPlayers.count; ++index)
+                        mixerContent.syncPreviewPlayer(mixerPreviewPlayers.objectAt(index), forcePosition)
+                }
+
+                function togglePlayback() {
+                    if (mixerPlayer.playbackState === MediaPlayer.PlayingState) {
+                        mixerPlayer.pause()
+                        mixerContent.syncPreviewPlayers(false)
+                    } else {
                         mixerPlayer.play()
+                        Qt.callLater(function() { mixerContent.syncPreviewPlayers(true) })
+                    }
                 }
 
                 function seekBy(milliseconds) {
@@ -1094,20 +1126,59 @@ ApplicationWindow {
                         0,
                         Math.min(mixerPlayer.duration, mixerPlayer.position + milliseconds)
                     )
+                    Qt.callLater(function() { mixerContent.syncPreviewPlayers(true) })
                 }
 
                 MediaPlayer {
                     id: mixerPlayer
                     objectName: "mixerPlayer"
                     source: root.appBackend.previewUrl
-                    audioOutput: AudioOutput { volume: 0.75 }
+                    audioOutput: AudioOutput { muted: true }
                     Component.onCompleted: position = root.editorPositionCache
                     onPositionChanged: {
                         root.editorPositionCache = mixerPlayer.position
-                        if (!mixerSeek.pressed)
-                            mixerSeek.value = mixerPlayer.position
+                        if (mixerPlayer.playbackState !== MediaPlayer.PlayingState)
+                            Qt.callLater(function() { mixerContent.syncPreviewPlayers(true) })
                     }
-                    onDurationChanged: mixerSeek.to = Math.max(1, mixerPlayer.duration)
+                    onPlaybackStateChanged: Qt.callLater(function() { mixerContent.syncPreviewPlayers(false) })
+                }
+
+                Instantiator {
+                    id: mixerPreviewPlayers
+                    objectName: "mixerPreviewPlayers"
+                    model: root.appBackend.audioMixerPreviewChannels
+                    delegate: MediaPlayer {
+                        id: mixerPreviewPlayer
+                        required property int index
+                        required property var modelData
+                        property real previewOffsetMilliseconds: Number(modelData.preview_offset_seconds || 0) * 1000
+                        property real previewVolume: Number(modelData.preview_volume || 0)
+                        source: modelData.preview_url || ""
+                        activeAudioTrack: Number(modelData.preview_audio_track_index || 0)
+                        audioOutput: AudioOutput {
+                            objectName: "mixerPreviewAudioOutput"
+                            volume: mixerPreviewPlayer.previewVolume
+                        }
+                        // qmllint disable missing-type
+                        audioBufferOutput: modelData.preview_buffer_output
+                        // qmllint enable missing-type
+                        Component.onCompleted: Qt.callLater(function() {
+                            mixerContent.syncPreviewPlayer(mixerPreviewPlayer, true)
+                        })
+                        onMediaStatusChanged: Qt.callLater(function() {
+                            mixerContent.syncPreviewPlayer(mixerPreviewPlayer, true)
+                        })
+                    }
+                    onObjectAdded: function(index, object) {
+                        Qt.callLater(function() { mixerContent.syncPreviewPlayer(object, true) })
+                    }
+                }
+
+                Timer {
+                    interval: 150
+                    running: mixerPlayer.playbackState === MediaPlayer.PlayingState
+                    repeat: true
+                    onTriggered: mixerContent.syncPreviewPlayers(false)
                 }
 
                 ColumnLayout {
@@ -1185,10 +1256,13 @@ ApplicationWindow {
                                     objectName: "mixerSeek"
                                     Layout.fillWidth: true
                                     from: 0
-                                    to: 1
-                                    value: 0
+                                    to: Math.max(1, mixerPlayer.duration)
+                                    value: mixerPlayer.position
                                     enabled: Boolean(root.appBackend.previewUrl)
-                                    onMoved: mixerPlayer.position = value
+                                    onMoved: {
+                                        mixerPlayer.position = value
+                                        mixerContent.syncPreviewPlayers(true)
+                                    }
                                 }
                                 SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: Boolean(root.appBackend.previewUrl); onClicked: mixerContent.seekBy(5000) }
                                 Text {
@@ -1204,7 +1278,7 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 PanelTitle { text: "SEQUENCE" }
-                                Text { text: "素材音声プレビュー"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Text { text: "出力音ライブプレビュー"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                                 Item { Layout.fillWidth: true }
                                 Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                             }
@@ -1253,6 +1327,7 @@ ApplicationWindow {
                                     id: mixerStrip
                                     required property int index
                                     required property var modelData
+                                    property real previewLevel: Number(root.appBackend.audioPreviewLevels[modelData.id] || 0)
                                     width: 190
                                     height: mixerChannelList.height - 12
                                     radius: 9
@@ -1348,8 +1423,9 @@ ApplicationWindow {
                                                     border.color: root.border
                                                     Rectangle {
                                                         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 2
-                                                        height: Math.max(2, (parent.height - 4) * Math.min(1, Number(mixerStrip.modelData.volume_percent) / 200))
+                                                        height: Math.max(2, (parent.height - 4) * mixerStrip.previewLevel)
                                                         radius: 2
+                                                        Behavior on height { NumberAnimation { duration: 70 } }
                                                         gradient: Gradient {
                                                             GradientStop { position: 0.0; color: root.acid }
                                                             GradientStop { position: 0.72; color: root.amber }
@@ -1409,7 +1485,7 @@ ApplicationWindow {
                             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: "再生は素材動画の音声プレビューです。個別音声には同期オフセットを適用し、フェーダー設定は完成動画の書き出し時に反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { Layout.fillWidth: true; text: "INPUT ON・ミュート・ソロ・フェーダー比率を再生音へ即時反映します。個別音声には同期オフセットを適用し、正確なゲインは書き出し時に反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
                                 Text { text: "OUTPUT: AAC / 48 kHz"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 9 }
                             }
                         }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from array import array
 from bisect import bisect_left, bisect_right
 import json
 import math
@@ -26,10 +27,16 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import QFontDatabase
+from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
-from .audio_mixer import MAX_VOLUME_PERCENT, reconcile_audio_mix, reset_audio_mix
+from .audio_mixer import (
+    MAX_VOLUME_PERCENT,
+    active_audio_mix_channels,
+    reconcile_audio_mix,
+    reset_audio_mix,
+)
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_state import build_gui_render_command, build_gui_transcribe_command
@@ -221,6 +228,7 @@ class EditBayBackend(LegacyEditBayBackend):
     selectionChanged = Signal()
     activeJobChanged = Signal()
     assPathChanged = Signal()
+    audioPreviewLevelsChanged = Signal()
     autosaveCompleted = Signal(int, str, str)
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
@@ -245,6 +253,13 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_pending = False
         self._ignored_autosaves: set[tuple[int, str]] = set()
         self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
+        self._audio_preview_outputs: dict[str, QAudioBufferOutput] = {}
+        self._audio_preview_gains: dict[str, float] = {}
+        self._audio_preview_levels: dict[str, float] = {}
+        self._audio_preview_pending_levels: dict[str, float] = {}
+        self._audio_preview_level_timer = QTimer(self)
+        self._audio_preview_level_timer.setInterval(33)
+        self._audio_preview_level_timer.timeout.connect(self._publish_audio_preview_levels)
         self.autosaveCompleted.connect(self._finish_autosave)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setSingleShot(True)
@@ -370,7 +385,143 @@ class EditBayBackend(LegacyEditBayBackend):
     def audioMixerChannels(self) -> list[dict[str, Any]]:
         if self._project is None:
             return []
-        return deepcopy(self._project.get("audio_mix", {}).get("channels", []))
+        return [
+            self._audio_mixer_channel_view(channel)
+            for channel in self._project.get("audio_mix", {}).get("channels", [])
+        ]
+
+    def _audio_mixer_channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
+        project = self._project or {}
+        view = deepcopy(channel)
+        is_external = view.get("kind") == "external"
+        source_path = (
+            str(view.get("path", ""))
+            if is_external
+            else str(project.get("video", {}).get("path", ""))
+        )
+        selector = str(view.get("selector", "0:a:0"))
+        try:
+            track_index = max(0, int(selector.rsplit(":", 1)[-1]))
+        except (TypeError, ValueError):
+            track_index = 0
+        view["preview_url"] = QUrl.fromLocalFile(source_path).toString() if source_path else ""
+        view["preview_audio_track_index"] = 0 if is_external else track_index
+        view["preview_offset_seconds"] = (
+            float(project.get("transcription", {}).get("offset_seconds", 0.0))
+            if is_external
+            else 0.0
+        )
+        return view
+
+    @Property("QVariantList", notify=projectDataChanged)
+    def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            self._audio_preview_gains = {}
+            return []
+        active = active_audio_mix_channels(self._project.get("audio_mix", {}))
+        total_gain = sum(
+            max(0.0, float(channel.get("volume_percent", 100.0))) / 100.0
+            for channel in active
+        )
+        normalization = max(1.0, total_gain)
+        channels: list[dict[str, Any]] = []
+        gains: dict[str, float] = {}
+        for channel in active:
+            view = self._audio_mixer_channel_view(channel)
+            channel_id = str(view.get("id", ""))
+            preview_volume = min(
+                1.0,
+                max(0.0, float(channel.get("volume_percent", 100.0)))
+                / 100.0
+                / normalization,
+            )
+            view["preview_volume"] = preview_volume
+            view["preview_buffer_output"] = self._audio_preview_output(channel_id)
+            gains[channel_id] = preview_volume
+            channels.append(view)
+        self._audio_preview_gains = gains
+        if any(channel_id not in gains for channel_id in self._audio_preview_levels):
+            self._audio_preview_level_timer.start()
+        return channels
+
+    def _audio_preview_output(self, channel_id: str) -> QAudioBufferOutput:
+        output = self._audio_preview_outputs.get(channel_id)
+        if output is None:
+            output = QAudioBufferOutput(self)
+            output.audioBufferReceived.connect(
+                lambda buffer, current_id=channel_id: self._receive_audio_preview_buffer(
+                    current_id,
+                    buffer,
+                )
+            )
+            self._audio_preview_outputs[channel_id] = output
+        return output
+
+    @staticmethod
+    def _audio_buffer_peak(buffer: QAudioBuffer) -> float:
+        if not buffer.isValid() or buffer.byteCount() <= 0:
+            return 0.0
+        raw = bytes(buffer.constData())
+        sample_format = buffer.format().sampleFormat()
+        if sample_format == QAudioFormat.UInt8:
+            values = (abs(value - 128) / 128.0 for value in raw)
+        elif sample_format == QAudioFormat.Int16:
+            samples = array("h")
+            samples.frombytes(raw[: len(raw) - len(raw) % 2])
+            stride = max(1, len(samples) // 4096)
+            values = (abs(value) / 32768.0 for value in samples[::stride])
+        elif sample_format == QAudioFormat.Int32:
+            samples = array("i")
+            samples.frombytes(raw[: len(raw) - len(raw) % 4])
+            stride = max(1, len(samples) // 4096)
+            values = (abs(value) / 2147483648.0 for value in samples[::stride])
+        elif sample_format == QAudioFormat.Float:
+            samples = array("f")
+            samples.frombytes(raw[: len(raw) - len(raw) % 4])
+            stride = max(1, len(samples) // 4096)
+            values = (
+                abs(float(value))
+                for value in samples[::stride]
+                if math.isfinite(float(value))
+            )
+        else:
+            return 0.0
+        return min(1.0, max(values, default=0.0))
+
+    def _receive_audio_preview_buffer(self, channel_id: str, buffer: QAudioBuffer) -> None:
+        gain = self._audio_preview_gains.get(channel_id, 0.0)
+        peak = self._audio_buffer_peak(buffer) * gain
+        self._audio_preview_pending_levels[channel_id] = max(
+            peak,
+            self._audio_preview_pending_levels.get(channel_id, 0.0),
+        )
+        if not self._audio_preview_level_timer.isActive():
+            self._audio_preview_level_timer.start()
+
+    def _publish_audio_preview_levels(self) -> None:
+        channel_ids = (
+            set(self._audio_preview_levels)
+            | set(self._audio_preview_pending_levels)
+            | set(self._audio_preview_gains)
+        )
+        levels: dict[str, float] = {}
+        for channel_id in channel_ids:
+            target = (
+                self._audio_preview_pending_levels.pop(channel_id, 0.0)
+                if channel_id in self._audio_preview_gains
+                else 0.0
+            )
+            level = max(target, self._audio_preview_levels.get(channel_id, 0.0) * 0.68)
+            levels[channel_id] = 0.0 if level < 0.002 else round(min(1.0, level), 4)
+        if levels != self._audio_preview_levels:
+            self._audio_preview_levels = levels
+            self.audioPreviewLevelsChanged.emit()
+        if not self._audio_preview_pending_levels and not any(levels.values()):
+            self._audio_preview_level_timer.stop()
+
+    @Property("QVariantMap", notify=audioPreviewLevelsChanged)
+    def audioPreviewLevels(self) -> dict[str, float]:
+        return dict(self._audio_preview_levels)
 
     @Property(float, notify=segmentsChanged)
     def projectDuration(self) -> float:
@@ -500,6 +651,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._redo_stack.clear()
         self._selected_segment_index = -1
         self._project_revision += 1
+        self._audio_preview_gains.clear()
+        self._audio_preview_pending_levels.clear()
+        if self._audio_preview_levels:
+            self._audio_preview_levels.clear()
+            self.audioPreviewLevelsChanged.emit()
+        self._audio_preview_level_timer.stop()
         self._sync_subtitle_model()
         self.projectChanged.emit()
         self.projectDataChanged.emit()

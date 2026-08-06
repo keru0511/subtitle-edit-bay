@@ -33,6 +33,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
 from .audio_mixer import (
+    AUDIO_MIX_MASTER_GAIN,
     MAX_VOLUME_PERCENT,
     active_audio_mix_channels,
     reconcile_audio_mix,
@@ -44,6 +45,7 @@ from .audio_preview_cache import (
     cached_audio_preview_paths,
     prepare_audio_preview_cache,
 )
+from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_state import build_gui_render_command, build_gui_transcribe_command
@@ -239,6 +241,7 @@ class EditBayBackend(LegacyEditBayBackend):
     audioMixerPreviewChannelsChanged = Signal()
     audioMixerPreviewGainsChanged = Signal()
     audioPreviewCacheChanged = Signal()
+    audioMasterMetricsChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
 
@@ -279,6 +282,10 @@ class EditBayBackend(LegacyEditBayBackend):
             thread_name_prefix="audio-preview",
         )
         self._audio_preview_outputs: dict[str, QAudioBufferOutput] = {}
+        self._audio_master_mixer = RealtimeAudioMixer(self)
+        self._audio_master_level = 0.0
+        self._audio_limiter_reduction_db = 0.0
+        self._audio_master_mixer.metricsChanged.connect(self._update_audio_master_metrics)
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
         self._audio_preview_pending_levels: dict[str, float] = {}
@@ -430,6 +437,7 @@ class EditBayBackend(LegacyEditBayBackend):
         return ""
 
     def _reset_audio_preview_cache(self) -> None:
+        self._audio_master_mixer.stop()
         self._audio_preview_cache_request += 1
         self._audio_preview_cache_paths = {}
         self._audio_preview_preparing = False
@@ -610,19 +618,13 @@ class EditBayBackend(LegacyEditBayBackend):
             str(channel.get("id", ""))
             for channel in active_audio_mix_channels(audio_mix)
         }
-        total_gain = sum(
-            max(0.0, float(channel.get("volume_percent", 100.0))) / 100.0
-            for channel, view in available
-            if str(view.get("id", "")) in active_ids
-        )
-        normalization = max(1.0, total_gain)
         gains = {
             str(view.get("id", "")): (
                 min(
-                    1.0,
+                    MAX_VOLUME_PERCENT / 100.0,
                     max(0.0, float(channel.get("volume_percent", 100.0)))
                     / 100.0
-                    / normalization,
+                    * AUDIO_MIX_MASTER_GAIN,
                 )
                 if str(view.get("id", "")) in active_ids
                 else 0.0
@@ -630,6 +632,13 @@ class EditBayBackend(LegacyEditBayBackend):
             for channel, view in available
         }
         self._audio_preview_gains = gains
+        self._audio_master_mixer.set_channels(
+            gains,
+            {
+                str(view.get("id", "")): float(view.get("preview_offset_seconds", 0.0))
+                for _channel, view in available
+            },
+        )
         if any(
             channel_id not in gains or gains.get(channel_id, 0.0) <= 0.0
             for channel_id in self._audio_preview_levels
@@ -662,7 +671,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def _audio_preview_output(self, channel_id: str) -> QAudioBufferOutput:
         output = self._audio_preview_outputs.get(channel_id)
         if output is None:
-            output = QAudioBufferOutput(self)
+            output = QAudioBufferOutput(self._audio_master_mixer.audio_format, self)
             output.audioBufferReceived.connect(
                 lambda buffer, current_id=channel_id: self._receive_audio_preview_buffer(
                     current_id,
@@ -704,8 +713,9 @@ class EditBayBackend(LegacyEditBayBackend):
         return min(1.0, max(values, default=0.0))
 
     def _receive_audio_preview_buffer(self, channel_id: str, buffer: QAudioBuffer) -> None:
+        decoded_peak = self._audio_master_mixer.push_buffer(channel_id, buffer)
         gain = self._audio_preview_gains.get(channel_id, 0.0)
-        peak = self._audio_buffer_peak(buffer) * gain
+        peak = decoded_peak * gain
         self._audio_preview_pending_levels[channel_id] = max(
             peak,
             self._audio_preview_pending_levels.get(channel_id, 0.0),
@@ -737,6 +747,45 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property("QVariantMap", notify=audioPreviewLevelsChanged)
     def audioPreviewLevels(self) -> dict[str, float]:
         return dict(self._audio_preview_levels)
+
+    @Slot(float, float)
+    def _update_audio_master_metrics(self, level: float, reduction_db: float) -> None:
+        next_level = round(max(0.0, min(1.0, float(level))), 4)
+        next_reduction = round(max(0.0, float(reduction_db)), 2)
+        if (
+            next_level == self._audio_master_level
+            and next_reduction == self._audio_limiter_reduction_db
+        ):
+            return
+        self._audio_master_level = next_level
+        self._audio_limiter_reduction_db = next_reduction
+        self.audioMasterMetricsChanged.emit()
+
+    @Property(float, notify=audioMasterMetricsChanged)
+    def audioMasterLevel(self) -> float:
+        return self._audio_master_level
+
+    @Property(float, notify=audioMasterMetricsChanged)
+    def audioLimiterReductionDb(self) -> float:
+        return self._audio_limiter_reduction_db
+
+    @Slot(int)
+    def startAudioMixerPreview(self, position_milliseconds: int) -> None:
+        self._audio_mixer_preview_state()
+        self._audio_master_mixer.play(position_milliseconds)
+
+    @Slot()
+    def pauseAudioMixerPreview(self) -> None:
+        self._audio_master_mixer.stop()
+
+    @Slot(int, bool)
+    def seekAudioMixerPreview(self, position_milliseconds: int, playing: bool) -> None:
+        self._audio_mixer_preview_state()
+        self._audio_master_mixer.seek(position_milliseconds, playing)
+
+    @Slot()
+    def stopAudioMixerPreview(self) -> None:
+        self._audio_master_mixer.stop()
 
     @Property(float, notify=segmentsChanged)
     def projectDuration(self) -> float:
@@ -1431,6 +1480,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_pending = False
 
     def _shutdown_executor(self) -> None:
+        if hasattr(self, "_audio_master_mixer"):
+            self._audio_master_mixer.stop()
         if hasattr(self, "autosave_timer"):
             self.autosave_timer.stop()
         if getattr(self, "_project_dirty", False) and getattr(self, "_project_path", ""):

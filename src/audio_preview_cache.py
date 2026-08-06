@@ -9,7 +9,7 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 
-AUDIO_PREVIEW_CACHE_VERSION = 1
+AUDIO_PREVIEW_CACHE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,13 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
                 entry.selector,
                 "-vn",
                 "-c:a",
-                "copy",
+                "flac",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-compression_level",
+                "5",
                 "-map_metadata",
                 "-1",
                 str(temporary_path),

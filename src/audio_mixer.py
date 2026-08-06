@@ -8,6 +8,13 @@ from typing import Any, Iterable
 AUDIO_MIX_VERSION = 1
 DEFAULT_AUDIO_TRACK = "0:a:0"
 MAX_VOLUME_PERCENT = 200.0
+AUDIO_MIX_MASTER_GAIN = 1.0
+AUDIO_MIX_LIMITER_CEILING = 0.841395
+AUDIO_MIX_MASTER_FILTER = (
+    f"volume={AUDIO_MIX_MASTER_GAIN:.4f},"
+    f"alimiter=limit={AUDIO_MIX_LIMITER_CEILING:.6f}:"
+    "attack=5:release=80:level=disabled:latency=enabled"
+)
 
 
 def _clamp_volume(value: object) -> float:
@@ -188,6 +195,10 @@ def build_audio_mix_filter(
         filters.append(
             f"{''.join(branch_labels)}amix=inputs={len(branch_labels)}:duration=longest:dropout_transition=0:normalize=0[{base_label}]"
         )
-    final_filter = f"{post_filter},apad" if post_filter else "apad"
+    final_filter = (
+        f"{post_filter},{AUDIO_MIX_MASTER_FILTER},apad"
+        if post_filter
+        else f"{AUDIO_MIX_MASTER_FILTER},apad"
+    )
     filters.append(f"[{base_label}]{final_filter}[{output_label}]")
     return input_args, ";".join(filters)

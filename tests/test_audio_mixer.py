@@ -98,7 +98,9 @@ class AudioMixerTests(unittest.TestCase):
         self.assertIn("volume=1.2500", filter_graph)
         self.assertIn("adelay=250:all=1", filter_graph)
         self.assertIn("amix=inputs=2", filter_graph)
-        self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5,apad[mixed_audio]", filter_graph)
+        self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5,volume=1.0000", filter_graph)
+        self.assertIn("alimiter=limit=0.841395", filter_graph)
+        self.assertIn("level=disabled:latency=enabled,apad[mixed_audio]", filter_graph)
 
     def test_filter_supports_negative_offset_and_silent_output(self) -> None:
         external = {

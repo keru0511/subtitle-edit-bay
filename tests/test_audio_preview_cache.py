@@ -93,6 +93,10 @@ class AudioPreviewCacheTests(unittest.TestCase):
             self.assertIn("0:a:0", video_command)
             self.assertIn("0:a:1", video_command)
             self.assertIn("+genpts", video_command)
+            self.assertIn("flac", video_command)
+            self.assertIn("48000", video_command)
+            self.assertIn("-ac", video_command)
+            self.assertNotIn("copy", video_command)
             self.assertTrue(all(path.endswith(".mka") for path in result.paths.values()))
 
             with patch("src.audio_preview_cache.subprocess.run") as run_again:

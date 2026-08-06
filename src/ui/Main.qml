@@ -177,7 +177,8 @@ ApplicationWindow {
         if (!root.mixerMode) {
             root.editorPositionCache = mainPlayer.position
             mainPlayer.pause()
-        }
+        } else
+            root.appBackend.stopAudioMixerPreview()
         root.mixerMode = false
         root.editorMode = true
     }
@@ -196,6 +197,7 @@ ApplicationWindow {
     }
 
     function closeMixerScreen() {
+        root.appBackend.stopAudioMixerPreview()
         mainPlayer.position = root.editorPositionCache
         root.mixerMode = false
     }
@@ -1196,19 +1198,29 @@ ApplicationWindow {
                 function togglePlayback() {
                     if (mixerPlayer.playbackState === MediaPlayer.PlayingState) {
                         mixerPlayer.pause()
+                        root.appBackend.pauseAudioMixerPreview()
                         mixerContent.syncPreviewPlayers(false)
                     } else {
+                        root.appBackend.startAudioMixerPreview(mixerPlayer.position)
                         mixerPlayer.play()
                         mixerContent.syncPreviewPlayers(true)
                     }
                 }
 
-                function seekBy(milliseconds) {
+                function seekTo(milliseconds) {
                     mixerPlayer.position = Math.max(
                         0,
-                        Math.min(mixerPlayer.duration, mixerPlayer.position + milliseconds)
+                        Math.min(mixerPlayer.duration, milliseconds)
+                    )
+                    root.appBackend.seekAudioMixerPreview(
+                        mixerPlayer.position,
+                        mixerPlayer.playbackState === MediaPlayer.PlayingState
                     )
                     mixerContent.syncPreviewPlayers(true)
+                }
+
+                function seekBy(milliseconds) {
+                    mixerContent.seekTo(mixerPlayer.position + milliseconds)
                 }
 
                 function restoreChannelScroll() {
@@ -1238,7 +1250,11 @@ ApplicationWindow {
                         if (mixerPlayer.playbackState !== MediaPlayer.PlayingState)
                             mixerContent.syncPreviewPlayers(true)
                     }
-                    onPlaybackStateChanged: mixerContent.syncPreviewPlayers(false)
+                    onPlaybackStateChanged: {
+                        mixerContent.syncPreviewPlayers(false)
+                        if (mixerPlayer.playbackState === MediaPlayer.StoppedState)
+                            root.appBackend.pauseAudioMixerPreview()
+                    }
                 }
 
                 Instantiator {
@@ -1291,7 +1307,7 @@ ApplicationWindow {
                         source: modelData.preview_url || ""
                         audioOutput: AudioOutput {
                             objectName: "mixerPreviewAudioOutput"
-                            volume: mixerPreviewPlayer.previewVolume
+                            muted: true
                         }
                         // qmllint disable missing-type
                         audioBufferOutput: modelData.preview_buffer_output
@@ -1404,10 +1420,7 @@ ApplicationWindow {
                                     to: Math.max(1, mixerPlayer.duration)
                                     value: mixerPlayer.position
                                     enabled: mixerContent.previewReady
-                                    onMoved: {
-                                        mixerPlayer.position = value
-                                        mixerContent.syncPreviewPlayers(true)
-                                    }
+                                    onMoved: mixerContent.seekTo(value)
                                 }
                                 SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(5000) }
                                 Text {
@@ -1639,7 +1652,10 @@ ApplicationWindow {
                             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: "INPUT ON・ミュート・ソロ・フェーダー比率を再生音へ即時反映します。個別音声には同期オフセットを適用し、正確なゲインは書き出し時に反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { Layout.fillWidth: true; text: "INPUT ON・ミュート・ソロ・フェーダーを出力プレビューへ即時反映します。同期後に1本のマスターバスへ合成し、−1.5 dBFSリミッターを適用します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { text: "MASTER"; color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 9; font.weight: Font.Bold }
+                                Rectangle { objectName: "mixerMasterMeter"; Layout.preferredWidth: 120; Layout.preferredHeight: 9; radius: 4; color: "#070908"; border.color: root.border; Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 2; width: Math.max(0, (parent.width - 4) * Number(root.appBackend.audioMasterLevel || 0)); radius: 2; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.acid; Behavior on width { NumberAnimation { duration: 45 } } } }
+                                Text { objectName: "mixerLimiterReduction"; text: "GR " + Number(root.appBackend.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; Layout.preferredWidth: 72 }
                                 Text { text: "OUTPUT: AAC / 48 kHz"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 9 }
                             }
                         }

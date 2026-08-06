@@ -87,6 +87,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._log = ""
         app._elapsed_seconds = 0
         app._cancel_requested = False
+        app._audio_master_mixer.stop()
         app._audio_preview_gains.clear()
         app._audio_preview_levels.clear()
         app._audio_preview_pending_levels.clear()
@@ -388,6 +389,48 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.audioPreviewLevels[channel_id], 1.0)
         self.app._audio_preview_level_timer.stop()
         self.app.autosave_timer.stop()
+
+    def test_audio_preview_gain_is_independent_of_active_channel_count(self) -> None:
+        self._load_project()
+        video_id = self.app.audioMixerChannels[0]["id"]
+        external_id = self.app.audioMixerChannels[1]["id"]
+
+        self.assertEqual(self.app.audioMixerPreviewGains[video_id], 1.0)
+
+        self.app.updateAudioMixChannel(1, {"enabled": True})
+        gains = self.app.audioMixerPreviewGains
+        self.assertEqual(gains[video_id], 1.0)
+        self.assertEqual(gains[external_id], 1.0)
+
+        self.app.updateAudioMixChannel(0, {"volume_percent": 200})
+        gains = self.app.audioMixerPreviewGains
+        self.assertEqual(gains[video_id], 2.0)
+        self.assertEqual(gains[external_id], 1.0)
+
+        self.app.updateAudioMixChannel(1, {"enabled": False})
+        self.assertEqual(self.app.audioMixerPreviewGains[video_id], 2.0)
+        self.app.autosave_timer.stop()
+
+    def test_audio_master_transport_and_metrics_are_exposed_to_qml(self) -> None:
+        self._load_project()
+        metrics_changed = QSignalSpy(self.app.audioMasterMetricsChanged)
+
+        with (
+            patch.object(self.app._audio_master_mixer, "play") as play,
+            patch.object(self.app._audio_master_mixer, "seek") as seek,
+            patch.object(self.app._audio_master_mixer, "stop") as stop,
+        ):
+            self.app.startAudioMixerPreview(1_250)
+            self.app.seekAudioMixerPreview(2_500, True)
+            self.app.pauseAudioMixerPreview()
+            play.assert_called_once_with(1_250)
+            seek.assert_called_once_with(2_500, True)
+            stop.assert_called_once_with()
+
+        self.app._update_audio_master_metrics(0.75, 3.25)
+        self.assertEqual(self.app.audioMasterLevel, 0.75)
+        self.assertEqual(self.app.audioLimiterReductionDb, 3.25)
+        self.assertEqual(metrics_changed.count(), 1)
 
     def test_audio_mixer_preparation_publishes_cache_without_dirtying_project(self) -> None:
         self._load_project()

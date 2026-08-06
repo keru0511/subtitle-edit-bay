@@ -19,6 +19,7 @@ ApplicationWindow {
     property real editorTimelineScrollX: 0
     property real editorCaptionScrollY: 0
     property bool editorMode: false
+    property bool mixerMode: false
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -167,13 +168,39 @@ ApplicationWindow {
     }
 
     function openEditorScreen() {
-        root.editorPositionCache = mainPlayer.position
+        if (!root.mixerMode) {
+            root.editorPositionCache = mainPlayer.position
+            mainPlayer.pause()
+        }
+        root.mixerMode = false
         root.editorMode = true
     }
 
     function closeEditorScreen() {
         mainPlayer.position = root.editorPositionCache
         root.editorMode = false
+    }
+
+    function openMixerScreen() {
+        root.editorPositionCache = mainPlayer.position
+        mainPlayer.pause()
+        root.editorMode = false
+        root.mixerMode = true
+    }
+
+    function closeMixerScreen() {
+        mainPlayer.position = root.editorPositionCache
+        root.mixerMode = false
+    }
+
+    function volumePercentToDb(percent) {
+        var value = Math.max(0, Number(percent) || 0)
+        return value <= 0 ? -60 : Math.max(-60, Math.min(6, 20 * Math.log(value / 100) / Math.LN10))
+    }
+
+    function dbToVolumePercent(db) {
+        var value = Number(db)
+        return value <= -60 ? 0 : Math.max(0, Math.min(200, 100 * Math.pow(10, value / 20)))
     }
 
     function renderFromEditor() {
@@ -691,8 +718,8 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: root.editorMode ? 0 : 62
-        visible: !root.editorMode
+        height: root.editorMode || root.mixerMode ? 0 : 62
+        visible: !root.editorMode && !root.mixerMode
         color: "#101512"
         border.color: root.border
         RowLayout {
@@ -703,7 +730,7 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 0
                 Text { text: "SUBTITLE EDIT BAY"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 18; font.weight: Font.Bold; font.letterSpacing: 1.5 }
-                Text { text: "素材  /  文字起こし  /  字幕編集  /  書き出し"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
+                Text { text: "素材  /  文字起こし  /  字幕・音量編集  /  書き出し"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
             }
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 30; color: root.border }
             ColumnLayout {
@@ -729,7 +756,7 @@ ApplicationWindow {
 
     RowLayout {
         objectName: "mainWorkspace"
-        visible: !root.editorMode
+        visible: !root.editorMode && !root.mixerMode
         anchors.fill: parent
         anchors.margins: 12
         spacing: 10
@@ -813,7 +840,7 @@ ApplicationWindow {
                     anchors.margins: 10
                     spacing: 8
                     Repeater {
-                        model: ["素材", "文字起こし", "字幕編集", "書き出し"]
+                        model: ["素材", "文字起こし", "字幕・音量編集", "書き出し"]
                         delegate: ColumnLayout {
                             id: stepDelegate
                             required property int index
@@ -911,7 +938,7 @@ ApplicationWindow {
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 ColumnLayout { objectName: "workflowActions"; Layout.fillWidth: true; Layout.fillHeight: false; Layout.margins: 12; spacing: 7
-                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕を編集するか、このまま動画へ焼き付けられます" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕と音量をそれぞれ編集するか、このまま動画へ焼き付けられます" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
                     Button {
                         id: transcribeButton
                         objectName: "transcribeButton"
@@ -931,6 +958,16 @@ ApplicationWindow {
                         onClicked: root.openEditorScreen()
                         contentItem: Text { text: editButton.text; color: editButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: editButton.enabled ? root.acid : "#252C28" }
+                    }
+                    Button {
+                        id: mixerOpenButton
+                        objectName: "audioMixerOpenButton"
+                        Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded
+                        enabled: root.appBackend.projectLoaded && !root.appBackend.running
+                        text: "音量を調整する"
+                        onClicked: root.openMixerScreen()
+                        contentItem: Text { text: mixerOpenButton.text; color: mixerOpenButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: mixerOpenButton.enabled ? root.acid : "#252C28" }
                     }
                     Button {
                         id: renderButton
@@ -1022,6 +1059,367 @@ ApplicationWindow {
     }
 
     Rectangle {
+        id: mixerPage
+        objectName: "mixerPage"
+        anchors.fill: parent
+        visible: root.mixerMode
+        z: 100
+        color: "#0D1210"
+        border.color: "#46564E"
+        focus: visible
+        Keys.onEscapePressed: root.closeMixerScreen()
+        onVisibleChanged: if (visible) forceActiveFocus()
+
+        Loader {
+            id: mixerLoader
+            anchors.fill: parent
+            active: root.mixerMode
+            sourceComponent: mixerContentComponent
+        }
+
+        Component {
+            id: mixerContentComponent
+            Item {
+                id: mixerContent
+
+                function togglePlayback() {
+                    if (mixerPlayer.playbackState === MediaPlayer.PlayingState)
+                        mixerPlayer.pause()
+                    else
+                        mixerPlayer.play()
+                }
+
+                function seekBy(milliseconds) {
+                    mixerPlayer.position = Math.max(
+                        0,
+                        Math.min(mixerPlayer.duration, mixerPlayer.position + milliseconds)
+                    )
+                }
+
+                MediaPlayer {
+                    id: mixerPlayer
+                    objectName: "mixerPlayer"
+                    source: root.appBackend.previewUrl
+                    audioOutput: AudioOutput { volume: 0.75 }
+                    Component.onCompleted: position = root.editorPositionCache
+                    onPositionChanged: {
+                        root.editorPositionCache = mixerPlayer.position
+                        if (!mixerSeek.pressed)
+                            mixerSeek.value = mixerPlayer.position
+                    }
+                    onDurationChanged: mixerSeek.to = Math.max(1, mixerPlayer.duration)
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 64
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 14
+                        spacing: 10
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text { text: "音量ミキサー"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 19; font.weight: Font.Bold; font.letterSpacing: 1.0 }
+                            Text { text: "動画内トラックと個別音声を、完成動画用にミックス"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                        }
+                        Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                        SmallButton { objectName: "mixerResetButton"; text: "全チャンネルをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
+                        SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
+                        SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
+                        Button {
+                            id: mixerRenderButton
+                            objectName: "mixerRenderButton"
+                            implicitHeight: 34
+                            text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
+                            enabled: root.appBackend.projectLoaded && !root.appBackend.running
+                            onClicked: {
+                                root.closeMixerScreen()
+                                root.appBackend.renderVideo(root.currentSettings())
+                            }
+                            contentItem: Text { text: mixerRenderButton.text; color: mixerRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            background: Rectangle { radius: 7; color: mixerRenderButton.enabled ? root.acid : "#252C28" }
+                        }
+                        SmallButton { objectName: "mixerBackButton"; text: "メインへ戻る"; onClicked: root.closeMixerScreen() }
+                    }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 174
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        Layout.topMargin: 10
+                        radius: 10
+                        color: root.panel
+                        border.color: root.border
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 7
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Button {
+                                    id: mixerPlayButton
+                                    objectName: "mixerPlayButton"
+                                    Layout.preferredWidth: 46
+                                    Layout.preferredHeight: 34
+                                    enabled: Boolean(root.appBackend.previewUrl)
+                                    onClicked: mixerContent.togglePlayback()
+                                    contentItem: Text {
+                                        text: mixerPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
+                                        color: mixerPlayButton.enabled ? "#10140F" : root.textMuted
+                                        font.pixelSize: 14
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle { radius: 7; color: mixerPlayButton.enabled ? root.acid : "#252C28" }
+                                }
+                                SmallButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: Boolean(root.appBackend.previewUrl); onClicked: mixerContent.seekBy(-5000) }
+                                Slider {
+                                    id: mixerSeek
+                                    objectName: "mixerSeek"
+                                    Layout.fillWidth: true
+                                    from: 0
+                                    to: 1
+                                    value: 0
+                                    enabled: Boolean(root.appBackend.previewUrl)
+                                    onMoved: mixerPlayer.position = value
+                                }
+                                SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: Boolean(root.appBackend.previewUrl); onClicked: mixerContent.seekBy(5000) }
+                                Text {
+                                    objectName: "mixerTimeText"
+                                    Layout.preferredWidth: 142
+                                    text: root.stamp(mixerPlayer.position / 1000) + " / " + root.stamp(mixerPlayer.duration / 1000)
+                                    color: root.textPrimary
+                                    font.family: "Cascadia Mono"
+                                    font.pixelSize: 10
+                                    horizontalAlignment: Text.AlignRight
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                PanelTitle { text: "SEQUENCE" }
+                                Text { text: "素材音声プレビュー"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
+                            }
+                            SubtitleTimeline {
+                                objectName: "mixerSequence"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                player: mixerPlayer
+                                pixelsPerSecond: root.timelinePixelsPerSecond
+                                laneHeight: 34
+                                editable: false
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.margins: 14
+                        radius: 12
+                        color: "#090C0B"
+                        border.color: root.border
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            spacing: 10
+                            RowLayout {
+                                Layout.fillWidth: true
+                                PanelTitle { text: "INPUT CHANNELS" }
+                                Text { text: root.appBackend.audioMixerChannels.length + " CH"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 10 }
+                                Item { Layout.fillWidth: true }
+                                Text { text: "フェーダー: −60〜+6 dB  /  M: ミュート  /  S: ソロ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                            }
+                            ListView {
+                                id: mixerChannelList
+                                objectName: "mixerChannelList"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                orientation: ListView.Horizontal
+                                spacing: 12
+                                clip: true
+                                boundsBehavior: Flickable.StopAtBounds
+                                model: root.appBackend.audioMixerChannels
+                                delegate: Rectangle {
+                                    id: mixerStrip
+                                    required property int index
+                                    required property var modelData
+                                    width: 190
+                                    height: mixerChannelList.height - 12
+                                    radius: 9
+                                    color: modelData.enabled ? "#171E1A" : "#101512"
+                                    border.width: modelData.solo ? 2 : 1
+                                    border.color: modelData.solo ? root.acid : (modelData.muted ? root.amber : root.border)
+                                    opacity: modelData.enabled ? 1.0 : 0.58
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 7
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Text { text: "CH " + String(mixerStrip.index + 1).padStart(2, "0"); color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 10; font.weight: Font.Bold }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                Layout.preferredWidth: 62; Layout.preferredHeight: 20; radius: 4
+                                                color: mixerStrip.modelData.kind === "external" ? "#253225" : "#272C30"
+                                                Text { anchors.centerIn: parent; text: mixerStrip.modelData.kind === "external" ? "FILE" : "VIDEO"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; font.weight: Font.Bold }
+                                            }
+                                        }
+                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.label; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle }
+                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.kind === "external" ? "同期オフセット適用" : mixerStrip.modelData.selector; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+                                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            Layout.minimumHeight: 250
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: 13
+                                                anchors.rightMargin: 13
+                                                spacing: 8
+                                                Column {
+                                                    Layout.preferredWidth: 30
+                                                    Layout.fillHeight: true
+                                                    topPadding: 7
+                                                    Text { width: parent.width; text: "+6"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Item { width: 1; height: (parent.height - 62) * 0.15 }
+                                                    Text { width: parent.width; text: "0"; color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Item { width: 1; height: (parent.height - 62) * 0.12 }
+                                                    Text { width: parent.width; text: "−6"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Item { width: 1; height: (parent.height - 62) * 0.12 }
+                                                    Text { width: parent.width; text: "−12"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Item { width: 1; height: (parent.height - 62) * 0.18 }
+                                                    Text { width: parent.width; text: "−24"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Item { width: 1; height: (parent.height - 62) * 0.22 }
+                                                    Text { width: parent.width; text: "−∞"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                }
+                                                Slider {
+                                                    id: channelFader
+                                                    objectName: "mixerChannelFader"
+                                                    Layout.fillHeight: true
+                                                    Layout.preferredWidth: 54
+                                                    orientation: Qt.Vertical
+                                                    from: -60
+                                                    to: 6.0206
+                                                    stepSize: 0.5
+                                                    value: root.volumePercentToDb(mixerStrip.modelData.volume_percent)
+                                                    enabled: !root.appBackend.running && mixerStrip.modelData.enabled
+                                                    onPressedChanged: if (!pressed) root.appBackend.updateAudioMixChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
+                                                    background: Rectangle {
+                                                        x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2
+                                                        y: channelFader.topPadding
+                                                        width: 7
+                                                        height: channelFader.availableHeight
+                                                        radius: 3
+                                                        color: "#090C0B"
+                                                        border.color: root.border
+                                                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: parent.height * channelFader.position; radius: 3; color: mixerStrip.modelData.muted ? root.amber : root.acid; opacity: 0.72 }
+                                                    }
+                                                    handle: Rectangle {
+                                                        x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2
+                                                        y: channelFader.topPadding + (1 - channelFader.position) * (channelFader.availableHeight - height)
+                                                        implicitWidth: 44
+                                                        implicitHeight: 18
+                                                        radius: 4
+                                                        color: channelFader.pressed ? root.acid : root.textPrimary
+                                                        border.color: "#0B0E0D"
+                                                        border.width: 2
+                                                        Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 8; height: 2; color: "#222A26" }
+                                                    }
+                                                }
+                                                Rectangle {
+                                                    Layout.preferredWidth: 13
+                                                    Layout.fillHeight: true
+                                                    Layout.topMargin: 7
+                                                    Layout.bottomMargin: 7
+                                                    radius: 4
+                                                    color: "#070908"
+                                                    border.color: root.border
+                                                    Rectangle {
+                                                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 2
+                                                        height: Math.max(2, (parent.height - 4) * Math.min(1, Number(mixerStrip.modelData.volume_percent) / 200))
+                                                        radius: 2
+                                                        gradient: Gradient {
+                                                            GradientStop { position: 0.0; color: root.acid }
+                                                            GradientStop { position: 0.72; color: root.amber }
+                                                            GradientStop { position: 1.0; color: root.danger }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: channelFader.value <= -59.9 ? "−∞ dB" : (channelFader.value >= 0 ? "+" : "") + channelFader.value.toFixed(1) + " dB"
+                                            color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter
+                                        }
+                                        Text { Layout.fillWidth: true; text: Math.round(Number(mixerStrip.modelData.volume_percent)) + "%"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            Button {
+                                                id: channelMuteButton
+                                                objectName: "mixerMuteButton"
+                                                Layout.fillWidth: true; Layout.preferredHeight: 34
+                                                text: "M"
+                                                enabled: !root.appBackend.running
+                                                onClicked: root.appBackend.updateAudioMixChannel(mixerStrip.index, {"muted": !mixerStrip.modelData.muted})
+                                                contentItem: Text { text: channelMuteButton.text; color: mixerStrip.modelData.muted ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                background: Rectangle { radius: 6; color: mixerStrip.modelData.muted ? root.amber : root.raised; border.color: mixerStrip.modelData.muted ? root.amber : root.border }
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "ミュート"
+                                            }
+                                            Button {
+                                                id: channelSoloButton
+                                                objectName: "mixerSoloButton"
+                                                Layout.fillWidth: true; Layout.preferredHeight: 34
+                                                text: "S"
+                                                enabled: !root.appBackend.running
+                                                onClicked: root.appBackend.updateAudioMixChannel(mixerStrip.index, {"solo": !mixerStrip.modelData.solo})
+                                                contentItem: Text { text: channelSoloButton.text; color: mixerStrip.modelData.solo ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                background: Rectangle { radius: 6; color: mixerStrip.modelData.solo ? root.acid : root.raised; border.color: mixerStrip.modelData.solo ? root.acid : root.border }
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "ソロ"
+                                            }
+                                        }
+                                        CheckBox {
+                                            objectName: "mixerChannelEnabledCheck"
+                                            Layout.alignment: Qt.AlignHCenter
+                                            text: "INPUT ON"
+                                            checked: Boolean(mixerStrip.modelData.enabled)
+                                            enabled: !root.appBackend.running
+                                            onToggled: root.appBackend.updateAudioMixChannel(mixerStrip.index, {"enabled": checked})
+                                        }
+                                    }
+                                }
+                                ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                            }
+                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { Layout.fillWidth: true; text: "再生は素材動画の音声プレビューです。個別音声には同期オフセットを適用し、フェーダー設定は完成動画の書き出し時に反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { text: "OUTPUT: AAC / 48 kHz"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 9 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
         id: editorPage
         objectName: "editorPage"
         anchors.fill: parent
@@ -1058,84 +1456,6 @@ ApplicationWindow {
                     onDurationChanged: editorSeek.to = Math.max(1, editorPlayer.duration)
                 }
 
-                Popup {
-                    id: audioMixerPopup
-                    objectName: "audioMixerPopup"
-                    width: Math.min(760, parent.width - 40)
-                    height: Math.min(600, parent.height - 40)
-                    x: Math.round((parent.width - width) / 2)
-                    y: Math.round((parent.height - height) / 2)
-                    modal: true
-                    focus: true
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                    background: Rectangle { radius: 12; color: root.panel; border.color: root.acid }
-                    contentItem: ColumnLayout {
-                        spacing: 10
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text { text: "音量ミキサー"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 18; font.weight: Font.Bold }
-                            Item { Layout.fillWidth: true }
-                            SmallButton { objectName: "audioMixerResetButton"; text: "既定値に戻す"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
-                            SmallButton { objectName: "audioMixerCloseButton"; text: "閉じる"; onClicked: audioMixerPopup.close() }
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: "動画内トラックと個別音声を選び、完成動画の音量を調整します。個別音声には同期結果が自動適用されます。"
-                            color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.WordWrap
-                        }
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        ListView {
-                            id: audioMixerList
-                            objectName: "audioMixerList"
-                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 7
-                            model: root.appBackend.audioMixerChannels
-                            delegate: Rectangle {
-                                id: mixerChannelRow
-                                required property int index
-                                required property var modelData
-                                width: audioMixerList.width; height: 72; radius: 8; color: root.raised; border.color: modelData.solo ? root.acid : root.border
-                                RowLayout {
-                                    anchors.fill: parent; anchors.margins: 8; spacing: 8
-                                    CheckBox {
-                                        objectName: "audioMixerEnabledCheck"
-                                        checked: Boolean(mixerChannelRow.modelData.enabled)
-                                        enabled: !root.appBackend.running
-                                        onToggled: root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"enabled": checked})
-                                    }
-                                    ColumnLayout {
-                                        Layout.preferredWidth: 210; spacing: 2
-                                        Text { Layout.fillWidth: true; text: mixerChannelRow.modelData.label; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; elide: Text.ElideRight }
-                                        Text { text: mixerChannelRow.modelData.kind === "external" ? "個別音声（同期済み）" : "動画内音声"; color: root.textMuted; font.pixelSize: 9 }
-                                    }
-                                    Slider {
-                                        id: mixerVolumeSlider
-                                        objectName: "audioMixerVolumeSlider"
-                                        Layout.fillWidth: true; from: 0; to: 200; stepSize: 1
-                                        value: Number(mixerChannelRow.modelData.volume_percent)
-                                        enabled: !root.appBackend.running && mixerChannelRow.modelData.enabled
-                                        onPressedChanged: if (!pressed) root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"volume_percent": Math.round(value)})
-                                    }
-                                    Text { Layout.preferredWidth: 44; text: Math.round(mixerVolumeSlider.value) + "%"; color: root.textPrimary; font.family: "Cascadia Mono"; horizontalAlignment: Text.AlignRight }
-                                    SmallButton {
-                                        objectName: "audioMixerMuteButton"
-                                        text: mixerChannelRow.modelData.muted ? "ミュート中" : "ミュート"
-                                        enabled: !root.appBackend.running
-                                        onClicked: root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"muted": !mixerChannelRow.modelData.muted})
-                                    }
-                                    SmallButton {
-                                        objectName: "audioMixerSoloButton"
-                                        text: mixerChannelRow.modelData.solo ? "ソロ中" : "ソロ"
-                                        enabled: !root.appBackend.running
-                                        onClicked: root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"solo": !mixerChannelRow.modelData.solo})
-                                    }
-                                }
-                            }
-                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-                        }
-                        Text { Layout.fillWidth: true; text: "※ 編集画面の再生音は元動画のままです。ミックス結果は動画書き出し時に反映されます。"; color: root.amber; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                    }
-                }
-
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 0
@@ -1150,7 +1470,6 @@ ApplicationWindow {
                 SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
                 SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
-                SmallButton { objectName: "audioMixerButton"; text: "音量ミキサー"; onClicked: audioMixerPopup.open() }
                 SmallButton { objectName: "buildAssButton"; text: "ASSを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
                 Button {
                     id: editorRenderButton
@@ -1381,7 +1700,7 @@ ApplicationWindow {
 
     Shortcut { sequence: StandardKey.Undo; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
     Shortcut { sequence: StandardKey.Redo; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequence: StandardKey.Save; enabled: root.editorMode; onActivated: root.appBackend.saveProject() }
+    Shortcut { sequence: StandardKey.Save; enabled: root.editorMode || root.mixerMode; onActivated: root.appBackend.saveProject() }
     Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
 
     Connections {

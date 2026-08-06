@@ -191,6 +191,16 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIsNotNone(item, name)
         return item
 
+    def _quick_visual_item(self, root: QQuickItem, name: str) -> QQuickItem:
+        if root.objectName() == name:
+            return root
+        for child in root.childItems():
+            try:
+                return self._quick_visual_item(child, name)
+            except AssertionError:
+                continue
+        self.fail(name)
+
     def _click(self, window: QObject, item: QQuickItem) -> None:
         self.assertGreater(item.width(), 0, item.objectName())
         self.assertGreater(item.height(), 0, item.objectName())
@@ -946,9 +956,50 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         main = self._quick_item(window, "mainWorkspace")
         editor = self._quick_item(window, "editorPage")
+        mixer = self._quick_item(window, "mixerPage")
+
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        self.assertFalse(main.isVisible())
+        self.assertFalse(editor.isVisible())
+        self.assertTrue(mixer.isVisible())
+        channel_list = self._quick_item(window, "mixerChannelList")
+        self.assertEqual(channel_list.property("count"), 2)
+        mixer_items = [
+            channel_list,
+            self._quick_item(window, "mixerPlayButton"),
+            self._quick_item(window, "mixerRewindButton"),
+            self._quick_item(window, "mixerSeek"),
+            self._quick_item(window, "mixerForwardButton"),
+            self._quick_item(window, "mixerTimeText"),
+            self._quick_item(window, "mixerSequence"),
+            self._quick_visual_item(channel_list, "mixerChannelFader"),
+            self._quick_visual_item(channel_list, "mixerMuteButton"),
+            self._quick_visual_item(channel_list, "mixerSoloButton"),
+            self._quick_visual_item(channel_list, "mixerChannelEnabledCheck"),
+            self._quick_item(window, "mixerResetButton"),
+            self._quick_item(window, "mixerSaveButton"),
+            self._quick_item(window, "mixerToEditorButton"),
+            self._quick_item(window, "mixerRenderButton"),
+            self._quick_item(window, "mixerBackButton"),
+        ]
+        for item in mixer_items:
+            name = item.objectName()
+            top_left = item.mapToScene(QPointF(0, 0))
+            self.assertGreater(item.width(), 0, name)
+            self.assertGreater(item.height(), 0, name)
+            self.assertGreaterEqual(top_left.x(), 0, name)
+            self.assertGreaterEqual(top_left.y(), 0, name)
+            self.assertLessEqual(top_left.x() + item.width(), window.width() + 1, name)
+            self.assertLessEqual(top_left.y() + item.height(), window.height() + 1, name)
+
+        self._click(window, self._quick_item(window, "mixerBackButton"))
+        self.assertTrue(main.isVisible())
+        self.assertFalse(mixer.isVisible())
+
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
         self.assertFalse(main.isVisible())
         self.assertTrue(editor.isVisible())
+        self.assertFalse(mixer.isVisible())
 
         toolbar_names = [
             "undoCaptionButton",
@@ -957,7 +1008,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "splitCaptionButton",
             "deleteCaptionButton",
             "saveProjectButton",
-            "audioMixerButton",
             "buildAssButton",
             "editorRenderButton",
             "editorBackButton",
@@ -970,13 +1020,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(top_left.y(), 0, name)
             self.assertLessEqual(top_left.x() + item.width(), window.width() + 1, name)
             self.assertLessEqual(top_left.y() + item.height(), window.height() + 1, name)
-
-        self._click(window, self._quick_item(window, "audioMixerButton"))
-        mixer_popup = window.findChild(QObject, "audioMixerPopup")
-        self.assertIsNotNone(mixer_popup)
-        self.assertTrue(mixer_popup.property("opened"))
-        self._click(window, self._quick_item(window, "audioMixerCloseButton"))
-        self.assertFalse(mixer_popup.property("opened"))
 
         self._click(window, self._quick_item(window, "editorBackButton"))
         self.assertTrue(main.isVisible())

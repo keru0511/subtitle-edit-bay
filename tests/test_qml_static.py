@@ -79,11 +79,20 @@ class QmlStaticTests(unittest.TestCase):
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")
 
-        self.assertIn('objectName: "audioMixerButton"', qml)
-        self.assertIn('objectName: "audioMixerPopup"', qml)
+        self.assertIn('objectName: "audioMixerOpenButton"', qml)
+        self.assertIn('objectName: "mixerPage"', qml)
+        self.assertIn('objectName: "mixerChannelList"', qml)
+        self.assertIn('objectName: "mixerChannelFader"', qml)
+        self.assertIn('objectName: "mixerPlayButton"', qml)
+        self.assertIn('objectName: "mixerSeek"', qml)
+        self.assertIn('objectName: "mixerSequence"', qml)
+        self.assertIn("source: root.appBackend.previewUrl", qml)
+        self.assertIn("root.editorPositionCache = mixerPlayer.position", qml)
+        self.assertIn("orientation: Qt.Vertical", qml)
         self.assertIn("model: root.appBackend.audioMixerChannels", qml)
         self.assertIn("updateAudioMixChannel", qml)
         self.assertIn("resetAudioMixer", qml)
+        self.assertNotIn('objectName: "audioMixerPopup"', qml)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"

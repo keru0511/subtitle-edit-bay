@@ -51,6 +51,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("python -m unittest discover", workflow)
         self.assertIn("name: Test on Linux", workflow)
         self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("name: Install Qt runtime dependencies", workflow)
+        self.assertIn("libpulse0", workflow)
         self.assertIn("name: Build Windows installer", workflow)
         self.assertIn("needs: test", workflow)
         self.assertIn("scripts/build_installer.ps1", workflow)

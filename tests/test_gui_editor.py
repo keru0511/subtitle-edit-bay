@@ -767,6 +767,39 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(saved_texts, ["first edit", "second edit"])
         self.assertFalse(self.app.projectDirty)
 
+    def test_loading_project_restores_subtitle_settings_in_gui(self) -> None:
+        path, _, _ = self._make_project()
+        project = load_project(path)
+        project["subtitle_settings"] = {
+            "font_size": 100,
+            "volume_scale_percent": 35,
+            "max_gap_seconds": 0.2,
+            "end_padding_seconds": 0.04,
+            "min_duration_seconds": 0.5,
+        }
+        save_project(path, project)
+        settings_changes = QSignalSpy(self.app.settingsChanged)
+
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        self.assertEqual(settings_changes.count(), 1)
+        self.assertEqual(self.app.settings["subtitle_font_size"], 100)
+        self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 35)
+        self.assertEqual(self.app.settings["subtitle_max_gap_seconds"], 0.2)
+        self.assertEqual(self.app.settings["subtitle_end_padding_seconds"], 0.04)
+        self.assertEqual(self.app.settings["subtitle_min_duration_seconds"], 0.5)
+        self.assertFalse(self.app.projectDirty)
+
+        _, window = self._load_qml()
+        self.assertEqual(self._quick_item(window, "fontSizeSpin").property("value"), 200)
+        self.assertEqual(self._quick_item(window, "volumeScaleSpin").property("value"), 35)
+        self.assertEqual(window.property("selectedSubtitleFontSize"), 100)
+        caption = self._quick_visual_item(
+            window.contentItem(),
+            "mainSubtitleOverlayCaption-0",
+        )
+        self.assertEqual(caption.property("font").pixelSize(), 44)
+
     def test_preview_updates_project_settings_and_ass_path(self) -> None:
         path = self._load_project()
         ass_path = self.root / "game.edited.ass"
@@ -947,6 +980,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(edit.isEnabled())
         self.assertFalse(render.isEnabled())
 
+    def test_subtitle_preview_multiplies_base_and_per_caption_sizes(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "preview",
+                    "speaker": "Speaker_Alice",
+                    "subtitle_font_scale": 1.5,
+                }
+            ]
+        )
+        _, window = self._load_qml()
+
+        main_caption = self._quick_visual_item(
+            window.contentItem(),
+            "mainSubtitleOverlayCaption-0",
+        )
+        self.assertEqual(main_caption.property("font").pixelSize(), 33)
+
+        self._quick_item(window, "fontSizeSpin").setProperty("value", 200)
+        self.app.processEvents()
+
+        self.assertEqual(window.property("selectedSubtitleFontSize"), 100)
+        self.assertEqual(main_caption.property("font").pixelSize(), 66)
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        editor_caption = self._quick_visual_item(
+            window.contentItem(),
+            "editorSubtitleOverlayCaption-0",
+        )
+        self.assertEqual(editor_caption.property("font").pixelSize(), 66)
+
     def test_qml_settings_round_trip_and_expanded_layout_fit(self) -> None:
         _, window = self._load_qml()
         self._load_project()
@@ -1081,6 +1148,22 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "audioMixerOpenButton"))
         channel_list = self._quick_item(window, "mixerChannelList")
         self.assertGreater(channel_list.property("contentWidth"), channel_list.width())
+        self.assertEqual(
+            self._quick_visual_item(channel_list, "mixerChannelStrip-0").width(),
+            170,
+        )
+
+        sequence = self._quick_item(window, "mixerSequence")
+        sequence.setProperty("viewportY", 60.0)
+        self.app.processEvents()
+        self.assertGreater(sequence.property("viewportY"), 0)
+        lane_body = self._quick_visual_item(sequence, "timelineLaneBody-0")
+        lane_label = self._quick_visual_item(sequence, "timelineLaneLabel-0")
+        self.assertAlmostEqual(
+            lane_body.mapToScene(QPointF(0, 0)).y(),
+            lane_label.mapToScene(QPointF(0, 0)).y(),
+            delta=0.5,
+        )
 
         channel_list.setProperty("contentX", 420.0)
         self.app.processEvents()

@@ -978,6 +978,33 @@ class EditBayBackend(LegacyEditBayBackend):
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
 
+    def _apply_project_subtitle_settings(self, project: dict[str, Any]) -> None:
+        subtitle = project.get("subtitle_settings", {})
+        if not isinstance(subtitle, dict):
+            self.settingsChanged.emit()
+            return
+
+        updates: dict[str, int | float] = {}
+        for project_key, setting_key, converter in (
+            ("font_size", "subtitle_font_size", int),
+            ("volume_scale_percent", "subtitle_volume_scale_percent", float),
+            ("max_gap_seconds", "subtitle_max_gap_seconds", float),
+            ("end_padding_seconds", "subtitle_end_padding_seconds", float),
+            ("min_duration_seconds", "subtitle_min_duration_seconds", float),
+        ):
+            if project_key not in subtitle:
+                continue
+            try:
+                value = converter(subtitle[project_key])
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if isinstance(value, float) and not math.isfinite(value):
+                continue
+            updates[setting_key] = value
+
+        self._settings.update(updates)
+        self.settingsChanged.emit()
+
     def _load_project_path(self, path: Path, *, update_sources: bool) -> bool:
         try:
             project = load_project(path)
@@ -985,6 +1012,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
             return False
         self._project = project
+        self._apply_project_subtitle_settings(project)
         self._project_path = str(path.resolve())
         self._project_dirty = False
         self._project_revision += 1

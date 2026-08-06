@@ -15,6 +15,10 @@ ApplicationWindow {
     property real editorPixelsPerSecond: 64
     property int snapMilliseconds: 100
     readonly property int defaultSubtitleFontSize: 50
+    readonly property int selectedSubtitleFontSize: Math.max(
+        3,
+        Math.round(root.defaultSubtitleFontSize * fontSizeSpin.value / 100)
+    )
     property var projectSpeakerCache: root.appBackend.projectSpeakers
     property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
     property real editorPositionCache: 0
@@ -94,7 +98,7 @@ ApplicationWindow {
             "language": "ja",
             "nvenc_cq": qualitySpin.value,
             "x264_crf": qualitySpin.value,
-            "subtitle_font_size": Math.max(3, Math.round(root.defaultSubtitleFontSize * fontSizeSpin.value / 100)),
+            "subtitle_font_size": root.selectedSubtitleFontSize,
             "subtitle_volume_scale_percent": volumeScaleSpin.value,
             "subtitle_max_gap_seconds": Number(gapField.text),
             "subtitle_end_padding_seconds": Number(paddingField.text),
@@ -326,8 +330,16 @@ ApplicationWindow {
     component SubtitleOverlay: Item {
         id: overlayRoot
         property MediaPlayer player
+        property string captionObjectPrefix: "subtitleOverlayCaption"
+        property int baseFontSize: root.selectedSubtitleFontSize
         property var activeSegments: []
         property string activeSignature: ""
+
+        function previewPixelSize(fontScale) {
+            var normalizedScale = Math.max(0.1, Number(fontScale) || 1)
+            var outputFontSize = Math.max(3, Math.round(overlayRoot.baseFontSize * normalizedScale))
+            return Math.max(1, Math.round(22 * outputFontSize / root.defaultSubtitleFontSize))
+        }
 
         function refreshActiveSegments() {
             var candidates = root.appBackend.activeSubtitleSegments(
@@ -353,8 +365,10 @@ ApplicationWindow {
             model: overlayRoot.activeSegments
             delegate: Text {
                 id: overlayCaption
+                required property int index
                 required property var modelData
                 property var segmentData: modelData || ({})
+                objectName: overlayRoot.captionObjectPrefix + "-" + index
                 width: Math.min(implicitWidth + 30, parent.width - 30)
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
@@ -362,7 +376,7 @@ ApplicationWindow {
                 text: segmentData.text || ""
                 color: root.speakerColor(segmentData.speaker || "")
                 font.family: segmentData.subtitle_font_family || "Yu Gothic UI"
-                font.pixelSize: Math.max(14, Math.round(22 * Number(segmentData.subtitle_font_scale || 1)))
+                font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)
                 font.weight: Font.Bold
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
@@ -378,12 +392,15 @@ ApplicationWindow {
         property real pixelsPerSecond: 40
         property real snapSeconds: 0.1
         property int laneHeight: 42
+        readonly property int rulerHeight: 28
+        readonly property int laneInset: 3
         property bool editable: true
         property bool showSegments: true
         property bool showTrackVolume: false
         property var lanes: root.projectSpeakerCache
         property var waveforms: root.subtitleWaveformCache
         property alias viewportX: timelineFlick.contentX
+        property alias viewportY: timelineFlick.contentY
         property var visibleSegments: []
         property var visibleRulerTicks: []
 
@@ -464,7 +481,7 @@ ApplicationWindow {
             interactive: true
             boundsBehavior: Flickable.StopAtBounds
             contentWidth: Math.max(width, root.appBackend.projectDuration * timelineRoot.pixelsPerSecond + 120)
-            contentHeight: 28 + Math.max(1, timelineRoot.lanes.length) * timelineRoot.laneHeight
+            contentHeight: timelineRoot.rulerHeight + Math.max(1, timelineRoot.lanes.length) * timelineRoot.laneHeight
             onContentXChanged: timelineRoot.refreshViewport()
             onWidthChanged: timelineRoot.refreshViewport()
             Component.onCompleted: timelineRoot.refreshViewport()
@@ -507,7 +524,8 @@ ApplicationWindow {
                     model: timelineRoot.lanes
                     delegate: Rectangle {
                         required property int index
-                        y: 28 + index * timelineRoot.laneHeight
+                        objectName: "timelineLaneBody-" + index
+                        y: timelineRoot.rulerHeight + index * timelineRoot.laneHeight
                         width: timelineCanvas.width
                         height: timelineRoot.laneHeight
                         color: index % 2 === 0 ? "#111714" : "#0D1210"
@@ -524,7 +542,7 @@ ApplicationWindow {
                         property int laneIndex: timelineRoot.laneForItem(modelData)
                         property real volumeRatio: Math.max(0, Math.min(1, Number(modelData.volume_percent || 0) / 100))
                         x: Math.max(0, Number(modelData.offset_seconds || 0)) * timelineRoot.pixelsPerSecond
-                        y: 31 + laneIndex * timelineRoot.laneHeight + (timelineRoot.laneHeight - height - 6) / 2
+                        y: timelineRoot.rulerHeight + laneIndex * timelineRoot.laneHeight + (timelineRoot.laneHeight - height) / 2
                         width: Math.max(4, Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond)
                         height: Math.max(3, (timelineRoot.laneHeight - 12) * volumeRatio)
                         radius: 3
@@ -540,9 +558,9 @@ ApplicationWindow {
                         required property var modelData
                         property int laneIndex: timelineRoot.laneForItem(modelData)
                         x: Number(modelData.offset_seconds || 0) * timelineRoot.pixelsPerSecond
-                        y: 31 + laneIndex * timelineRoot.laneHeight
+                        y: timelineRoot.rulerHeight + laneIndex * timelineRoot.laneHeight + timelineRoot.laneInset
                         width: Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond
-                        height: timelineRoot.laneHeight - 6
+                        height: timelineRoot.laneHeight - timelineRoot.laneInset * 2
                         opacity: modelData.audible === false ? 0.08 : 0.3
                         Canvas {
                             anchors.fill: parent
@@ -586,9 +604,9 @@ ApplicationWindow {
                         property real pointerStart: 0
                         visible: sourceIndex >= 0 && segment.start !== undefined && segment.end !== undefined
                         x: Number(segment.start || 0) * timelineRoot.pixelsPerSecond
-                        y: 31 + root.laneForStyle(segment.speaker || "") * timelineRoot.laneHeight
+                        y: timelineRoot.rulerHeight + root.laneForStyle(segment.speaker || "") * timelineRoot.laneHeight + timelineRoot.laneInset
                         width: Math.max(10, (Number(segment.end || 0) - Number(segment.start || 0)) * timelineRoot.pixelsPerSecond)
-                        height: timelineRoot.laneHeight - 7
+                        height: timelineRoot.laneHeight - timelineRoot.laneInset * 2 - 1
                         radius: 6
                         color: root.speakerColor(segment.speaker || "")
                         opacity: root.appBackend.selectedSegmentIndex === sourceIndex ? 1 : 0.78
@@ -723,15 +741,16 @@ ApplicationWindow {
 
         Column {
             anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
+            y: timelineRoot.rulerHeight - timelineFlick.contentY
             width: 86
-            topPadding: 28
+            height: timelineRoot.lanes.length * timelineRoot.laneHeight
             Repeater {
                 model: timelineRoot.lanes
                 delegate: Rectangle {
                     id: laneLabel
+                    required property int index
                     required property var modelData
+                    objectName: "timelineLaneLabel-" + index
                     width: 86
                     height: timelineRoot.laneHeight
                     color: "#171E1A"
@@ -908,7 +927,7 @@ ApplicationWindow {
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
-                SubtitleOverlay { anchors.fill: mainVideo; player: mainPlayer }
+                SubtitleOverlay { anchors.fill: mainVideo; player: mainPlayer; captionObjectPrefix: "mainSubtitleOverlayCaption" }
                 ColumnLayout {
                     anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                     anchors.margins: 12; spacing: 2
@@ -1346,7 +1365,7 @@ ApplicationWindow {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 174
+                        Layout.preferredHeight: Math.min(230, Math.max(174, 174 + (mixerContent.height - 760) * 0.31))
                         Layout.leftMargin: 14
                         Layout.rightMargin: 14
                         Layout.topMargin: 10
@@ -1414,7 +1433,7 @@ ApplicationWindow {
                                 Layout.fillHeight: true
                                 player: mixerPlayer
                                 pixelsPerSecond: root.timelinePixelsPerSecond
-                                laneHeight: 34
+                                laneHeight: 42
                                 editable: false
                                 showSegments: false
                                 showTrackVolume: true
@@ -1461,8 +1480,9 @@ ApplicationWindow {
                                     id: mixerStrip
                                     required property int index
                                     required property var modelData
+                                    objectName: "mixerChannelStrip-" + index
                                     property real previewLevel: Number(root.appBackend.audioPreviewLevels[modelData.id] || 0)
-                                    width: 190
+                                    width: 170
                                     height: mixerChannelList.height - 12
                                     radius: 9
                                     color: modelData.enabled ? "#171E1A" : "#101512"
@@ -1702,7 +1722,7 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; radius: 10; color: "#060806"; border.color: root.border; clip: true
                         VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
-                        SubtitleOverlay { id: editorOverlay; anchors.fill: editorVideo; player: editorPlayer }
+                        SubtitleOverlay { id: editorOverlay; anchors.fill: editorVideo; player: editorPlayer; captionObjectPrefix: "editorSubtitleOverlayCaption" }
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
                             Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: editorPlayer.position = value }
                             RowLayout { Layout.fillWidth: true

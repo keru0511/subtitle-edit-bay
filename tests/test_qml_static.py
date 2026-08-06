@@ -112,6 +112,12 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("model: root.appBackend.audioMixerChannels", qml)
         self.assertIn("lanes: root.appBackend.audioMixerSequenceChannels", mixer_block)
         self.assertIn("showTrackVolume: true", mixer_block)
+        self.assertIn("timelineRoot.rulerHeight - timelineFlick.contentY", qml)
+        self.assertIn('objectName: "timelineLaneLabel-" + index', qml)
+        self.assertIn("Layout.preferredHeight: Math.min(230, Math.max(174", mixer_block)
+        self.assertIn("laneHeight: 42", mixer_block)
+        self.assertIn('objectName: "mixerChannelStrip-" + index', mixer_block)
+        self.assertIn("width: 170", mixer_block)
         self.assertIn('objectName: "mixerSequenceVolumeBar"', qml)
         self.assertIn("function updateMixerChannel(index, changes)", mixer_block)
         self.assertIn("mixerChannelScrollRestoreTimer.restart()", mixer_block)
@@ -126,6 +132,10 @@ class QmlStaticTests(unittest.TestCase):
 
         self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
         self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
+        self.assertIn('readonly property int selectedSubtitleFontSize', qml)
+        self.assertIn('property int baseFontSize: root.selectedSubtitleFontSize', qml)
+        self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', qml)
+
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")

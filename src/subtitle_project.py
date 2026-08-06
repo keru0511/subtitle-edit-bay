@@ -11,6 +11,8 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from .audio_mixer import reconcile_audio_mix
+
 
 PROJECT_SCHEMA_VERSION = 1
 PROJECT_TYPE = "subtitle-edit-project"
@@ -180,6 +182,7 @@ def validate_project(project: dict[str, Any]) -> dict[str, Any]:
     project.setdefault("subtitle_settings", {})
     project.setdefault("render_settings", {})
     project.setdefault("transcription", {})
+    reconcile_audio_mix(project)
     project.setdefault("created_at", utc_timestamp())
     project.setdefault("updated_at", project["created_at"])
     return project
@@ -196,6 +199,7 @@ def create_project(
     subtitle_settings: dict[str, Any] | None = None,
     render_settings: dict[str, Any] | None = None,
     transcription: dict[str, Any] | None = None,
+    audio_mix: dict[str, Any] | None = None,
     duration_seconds: float | None = None,
 ) -> dict[str, Any]:
     now = utc_timestamp()
@@ -215,6 +219,7 @@ def create_project(
         "subtitle_settings": deepcopy(subtitle_settings or {}),
         "render_settings": deepcopy(render_settings or {}),
         "transcription": deepcopy(transcription or {}),
+        "audio_mix": deepcopy(audio_mix or {}),
         "segments": [deepcopy(segment) for segment in segments],
     }
     return validate_project(project)

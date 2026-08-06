@@ -424,6 +424,27 @@ class RenderAssTests(unittest.TestCase):
         self.assertIn("aac", command)
         self.assertIn("48000", command)
 
+    def test_build_ffmpeg_command_maps_custom_audio_mix(self) -> None:
+        command = build_ffmpeg_command(
+            "input.mp4",
+            "out/sample.ass",
+            "out/final.mp4",
+            audio_mix={
+                "channels": [
+                    {"kind": "video", "selector": "0:a:0", "enabled": True, "volume_percent": 50},
+                    {"kind": "external", "path": "voice.flac", "enabled": True, "volume_percent": 100},
+                ]
+            },
+            audio_offset_seconds=0.2,
+        )
+
+        self.assertIn("voice.flac", command)
+        self.assertIn("-filter_complex", command)
+        self.assertIn("[mixed_audio]", command)
+        self.assertIn("adelay=200:all=1", command[command.index("-filter_complex") + 1])
+        self.assertIn("-shortest", command)
+        self.assertEqual(command[command.index("-c:a") + 1], "aac")
+
     def test_build_normalize_command_can_use_nvenc(self) -> None:
         command = build_normalize_command("op.mp4", "out/op.normalized.mp4", 1920, 1080, video_codec="h264_nvenc", nvenc_preset="p4")
         self.assertIn("h264_nvenc", command)

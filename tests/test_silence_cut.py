@@ -155,6 +155,29 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("48000", command)
         self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", " ".join(command))
 
+    def test_build_silence_cut_command_accepts_audio_mix(self) -> None:
+        command = build_silence_cut_command(
+            "input.mp4",
+            "output.mp4",
+            [(0.0, 0.4), (0.6, 1.0)],
+            audio_mix={
+                "channels": [
+                    {"kind": "video", "selector": "0:a:0", "enabled": True, "volume_percent": 100},
+                    {"kind": "external", "path": "voice.flac", "enabled": True, "volume_percent": 75},
+                ]
+            },
+            audio_offset_seconds=0.1,
+        )
+
+        self.assertIn("voice.flac", command)
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("adelay=100:all=1", graph)
+        self.assertIn("amix=inputs=2", graph)
+        self.assertIn("[mixed_audio]asplit=2[mixed_audio_0][mixed_audio_1]", graph)
+        self.assertIn("[mixed_audio_0]atrim=start=0.000:end=0.400", graph)
+        self.assertIn("[mixed_audio_1]atrim=start=0.600:end=1.000", graph)
+        self.assertIn("48000", command)
+
     def test_cut_media_ranges_uses_short_filter_script_command(self) -> None:
         keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
         observed: dict[str, int] = {}

@@ -38,6 +38,8 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertEqual(project["segments"][1]["subtitle_font_family"], "Yu Mincho")
         self.assertGreater(project["segments"][1]["end"], project["segments"][1]["start"])
         self.assertTrue(all(item["layout_packed"] for item in project["segments"]))
+        self.assertFalse(project["audio_mix"]["customized"])
+        self.assertEqual(project["audio_mix"]["channels"][0]["selector"], "0:a:0")
 
     def test_save_load_and_transcript_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -177,6 +179,47 @@ class SubtitleWorkflowTests(unittest.TestCase):
             burn.assert_called_once()
             self.assertFalse(transcribe.called)
             self.assertEqual(load_project(project_path)["render_settings"]["last_output"], str(output.resolve()))
+
+    def test_render_phase_passes_custom_audio_mix_and_sync_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[{"start": 0, "end": 1, "text": "edited", "speaker": "Oz"}],
+                transcription={"offset_seconds": 0.25},
+                audio_mix={
+                    "customized": True,
+                    "channels": [{
+                        "id": "video:0:a:1",
+                        "kind": "video",
+                        "selector": "0:a:1",
+                        "label": "voice",
+                        "enabled": True,
+                        "muted": False,
+                        "solo": False,
+                        "volume_percent": 80,
+                    }],
+                },
+            )
+            project_path = root / "game.subtitle-project.json"
+            save_project(project_path, project)
+            ass_path = root / "game.edited.ass"
+            ass_path.write_text("ASS", encoding="utf-8")
+
+            with (
+                patch("src.subtitle_workflow.build_project_ass", return_value=ass_path),
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
+            ):
+                render_project_video(project_path, audio_normalize=False)
+
+            kwargs = burn.call_args.kwargs
+            self.assertTrue(kwargs["audio_mix"]["customized"])
+            self.assertEqual(kwargs["audio_mix"]["channels"][0]["selector"], "0:a:1")
+            self.assertEqual(kwargs["audio_offset_seconds"], 0.25)
+            self.assertEqual(kwargs["audio_codec"], "aac")
 
     def test_render_reuses_loaded_project_for_ass_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

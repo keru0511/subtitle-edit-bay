@@ -5,6 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from .audio_mixer import build_audio_mix_filter
 from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -172,13 +173,20 @@ def build_concat_filter(
     video_parts: list[str] = []
     audio_parts: list[str] = []
     concat_inputs: list[str] = []
+    split_filtered_audio = audio_track == "mixed_audio" and len(keep_ranges) > 1
     for index, (start, end) in enumerate(keep_ranges):
         video_parts.append(f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{index}]")
-        audio_parts.append(f"[{audio_track}]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
+        audio_source = f"mixed_audio_{index}" if split_filtered_audio else audio_track
+        audio_parts.append(f"[{audio_source}]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
         concat_inputs.append(f"[v{index}][a{index}]")
     video_output = "[vcat]" if video_filter else "[v]"
     audio_output = "[acat]" if audio_filter else "[a]"
-    filters = video_parts + audio_parts + [
+    audio_split = (
+        [f"[mixed_audio]asplit={len(keep_ranges)}{''.join(f'[mixed_audio_{index}]' for index in range(len(keep_ranges)))}"]
+        if split_filtered_audio
+        else []
+    )
+    filters = audio_split + video_parts + audio_parts + [
         f"{''.join(concat_inputs)}concat=n={len(keep_ranges)}:v=1:a=1{video_output}{audio_output}"
     ]
     if video_filter:
@@ -201,21 +209,27 @@ def build_silence_cut_command(
     video_filter: str | None = None,
     filter_script_path: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
+    audio_mix: dict | None = None,
+    audio_offset_seconds: float = 0.0,
 ) -> list[str]:
     if not keep_ranges:
         raise ValueError("At least one keep range is required.")
-    filter_option = "-filter_complex_script" if filter_script_path else "-filter_complex"
-    filter_value = filter_script_path or build_concat_filter(
+    input_args: list[str] = []
+    mix_filter = ""
+    if audio_mix is not None:
+        input_args, mix_filter = build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)
+        audio_track = "mixed_audio"
+    concat_filter = build_concat_filter(
         keep_ranges,
         audio_filter=audio_filter,
         video_filter=video_filter,
         audio_track=audio_track,
     )
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        input_path,
+    filter_option = "-filter_complex_script" if filter_script_path else "-filter_complex"
+    filter_value = filter_script_path or (f"{mix_filter};{concat_filter}" if mix_filter else concat_filter)
+    command = ["ffmpeg", "-y", "-i", input_path]
+    command.extend(input_args)
+    command.extend([
         filter_option,
         filter_value,
         "-map",
@@ -224,10 +238,10 @@ def build_silence_cut_command(
         "[a]",
         "-c:v",
         video_codec,
-    ]
+    ])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
     command.extend(["-c:a", audio_codec])
-    if audio_filter:
+    if audio_filter or audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
     command.append(output_path)
     return command
@@ -245,12 +259,24 @@ def cut_media_ranges(
     audio_filter: str | None = None,
     video_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
+    audio_mix: dict | None = None,
+    audio_offset_seconds: float = 0.0,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
     filter_script.write_text(
-        build_concat_filter(keep_ranges, audio_filter=audio_filter, video_filter=video_filter, audio_track=audio_track),
+        (
+            build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)[1] + ";"
+            if audio_mix is not None
+            else ""
+        )
+        + build_concat_filter(
+            keep_ranges,
+            audio_filter=audio_filter,
+            video_filter=video_filter,
+            audio_track="mixed_audio" if audio_mix is not None else audio_track,
+        ),
         encoding="utf-8",
     )
     try:
@@ -267,6 +293,8 @@ def cut_media_ranges(
             video_filter=video_filter,
             filter_script_path=str(filter_script),
             audio_track=audio_track,
+            audio_mix=audio_mix,
+            audio_offset_seconds=audio_offset_seconds,
         )
         subprocess.run(command, check=True)
     finally:

@@ -75,6 +75,16 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("root.appBackend.importDroppedSourceFiles(drop.urls)", qml)
         self.assertIn("drop.acceptProposedAction()", qml)
 
+    def test_audio_mixer_is_wired_to_project_channels(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "audioMixerButton"', qml)
+        self.assertIn('objectName: "audioMixerPopup"', qml)
+        self.assertIn("model: root.appBackend.audioMixerChannels", qml)
+        self.assertIn("updateAudioMixChannel", qml)
+        self.assertIn("resetAudioMixer", qml)
+
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")

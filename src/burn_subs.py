@@ -4,6 +4,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
+from .audio_mixer import build_audio_mix_filter
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 DEFAULT_VIDEO_CODEC = "libx264"
@@ -29,23 +30,27 @@ def build_ffmpeg_command(
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
+    audio_mix: dict | None = None,
+    audio_offset_seconds: float = 0.0,
 ) -> list[str]:
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        video,
-        "-map",
-        "0:v:0",
-        "-map",
-        audio_track,
-        "-vf",
-        build_ass_filter(subtitle),
-        "-c:v",
-        video_codec,
-    ]
+    command = ["ffmpeg", "-y", "-i", video]
+    if audio_mix is not None:
+        input_args, mix_filter = build_audio_mix_filter(
+            audio_mix,
+            offset_seconds=audio_offset_seconds,
+            post_filter=audio_filter,
+        )
+        command.extend(input_args)
+        command.extend(["-filter_complex", mix_filter, "-map", "0:v:0", "-map", "[mixed_audio]"])
+    else:
+        command.extend(["-map", "0:v:0", "-map", audio_track])
+    command.extend(["-vf", build_ass_filter(subtitle), "-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    if audio_filter:
+    if audio_mix is not None:
+        command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE, "-shortest"])
+        if audio_codec == "copy":
+            audio_codec = "aac"
+    elif audio_filter:
         command.extend(["-af", audio_filter, "-ar", DEFAULT_FILTERED_AUDIO_RATE])
     command.extend(["-c:a", audio_codec, output])
     return command
@@ -62,6 +67,8 @@ def run_ffmpeg_burn(
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
+    audio_mix: dict | None = None,
+    audio_offset_seconds: float = 0.0,
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +84,8 @@ def run_ffmpeg_burn(
             x264_crf=x264_crf,
             audio_filter=audio_filter,
             audio_track=audio_track,
+            audio_mix=audio_mix,
+            audio_offset_seconds=audio_offset_seconds,
         ),
         check=True,
     )

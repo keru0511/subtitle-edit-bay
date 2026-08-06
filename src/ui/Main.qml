@@ -1058,6 +1058,84 @@ ApplicationWindow {
                     onDurationChanged: editorSeek.to = Math.max(1, editorPlayer.duration)
                 }
 
+                Popup {
+                    id: audioMixerPopup
+                    objectName: "audioMixerPopup"
+                    width: Math.min(760, parent.width - 40)
+                    height: Math.min(600, parent.height - 40)
+                    x: Math.round((parent.width - width) / 2)
+                    y: Math.round((parent.height - height) / 2)
+                    modal: true
+                    focus: true
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    background: Rectangle { radius: 12; color: root.panel; border.color: root.acid }
+                    contentItem: ColumnLayout {
+                        spacing: 10
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "音量ミキサー"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 18; font.weight: Font.Bold }
+                            Item { Layout.fillWidth: true }
+                            SmallButton { objectName: "audioMixerResetButton"; text: "既定値に戻す"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
+                            SmallButton { objectName: "audioMixerCloseButton"; text: "閉じる"; onClicked: audioMixerPopup.close() }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "動画内トラックと個別音声を選び、完成動画の音量を調整します。個別音声には同期結果が自動適用されます。"
+                            color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.WordWrap
+                        }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+                        ListView {
+                            id: audioMixerList
+                            objectName: "audioMixerList"
+                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 7
+                            model: root.appBackend.audioMixerChannels
+                            delegate: Rectangle {
+                                id: mixerChannelRow
+                                required property int index
+                                required property var modelData
+                                width: audioMixerList.width; height: 72; radius: 8; color: root.raised; border.color: modelData.solo ? root.acid : root.border
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 8; spacing: 8
+                                    CheckBox {
+                                        objectName: "audioMixerEnabledCheck"
+                                        checked: Boolean(mixerChannelRow.modelData.enabled)
+                                        enabled: !root.appBackend.running
+                                        onToggled: root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"enabled": checked})
+                                    }
+                                    ColumnLayout {
+                                        Layout.preferredWidth: 210; spacing: 2
+                                        Text { Layout.fillWidth: true; text: mixerChannelRow.modelData.label; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; elide: Text.ElideRight }
+                                        Text { text: mixerChannelRow.modelData.kind === "external" ? "個別音声（同期済み）" : "動画内音声"; color: root.textMuted; font.pixelSize: 9 }
+                                    }
+                                    Slider {
+                                        id: mixerVolumeSlider
+                                        objectName: "audioMixerVolumeSlider"
+                                        Layout.fillWidth: true; from: 0; to: 200; stepSize: 1
+                                        value: Number(mixerChannelRow.modelData.volume_percent)
+                                        enabled: !root.appBackend.running && mixerChannelRow.modelData.enabled
+                                        onPressedChanged: if (!pressed) root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"volume_percent": Math.round(value)})
+                                    }
+                                    Text { Layout.preferredWidth: 44; text: Math.round(mixerVolumeSlider.value) + "%"; color: root.textPrimary; font.family: "Cascadia Mono"; horizontalAlignment: Text.AlignRight }
+                                    SmallButton {
+                                        objectName: "audioMixerMuteButton"
+                                        text: mixerChannelRow.modelData.muted ? "ミュート中" : "ミュート"
+                                        enabled: !root.appBackend.running
+                                        onClicked: root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"muted": !mixerChannelRow.modelData.muted})
+                                    }
+                                    SmallButton {
+                                        objectName: "audioMixerSoloButton"
+                                        text: mixerChannelRow.modelData.solo ? "ソロ中" : "ソロ"
+                                        enabled: !root.appBackend.running
+                                        onClicked: root.appBackend.updateAudioMixChannel(mixerChannelRow.index, {"solo": !mixerChannelRow.modelData.solo})
+                                    }
+                                }
+                            }
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        }
+                        Text { Layout.fillWidth: true; text: "※ 編集画面の再生音は元動画のままです。ミックス結果は動画書き出し時に反映されます。"; color: root.amber; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                    }
+                }
+
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 0
@@ -1072,6 +1150,7 @@ ApplicationWindow {
                 SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
                 SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
+                SmallButton { objectName: "audioMixerButton"; text: "音量ミキサー"; onClicked: audioMixerPopup.open() }
                 SmallButton { objectName: "buildAssButton"; text: "ASSを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
                 Button {
                     id: editorRenderButton

@@ -30,6 +30,8 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 
 プロジェクトの `subtitle_settings.font_size` は全字幕の基準値、各segmentの `subtitle_font_scale` は字幕単位の倍率です。文字起こし時は話者内の相対音量から自動設定され、エディターで変更すると `manual_font_scale=true` になります。話者単位の文字サイズ設定は使用しません。各segmentの `subtitle_font_family` には字幕単位で選択したフォント名を保存し、未指定なら既定フォントを使用します。
 
+`audio_mix.channels` は動画内トラックと個別音声のチャンネルを保存します。各チャンネルは `enabled`、`volume_percent`（0〜200）、`muted`、`solo` を持ちます。`audio_mix.customized=false` の既存・既定プロジェクトは従来の `render_settings.output_audio_track` をそのまま使用し、ミキサーを操作すると `customized=true` になってFFmpegのaudio filter graphでAAC合成します。個別音声の時刻には `transcription.offset_seconds` を使用します。
+
 編集保存は一時ファイルへ書いてから置換するため、保存途中の終了で正本を部分書き込みしません。GUIは変更から700ms後にバックグラウンド保存を開始します。保存中の追加編集は世代番号でまとめ、古い保存完了で新しい編集を保存済みにしない「latest version wins」の動作です。手動保存、ASS更新、動画書き出し、GUI終了時は保留中の保存を待ってから最新状態を同期保存します。Undo/Redo履歴は実行中のGUIセッション内で最大100操作保持します。
 
 ## shared

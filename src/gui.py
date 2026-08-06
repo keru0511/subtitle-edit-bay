@@ -29,6 +29,7 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
+from .audio_mixer import MAX_VOLUME_PERCENT, reconcile_audio_mix, reset_audio_mix
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_state import build_gui_render_command, build_gui_transcribe_command
@@ -365,6 +366,12 @@ class EditBayBackend(LegacyEditBayBackend):
             return []
         return deepcopy(self._project.get("waveforms", []))
 
+    @Property("QVariantList", notify=projectDataChanged)
+    def audioMixerChannels(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            return []
+        return deepcopy(self._project.get("audio_mix", {}).get("channels", []))
+
     @Property(float, notify=segmentsChanged)
     def projectDuration(self) -> float:
         if self._project is None:
@@ -541,6 +548,50 @@ class EditBayBackend(LegacyEditBayBackend):
         if path:
             self.loadProject(path)
 
+    def _mixer_video_tracks(self) -> list[dict[str, str]] | None:
+        tracks = [
+            {"selector": str(item.get("selector", "")), "label": str(item.get("label", ""))}
+            for item in self._audio_tracks
+            if str(item.get("selector", "")).strip()
+        ]
+        return tracks or None
+
+    @Slot(int, "QVariantMap")
+    def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
+        if self._project is None or self._running:
+            return
+        audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks())
+        channels = audio_mix["channels"]
+        if not 0 <= index < len(channels):
+            self._set_status("音量ミキサーのチャンネルが見つかりません", "CHECK")
+            return
+        channel = channels[index]
+        for key in ("enabled", "muted", "solo"):
+            if key in changes:
+                channel[key] = bool(changes[key])
+        if "volume_percent" in changes:
+            try:
+                channel["volume_percent"] = max(
+                    0.0,
+                    min(MAX_VOLUME_PERCENT, float(changes["volume_percent"])),
+                )
+            except (TypeError, ValueError):
+                self._set_status("音量は0〜200%で指定してください", "CHECK")
+                return
+        audio_mix["customized"] = True
+        self.projectDataChanged.emit()
+        self._mark_project_dirty()
+        self._set_status("音量ミキサー設定を更新しました", "EDIT")
+
+    @Slot()
+    def resetAudioMixer(self) -> None:
+        if self._project is None or self._running:
+            return
+        reset_audio_mix(self._project, self._mixer_video_tracks())
+        self.projectDataChanged.emit()
+        self._mark_project_dirty()
+        self._set_status("音量ミキサーを既定値へ戻しました", "EDIT")
+
     @Slot(str)
     def loadProject(self, path: str) -> None:
         if self._running:
@@ -577,6 +628,7 @@ class EditBayBackend(LegacyEditBayBackend):
                     super().setAudioFiles(existing_audio, False)
             finally:
                 self._loading_project_sources = False
+        reconcile_audio_mix(self._project, self._mixer_video_tracks())
         self._sync_subtitle_model()
         self.projectChanged.emit()
         self.projectDataChanged.emit()

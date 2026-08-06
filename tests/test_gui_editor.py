@@ -296,6 +296,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
         payload = json.loads(self.app.color_config_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["speakers"]["Alice"]["color"], "#445566")
 
+    def test_audio_mixer_updates_individual_source_and_resets(self) -> None:
+        path = self._load_project()
+        self.assertEqual(len(self.app.audioMixerChannels), 2)
+
+        self.app.updateAudioMixChannel(
+            1,
+            {"enabled": True, "volume_percent": 135, "muted": False, "solo": True},
+        )
+        self.app.autosave_timer.stop()
+
+        channel = self.app.audioMixerChannels[1]
+        self.assertTrue(channel["enabled"])
+        self.assertEqual(channel["volume_percent"], 135)
+        self.assertTrue(channel["solo"])
+        self.assertTrue(self.app._project["audio_mix"]["customized"])
+        self.assertTrue(self.app.saveProject())
+        self.assertTrue(json.loads(path.read_text(encoding="utf-8"))["audio_mix"]["customized"])
+
+        self.app.resetAudioMixer()
+        self.app.autosave_timer.stop()
+        self.assertFalse(self.app._project["audio_mix"]["customized"])
+        self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
+
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()
 
@@ -934,6 +957,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "splitCaptionButton",
             "deleteCaptionButton",
             "saveProjectButton",
+            "audioMixerButton",
             "buildAssButton",
             "editorRenderButton",
             "editorBackButton",
@@ -946,6 +970,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(top_left.y(), 0, name)
             self.assertLessEqual(top_left.x() + item.width(), window.width() + 1, name)
             self.assertLessEqual(top_left.y() + item.height(), window.height() + 1, name)
+
+        self._click(window, self._quick_item(window, "audioMixerButton"))
+        mixer_popup = window.findChild(QObject, "audioMixerPopup")
+        self.assertIsNotNone(mixer_popup)
+        self.assertTrue(mixer_popup.property("opened"))
+        self._click(window, self._quick_item(window, "audioMixerCloseButton"))
+        self.assertFalse(mixer_popup.property("opened"))
 
         self._click(window, self._quick_item(window, "editorBackButton"))
         self.assertTrue(main.isVisible())

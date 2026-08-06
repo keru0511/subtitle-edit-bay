@@ -55,6 +55,19 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
                     "min_duration_seconds": 0.3,
                 },
                 transcription={"offset_seconds": 0.25},
+                audio_mix={
+                    "customized": True,
+                    "channels": [{
+                        "id": "external:craig:alice",
+                        "kind": "external",
+                        "path": str(audio),
+                        "label": "alice",
+                        "enabled": True,
+                        "muted": False,
+                        "solo": False,
+                        "volume_percent": 110,
+                    }],
+                },
             )
             project_path = root / "game.subtitle-project.json"
             save_project(project_path, project)
@@ -88,6 +101,9 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
             )
             self.assertEqual(detect.call_count, 2)
             cut_media.assert_called_once()
+            cut_kwargs = cut_media.call_args.kwargs
+            self.assertTrue(cut_kwargs["audio_mix"]["customized"])
+            self.assertEqual(cut_kwargs["audio_offset_seconds"], 0.25)
 
 
 if __name__ == "__main__":

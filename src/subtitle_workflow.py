@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from .audio_mixer import active_audio_mix_channels, reconcile_audio_mix, video_track_entries
 from .assemble_video import build_loudnorm_filter
 from .burn_subs import build_ass_filter, run_ffmpeg_burn
 from .craig_pipeline import (
@@ -65,6 +66,7 @@ from .subtitle_project import (
     project_to_transcript,
     save_project,
 )
+from .transcribe import probe_audio_streams
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 
 
@@ -248,6 +250,11 @@ def transcribe_to_project(
             "filtered_json": str(filtered_path.resolve()),
         },
     )
+    try:
+        video_tracks = video_track_entries(probe_audio_streams(video_path))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        video_tracks = None
+    reconcile_audio_mix(project, video_tracks)
     save_project(project_path, project)
     log_progress(f"Project ready: {project_path}")
     return project_path
@@ -323,9 +330,15 @@ def render_project_video(
     ass_path = build_project_ass(project_path, _project=project)
     output = Path(output_path) if output_path else derive_render_path(project_path)
     loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
+    audio_mix = project.get("audio_mix", {})
+    use_audio_mix = bool(audio_mix.get("customized", False))
+    offset_seconds = float(project.get("transcription", {}).get("offset_seconds", 0.0))
+    if use_audio_mix:
+        for channel in active_audio_mix_channels(audio_mix):
+            if channel.get("kind") == "external" and not Path(str(channel.get("path", ""))).is_file():
+                raise SystemExit(f"Mixer audio source was not found: {channel.get('path', '')}")
 
     if cut_no_speech:
-        offset_seconds = float(project.get("transcription", {}).get("offset_seconds", 0.0))
         speech_ranges: list[tuple[float, float]] = []
         source_paths = [
             str(source.get("path", ""))
@@ -378,12 +391,14 @@ def render_project_video(
                 audio_filter=loudnorm_filter,
                 video_filter=build_ass_filter(str(cut_ass)),
                 audio_track=output_audio_track,
+                audio_mix=audio_mix if use_audio_mix else None,
+                audio_offset_seconds=offset_seconds,
             )
         finally:
             cut_ass.unlink(missing_ok=True)
     else:
         log_progress(f"Rendering edited subtitles to {output.name}")
-        burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter else audio_codec
+        burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec
         run_ffmpeg_burn(
             video_path,
             str(ass_path),
@@ -395,6 +410,8 @@ def render_project_video(
             x264_crf=x264_crf,
             audio_filter=loudnorm_filter,
             audio_track=output_audio_track,
+            audio_mix=audio_mix if use_audio_mix else None,
+            audio_offset_seconds=offset_seconds,
         )
     project["render_settings"] = {
         **project.get("render_settings", {}),

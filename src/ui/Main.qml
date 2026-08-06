@@ -1230,8 +1230,10 @@ ApplicationWindow {
                         id: mixerPreviewPlayer
                         required property int index
                         required property var modelData
+                        property string previewChannelId: String(modelData.id || "")
+                        objectName: "mixerPreviewPlayer-" + previewChannelId
                         property real previewOffsetMilliseconds: Number(modelData.preview_offset_seconds || 0) * 1000
-                        property real previewVolume: Number(modelData.preview_volume || 0)
+                        property real previewVolume: Number(root.appBackend.audioMixerPreviewGains[previewChannelId] || 0)
                         property int requestedAudioTrack: Number(modelData.preview_audio_track_index || 0)
                         property real pendingSyncPosition: 0
                         property bool pendingForcePosition: false

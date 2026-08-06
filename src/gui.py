@@ -236,6 +236,8 @@ class EditBayBackend(LegacyEditBayBackend):
     activeJobChanged = Signal()
     assPathChanged = Signal()
     audioPreviewLevelsChanged = Signal()
+    audioMixerPreviewChannelsChanged = Signal()
+    audioMixerPreviewGainsChanged = Signal()
     audioPreviewCacheChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
@@ -409,7 +411,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def audioPreviewPreparing(self) -> bool:
         return self._audio_preview_preparing
 
-    @Property(str, notify=projectDataChanged)
+    @Property(str, notify=audioMixerPreviewChannelsChanged)
     def audioPreviewClockUrl(self) -> str:
         if self._project is None:
             return ""
@@ -436,6 +438,7 @@ class EditBayBackend(LegacyEditBayBackend):
             future.cancel()
         self._audio_preview_cache_future = None
         self.audioPreviewCacheChanged.emit()
+        self._notify_audio_mixer_preview(structure_changed=True)
 
     @Slot()
     def prepareAudioMixerPreview(self) -> None:
@@ -449,6 +452,7 @@ class EditBayBackend(LegacyEditBayBackend):
         required_ids = {entry.channel_id for entry in entries}
         if cached_paths != self._audio_preview_cache_paths:
             self._audio_preview_cache_paths = cached_paths
+            self._notify_audio_mixer_preview(structure_changed=True)
             self.projectDataChanged.emit()
         if required_ids.issubset(cached_paths):
             if self._audio_preview_preparing:
@@ -503,6 +507,7 @@ class EditBayBackend(LegacyEditBayBackend):
         }
         self._audio_preview_preparing = False
         self.audioPreviewCacheChanged.emit()
+        self._notify_audio_mixer_preview(structure_changed=True)
         self.projectDataChanged.emit()
         if result.errors:
             self._set_status(
@@ -588,40 +593,71 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         return view
 
-    @Property("QVariantList", notify=projectDataChanged)
-    def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
+    def _audio_mixer_preview_state(
+        self,
+    ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, float]]:
         if self._project is None:
             self._audio_preview_gains = {}
-            return []
-        active = active_audio_mix_channels(self._project.get("audio_mix", {}))
+            return [], {}
+        audio_mix = self._project.get("audio_mix", {})
         available = [
             (channel, self._audio_mixer_channel_view(channel))
-            for channel in active
+            for channel in audio_mix.get("channels", [])
+            if isinstance(channel, dict) and bool(channel.get("enabled"))
         ]
         available = [item for item in available if item[1]["preview_url"]]
+        active_ids = {
+            str(channel.get("id", ""))
+            for channel in active_audio_mix_channels(audio_mix)
+        }
         total_gain = sum(
             max(0.0, float(channel.get("volume_percent", 100.0))) / 100.0
-            for channel, _view in available
+            for channel, view in available
+            if str(view.get("id", "")) in active_ids
         )
         normalization = max(1.0, total_gain)
-        channels: list[dict[str, Any]] = []
-        gains: dict[str, float] = {}
-        for channel, view in available:
-            channel_id = str(view.get("id", ""))
-            preview_volume = min(
-                1.0,
-                max(0.0, float(channel.get("volume_percent", 100.0)))
-                / 100.0
-                / normalization,
+        gains = {
+            str(view.get("id", "")): (
+                min(
+                    1.0,
+                    max(0.0, float(channel.get("volume_percent", 100.0)))
+                    / 100.0
+                    / normalization,
+                )
+                if str(view.get("id", "")) in active_ids
+                else 0.0
             )
-            view["preview_volume"] = preview_volume
-            view["preview_buffer_output"] = self._audio_preview_output(channel_id)
-            gains[channel_id] = preview_volume
-            channels.append(view)
+            for channel, view in available
+        }
         self._audio_preview_gains = gains
-        if any(channel_id not in gains for channel_id in self._audio_preview_levels):
+        if any(
+            channel_id not in gains or gains.get(channel_id, 0.0) <= 0.0
+            for channel_id in self._audio_preview_levels
+        ):
             self._audio_preview_level_timer.start()
+        return available, gains
+
+    def _notify_audio_mixer_preview(self, *, structure_changed: bool) -> None:
+        self._audio_mixer_preview_state()
+        if structure_changed:
+            self.audioMixerPreviewChannelsChanged.emit()
+        self.audioMixerPreviewGainsChanged.emit()
+
+    @Property("QVariantList", notify=audioMixerPreviewChannelsChanged)
+    def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
+        available, gains = self._audio_mixer_preview_state()
+        channels: list[dict[str, Any]] = []
+        for _channel, view in available:
+            channel_id = str(view.get("id", ""))
+            view["preview_volume"] = gains.get(channel_id, 0.0)
+            view["preview_buffer_output"] = self._audio_preview_output(channel_id)
+            channels.append(view)
         return channels
+
+    @Property("QVariantMap", notify=audioMixerPreviewGainsChanged)
+    def audioMixerPreviewGains(self) -> dict[str, float]:
+        _available, gains = self._audio_mixer_preview_state()
+        return dict(gains)
 
     def _audio_preview_output(self, channel_id: str) -> QAudioBufferOutput:
         output = self._audio_preview_outputs.get(channel_id)
@@ -903,6 +939,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("音量ミキサーのチャンネルが見つかりません", "CHECK")
             return
         channel = channels[index]
+        enabled_before = bool(channel.get("enabled"))
         for key in ("enabled", "muted", "solo"):
             if key in changes:
                 channel[key] = bool(changes[key])
@@ -917,6 +954,9 @@ class EditBayBackend(LegacyEditBayBackend):
                 return
         audio_mix["customized"] = True
         self.projectDataChanged.emit()
+        self._notify_audio_mixer_preview(
+            structure_changed=enabled_before != bool(channel.get("enabled"))
+        )
         self._mark_project_dirty()
         self._set_status("音量ミキサー設定を更新しました", "EDIT")
 
@@ -926,6 +966,7 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         reset_audio_mix(self._project, self._mixer_video_tracks())
         self.projectDataChanged.emit()
+        self._notify_audio_mixer_preview(structure_changed=True)
         self._mark_project_dirty()
         self._set_status("音量ミキサーを既定値へ戻しました", "EDIT")
 

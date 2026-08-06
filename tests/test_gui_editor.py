@@ -19,7 +19,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, Q
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 
 from src.audio_preview_cache import (
     AudioPreviewCacheResult,
@@ -344,19 +344,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(len(preview), 1)
         self.assertEqual(preview[0]["kind"], "video")
         self.assertEqual(preview[0]["preview_volume"], 1.0)
+        structure_changes = QSignalSpy(self.app.audioMixerPreviewChannelsChanged)
+        gain_changes = QSignalSpy(self.app.audioMixerPreviewGainsChanged)
 
         self.app.updateAudioMixChannel(0, {"volume_percent": 56})
-        self.assertAlmostEqual(self.app.audioMixerPreviewChannels[0]["preview_volume"], 0.56)
+        self.assertAlmostEqual(self.app.audioMixerPreviewGains[preview[0]["id"]], 0.56)
+        self.assertEqual(structure_changes.count(), 0)
+        self.assertEqual(gain_changes.count(), 1)
 
         self.app.updateAudioMixChannel(0, {"muted": True})
-        self.assertEqual(self.app.audioMixerPreviewChannels, [])
+        muted_preview = self.app.audioMixerPreviewChannels
+        self.assertEqual(len(muted_preview), 1)
+        self.assertEqual(muted_preview[0]["preview_volume"], 0.0)
+        self.assertEqual(structure_changes.count(), 0)
+        self.assertEqual(gain_changes.count(), 2)
 
         self.app.updateAudioMixChannel(0, {"muted": False})
         self.app.updateAudioMixChannel(1, {"enabled": True, "solo": True})
         preview = self.app.audioMixerPreviewChannels
-        self.assertEqual(len(preview), 1)
-        self.assertEqual(preview[0]["kind"], "external")
-        self.assertEqual(preview[0]["preview_volume"], 1.0)
+        self.assertEqual([channel["kind"] for channel in preview], ["video", "external"])
+        self.assertEqual(preview[0]["preview_volume"], 0.0)
+        self.assertEqual(preview[1]["preview_volume"], 1.0)
+        self.assertEqual(structure_changes.count(), 1)
+        self.assertEqual(gain_changes.count(), 4)
 
         sequence = self.app.audioMixerSequenceChannels
         self.assertEqual([channel["kind"] for channel in sequence], ["video", "external"])
@@ -371,7 +381,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             struct.pack("<hhhh", 0, 16_384, -32_768, 8_192),
             audio_format,
         )
-        channel_id = preview[0]["id"]
+        channel_id = preview[1]["id"]
         self.assertEqual(self.app._audio_buffer_peak(buffer), 1.0)
         self.app._receive_audio_preview_buffer(channel_id, buffer)
         self.app._publish_audio_preview_levels()
@@ -1147,13 +1157,25 @@ class GuiEditorRegressionTests(unittest.TestCase):
         preview_players = window.findChild(QObject, "mixerPreviewPlayers")
         self.assertIsNotNone(preview_players)
         self.assertEqual(preview_players.property("count"), 1)
+        preview_player = window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0")
+        self.assertIsNotNone(preview_player)
 
         self._click(window, self._quick_visual_item(channel_list, "mixerMuteButton"))
         self.app.processEvents()
-        self.assertEqual(preview_players.property("count"), 0)
+        self.assertEqual(preview_players.property("count"), 1)
+        self.assertIs(
+            window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
+            preview_player,
+        )
+        self.assertEqual(preview_player.property("previewVolume"), 0.0)
         self._click(window, self._quick_visual_item(channel_list, "mixerMuteButton"))
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
+        self.assertIs(
+            window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
+            preview_player,
+        )
+        self.assertEqual(preview_player.property("previewVolume"), 1.0)
 
         mixer_items = [
             channel_list,

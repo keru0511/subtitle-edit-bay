@@ -966,6 +966,33 @@ class GuiEditorRegressionTests(unittest.TestCase):
         type_errors = [message for message in messages if "TypeError" in message]
         self.assertEqual(type_errors, [], "\n".join(type_errors))
 
+    def test_qml_mixer_close_does_not_run_callbacks_in_destroyed_context(self) -> None:
+        self._load_project()
+        messages: list[str] = []
+        previous_handler = qInstallMessageHandler(
+            lambda _message_type, _context, message: messages.append(message)
+        )
+        try:
+            _, window = self._load_qml()
+            for _ in range(3):
+                self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+                self.assertIsNotNone(window.findChild(QObject, "mixerPreviewPlayers"))
+                self.app.updateAudioMixChannel(0, {"muted": True})
+                self.app.updateAudioMixChannel(0, {"muted": False})
+                self.app.processEvents()
+                self._click(window, self._quick_item(window, "mixerBackButton"))
+                QTest.qWait(80)
+                self.app.processEvents()
+        finally:
+            qInstallMessageHandler(previous_handler)
+
+        invalid_context_errors = [
+            message
+            for message in messages
+            if "invalid context" in message or "syncPreviewPlayer" in message
+        ]
+        self.assertEqual(invalid_context_errors, [], chr(10).join(invalid_context_errors))
+
     def test_editor_render_action_returns_to_main_and_starts_render(self) -> None:
         self._load_project()
         _, window = self._load_qml()

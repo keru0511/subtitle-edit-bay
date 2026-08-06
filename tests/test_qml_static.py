@@ -100,6 +100,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("updateAudioMixChannel", qml)
         self.assertIn("resetAudioMixer", qml)
         self.assertNotIn('objectName: "audioMixerPopup"', qml)
+        mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]
+        self.assertNotIn("Qt.callLater", mixer_block)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"

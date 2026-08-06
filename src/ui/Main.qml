@@ -1117,7 +1117,7 @@ ApplicationWindow {
                         mixerContent.syncPreviewPlayers(false)
                     } else {
                         mixerPlayer.play()
-                        Qt.callLater(function() { mixerContent.syncPreviewPlayers(true) })
+                        mixerContent.syncPreviewPlayers(true)
                     }
                 }
 
@@ -1126,7 +1126,7 @@ ApplicationWindow {
                         0,
                         Math.min(mixerPlayer.duration, mixerPlayer.position + milliseconds)
                     )
-                    Qt.callLater(function() { mixerContent.syncPreviewPlayers(true) })
+                    mixerContent.syncPreviewPlayers(true)
                 }
 
                 MediaPlayer {
@@ -1138,9 +1138,9 @@ ApplicationWindow {
                     onPositionChanged: {
                         root.editorPositionCache = mixerPlayer.position
                         if (mixerPlayer.playbackState !== MediaPlayer.PlayingState)
-                            Qt.callLater(function() { mixerContent.syncPreviewPlayers(true) })
+                            mixerContent.syncPreviewPlayers(true)
                     }
-                    onPlaybackStateChanged: Qt.callLater(function() { mixerContent.syncPreviewPlayers(false) })
+                    onPlaybackStateChanged: mixerContent.syncPreviewPlayers(false)
                 }
 
                 Instantiator {
@@ -1162,15 +1162,9 @@ ApplicationWindow {
                         // qmllint disable missing-type
                         audioBufferOutput: modelData.preview_buffer_output
                         // qmllint enable missing-type
-                        Component.onCompleted: Qt.callLater(function() {
-                            mixerContent.syncPreviewPlayer(mixerPreviewPlayer, true)
-                        })
-                        onMediaStatusChanged: Qt.callLater(function() {
-                            mixerContent.syncPreviewPlayer(mixerPreviewPlayer, true)
-                        })
                     }
                     onObjectAdded: function(index, object) {
-                        Qt.callLater(function() { mixerContent.syncPreviewPlayer(object, true) })
+                        mixerContent.syncPreviewPlayer(object, true)
                     }
                 }
 

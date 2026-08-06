@@ -20,6 +20,7 @@ from PySide6.QtCore import (
     QObject,
     QProcess,
     QProcessEnvironment,
+    QStandardPaths,
     QTimer,
     Qt,
     QUrl,
@@ -36,6 +37,12 @@ from .audio_mixer import (
     active_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,
+)
+from .audio_preview_cache import (
+    AudioPreviewCacheResult,
+    audio_preview_cache_entries,
+    cached_audio_preview_paths,
+    prepare_audio_preview_cache,
 )
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
@@ -229,6 +236,8 @@ class EditBayBackend(LegacyEditBayBackend):
     activeJobChanged = Signal()
     assPathChanged = Signal()
     audioPreviewLevelsChanged = Signal()
+    audioPreviewCacheChanged = Signal()
+    audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
@@ -253,6 +262,20 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_pending = False
         self._ignored_autosaves: set[tuple[int, str]] = set()
         self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
+        cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.GenericCacheLocation
+        )
+        self.audio_preview_cache_root = (
+            Path(cache_location) / "Subtitle Edit Bay" / "audio-preview"
+        )
+        self._audio_preview_cache_paths: dict[str, str] = {}
+        self._audio_preview_cache_future: Future[AudioPreviewCacheResult] | None = None
+        self._audio_preview_cache_request = 0
+        self._audio_preview_preparing = False
+        self._audio_preview_cache_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="audio-preview",
+        )
         self._audio_preview_outputs: dict[str, QAudioBufferOutput] = {}
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
@@ -260,6 +283,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._audio_preview_level_timer = QTimer(self)
         self._audio_preview_level_timer.setInterval(33)
         self._audio_preview_level_timer.timeout.connect(self._publish_audio_preview_levels)
+        self.audioPreviewCacheCompleted.connect(self._apply_audio_preview_cache)
         self.autosaveCompleted.connect(self._finish_autosave)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setSingleShot(True)
@@ -381,6 +405,113 @@ class EditBayBackend(LegacyEditBayBackend):
             return []
         return deepcopy(self._project.get("waveforms", []))
 
+    @Property(bool, notify=audioPreviewCacheChanged)
+    def audioPreviewPreparing(self) -> bool:
+        return self._audio_preview_preparing
+
+    @Property(str, notify=projectDataChanged)
+    def audioPreviewClockUrl(self) -> str:
+        if self._project is None:
+            return ""
+        channels = self._project.get("audio_mix", {}).get("channels", [])
+        ordered = sorted(
+            (channel for channel in channels if isinstance(channel, dict)),
+            key=lambda channel: channel.get("kind") == "external",
+        )
+        for channel in ordered:
+            cache_path = self._audio_preview_cache_paths.get(
+                str(channel.get("id", "")),
+                "",
+            )
+            if cache_path and Path(cache_path).is_file():
+                return QUrl.fromLocalFile(cache_path).toString()
+        return ""
+
+    def _reset_audio_preview_cache(self) -> None:
+        self._audio_preview_cache_request += 1
+        self._audio_preview_cache_paths = {}
+        self._audio_preview_preparing = False
+        future = self._audio_preview_cache_future
+        if future is not None and not future.done():
+            future.cancel()
+        self._audio_preview_cache_future = None
+        self.audioPreviewCacheChanged.emit()
+
+    @Slot()
+    def prepareAudioMixerPreview(self) -> None:
+        if self._project is None:
+            return
+        entries = audio_preview_cache_entries(
+            self._project,
+            self.audio_preview_cache_root,
+        )
+        cached_paths = cached_audio_preview_paths(entries)
+        required_ids = {entry.channel_id for entry in entries}
+        if cached_paths != self._audio_preview_cache_paths:
+            self._audio_preview_cache_paths = cached_paths
+            self.projectDataChanged.emit()
+        if required_ids.issubset(cached_paths):
+            if self._audio_preview_preparing:
+                self._audio_preview_preparing = False
+                self.audioPreviewCacheChanged.emit()
+            return
+        if not self._dependencies.ffmpeg:
+            self._audio_preview_preparing = False
+            self.audioPreviewCacheChanged.emit()
+            self._set_status("音声プレビューの準備にはFFmpegが必要です", "SETUP")
+            return
+        future = self._audio_preview_cache_future
+        if future is not None and not future.done():
+            return
+
+        self._audio_preview_cache_request += 1
+        request_id = self._audio_preview_cache_request
+        project_snapshot = deepcopy(self._project)
+        cache_root = self.audio_preview_cache_root
+        self._audio_preview_preparing = True
+        self.audioPreviewCacheChanged.emit()
+        self.projectDataChanged.emit()
+        future = self._audio_preview_cache_executor.submit(
+            prepare_audio_preview_cache,
+            project_snapshot,
+            cache_root,
+        )
+        self._audio_preview_cache_future = future
+
+        def report_completion(done: Future[AudioPreviewCacheResult]) -> None:
+            try:
+                result = done.result()
+            except Exception as error:
+                result = AudioPreviewCacheResult({}, (str(error),))
+            self.audioPreviewCacheCompleted.emit(request_id, result)
+
+        future.add_done_callback(report_completion)
+
+    @Slot(int, object)
+    def _apply_audio_preview_cache(
+        self,
+        request_id: int,
+        result: AudioPreviewCacheResult,
+    ) -> None:
+        if request_id != self._audio_preview_cache_request or self._project is None:
+            return
+        self._audio_preview_cache_future = None
+        self._audio_preview_cache_paths = {
+            channel_id: path
+            for channel_id, path in result.paths.items()
+            if Path(path).is_file()
+        }
+        self._audio_preview_preparing = False
+        self.audioPreviewCacheChanged.emit()
+        self.projectDataChanged.emit()
+        if result.errors:
+            self._set_status(
+                "音声プレビューの準備に失敗しました: " + "; ".join(result.errors),
+                "CHECK",
+            )
+        else:
+            self._set_status("音声プレビューの準備が完了しました", "MIX")
+
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerChannels(self) -> list[dict[str, Any]]:
         if self._project is None:
@@ -394,18 +525,13 @@ class EditBayBackend(LegacyEditBayBackend):
         project = self._project or {}
         view = deepcopy(channel)
         is_external = view.get("kind") == "external"
-        source_path = (
-            str(view.get("path", ""))
-            if is_external
-            else str(project.get("video", {}).get("path", ""))
+        cache_path = self._audio_preview_cache_paths.get(str(view.get("id", "")), "")
+        view["preview_url"] = (
+            QUrl.fromLocalFile(cache_path).toString()
+            if cache_path and Path(cache_path).is_file()
+            else ""
         )
-        selector = str(view.get("selector", "0:a:0"))
-        try:
-            track_index = max(0, int(selector.rsplit(":", 1)[-1]))
-        except (TypeError, ValueError):
-            track_index = 0
-        view["preview_url"] = QUrl.fromLocalFile(source_path).toString() if source_path else ""
-        view["preview_audio_track_index"] = 0 if is_external else track_index
+        view["preview_audio_track_index"] = 0
         view["preview_offset_seconds"] = (
             float(project.get("transcription", {}).get("offset_seconds", 0.0))
             if is_external
@@ -419,15 +545,19 @@ class EditBayBackend(LegacyEditBayBackend):
             self._audio_preview_gains = {}
             return []
         active = active_audio_mix_channels(self._project.get("audio_mix", {}))
+        available = [
+            (channel, self._audio_mixer_channel_view(channel))
+            for channel in active
+        ]
+        available = [item for item in available if item[1]["preview_url"]]
         total_gain = sum(
             max(0.0, float(channel.get("volume_percent", 100.0))) / 100.0
-            for channel in active
+            for channel, _view in available
         )
         normalization = max(1.0, total_gain)
         channels: list[dict[str, Any]] = []
         gains: dict[str, float] = {}
-        for channel in active:
-            view = self._audio_mixer_channel_view(channel)
+        for channel, view in available:
             channel_id = str(view.get("id", ""))
             preview_volume = min(
                 1.0,
@@ -651,6 +781,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._redo_stack.clear()
         self._selected_segment_index = -1
         self._project_revision += 1
+        self._reset_audio_preview_cache()
         self._audio_preview_gains.clear()
         self._audio_preview_pending_levels.clear()
         if self._audio_preview_levels:
@@ -767,6 +898,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project_path = str(path.resolve())
         self._project_dirty = False
         self._project_revision += 1
+        self._reset_audio_preview_cache()
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._selected_segment_index = 0 if project.get("segments") else -1
@@ -1188,6 +1320,8 @@ class EditBayBackend(LegacyEditBayBackend):
         if hasattr(self, "_autosave_executor"):
             self._wait_for_autosave()
             self._autosave_executor.shutdown(wait=True, cancel_futures=False)
+        if hasattr(self, "_audio_preview_cache_executor"):
+            self._audio_preview_cache_executor.shutdown(wait=True, cancel_futures=True)
         super()._shutdown_executor()
 
     def _update_project_settings(self, settings: dict[str, Any]) -> None:

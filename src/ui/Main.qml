@@ -186,6 +186,7 @@ ApplicationWindow {
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.editorMode = false
+        root.appBackend.prepareAudioMixerPreview()
         root.mixerMode = true
     }
 
@@ -1082,6 +1083,33 @@ ApplicationWindow {
             id: mixerContentComponent
             Item {
                 id: mixerContent
+                readonly property bool previewReady: !root.appBackend.audioPreviewPreparing
+                    && root.appBackend.audioMixerPreviewChannels.length > 0
+                property real initialPosition: -1
+                property int initialPositionStableTicks: 0
+                Component.onCompleted: {
+                    initialPosition = root.editorPositionCache
+                    restoreInitialPosition()
+                }
+
+                function restoreInitialPosition(confirmStable) {
+                    if (!mixerPlayer.seekable || mixerPlayer.duration <= 0 || initialPosition < 0)
+                        return
+                    var target = Math.max(
+                        0,
+                        Math.min(mixerPlayer.duration, initialPosition)
+                    )
+                    if (Math.abs(mixerPlayer.position - target) <= 80) {
+                        if (confirmStable) {
+                            initialPositionStableTicks += 1
+                            if (initialPositionStableTicks >= 6)
+                                initialPosition = -1
+                        }
+                        return
+                    }
+                    initialPositionStableTicks = 0
+                    mixerPlayer.position = target
+                }
 
                 function syncPreviewPlayer(player, forcePosition) {
                     if (!player)
@@ -1128,9 +1156,12 @@ ApplicationWindow {
                 MediaPlayer {
                     id: mixerPlayer
                     objectName: "mixerPlayer"
-                    source: root.appBackend.previewUrl
+                    source: mixerContent.previewReady ? root.appBackend.audioPreviewClockUrl : ""
                     audioOutput: AudioOutput { muted: true }
-                    Component.onCompleted: position = root.editorPositionCache
+                    Component.onCompleted: mixerContent.restoreInitialPosition()
+                    onSeekableChanged: mixerContent.restoreInitialPosition()
+                    onDurationChanged: mixerContent.restoreInitialPosition()
+                    onMediaStatusChanged: mixerContent.restoreInitialPosition()
                     onPositionChanged: {
                         root.editorPositionCache = mixerPlayer.position
                         if (mixerPlayer.playbackState !== MediaPlayer.PlayingState)
@@ -1202,6 +1233,13 @@ ApplicationWindow {
                 }
 
                 Timer {
+                    interval: 50
+                    running: mixerContent.previewReady && mixerContent.initialPosition >= 0
+                    repeat: true
+                    onTriggered: mixerContent.restoreInitialPosition(true)
+                }
+
+                Timer {
                     interval: 150
                     running: mixerPlayer.playbackState === MediaPlayer.PlayingState
                     repeat: true
@@ -1266,7 +1304,7 @@ ApplicationWindow {
                                     objectName: "mixerPlayButton"
                                     Layout.preferredWidth: 46
                                     Layout.preferredHeight: 34
-                                    enabled: Boolean(root.appBackend.previewUrl)
+                                    enabled: mixerContent.previewReady
                                     onClicked: mixerContent.togglePlayback()
                                     contentItem: Text {
                                         text: mixerPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
@@ -1277,7 +1315,7 @@ ApplicationWindow {
                                     }
                                     background: Rectangle { radius: 7; color: mixerPlayButton.enabled ? root.acid : "#252C28" }
                                 }
-                                SmallButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: Boolean(root.appBackend.previewUrl); onClicked: mixerContent.seekBy(-5000) }
+                                SmallButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(-5000) }
                                 Slider {
                                     id: mixerSeek
                                     objectName: "mixerSeek"
@@ -1285,13 +1323,13 @@ ApplicationWindow {
                                     from: 0
                                     to: Math.max(1, mixerPlayer.duration)
                                     value: mixerPlayer.position
-                                    enabled: Boolean(root.appBackend.previewUrl)
+                                    enabled: mixerContent.previewReady
                                     onMoved: {
                                         mixerPlayer.position = value
                                         mixerContent.syncPreviewPlayers(true)
                                     }
                                 }
-                                SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: Boolean(root.appBackend.previewUrl); onClicked: mixerContent.seekBy(5000) }
+                                SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(5000) }
                                 Text {
                                     objectName: "mixerTimeText"
                                     Layout.preferredWidth: 142
@@ -1305,7 +1343,7 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 PanelTitle { text: "SEQUENCE" }
-                                Text { text: "出力音ライブプレビュー"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Text { text: root.appBackend.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                                 Item { Layout.fillWidth: true }
                                 Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                             }

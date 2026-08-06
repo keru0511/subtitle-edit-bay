@@ -21,6 +21,11 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
+from src.audio_preview_cache import (
+    AudioPreviewCacheResult,
+    audio_preview_cache_entries,
+    cached_audio_preview_paths,
+)
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
@@ -86,6 +91,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._audio_preview_levels.clear()
         app._audio_preview_pending_levels.clear()
         app._audio_preview_level_timer.stop()
+        app._audio_preview_cache_request += 1
+        app._audio_preview_cache_paths.clear()
+        app._audio_preview_cache_future = None
+        app._audio_preview_preparing = False
+        app.audio_preview_cache_root = self.root / ".audio-preview-cache"
 
     def tearDown(self) -> None:
         for engine in self._engines:
@@ -163,8 +173,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def _load_project(self, **kwargs: object) -> Path:
         path, _, _ = self._make_project(**kwargs)
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self._prime_audio_preview_cache()
         self.app.autosave_timer.stop()
         return path
+
+    def _prime_audio_preview_cache(self) -> None:
+        entries = audio_preview_cache_entries(
+            self.app._project or {},
+            self.app.audio_preview_cache_root,
+        )
+        for entry in entries:
+            entry.output_path.parent.mkdir(parents=True, exist_ok=True)
+            entry.output_path.write_bytes(b"cached-audio")
+        self.app._audio_preview_cache_paths = cached_audio_preview_paths(entries)
 
     def _set_ready_sources(self) -> tuple[Path, Path, Path]:
         video = self.root / "game.mkv"
@@ -351,6 +372,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.audioPreviewLevels[channel_id], 1.0)
         self.app._audio_preview_level_timer.stop()
         self.app.autosave_timer.stop()
+
+    def test_audio_mixer_preparation_publishes_cache_without_dirtying_project(self) -> None:
+        self._load_project()
+        entries = audio_preview_cache_entries(
+            self.app._project or {},
+            self.app.audio_preview_cache_root,
+        )
+        for entry in entries:
+            entry.output_path.unlink()
+        self.app._audio_preview_cache_paths.clear()
+
+        def fake_prepare(_project, _cache_root):
+            paths: dict[str, str] = {}
+            for entry in entries:
+                entry.output_path.write_bytes(b"prepared-audio")
+                paths[entry.channel_id] = str(entry.output_path)
+            return AudioPreviewCacheResult(paths)
+
+        with patch("src.gui.prepare_audio_preview_cache", side_effect=fake_prepare):
+            self.app.prepareAudioMixerPreview()
+            self.assertTrue(self.app.audioPreviewPreparing)
+            deadline = time.monotonic() + 2
+            while self.app.audioPreviewPreparing and time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(0.01)
+
+        self.assertFalse(self.app.audioPreviewPreparing)
+        self.assertTrue(self.app.audioPreviewClockUrl.endswith(".mka"))
+        self.assertEqual(set(self.app._audio_preview_cache_paths), {entry.channel_id for entry in entries})
+        self.assertTrue(all(
+            channel["preview_url"].endswith(".mka")
+            for channel in self.app.audioMixerChannels
+        ))
+        self.assertFalse(self.app.projectDirty)
 
     def test_audio_mixer_updates_individual_source_and_resets(self) -> None:
         path = self._load_project()

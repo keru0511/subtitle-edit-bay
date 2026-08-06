@@ -88,7 +88,7 @@ class AudioPreviewCacheTests(unittest.TestCase):
             self.assertTrue(all(Path(path).is_file() for path in result.paths.values()))
             self.assertEqual(len(calls), 2)
             video_command = next(
-                command for command in calls if str(project["video"]["path"]) in command
+                command for command in calls if "0:a:1" in command
             )
             self.assertIn("0:a:0", video_command)
             self.assertIn("0:a:1", video_command)

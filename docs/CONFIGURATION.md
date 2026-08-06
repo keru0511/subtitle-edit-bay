@@ -47,7 +47,7 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `width`, `height` | `1920`, `1080` | ASSの基準解像度 |
 | `nvenc_cq` | `18` | NVENC固定品質。小さいほど高画質・大容量 |
 | `x264_crf` | `18` | libx264固定品質。小さいほど高画質・大容量 |
-| `subtitle_font_size` | `50` | 全話者共通の字幕基準文字サイズ |
+| `subtitle_font_size` | `50` | 全話者共通の字幕基準文字サイズ。GUIでは50pxを100%として10〜900%で指定 |
 | `subtitle_max_gap_seconds` | `0.1` | 単語間の無音をページ境界候補にする秒数 |
 | `subtitle_end_padding_seconds` | `0.08` | 最後の単語後に残す字幕余白 |
 | `subtitle_min_duration_seconds` | `0.35` | 極端に短い字幕の表示下限 |

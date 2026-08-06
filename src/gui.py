@@ -521,6 +521,55 @@ class EditBayBackend(LegacyEditBayBackend):
             for channel in self._project.get("audio_mix", {}).get("channels", [])
         ]
 
+    @Property("QVariantList", notify=projectDataChanged)
+    def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            return []
+
+        active_ids = {
+            str(channel.get("id", ""))
+            for channel in active_audio_mix_channels(self._project.get("audio_mix", {}))
+        }
+        waveforms_by_path = {
+            str(Path(str(waveform.get("source_path", ""))).resolve()).casefold(): waveform
+            for waveform in self._project.get("waveforms", [])
+            if isinstance(waveform, dict) and waveform.get("source_path")
+        }
+        duration = max(
+            0.0,
+            float(self._project.get("video", {}).get("duration_seconds", 0.0)),
+        )
+        colors = ("#6FA8DC", "#93C47D", "#F6B26B", "#E78284", "#81C8BE")
+        sequence: list[dict[str, Any]] = []
+        for index, channel in enumerate(self._project.get("audio_mix", {}).get("channels", [])):
+            if not isinstance(channel, dict) or not bool(channel.get("enabled")):
+                continue
+            view = self._audio_mixer_channel_view(channel)
+            waveform = None
+            if view.get("kind") == "external" and view.get("path"):
+                waveform = waveforms_by_path.get(
+                    str(Path(str(view["path"])).resolve()).casefold()
+                )
+            offset = float(view.get("preview_offset_seconds", 0.0))
+            view.update(
+                {
+                    "lane_id": str(view.get("id", "")),
+                    "name": str(view.get("label", "入力")),
+                    "color": str((waveform or {}).get("color") or colors[index % len(colors)]),
+                    "offset_seconds": float((waveform or {}).get("offset_seconds", offset)),
+                    "duration_seconds": float(
+                        (waveform or {}).get(
+                            "duration_seconds",
+                            max(0.0, duration - max(0.0, offset)),
+                        )
+                    ),
+                    "peaks": list((waveform or {}).get("peaks", [])),
+                    "audible": str(view.get("id", "")) in active_ids,
+                }
+            )
+            sequence.append(view)
+        return sequence
+
     def _audio_mixer_channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
         project = self._project or {}
         view = deepcopy(channel)

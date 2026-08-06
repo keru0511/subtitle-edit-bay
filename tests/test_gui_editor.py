@@ -357,6 +357,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(len(preview), 1)
         self.assertEqual(preview[0]["kind"], "external")
         self.assertEqual(preview[0]["preview_volume"], 1.0)
+
+        sequence = self.app.audioMixerSequenceChannels
+        self.assertEqual([channel["kind"] for channel in sequence], ["video", "external"])
+        self.assertFalse(sequence[0]["audible"])
+        self.assertTrue(sequence[1]["audible"])
+        self.assertEqual(sequence[0]["duration_seconds"], 30.0)
         audio_format = QAudioFormat()
         audio_format.setSampleRate(48_000)
         audio_format.setChannelCount(2)
@@ -944,10 +950,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertLessEqual(panel.y() + panel.height(), actions.y() + 1)
         self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
 
-        self._quick_item(window, "fontSizeSpin").setProperty("value", 72)
+        font_size = self._quick_item(window, "fontSizeSpin")
+        self.assertEqual(font_size.property("to"), 900)
+        font_size.setProperty("value", 900)
         self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
         self._click(window, self._quick_item(window, "saveSettingsButton"))
-        self.assertEqual(self.app.settings["subtitle_font_size"], 72)
+        self.assertEqual(self.app.settings["subtitle_font_size"], 450)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 30)
 
         self._click(window, toggle)
@@ -1048,6 +1056,50 @@ class GuiEditorRegressionTests(unittest.TestCase):
         ]
         self.assertEqual(invalid_context_errors, [], chr(10).join(invalid_context_errors))
 
+    def test_mixer_volume_change_preserves_horizontal_scroll(self) -> None:
+        self.app._audio_tracks = [
+            {"selector": f"0:a:{index}", "label": f"Track {index + 1}"}
+            for index in range(8)
+        ]
+        self._load_project()
+        for index in range(len(self.app.audioMixerChannels)):
+            self.app.updateAudioMixChannel(index, {"enabled": True})
+        self.app.autosave_timer.stop()
+        volumes_before = [channel["volume_percent"] for channel in self.app.audioMixerChannels]
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        channel_list = self._quick_item(window, "mixerChannelList")
+        self.assertGreater(channel_list.property("contentWidth"), channel_list.width())
+
+        channel_list.setProperty("contentX", 420.0)
+        self.app.processEvents()
+        original_x = float(channel_list.property("contentX"))
+        self.assertGreater(original_x, 0)
+
+        visible_fader = None
+        list_left = channel_list.mapToScene(QPointF(0, 0)).x()
+        list_right = list_left + channel_list.width()
+        stack = list(channel_list.childItems())
+        while stack:
+            item = stack.pop()
+            stack.extend(item.childItems())
+            if item.objectName() != "mixerChannelFader" or not item.isVisible():
+                continue
+            center_x = item.mapToScene(QPointF(item.width() / 2, item.height() / 2)).x()
+            if list_left <= center_x <= list_right:
+                visible_fader = item
+                break
+        self.assertIsNotNone(visible_fader)
+
+        self._click(window, visible_fader)
+        QTest.qWait(20)
+        self.app.processEvents()
+        self.assertAlmostEqual(float(channel_list.property("contentX")), original_x, delta=1.0)
+        self.assertNotEqual(
+            [channel["volume_percent"] for channel in self.app.audioMixerChannels],
+            volumes_before,
+        )
     def test_editor_render_action_returns_to_main_and_starts_render(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -1111,6 +1163,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._quick_item(window, "mixerForwardButton"),
             self._quick_item(window, "mixerTimeText"),
             self._quick_item(window, "mixerSequence"),
+            self._quick_visual_item(self._quick_item(window, "mixerSequence"), "mixerSequenceVolumeBar"),
             self._quick_visual_item(channel_list, "mixerChannelFader"),
             self._quick_visual_item(channel_list, "mixerMuteButton"),
             self._quick_visual_item(channel_list, "mixerSoloButton"),

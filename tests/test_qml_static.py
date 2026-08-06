@@ -108,11 +108,22 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("activeAudioTrack: Number(", mixer_block)
         self.assertIn("orientation: Qt.Vertical", qml)
         self.assertIn("model: root.appBackend.audioMixerChannels", qml)
+        self.assertIn("lanes: root.appBackend.audioMixerSequenceChannels", mixer_block)
+        self.assertIn("showTrackVolume: true", mixer_block)
+        self.assertIn('objectName: "mixerSequenceVolumeBar"', qml)
+        self.assertIn("function updateMixerChannel(index, changes)", mixer_block)
+        self.assertIn("mixerChannelScrollRestoreTimer.restart()", mixer_block)
         self.assertIn("updateAudioMixChannel", qml)
         self.assertIn("resetAudioMixer", qml)
         self.assertNotIn('objectName: "audioMixerPopup"', qml)
         self.assertNotIn("Qt.callLater", mixer_block)
 
+    def test_main_font_size_control_supports_nine_hundred_percent(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
+        self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")

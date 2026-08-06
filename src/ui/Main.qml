@@ -14,6 +14,7 @@ ApplicationWindow {
     property real timelinePixelsPerSecond: 34
     property real editorPixelsPerSecond: 64
     property int snapMilliseconds: 100
+    readonly property int defaultSubtitleFontSize: 50
     property var projectSpeakerCache: root.appBackend.projectSpeakers
     property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
     property real editorPositionCache: 0
@@ -93,7 +94,7 @@ ApplicationWindow {
             "language": "ja",
             "nvenc_cq": qualitySpin.value,
             "x264_crf": qualitySpin.value,
-            "subtitle_font_size": fontSizeSpin.value,
+            "subtitle_font_size": Math.max(3, Math.round(root.defaultSubtitleFontSize * fontSizeSpin.value / 100)),
             "subtitle_volume_scale_percent": volumeScaleSpin.value,
             "subtitle_max_gap_seconds": Number(gapField.text),
             "subtitle_end_padding_seconds": Number(paddingField.text),
@@ -114,7 +115,7 @@ ApplicationWindow {
     function syncSettings() {
         var value = root.appBackend.settings
         qualitySpin.value = Number(value.nvenc_cq || 18)
-        fontSizeSpin.value = Number(value.subtitle_font_size || 50)
+        fontSizeSpin.value = Math.round(Number(value.subtitle_font_size || root.defaultSubtitleFontSize) / root.defaultSubtitleFontSize * 100)
         volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
         gapField.text = Number(value.subtitle_max_gap_seconds || 0.1).toFixed(2)
         paddingField.text = Number(value.subtitle_end_padding_seconds || 0.08).toFixed(2)
@@ -378,6 +379,10 @@ ApplicationWindow {
         property real snapSeconds: 0.1
         property int laneHeight: 42
         property bool editable: true
+        property bool showSegments: true
+        property bool showTrackVolume: false
+        property var lanes: root.projectSpeakerCache
+        property var waveforms: root.subtitleWaveformCache
         property alias viewportX: timelineFlick.contentX
         property var visibleSegments: []
         property var visibleRulerTicks: []
@@ -389,7 +394,9 @@ ApplicationWindow {
             var padding = Math.max(2, timelineFlick.width / pixels * 0.25)
             var viewportStart = Math.max(0, timelineFlick.contentX / pixels - padding)
             var viewportEnd = (timelineFlick.contentX + timelineFlick.width) / pixels + padding
-            timelineRoot.visibleSegments = root.appBackend.visibleSubtitleSegments(viewportStart, viewportEnd)
+            timelineRoot.visibleSegments = timelineRoot.showSegments
+                ? root.appBackend.visibleSubtitleSegments(viewportStart, viewportEnd)
+                : []
 
             var ticks = []
             var firstTick = Math.max(0, Math.floor(viewportStart / 10) * 10)
@@ -419,6 +426,17 @@ ApplicationWindow {
                 timelineFlick.contentX = desiredX
         }
 
+        function laneForItem(item) {
+            var key = item && item.lane_id !== undefined ? item.lane_id : (item ? item.style : "")
+            for (var index = 0; index < timelineRoot.lanes.length; ++index) {
+                var lane = timelineRoot.lanes[index]
+                var laneKey = lane && lane.lane_id !== undefined ? lane.lane_id : lane.style
+                if (laneKey === key)
+                    return index
+            }
+            return 0
+        }
+
         onPixelsPerSecondChanged: timelineRoot.refreshViewport()
         signal segmentActivated(int index)
         Connections {
@@ -446,7 +464,7 @@ ApplicationWindow {
             interactive: true
             boundsBehavior: Flickable.StopAtBounds
             contentWidth: Math.max(width, root.appBackend.projectDuration * timelineRoot.pixelsPerSecond + 120)
-            contentHeight: 28 + Math.max(1, root.projectSpeakerCache.length) * timelineRoot.laneHeight
+            contentHeight: 28 + Math.max(1, timelineRoot.lanes.length) * timelineRoot.laneHeight
             onContentXChanged: timelineRoot.refreshViewport()
             onWidthChanged: timelineRoot.refreshViewport()
             Component.onCompleted: timelineRoot.refreshViewport()
@@ -486,7 +504,7 @@ ApplicationWindow {
                 }
 
                 Repeater {
-                    model: root.projectSpeakerCache
+                    model: timelineRoot.lanes
                     delegate: Rectangle {
                         required property int index
                         y: 28 + index * timelineRoot.laneHeight
@@ -498,16 +516,34 @@ ApplicationWindow {
                 }
 
                 Repeater {
-                    model: root.subtitleWaveformCache
+                    model: timelineRoot.showTrackVolume ? timelineRoot.lanes : []
+                    delegate: Rectangle {
+                        id: trackVolumeBar
+                        objectName: "mixerSequenceVolumeBar"
+                        required property var modelData
+                        property int laneIndex: timelineRoot.laneForItem(modelData)
+                        property real volumeRatio: Math.max(0, Math.min(1, Number(modelData.volume_percent || 0) / 100))
+                        x: Math.max(0, Number(modelData.offset_seconds || 0)) * timelineRoot.pixelsPerSecond
+                        y: 31 + laneIndex * timelineRoot.laneHeight + (timelineRoot.laneHeight - height - 6) / 2
+                        width: Math.max(4, Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond)
+                        height: Math.max(3, (timelineRoot.laneHeight - 12) * volumeRatio)
+                        radius: 3
+                        color: modelData.color || root.amber
+                        opacity: modelData.audible ? 0.32 : 0.09
+                    }
+                }
+
+                Repeater {
+                    model: timelineRoot.waveforms
                     delegate: Item {
                         id: waveDelegate
                         required property var modelData
-                        property int laneIndex: root.laneForStyle(modelData.style)
+                        property int laneIndex: timelineRoot.laneForItem(modelData)
                         x: Number(modelData.offset_seconds || 0) * timelineRoot.pixelsPerSecond
                         y: 31 + laneIndex * timelineRoot.laneHeight
                         width: Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond
                         height: timelineRoot.laneHeight - 6
-                        opacity: 0.3
+                        opacity: modelData.audible === false ? 0.08 : 0.3
                         Canvas {
                             anchors.fill: parent
                             property var peaks: waveDelegate.modelData.peaks || []
@@ -692,7 +728,7 @@ ApplicationWindow {
             width: 86
             topPadding: 28
             Repeater {
-                model: root.projectSpeakerCache
+                model: timelineRoot.lanes
                 delegate: Rectangle {
                     id: laneLabel
                     required property var modelData
@@ -921,7 +957,7 @@ ApplicationWindow {
                         RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                         PanelTitle { text: "字幕" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 32; to: 96; value: 50 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100 } Text { text: "%"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "音量サイズ比率"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
                         RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
@@ -1083,10 +1119,13 @@ ApplicationWindow {
             id: mixerContentComponent
             Item {
                 id: mixerContent
+                objectName: "mixerContent"
                 readonly property bool previewReady: !root.appBackend.audioPreviewPreparing
                     && root.appBackend.audioMixerPreviewChannels.length > 0
                 property real initialPosition: -1
                 property int initialPositionStableTicks: 0
+                property real channelScrollPosition: 0
+                property bool restoringChannelScroll: false
                 Component.onCompleted: {
                     initialPosition = root.editorPositionCache
                     restoreInitialPosition()
@@ -1151,6 +1190,19 @@ ApplicationWindow {
                         Math.min(mixerPlayer.duration, mixerPlayer.position + milliseconds)
                     )
                     mixerContent.syncPreviewPlayers(true)
+                }
+
+                function restoreChannelScroll() {
+                    var maximum = Math.max(0, mixerChannelList.contentWidth - mixerChannelList.width)
+                    restoringChannelScroll = true
+                    mixerChannelList.contentX = Math.max(0, Math.min(maximum, channelScrollPosition))
+                    restoringChannelScroll = false
+                }
+
+                function updateMixerChannel(index, changes) {
+                    channelScrollPosition = mixerChannelList.contentX
+                    mixerChannelScrollRestoreTimer.restart()
+                    root.appBackend.updateAudioMixChannel(index, changes)
                 }
 
                 MediaPlayer {
@@ -1244,6 +1296,13 @@ ApplicationWindow {
                     running: mixerPlayer.playbackState === MediaPlayer.PlayingState
                     repeat: true
                     onTriggered: mixerContent.syncPreviewPlayers(false)
+                }
+
+                Timer {
+                    id: mixerChannelScrollRestoreTimer
+                    interval: 0
+                    repeat: false
+                    onTriggered: mixerContent.restoreChannelScroll()
                 }
 
                 ColumnLayout {
@@ -1355,6 +1414,10 @@ ApplicationWindow {
                                 pixelsPerSecond: root.timelinePixelsPerSecond
                                 laneHeight: 34
                                 editable: false
+                                showSegments: false
+                                showTrackVolume: true
+                                lanes: root.appBackend.audioMixerSequenceChannels
+                                waveforms: root.appBackend.audioMixerSequenceChannels
                             }
                         }
                     }
@@ -1388,6 +1451,10 @@ ApplicationWindow {
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
                                 model: root.appBackend.audioMixerChannels
+                                onContentXChanged: {
+                                    if (!mixerContent.restoringChannelScroll && !mixerChannelScrollRestoreTimer.running)
+                                        mixerContent.channelScrollPosition = contentX
+                                }
                                 delegate: Rectangle {
                                     id: mixerStrip
                                     required property int index
@@ -1455,7 +1522,7 @@ ApplicationWindow {
                                                     stepSize: 0.5
                                                     value: root.volumePercentToDb(mixerStrip.modelData.volume_percent)
                                                     enabled: !root.appBackend.running && mixerStrip.modelData.enabled
-                                                    onPressedChanged: if (!pressed) root.appBackend.updateAudioMixChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
+                                                    onPressedChanged: if (!pressed) mixerContent.updateMixerChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
                                                     background: Rectangle {
                                                         x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2
                                                         y: channelFader.topPadding
@@ -1516,7 +1583,7 @@ ApplicationWindow {
                                                 Layout.fillWidth: true; Layout.preferredHeight: 34
                                                 text: "M"
                                                 enabled: !root.appBackend.running
-                                                onClicked: root.appBackend.updateAudioMixChannel(mixerStrip.index, {"muted": !mixerStrip.modelData.muted})
+                                                onClicked: mixerContent.updateMixerChannel(mixerStrip.index, {"muted": !mixerStrip.modelData.muted})
                                                 contentItem: Text { text: channelMuteButton.text; color: mixerStrip.modelData.muted ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                                 background: Rectangle { radius: 6; color: mixerStrip.modelData.muted ? root.amber : root.raised; border.color: mixerStrip.modelData.muted ? root.amber : root.border }
                                                 ToolTip.visible: hovered
@@ -1528,7 +1595,7 @@ ApplicationWindow {
                                                 Layout.fillWidth: true; Layout.preferredHeight: 34
                                                 text: "S"
                                                 enabled: !root.appBackend.running
-                                                onClicked: root.appBackend.updateAudioMixChannel(mixerStrip.index, {"solo": !mixerStrip.modelData.solo})
+                                                onClicked: mixerContent.updateMixerChannel(mixerStrip.index, {"solo": !mixerStrip.modelData.solo})
                                                 contentItem: Text { text: channelSoloButton.text; color: mixerStrip.modelData.solo ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                                 background: Rectangle { radius: 6; color: mixerStrip.modelData.solo ? root.acid : root.raised; border.color: mixerStrip.modelData.solo ? root.acid : root.border }
                                                 ToolTip.visible: hovered
@@ -1541,7 +1608,7 @@ ApplicationWindow {
                                             text: "INPUT ON"
                                             checked: Boolean(mixerStrip.modelData.enabled)
                                             enabled: !root.appBackend.running
-                                            onToggled: root.appBackend.updateAudioMixChannel(mixerStrip.index, {"enabled": checked})
+                                            onToggled: mixerContent.updateMixerChannel(mixerStrip.index, {"enabled": checked})
                                         }
                                     }
                                 }

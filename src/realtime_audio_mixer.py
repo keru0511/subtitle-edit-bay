@@ -19,12 +19,26 @@ from PySide6.QtMultimedia import (
 MIX_SAMPLE_RATE = 48_000
 MIX_CHANNEL_COUNT = 2
 MIX_BLOCK_FRAMES = 480
-MIX_OUTPUT_BUFFER_MILLISECONDS = 40
-MIX_PREROLL_TIMEOUT_SECONDS = 0.15
+MIX_OUTPUT_BUFFER_MILLISECONDS = 100
+MIX_PREROLL_MILLISECONDS = 120
+MIX_PREROLL_TIMEOUT_SECONDS = 0.75
+MIX_TIMESTAMP_TOLERANCE_FRAMES = 2
 MIX_MAX_DECODE_LOOKAHEAD_SECONDS = 0.5
 LIMITER_CEILING_DB = -1.5
 LIMITER_CEILING = 10.0 ** (LIMITER_CEILING_DB / 20.0)
 LIMITER_RELEASE_SECONDS = 0.08
+
+def buffered_output_start_frame(
+    base_frame: int,
+    elapsed_frames: int,
+    available_frames: int,
+    reserve_frames: int,
+) -> int:
+    """Keep the output near the UI clock without consuming its PCM reserve."""
+    base_frame = max(0, int(base_frame))
+    elapsed_frames = max(0, int(elapsed_frames))
+    skippable_frames = max(0, int(available_frames) - max(0, int(reserve_frames)))
+    return base_frame + min(elapsed_frames, skippable_frames)
 
 
 def build_mix_format() -> QAudioFormat:
@@ -168,6 +182,9 @@ class TimelineAudioMixer:
         self.master_peak = 0.0
         self.limiter_reduction_db = 0.0
 
+    def set_cursor(self, position_frame: int) -> None:
+        self._cursor_frame = max(0, int(position_frame))
+
     def push(self, channel_id: str, stream_start_frame: int, samples: np.ndarray) -> None:
         channel_id = str(channel_id)
         if channel_id not in self._gains or not len(samples):
@@ -187,14 +204,41 @@ class TimelineAudioMixer:
         else:
             chunks.append(chunk)
 
-    def has_preroll(self, position_frame: int) -> bool:
-        for channel_id in self.active_channel_ids:
-            if position_frame < self._offset_frames.get(channel_id, 0):
-                continue
-            chunks = self._chunks.get(channel_id, ())
-            if not any(chunk.start_frame <= position_frame < chunk.end_frame for chunk in chunks):
-                return False
-        return True
+    def available_ahead_frames(self, position_frame: int) -> int:
+        """Return contiguous frames ready across every active channel.
+
+        Time before a positive channel offset is known silence and therefore
+        counts as available. Tiny timestamp rounding gaps are tolerated because
+        Qt buffer timestamps can differ from the resampled frame count by one
+        or two frames.
+        """
+        active_ids = self.active_channel_ids
+        if not active_ids:
+            return 2**63 - 1
+        position_frame = max(0, int(position_frame))
+        available: int | None = None
+        for channel_id in active_ids:
+            offset_frame = self._offset_frames.get(channel_id, 0)
+            coverage_end = max(position_frame, offset_frame)
+            for chunk in self._chunks.get(channel_id, ()):
+                if chunk.end_frame <= coverage_end:
+                    continue
+                if chunk.start_frame > coverage_end + MIX_TIMESTAMP_TOLERANCE_FRAMES:
+                    break
+                coverage_end = max(coverage_end, chunk.end_frame)
+            channel_available = max(0, coverage_end - position_frame)
+            available = (
+                channel_available
+                if available is None
+                else min(available, channel_available)
+            )
+        return available or 0
+
+    def has_preroll(self, position_frame: int, frame_count: int = 1) -> bool:
+        return self.available_ahead_frames(position_frame) >= max(0, int(frame_count))
+
+    def can_mix(self, frame_count: int) -> bool:
+        return self.has_preroll(self._cursor_frame, frame_count)
 
     def _mix_channel(self, channel_id: str, start_frame: int, frame_count: int) -> np.ndarray:
         mixed = np.zeros((frame_count, self.channel_count), dtype=np.float32)
@@ -348,12 +392,11 @@ class RealtimeAudioMixer(QObject):
         self._seen_channels.add(str(channel_id))
         return peak
 
-    def _start_sink(self, elapsed: float) -> bool:
+    def _start_sink(self, position_frame: int) -> bool:
         output_device = QMediaDevices.defaultAudioOutput()
         if output_device.isNull() or not output_device.isFormatSupported(self.audio_format):
             return False
-        elapsed_frames = round(elapsed * self.audio_format.sampleRate())
-        self.core._cursor_frame = self._base_frame + elapsed_frames
+        self.core.set_cursor(position_frame)
         self._sink = QAudioSink(output_device, self.audio_format, self)
         self._sink.setBufferSize(
             self.audio_format.bytesForDuration(MIX_OUTPUT_BUFFER_MILLISECONDS * 1000)
@@ -378,19 +421,47 @@ class RealtimeAudioMixer(QObject):
             return
         elapsed = max(0.0, time.monotonic() - self._started_at)
         if not self._started:
-            target_frame = self._base_frame + round(elapsed * self.audio_format.sampleRate())
             required = self.core.active_channel_ids
-            ready = required.issubset(self._seen_channels) and self.core.has_preroll(target_frame)
+            preroll_frames = round(
+                MIX_PREROLL_MILLISECONDS * self.audio_format.sampleRate() / 1000
+            )
+            available_frames = self.core.available_ahead_frames(self._base_frame)
+            ready = required.issubset(self._seen_channels) and available_frames >= preroll_frames
             if not ready and elapsed < MIX_PREROLL_TIMEOUT_SECONDS:
                 return
-            if not self._start_sink(elapsed):
+            if not ready and not (
+                required.issubset(self._seen_channels)
+                and available_frames >= MIX_BLOCK_FRAMES
+            ):
+                return
+            elapsed_frames = round(elapsed * self.audio_format.sampleRate())
+            output_start_frame = buffered_output_start_frame(
+                self._base_frame,
+                elapsed_frames,
+                available_frames,
+                preroll_frames,
+            )
+            if not self._start_sink(output_start_frame):
                 self.stop()
                 return
         if not self._write_pending() or self._sink is None:
             return
         block_bytes = self.audio_format.bytesForFrames(MIX_BLOCK_FRAMES)
         blocks_written = 0
-        while self._sink.bytesFree() >= block_bytes and blocks_written < 4:
+        max_blocks = max(
+            1,
+            math.ceil(
+                MIX_OUTPUT_BUFFER_MILLISECONDS
+                * self.audio_format.sampleRate()
+                / 1000
+                / MIX_BLOCK_FRAMES
+            ),
+        )
+        while (
+            self._sink.bytesFree() >= block_bytes
+            and blocks_written < max_blocks
+            and self.core.can_mix(MIX_BLOCK_FRAMES)
+        ):
             mixed = self.core.mix(MIX_BLOCK_FRAMES)
             self._pending_output.extend(encode_float32(mixed, self.audio_format))
             if not self._write_pending():

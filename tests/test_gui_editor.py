@@ -916,6 +916,36 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("render", render_command)
         self.assertNotIn("--audio-file", render_command)
 
+    def test_render_automatically_selects_the_available_video_encoder(self) -> None:
+        self._load_project()
+
+        for nvenc_available, expected_codec, expected_mode in (
+            (True, "h264_nvenc", "GPU"),
+            (False, "libx264", "CPU"),
+        ):
+            with self.subTest(nvenc_available=nvenc_available):
+                self.app._dependencies = RuntimeDependencyStatus(
+                    ffmpeg=True,
+                    ffprobe=True,
+                    whisperx=True,
+                    cuda=True,
+                    nvenc=nvenc_available,
+                )
+                with (
+                    patch.object(self.app, "refreshDependencies"),
+                    patch.object(self.app, "saveSettings") as save_settings,
+                    patch.object(self.app, "_update_project_settings"),
+                    patch.object(self.app, "saveProject", return_value=True),
+                    patch.object(self.app, "_start_command") as start,
+                ):
+                    self.app.renderVideo(self.app.settings)
+
+                effective_settings = save_settings.call_args.args[0]
+                self.assertEqual(effective_settings["video_codec"], expected_codec)
+                _, render_job, status = start.call_args.args
+                self.assertEqual(render_job, "render")
+                self.assertIn(expected_mode, status)
+
     def test_process_finish_handles_transcribe_render_cancel_and_error(self) -> None:
         video, _, output = self._set_ready_sources()
         path, _, _ = self._make_project()

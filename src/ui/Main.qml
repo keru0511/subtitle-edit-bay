@@ -103,7 +103,6 @@ ApplicationWindow {
             "subtitle_max_gap_seconds": Number(gapField.text),
             "subtitle_end_padding_seconds": Number(paddingField.text),
             "subtitle_min_duration_seconds": Number(minDurationField.text),
-            "video_codec": codecCombo.currentText,
             "audio_normalize": normalizeSwitch.checked,
             "audio_target_lufs": Number(lufsField.text),
             "cut_no_speech": silenceSwitch.checked,
@@ -132,7 +131,6 @@ ApplicationWindow {
         workersSpin.value = Number(value.postprocess_workers || 4)
         modelCombo.currentIndex = Math.max(0, modelCombo.find(value.model || "large-v3"))
         deviceCombo.currentIndex = Math.max(0, deviceCombo.find(value.device || "cuda"))
-        codecCombo.currentIndex = Math.max(0, codecCombo.find(value.video_codec || "h264_nvenc"))
         manualOffsetField.text = Number(value.alignment_offset_adjustment || 0).toFixed(3)
     }
     function transcriptionBlockReason() {
@@ -985,7 +983,7 @@ ApplicationWindow {
                         RowLayout { Layout.fillWidth: true; Text { text: "最短表示時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                         PanelTitle { text: "動画・音声" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "動画コーデック"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: codecCombo; model: ["h264_nvenc", "libx264"]; Layout.preferredWidth: 132 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "動画書き出し"; color: root.textPrimary; Layout.fillWidth: true } Text { objectName: "automaticVideoCodecText"; text: root.appBackend.dependencyStatus.nvenc ? "GPU（自動）" : "CPU（自動）"; color: root.acid; font.family: "Yu Gothic UI" } }
                         RowLayout { Layout.fillWidth: true; Text { text: "画質"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; from: 14; to: 28; value: 18 } }
                         Switch { id: normalizeSwitch; text: "音量を正規化"; checked: true }
                         RowLayout { Layout.fillWidth: true; Text { text: "目標LUFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }

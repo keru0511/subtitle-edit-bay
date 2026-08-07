@@ -63,7 +63,7 @@ class EditBayBackend(QApplication):
         self._base_config = load_runtime_config(DEFAULT_RUNTIME_CONFIG)
         self._config = load_runtime_config(self.gui_config_path) if self.gui_config_path.exists() else self._base_config
         self._source_selection = SourceSelection()
-        self._dependencies = check_runtime_dependencies()
+        self._dependencies = check_runtime_dependencies(probe_nvenc=True)
         self._speakers: list[dict[str, str]] = []
         self._audio_tracks: list[dict[str, str]] = self._default_audio_tracks()
         self._alignment_result = self._empty_alignment_result()
@@ -249,7 +249,7 @@ class EditBayBackend(QApplication):
 
     @Slot()
     def refreshDependencies(self) -> None:
-        self._dependencies = check_runtime_dependencies()
+        self._dependencies = check_runtime_dependencies(probe_nvenc=True)
         self.dependenciesChanged.emit()
         if self._source_selection.video:
             self._probe_audio_tracks(self._source_selection.video)

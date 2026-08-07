@@ -1584,12 +1584,18 @@ class EditBayBackend(LegacyEditBayBackend):
     def renderVideo(self, settings: dict[str, Any]) -> None:
         if self._running or self._project is None:
             return
-        self.saveSettings(settings)
-        self._update_project_settings(settings)
+        self.refreshDependencies()
+        effective_settings = dict(settings)
+        effective_settings["video_codec"] = (
+            "h264_nvenc" if self._dependencies.nvenc else "libx264"
+        )
+        self.saveSettings(effective_settings)
+        self._update_project_settings(effective_settings)
         if not self.saveProject():
             return
         command = build_gui_render_command(self.gui_config_path, project_path=self._project_path)
-        self._start_command(command, "render", "編集済み字幕の動画を書き出しています")
+        mode = "GPU" if self._dependencies.nvenc else "CPU"
+        self._start_command(command, "render", f"{mode}を自動選択して動画を書き出しています")
 
     def _process_started(self) -> None:
         self._running = True

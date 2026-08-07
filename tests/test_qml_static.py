@@ -131,6 +131,15 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn('objectName: "audioMixerPopup"', qml)
         self.assertNotIn("Qt.callLater", mixer_block)
 
+    def test_video_encoder_is_selected_automatically(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("codecCombo", qml)
+        self.assertNotIn('"video_codec":', qml)
+        self.assertIn('objectName: "automaticVideoCodecText"', qml)
+        self.assertIn("root.appBackend.dependencyStatus.nvenc", qml)
+
     def test_main_font_size_control_supports_nine_hundred_percent(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")

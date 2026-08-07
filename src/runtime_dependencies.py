@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+import subprocess
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -12,6 +13,7 @@ class RuntimeDependencyStatus:
     ffprobe: bool
     whisperx: bool
     cuda: bool = False
+    nvenc: bool = False
 
     @property
     def ready(self) -> bool:
@@ -34,13 +36,51 @@ class RuntimeDependencyStatus:
         return payload
 
 
-def check_runtime_dependencies() -> RuntimeDependencyStatus:
+def check_runtime_dependencies(*, probe_nvenc: bool = False) -> RuntimeDependencyStatus:
+    ffmpeg_path = shutil.which("ffmpeg")
     return RuntimeDependencyStatus(
-        ffmpeg=shutil.which("ffmpeg") is not None,
+        ffmpeg=ffmpeg_path is not None,
         ffprobe=shutil.which("ffprobe") is not None,
         whisperx=importlib.util.find_spec("whisperx") is not None,
         cuda=_torch_cuda_available(),
+        nvenc=probe_nvenc and _ffmpeg_nvenc_available(ffmpeg_path),
     )
+
+
+def _ffmpeg_nvenc_available(ffmpeg_path: str | None) -> bool:
+    if not ffmpeg_path:
+        return False
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=256x144:r=1",
+        "-frames:v",
+        "1",
+        "-an",
+        "-c:v",
+        "h264_nvenc",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def _torch_cuda_available() -> bool:

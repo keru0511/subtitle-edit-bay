@@ -41,7 +41,7 @@ PowerShellから実行する場合:
 
 `setup.bat` は不足しているPython 3.10とFFmpegをwingetで導入し、`.venv` に必要なPython依存をインストールします。NVIDIA GPUを検出すると、WhisperX 3.8.6向けのPyTorch 2.8.0 CUDA 12.8版を導入し、`torch.cuda.is_available()` と依存整合性を検証します。
 
-CUDAを利用できない初回環境では、GUI設定を `device=cpu`、`compute_type=int8`、`video_codec=libx264` にします。既存環境でCPU版PyTorchへ置き換わった場合は、`setup.bat` を再実行するとCUDA版へ修復されます。
+CUDAを利用できない初回環境では、GUI設定を `device=cpu`、`compute_type=int8` にします。動画codecはGUIに表示せず、書き出し直前の試験エンコードに成功すれば `h264_nvenc`、失敗すれば `libx264` を自動選択します。既存環境でCPU版PyTorchへ置き換わった場合は、`setup.bat` を再実行するとCUDA版へ修復されます。
 
 セットアップは再実行可能です。既存の動画、音声、話者色、`.gui/runtime_config.json` は上書きしません。
 

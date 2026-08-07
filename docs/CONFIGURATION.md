@@ -124,7 +124,7 @@ OP/本編/EDは本編と同じフレームレート・タイムベース・48kHz
 | WhisperX | `device=cuda`, `compute_type=float16` | `device=cpu`, `compute_type=int8` |
 | FFmpeg焼き込み | `video_codec=h264_nvenc` | `video_codec=libx264` |
 
-`h264_nvenc` はNVIDIA NVENC対応FFmpegが必要です。CUDAでWhisperXが動いても、FFmpegにNVENCがなければ動画エンコードは失敗します。
+`h264_nvenc` はNVIDIA NVENC対応FFmpegが必要です。CUDAでWhisperXが動くかどうかとは別の能力なので、GUIは書き出し直前にNVENCで1フレームを試験エンコードします。成功時は `h264_nvenc`、失敗時は `libx264` を自動選択し、codecの選択欄は表示しません。CLIで明示した場合は指定値をそのまま使用します。
 
 NVENCは `VBR + CQ 18 + High profile + spatial/temporal AQ` を標準使用します。ビットレートを低く固定しないため、動きの多いゲーム画面では必要な分だけビットレートが上がり、輪郭のジャギーやブロックノイズを抑えます。
 

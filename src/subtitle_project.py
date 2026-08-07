@@ -12,6 +12,8 @@ from typing import Any, Iterable
 import numpy as np
 
 from .audio_mixer import reconcile_audio_mix
+from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
+from .color_config import normalize_rgb_color
 
 
 PROJECT_SCHEMA_VERSION = 1
@@ -179,7 +181,21 @@ def validate_project(project: dict[str, Any]) -> dict[str, Any]:
     project.setdefault("audio_sources", [])
     project.setdefault("speakers", [])
     project.setdefault("waveforms", [])
-    project.setdefault("subtitle_settings", {})
+    subtitle_settings = project.setdefault("subtitle_settings", {})
+    if not isinstance(subtitle_settings, dict):
+        raise SubtitleProjectError("subtitle_settings must be an object")
+    try:
+        subtitle_settings["outline_color"] = normalize_rgb_color(
+            subtitle_settings.get("outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)
+        )
+        outline_thickness = int(
+            subtitle_settings.get("outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)
+        )
+    except (TypeError, ValueError, OverflowError) as error:
+        raise SubtitleProjectError(f"invalid subtitle outline setting: {error}") from error
+    if not 0 <= outline_thickness <= 20:
+        raise SubtitleProjectError("subtitle outline thickness must be between 0 and 20")
+    subtitle_settings["outline_thickness"] = outline_thickness
     project.setdefault("render_settings", {})
     project.setdefault("transcription", {})
     reconcile_audio_mix(project)

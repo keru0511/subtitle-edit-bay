@@ -13,7 +13,11 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
+from .ass_template import (
+    DEFAULT_SUBTITLE_FONT_SIZE,
+    DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
+)
 from .color_config import normalize_rgb_color, save_speaker_color
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
@@ -126,6 +130,8 @@ class EditBayBackend(QApplication):
             "nvenc_cq": int(shared.get("nvenc_cq", 18)),
             "x264_crf": int(shared.get("x264_crf", 18)),
             "subtitle_font_size": int(shared.get("subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE)),
+            "subtitle_outline_color": normalize_rgb_color(shared.get("subtitle_outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)),
+            "subtitle_outline_thickness": int(shared.get("subtitle_outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
             "subtitle_volume_scale_percent": float(craig.get("subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)),
             "subtitle_max_gap_seconds": float(shared.get("subtitle_max_gap_seconds", 0.1)),
             "subtitle_end_padding_seconds": float(shared.get("subtitle_end_padding_seconds", 0.08)),

@@ -70,6 +70,8 @@ class GuiStateTests(unittest.TestCase):
                 "nvenc_cq": 17,
                 "x264_crf": 16,
                 "subtitle_font_size": 64,
+                "subtitle_outline_color": "#123456",
+                "subtitle_outline_thickness": 7,
                 "subtitle_volume_scale_percent": 25,
                 "cut_no_speech": True,
                 "alignment_offset_adjustment": -0.125,
@@ -81,6 +83,8 @@ class GuiStateTests(unittest.TestCase):
         self.assertEqual(payload["shared"]["nvenc_cq"], 17)
         self.assertEqual(payload["shared"]["x264_crf"], 16)
         self.assertEqual(payload["shared"]["subtitle_font_size"], 64)
+        self.assertEqual(payload["shared"]["subtitle_outline_color"], "#123456")
+        self.assertEqual(payload["shared"]["subtitle_outline_thickness"], 7)
         self.assertEqual(payload["craig_pipeline"]["subtitle_volume_scale_percent"], 25)
         self.assertTrue(payload["craig_pipeline"]["cut_no_speech"])
         self.assertEqual(payload["craig_pipeline"]["alignment_offset_adjustment"], -0.125)

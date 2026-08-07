@@ -38,6 +38,8 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertEqual(project["segments"][1]["subtitle_font_family"], "Yu Mincho")
         self.assertGreater(project["segments"][1]["end"], project["segments"][1]["start"])
         self.assertTrue(all(item["layout_packed"] for item in project["segments"]))
+        self.assertEqual(project["subtitle_settings"]["outline_color"], "#000000")
+        self.assertEqual(project["subtitle_settings"]["outline_thickness"], 3)
         self.assertFalse(project["audio_mix"]["customized"])
         self.assertEqual(project["audio_mix"]["channels"][0]["selector"], "0:a:0")
 
@@ -136,7 +138,11 @@ class SubtitleWorkflowTests(unittest.TestCase):
                 video_path=video,
                 output_dir=root,
                 segments=[{"start": 1, "end": 2, "text": "edited", "speaker": "Oz"}],
-                subtitle_settings={"font_size": 64},
+                subtitle_settings={
+                    "font_size": 64,
+                    "outline_color": "#123456",
+                    "outline_thickness": 6,
+                },
             )
             project_path = root / "game.subtitle-project.json"
             save_project(project_path, project)
@@ -144,6 +150,8 @@ class SubtitleWorkflowTests(unittest.TestCase):
             def fake_build(payload, ass_path, **kwargs):
                 self.assertEqual(payload["segments"][0]["text"], "edited")
                 self.assertEqual(kwargs["subtitle_font_size"], 64)
+                self.assertEqual(kwargs["subtitle_outline_color"], "#123456")
+                self.assertEqual(kwargs["subtitle_outline_thickness"], 6)
                 Path(ass_path).write_text("ASS", encoding="utf-8")
                 return Path(ass_path)
 

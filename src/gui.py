@@ -1033,9 +1033,11 @@ class EditBayBackend(LegacyEditBayBackend):
             self.settingsChanged.emit()
             return
 
-        updates: dict[str, int | float] = {}
+        updates: dict[str, int | float | str] = {}
         for project_key, setting_key, converter in (
             ("font_size", "subtitle_font_size", int),
+            ("outline_color", "subtitle_outline_color", normalize_rgb_color),
+            ("outline_thickness", "subtitle_outline_thickness", int),
             ("volume_scale_percent", "subtitle_volume_scale_percent", float),
             ("max_gap_seconds", "subtitle_max_gap_seconds", float),
             ("end_padding_seconds", "subtitle_end_padding_seconds", float),
@@ -1500,6 +1502,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project["subtitle_settings"] = {
             **subtitle,
             "font_size": int(settings.get("subtitle_font_size", subtitle.get("font_size", 50))),
+            "outline_color": normalize_rgb_color(settings.get("subtitle_outline_color", subtitle.get("outline_color", "#000000"))),
+            "outline_thickness": max(0, min(20, int(settings.get("subtitle_outline_thickness", subtitle.get("outline_thickness", 3))))),
             "volume_scale_percent": float(settings.get("subtitle_volume_scale_percent", subtitle.get("volume_scale_percent", 20.0))),
             "max_gap_seconds": float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
             "end_padding_seconds": float(settings.get("subtitle_end_padding_seconds", subtitle.get("end_padding_seconds", 0.08))),

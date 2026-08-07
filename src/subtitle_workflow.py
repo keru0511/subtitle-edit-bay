@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from .audio_mixer import active_audio_mix_channels, reconcile_audio_mix, video_track_entries
+from .ass_template import (
+    DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
+)
 from .assemble_video import build_loudnorm_filter
 from .burn_subs import build_ass_filter, run_ffmpeg_burn
 from .craig_pipeline import (
@@ -145,6 +149,8 @@ def transcribe_to_project(
     postprocess_workers: int = DEFAULT_POSTPROCESS_WORKERS,
     track_color_map: dict[str, str] | None = None,
     subtitle_font_size: int = 50,
+    subtitle_outline_color: str = DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    subtitle_outline_thickness: int = DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
     subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
@@ -230,6 +236,8 @@ def transcribe_to_project(
         waveforms=waveforms,
         subtitle_settings={
             "font_size": subtitle_font_size,
+            "outline_color": subtitle_outline_color,
+            "outline_thickness": subtitle_outline_thickness,
             "volume_scale_percent": subtitle_volume_scale_percent,
             "max_gap_seconds": subtitle_max_gap_seconds,
             "end_padding_seconds": subtitle_end_padding_seconds,
@@ -273,6 +281,8 @@ def _ass_build_options(
     return {
         "track_color_map": colors,
         "subtitle_font_size": int(subtitle_font_size or settings.get("font_size", 50)),
+        "subtitle_outline_color": str(settings.get("outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)),
+        "subtitle_outline_thickness": int(settings.get("outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
         "subtitle_max_gap_seconds": float(
             settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)
         ),
@@ -503,6 +513,8 @@ def main() -> None:
             postprocess_workers=int(resolve_option(None, config, "postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)),
             track_color_map=track_colors,
             subtitle_font_size=int(resolve_option(None, config, "subtitle_font_size", 50)),
+            subtitle_outline_color=str(resolve_option(None, config, "subtitle_outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)),
+            subtitle_outline_thickness=int(resolve_option(None, config, "subtitle_outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
             subtitle_volume_scale_percent=float(resolve_option(None, config, "subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)),
             subtitle_max_gap_seconds=float(resolve_option(None, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
             subtitle_end_padding_seconds=float(resolve_option(None, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),

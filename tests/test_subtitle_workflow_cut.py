@@ -50,6 +50,8 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
                 }],
                 subtitle_settings={
                     "font_size": 72,
+                    "outline_color": "#234567",
+                    "outline_thickness": 5,
                     "max_gap_seconds": 0.2,
                     "end_padding_seconds": 0.04,
                     "min_duration_seconds": 0.3,
@@ -95,6 +97,8 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
                 render_project_video(project_path, cut_no_speech=True, audio_normalize=False)
 
             self.assertEqual(ass_kwargs["subtitle_font_size"], 72)
+            self.assertEqual(ass_kwargs["subtitle_outline_color"], "#234567")
+            self.assertEqual(ass_kwargs["subtitle_outline_thickness"], 5)
             self.assertEqual(
                 ass_kwargs["track_color_map"],
                 {"craig:alice": "#FFD966", "craig:bob": "#6FA8DC"},

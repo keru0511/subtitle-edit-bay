@@ -19,6 +19,8 @@ ApplicationWindow {
         3,
         Math.round(root.defaultSubtitleFontSize * fontSizeSpin.value / 100)
     )
+    readonly property string selectedSubtitleOutlineColor: outlineColorButton.colorValue
+    readonly property int selectedSubtitleOutlineThickness: outlineThicknessSpin.value
     property var projectSpeakerCache: root.appBackend.projectSpeakers
     property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
     property real editorPositionCache: 0
@@ -82,6 +84,18 @@ ApplicationWindow {
         }
     }
 
+    ColorDialog {
+        id: outlineColorDialog
+        objectName: "outlineColorDialog"
+        title: "字幕の縁取り色を選択"
+        onAccepted: outlineColorButton.colorValue = selectedColor.toString()
+    }
+
+    function openOutlineColorPicker() {
+        outlineColorDialog.selectedColor = outlineColorButton.colorValue
+        outlineColorDialog.open()
+    }
+
     function importSourceDrop(drop) {
         root.acceptingSourceDrop = false
         if (!drop.hasUrls)
@@ -99,6 +113,8 @@ ApplicationWindow {
             "nvenc_cq": qualitySpin.value,
             "x264_crf": qualitySpin.value,
             "subtitle_font_size": root.selectedSubtitleFontSize,
+            "subtitle_outline_color": root.selectedSubtitleOutlineColor,
+            "subtitle_outline_thickness": root.selectedSubtitleOutlineThickness,
             "subtitle_volume_scale_percent": volumeScaleSpin.value,
             "subtitle_max_gap_seconds": Number(gapField.text),
             "subtitle_end_padding_seconds": Number(paddingField.text),
@@ -119,6 +135,8 @@ ApplicationWindow {
         var value = root.appBackend.settings
         qualitySpin.value = Number(value.nvenc_cq || 18)
         fontSizeSpin.value = Math.round(Number(value.subtitle_font_size || root.defaultSubtitleFontSize) / root.defaultSubtitleFontSize * 100)
+        outlineColorButton.colorValue = String(value.subtitle_outline_color || "#000000")
+        outlineThicknessSpin.value = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
         volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
         gapField.text = Number(value.subtitle_max_gap_seconds || 0.1).toFixed(2)
         paddingField.text = Number(value.subtitle_end_padding_seconds || 0.08).toFixed(2)
@@ -341,6 +359,24 @@ ApplicationWindow {
             return Math.max(1, Math.round(22 * outputFontSize / root.defaultSubtitleFontSize))
         }
 
+        function outlineOffsets(thickness) {
+            var outputThickness = Math.max(0, Math.min(20, Math.round(Number(thickness) || 0)))
+            if (outputThickness === 0)
+                return []
+            var previewThickness = Math.max(
+                1,
+                Math.round(22 * outputThickness / root.defaultSubtitleFontSize)
+            )
+            var offsets = []
+            for (var radius = 1; radius <= previewThickness; radius++) {
+                offsets.push({"x": -radius, "y": 0}, {"x": radius, "y": 0})
+                offsets.push({"x": 0, "y": -radius}, {"x": 0, "y": radius})
+                offsets.push({"x": -radius, "y": -radius}, {"x": radius, "y": -radius})
+                offsets.push({"x": -radius, "y": radius}, {"x": radius, "y": radius})
+            }
+            return offsets
+        }
+
         function refreshActiveSegments() {
             var candidates = root.appBackend.activeSubtitleSegments(
                 overlayRoot.player ? overlayRoot.player.position / 1000 : 0
@@ -380,8 +416,26 @@ ApplicationWindow {
                 font.weight: Font.Bold
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
-                style: Text.Outline
-                styleColor: "#D0000000"
+                style: Text.Normal
+                Repeater {
+                    model: overlayRoot.outlineOffsets(root.selectedSubtitleOutlineThickness)
+                    delegate: Text {
+                        required property var modelData
+                        x: modelData.x
+                        y: modelData.y
+                        width: overlayCaption.width
+                        height: overlayCaption.height
+                        text: overlayCaption.text
+                        color: root.selectedSubtitleOutlineColor
+                        font.family: overlayCaption.font.family
+                        font.pixelSize: overlayCaption.font.pixelSize
+                        font.weight: overlayCaption.font.weight
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.Wrap
+                        z: -1
+                    }
+                }
             }
         }
     }
@@ -977,6 +1031,25 @@ ApplicationWindow {
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                         PanelTitle { text: "字幕" }
                         RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100 } Text { text: "%"; color: root.textMuted } }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "縁取り色"; color: root.textPrimary; Layout.fillWidth: true }
+                            Button {
+                                id: outlineColorButton
+                                objectName: "outlineColorButton"
+                                property string colorValue: "#000000"
+                                Layout.preferredWidth: 112
+                                Layout.preferredHeight: 32
+                                onClicked: root.openOutlineColorPicker()
+                                contentItem: Row {
+                                    spacing: 7
+                                    Rectangle { width: 20; height: 20; radius: 4; color: outlineColorButton.colorValue; border.color: root.border }
+                                    Text { text: outlineColorButton.colorValue; color: root.textPrimary; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                }
+                                background: Rectangle { radius: 6; color: root.raised; border.color: root.border }
+                            }
+                        }
+                        RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3 } Text { text: "px"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "音量サイズ比率"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
                         RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }

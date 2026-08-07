@@ -11,6 +11,8 @@
     "nvenc_cq": 18,
     "x264_crf": 18,
     "subtitle_font_size": 50,
+    "subtitle_outline_color": "#000000",
+    "subtitle_outline_thickness": 3,
     "subtitle_max_gap_seconds": 0.1,
     "subtitle_end_padding_seconds": 0.08,
     "subtitle_min_duration_seconds": 0.35

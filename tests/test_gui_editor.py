@@ -815,6 +815,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         project = load_project(path)
         project["subtitle_settings"] = {
             "font_size": 100,
+            "outline_color": "#123456",
+            "outline_thickness": 6,
             "volume_scale_percent": 35,
             "max_gap_seconds": 0.2,
             "end_padding_seconds": 0.04,
@@ -827,6 +829,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(settings_changes.count(), 1)
         self.assertEqual(self.app.settings["subtitle_font_size"], 100)
+        self.assertEqual(self.app.settings["subtitle_outline_color"], "#123456")
+        self.assertEqual(self.app.settings["subtitle_outline_thickness"], 6)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 35)
         self.assertEqual(self.app.settings["subtitle_max_gap_seconds"], 0.2)
         self.assertEqual(self.app.settings["subtitle_end_padding_seconds"], 0.04)
@@ -835,6 +839,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         _, window = self._load_qml()
         self.assertEqual(self._quick_item(window, "fontSizeSpin").property("value"), 200)
+        self.assertEqual(self._quick_item(window, "outlineColorButton").property("colorValue"), "#123456")
+        self.assertEqual(self._quick_item(window, "outlineThicknessSpin").property("value"), 6)
         self.assertEqual(self._quick_item(window, "volumeScaleSpin").property("value"), 35)
         self.assertEqual(window.property("selectedSubtitleFontSize"), 100)
         caption = self._quick_visual_item(
@@ -849,6 +855,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         settings = {
             **self.app.settings,
             "subtitle_font_size": 72,
+            "subtitle_outline_color": "#345678",
+            "subtitle_outline_thickness": 8,
             "subtitle_volume_scale_percent": 35,
             "subtitle_max_gap_seconds": 0.2,
             "subtitle_end_padding_seconds": 0.04,
@@ -860,6 +868,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         subtitle = load_project(path)["subtitle_settings"]
         self.assertEqual(subtitle["font_size"], 72)
+        self.assertEqual(subtitle["outline_color"], "#345678")
+        self.assertEqual(subtitle["outline_thickness"], 8)
         self.assertEqual(subtitle["volume_scale_percent"], 35)
         self.assertEqual(subtitle["max_gap_seconds"], 0.2)
         self.assertEqual(self.app.assPath, str(ass_path.resolve()))
@@ -1103,9 +1113,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         font_size = self._quick_item(window, "fontSizeSpin")
         self.assertEqual(font_size.property("to"), 900)
         font_size.setProperty("value", 900)
+        self._quick_item(window, "outlineColorButton").setProperty("colorValue", "#456789")
+        self._quick_item(window, "outlineThicknessSpin").setProperty("value", 9)
         self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
         self._click(window, self._quick_item(window, "saveSettingsButton"))
         self.assertEqual(self.app.settings["subtitle_font_size"], 450)
+        self.assertEqual(self.app.settings["subtitle_outline_color"], "#456789")
+        self.assertEqual(self.app.settings["subtitle_outline_thickness"], 9)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 30)
 
         self._click(window, toggle)

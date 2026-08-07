@@ -52,6 +52,8 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(loaded["nvenc_cq"], 18)
         self.assertEqual(loaded["x264_crf"], 18)
         self.assertEqual(loaded["subtitle_font_size"], 50)
+        self.assertEqual(loaded["subtitle_outline_color"], "#000000")
+        self.assertEqual(loaded["subtitle_outline_thickness"], 3)
         self.assertEqual(loaded["subtitle_volume_scale_percent"], 20.0)
 
     def test_resolve_option_prefers_cli_value(self) -> None:

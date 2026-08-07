@@ -5,7 +5,12 @@ import json
 import re
 from pathlib import Path
 
-from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE, build_ass_header
+from .ass_template import (
+    DEFAULT_SUBTITLE_FONT_SIZE,
+    DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
+    build_ass_header,
+)
 from .color_config import load_speaker_color_map, normalize_color_key
 from .models import SubtitleEvent
 from .subtitle_packer import (
@@ -173,6 +178,8 @@ def render_ass(
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_outline_color: str = DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    subtitle_outline_thickness: int = DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 ) -> str:
     events = parse_segments(
         data,
@@ -198,6 +205,8 @@ def render_ass(
         height=height,
         style_overrides=style_overrides,
         subtitle_font_size=subtitle_font_size,
+        subtitle_outline_color=subtitle_outline_color,
+        subtitle_outline_thickness=subtitle_outline_thickness,
     )]
     lines.extend(
         render_dialogue(
@@ -219,6 +228,8 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1920, help="Video width.")
     parser.add_argument("--height", type=int, default=1080, help="Video height.")
     parser.add_argument("--subtitle-font-size", type=int, default=DEFAULT_SUBTITLE_FONT_SIZE, help="Base ASS subtitle font size.")
+    parser.add_argument("--subtitle-outline-color", default=DEFAULT_SUBTITLE_OUTLINE_COLOR, help="Global subtitle outline color such as #000000.")
+    parser.add_argument("--subtitle-outline-thickness", type=int, default=DEFAULT_SUBTITLE_OUTLINE_THICKNESS, help="Global subtitle outline thickness from 0 to 20.")
     parser.add_argument("--track-color", action="append", default=[], help="Per-track subtitle color like 0:a:1=#FFFFFF.")
     args = parser.parse_args()
 
@@ -228,6 +239,8 @@ def main() -> None:
         width=args.width,
         height=args.height,
         subtitle_font_size=args.subtitle_font_size,
+        subtitle_outline_color=args.subtitle_outline_color,
+        subtitle_outline_thickness=args.subtitle_outline_thickness,
         track_color_map=parse_track_color_args(args.track_color),
     )
 

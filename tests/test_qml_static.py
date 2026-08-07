@@ -150,6 +150,18 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('property int baseFontSize: root.selectedSubtitleFontSize', qml)
         self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', qml)
 
+    def test_global_subtitle_outline_controls_are_wired_to_preview(self) -> None:
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        qml = qml_path.read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "outlineColorDialog"', qml)
+        self.assertIn('objectName: "outlineColorButton"', qml)
+        self.assertIn('objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3', qml)
+        self.assertIn('"subtitle_outline_color": root.selectedSubtitleOutlineColor', qml)
+        self.assertIn('"subtitle_outline_thickness": root.selectedSubtitleOutlineThickness', qml)
+        self.assertIn('model: overlayRoot.outlineOffsets(root.selectedSubtitleOutlineThickness)', qml)
+        self.assertIn('color: root.selectedSubtitleOutlineColor', qml)
+
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         qml = qml_path.read_text(encoding="utf-8")

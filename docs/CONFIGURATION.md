@@ -28,7 +28,7 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `*.edited.ass` | ASS生成物 | `ASSを更新` / renderで上書き可能 |
 | `*.edited.subtitled.mp4` | 完成動画 | renderで上書き可能 |
 
-プロジェクトの `subtitle_settings.font_size` は全字幕の基準値、各segmentの `subtitle_font_scale` は字幕単位の倍率です。文字起こし時は話者内の相対音量から自動設定され、エディターで変更すると `manual_font_scale=true` になります。話者単位の文字サイズ設定は使用しません。各segmentの `subtitle_font_family` には字幕単位で選択したフォント名を保存し、未指定なら既定フォントを使用します。
+プロジェクトの `subtitle_settings.font_size` は全字幕の基準値、各segmentの `subtitle_font_scale` は字幕単位の倍率です。文字起こし時は話者内の相対音量から自動設定され、エディターで変更すると `manual_font_scale=true` になります。話者単位の文字サイズ設定は使用しません。各segmentの `subtitle_font_family` には字幕単位で選択したフォント名を保存し、未指定なら既定フォントを使用します。縁取りは全字幕共通で、`outline_color` と `outline_thickness` に保存します。
 
 `audio_mix.channels` は動画内トラックと個別音声のチャンネルを保存します。各チャンネルは `enabled`、`volume_percent`（0〜200）、`muted`、`solo` を持ちます。`audio_mix.customized=false` の既存・既定プロジェクトは従来の `render_settings.output_audio_track` をそのまま使用し、ミキサーを操作すると `customized=true` になってFFmpegのaudio filter graphでAAC合成します。個別音声の時刻には `transcription.offset_seconds` を使用します。
 
@@ -48,6 +48,8 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `nvenc_cq` | `18` | NVENC固定品質。小さいほど高画質・大容量 |
 | `x264_crf` | `18` | libx264固定品質。小さいほど高画質・大容量 |
 | `subtitle_font_size` | `50` | 全話者共通の字幕基準文字サイズ。GUIでは50pxを100%として10〜900%で指定 |
+| `subtitle_outline_color` | `#000000` | 全字幕共通の縁取り色 |
+| `subtitle_outline_thickness` | `3` | 全字幕共通の縁取り太さ。0〜20px |
 | `subtitle_max_gap_seconds` | `0.1` | 単語間の無音をページ境界候補にする秒数 |
 | `subtitle_end_padding_seconds` | `0.08` | 最後の単語後に残す字幕余白 |
 | `subtitle_min_duration_seconds` | `0.35` | 極端に短い字幕の表示下限 |

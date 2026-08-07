@@ -311,6 +311,29 @@ class RenderAssTests(unittest.TestCase):
         self.assertIn(r",,{\fs72}loud", output)
         self.assertIn(r",0,0,259,,{\fs72}also loud", output)
 
+    def test_render_ass_applies_global_outline_color_and_thickness_to_all_styles(self) -> None:
+        data = {
+            "segments": [{
+                "start": 0.0,
+                "end": 1.0,
+                "speaker": "custom",
+                "source_track": "craig:custom",
+                "text": "hello",
+            }]
+        }
+
+        output = render_ass(
+            data,
+            track_color_map={"craig:custom": "#FFFFFF"},
+            subtitle_outline_color="#123456",
+            subtitle_outline_thickness=7,
+        )
+
+        style_lines = [line for line in output.splitlines() if line.startswith("Style: ")]
+        self.assertGreater(len(style_lines), 12)
+        self.assertTrue(all(line.split(",")[5] == "&H00563412" for line in style_lines))
+        self.assertTrue(all(line.split(",")[16] == "7" for line in style_lines))
+
     def test_render_ass_applies_font_family_per_caption(self) -> None:
         data = {
             "segments": [

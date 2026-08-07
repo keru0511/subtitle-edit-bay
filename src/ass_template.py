@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 DEFAULT_SUBTITLE_FONT_SIZE = 50
+DEFAULT_SUBTITLE_OUTLINE_COLOR = "#000000"
+DEFAULT_SUBTITLE_OUTLINE_THICKNESS = 3
 
 STYLE_DEFINITIONS = {
     "Oz": "Style: Oz,Arial,50,&H00FFFFFF,&H0000FFFF,&H003030FF,&H66000000,-1,0,0,0,100,100,0,0,1,3,1,2,36,36,34,1",
@@ -54,14 +56,32 @@ def apply_subtitle_font_size(style_definition: str, subtitle_font_size: int) -> 
     return ",".join(fields)
 
 
+def apply_subtitle_outline(style_definition: str, color: str, thickness: int) -> str:
+    if not 0 <= thickness <= 20:
+        raise ValueError("subtitle_outline_thickness must be between 0 and 20")
+    fields = style_definition.split(",")
+    fields[5] = normalize_ass_color(color)
+    fields[16] = str(int(thickness))
+    return ",".join(fields)
+
+
 def build_ass_header(
     width: int = 1920,
     height: int = 1080,
     style_overrides: dict[str, tuple[str, str]] | None = None,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_outline_color: str = DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    subtitle_outline_thickness: int = DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 ) -> str:
     style_definitions = list(STYLE_DEFINITIONS.values()) + build_extra_style_definitions(style_overrides)
-    styles = "\n".join(apply_subtitle_font_size(style, subtitle_font_size) for style in style_definitions)
+    styles = "\n".join(
+        apply_subtitle_outline(
+            apply_subtitle_font_size(style, subtitle_font_size),
+            subtitle_outline_color,
+            subtitle_outline_thickness,
+        )
+        for style in style_definitions
+    )
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"

@@ -152,7 +152,7 @@ $env:HF_TOKEN = [Net.NetworkCredential]::new("", $secureToken).Password
 schema_version / project_type
 video / audio_sources / speakers
 transcription        # raw transcript、同期オフセット、モデル情報
-subtitle_settings    # 基準サイズ、音量連動幅、字幕タイミング
+subtitle_settings    # 基準サイズ、共通の縁取り、音量連動幅、字幕タイミング
 segments             # 編集の正本。ID、本文、時刻、話者、手動上書き状態
 waveforms            # GUI表示用に縮約した実音声ピーク
 audio_mix            # 音声チャンネルの有効状態、音量、ミュート、ソロ

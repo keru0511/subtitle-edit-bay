@@ -66,7 +66,7 @@ def build_gui_runtime_config(
 
     for key in (
         "model", "device", "compute_type", "language", "nvenc_cq", "x264_crf",
-        "subtitle_font_size",
+        "subtitle_font_size", "subtitle_outline_color", "subtitle_outline_thickness",
         "subtitle_max_gap_seconds", "subtitle_end_padding_seconds", "subtitle_min_duration_seconds",
     ):
         if key in settings:

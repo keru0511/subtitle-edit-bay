@@ -5,7 +5,11 @@ import json
 import subprocess
 from pathlib import Path
 
-from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
+from .ass_template import (
+    DEFAULT_SUBTITLE_FONT_SIZE,
+    DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
+)
 from .merge_transcripts import write_merged_transcript
 from .render_ass import parse_track_color_args, render_ass
 from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
@@ -47,6 +51,8 @@ def build_ass_from_data(
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_outline_color: str = DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    subtitle_outline_thickness: int = DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 ) -> Path:
     ass_text = render_ass(
         data,
@@ -57,6 +63,8 @@ def build_ass_from_data(
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
         subtitle_font_size=subtitle_font_size,
+        subtitle_outline_color=subtitle_outline_color,
+        subtitle_outline_thickness=subtitle_outline_thickness,
     )
     output_path = Path(ass_output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +82,8 @@ def build_ass_from_transcript(
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_outline_color: str = DEFAULT_SUBTITLE_OUTLINE_COLOR,
+    subtitle_outline_thickness: int = DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 ) -> Path:
     data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
     return build_ass_from_data(
@@ -86,6 +96,8 @@ def build_ass_from_transcript(
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
         subtitle_font_size=subtitle_font_size,
+        subtitle_outline_color=subtitle_outline_color,
+        subtitle_outline_thickness=subtitle_outline_thickness,
     )
 
 

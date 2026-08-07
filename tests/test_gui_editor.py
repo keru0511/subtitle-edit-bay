@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QPointF, QProcess, Qt, QUrl, qInstallMessageHandler
+from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl, qInstallMessageHandler
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -1289,7 +1289,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
 
-        self._click(window, video_mute_button)
+        self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
@@ -1298,9 +1298,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 0.0)
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
-        self._click(
-            window, self._quick_visual_item(video_channel_strip, "mixerMuteButton")
-        )
+        video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
+        self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(

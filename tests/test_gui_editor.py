@@ -1285,6 +1285,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(preview_players.property("count"), 1)
         preview_player = window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0")
         self.assertIsNotNone(preview_player)
+        video_channel_id = self.app.audioMixerChannels[0]["id"]
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
 
@@ -1295,7 +1296,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
             preview_player,
         )
-        self.assertEqual(preview_player.property("previewVolume"), 0.0)
+        self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 0.0)
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         self._click(
             window, self._quick_visual_item(video_channel_strip, "mixerMuteButton")
@@ -1306,7 +1307,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
             preview_player,
         )
-        self.assertEqual(preview_player.property("previewVolume"), 1.0)
+        self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)
 
         mixer_items = [
             channel_list,

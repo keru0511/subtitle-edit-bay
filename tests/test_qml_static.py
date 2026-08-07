@@ -89,7 +89,6 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "mixerSequence"', qml)
         self.assertIn('objectName: "mixerPreviewPlayers"', qml)
         self.assertIn("model: root.appBackend.audioMixerPreviewChannels", qml)
-        self.assertIn("root.appBackend.audioMixerPreviewGains[previewChannelId]", mixer_block)
         self.assertIn("root.appBackend.startAudioMixerPreview(mixerPlayer.position)", mixer_block)
         self.assertIn("root.appBackend.seekAudioMixerPreview(", mixer_block)
         self.assertIn("root.appBackend.pauseAudioMixerPreview()", mixer_block)

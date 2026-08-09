@@ -20,9 +20,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Run only Ruff lint checks.",
     )
     parser.add_argument(
+        "--format-only",
+        action="store_true",
+        help="Run only Ruff format checks.",
+    )
+    parser.add_argument(
         "--tests-only",
         action="store_true",
         help="Run only the unittest suite.",
+    )
+    parser.add_argument(
+        "--include-format",
+        action="store_true",
+        help="Include Ruff format checks in addition to the default checks.",
+    )
+    parser.add_argument(
+        "--fix-format",
+        action="store_true",
+        help="Run Ruff format instead of Ruff format --check. Requires --include-format or --format-only.",
     )
     parser.add_argument(
         "--skip-lint",
@@ -55,13 +70,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="File pattern passed to unittest discover.",
     )
     args = parser.parse_args(argv)
-    if args.lint_only and args.tests_only:
-        parser.error("--lint-only and --tests-only cannot be used together")
-    if args.lint_only:
-        args.skip_tests = True
-    if args.tests_only:
+
+    exclusive_modes = (args.lint_only, args.format_only, args.tests_only)
+    if sum(1 for enabled in exclusive_modes if enabled) > 1:
+        parser.error("--lint-only, --format-only, and --tests-only cannot be combined")
+    if args.include_format and (args.lint_only or args.tests_only):
+        parser.error("--include-format cannot be used with --lint-only or --tests-only")
+    if args.fix_format and not (args.include_format or args.format_only):
+        parser.error("--fix-format requires --include-format or --format-only")
+
+    if args.format_only:
         args.skip_lint = True
-    if args.skip_lint and args.skip_tests:
+        args.skip_tests = True
+        args.include_format = True
+    elif args.lint_only:
+        args.skip_tests = True
+    elif args.tests_only:
+        args.skip_lint = True
+    if args.skip_lint and args.skip_tests and not args.include_format:
         parser.error("all checks are disabled")
     return args
 
@@ -74,6 +100,12 @@ def build_steps(args: argparse.Namespace) -> list[list[str]]:
         steps.append([sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"])
     if not args.skip_lint:
         steps.append([sys.executable, "-m", "ruff", "check", "."])
+    if args.include_format:
+        format_command = [sys.executable, "-m", "ruff", "format"]
+        if not args.fix_format:
+            format_command.append("--check")
+        format_command.append(".")
+        steps.append(format_command)
     if not args.skip_tests:
         steps.append([
             sys.executable,

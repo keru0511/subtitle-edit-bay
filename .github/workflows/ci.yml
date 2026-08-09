@@ -142,7 +142,7 @@ jobs:
         shell: pwsh
         run: |
           $installerPath = Join-Path $env:RUNNER_TEMP "SubtitleEditBay-Setup.exe"
-          $installDir = Join-Path $env:RUNNER_TEMP "Subtitle Edit Bay Installed"
+          $installDir = Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled"
           $logPath = Join-Path $env:RUNNER_TEMP "subtitle-edit-bay-install.log"
           $arguments = @(
               "/VERYSILENT",
@@ -175,7 +175,7 @@ jobs:
       - name: Prepare installed app environment
         shell: pwsh
         run: |
-          $installDir = Join-Path $env:RUNNER_TEMP "Subtitle Edit Bay Installed"
+          $installDir = Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled"
           $venvPython = Join-Path $installDir ".venv\Scripts\python.exe"
           python -m venv (Join-Path $installDir ".venv")
           & $venvPython -m pip install --upgrade pip
@@ -184,7 +184,7 @@ jobs:
       - name: Start installed app on Windows
         shell: pwsh
         run: |
-          $installDir = Join-Path $env:RUNNER_TEMP "Subtitle Edit Bay Installed"
+          $installDir = Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled"
           $venvPython = Join-Path $installDir ".venv\Scripts\python.exe"
           Push-Location $installDir
           try {

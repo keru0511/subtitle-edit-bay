@@ -89,11 +89,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     exclusive_modes = (args.lint_only, args.format_only, args.type_only, args.tests_only)
     if sum(1 for enabled in exclusive_modes if enabled) > 1:
-        parser.error("--lint-only, --format-only, --type-only, and --tests-only cannot be combined")
-    if args.include_format and (args.lint_only or args.type_only or args.tests_only):
-        parser.error("--include-format cannot be used with --lint-only, --type-only, or --tests-only")
-    if args.include_type_check and (args.lint_only or args.format_only or args.tests_only):
-        parser.error("--include-type-check cannot be used with --lint-only, --format-only, or --tests-only")
+        parser.error(
+            "--lint-only, --format-only, --type-only, and --tests-only cannot be combined"
+        )
+    if args.include_format and (
+        args.lint_only or args.type_only or args.tests_only
+    ):
+        parser.error(
+            "--include-format cannot be used with --lint-only, --type-only, or --tests-only"
+        )
+    if args.include_type_check and (
+        args.lint_only or args.format_only or args.tests_only
+    ):
+        parser.error(
+            "--include-type-check cannot be used with --lint-only, --format-only, or --tests-only"
+        )
     if args.fix_format and not (args.include_format or args.format_only):
         parser.error("--fix-format requires --include-format or --format-only")
 
@@ -109,7 +119,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.skip_tests = True
     elif args.tests_only:
         args.skip_lint = True
-    if args.skip_lint and args.skip_tests and not (args.include_format or args.include_type_check):
+    if args.skip_lint and args.skip_tests and not (
+        args.include_format or args.include_type_check
+    ):
         parser.error("all checks are disabled")
     return args
 
@@ -133,13 +145,15 @@ def build_steps(args: argparse.Namespace) -> list[list[str]]:
         format_command.extend(quality_targets(args))
         steps.append(format_command)
     if args.include_type_check:
-        steps.append([
-            sys.executable,
-            "-m",
-            "mypy",
-            "--ignore-missing-imports",
-            *quality_targets(args),
-        ])
+        steps.append(
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "--ignore-missing-imports",
+                *quality_targets(args),
+            ]
+        )
     if not args.skip_tests:
         steps.append(
             [

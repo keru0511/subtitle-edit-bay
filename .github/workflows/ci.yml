@@ -39,6 +39,9 @@ jobs:
       - name: Run Ruff lint
         run: python scripts/check_quality.py --lint-only
 
+      - name: Run scoped Ruff format check
+        run: python scripts/check_quality.py --format-only --paths scripts/check_quality.py
+
   windows-tests:
     name: Windows tests
     runs-on: windows-latest

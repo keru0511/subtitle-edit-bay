@@ -27,10 +27,11 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
                 "video_codec": "libx264",
                 "audio_normalize": False,
                 "alignment_offset_adjustment": 0.125,
+                "postprocess_workers": 2,
             },
         )
 
-    def test_build_gui_runtime_config_uses_typed_boundary_and_preserves_raw_workers(self) -> None:
+    def test_build_gui_runtime_config_uses_typed_boundary_for_workers(self) -> None:
         base_config = {
             "shared": {
                 "model": "large-v3",

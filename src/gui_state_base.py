@@ -69,9 +69,6 @@ def build_gui_runtime_config(
     shared.update(shared_updates)
     craig.update(craig_updates)
 
-    if "postprocess_workers" in settings:
-        craig["postprocess_workers"] = settings["postprocess_workers"]
-
     for key in SOURCE_CONFIG_KEYS:
         craig.pop(key, None)
     craig["track_color"] = [f"{speaker['track_key']}={speaker['color']}" for speaker in speakers]

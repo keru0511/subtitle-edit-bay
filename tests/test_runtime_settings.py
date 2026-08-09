@@ -7,10 +7,11 @@ from pathlib import Path
 
 from src.runtime_config import DEFAULT_RUNTIME_CONFIG, load_command_runtime_config
 from src.runtime_settings import (
+    DEFAULT_POSTPROCESS_WORKERS,
     configured_render_settings,
+    load_runtime_settings,
     render_runtime_options,
     settings_from_config,
-    load_runtime_settings,
     settings_to_flat_dict,
     transcribe_runtime_options,
 )
@@ -41,6 +42,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertTrue(settings.audio_normalize.audio_normalize)
         self.assertAlmostEqual(settings.audio_normalize.audio_target_lufs, -16.0)
         self.assertFalse(settings.silence_cut.cut_no_speech)
+        self.assertEqual(settings.pipeline.postprocess_workers, 4)
 
     def test_typed_settings_use_same_shared_command_merge_as_runtime_config(self) -> None:
         payload = {
@@ -54,12 +56,14 @@ class RuntimeSettingsTests(unittest.TestCase):
                 "video_codec": "libx264",
                 "audio_codec": "aac",
                 "audio_normalize": False,
+                "postprocess_workers": 2,
             },
             "craig_pipeline": {
                 "video_codec": "h264_nvenc",
                 "audio_codec": "copy",
                 "skip_existing_transcripts": False,
                 "alignment_offset_adjustment": 0.25,
+                "postprocess_workers": 3,
             },
         }
 
@@ -79,6 +83,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertFalse(settings.transcription.skip_existing_transcripts)
         self.assertFalse(settings.audio_normalize.audio_normalize)
         self.assertAlmostEqual(settings.alignment.alignment_offset_adjustment, 0.25)
+        self.assertEqual(settings.pipeline.postprocess_workers, 3)
 
     def test_empty_config_keeps_existing_python_fallback_defaults(self) -> None:
         settings = settings_from_config({})
@@ -91,6 +96,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertAlmostEqual(settings.subtitle_layout.subtitle_max_gap_seconds, 0.32)
         self.assertTrue(settings.audio_normalize.audio_normalize)
         self.assertFalse(settings.silence_cut.cut_no_speech)
+        self.assertEqual(settings.pipeline.postprocess_workers, DEFAULT_POSTPROCESS_WORKERS)
 
     def test_settings_flat_dict_exposes_runtime_config_keys(self) -> None:
         settings = settings_from_config(
@@ -100,6 +106,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                 "compute_type": "int8",
                 "subtitle_font_size": 42,
                 "audio_target_lufs": -18.0,
+                "postprocess_workers": 2,
             }
         )
 
@@ -110,6 +117,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(flat["compute_type"], "int8")
         self.assertEqual(flat["subtitle_font_size"], 42)
         self.assertAlmostEqual(flat["audio_target_lufs"], -18.0)
+        self.assertEqual(flat["postprocess_workers"], 2)
         self.assertIn("alignment_sample_rate", flat)
         self.assertIn("speech_threshold_db", flat)
 
@@ -122,6 +130,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                 "alignment_sample_rate": 80,
                 "alignment_offset_adjustment": 0.125,
                 "skip_existing_transcripts": False,
+                "postprocess_workers": 2,
                 "subtitle_font_size": 44,
                 "subtitle_max_gap_seconds": 0.2,
             }
@@ -135,6 +144,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(options["alignment_sample_rate"], 80)
         self.assertAlmostEqual(options["alignment_offset_adjustment"], 0.125)
         self.assertFalse(options["skip_existing_transcripts"])
+        self.assertEqual(options["postprocess_workers"], 2)
         self.assertEqual(options["subtitle_font_size"], 44)
         self.assertAlmostEqual(options["subtitle_max_gap_seconds"], 0.2)
         self.assertNotIn("video_codec", options)
@@ -199,6 +209,9 @@ class RuntimeSettingsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "width"):
             settings_from_config({"width": 1920.0})
+
+        with self.assertRaisesRegex(ValueError, "postprocess_workers"):
+            settings_from_config({"postprocess_workers": 2.5})
 
 
 if __name__ == "__main__":

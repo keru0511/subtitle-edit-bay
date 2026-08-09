@@ -14,16 +14,22 @@ Issue #2 is being handled in small compatibility-preserving steps. The first ste
   - GUI pipeline command construction
 - `src/gui_state_base.py`
   - compatibility re-exports for existing callers
+- `src/ui/Main.qml`
+  - thin QML entrypoint
+- `src/ui/screens/MainWorkflowScreen.qml`
+  - current full workflow screen implementation
 
 `gui_state_base` still re-exports the source-selection and runtime-state symbols so existing imports from `src.gui_state` and `src.gui_base` continue to work.
 
+`Main.qml` is now only an entrypoint. The current workflow screen remains behavior-compatible in `screens/MainWorkflowScreen.qml`, so later QML PRs can extract large pieces without also changing app bootstrapping.
+
 ## Next QML steps
 
-QML should be split after the Python source/runtime-state boundaries are stable. Recommended order:
+QML should be split after the Python source/runtime-state boundaries and top-level QML entrypoint are stable. Recommended order:
 
-1. Extract common visual controls from `Main.qml`.
+1. Extract common visual controls from `screens/MainWorkflowScreen.qml`.
 2. Extract subtitle overlay and timeline components.
 3. Extract editor and mixer screens.
-4. Keep `Main.qml` focused on top-level layout, screen switching, and backend injection.
+4. Keep `Main.qml` focused on backend injection and entrypoint loading.
 
 Each step should keep existing GUI behavior unchanged and rely on the Windows GUI smoke tests for regression coverage.

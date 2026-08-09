@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .runtime_config import load_command_runtime_config
 
@@ -74,6 +74,56 @@ class RuntimeSettings:
     audio_normalize: AudioNormalizeSettings
     silence_cut: SilenceCutSettings
     alignment: AlignmentSettings
+
+
+TRANSCRIBE_OPTION_KEYS = (
+    "alignment_sample_rate",
+    "alignment_offset_adjustment",
+    "model",
+    "device",
+    "compute_type",
+    "language",
+    "vad_onset",
+    "vad_offset",
+    "skip_existing_transcripts",
+    "subtitle_font_size",
+    "subtitle_volume_scale_percent",
+    "subtitle_max_gap_seconds",
+    "subtitle_end_padding_seconds",
+    "subtitle_min_duration_seconds",
+)
+
+RENDER_OPTION_KEYS = (
+    "video_codec",
+    "audio_codec",
+    "output_audio_track",
+    "nvenc_preset",
+    "nvenc_cq",
+    "x264_crf",
+    "audio_normalize",
+    "audio_target_lufs",
+    "audio_loudness_range",
+    "audio_true_peak_db",
+    "cut_no_speech",
+    "no_speech_min_seconds",
+    "speech_padding_seconds",
+    "speech_threshold_db",
+    "speech_min_clip_seconds",
+)
+
+PERSISTED_RENDER_SETTING_KEYS = (
+    "video_codec",
+    "audio_codec",
+    "output_audio_track",
+    "nvenc_preset",
+    "nvenc_cq",
+    "x264_crf",
+    "audio_normalize",
+    "audio_target_lufs",
+    "cut_no_speech",
+    "no_speech_min_seconds",
+    "speech_padding_seconds",
+)
 
 
 def _raw(config: RuntimeConfig, key: str, default: Any) -> Any:
@@ -219,3 +269,21 @@ def settings_to_flat_dict(settings: RuntimeSettings) -> dict[str, Any]:
     ):
         flattened.update(asdict(group))
     return flattened
+
+
+def select_runtime_options(settings: RuntimeSettings, keys: Sequence[str]) -> dict[str, Any]:
+    flattened = settings_to_flat_dict(settings)
+    return {key: flattened[key] for key in keys}
+
+
+def transcribe_runtime_options(settings: RuntimeSettings) -> dict[str, Any]:
+    return select_runtime_options(settings, TRANSCRIBE_OPTION_KEYS)
+
+
+def render_runtime_options(settings: RuntimeSettings) -> dict[str, Any]:
+    return select_runtime_options(settings, RENDER_OPTION_KEYS)
+
+
+def configured_render_settings(settings: RuntimeSettings, config: RuntimeConfig) -> dict[str, Any]:
+    flattened = settings_to_flat_dict(settings)
+    return {key: flattened[key] for key in PERSISTED_RENDER_SETTING_KEYS if key in config}

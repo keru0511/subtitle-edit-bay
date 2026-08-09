@@ -130,7 +130,7 @@ jobs:
         shell: pwsh
         run: |
           $installerPath = Join-Path $env:RUNNER_TEMP "SubtitleEditBay-Setup.exe"
-          & ./scripts/build_installer.ps1 -Version "0.0.0-ci" -OutputPath $installerPath
+          & ./scripts/build_installer.ps1 -Version "0.0.0" -OutputPath $installerPath
           if ($LASTEXITCODE -ne 0) {
               throw "Installer build failed with exit code $LASTEXITCODE."
           }

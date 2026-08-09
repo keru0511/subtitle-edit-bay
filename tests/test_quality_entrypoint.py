@@ -29,6 +29,33 @@ class QualityEntrypointTests(unittest.TestCase):
 
         self.assertEqual(steps, [[sys.executable, "-m", "ruff", "check", "."]])
 
+    def test_lint_only_can_be_scoped_to_explicit_paths(self) -> None:
+        quality = load_quality_module()
+
+        args = quality.parse_args(
+            [
+                "--lint-only",
+                "--paths",
+                "scripts/check_quality.py",
+                "tests/test_quality_entrypoint.py",
+            ]
+        )
+        steps = quality.build_steps(args)
+
+        self.assertEqual(
+            steps,
+            [
+                [
+                    sys.executable,
+                    "-m",
+                    "ruff",
+                    "check",
+                    "scripts/check_quality.py",
+                    "tests/test_quality_entrypoint.py",
+                ]
+            ],
+        )
+
     def test_format_only_runs_only_ruff_format_check(self) -> None:
         quality = load_quality_module()
 
@@ -36,6 +63,28 @@ class QualityEntrypointTests(unittest.TestCase):
         steps = quality.build_steps(args)
 
         self.assertEqual(steps, [[sys.executable, "-m", "ruff", "format", "--check", "."]])
+
+    def test_format_only_can_be_scoped_to_explicit_paths(self) -> None:
+        quality = load_quality_module()
+
+        args = quality.parse_args(
+            ["--format-only", "--paths", "scripts/check_quality.py"]
+        )
+        steps = quality.build_steps(args)
+
+        self.assertEqual(
+            steps,
+            [
+                [
+                    sys.executable,
+                    "-m",
+                    "ruff",
+                    "format",
+                    "--check",
+                    "scripts/check_quality.py",
+                ]
+            ],
+        )
 
     def test_format_fix_runs_ruff_format_without_check(self) -> None:
         quality = load_quality_module()
@@ -74,7 +123,9 @@ class QualityEntrypointTests(unittest.TestCase):
         steps = quality.build_steps(args)
 
         self.assertEqual(steps[0], [sys.executable, "-m", "ruff", "check", "."])
-        self.assertEqual(steps[1], [sys.executable, "-m", "ruff", "format", "--check", "."])
+        self.assertEqual(
+            steps[1], [sys.executable, "-m", "ruff", "format", "--check", "."]
+        )
         self.assertEqual(steps[2][1:4], ["-m", "unittest", "discover"])
 
     def test_install_flags_prepend_dependency_steps(self) -> None:
@@ -83,8 +134,13 @@ class QualityEntrypointTests(unittest.TestCase):
         args = quality.parse_args(["--install-runtime", "--install-dev", "--tests-only"])
         steps = quality.build_steps(args)
 
-        self.assertEqual(steps[0], [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-        self.assertEqual(steps[1], [sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"])
+        self.assertEqual(
+            steps[0], [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+        )
+        self.assertEqual(
+            steps[1],
+            [sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"],
+        )
         self.assertEqual(steps[2][1:4], ["-m", "unittest", "discover"])
 
     def test_fix_format_requires_format_mode(self) -> None:

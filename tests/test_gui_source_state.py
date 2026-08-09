@@ -43,7 +43,12 @@ class GuiSourceStateTests(unittest.TestCase):
             ignored.write_text("not audio", encoding="utf-8")
             color_config = root / "speaker_colors.json"
             color_config.write_text(
-                json.dumps({"speakers": {"alice": "#112233", "002-bob.wav": "#445566"}}),
+                json.dumps(
+                    {
+                        "speakers": {"alice": "#112233"},
+                        "files": {"002-bob.wav": "#445566"},
+                    }
+                ),
                 encoding="utf-8",
             )
 

@@ -16,17 +16,31 @@ Install development-only tooling:
 python -m pip install -r requirements-dev.txt
 ```
 
-Run the test suite:
+Run the same default quality checks as the local entrypoint:
 
 ```powershell
-python -m unittest discover -s tests -p "test_*.py" -v
+python scripts/check_quality.py
 ```
 
-Run Ruff lint checks:
+Run only Ruff lint checks:
 
 ```powershell
-python -m ruff check .
+python scripts/check_quality.py --lint-only
 ```
+
+Run only the test suite:
+
+```powershell
+python scripts/check_quality.py --tests-only
+```
+
+Install dependencies and then run checks from a fresh environment:
+
+```powershell
+python scripts/check_quality.py --install-runtime --install-dev
+```
+
+The CI Ruff job uses the same script with `--lint-only`; Windows CI keeps separate jobs for runtime-heavy smoke checks.
 
 ## Current Ruff scope
 

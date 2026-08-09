@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -7,6 +8,7 @@ from typing import Any, Mapping, Sequence
 from .runtime_config import load_command_runtime_config
 
 RuntimeConfig = Mapping[str, Any]
+DEFAULT_POSTPROCESS_WORKERS = max(1, min(4, os.cpu_count() or 1))
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,11 @@ class AlignmentSettings:
 
 
 @dataclass(frozen=True)
+class PipelineSettings:
+    postprocess_workers: int = DEFAULT_POSTPROCESS_WORKERS
+
+
+@dataclass(frozen=True)
 class RuntimeSettings:
     transcription: TranscriptionSettings
     subtitle_layout: SubtitleLayoutSettings
@@ -74,6 +81,7 @@ class RuntimeSettings:
     audio_normalize: AudioNormalizeSettings
     silence_cut: SilenceCutSettings
     alignment: AlignmentSettings
+    pipeline: PipelineSettings
 
 
 TRANSCRIBE_OPTION_KEYS = (
@@ -86,6 +94,7 @@ TRANSCRIBE_OPTION_KEYS = (
     "vad_onset",
     "vad_offset",
     "skip_existing_transcripts",
+    "postprocess_workers",
     "subtitle_font_size",
     "subtitle_volume_scale_percent",
     "subtitle_max_gap_seconds",
@@ -147,6 +156,7 @@ GUI_CRAIG_PIPELINE_SETTING_KEYS = (
     "no_speech_min_seconds",
     "speech_padding_seconds",
     "alignment_offset_adjustment",
+    "postprocess_workers",
 )
 
 
@@ -274,6 +284,9 @@ def settings_from_config(config: RuntimeConfig) -> RuntimeSettings:
                 AlignmentSettings.alignment_offset_adjustment,
             ),
         ),
+        pipeline=PipelineSettings(
+            postprocess_workers=_int(config, "postprocess_workers", PipelineSettings.postprocess_workers),
+        ),
     )
 
 
@@ -290,6 +303,7 @@ def settings_to_flat_dict(settings: RuntimeSettings) -> dict[str, Any]:
         settings.audio_normalize,
         settings.silence_cut,
         settings.alignment,
+        settings.pipeline,
     ):
         flattened.update(asdict(group))
     return flattened

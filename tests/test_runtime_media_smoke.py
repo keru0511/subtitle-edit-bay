@@ -111,7 +111,7 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
         if os.environ.get("RUN_QT_MEDIA_SMOKE") != "1":
             self.skipTest("set RUN_QT_MEDIA_SMOKE=1 to exercise Qt Multimedia playback")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             video = self._make_video(Path(temp_dir) / "playback.mp4", duration=1.2)
 
             from PySide6.QtCore import QTimer, QUrl
@@ -135,6 +135,10 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             player.play()
             app.exec()
             player.stop()
+            player.setSource(QUrl())
+            player.setVideoSink(None)
+            player.setAudioOutput(None)
+            app.processEvents()
 
             self.assertEqual(state["errors"], [])
             self.assertTrue(state["advanced"] or state["frame"])
@@ -202,6 +206,7 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             backend.updateAudioMixChannel(external_index, {"enabled": True, "volume_percent": 125.0, "solo": True})
 
             updated = backend.audioMixerChannels[external_index]
+            backend._audio_preview_cache_paths[str(updated["id"])] = str(speaker_audio)
             self.assertTrue(updated["enabled"])
             self.assertTrue(updated["solo"])
             self.assertEqual(updated["volume_percent"], 125.0)

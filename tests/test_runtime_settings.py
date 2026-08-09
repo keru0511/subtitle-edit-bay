@@ -7,9 +7,12 @@ from pathlib import Path
 
 from src.runtime_config import DEFAULT_RUNTIME_CONFIG, load_command_runtime_config
 from src.runtime_settings import (
+    configured_render_settings,
+    render_runtime_options,
     settings_from_config,
     load_runtime_settings,
     settings_to_flat_dict,
+    transcribe_runtime_options,
 )
 
 
@@ -109,6 +112,83 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertAlmostEqual(flat["audio_target_lufs"], -18.0)
         self.assertIn("alignment_sample_rate", flat)
         self.assertIn("speech_threshold_db", flat)
+
+    def test_transcribe_runtime_options_match_workflow_keyword_names(self) -> None:
+        settings = settings_from_config(
+            {
+                "model": "tiny",
+                "device": "cpu",
+                "compute_type": "int8",
+                "alignment_sample_rate": 80,
+                "alignment_offset_adjustment": 0.125,
+                "skip_existing_transcripts": False,
+                "subtitle_font_size": 44,
+                "subtitle_max_gap_seconds": 0.2,
+            }
+        )
+
+        options = transcribe_runtime_options(settings)
+
+        self.assertEqual(options["model"], "tiny")
+        self.assertEqual(options["device"], "cpu")
+        self.assertEqual(options["compute_type"], "int8")
+        self.assertEqual(options["alignment_sample_rate"], 80)
+        self.assertAlmostEqual(options["alignment_offset_adjustment"], 0.125)
+        self.assertFalse(options["skip_existing_transcripts"])
+        self.assertEqual(options["subtitle_font_size"], 44)
+        self.assertAlmostEqual(options["subtitle_max_gap_seconds"], 0.2)
+        self.assertNotIn("video_codec", options)
+        self.assertNotIn("audio_normalize", options)
+
+    def test_render_runtime_options_match_video_render_keyword_names(self) -> None:
+        settings = settings_from_config(
+            {
+                "video_codec": "h264_nvenc",
+                "audio_codec": "copy",
+                "output_audio_track": "0:a:2",
+                "nvenc_cq": 20,
+                "x264_crf": 19,
+                "audio_normalize": False,
+                "cut_no_speech": True,
+                "speech_threshold_db": "-42dB",
+            }
+        )
+
+        options = render_runtime_options(settings)
+
+        self.assertEqual(options["video_codec"], "h264_nvenc")
+        self.assertEqual(options["audio_codec"], "copy")
+        self.assertEqual(options["output_audio_track"], "0:a:2")
+        self.assertEqual(options["nvenc_cq"], 20)
+        self.assertEqual(options["x264_crf"], 19)
+        self.assertFalse(options["audio_normalize"])
+        self.assertTrue(options["cut_no_speech"])
+        self.assertEqual(options["speech_threshold_db"], "-42dB")
+        self.assertNotIn("model", options)
+        self.assertNotIn("subtitle_font_size", options)
+
+    def test_configured_render_settings_preserve_existing_only_if_configured_behavior(self) -> None:
+        config = {
+            "video_codec": "h264_nvenc",
+            "audio_codec": "copy",
+            "audio_normalize": False,
+            "speech_threshold_db": "-42dB",
+        }
+        settings = settings_from_config(config)
+
+        persisted = configured_render_settings(settings, config)
+
+        self.assertEqual(
+            persisted,
+            {
+                "video_codec": "h264_nvenc",
+                "audio_codec": "copy",
+                "audio_normalize": False,
+            },
+        )
+        self.assertNotIn("speech_threshold_db", persisted)
+        self.assertNotIn("output_audio_track", persisted)
+        self.assertNotIn("nvenc_cq", persisted)
 
     def test_invalid_types_raise_explicit_errors(self) -> None:
         with self.assertRaisesRegex(ValueError, "vad_onset"):

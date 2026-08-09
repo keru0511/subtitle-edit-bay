@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import unittest
 
-from src.gui_state_base import build_gui_runtime_config
+from src import gui_state_base
+from src.gui_runtime_state import build_gui_command, build_gui_runtime_config
 from src.runtime_settings import gui_runtime_config_updates
 
 
 class GuiRuntimeSettingsTests(unittest.TestCase):
+    def test_gui_runtime_helpers_are_reexported_for_existing_callers(self) -> None:
+        self.assertIs(gui_state_base.build_gui_runtime_config, build_gui_runtime_config)
+        self.assertIs(gui_state_base.build_gui_command, build_gui_command)
+
     def test_gui_runtime_config_updates_selects_only_typed_gui_keys(self) -> None:
         shared, craig = gui_runtime_config_updates(
             {
@@ -74,6 +79,26 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
         self.assertNotIn("unknown_setting", resolved["craig_pipeline"])
         for one_shot_key in ("video", "audio_file", "output_dir", "reference_track", "target"):
             self.assertNotIn(one_shot_key, resolved["craig_pipeline"])
+
+    def test_build_gui_command_keeps_existing_pipeline_invocation_shape(self) -> None:
+        command = build_gui_command(
+            "runtime.json",
+            video="video.mkv",
+            audio_files=("alice.flac", "bob.wav"),
+            output_dir="out",
+            reference_audio="alice.flac",
+            reference_track="0:a:1",
+            alignment_offset_adjustment=0.25,
+        )
+
+        self.assertIn("src.craig_pipeline", command)
+        self.assertEqual(command[-1], "--run")
+        self.assertIn("video.mkv", command)
+        self.assertIn("alice.flac", command)
+        self.assertIn("bob.wav", command)
+        self.assertIn("runtime.json", command)
+        self.assertIn("0:a:1", command)
+        self.assertIn("0.25", command)
 
 
 if __name__ == "__main__":

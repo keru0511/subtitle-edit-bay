@@ -1,6 +1,6 @@
 # GUI architecture split
 
-Issue #2 is being handled in small compatibility-preserving steps. The first step is to separate source-selection state from the broader GUI state helpers without changing the public imports used by the existing backend.
+Issue #2 is being handled in small compatibility-preserving steps. The first steps separate focused Python GUI helpers from the broad `gui_state_base.py` compatibility surface without changing the public imports used by the existing backend.
 
 ## Current split
 
@@ -9,16 +9,17 @@ Issue #2 is being handled in small compatibility-preserving steps. The first ste
   - one-shot source config keys
   - `SourceSelection`
   - speaker source entry generation
+- `src/gui_runtime_state.py`
+  - GUI runtime config writing
+  - GUI pipeline command construction
 - `src/gui_state_base.py`
-  - runtime config writing
-  - GUI command construction
   - compatibility re-exports for existing callers
 
-`gui_state_base` still re-exports the source-selection symbols so existing imports from `src.gui_state` and `src.gui_base` continue to work.
+`gui_state_base` still re-exports the source-selection and runtime-state symbols so existing imports from `src.gui_state` and `src.gui_base` continue to work.
 
 ## Next QML steps
 
-QML should be split after the Python source-state boundary is stable. Recommended order:
+QML should be split after the Python source/runtime-state boundaries are stable. Recommended order:
 
 1. Extract common visual controls from `Main.qml`.
 2. Extract subtitle overlay and timeline components.

@@ -125,6 +125,30 @@ PERSISTED_RENDER_SETTING_KEYS = (
     "speech_padding_seconds",
 )
 
+GUI_SHARED_SETTING_KEYS = (
+    "model",
+    "device",
+    "compute_type",
+    "language",
+    "nvenc_cq",
+    "x264_crf",
+    "subtitle_font_size",
+    "subtitle_max_gap_seconds",
+    "subtitle_end_padding_seconds",
+    "subtitle_min_duration_seconds",
+)
+
+GUI_CRAIG_PIPELINE_SETTING_KEYS = (
+    "video_codec",
+    "audio_normalize",
+    "audio_target_lufs",
+    "cut_no_speech",
+    "subtitle_volume_scale_percent",
+    "no_speech_min_seconds",
+    "speech_padding_seconds",
+    "alignment_offset_adjustment",
+)
+
 
 def _raw(config: RuntimeConfig, key: str, default: Any) -> Any:
     if key in config:
@@ -287,3 +311,10 @@ def render_runtime_options(settings: RuntimeSettings) -> dict[str, Any]:
 def configured_render_settings(settings: RuntimeSettings, config: RuntimeConfig) -> dict[str, Any]:
     flattened = settings_to_flat_dict(settings)
     return {key: flattened[key] for key in PERSISTED_RENDER_SETTING_KEYS if key in config}
+
+
+def gui_runtime_config_updates(settings: RuntimeConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+    return (
+        {key: settings[key] for key in GUI_SHARED_SETTING_KEYS if key in settings},
+        {key: settings[key] for key in GUI_CRAIG_PIPELINE_SETTING_KEYS if key in settings},
+    )

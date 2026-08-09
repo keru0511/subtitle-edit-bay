@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .color_config import load_speaker_color_map
+from .runtime_settings import gui_runtime_config_updates
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".aac", ".flac", ".wav", ".m4a"}
@@ -64,22 +65,12 @@ def build_gui_runtime_config(
     shared = payload.setdefault("shared", {})
     craig = payload.setdefault("craig_pipeline", {})
 
-    for key in (
-        "model", "device", "compute_type", "language", "nvenc_cq", "x264_crf",
-        "subtitle_font_size",
-        "subtitle_max_gap_seconds", "subtitle_end_padding_seconds", "subtitle_min_duration_seconds",
-    ):
-        if key in settings:
-            shared[key] = settings[key]
+    shared_updates, craig_updates = gui_runtime_config_updates(settings)
+    shared.update(shared_updates)
+    craig.update(craig_updates)
 
-    for key in (
-        "video_codec", "audio_normalize", "audio_target_lufs", "cut_no_speech",
-        "subtitle_volume_scale_percent",
-        "no_speech_min_seconds", "speech_padding_seconds", "postprocess_workers",
-        "alignment_offset_adjustment",
-    ):
-        if key in settings:
-            craig[key] = settings[key]
+    if "postprocess_workers" in settings:
+        craig["postprocess_workers"] = settings["postprocess_workers"]
 
     for key in SOURCE_CONFIG_KEYS:
         craig.pop(key, None)

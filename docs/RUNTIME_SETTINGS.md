@@ -1,6 +1,6 @@
 # Typed runtime settings
 
-Issue #3 is being introduced in stages. The first stage added typed settings models and tests without changing the runtime execution path. The next stage added option adapters that match existing workflow function keyword names.
+Issue #3 is being introduced in stages. The first stage added typed settings models and tests without changing the runtime execution path. Later stages added option adapters that match existing workflow function keyword names and migrated `subtitle_workflow.main()` to those adapters.
 
 ## Current scope
 
@@ -10,6 +10,8 @@ Issue #3 is being introduced in stages. The first stage added typed settings mod
 2. command-specific values such as `craig_pipeline`
 
 The typed models are now used by `subtitle_workflow.main()` for the transcribe and render phases. The ASS phase still avoids resolving typed settings because it does not need runtime config values.
+
+GUI runtime config generation now uses the same runtime settings boundary for the typed keys it persists. GUI-only or not-yet-typed values remain explicit raw handling until they receive typed models.
 
 ## Settings groups
 
@@ -34,8 +36,12 @@ The first adapters are:
   - returns the typed settings that map to `subtitle_workflow.render_project_video` keyword arguments
 - `configured_render_settings(settings, config)`
   - preserves the existing behavior where only explicitly configured render keys are written into project metadata
+- `gui_runtime_config_updates(settings)`
+  - returns the shared and `craig_pipeline` updates that the GUI should write for typed runtime settings
 
 `subtitle_workflow.main()` applies CLI-only overrides after reading the typed settings. This keeps explicit command-line values higher priority than `runtime_config.json` values.
+
+`build_gui_runtime_config()` applies GUI-selected values through `gui_runtime_config_updates()`, then keeps `postprocess_workers` as an explicit raw value because it is not typed yet.
 
 ## Migration policy
 

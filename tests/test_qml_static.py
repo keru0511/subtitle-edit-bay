@@ -11,6 +11,13 @@ from pathlib import Path
 UI_ROOT = Path(__file__).resolve().parents[1] / "src" / "ui"
 ENTRYPOINT_QML = UI_ROOT / "Main.qml"
 WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
+COMPONENTS_ROOT = UI_ROOT / "components"
+SHARED_CONTROL_QML_FILES = (
+    COMPONENTS_ROOT / "PanelTitle.qml",
+    COMPONENTS_ROOT / "SmallButton.qml",
+    COMPONENTS_ROOT / "CompactSpinBox.qml",
+    COMPONENTS_ROOT / "TimeField.qml",
+)
 
 
 def read_entrypoint_qml() -> str:
@@ -21,14 +28,18 @@ def read_workflow_qml() -> str:
     return WORKFLOW_QML.read_text(encoding="utf-8")
 
 
+def read_component_qml(name: str) -> str:
+    return (COMPONENTS_ROOT / name).read_text(encoding="utf-8")
+
+
 class QmlStaticTests(unittest.TestCase):
-    def test_main_qml_passes_qmllint_without_warnings(self) -> None:
+    def test_qml_files_pass_qmllint_without_warnings(self) -> None:
         executable_name = "pyside6-qmllint.exe" if os.name == "nt" else "pyside6-qmllint"
         bundled = Path(sys.executable).with_name(executable_name)
         executable = str(bundled) if bundled.is_file() else shutil.which(executable_name)
         self.assertTrue(executable, "pyside6-qmllint is required with PySide6")
 
-        for qml_path in (ENTRYPOINT_QML, WORKFLOW_QML):
+        for qml_path in (ENTRYPOINT_QML, WORKFLOW_QML, *SHARED_CONTROL_QML_FILES):
             with self.subTest(qml_path=qml_path):
                 result = subprocess.run(
                     [str(executable), str(qml_path)],
@@ -49,6 +60,19 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('import "screens"', qml)
         self.assertIn("MainWorkflowScreen {}", qml)
         self.assertNotIn("ApplicationWindow", qml)
+
+    def test_shared_controls_are_available_as_standalone_components(self) -> None:
+        for qml_path in SHARED_CONTROL_QML_FILES:
+            with self.subTest(qml_path=qml_path):
+                self.assertTrue(qml_path.is_file())
+
+        self.assertIn("Text {", read_component_qml("PanelTitle.qml"))
+        self.assertIn("Button {", read_component_qml("SmallButton.qml"))
+        self.assertIn("SpinBox {", read_component_qml("CompactSpinBox.qml"))
+        self.assertIn("TextField {", read_component_qml("TimeField.qml"))
+        self.assertIn('font.family: "Yu Gothic UI"', read_component_qml("PanelTitle.qml"))
+        self.assertIn('font.family: "Cascadia Mono"', read_component_qml("CompactSpinBox.qml"))
+        self.assertIn("DoubleValidator", read_component_qml("TimeField.qml"))
 
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
         qml = read_workflow_qml()

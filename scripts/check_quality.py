@@ -25,6 +25,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Run only Ruff format checks.",
     )
     parser.add_argument(
+        "--type-only",
+        action="store_true",
+        help="Run only mypy type checks.",
+    )
+    parser.add_argument(
         "--tests-only",
         action="store_true",
         help="Run only the unittest suite.",
@@ -33,6 +38,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--include-format",
         action="store_true",
         help="Include Ruff format checks in addition to the default checks.",
+    )
+    parser.add_argument(
+        "--include-type-check",
+        action="store_true",
+        help="Include mypy type checks in addition to the default checks.",
     )
     parser.add_argument(
         "--fix-format",
@@ -73,15 +83,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--paths",
         nargs="+",
         metavar="PATH",
-        help="Limit Ruff lint or format checks to specific files or directories.",
+        help="Limit Ruff or mypy checks to specific files or directories.",
     )
     args = parser.parse_args(argv)
 
-    exclusive_modes = (args.lint_only, args.format_only, args.tests_only)
+    exclusive_modes = (args.lint_only, args.format_only, args.type_only, args.tests_only)
     if sum(1 for enabled in exclusive_modes if enabled) > 1:
-        parser.error("--lint-only, --format-only, and --tests-only cannot be combined")
-    if args.include_format and (args.lint_only or args.tests_only):
-        parser.error("--include-format cannot be used with --lint-only or --tests-only")
+        parser.error("--lint-only, --format-only, --type-only, and --tests-only cannot be combined")
+    if args.include_format and (args.lint_only or args.type_only or args.tests_only):
+        parser.error("--include-format cannot be used with --lint-only, --type-only, or --tests-only")
+    if args.include_type_check and (args.lint_only or args.format_only or args.tests_only):
+        parser.error("--include-type-check cannot be used with --lint-only, --format-only, or --tests-only")
     if args.fix_format and not (args.include_format or args.format_only):
         parser.error("--fix-format requires --include-format or --format-only")
 
@@ -89,16 +101,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.skip_lint = True
         args.skip_tests = True
         args.include_format = True
+    elif args.type_only:
+        args.skip_lint = True
+        args.skip_tests = True
+        args.include_type_check = True
     elif args.lint_only:
         args.skip_tests = True
     elif args.tests_only:
         args.skip_lint = True
-    if args.skip_lint and args.skip_tests and not args.include_format:
+    if args.skip_lint and args.skip_tests and not (args.include_format or args.include_type_check):
         parser.error("all checks are disabled")
     return args
 
 
-def ruff_targets(args: argparse.Namespace) -> list[str]:
+def quality_targets(args: argparse.Namespace) -> list[str]:
     return list(args.paths or ["."])
 
 
@@ -109,13 +125,23 @@ def build_steps(args: argparse.Namespace) -> list[list[str]]:
     if args.install_dev:
         steps.append([sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"])
     if not args.skip_lint:
-        steps.append([sys.executable, "-m", "ruff", "check", *ruff_targets(args)])
+        steps.append([sys.executable, "-m", "ruff", "check", *quality_targets(args)])
     if args.include_format:
         format_command = [sys.executable, "-m", "ruff", "format"]
         if not args.fix_format:
             format_command.append("--check")
-        format_command.extend(ruff_targets(args))
+        format_command.extend(quality_targets(args))
         steps.append(format_command)
+    if args.include_type_check:
+        steps.append(
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "--ignore-missing-imports",
+                *quality_targets(args),
+            ]
+        )
     if not args.skip_tests:
         steps.append(
             [

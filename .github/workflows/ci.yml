@@ -18,6 +18,9 @@ jobs:
     env:
       PYTHONUTF8: "1"
       QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
@@ -44,6 +47,34 @@ jobs:
         run: |
           python -c "from src.runtime_dependencies import check_runtime_dependencies; print(check_runtime_dependencies().to_dict())"
           python -c "import src.gui_state; import src.gui_state_base; import src.subtitle_project; import src.subtitle_packer"
+
+      - name: Start GUI on Windows
+        shell: pwsh
+        run: |
+          @'
+          import sys
+          from pathlib import Path
+
+          from PySide6.QtCore import QTimer, QUrl
+          from PySide6.QtQml import QQmlApplicationEngine
+
+          from src.gui import APP_TITLE, EditBayBackend
+
+          app = EditBayBackend(["subtitle-edit-bay-gui-smoke"])
+          app.setApplicationName(APP_TITLE)
+
+          engine = QQmlApplicationEngine()
+          engine.rootContext().setContextProperty("backend", app)
+          qml_path = Path("src/ui/Main.qml").resolve()
+          engine.load(QUrl.fromLocalFile(str(qml_path)))
+          if not engine.rootObjects():
+              raise SystemExit(f"Could not load GUI: {qml_path}")
+
+          QTimer.singleShot(500, app.quit)
+          exit_code = app.exec()
+          if exit_code != 0:
+              raise SystemExit(exit_code)
+          '@ | python -
 
       - name: Run unit tests on Windows
         shell: pwsh

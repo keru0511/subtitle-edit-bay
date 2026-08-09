@@ -28,6 +28,12 @@ Run only Ruff lint checks:
 python scripts/check_quality.py --lint-only
 ```
 
+Run Ruff lint checks for selected files or directories:
+
+```powershell
+python scripts/check_quality.py --lint-only --paths src tests
+```
+
 Run only the test suite:
 
 ```powershell
@@ -38,6 +44,12 @@ Run only Ruff format checks:
 
 ```powershell
 python scripts/check_quality.py --format-only
+```
+
+Run Ruff format checks for selected files or directories:
+
+```powershell
+python scripts/check_quality.py --format-only --paths scripts/check_quality.py
 ```
 
 Run lint, format check, and tests together:
@@ -58,7 +70,7 @@ Install dependencies and then run checks from a fresh environment:
 python scripts/check_quality.py --install-runtime --install-dev
 ```
 
-The CI Ruff job uses the same script with `--lint-only`; Windows CI keeps separate jobs for runtime-heavy smoke checks.
+The CI Ruff job uses the same script with `--lint-only` and also runs a scoped format check against `scripts/check_quality.py`. Windows CI keeps separate jobs for runtime-heavy smoke checks.
 
 ## Current Ruff scope
 
@@ -68,7 +80,7 @@ Ruff is currently configured to catch broken Python only:
 - undefined names
 - severe Pyflakes control-flow errors
 
-Ruff format is available through the shared quality entrypoint, but formatting is not enforced by the regular CI job yet. Format enforcement should be enabled in a separate formatting-only pull request to avoid mixing behavior work with large formatting diffs.
+Ruff format is available through the shared quality entrypoint. CI currently enforces a scoped format check for the quality entrypoint itself, but repository-wide formatting is not enforced yet. Repository-wide format enforcement should be enabled in a separate formatting-only pull request to avoid mixing behavior work with large formatting diffs.
 
 Import sorting, broad style rules, and type checking are not enforced yet. They should be enabled in separate follow-up changes after the existing hot spots are cleaned up.
 

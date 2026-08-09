@@ -69,6 +69,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="test_*.py",
         help="File pattern passed to unittest discover.",
     )
+    parser.add_argument(
+        "--paths",
+        nargs="+",
+        metavar="PATH",
+        help="Limit Ruff lint or format checks to specific files or directories.",
+    )
     args = parser.parse_args(argv)
 
     exclusive_modes = (args.lint_only, args.format_only, args.tests_only)
@@ -92,6 +98,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def ruff_targets(args: argparse.Namespace) -> list[str]:
+    return list(args.paths or ["."])
+
+
 def build_steps(args: argparse.Namespace) -> list[list[str]]:
     steps: list[list[str]] = []
     if args.install_runtime:
@@ -99,25 +109,27 @@ def build_steps(args: argparse.Namespace) -> list[list[str]]:
     if args.install_dev:
         steps.append([sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"])
     if not args.skip_lint:
-        steps.append([sys.executable, "-m", "ruff", "check", "."])
+        steps.append([sys.executable, "-m", "ruff", "check", *ruff_targets(args)])
     if args.include_format:
         format_command = [sys.executable, "-m", "ruff", "format"]
         if not args.fix_format:
             format_command.append("--check")
-        format_command.append(".")
+        format_command.extend(ruff_targets(args))
         steps.append(format_command)
     if not args.skip_tests:
-        steps.append([
-            sys.executable,
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            str(args.test_dir),
-            "-p",
-            str(args.test_pattern),
-            "-v",
-        ])
+        steps.append(
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                str(args.test_dir),
+                "-p",
+                str(args.test_pattern),
+                "-v",
+            ]
+        )
     return steps
 
 

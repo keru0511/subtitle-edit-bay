@@ -1,6 +1,6 @@
 # Typed runtime settings
 
-Issue #3 is being introduced in stages. This first stage adds typed settings models and tests without changing the runtime execution path.
+Issue #3 is being introduced in stages. The first stage added typed settings models and tests without changing the runtime execution path. The next stage adds read-only option adapters that match existing workflow function keyword names.
 
 ## Current scope
 
@@ -9,11 +9,11 @@ Issue #3 is being introduced in stages. This first stage adds typed settings mod
 1. `shared` values from `assets/runtime_config.json`
 2. command-specific values such as `craig_pipeline`
 
-The typed models are currently an inspection and validation boundary. Existing GUI and CLI command construction still use the existing runtime config helpers.
+The typed models are an inspection and validation boundary. The option adapters are still read-only and do not change GUI or CLI behavior by themselves.
 
 ## Settings groups
 
-The first typed groups are:
+The typed groups are:
 
 - `TranscriptionSettings`
 - `SubtitleLayoutSettings`
@@ -24,9 +24,22 @@ The first typed groups are:
 
 These groups make default drift easier to detect before behavior code is migrated.
 
+## Option adapters
+
+The first read-only adapters are:
+
+- `transcribe_runtime_options(settings)`
+  - returns the typed settings that map to `subtitle_workflow.transcribe_to_project` keyword arguments
+- `render_runtime_options(settings)`
+  - returns the typed settings that map to `subtitle_workflow.render_project_video` keyword arguments
+- `configured_render_settings(settings, config)`
+  - preserves the existing behavior where only explicitly configured render keys are written into project metadata
+
+These adapters are intentionally separate from the GUI and CLI call sites. They allow the next migration PR to replace one caller without re-deciding key names or defaults.
+
 ## Migration policy
 
-Do not replace existing call sites in the same pull request that introduces the models. The safe order is:
+Do not replace many existing call sites in the same pull request that changes the settings model. The safe order is:
 
 1. Add typed models and tests.
 2. Add read-only adapters for existing config files.

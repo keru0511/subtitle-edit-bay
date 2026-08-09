@@ -46,8 +46,15 @@ from .craig_pipeline import (
 from .merge_transcripts import refine_segments
 from .pipeline import build_ass_from_data
 from .render_ass import parse_track_color_args
-from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
+from .runtime_config import load_command_runtime_config, resolve_list_option
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
+from .runtime_settings import (
+    RuntimeSettings,
+    configured_render_settings,
+    render_runtime_options,
+    settings_from_config,
+    transcribe_runtime_options,
+)
 from .silence_cut import (
     build_no_speech_plan,
     cut_media_ranges,
@@ -273,15 +280,9 @@ def _ass_build_options(
     return {
         "track_color_map": colors,
         "subtitle_font_size": int(subtitle_font_size or settings.get("font_size", 50)),
-        "subtitle_max_gap_seconds": float(
-            settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)
-        ),
-        "subtitle_end_padding_seconds": float(
-            settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)
-        ),
-        "subtitle_min_duration_seconds": float(
-            settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)
-        ),
+        "subtitle_max_gap_seconds": float(settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
+        "subtitle_end_padding_seconds": float(settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),
+        "subtitle_min_duration_seconds": float(settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)),
     }
 
 
@@ -434,6 +435,20 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", help="Runtime JSON config path.")
 
 
+def _transcribe_options_with_cli_overrides(
+    settings: RuntimeSettings,
+    *,
+    alignment_offset_adjustment: float | None,
+    skip_existing_transcripts: bool | None,
+) -> dict[str, Any]:
+    options = transcribe_runtime_options(settings)
+    if alignment_offset_adjustment is not None:
+        options["alignment_offset_adjustment"] = alignment_offset_adjustment
+    if skip_existing_transcripts is not None:
+        options["skip_existing_transcripts"] = skip_existing_transcripts
+    return options
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Editable subtitle project workflow.")
     subparsers = parser.add_subparsers(dest="phase", required=True)
@@ -469,7 +484,13 @@ def main() -> None:
         if not args.run:
             print(derive_project_path(args.video, args.output_dir))
             return
-        device = resolve_option(None, config, "device", DEFAULT_DEVICE)
+        settings = settings_from_config(config)
+        transcribe_options = _transcribe_options_with_cli_overrides(
+            settings,
+            alignment_offset_adjustment=args.alignment_offset_adjustment,
+            skip_existing_transcripts=args.skip_existing_transcripts,
+        )
+        device = str(transcribe_options["device"])
         dependency_error = format_dependency_error(
             check_runtime_dependencies(),
             require_whisperx=True,
@@ -478,37 +499,21 @@ def main() -> None:
         if dependency_error:
             raise SystemExit(dependency_error)
         track_colors = parse_track_color_args(resolve_list_option(None, config, "track_color", []))
-        render_settings = {
-            key: config[key]
-            for key in (
-                "video_codec", "audio_codec", "output_audio_track", "nvenc_preset", "nvenc_cq", "x264_crf",
-                "audio_normalize", "audio_target_lufs", "cut_no_speech", "no_speech_min_seconds", "speech_padding_seconds",
-            )
-            if key in config
-        }
+        transcribe_options.update(
+            {
+                "postprocess_workers": int(config.get("postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)),
+                "track_color_map": track_colors,
+                "render_settings": configured_render_settings(settings, config),
+                "overwrite_project": args.overwrite_project,
+            }
+        )
         result = transcribe_to_project(
             video_path=args.video,
             audio_files=args.audio_file,
             output_dir=args.output_dir,
             reference_audio=args.reference_audio,
             reference_track=args.reference_track,
-            alignment_offset_adjustment=float(resolve_option(args.alignment_offset_adjustment, config, "alignment_offset_adjustment", 0.0)),
-            model=resolve_option(None, config, "model", DEFAULT_MODEL),
-            device=device,
-            compute_type=resolve_option(None, config, "compute_type", DEFAULT_COMPUTE_TYPE),
-            language=resolve_option(None, config, "language", DEFAULT_LANGUAGE),
-            vad_onset=float(resolve_option(None, config, "vad_onset", DEFAULT_VAD_ONSET)),
-            vad_offset=float(resolve_option(None, config, "vad_offset", DEFAULT_VAD_OFFSET)),
-            skip_existing_transcripts=resolve_bool_option(args.skip_existing_transcripts, config, "skip_existing_transcripts", True),
-            postprocess_workers=int(resolve_option(None, config, "postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)),
-            track_color_map=track_colors,
-            subtitle_font_size=int(resolve_option(None, config, "subtitle_font_size", 50)),
-            subtitle_volume_scale_percent=float(resolve_option(None, config, "subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)),
-            subtitle_max_gap_seconds=float(resolve_option(None, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
-            subtitle_end_padding_seconds=float(resolve_option(None, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),
-            subtitle_min_duration_seconds=float(resolve_option(None, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)),
-            render_settings=render_settings,
-            overwrite_project=args.overwrite_project,
+            **transcribe_options,
         )
         print(f"project_path: {result}")
         return
@@ -521,28 +526,13 @@ def main() -> None:
     if not args.run:
         print(Path(args.output) if args.output else derive_render_path(args.project))
         return
+    settings = settings_from_config(config)
     dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=False)
     if dependency_error:
         raise SystemExit(dependency_error)
-    result = render_project_video(
-        args.project,
-        args.output,
-        video_codec=resolve_option(None, config, "video_codec", "libx264"),
-        audio_codec=resolve_option(None, config, "audio_codec", "copy"),
-        output_audio_track=resolve_option(None, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK),
-        nvenc_preset=resolve_option(None, config, "nvenc_preset", "p5"),
-        nvenc_cq=int(resolve_option(None, config, "nvenc_cq", DEFAULT_NVENC_CQ)),
-        x264_crf=int(resolve_option(None, config, "x264_crf", DEFAULT_X264_CRF)),
-        audio_normalize=resolve_bool_option(None, config, "audio_normalize", DEFAULT_AUDIO_NORMALIZE),
-        audio_target_lufs=float(resolve_option(None, config, "audio_target_lufs", DEFAULT_AUDIO_TARGET_LUFS)),
-        audio_loudness_range=float(resolve_option(None, config, "audio_loudness_range", DEFAULT_AUDIO_LOUDNESS_RANGE)),
-        audio_true_peak_db=float(resolve_option(None, config, "audio_true_peak_db", DEFAULT_AUDIO_TRUE_PEAK_DB)),
-        cut_no_speech=resolve_bool_option(None, config, "cut_no_speech", False),
-        no_speech_min_seconds=float(resolve_option(None, config, "no_speech_min_seconds", DEFAULT_NO_SPEECH_MIN_SECONDS)),
-        speech_padding_seconds=float(resolve_option(None, config, "speech_padding_seconds", DEFAULT_SPEECH_PADDING_SECONDS)),
-        speech_threshold_db=normalize_db_threshold(resolve_option(None, config, "speech_threshold_db", DEFAULT_SPEECH_THRESHOLD_DB)),
-        speech_min_clip_seconds=float(resolve_option(None, config, "speech_min_clip_seconds", DEFAULT_SPEECH_MIN_CLIP_SECONDS)),
-    )
+    render_options = render_runtime_options(settings)
+    render_options["speech_threshold_db"] = normalize_db_threshold(render_options["speech_threshold_db"])
+    result = render_project_video(args.project, args.output, **render_options)
     print(f"final_video: {result}")
 
 

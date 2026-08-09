@@ -1,6 +1,6 @@
 # Typed runtime settings
 
-Issue #3 is being introduced in stages. The first stage added typed settings models and tests without changing the runtime execution path. The next stage adds read-only option adapters that match existing workflow function keyword names.
+Issue #3 is being introduced in stages. The first stage added typed settings models and tests without changing the runtime execution path. The next stage added option adapters that match existing workflow function keyword names.
 
 ## Current scope
 
@@ -9,7 +9,7 @@ Issue #3 is being introduced in stages. The first stage added typed settings mod
 1. `shared` values from `assets/runtime_config.json`
 2. command-specific values such as `craig_pipeline`
 
-The typed models are an inspection and validation boundary. The option adapters are still read-only and do not change GUI or CLI behavior by themselves.
+The typed models are now used by `subtitle_workflow.main()` for the transcribe and render phases. The ASS phase still avoids resolving typed settings because it does not need runtime config values.
 
 ## Settings groups
 
@@ -26,7 +26,7 @@ These groups make default drift easier to detect before behavior code is migrate
 
 ## Option adapters
 
-The first read-only adapters are:
+The first adapters are:
 
 - `transcribe_runtime_options(settings)`
   - returns the typed settings that map to `subtitle_workflow.transcribe_to_project` keyword arguments
@@ -35,7 +35,7 @@ The first read-only adapters are:
 - `configured_render_settings(settings, config)`
   - preserves the existing behavior where only explicitly configured render keys are written into project metadata
 
-These adapters are intentionally separate from the GUI and CLI call sites. They allow the next migration PR to replace one caller without re-deciding key names or defaults.
+`subtitle_workflow.main()` applies CLI-only overrides after reading the typed settings. This keeps explicit command-line values higher priority than `runtime_config.json` values.
 
 ## Migration policy
 

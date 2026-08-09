@@ -144,10 +144,17 @@ jobs:
           $installerPath = Join-Path $env:RUNNER_TEMP "SubtitleEditBay-Setup.exe"
           $installDir = Join-Path $env:RUNNER_TEMP "Subtitle Edit Bay Installed"
           $logPath = Join-Path $env:RUNNER_TEMP "subtitle-edit-bay-install.log"
-          & $installerPath /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$installDir" /LOG="$logPath"
-          if ($LASTEXITCODE -ne 0) {
+          $arguments = @(
+              "/VERYSILENT",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART",
+              "/DIR=$installDir",
+              "/LOG=$logPath"
+          )
+          $process = Start-Process -FilePath $installerPath -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
               Get-Content -LiteralPath $logPath -ErrorAction SilentlyContinue
-              throw "Installer exited with code $LASTEXITCODE."
+              throw "Installer exited with code $($process.ExitCode)."
           }
           foreach ($path in @(
               "src\gui.py",

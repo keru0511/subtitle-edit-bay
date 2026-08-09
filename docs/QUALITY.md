@@ -52,6 +52,24 @@ Run Ruff format checks for selected files or directories:
 python scripts/check_quality.py --format-only --paths scripts/check_quality.py
 ```
 
+Run only mypy type checks:
+
+```powershell
+python scripts/check_quality.py --type-only
+```
+
+Run mypy type checks for selected files or directories:
+
+```powershell
+python scripts/check_quality.py --type-only --paths scripts/check_quality.py
+```
+
+Run lint, type check, and tests together for selected files or directories:
+
+```powershell
+python scripts/check_quality.py --include-type-check --paths scripts/check_quality.py
+```
+
 Run lint, format check, and tests together:
 
 ```powershell
@@ -70,7 +88,7 @@ Install dependencies and then run checks from a fresh environment:
 python scripts/check_quality.py --install-runtime --install-dev
 ```
 
-The CI Ruff job uses the same script with `--lint-only` and also runs a scoped format check against `scripts/check_quality.py`. Windows CI keeps separate jobs for runtime-heavy smoke checks.
+The CI Python quality job uses the same script with `--lint-only`, runs a scoped format check against `scripts/check_quality.py`, and runs a scoped mypy check against `scripts/check_quality.py`. Windows CI keeps separate jobs for runtime-heavy smoke checks.
 
 ## Current Ruff scope
 
@@ -82,7 +100,11 @@ Ruff is currently configured to catch broken Python only:
 
 Ruff format is available through the shared quality entrypoint. CI currently enforces a scoped format check for the quality entrypoint itself, but repository-wide formatting is not enforced yet. Repository-wide format enforcement should be enabled in a separate formatting-only pull request to avoid mixing behavior work with large formatting diffs.
 
-Import sorting, broad style rules, and type checking are not enforced yet. They should be enabled in separate follow-up changes after the existing hot spots are cleaned up.
+## Current type-check scope
+
+mypy is available through the shared quality entrypoint. CI currently enforces a scoped mypy check for `scripts/check_quality.py` only. Repository-wide type checking is not enforced yet because the broader codebase still needs typed settings and domain model boundaries.
+
+Import sorting and broad style rules are not enforced yet. They should be enabled in separate follow-up changes after the existing hot spots are cleaned up.
 
 ## Heavier Windows checks
 

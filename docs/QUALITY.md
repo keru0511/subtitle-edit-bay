@@ -34,6 +34,24 @@ Run only the test suite:
 python scripts/check_quality.py --tests-only
 ```
 
+Run only Ruff format checks:
+
+```powershell
+python scripts/check_quality.py --format-only
+```
+
+Run lint, format check, and tests together:
+
+```powershell
+python scripts/check_quality.py --include-format
+```
+
+Apply Ruff formatting locally:
+
+```powershell
+python scripts/check_quality.py --format-only --fix-format
+```
+
 Install dependencies and then run checks from a fresh environment:
 
 ```powershell
@@ -50,7 +68,9 @@ Ruff is currently configured to catch broken Python only:
 - undefined names
 - severe Pyflakes control-flow errors
 
-Formatting, import sorting, broad style rules, and type checking are not enforced yet. They should be enabled in separate follow-up changes to avoid mixing behavior work with large formatting diffs.
+Ruff format is available through the shared quality entrypoint, but formatting is not enforced by the regular CI job yet. Format enforcement should be enabled in a separate formatting-only pull request to avoid mixing behavior work with large formatting diffs.
+
+Import sorting, broad style rules, and type checking are not enforced yet. They should be enabled in separate follow-up changes after the existing hot spots are cleaned up.
 
 ## Heavier Windows checks
 

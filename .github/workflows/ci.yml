@@ -189,6 +189,9 @@ jobs:
           $smokeScript = Join-Path $env:RUNNER_TEMP "installed-gui-smoke.py"
           @'
           from pathlib import Path
+          import sys
+
+          sys.path.insert(0, str(Path.cwd()))
 
           from PySide6.QtCore import QTimer, QUrl
           from PySide6.QtQml import QQmlApplicationEngine

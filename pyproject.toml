@@ -1,0 +1,28 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = [
+  ".venv",
+  ".local",
+  ".gui",
+  "video_import",
+  "video_export",
+  "out",
+  "dist",
+  "build",
+]
+
+[tool.ruff.lint]
+# Start with rules that catch broken Python without forcing a large style-only rewrite.
+# Broader style/import/format enforcement should be enabled in follow-up PRs.
+select = [
+  "E9",   # syntax errors
+  "F63",  # invalid print/raise-style checks from Pyflakes
+  "F7",   # logic errors in comprehensions/control flow
+  "F82",  # undefined names
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

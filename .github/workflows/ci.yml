@@ -37,7 +37,7 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Run Ruff lint
-        run: python -m ruff check .
+        run: python scripts/check_quality.py --lint-only
 
   windows-tests:
     name: Windows tests

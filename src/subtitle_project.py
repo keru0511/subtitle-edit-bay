@@ -12,6 +12,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from .audio_mixer import reconcile_audio_mix
+from .transcription_context import TranscriptionContextError, normalize_transcription_context
 
 
 PROJECT_SCHEMA_VERSION = 1
@@ -182,6 +183,10 @@ def validate_project(project: dict[str, Any]) -> dict[str, Any]:
     project.setdefault("subtitle_settings", {})
     project.setdefault("render_settings", {})
     project.setdefault("transcription", {})
+    try:
+        project["transcription_context"] = normalize_transcription_context(project.get("transcription_context"))
+    except TranscriptionContextError as error:
+        raise SubtitleProjectError(str(error)) from error
     reconcile_audio_mix(project)
     project.setdefault("created_at", utc_timestamp())
     project.setdefault("updated_at", project["created_at"])
@@ -199,6 +204,7 @@ def create_project(
     subtitle_settings: dict[str, Any] | None = None,
     render_settings: dict[str, Any] | None = None,
     transcription: dict[str, Any] | None = None,
+    transcription_context: dict[str, Any] | None = None,
     audio_mix: dict[str, Any] | None = None,
     duration_seconds: float | None = None,
 ) -> dict[str, Any]:
@@ -219,6 +225,7 @@ def create_project(
         "subtitle_settings": deepcopy(subtitle_settings or {}),
         "render_settings": deepcopy(render_settings or {}),
         "transcription": deepcopy(transcription or {}),
+        "transcription_context": deepcopy(transcription_context or {}),
         "audio_mix": deepcopy(audio_mix or {}),
         "segments": [deepcopy(segment) for segment in segments],
     }

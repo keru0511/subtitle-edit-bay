@@ -6,7 +6,7 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from PySide6.QtCore import Property, QProcess, QProcessEnvironment, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
@@ -28,6 +28,8 @@ from .gui_state import (
     build_gui_command,
     build_gui_runtime_config,
     build_speaker_entries_from_files,
+    gui_state_to_transcription_context,
+    gui_transcription_context_state_from_config,
     write_gui_runtime_config,
 )
 from .runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
@@ -46,6 +48,7 @@ class EditBayBackend(QApplication):
     alignmentComputed = Signal(object)
     alignmentFailed = Signal(str)
     settingsChanged = Signal()
+    transcriptionContextChanged = Signal()
     runningChanged = Signal()
     statusChanged = Signal()
     progressChanged = Signal()
@@ -69,6 +72,7 @@ class EditBayBackend(QApplication):
         self._alignment_result = self._empty_alignment_result()
         self._alignment_busy = False
         self._settings = self._settings_from_config(self._config)
+        self._transcription_context = gui_transcription_context_state_from_config(self._config)
         self._running = False
         self._status = "動画・話者音声・出力先を指定してください"
         self._stage = "READY"
@@ -114,6 +118,15 @@ class EditBayBackend(QApplication):
         raw_value = str(value)
         url = value if isinstance(value, QUrl) else QUrl(raw_value)
         return Path(url.toLocalFile()) if url.isLocalFile() else Path(raw_value)
+
+    @staticmethod
+    def _normalized_gui_transcription_context(
+        context: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        runtime_context = gui_state_to_transcription_context(context)
+        return gui_transcription_context_state_from_config(
+            {"craig_pipeline": {"transcription_context": runtime_context}}
+        )
 
     def _settings_from_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         shared = payload.get("shared", {})
@@ -167,6 +180,10 @@ class EditBayBackend(QApplication):
     @Property("QVariantMap", notify=settingsChanged)
     def settings(self) -> dict[str, Any]:
         return dict(self._settings)
+
+    @Property("QVariantMap", notify=transcriptionContextChanged)
+    def transcriptionContext(self) -> dict[str, Any]:
+        return dict(self._transcription_context)
 
     @Property(bool, notify=runningChanged)
     def running(self) -> bool:
@@ -517,12 +534,46 @@ class EditBayBackend(QApplication):
         self._set_status(f"同期解析に失敗しました: {message}", "ERROR")
 
     @Slot("QVariantMap")
+    def setTranscriptionContext(self, context: dict[str, Any]) -> None:
+        if self._running:
+            self._set_status("処理中は文字起こし辞書設定を変更できません", "BUSY")
+            return
+        try:
+            self._transcription_context = self._normalized_gui_transcription_context(context)
+        except (TypeError, ValueError) as error:
+            self._set_status(f"文字起こし辞書設定を更新できません: {error}", "ERROR")
+            return
+        self.transcriptionContextChanged.emit()
+        self._set_status("文字起こし辞書設定を更新しました", "SAVED")
+
+    @Slot("QVariantMap")
     def saveSettings(self, settings: dict[str, Any]) -> None:
         persistent_settings = dict(settings)
+        incoming_context = persistent_settings.pop("transcription_context", None)
+        if incoming_context is not None:
+            try:
+                self._transcription_context = self._normalized_gui_transcription_context(
+                    incoming_context
+                )
+            except (TypeError, ValueError) as error:
+                self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
+                return
+            self.transcriptionContextChanged.emit()
+
         for key in SOURCE_CONFIG_KEYS:
             persistent_settings.pop(key, None)
         self._settings.update(persistent_settings)
-        payload = build_gui_runtime_config(self._base_config, self._settings, self._speakers)
+        try:
+            transcription_context = gui_state_to_transcription_context(self._transcription_context)
+        except (TypeError, ValueError) as error:
+            self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
+            return
+        payload = build_gui_runtime_config(
+            self._base_config,
+            self._settings,
+            self._speakers,
+            transcription_context=transcription_context,
+        )
         write_gui_runtime_config(self.gui_config_path, payload)
         self._config = payload
         self.settingsChanged.emit()

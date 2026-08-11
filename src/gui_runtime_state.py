@@ -3,16 +3,18 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .gui_source_state import SOURCE_CONFIG_KEYS
 from .runtime_settings import gui_runtime_config_updates
+from .transcription_context import normalize_transcription_context
 
 
 def build_gui_runtime_config(
     base_config: dict[str, Any],
     settings: dict[str, Any],
     speakers: list[dict[str, str]],
+    transcription_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = json.loads(json.dumps(base_config))
     shared = payload.setdefault("shared", {})
@@ -21,6 +23,9 @@ def build_gui_runtime_config(
     shared_updates, craig_updates = gui_runtime_config_updates(settings)
     shared.update(shared_updates)
     craig.update(craig_updates)
+
+    if transcription_context is not None:
+        craig["transcription_context"] = normalize_transcription_context(transcription_context)
 
     for key in SOURCE_CONFIG_KEYS:
         craig.pop(key, None)

@@ -80,6 +80,47 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
         for one_shot_key in ("video", "audio_file", "output_dir", "reference_track", "target"):
             self.assertNotIn(one_shot_key, resolved["craig_pipeline"])
 
+    def test_build_gui_runtime_config_writes_normalized_transcription_context(self) -> None:
+        resolved = build_gui_runtime_config(
+            {"shared": {}, "craig_pipeline": {}},
+            {},
+            [],
+            transcription_context={
+                "game_title": "  Splatoon 3  ",
+                "game_notes": "  ranked session  ",
+                "creator_terms": ["ナワバリバトル", "", "ナワバリバトル", "スプラシューター"],
+                "dictionary_path": "  dictionaries/splatoon.json  ",
+                "dictionary_confirmed": True,
+                "web_dictionary_enabled": False,
+            },
+        )
+
+        self.assertEqual(
+            resolved["craig_pipeline"]["transcription_context"],
+            {
+                "game_title": "Splatoon 3",
+                "game_notes": "ranked session",
+                "creator_terms": ["ナワバリバトル", "スプラシューター"],
+                "dictionary_path": "dictionaries/splatoon.json",
+                "dictionary_confirmed": True,
+                "web_dictionary_enabled": False,
+            },
+        )
+
+    def test_build_gui_runtime_config_preserves_existing_context_when_not_supplied(self) -> None:
+        resolved = build_gui_runtime_config(
+            {
+                "shared": {},
+                "craig_pipeline": {
+                    "transcription_context": {"game_title": "Existing"},
+                },
+            },
+            {},
+            [],
+        )
+
+        self.assertEqual(resolved["craig_pipeline"]["transcription_context"], {"game_title": "Existing"})
+
     def test_build_gui_command_keeps_existing_pipeline_invocation_shape(self) -> None:
         command = build_gui_command(
             "runtime.json",

@@ -5,6 +5,7 @@ from unittest.mock import patch
 from src.craig_transcription_execution import (
     CraigTranscriptionHint,
     resolve_craig_transcription_hint,
+    transcribe_craig_audio_batch_with_cache,
     transcribe_craig_audio_file_with_cache,
 )
 from src.transcription_execution import TranscriptionExecutionResult
@@ -91,6 +92,54 @@ class CraigTranscriptionExecutionTests(unittest.TestCase):
         self.assertEqual(kwargs["hotwords"], ())
         self.assertIsNone(kwargs["cache_fingerprint"])
         self.assertIsNone(kwargs["cache_settings"])
+
+    def test_batch_preserves_transcript_map_and_result_order(self) -> None:
+        audio_files = [Path("1-alice.flac"), Path("2-bob.flac")]
+        first = TranscriptionExecutionResult(transcript_path=Path("transcripts/1-alice.json"), cache_hit=True)
+        second = TranscriptionExecutionResult(transcript_path=Path("transcripts/2-bob.json"), cache_hit=False)
+
+        with patch(
+            "src.craig_transcription_execution.transcribe_audio_with_cache",
+            side_effect=[first, second],
+        ):
+            batch = transcribe_craig_audio_batch_with_cache(
+                audio_files,
+                "transcripts",
+            )
+
+        self.assertEqual(
+            batch.transcript_map,
+            {
+                str(audio_files[0].resolve()): str(first.transcript_path.resolve()),
+                str(audio_files[1].resolve()): str(second.transcript_path.resolve()),
+            },
+        )
+        self.assertEqual([result.audio_path for result in batch.results], audio_files)
+        self.assertEqual([result.cache_hit for result in batch.results], [True, False])
+
+    def test_batch_resolves_per_file_and_default_hints(self) -> None:
+        audio_files = [Path("1-alice.flac"), Path("2-bob.flac")]
+        alice_hint = CraigTranscriptionHint(initial_prompt="Alice prompt", cache_fingerprint="alice")
+        default_hint = CraigTranscriptionHint(initial_prompt="Default prompt", cache_fingerprint="default")
+        first = TranscriptionExecutionResult(transcript_path=Path("transcripts/1-alice.json"), cache_hit=False)
+        second = TranscriptionExecutionResult(transcript_path=Path("transcripts/2-bob.json"), cache_hit=False)
+
+        with patch(
+            "src.craig_transcription_execution.transcribe_audio_with_cache",
+            side_effect=[first, second],
+        ) as transcribe:
+            transcribe_craig_audio_batch_with_cache(
+                audio_files,
+                "transcripts",
+                hints_by_audio={"1-alice.flac": alice_hint},
+                default_hint=default_hint,
+            )
+
+        calls = transcribe.call_args_list
+        self.assertEqual(calls[0].kwargs["initial_prompt"], "Alice prompt")
+        self.assertEqual(calls[0].kwargs["cache_fingerprint"], "alice")
+        self.assertEqual(calls[1].kwargs["initial_prompt"], "Default prompt")
+        self.assertEqual(calls[1].kwargs["cache_fingerprint"], "default")
 
 
 if __name__ == "__main__":

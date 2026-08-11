@@ -17,6 +17,24 @@ class CraigTranscriptionHint:
     cache_settings: Mapping[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class CraigTranscriptionFileResult:
+    """Cache-aware transcription result for one Craig speaker audio file."""
+
+    audio_path: Path
+    transcript_path: Path
+    cache_hit: bool
+    cache_metadata_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class CraigTranscriptionBatchExecution:
+    """Cache-aware transcription results for a batch of Craig speaker audio files."""
+
+    transcript_map: dict[str, str]
+    results: tuple[CraigTranscriptionFileResult, ...]
+
+
 def resolve_craig_transcription_hint(
     audio_path: str | Path,
     hints_by_audio: Mapping[str, CraigTranscriptionHint] | None = None,
@@ -73,4 +91,63 @@ def transcribe_craig_audio_file_with_cache(
         skip_existing=skip_existing_transcripts,
         cache_fingerprint=resolved_hint.cache_fingerprint,
         cache_settings=resolved_hint.cache_settings,
+    )
+
+
+def transcribe_craig_audio_batch_with_cache(
+    audio_files: Sequence[str | Path],
+    transcript_dir: str | Path,
+    *,
+    model: str = "large-v3",
+    device: str = "cpu",
+    compute_type: str = "int8",
+    language: str | None = "ja",
+    vad_onset: float | None = 0.35,
+    vad_offset: float | None = 0.2,
+    skip_existing_transcripts: bool = True,
+    hints_by_audio: Mapping[str, CraigTranscriptionHint] | None = None,
+    default_hint: CraigTranscriptionHint | None = None,
+) -> CraigTranscriptionBatchExecution:
+    """Run cache-aware transcription for an ordered batch of Craig audio files.
+
+    The returned ``transcript_map`` preserves the historical Craig pipeline shape:
+    absolute audio paths map to absolute transcript JSON paths. The explicit
+    per-file ``results`` tuple lets the pipeline log cache hits without repeating
+    fingerprint validation logic.
+    """
+    transcript_map: dict[str, str] = {}
+    results: list[CraigTranscriptionFileResult] = []
+
+    for audio_file in audio_files:
+        audio_path = Path(audio_file)
+        hint = resolve_craig_transcription_hint(
+            audio_path,
+            hints_by_audio,
+            default_hint=default_hint,
+        )
+        result = transcribe_craig_audio_file_with_cache(
+            audio_path,
+            transcript_dir,
+            model=model,
+            device=device,
+            compute_type=compute_type,
+            language=language,
+            vad_onset=vad_onset,
+            vad_offset=vad_offset,
+            skip_existing_transcripts=skip_existing_transcripts,
+            hint=hint,
+        )
+        transcript_map[str(audio_path.resolve())] = str(result.transcript_path.resolve())
+        results.append(
+            CraigTranscriptionFileResult(
+                audio_path=audio_path,
+                transcript_path=result.transcript_path,
+                cache_hit=result.cache_hit,
+                cache_metadata_path=result.cache_metadata_path,
+            )
+        )
+
+    return CraigTranscriptionBatchExecution(
+        transcript_map=transcript_map,
+        results=tuple(results),
     )

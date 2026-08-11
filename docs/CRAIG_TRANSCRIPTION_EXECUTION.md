@@ -8,7 +8,7 @@ This document describes the Craig-specific adapter added for Issue #1.
 
 `src/craig_transcription_execution.py` provides that boundary.
 
-## Current adapter
+## File adapter
 
 `CraigTranscriptionHint` contains optional data for one Craig speaker audio file:
 
@@ -25,6 +25,17 @@ CraigTranscriptionHint(
 
 When no hint is supplied, the adapter passes no fingerprint and therefore preserves legacy path-exists cache reuse.
 
+## Batch adapter
+
+`transcribe_craig_audio_batch_with_cache()` runs the same adapter for an ordered batch of Craig speaker audio files.
+
+It returns:
+
+- `transcript_map`, preserving the existing Craig pipeline shape of absolute audio path to absolute transcript JSON path;
+- ordered per-file results with `cache_hit` and optional metadata sidecar path.
+
+This lets the main Craig pipeline switch from direct `transcribe_audio_file()` calls to a cache-aware batch call without duplicating hint resolution or fingerprint validation logic.
+
 ## Hint lookup
 
 `resolve_craig_transcription_hint()` can resolve hints by:
@@ -33,10 +44,10 @@ When no hint is supplied, the adapter passes no fingerprint and therefore preser
 - absolute path string
 - file name
 
-This lets the pipeline build hints either globally or per selected Craig audio file.
+If a per-file mapping does not match, callers may pass a `default_hint`, which is useful when all Craig speaker tracks should share one game-level prompt/hotword/fingerprint plan.
 
 ## Next step
 
-The next PR should replace `craig_pipeline.transcribe_audio_file()` internals with this adapter while keeping its existing public function signature compatible. It can then add optional keyword-only hint/fingerprint inputs to `transcribe_craig_audio_files()`.
+The next PR should replace the transcription loop inside `craig_pipeline.transcribe_craig_audio_files()` with `transcribe_craig_audio_batch_with_cache()`, then keep the CPU subtitle segment post-processing exactly where it is.
 
 That PR should still keep default behavior unchanged when no hint/fingerprint is supplied.

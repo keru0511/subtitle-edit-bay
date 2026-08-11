@@ -73,7 +73,9 @@ from .subtitle_project import (
     project_to_transcript,
     save_project,
 )
+from .subtitle_workflow_transcription import transcribe_to_project_with_context
 from .transcribe import probe_audio_streams
+from .transcription_context_config import transcription_context_from_runtime_config
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 
 
@@ -462,6 +464,7 @@ def main() -> None:
     transcribe.add_argument("--reference-track")
     transcribe.add_argument("--alignment-offset-adjustment", type=float, default=None)
     transcribe.add_argument("--skip-existing-transcripts", action=argparse.BooleanOptionalAction, default=None)
+    transcribe.add_argument("--transcription-context-file", help="Path to a transcription context JSON file.")
     transcribe.add_argument("--overwrite-project", action="store_true", help="Explicitly replace an existing editable project.")
     transcribe.add_argument("--run", action="store_true")
 
@@ -499,6 +502,12 @@ def main() -> None:
         if dependency_error:
             raise SystemExit(dependency_error)
         track_colors = parse_track_color_args(resolve_list_option(None, config, "track_color", []))
+        context_base_dir = Path(args.config).resolve().parent if args.config else Path.cwd()
+        transcription_context = transcription_context_from_runtime_config(
+            config,
+            cli_context_file=args.transcription_context_file,
+            base_dir=context_base_dir,
+        )
         transcribe_options.update(
             {
                 "postprocess_workers": int(config.get("postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)),
@@ -507,12 +516,13 @@ def main() -> None:
                 "overwrite_project": args.overwrite_project,
             }
         )
-        result = transcribe_to_project(
+        result = transcribe_to_project_with_context(
             video_path=args.video,
             audio_files=args.audio_file,
             output_dir=args.output_dir,
             reference_audio=args.reference_audio,
             reference_track=args.reference_track,
+            transcription_context=transcription_context,
             **transcribe_options,
         )
         print(f"project_path: {result}")

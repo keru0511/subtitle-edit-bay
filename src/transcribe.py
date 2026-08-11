@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Sequence
+
 
 def probe_audio_streams(input_path: str) -> list[dict[str, object]]:
     command = [
@@ -49,6 +51,28 @@ def validate_hf_token(diarize: bool) -> None:
         raise SystemExit("Diarization requires the HF_TOKEN environment variable. Omit --diarize when it is not needed.")
 
 
+def _normalized_hotwords(hotwords: Sequence[str] | str | None) -> list[str]:
+    if hotwords is None:
+        return []
+    if isinstance(hotwords, str):
+        candidates: Sequence[str] = [hotwords]
+    else:
+        candidates = hotwords
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        word = "".join(char for char in str(value).strip() if char >= " " and char != "\x7f")
+        if not word:
+            continue
+        key = word.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(word)
+    return normalized
+
+
 def build_whisperx_command(
     audio_path: str,
     output_dir: str,
@@ -61,6 +85,8 @@ def build_whisperx_command(
     language: str | None = "ja",
     vad_onset: float | None = None,
     vad_offset: float | None = None,
+    initial_prompt: str | None = None,
+    hotwords: Sequence[str] | str | None = None,
 ) -> list[str]:
     validate_hf_token(diarize)
     command = [
@@ -85,6 +111,12 @@ def build_whisperx_command(
         command.extend(["--vad_onset", str(vad_onset)])
     if vad_offset is not None:
         command.extend(["--vad_offset", str(vad_offset)])
+    cleaned_prompt = "".join(char for char in str(initial_prompt or "").strip() if char >= " " and char != "\x7f")
+    if cleaned_prompt:
+        command.extend(["--initial_prompt", cleaned_prompt])
+    cleaned_hotwords = _normalized_hotwords(hotwords)
+    if cleaned_hotwords:
+        command.extend(["--hotwords", ", ".join(cleaned_hotwords)])
     if diarize:
         command.append("--diarize")
         if min_speakers is not None:
@@ -184,6 +216,13 @@ def main() -> None:
     run_parser.add_argument("--language", default="ja", help="Language code passed to WhisperX.")
     run_parser.add_argument("--vad-onset", type=float, default=0.35, help="VAD onset threshold passed to WhisperX.")
     run_parser.add_argument("--vad-offset", type=float, default=0.2, help="VAD offset threshold passed to WhisperX.")
+    run_parser.add_argument("--initial-prompt", default="", help="Optional context prompt passed to WhisperX.")
+    run_parser.add_argument(
+        "--hotword",
+        action="append",
+        default=[],
+        help="Optional WhisperX hotword. May be provided multiple times.",
+    )
     run_parser.add_argument("--run", action="store_true", help="Execute instead of printing.")
 
     args = parser.parse_args()
@@ -217,6 +256,8 @@ def main() -> None:
         language=args.language,
         vad_onset=args.vad_onset,
         vad_offset=args.vad_offset,
+        initial_prompt=args.initial_prompt,
+        hotwords=args.hotword,
     )
     log_path = expected_log_path(str(extracted_audio), str(output_dir))
 

@@ -9,3 +9,8 @@ from .gui_source_state import (
     SourceSelection,
     build_speaker_entries_from_files,
 )
+from .gui_transcription_context_state import (
+    GuiTranscriptionContextState,
+    gui_state_to_transcription_context,
+    gui_transcription_context_state_from_config,
+)

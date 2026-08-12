@@ -58,7 +58,7 @@ MainWorkflowScreen {
         textMutedColor: screenRoot.textMuted
         accentColor: screenRoot.acid
         onLineCountChanged: function(segmentIndex, lineCount) {
-            screenRoot.appBackend.updateSegment(segmentIndex, {"subtitle_line_count": lineCount})
+            screenRoot.appBackend.updateSegmentLineCount(segmentIndex, lineCount)
         }
     }
 }

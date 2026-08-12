@@ -17,23 +17,24 @@ _RULE_BINDINGS: Final = (
     "CLAUSE_BREAK_TOKENS",
     "LEADING_BOUNDARY_PENALTIES",
 )
-_TOKENIZER_BINDINGS: Final = (
+_TOKENIZER_FACTORY_BINDINGS: Final = (
     "create_budoux_parser",
     "create_janome_tokenizer",
-    "require_japanese_layout_tools",
 )
 
 
 def apply_layout_modules() -> None:
-    """Bind the legacy packer to the extracted rules and tokenizer helpers.
+    """Bind the legacy packer to the extracted rules and tokenizer factories.
 
     The public functions still live in ``subtitle_packer`` during this migration,
     but global lookups inside those functions should resolve through the extracted
-    layout boundary before the scoring/rules split continues.
+    layout boundary before the scoring/rules split continues. The legacy
+    ``require_japanese_layout_tools`` wrapper intentionally remains in place so
+    existing tests and callers can still patch ``src.subtitle_packer.create_*``.
     """
     for name in _RULE_BINDINGS:
         setattr(legacy_packer, name, getattr(rules, name))
-    for name in _TOKENIZER_BINDINGS:
+    for name in _TOKENIZER_FACTORY_BINDINGS:
         setattr(legacy_packer, name, getattr(tokenize, name))
 
 

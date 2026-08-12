@@ -89,6 +89,17 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('"subtitle_font_family": currentValue', qml)
         self.assertIn('font.family: segmentData.subtitle_font_family || "Yu Gothic UI"', qml)
 
+    def test_caption_editor_supports_manual_breaks_and_live_formatted_preview(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn('objectName: "captionTextArea"', qml)
+        self.assertIn("wrapMode: TextEdit.Wrap", qml)
+        self.assertIn("text: captionRow.editorText", qml)
+        self.assertIn("root.updateSubtitleDraft(captionRow.index, text)", qml)
+        self.assertIn("root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)", qml)
+        self.assertIn("text: root.subtitlePreviewText(segmentData)", qml)
+        self.assertNotIn('onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"text": text})', qml)
+
     def test_timeline_delegate_and_position_handlers_are_safe_during_refresh(self) -> None:
         qml = read_workflow_qml()
 
@@ -121,6 +132,17 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "sourcePopupDropTarget"', qml)
         self.assertIn("root.appBackend.importDroppedSourceFiles(drop.urls)", qml)
         self.assertIn("drop.acceptProposedAction()", qml)
+
+    def test_transcription_dictionary_opens_as_dedicated_screen(self) -> None:
+        qml = read_workflow_qml()
+        wrapper = read_workflow_wrapper_qml()
+
+        self.assertIn('objectName: "transcriptionDictionaryOpenButton"', qml)
+        self.assertIn("onClicked: root.openDictionaryScreen()", qml)
+        self.assertIn("property bool dictionaryMode: false", qml)
+        self.assertIn("!root.editorMode && !root.mixerMode && !root.dictionaryMode", qml)
+        self.assertIn('objectName: "transcriptionDictionaryPage"', wrapper)
+        self.assertIn("visible: screenRoot.dictionaryMode", wrapper)
 
     def test_audio_mixer_is_wired_to_project_channels(self) -> None:
         qml = read_workflow_qml()

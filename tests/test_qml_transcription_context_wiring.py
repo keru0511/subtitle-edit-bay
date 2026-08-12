@@ -25,12 +25,15 @@ class QmlTranscriptionContextWiringTests(unittest.TestCase):
         self.assertIn("running: screenRoot.appBackend.running", content)
         self.assertIn("screenRoot.appBackend.setTranscriptionContext(context)", content)
 
-    def test_wrapper_hides_panel_in_editor_and_project_modes(self) -> None:
+    def test_wrapper_hosts_context_panel_on_dedicated_page(self) -> None:
         content = WRAPPER_QML.read_text(encoding="utf-8")
 
-        self.assertIn("!screenRoot.editorMode", content)
-        self.assertIn("!screenRoot.mixerMode", content)
-        self.assertIn("!screenRoot.appBackend.projectLoaded", content)
+        self.assertIn('objectName: "transcriptionDictionaryPage"', content)
+        self.assertIn("visible: screenRoot.dictionaryMode", content)
+        self.assertIn('objectName: "transcriptionDictionarySaveButton"', content)
+        self.assertIn('objectName: "transcriptionDictionaryBackButton"', content)
+        self.assertIn("screenRoot.appBackend.saveSettings(screenRoot.currentSettings())", content)
+        self.assertNotIn("anchors.topMargin: 76", content)
 
 
 if __name__ == "__main__":

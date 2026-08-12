@@ -58,6 +58,7 @@ from .subtitle_project import (
     normalize_segment,
     save_project,
 )
+from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 
 
@@ -84,6 +85,7 @@ class SubtitleListModel(QAbstractListModel):
     LayoutRowRole = SegmentIdRole + 5
     FontScaleRole = SegmentIdRole + 6
     FontFamilyRole = SegmentIdRole + 7
+    EditorTextRole = SegmentIdRole + 8
 
     _ROLE_NAMES = {
         SegmentIdRole: b"segmentId",
@@ -94,6 +96,7 @@ class SubtitleListModel(QAbstractListModel):
         LayoutRowRole: b"layoutRow",
         FontFamilyRole: b"subtitleFontFamily",
         FontScaleRole: b"subtitleFontScale",
+        EditorTextRole: b"editorText",
     }
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -118,6 +121,8 @@ class SubtitleListModel(QAbstractListModel):
             return float(segment["end"])
         if role == self.TextRole:
             return str(segment.get("text", ""))
+        if role == self.EditorTextRole:
+            return segment_editor_text(segment)
         if role == self.SpeakerRole:
             return str(segment.get("speaker", ""))
         if role == self.LayoutRowRole:
@@ -351,6 +356,7 @@ class EditBayBackend(LegacyEditBayBackend):
             "start": float(segment["start"]),
             "end": float(segment["end"]),
             "text": str(segment.get("text", "")),
+            "preview_text": segment_preview_text(segment),
             "speaker": str(segment.get("speaker", "")),
             "layout_row": int(segment.get("layout_row", 0)),
             "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),
@@ -366,6 +372,14 @@ class EditBayBackend(LegacyEditBayBackend):
         if not 0 <= index < len(segments):
             return {}
         return self._segment_view(segments[index], index)
+
+    @Slot(int, str, result=str)
+    def formatSubtitlePreview(self, index: int, text: str) -> str:
+        segments = self._project.get("segments", []) if self._project else []
+        if not 0 <= index < len(segments):
+            return str(text)
+        draft = {**segments[index], "text": str(text)}
+        return segment_preview_text(draft)
 
     @Slot(float, result="QVariantList")
     def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:

@@ -519,6 +519,34 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(segment["manual_font_family"])
         self.assertNotIn("words", segment)
 
+    def test_multiline_text_is_saved_and_preview_uses_formatted_newlines(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "multiline",
+                    "start": 0,
+                    "end": 3,
+                    "text": "alpha beta gamma",
+                    "speaker": "Speaker_Alice",
+                    "max_width": 8,
+                }
+            ]
+        )
+
+        automatic = self.app.activeSubtitleSegments(1.0)[0]
+        self.assertIn("\n", automatic["preview_text"])
+        self.assertEqual(
+            self.app.formatSubtitlePreview(0, "manual first\nmanual second"),
+            "manual first\nmanual second",
+        )
+
+        self.app.updateSegment(0, {"text": "manual first\nmanual second"})
+        saved = self.app.subtitleSegments[0]
+        preview = self.app.activeSubtitleSegments(1.0)[0]
+        self.assertEqual(saved["text"], "manual first\nmanual second")
+        self.assertEqual(preview["preview_text"], "manual first\nmanual second")
+        self.assertTrue(saved["manual_text"])
+
     def test_invalid_numeric_edits_preserve_segment_and_report_check(self) -> None:
         self._load_project()
         original = deepcopy(self.app.subtitleSegments[0])
@@ -713,6 +741,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(model.rowCount(), 2)
         first_index = model.index(0, 0)
         self.assertEqual(model.data(first_index, model.TextRole), "first")
+        self.assertEqual(model.data(first_index, model.EditorTextRole), "first")
 
         active = self.app.activeSubtitleSegments(1.0)
         visible = self.app.visibleSubtitleSegments(3.5, 5.5)
@@ -1097,6 +1126,38 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.assertEqual(editor_caption.property("font").pixelSize(), 66)
 
+    def test_qml_multiline_editor_live_previews_and_saves_manual_break(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "alpha beta gamma",
+                    "speaker": "Speaker_Alice",
+                    "max_width": 8,
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+
+        caption = self._quick_visual_item(
+            window.contentItem(),
+            "editorSubtitleOverlayCaption-0",
+        )
+        self.assertIn("\n", caption.property("text"))
+
+        text_area = self._quick_visual_item(window.contentItem(), "captionTextArea")
+        self.assertIn("\n", text_area.property("text"))
+        text_area.forceActiveFocus()
+        text_area.setProperty("text", "manual first\nmanual second")
+        self.app.processEvents()
+        self.assertEqual(caption.property("text"), "manual first\nmanual second")
+
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
+
     def test_qml_settings_round_trip_and_expanded_layout_fit(self) -> None:
         _, window = self._load_qml()
         self._load_project()
@@ -1343,6 +1404,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 0.0)
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
+
         self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
@@ -1413,6 +1475,28 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "editorBackButton"))
         self.assertTrue(main.isVisible())
         self.assertFalse(editor.isVisible())
+
+    def test_qml_transcription_dictionary_uses_dedicated_screen_and_saves(self) -> None:
+        _, window = self._load_qml()
+        main = self._quick_item(window, "mainWorkspace")
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+
+        self.assertTrue(main.isVisible())
+        self.assertFalse(page.isVisible())
+        self._click(window, self._quick_item(window, "transcriptionDictionaryOpenButton"))
+        self.assertFalse(main.isVisible())
+        self.assertTrue(page.isVisible())
+
+        title_field = self._quick_visual_item(window.contentItem(), "transcriptionGameTitleField")
+        title_field.forceActiveFocus()
+        title_field.setProperty("text", "Test Game")
+        self.app.processEvents()
+
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self.assertTrue(main.isVisible())
+        self.assertFalse(page.isVisible())
+        self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
+        self.assertTrue(self.app.gui_config_path.is_file())
 
 
 if __name__ == "__main__":

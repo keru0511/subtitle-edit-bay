@@ -26,8 +26,11 @@ ApplicationWindow {
     property real editorPositionCache: 0
     property real editorTimelineScrollX: 0
     property real editorCaptionScrollY: 0
+    property int editorDraftSegmentIndex: -1
+    property string editorDraftText: ""
     property bool editorMode: false
     property bool mixerMode: false
+    property bool dictionaryMode: false
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -179,6 +182,33 @@ ApplicationWindow {
         return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
     }
 
+    function beginSubtitleDraft(segmentIndex, text) {
+        root.editorDraftSegmentIndex = segmentIndex
+        root.editorDraftText = String(text)
+    }
+
+    function updateSubtitleDraft(segmentIndex, text) {
+        if (root.editorDraftSegmentIndex !== segmentIndex)
+            root.editorDraftSegmentIndex = segmentIndex
+        root.editorDraftText = String(text)
+    }
+
+    function clearSubtitleDraft(segmentIndex) {
+        if (root.editorDraftSegmentIndex !== segmentIndex)
+            return
+        root.editorDraftSegmentIndex = -1
+        root.editorDraftText = ""
+    }
+
+    function subtitlePreviewText(segmentData) {
+        var sourceIndex = Number(segmentData.sourceIndex)
+        if (root.editorMode && sourceIndex === root.editorDraftSegmentIndex)
+            return root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)
+        if (segmentData.preview_text !== undefined)
+            return String(segmentData.preview_text)
+        return String(segmentData.text || "")
+    }
+
     function workflowStepNumber() {
         if (root.appBackend.running && root.appBackend.activeJob === "render")
             return 4
@@ -196,6 +226,7 @@ ApplicationWindow {
         } else
             root.appBackend.stopAudioMixerPreview()
         root.mixerMode = false
+        root.dictionaryMode = false
         root.editorMode = true
     }
 
@@ -208,6 +239,7 @@ ApplicationWindow {
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.editorMode = false
+        root.dictionaryMode = false
         root.appBackend.prepareAudioMixerPreview()
         root.mixerMode = true
     }
@@ -216,6 +248,22 @@ ApplicationWindow {
         root.appBackend.stopAudioMixerPreview()
         mainPlayer.position = root.editorPositionCache
         root.mixerMode = false
+    }
+
+    function openDictionaryScreen() {
+        if (root.appBackend.running)
+            return
+        root.editorPositionCache = mainPlayer.position
+        mainPlayer.pause()
+        root.appBackend.stopAudioMixerPreview()
+        root.editorMode = false
+        root.mixerMode = false
+        root.dictionaryMode = true
+    }
+
+    function closeDictionaryScreen() {
+        mainPlayer.position = root.editorPositionCache
+        root.dictionaryMode = false
     }
 
     function volumePercentToDb(percent) {
@@ -409,7 +457,7 @@ ApplicationWindow {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 26 + Number(segmentData.layout_row || 0) * 54
-                text: segmentData.text || ""
+                text: root.subtitlePreviewText(segmentData)
                 color: root.speakerColor(segmentData.speaker || "")
                 font.family: segmentData.subtitle_font_family || "Yu Gothic UI"
                 font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)
@@ -829,8 +877,8 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: root.editorMode || root.mixerMode ? 0 : 62
-        visible: !root.editorMode && !root.mixerMode
+        height: root.editorMode || root.mixerMode || root.dictionaryMode ? 0 : 62
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
         color: "#101512"
         border.color: root.border
         RowLayout {
@@ -867,7 +915,7 @@ ApplicationWindow {
 
     RowLayout {
         objectName: "mainWorkspace"
-        visible: !root.editorMode && !root.mixerMode
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
         anchors.fill: parent
         anchors.margins: 12
         spacing: 10
@@ -1069,6 +1117,16 @@ ApplicationWindow {
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 ColumnLayout { objectName: "workflowActions"; Layout.fillWidth: true; Layout.fillHeight: false; Layout.margins: 12; spacing: 7
                     Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕と音量をそれぞれ編集するか、このまま動画へ焼き付けられます" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                    Button {
+                        id: dictionaryOpenButton
+                        objectName: "transcriptionDictionaryOpenButton"
+                        Layout.fillWidth: true; Layout.preferredHeight: 38; visible: !root.appBackend.projectLoaded
+                        enabled: !root.appBackend.running
+                        text: "文字起こし辞書を設定"
+                        onClicked: root.openDictionaryScreen()
+                        contentItem: Text { text: dictionaryOpenButton.text; color: dictionaryOpenButton.enabled ? root.textPrimary : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: dictionaryOpenButton.enabled ? root.raised : "#252C28"; border.color: dictionaryOpenButton.enabled ? root.border : "#252C28" }
+                    }
                     Button {
                         id: transcribeButton
                         objectName: "transcribeButton"
@@ -1902,11 +1960,12 @@ ApplicationWindow {
                                 required property real start
                                 required property real end
                                 required property string text
+                                required property string editorText
                                 required property string speaker
                                 required property int layoutRow
                                 required property real subtitleFontScale
                                 required property string subtitleFontFamily
-                                width: captionTable.width; height: 92; radius: 8
+                                width: captionTable.width; height: 122; radius: 8
                                 color: root.appBackend.selectedSegmentIndex === index ? "#263326" : root.raised
                                 border.color: root.appBackend.selectedSegmentIndex === index ? root.acid : root.border
                                 MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); editorPlayer.position = captionRow.start * 1000 } }
@@ -1956,11 +2015,29 @@ ApplicationWindow {
                                         }
                                         Text { text: "%"; color: root.textMuted; font.pixelSize: 9 }
                                     }
-                                    TextField {
+                                    TextArea {
+                                        id: captionTextArea
+                                        objectName: "captionTextArea"
                                         Layout.fillWidth: true
-                                        text: captionRow.text
+                                        Layout.preferredHeight: 52
+                                        text: captionRow.editorText
                                         color: root.textPrimary; selectionColor: root.acid; font.family: captionRow.subtitleFontFamily || "Yu Gothic UI"; font.pixelSize: 12
-                                        onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"text": text})
+                                        wrapMode: TextEdit.Wrap
+                                        selectByMouse: true
+                                        onTextChanged: {
+                                            if (activeFocus)
+                                                root.updateSubtitleDraft(captionRow.index, text)
+                                        }
+                                        onActiveFocusChanged: {
+                                            if (activeFocus) {
+                                                root.beginSubtitleDraft(captionRow.index, text)
+                                            } else {
+                                                var editedText = text
+                                                if (editedText !== captionRow.editorText)
+                                                    root.appBackend.updateSegment(captionRow.index, {"text": editedText})
+                                                root.clearSubtitleDraft(captionRow.index)
+                                            }
+                                        }
                                         background: Rectangle { radius: 6; color: "#101512"; border.color: parent.activeFocus ? root.acid : root.border }
                                     }
                                 }

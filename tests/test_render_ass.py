@@ -66,6 +66,16 @@ class RenderAssTests(unittest.TestCase):
         self.assertIn(r"\N", wrapped)
         self.assertIn(r"\u2026".encode("ascii").decode("unicode_escape"), wrapped)
 
+    def test_normalize_text_preserves_manual_line_breaks_over_line_count(self) -> None:
+        self.assertEqual(
+            normalize_text("first line\nsecond line", max_width=4, max_lines=1),
+            r"first line\Nsecond line",
+        )
+        self.assertEqual(
+            normalize_text("first line\r\nsecond line", max_width=4, max_lines=2),
+            r"first line\Nsecond line",
+        )
+
     def test_normalize_text_uses_budoux_boundary_for_two_lines(self) -> None:
         class FakeParser:
             def parse(self, text: str) -> list[str]:

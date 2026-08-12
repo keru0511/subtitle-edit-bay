@@ -13,6 +13,7 @@ from .subtitle_layout.packer import (
 
 SUBTITLE_LINE_COUNT_AUTO = "auto"
 SUPPORTED_SUBTITLE_LINE_COUNTS = {SUBTITLE_LINE_COUNT_AUTO, "1", "2"}
+ELLIPSIS = "\u2026"
 
 
 def normalize_subtitle_line_count(value: object = SUBTITLE_LINE_COUNT_AUTO) -> str:
@@ -43,6 +44,40 @@ def subtitle_line_count_max_lines(value: object = SUBTITLE_LINE_COUNT_AUTO) -> i
     return int(normalized)
 
 
+def format_segment_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
+    """Return the exact ASS-ready text after manual or automatic line breaking."""
+    text = str(segment.get("text", "")).strip()
+    if not text:
+        return ""
+
+    max_width = int(segment.get("max_width", default_max_width))
+    display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+    line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", SUBTITLE_LINE_COUNT_AUTO))
+    max_lines = subtitle_line_count_max_lines(line_count)
+    if max_lines is None:
+        return normalize_text(text, max_width=max_width, display_duration=display_duration)
+    return normalize_text(
+        text,
+        max_width=max_width,
+        max_lines=max_lines,
+        display_duration=display_duration,
+    )
+
+
+def segment_preview_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
+    """Return formatted text with real newlines for Qt preview rendering."""
+    return format_segment_text(segment, default_max_width=default_max_width).replace(r"\N", "\n")
+
+
+def segment_editor_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
+    """Show automatic breaks in the editor without hiding truncated source text."""
+    source = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").strip()
+    preview = segment_preview_text(segment, default_max_width=default_max_width)
+    if preview.endswith(ELLIPSIS) and not source.endswith(ELLIPSIS):
+        return source
+    return preview
+
+
 def pack_event_with_line_count(segment: dict[str, Any], default_max_width: int = 24) -> SubtitleEvent | None:
     speaker = segment.get("speaker", "Oz")
     text = str(segment.get("text", "")).strip()
@@ -53,17 +88,7 @@ def pack_event_with_line_count(segment: dict[str, Any], default_max_width: int =
     max_width = int(segment.get("max_width", default_max_width))
     display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
     line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", SUBTITLE_LINE_COUNT_AUTO))
-    max_lines = subtitle_line_count_max_lines(line_count)
-    normalized_text = (
-        normalize_text(text, max_width=max_width, display_duration=display_duration)
-        if max_lines is None
-        else normalize_text(
-            text,
-            max_width=max_width,
-            max_lines=max_lines,
-            display_duration=display_duration,
-        )
-    )
+    normalized_text = format_segment_text(segment, default_max_width=default_max_width)
     return SubtitleEvent(
         start=float(segment["start"]),
         end=float(segment["end"]),

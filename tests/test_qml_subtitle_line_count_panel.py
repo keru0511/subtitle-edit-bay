@@ -10,40 +10,21 @@ WRAPPER_QML = ROOT / "src" / "ui" / "screens" / "MainWorkflowScreenWithContext.q
 GUI_BASE = ROOT / "src" / "gui_base.py"
 
 
-class SubtitleLineCountPanelQmlTests(unittest.TestCase):
-    def test_panel_exposes_line_count_choices(self) -> None:
-        content = PANEL_QML.read_text(encoding="utf-8")
+class SubtitleLineCountPanelRemovalTests(unittest.TestCase):
+    def test_line_count_panel_component_is_removed(self) -> None:
+        self.assertFalse(PANEL_QML.exists())
 
-        self.assertIn('objectName: "subtitleLineCountPanel"', content)
-        self.assertIn('objectName: "subtitleLineCountCombo"', content)
-        self.assertIn('"label": "自動（既存ルール）", "value": "auto"', content)
-        self.assertIn('"label": "1行", "value": "1"', content)
-        self.assertIn('"label": "2行", "value": "2"', content)
-
-    def test_panel_emits_selected_segment_line_count(self) -> None:
-        content = PANEL_QML.read_text(encoding="utf-8")
-
-        self.assertIn("signal lineCountChanged(int segmentIndex, string lineCount)", content)
-        self.assertIn("panelRoot.lineCountChanged(panelRoot.selectedSegmentIndex, currentValue)", content)
-        self.assertIn("segment.subtitle_line_count", content)
-
-    def test_wrapper_wires_panel_to_backend_line_count_slot(self) -> None:
+    def test_wrapper_no_longer_wires_line_count_panel(self) -> None:
         content = WRAPPER_QML.read_text(encoding="utf-8")
 
-        self.assertIn("SubtitleLineCountPanel", content)
-        self.assertIn('objectName: "editorSubtitleLineCountPanel"', content)
-        self.assertIn("visible: screenRoot.editorMode && screenRoot.appBackend.projectLoaded", content)
-        self.assertIn("selectedSegmentIndex: screenRoot.appBackend.selectedSegmentIndex", content)
-        self.assertIn("segment: screenRoot.selectedSubtitleSegment()", content)
-        self.assertIn("screenRoot.appBackend.updateSegmentLineCount(segmentIndex, lineCount)", content)
+        self.assertNotIn("SubtitleLineCountPanel", content)
+        self.assertNotIn('objectName: "editorSubtitleLineCountPanel"', content)
+        self.assertNotIn("selectedSubtitleSegment", content)
 
-    def test_backend_exposes_dedicated_line_count_slot(self) -> None:
+    def test_backend_no_longer_exposes_line_count_slot(self) -> None:
         content = GUI_BASE.read_text(encoding="utf-8")
 
-        self.assertIn("def updateSegmentLineCount(self, index: int, line_count: str) -> None:", content)
-        self.assertIn("normalize_subtitle_line_count", content)
-        self.assertIn('updated["subtitle_line_count"] = normalized_line_count', content)
-        self.assertIn('updated["manual_line_count"] = normalized_line_count != "auto"', content)
+        self.assertNotIn("def updateSegmentLineCount", content)
 
 
 if __name__ == "__main__":

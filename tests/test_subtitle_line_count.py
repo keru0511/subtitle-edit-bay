@@ -1,6 +1,12 @@
 import unittest
 
-from src.subtitle_line_count import normalize_subtitle_line_count, pack_segments_with_line_count
+from src.subtitle_line_count import (
+    format_segment_text,
+    normalize_subtitle_line_count,
+    pack_segments_with_line_count,
+    segment_editor_text,
+    segment_preview_text,
+)
 from src.subtitle_packer import pack_segments as legacy_pack_segments
 from src.subtitle_project import SubtitleProjectError, create_project
 
@@ -33,7 +39,7 @@ class SubtitleLineCountTests(unittest.TestCase):
                 ],
             )
 
-    def test_project_line_count_controls_layout_span(self) -> None:
+    def test_project_migrates_legacy_line_count_choices_to_auto(self) -> None:
         one_line = create_project(
             video_path="video.mkv",
             output_dir="out",
@@ -64,11 +70,12 @@ class SubtitleLineCountTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(one_line["segments"][0]["subtitle_line_count"], "1")
-        self.assertEqual(one_line["segments"][0]["layout_row_span"], 1)
-        self.assertTrue(one_line["segments"][0]["manual_line_count"])
-        self.assertEqual(two_line["segments"][0]["subtitle_line_count"], "2")
-        self.assertEqual(two_line["segments"][0]["layout_row_span"], 2)
+        self.assertEqual(one_line["segments"][0]["subtitle_line_count"], "auto")
+        self.assertEqual(one_line["segments"][0]["layout_row_span"], 2)
+        self.assertFalse(one_line["segments"][0]["manual_line_count"])
+        self.assertEqual(two_line["segments"][0]["subtitle_line_count"], "auto")
+        self.assertEqual(two_line["segments"][0]["layout_row_span"], 1)
+        self.assertFalse(two_line["segments"][0]["manual_line_count"])
 
     def test_auto_line_count_matches_legacy_packing(self) -> None:
         segment = {
@@ -128,6 +135,61 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertIn(r"\N", event.text)
         self.assertLessEqual(event.text.count(r"\N"), 1)
         self.assertEqual(event.metadata["subtitle_line_count"], "2")
+
+    def test_auto_formatting_uses_ass_breaks_and_real_preview_newlines(self) -> None:
+        segment = {
+            "start": 0,
+            "end": 3,
+            "text": "alpha beta gamma",
+            "speaker": "Oz",
+            "layout_packed": True,
+            "max_width": 8,
+            "subtitle_line_count": "2",
+        }
+
+        ass_text = format_segment_text(segment)
+        preview_text = segment_preview_text(segment)
+
+        self.assertIn(r"\N", ass_text)
+        self.assertNotIn("\n", ass_text)
+        self.assertIn("\n", preview_text)
+        self.assertEqual(preview_text, ass_text.replace(r"\N", "\n"))
+        self.assertEqual(segment_editor_text(segment), preview_text)
+
+    def test_editor_does_not_hide_source_text_when_preview_is_truncated(self) -> None:
+        segment = {
+            "start": 0,
+            "end": 3,
+            "text": "alpha beta gamma delta epsilon zeta eta theta",
+            "speaker": "Oz",
+            "layout_packed": True,
+            "max_width": 8,
+            "subtitle_line_count": "auto",
+        }
+
+        self.assertTrue(segment_preview_text(segment).endswith("…"))
+        self.assertEqual(segment_editor_text(segment), segment["text"])
+
+    def test_manual_break_overrides_automatic_formatting_and_layout_span(self) -> None:
+        project = create_project(
+            video_path="video.mkv",
+            output_dir="out",
+            segments=[
+                {
+                    "start": 0,
+                    "end": 3,
+                    "text": "short first\nshort second",
+                    "speaker": "Oz",
+                    "max_width": 24,
+                    "subtitle_line_count": "1",
+                }
+            ],
+        )
+        segment = project["segments"][0]
+
+        self.assertEqual(format_segment_text(segment), r"short first\Nshort second")
+        self.assertEqual(segment_preview_text(segment), "short first\nshort second")
+        self.assertEqual(segment["layout_row_span"], 2)
 
     def test_line_count_normalizer_accepts_auto_one_and_two_only(self) -> None:
         self.assertEqual(normalize_subtitle_line_count(None), "auto")

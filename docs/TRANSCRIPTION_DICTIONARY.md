@@ -10,12 +10,14 @@ The goal is to improve WhisperX transcription for game commentary without requir
 
 1. Open the app.
 2. Add the video, Craig speaker audio files, and output directory.
-3. In the transcription dictionary panel, enter the game title.
-4. Add creator-confirmed terms such as character names, map names, weapon names, spell names, player names, or abbreviations.
-5. Optionally enter notes that help describe the session.
-6. Optionally set a manual dictionary JSON path.
-7. Enable dictionary confirmation only after the dictionary content has been reviewed.
-8. Start transcription.
+3. Select `文字起こし辞書を設定` to open the dedicated transcription dictionary screen.
+4. Enter the game title.
+5. Add creator-confirmed terms such as character names, map names, weapon names, spell names, player names, or abbreviations.
+6. Optionally enter notes that help describe the session.
+7. Optionally set a manual dictionary JSON path.
+8. Enable dictionary confirmation only after the dictionary content has been reviewed.
+9. Save the dictionary screen and return to the main screen.
+10. Start transcription.
 
 The GUI stores the normalized transcription context in `.gui/runtime_config.json` under `craig_pipeline.transcription_context`. The GUI transcription command runs through `src.subtitle_workflow transcribe`, so the saved context is available to the context-aware workflow boundary.
 

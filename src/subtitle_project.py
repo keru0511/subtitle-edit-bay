@@ -12,6 +12,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from .audio_mixer import reconcile_audio_mix
+from .subtitle_line_count import normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 
 
@@ -58,6 +59,13 @@ def _finite_number(value: Any, field: str) -> float:
     return result
 
 
+def _subtitle_line_count(value: object) -> str:
+    try:
+        return normalize_subtitle_line_count(value)
+    except ValueError as error:
+        raise SubtitleProjectError(str(error)) from error
+
+
 def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
     start = max(0.0, _finite_number(segment.get("start", 0.0), "segment.start"))
     end = _finite_number(segment.get("end", start + MIN_SEGMENT_DURATION_SECONDS), "segment.end")
@@ -71,6 +79,7 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
         for char in str(segment.get("subtitle_font_family", "")).strip()
         if char >= " " and char != "\x7f"
     )[:256]
+    line_count = _subtitle_line_count(segment.get("subtitle_line_count", segment.get("line_count_override", "auto")))
     normalized = deepcopy(segment)
     normalized.update(
         {
@@ -83,6 +92,7 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
             "position": str(segment.get("position", "bottom")),
             "layout_row": max(0, int(segment.get("layout_row", 0))),
             "max_width": max(4, int(segment.get("max_width", 24))),
+            "subtitle_line_count": line_count,
             "subtitle_font_scale": round(font_scale, 4),
             "subtitle_font_family": font_family,
             "subtitle_volume_level": float(segment.get("subtitle_volume_level", 0.0)),
@@ -90,6 +100,7 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
             "manual_text": bool(segment.get("manual_text", False)),
             "manual_timing": bool(segment.get("manual_timing", False)),
             "manual_speaker": bool(segment.get("manual_speaker", False)),
+            "manual_line_count": bool(segment.get("manual_line_count", False)),
             "manual_font_scale": bool(segment.get("manual_font_scale", False)),
             "manual_font_family": bool(segment.get("manual_font_family", False)),
         }
@@ -99,6 +110,15 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
 
 def _display_width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1 for char in text)
+
+
+def _layout_row_span(segment: dict[str, Any]) -> int:
+    line_count = str(segment.get("subtitle_line_count", "auto"))
+    if line_count == "1":
+        return 1
+    if line_count == "2":
+        return 2
+    return 2 if _display_width(str(segment.get("text", ""))) > int(segment.get("max_width", 24)) else 1
 
 
 def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -143,7 +163,7 @@ def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str,
         return trailing_pair
 
     for segment in sorted(segments, key=lambda item: (item["start"], item["end"], item["id"])):
-        span = 2 if _display_width(str(segment.get("text", ""))) > int(segment.get("max_width", 24)) else 1
+        span = _layout_row_span(segment)
         start = float(segment["start"])
         release_finished(start)
         base_row = take_free_pair() if span == 2 else take_free_row()

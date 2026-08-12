@@ -1,12 +1,36 @@
 from __future__ import annotations
 
 import unicodedata
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Iterable
 
 from . import rules, tokenize
 
 TARGET_READING_SPEED = 14.0
 TIMING_BALANCE_WEIGHT = 1.4
+BreakScore = tuple[int, int, int, int, int, int, int, int]
+
+
+@dataclass(frozen=True)
+class SplitCandidateExplanation:
+    break_index: int
+    left: str
+    right: str
+    left_width: int
+    right_width: int
+    previous_char: str
+    next_char: str
+    is_budoux_boundary: bool
+    is_morpheme_boundary: bool
+    overflow_penalty: int
+    timing_penalty: int
+    tiny_line_penalty: int
+    candidate_bonus: int
+    boundary_penalty: int
+    width_balance_penalty: int
+    natural_midpoint_penalty: int
+    score: BreakScore
 
 
 def display_width(char: str) -> int:
@@ -142,7 +166,7 @@ def score_break(
     break_index: int,
     max_width: int,
     display_duration: float | None = None,
-) -> tuple[int, int, int, int, int, int, int, int]:
+) -> BreakScore:
     left = text[:break_index].rstrip()
     right = text[break_index:].lstrip()
     left_width = text_width(left)
@@ -196,5 +220,94 @@ def score_truncated_break(
     break_index: int,
     max_width: int,
     display_duration: float | None = None,
-) -> tuple[int, int, int, int, int, int, int, int]:
+) -> BreakScore:
     return score_break(text, break_index, max_width, display_duration=display_duration)
+
+
+def explain_split_candidate(
+    text: str,
+    break_index: int,
+    max_width: int,
+    display_duration: float | None = None,
+) -> SplitCandidateExplanation | None:
+    if break_index <= 0 or break_index >= len(text):
+        return None
+
+    left = text[:break_index].rstrip()
+    right = text[break_index:].lstrip()
+    if not left or not right:
+        return None
+
+    left_width = text_width(left)
+    right_width = text_width(right)
+    previous_char = left[-1]
+    next_char = right[0]
+    overflow_penalty = max(0, left_width - max_width) + max(0, right_width - max_width)
+    tiny_line_penalty = 0
+    if left_width <= 5 or right_width <= 5:
+        tiny_line_penalty += 18
+    if left_width <= 3 or right_width <= 3:
+        tiny_line_penalty += 36
+    if left_width <= 2 or right_width <= 2:
+        tiny_line_penalty += 60
+
+    boundary_penalty = 0
+    if next_char in rules.LEADING_AVOID_CHARS:
+        boundary_penalty += 8
+    if previous_char in rules.TRAILING_AVOID_CHARS:
+        boundary_penalty += 6
+    if right[:2] in rules.RIGHT_BOUNDARY_AVOID_WORDS:
+        boundary_penalty += 10
+    elif right[:1] in rules.RIGHT_BOUNDARY_AVOID_WORDS:
+        boundary_penalty += 10
+    if left[-2:] in rules.LEFT_BOUNDARY_AVOID_WORDS:
+        boundary_penalty += 3
+    elif left[-1:] in rules.LEFT_BOUNDARY_AVOID_WORDS:
+        boundary_penalty += 3
+    boundary_penalty += connected_char_penalty(previous_char, next_char)
+
+    candidate_bonus = candidate_kind_bonus(text, break_index)
+    leading_penalty = leading_boundary_penalty(text, break_index)
+    timing_penalty = timing_balance_penalty(left_width, right_width, display_duration)
+    score = score_break(text, break_index, max_width, display_duration=display_duration)
+    return SplitCandidateExplanation(
+        break_index=break_index,
+        left=left,
+        right=right,
+        left_width=left_width,
+        right_width=right_width,
+        previous_char=previous_char,
+        next_char=next_char,
+        is_budoux_boundary=break_index in budoux_boundaries(text),
+        is_morpheme_boundary=break_index in morpheme_boundaries(text),
+        overflow_penalty=overflow_penalty,
+        timing_penalty=timing_penalty,
+        tiny_line_penalty=tiny_line_penalty,
+        candidate_bonus=candidate_bonus,
+        boundary_penalty=boundary_penalty + leading_penalty,
+        width_balance_penalty=abs(left_width - right_width),
+        natural_midpoint_penalty=abs(break_index - len(text) // 2),
+        score=score,
+    )
+
+
+def explain_split_candidates(
+    text: str,
+    candidate_indices: Iterable[int],
+    max_width: int,
+    display_duration: float | None = None,
+) -> list[SplitCandidateExplanation]:
+    explanations = [
+        explanation
+        for index in sorted(set(candidate_indices))
+        if (
+            explanation := explain_split_candidate(
+                text,
+                index,
+                max_width,
+                display_duration=display_duration,
+            )
+        )
+        is not None
+    ]
+    return sorted(explanations, key=lambda explanation: explanation.score)

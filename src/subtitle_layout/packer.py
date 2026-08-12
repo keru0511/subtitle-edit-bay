@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Final
 
 from .. import subtitle_packer as legacy_packer
-from . import rules, tokenize
+from . import rules, scoring, tokenize
 
 _RULE_BINDINGS: Final = (
     "MAX_LINES",
@@ -21,21 +21,40 @@ _TOKENIZER_FACTORY_BINDINGS: Final = (
     "create_budoux_parser",
     "create_janome_tokenizer",
 )
+_SCORING_HELPER_BINDINGS: Final = (
+    "display_width",
+    "text_width",
+    "duration_pressure",
+    "timing_balance_penalty",
+    "char_bucket",
+    "connected_char_penalty",
+    "is_protected_inline_split",
+    "chunk_boundaries",
+    "clause_break_bonus",
+    "leading_boundary_penalty",
+)
 
 
 def apply_layout_modules() -> None:
-    """Bind the legacy packer to the extracted rules and tokenizer factories.
+    """Bind the legacy packer to extracted layout helpers.
 
     The public functions still live in ``subtitle_packer`` during this migration,
     but global lookups inside those functions should resolve through the extracted
     layout boundary before the scoring/rules split continues. The legacy
     ``require_japanese_layout_tools`` wrapper intentionally remains in place so
     existing tests and callers can still patch ``src.subtitle_packer.create_*``.
+
+    ``score_break`` and natural boundary functions remain as compatibility shells
+    for now because existing callers patch legacy names such as
+    ``src.subtitle_packer.candidate_kind_bonus`` and
+    ``src.subtitle_packer.create_budoux_parser``.
     """
     for name in _RULE_BINDINGS:
         setattr(legacy_packer, name, getattr(rules, name))
     for name in _TOKENIZER_FACTORY_BINDINGS:
         setattr(legacy_packer, name, getattr(tokenize, name))
+    for name in _SCORING_HELPER_BINDINGS:
+        setattr(legacy_packer, name, getattr(scoring, name))
 
 
 apply_layout_modules()
@@ -63,6 +82,14 @@ parse_morpheme_chunks = legacy_packer.parse_morpheme_chunks
 
 text_width = legacy_packer.text_width
 display_width = legacy_packer.display_width
+duration_pressure = legacy_packer.duration_pressure
+timing_balance_penalty = legacy_packer.timing_balance_penalty
+char_bucket = legacy_packer.char_bucket
+connected_char_penalty = legacy_packer.connected_char_penalty
+is_protected_inline_split = legacy_packer.is_protected_inline_split
+chunk_boundaries = legacy_packer.chunk_boundaries
+clause_break_bonus = legacy_packer.clause_break_bonus
+leading_boundary_penalty = legacy_packer.leading_boundary_penalty
 budoux_boundaries = legacy_packer.budoux_boundaries
 morpheme_boundaries = legacy_packer.morpheme_boundaries
 break_candidates = legacy_packer.break_candidates

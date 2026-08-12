@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .models import SubtitleEvent
-from .subtitle_packer import (
+from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,

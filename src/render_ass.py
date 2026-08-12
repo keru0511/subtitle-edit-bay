@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -9,7 +9,7 @@ from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE, build_ass_header
 from .color_config import load_speaker_color_map, normalize_color_key
 from .models import SubtitleEvent
 from .subtitle_line_count import pack_segments_with_line_count
-from .subtitle_packer import (
+from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,

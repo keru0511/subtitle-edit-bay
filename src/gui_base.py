@@ -271,6 +271,7 @@ class EditBayBackend(QApplication):
         if self._source_selection.video:
             self._probe_audio_tracks(self._source_selection.video)
         self._update_source_status()
+
     @Slot()
     def browseVideoFile(self) -> None:
         if self._running:
@@ -545,6 +546,45 @@ class EditBayBackend(QApplication):
             return
         self.transcriptionContextChanged.emit()
         self._set_status("文字起こし辞書設定を更新しました", "SAVED")
+
+    @Slot(int, str)
+    def updateSegmentLineCount(self, index: int, line_count: str) -> None:
+        project = getattr(self, "_project", None)
+        if not isinstance(project, dict) or self._running:
+            return
+        segments = project.get("segments", [])
+        if not isinstance(segments, list) or not 0 <= index < len(segments):
+            return
+        current = segments[index]
+        if not isinstance(current, dict):
+            return
+
+        from .subtitle_line_count import normalize_subtitle_line_count
+        from .subtitle_project import normalize_segment
+
+        try:
+            normalized_line_count = normalize_subtitle_line_count(line_count)
+        except ValueError as error:
+            self._set_status(f"字幕表示行数を更新できません: {error}", "CHECK")
+            return
+
+        updated = dict(current)
+        updated["subtitle_line_count"] = normalized_line_count
+        updated["manual_line_count"] = normalized_line_count != "auto"
+        if updated == current:
+            return
+
+        commit_segment_change: Any = getattr(self, "_commit_segment_change", None)
+        if commit_segment_change is None:
+            self._set_status("字幕表示行数を更新できません", "ERROR")
+            return
+        commit_segment_change(
+            [current],
+            [normalize_segment(updated, index)],
+            str(current.get("id", "")),
+            reflow_layout=True,
+        )
+        self._set_status("字幕表示行数を更新しました", "EDIT")
 
     @Slot("QVariantMap")
     def saveSettings(self, settings: dict[str, Any]) -> None:

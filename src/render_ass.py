@@ -8,13 +8,11 @@ from pathlib import Path
 from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE, build_ass_header
 from .color_config import load_speaker_color_map, normalize_color_key
 from .models import SubtitleEvent
+from .subtitle_line_count import pack_segments_with_line_count
 from .subtitle_packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-    MAX_LINES,
-    normalize_text,
-    pack_segments,
 )
 
 DEFAULT_SPEAKER_STYLE = {
@@ -122,7 +120,7 @@ def parse_segments(
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
 ) -> list[SubtitleEvent]:
-    return pack_segments(
+    return pack_segments_with_line_count(
         data,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,

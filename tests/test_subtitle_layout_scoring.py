@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from src import subtitle_packer as legacy_packer
 from src.subtitle_layout import packer as layout_packer
 from src.subtitle_layout import scoring
 
@@ -13,9 +14,9 @@ def jp(value: str) -> str:
 
 class SubtitleLayoutScoringTests(unittest.TestCase):
     def setUp(self) -> None:
-        layout_packer.text_width.cache_clear()
-        layout_packer.budoux_boundaries.cache_clear()
-        layout_packer.morpheme_boundaries.cache_clear()
+        legacy_packer.text_width.cache_clear()
+        legacy_packer.budoux_boundaries.cache_clear()
+        legacy_packer.morpheme_boundaries.cache_clear()
         scoring.text_width.cache_clear()
         scoring.budoux_boundaries.cache_clear()
         scoring.morpheme_boundaries.cache_clear()
@@ -26,7 +27,7 @@ class SubtitleLayoutScoringTests(unittest.TestCase):
             jp(r"\u3053\u3053\u3067OBS\u3092\u4f7f\u3046"),
             jp(r"\u30b9\u30d7\u30e9\u30c8\u30a5\u30fc\u30f33"),
         ):
-            self.assertEqual(scoring.text_width(text), layout_packer.text_width(text))
+            self.assertEqual(scoring.text_width(text), legacy_packer.text_width(text))
 
     def test_connected_char_penalties_match_legacy_packer(self) -> None:
         for previous_char, next_char in (
@@ -40,7 +41,7 @@ class SubtitleLayoutScoringTests(unittest.TestCase):
         ):
             self.assertEqual(
                 scoring.connected_char_penalty(previous_char, next_char),
-                layout_packer.connected_char_penalty(previous_char, next_char),
+                legacy_packer.connected_char_penalty(previous_char, next_char),
             )
 
     def test_boundary_helpers_match_legacy_packer(self) -> None:
@@ -53,11 +54,11 @@ class SubtitleLayoutScoringTests(unittest.TestCase):
             mock.patch("src.subtitle_packer.create_budoux_parser", return_value=FakeParser()),
         ):
             scoring.budoux_boundaries.cache_clear()
-            layout_packer.budoux_boundaries.cache_clear()
+            legacy_packer.budoux_boundaries.cache_clear()
             self.assertEqual(scoring.budoux_boundaries("abcdef"), {2, 4})
             self.assertEqual(
                 scoring.budoux_boundaries("abcdef"),
-                layout_packer.budoux_boundaries("abcdef"),
+                legacy_packer.budoux_boundaries("abcdef"),
             )
 
     def test_candidate_bonus_and_leading_penalty_match_legacy_packer(self) -> None:
@@ -69,18 +70,31 @@ class SubtitleLayoutScoringTests(unittest.TestCase):
 
         self.assertEqual(
             scoring.candidate_kind_bonus(text, break_index),
-            layout_packer.candidate_kind_bonus(text, break_index),
+            legacy_packer.candidate_kind_bonus(text, break_index),
         )
         self.assertEqual(
             scoring.leading_boundary_penalty(text, break_index),
-            layout_packer.leading_boundary_penalty(text, break_index),
+            legacy_packer.leading_boundary_penalty(text, break_index),
         )
 
     def test_score_break_matches_legacy_packer(self) -> None:
         cases = (
             ("ABCDEFGHIJKLMN", 7, 8, 0.4),
-            (jp(r"\u3053\u3053\u3067\u6575\u304c\u6765\u308b\u304b\u3089\u4e00\u56de\u5f15\u304f"), 12, 18, 2.0),
-            (jp(r"\u305d\u308c\u306f\u4eca\u3084\u308b\u306e\u306f\u5371\u306a\u3044"), 8, 16, None),
+            (
+                jp(
+                    r"\u3053\u3053\u3067\u6575\u304c\u6765\u308b\u304b\u3089"
+                    r"\u4e00\u56de\u5f15\u304f"
+                ),
+                12,
+                18,
+                2.0,
+            ),
+            (
+                jp(r"\u305d\u308c\u306f\u4eca\u3084\u308b\u306e\u306f\u5371\u306a\u3044"),
+                8,
+                16,
+                None,
+            ),
         )
 
         for text, break_index, max_width, display_duration in cases:
@@ -91,7 +105,7 @@ class SubtitleLayoutScoringTests(unittest.TestCase):
                     max_width,
                     display_duration=display_duration,
                 ),
-                layout_packer.score_break(
+                legacy_packer.score_break(
                     text,
                     break_index,
                     max_width,
@@ -105,13 +119,17 @@ class SubtitleLayoutScoringTests(unittest.TestCase):
                     max_width,
                     display_duration=display_duration,
                 ),
-                layout_packer.score_truncated_break(
+                legacy_packer.score_truncated_break(
                     text,
                     break_index,
                     max_width,
                     display_duration=display_duration,
                 ),
             )
+
+    def test_bridge_still_exports_public_scoring_entrypoints(self) -> None:
+        self.assertIs(layout_packer.score_break, legacy_packer.score_break)
+        self.assertIs(layout_packer.score_truncated_break, legacy_packer.score_truncated_break)
 
 
 if __name__ == "__main__":

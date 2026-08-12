@@ -13,6 +13,11 @@ import numpy as np
 from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .assemble_video import build_loudnorm_filter
 from .burn_subs import build_ass_filter, run_ffmpeg_burn
+from .craig_transcription_execution import (
+    CraigTranscriptionHint,
+    resolve_craig_transcription_hint,
+    transcribe_craig_audio_file_with_cache,
+)
 from .merge_transcripts import is_short_reaction, max_width_for_speaker, refine_segments
 from .pipeline import build_ass_from_transcript
 from .render_ass import parse_track_color_args
@@ -25,13 +30,7 @@ from .silence_cut import (
     probe_media_duration,
     retime_segments_for_keep_ranges,
 )
-from .transcribe import (
-    build_whisperx_command,
-    expected_log_path,
-    expected_transcript_path,
-    probe_audio_streams,
-    run_command_with_utf8_log,
-)
+from .transcribe import expected_transcript_path, probe_audio_streams
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 
 DEFAULT_STYLE_SEQUENCE = ["Oz", "A", "B", "C"]
@@ -313,13 +312,10 @@ def transcribe_audio_file(
     vad_onset: float | None = 0.35,
     vad_offset: float | None = 0.2,
     skip_existing: bool = True,
+    *,
+    hint: CraigTranscriptionHint | None = None,
 ) -> Path:
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    transcript_path = expected_audio_transcript_path(audio_path, output_dir)
-    if skip_existing and transcript_path.exists():
-        return transcript_path
-    whisperx_command = build_whisperx_command(
+    result = transcribe_craig_audio_file_with_cache(
         audio_path,
         output_dir,
         model=model,
@@ -328,9 +324,10 @@ def transcribe_audio_file(
         language=language,
         vad_onset=vad_onset,
         vad_offset=vad_offset,
+        skip_existing_transcripts=skip_existing,
+        hint=hint,
     )
-    run_command_with_utf8_log(whisperx_command, str(expected_log_path(audio_path, output_dir)))
-    return transcript_path
+    return result.transcript_path
 
 
 def resolve_alignment(
@@ -369,6 +366,8 @@ def transcribe_craig_audio_files(
     postprocess_workers: int = DEFAULT_POSTPROCESS_WORKERS,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
     subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
+    transcription_hints_by_audio: dict[str, CraigTranscriptionHint] | None = None,
+    default_transcription_hint: CraigTranscriptionHint | None = None,
 ) -> CraigTranscriptionBatch:
     """Run WhisperX serially while overlapping CPU-only caption postprocessing."""
     transcript_map: dict[str, str] = {}
@@ -377,7 +376,14 @@ def transcribe_craig_audio_files(
     with ThreadPoolExecutor(max_workers=max(1, postprocess_workers)) as executor:
         for audio_file in audio_files:
             expected_path = expected_audio_transcript_path(str(audio_file), str(transcript_dir))
-            if skip_existing_transcripts and expected_path.exists():
+            hint = resolve_craig_transcription_hint(
+                audio_file,
+                transcription_hints_by_audio,
+                default_hint=default_transcription_hint,
+            )
+            if hint.cache_fingerprint:
+                log_progress(f"Checking fingerprinted transcript cache for {audio_file.name}")
+            elif skip_existing_transcripts and expected_path.exists():
                 log_progress(f"Cache hit for {audio_file.name}; reusing {expected_path.name}")
             else:
                 log_progress(f"Starting WhisperX for {audio_file.name} on {device}/{compute_type}")
@@ -391,6 +397,7 @@ def transcribe_craig_audio_files(
                 vad_onset=vad_onset,
                 vad_offset=vad_offset,
                 skip_existing=skip_existing_transcripts,
+                hint=hint,
             )
             transcript_map[str(audio_file.resolve())] = str(transcript_path.resolve())
             segment_futures[str(audio_file)] = executor.submit(

@@ -1,0 +1,100 @@
+name: Windows deep runtime smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Runner label to use. Use a GPU-capable larger/self-hosted runner for CUDA validation."
+        required: true
+        default: "windows-latest"
+        type: string
+      expect_cuda:
+        description: "Require torch.cuda.is_available() and run WhisperX on CUDA."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  whisperx-runtime-smoke:
+    name: WhisperX and PyTorch runtime smoke
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Install Python and ASR dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          if ('${{ inputs.expect_cuda }}' -eq 'true') {
+              python -m pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+          }
+          else {
+              python -m pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          }
+          python -m pip install whisperx==3.8.6
+
+      - name: Verify PyTorch CUDA expectation
+        shell: pwsh
+        run: |
+          @'
+          import os
+          import torch
+
+          expect_cuda = os.environ.get("EXPECT_CUDA", "false").lower() == "true"
+          available = bool(torch.cuda.is_available())
+          print({"torch": torch.__version__, "cuda_available": available})
+          if expect_cuda and not available:
+              raise SystemExit("CUDA was required but torch.cuda.is_available() is false")
+          '@ | python -
+        env:
+          EXPECT_CUDA: ${{ inputs.expect_cuda }}
+
+      - name: Run WhisperX on generated audio
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "whisperx-smoke"
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          $audio = Join-Path $work "smoke.wav"
+          $out = Join-Path $work "out"
+          ffmpeg -y -f lavfi -i "sine=frequency=440:sample_rate=16000:duration=1" -ac 1 -ar 16000 $audio
+          if ($LASTEXITCODE -ne 0) { throw "Could not generate smoke audio." }
+
+          if ('${{ inputs.expect_cuda }}' -eq 'true') {
+              python -m whisperx $audio --model tiny --device cuda --compute_type float16 --language ja --output_dir $out --output_format json
+          }
+          else {
+              python -m whisperx $audio --model tiny --device cpu --compute_type int8 --language ja --output_dir $out --output_format json
+          }
+          if ($LASTEXITCODE -ne 0) { throw "WhisperX smoke transcription failed." }
+
+          $json = Join-Path $out "smoke.json"
+          if (-not (Test-Path -LiteralPath $json -PathType Leaf)) {
+              throw "WhisperX did not produce expected transcript JSON: $json"
+          }
+          Get-Content -LiteralPath $json -Raw | ConvertFrom-Json | Out-Null

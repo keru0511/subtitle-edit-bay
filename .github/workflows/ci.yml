@@ -1,0 +1,256 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-quality:
+    name: Python quality checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run Ruff lint
+        run: python scripts/check_quality.py --lint-only
+
+      - name: Run scoped Ruff format check
+        run: python scripts/check_quality.py --format-only --paths scripts/check_quality.py
+
+      - name: Run scoped mypy type check
+        run: python scripts/check_quality.py --type-only --paths scripts/check_quality.py
+
+  windows-tests:
+    name: Windows tests
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      RUN_FFMPEG_SMOKE: "1"
+      RUN_QT_MEDIA_SMOKE: "1"
+      RUN_GUI_AUDIO_MIXER_SMOKE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install system runtime dependencies
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Import Windows-critical modules
+        shell: pwsh
+        run: |
+          python -c "from src.runtime_dependencies import check_runtime_dependencies; print(check_runtime_dependencies().to_dict())"
+          python -c "import src.gui_state; import src.gui_state_base; import src.subtitle_project; import src.subtitle_packer"
+
+      - name: Start GUI on Windows
+        shell: pwsh
+        run: |
+          @'
+          import sys
+          from pathlib import Path
+
+          from PySide6.QtCore import QTimer, QUrl
+          from PySide6.QtQml import QQmlApplicationEngine
+
+          from src.gui import APP_TITLE, EditBayBackend
+
+          app = EditBayBackend(["subtitle-edit-bay-gui-smoke"])
+          app.setApplicationName(APP_TITLE)
+
+          engine = QQmlApplicationEngine()
+          engine.rootContext().setContextProperty("backend", app)
+          qml_path = Path("src/ui/Main.qml").resolve()
+          engine.load(QUrl.fromLocalFile(str(qml_path)))
+          if not engine.rootObjects():
+              raise SystemExit(f"Could not load GUI: {qml_path}")
+
+          QTimer.singleShot(500, app.quit)
+          exit_code = app.exec()
+          if exit_code != 0:
+              raise SystemExit(exit_code)
+          '@ | python -
+
+      - name: Run unit tests on Windows
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+  windows-installer-smoke:
+    name: Windows installer smoke
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Ensure Inno Setup compiler
+        shell: pwsh
+        run: |
+          $compiler = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+          if (-not $compiler) {
+              choco install innosetup --yes --no-progress
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Inno Setup installation failed with exit code $LASTEXITCODE."
+              }
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $installerPath = Join-Path $env:RUNNER_TEMP "SubtitleEditBay-Setup.exe"
+          & ./scripts/build_installer.ps1 -Version "0.0.0" -OutputPath $installerPath
+          if ($LASTEXITCODE -ne 0) {
+              throw "Installer build failed with exit code $LASTEXITCODE."
+          }
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+              throw "Installer build did not produce $installerPath."
+          }
+
+      - name: Install built application silently
+        shell: pwsh
+        run: |
+          $installerPath = Join-Path $env:RUNNER_TEMP "SubtitleEditBay-Setup.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled"
+          $logPath = Join-Path $env:RUNNER_TEMP "subtitle-edit-bay-install.log"
+          $arguments = @(
+              "/VERYSILENT",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART",
+              "/DIR=$installDir",
+              "/LOG=$logPath"
+          )
+          $process = Start-Process -FilePath $installerPath -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+              Get-Content -LiteralPath $logPath -ErrorAction SilentlyContinue
+              throw "Installer exited with code $($process.ExitCode)."
+          }
+          foreach ($path in @(
+              "src\gui.py",
+              "src\ui\Main.qml",
+              "scripts\launch.ps1",
+              "setup.bat",
+              "start.bat",
+              "update.bat",
+              "requirements.txt",
+              "VERSION"
+          )) {
+              $candidate = Join-Path $installDir $path
+              if (-not (Test-Path -LiteralPath $candidate)) {
+                  throw "Installed file is missing: $candidate"
+              }
+          }
+
+      - name: Prepare installed app environment
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled"
+          $venvPython = Join-Path $installDir ".venv\Scripts\python.exe"
+          python -m venv (Join-Path $installDir ".venv")
+          & $venvPython -m pip install --upgrade pip
+          & $venvPython -m pip install -r (Join-Path $installDir "requirements.txt")
+
+      - name: Start installed app on Windows
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled"
+          $venvPython = Join-Path $installDir ".venv\Scripts\python.exe"
+          $smokeScript = Join-Path $env:RUNNER_TEMP "installed-gui-smoke.py"
+          @'
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, str(Path.cwd()))
+
+          from PySide6.QtCore import QTimer, QUrl
+          from PySide6.QtQml import QQmlApplicationEngine
+
+          from src.gui import APP_TITLE, EditBayBackend
+
+          app = EditBayBackend(["subtitle-edit-bay-installed-smoke"], workspace_root=Path.cwd())
+          app.setApplicationName(APP_TITLE)
+
+          engine = QQmlApplicationEngine()
+          engine.rootContext().setContextProperty("backend", app)
+          qml_path = Path("src/ui/Main.qml").resolve()
+          engine.load(QUrl.fromLocalFile(str(qml_path)))
+          if not engine.rootObjects():
+              raise SystemExit(f"Could not load installed GUI: {qml_path}")
+
+          QTimer.singleShot(500, app.quit)
+          exit_code = app.exec()
+          if exit_code != 0:
+              raise SystemExit(exit_code)
+          '@ | Set-Content -LiteralPath $smokeScript -Encoding UTF8
+          Push-Location $installDir
+          try {
+              & $venvPython $smokeScript
+          }
+          finally {
+              Pop-Location
+          }

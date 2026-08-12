@@ -8,30 +8,81 @@ import unittest
 from pathlib import Path
 
 
+UI_ROOT = Path(__file__).resolve().parents[1] / "src" / "ui"
+ENTRYPOINT_QML = UI_ROOT / "Main.qml"
+WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
+WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
+COMPONENTS_ROOT = UI_ROOT / "components"
+SHARED_CONTROL_QML_FILES = (
+    COMPONENTS_ROOT / "PanelTitle.qml",
+    COMPONENTS_ROOT / "SmallButton.qml",
+    COMPONENTS_ROOT / "CompactSpinBox.qml",
+    COMPONENTS_ROOT / "TimeField.qml",
+)
+
+
+def read_entrypoint_qml() -> str:
+    return ENTRYPOINT_QML.read_text(encoding="utf-8")
+
+
+def read_workflow_qml() -> str:
+    return WORKFLOW_QML.read_text(encoding="utf-8")
+
+
+def read_workflow_wrapper_qml() -> str:
+    return WORKFLOW_WRAPPER_QML.read_text(encoding="utf-8")
+
+
+def read_component_qml(name: str) -> str:
+    return (COMPONENTS_ROOT / name).read_text(encoding="utf-8")
+
+
 class QmlStaticTests(unittest.TestCase):
-    def test_main_qml_passes_qmllint_without_warnings(self) -> None:
+    def test_qml_files_pass_qmllint_without_warnings(self) -> None:
         executable_name = "pyside6-qmllint.exe" if os.name == "nt" else "pyside6-qmllint"
         bundled = Path(sys.executable).with_name(executable_name)
         executable = str(bundled) if bundled.is_file() else shutil.which(executable_name)
         self.assertTrue(executable, "pyside6-qmllint is required with PySide6")
 
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        result = subprocess.run(
-            [str(executable), str(qml_path)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        for qml_path in (ENTRYPOINT_QML, WORKFLOW_QML, WORKFLOW_WRAPPER_QML, *SHARED_CONTROL_QML_FILES):
+            with self.subTest(qml_path=qml_path):
+                result = subprocess.run(
+                    [str(executable), str(qml_path)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
 
-        output = (result.stdout + result.stderr).strip()
-        self.assertEqual(result.returncode, 0, output)
-        self.assertNotIn("Warning:", output)
+                output = (result.stdout + result.stderr).strip()
+                self.assertEqual(result.returncode, 0, output)
+                self.assertNotIn("Warning:", output)
+
+    def test_main_qml_is_thin_entrypoint_for_workflow_screen(self) -> None:
+        qml = read_entrypoint_qml()
+        wrapper = read_workflow_wrapper_qml()
+
+        self.assertIn('import "screens"', qml)
+        self.assertIn("MainWorkflowScreenWithContext {}", qml)
+        self.assertIn("MainWorkflowScreen {", wrapper)
+        self.assertNotIn("ApplicationWindow", qml)
+
+    def test_shared_controls_are_available_as_standalone_components(self) -> None:
+        for qml_path in SHARED_CONTROL_QML_FILES:
+            with self.subTest(qml_path=qml_path):
+                self.assertTrue(qml_path.is_file())
+
+        self.assertIn("Text {", read_component_qml("PanelTitle.qml"))
+        self.assertIn("Button {", read_component_qml("SmallButton.qml"))
+        self.assertIn("SpinBox {", read_component_qml("CompactSpinBox.qml"))
+        self.assertIn("TextField {", read_component_qml("TimeField.qml"))
+        self.assertIn('font.family: "Yu Gothic UI"', read_component_qml("PanelTitle.qml"))
+        self.assertIn('font.family: "Cascadia Mono"', read_component_qml("CompactSpinBox.qml"))
+        self.assertIn("DoubleValidator", read_component_qml("TimeField.qml"))
 
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn('objectName: "captionFontCombo"', qml)
         self.assertIn("model: root.appBackend.fontChoices", qml)
@@ -39,8 +90,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('font.family: segmentData.subtitle_font_family || "Yu Gothic UI"', qml)
 
     def test_timeline_delegate_and_position_handlers_are_safe_during_refresh(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn("property var segment: modelData && modelData.segment ? modelData.segment : ({})", qml)
         self.assertIn("visible: sourceIndex >= 0 && segment.start !== undefined", qml)
@@ -48,8 +98,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("editorSeek.value = editorPlayer.position", qml)
 
     def test_caption_size_control_and_source_labels_are_readable_and_consistent(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn("component CompactSpinBox: SpinBox", qml)
         self.assertIn('objectName: "captionSizeSpin"', qml)
@@ -57,8 +106,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn('text: "素材を変更"', qml)
 
     def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn("root.appBackend.selectSegmentAtTime(editorPlayer.position / 1000)", qml)
         self.assertIn("timelineRoot.followPlaybackPosition(timelineRoot.player.position)", qml)
@@ -67,8 +115,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("positionViewAtIndex(selectedIndex, ListView.Contain)", qml)
 
     def test_source_drag_and_drop_is_wired_to_backend(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn('objectName: "globalSourceDropArea"', qml)
         self.assertIn('objectName: "sourcePopupDropTarget"', qml)
@@ -76,8 +123,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("drop.acceptProposedAction()", qml)
 
     def test_audio_mixer_is_wired_to_project_channels(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
         mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]
 
         self.assertIn('objectName: "audioMixerOpenButton"', qml)
@@ -132,8 +178,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("Qt.callLater", mixer_block)
 
     def test_video_encoder_is_selected_automatically(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertNotIn("codecCombo", qml)
         self.assertNotIn('"video_codec":', qml)
@@ -141,8 +186,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("root.appBackend.dependencyStatus.nvenc", qml)
 
     def test_main_font_size_control_supports_nine_hundred_percent(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
         self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
@@ -151,8 +195,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', qml)
 
     def test_global_subtitle_outline_controls_are_wired_to_preview(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn('objectName: "outlineColorDialog"', qml)
         self.assertIn('objectName: "outlineColorButton"', qml)
@@ -163,8 +206,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('color: root.selectedSubtitleOutlineColor', qml)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
-        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        qml = qml_path.read_text(encoding="utf-8")
+        qml = read_workflow_qml()
 
         self.assertIn('objectName: "speakerColorDialog"', qml)
         self.assertIn('objectName: "sourceSpeakerColorButton"', qml)

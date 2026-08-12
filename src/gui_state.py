@@ -38,6 +38,28 @@ def build_gui_transcribe_command(
     return command
 
 
+def build_gui_command(
+    config_path: str | Path,
+    *,
+    video: str,
+    audio_files: list[str] | tuple[str, ...],
+    output_dir: str,
+    reference_audio: str | None = None,
+    reference_track: str | None = None,
+    alignment_offset_adjustment: float = 0.0,
+) -> list[str]:
+    """Build the GUI transcription command using the editable workflow path."""
+    return build_gui_transcribe_command(
+        config_path,
+        video=video,
+        audio_files=audio_files,
+        output_dir=output_dir,
+        reference_audio=reference_audio,
+        reference_track=reference_track,
+        alignment_offset_adjustment=alignment_offset_adjustment,
+    )
+
+
 def build_gui_render_command(
     config_path: str | Path,
     *,

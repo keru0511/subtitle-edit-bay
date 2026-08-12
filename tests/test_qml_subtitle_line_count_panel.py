@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PANEL_QML = ROOT / "src" / "ui" / "components" / "SubtitleLineCountPanel.qml"
 WRAPPER_QML = ROOT / "src" / "ui" / "screens" / "MainWorkflowScreenWithContext.qml"
+GUI_BASE = ROOT / "src" / "gui_base.py"
 
 
 class SubtitleLineCountPanelQmlTests(unittest.TestCase):
@@ -26,7 +27,7 @@ class SubtitleLineCountPanelQmlTests(unittest.TestCase):
         self.assertIn("panelRoot.lineCountChanged(panelRoot.selectedSegmentIndex, currentValue)", content)
         self.assertIn("segment.subtitle_line_count", content)
 
-    def test_wrapper_wires_panel_to_backend_update_segment(self) -> None:
+    def test_wrapper_wires_panel_to_backend_line_count_slot(self) -> None:
         content = WRAPPER_QML.read_text(encoding="utf-8")
 
         self.assertIn("SubtitleLineCountPanel", content)
@@ -34,7 +35,15 @@ class SubtitleLineCountPanelQmlTests(unittest.TestCase):
         self.assertIn("visible: screenRoot.editorMode && screenRoot.appBackend.projectLoaded", content)
         self.assertIn("selectedSegmentIndex: screenRoot.appBackend.selectedSegmentIndex", content)
         self.assertIn("segment: screenRoot.selectedSubtitleSegment()", content)
-        self.assertIn('screenRoot.appBackend.updateSegment(segmentIndex, {"subtitle_line_count": lineCount})', content)
+        self.assertIn("screenRoot.appBackend.updateSegmentLineCount(segmentIndex, lineCount)", content)
+
+    def test_backend_exposes_dedicated_line_count_slot(self) -> None:
+        content = GUI_BASE.read_text(encoding="utf-8")
+
+        self.assertIn("def updateSegmentLineCount(self, index: int, line_count: str) -> None:", content)
+        self.assertIn("normalize_subtitle_line_count", content)
+        self.assertIn('updated["subtitle_line_count"] = normalized_line_count', content)
+        self.assertIn('updated["manual_line_count"] = normalized_line_count != "auto"', content)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from pathlib import Path
 UI_ROOT = Path(__file__).resolve().parents[1] / "src" / "ui"
 ENTRYPOINT_QML = UI_ROOT / "Main.qml"
 WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
+WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
 SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "PanelTitle.qml",
@@ -28,6 +29,10 @@ def read_workflow_qml() -> str:
     return WORKFLOW_QML.read_text(encoding="utf-8")
 
 
+def read_workflow_wrapper_qml() -> str:
+    return WORKFLOW_WRAPPER_QML.read_text(encoding="utf-8")
+
+
 def read_component_qml(name: str) -> str:
     return (COMPONENTS_ROOT / name).read_text(encoding="utf-8")
 
@@ -39,7 +44,7 @@ class QmlStaticTests(unittest.TestCase):
         executable = str(bundled) if bundled.is_file() else shutil.which(executable_name)
         self.assertTrue(executable, "pyside6-qmllint is required with PySide6")
 
-        for qml_path in (ENTRYPOINT_QML, WORKFLOW_QML, *SHARED_CONTROL_QML_FILES):
+        for qml_path in (ENTRYPOINT_QML, WORKFLOW_QML, WORKFLOW_WRAPPER_QML, *SHARED_CONTROL_QML_FILES):
             with self.subTest(qml_path=qml_path):
                 result = subprocess.run(
                     [str(executable), str(qml_path)],
@@ -56,9 +61,11 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_main_qml_is_thin_entrypoint_for_workflow_screen(self) -> None:
         qml = read_entrypoint_qml()
+        wrapper = read_workflow_wrapper_qml()
 
         self.assertIn('import "screens"', qml)
-        self.assertIn("MainWorkflowScreen {}", qml)
+        self.assertIn("MainWorkflowScreenWithContext {}", qml)
+        self.assertIn("MainWorkflowScreen {", wrapper)
         self.assertNotIn("ApplicationWindow", qml)
 
     def test_shared_controls_are_available_as_standalone_components(self) -> None:

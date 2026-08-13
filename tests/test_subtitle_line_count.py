@@ -170,6 +170,27 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertTrue(segment_preview_text(segment).endswith("…"))
         self.assertEqual(segment_editor_text(segment), segment["text"])
 
+    def test_manual_long_segment_preserves_full_text_for_preview_render(self) -> None:
+        segment = {
+            "start": 0,
+            "end": 3,
+            "text": "alpha beta gamma delta epsilon zeta eta theta",
+            "speaker": "Oz",
+            "layout_packed": True,
+            "max_width": 8,
+            "manual_text": True,
+        }
+
+        events = pack_segments_with_line_count(
+            {"segments": [segment]},
+            subtitle_max_gap_seconds=0.4,
+            subtitle_end_padding_seconds=0.08,
+            subtitle_min_duration_seconds=0.35,
+        )
+        self.assertGreaterEqual(len(events), 1)
+        self.assertTrue(any("theta" in event.text for event in events))
+        self.assertFalse(any("…" in event.text for event in events))
+
     def test_manual_break_overrides_automatic_formatting_and_layout_span(self) -> None:
         project = create_project(
             video_path="video.mkv",

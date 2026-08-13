@@ -1201,8 +1201,14 @@ class EditBayBackend(LegacyEditBayBackend):
     @Slot(str)
     def loadProject(self, path: str) -> None:
         if self._running:
-            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            self._set_status("????????????????????", "BUSY")
             return
+        if self._project_dirty:
+            if not self._project_path:
+                self._set_status("?????????????????????????????????", "ERROR")
+                return
+            if not self.saveProject():
+                return
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
 

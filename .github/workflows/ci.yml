@@ -79,7 +79,7 @@ jobs:
           choco install ffmpeg --yes --no-progress
           if ($LASTEXITCODE -ne 0) {
               Write-Host "Chocolatey install failed, attempting winget fallback..."
-              winget\ install\ --id\ Gyan\.FFmpeg\ --source\ winget\ --exact\ --silent\ --accept-package-agreements\ --accept-source-agreements
+              winget install --id Gyan.FFmpeg --source winget --exact --silent --accept-package-agreements --accept-source-agreements
               if ($LASTEXITCODE -ne 0) {
                   Write-Host "Winget fallback failed, retrying Chocolatey from explicit source..."
                   choco install ffmpeg --yes --no-progress --source=https://community.chocolatey.org/api/v2/
@@ -272,6 +272,7 @@ jobs:
           finally {
               Pop-Location
           }
+
 
 
 

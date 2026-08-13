@@ -97,6 +97,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._audio_preview_cache_future = None
         app._audio_preview_preparing = False
         app.audio_preview_cache_root = self.root / ".audio-preview-cache"
+        self._media_probe_patch = patch.object(
+            app,
+            "_is_supported_media_file",
+            side_effect=self._fake_media_file_has_required_streams,
+        )
+        self._media_probe_patch.start()
 
     def tearDown(self) -> None:
         for engine in self._engines:
@@ -114,6 +120,23 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._running = False
         self.app._active_job = ""
         self.app._cancel_requested = False
+
+        self._media_probe_patch.stop()
+
+    @staticmethod
+    def _fake_media_file_has_required_streams(
+        source: Path | str,
+        required_streams: set[str],
+        _label: str,
+    ) -> bool:
+        ext = Path(source).suffix.lower()
+        video_exts = {".avi", ".m2ts", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+        audio_exts = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
+        if ext in video_exts:
+            return "video" in required_streams
+        if ext in audio_exts:
+            return "audio" in required_streams
+        return False
 
     def _make_project(
         self,
@@ -296,6 +319,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(self.app.sourceSelection["video"], "")
         self.assertEqual(self.app.stage, "BUSY")
+
+    def test_video_file_dialog_allows_extended_video_extensions(self) -> None:
+        video = self.root / "capture.avi"
+        video.write_bytes(b"video")
+
+        self.app.setVideoFile(str(video))
+
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.assertEqual(self.app.stage, "INPUT")
+
+    def test_audio_file_dialog_allows_extended_audio_extensions(self) -> None:
+        audio = self.root / "voice.opus"
+        audio.write_bytes(b"audio")
+
+        self.app.setAudioFiles([str(audio)], False)
+
+        self.assertEqual(self.app.sourceSelection["audio_files"], [str(audio.resolve())])
+        self.assertEqual(self.app.stage, "INPUT")
 
     def test_source_speaker_color_is_saved_and_reloaded(self) -> None:
         _, audio, _ = self._set_ready_sources()

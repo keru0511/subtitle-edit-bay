@@ -301,6 +301,7 @@ function Update-ZipDistribution {
         }
 
         Write-Host "Refreshing dependencies..."
+        $LASTEXITCODE = 0
         & $setupScript
         if ($LASTEXITCODE -ne 0) {
             throw "Setup failed while refreshing dependencies."
@@ -339,7 +340,11 @@ if (Test-ProjectGitCheckout) {
     }
 
     Write-Host "Refreshing dependencies..."
+    $LASTEXITCODE = 0
     & $setupScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Setup failed while refreshing dependencies."
+    }
 }
 else {
     Update-ZipDistribution

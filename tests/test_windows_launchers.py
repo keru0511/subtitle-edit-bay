@@ -41,7 +41,7 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("pull --ff-only", updater)
         self.assertIn("--untracked-files=no", updater)
         self.assertIn("Invoke-WebRequest", updater)
-        self.assertIn("subtitle-edit-bay/archive/refs/heads/main.zip", updater)
+        self.assertIn("archive/refs/tags", updater)
         self.assertIn('"video_import"', updater)
         self.assertIn('"video_export"', updater)
         self.assertIn("assets/speaker_colors.json", updater)

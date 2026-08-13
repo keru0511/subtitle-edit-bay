@@ -363,6 +363,42 @@ class RenderAssTests(unittest.TestCase):
 
         self.assertIn(r",,{\fnYu Mincho\fs60}hello", output)
 
+    def test_render_ass_row_margin_matches_layout_scale_multipliers(self) -> None:
+        for base_font_size, expected_step in [(50, 156), (100, 312), (200, 624), (450, 1404)]:
+            with self.subTest(base_font_size=base_font_size):
+                data = {
+                    "segments": [
+                        {
+                            "start": 0.0,
+                            "end": 1.0,
+                            "speaker": "Oz",
+                            "text": "first",
+                            "layout_packed": True,
+                            "layout_row": 0,
+                        },
+                        {
+                            "start": 0.0,
+                            "end": 1.0,
+                            "speaker": "Guest",
+                            "text": "second",
+                            "layout_packed": True,
+                            "layout_row": 1,
+                        },
+                    ]
+                }
+                output = render_ass(data, subtitle_font_size=base_font_size)
+                rows = [
+                    [part.strip() for part in line.split(",", 8) if part]
+                    for line in output.splitlines()
+                    if line.startswith("Dialogue:")
+                ]
+                margins = {
+                    int(item[0].replace("Dialogue: ", "")): int(item[7])
+                    for item in rows
+                }
+                self.assertEqual(margins[0], 34)
+                self.assertEqual(margins[1], 34 + expected_step)
+
     def test_pack_segments_preserves_source_speaker_metadata(self) -> None:
         data = {
             "segments": [

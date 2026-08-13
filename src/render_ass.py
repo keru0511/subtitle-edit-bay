@@ -33,6 +33,19 @@ ROW_MARGIN_BASE = 34
 ROW_MARGIN_STEP = 156
 
 
+def resolve_row_margin_step(
+    subtitle_font_size: int,
+    events: list[SubtitleEvent] | None = None,
+) -> int:
+    max_font_scale = max(
+        (max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0))) for event in events or []),
+        default=1.0,
+    )
+    return round(
+        ROW_MARGIN_STEP * max(1.0, subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * max_font_scale)
+    )
+
+
 def format_ass_time(seconds: float) -> str:
     total_cs = max(0, round(seconds * 100))
     hours, rem = divmod(total_cs, 360000)
@@ -159,7 +172,9 @@ def render_dialogue(
         overrides += f"\\fn{font_family}"
     if scaled_font_size != subtitle_font_size:
         overrides += f"\\fs{scaled_font_size}"
-    dialogue_text = f"{{{overrides}}}{event.text}" if overrides else event.text
+    dialogue_text = event.text
+    if overrides:
+        dialogue_text = f"{{{overrides}}}{dialogue_text}"
     margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step
     return (
         "Dialogue: "
@@ -187,13 +202,7 @@ def render_ass(
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
-    max_font_scale = max(
-        (max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0))) for event in events),
-        default=1.0,
-    )
-    row_margin_step = round(
-        ROW_MARGIN_STEP * max(1.0, subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * max_font_scale)
-    )
+    row_margin_step = resolve_row_margin_step(subtitle_font_size=subtitle_font_size, events=events)
     resolved_speaker_color_map = load_speaker_color_map() if speaker_color_map is None else speaker_color_map
     style_overrides = build_track_style_overrides(
         events,

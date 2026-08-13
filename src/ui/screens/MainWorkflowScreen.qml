@@ -1183,6 +1183,8 @@ ApplicationWindow {
         id: sourcePopup
         anchors.centerIn: Overlay.overlay
         width: 620; height: 520; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
+        onOpened: root.appBackend.beginSourceRelink()
+        onClosed: root.appBackend.finishSourceRelink()
         background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
         ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
             RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
@@ -1242,7 +1244,7 @@ ApplicationWindow {
             RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
             PanelTitle { text: "出力先フォルダ" }
             RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "再リンク"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
         }
     }
 

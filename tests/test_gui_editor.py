@@ -73,6 +73,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._active_job = ""
         app._ass_path = ""
         app._loading_project_sources = False
+        app._relinking_project_sources = False
         app._source_selection = SourceSelection()
         app._speakers = []
         app._audio_tracks = app._default_audio_tracks()
@@ -1047,6 +1048,58 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.resetSources()
         self.assertFalse(self.app.projectLoaded)
         self.assertEqual(self.app.sourceSelection["video"], "")
+
+    def test_relinking_source_selection_updates_existing_project(self) -> None:
+        path, _, _ = self._make_project()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        relocated = self.root / "relinked"
+        relocated.mkdir()
+        original_project = load_project(path)
+        old_video = Path(original_project["video"]["path"])
+        old_audio = Path(original_project["audio_sources"][0]["path"])
+        new_video = relocated / old_video.name
+        new_audio = relocated / old_audio.name
+        new_output = relocated / "output"
+        new_output.mkdir()
+        new_video.write_bytes(b"video")
+        new_audio.write_bytes(b"audio")
+
+        self.app.beginSourceRelink()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(new_video))
+            self.app.setAudioFiles([str(new_audio)], False)
+            self.app.setOutputDirectory(str(new_output))
+        self.app.relinkProjectSources()
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertTrue(self.app.projectDirty)
+        self.assertEqual(self.app._project["segments"], original_project["segments"])
+        self.assertEqual(self.app.sourceSelection["video"], str(new_video.resolve()))
+        self.assertEqual(self.app.sourceSelection["output_dir"], str(new_output.resolve()))
+        self.assertEqual(self.app._project["video"]["path"], str(new_video.resolve()))
+        self.assertEqual(self.app._project["output_dir"], str(new_output.resolve()))
+        self.assertEqual(
+            [item["path"] for item in self.app._project["audio_sources"]],
+            [str(new_audio.resolve())],
+        )
+        self.assertEqual(self.app.projectSpeakers[0]["path"], str(new_audio.resolve()))
+        self.assertEqual(self.app.projectSpeakers[0]["style"], original_project["speakers"][0]["style"])
+        self.assertEqual(self.app.projectSpeakers[0]["color"], original_project["speakers"][0]["color"])
+        self.assertEqual(self.app.projectSpeakers[0]["track_key"], original_project["speakers"][0]["track_key"])
+        self.app.finishSourceRelink()
+
+    def test_finish_source_relink_clears_relinking_state(self) -> None:
+        path, _, _ = self._make_project()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        self.app.beginSourceRelink()
+        self.assertTrue(self.app._relinking_project_sources)
+        self.app.finishSourceRelink()
+        self.assertFalse(self.app._relinking_project_sources)
+        self.assertTrue(self.app.projectLoaded)
 
     def test_qml_workflow_state_matrix(self) -> None:
         _, window = self._load_qml()

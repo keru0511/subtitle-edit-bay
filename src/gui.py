@@ -48,6 +48,7 @@ from .audio_preview_cache import (
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
+from .gui_source_state import SourceSelection, build_speaker_entries_from_files
 from .gui_state import build_gui_render_command, build_gui_transcribe_command
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
@@ -60,6 +61,7 @@ from .subtitle_project import (
 )
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
+from .render_ass import style_name_for_speaker
 
 
 def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
@@ -260,6 +262,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._active_job = ""
         self._ass_path = ""
         self._loading_project_sources = False
+        self._relinking_project_sources = False
+        self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=workspace_root)
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
@@ -894,24 +898,148 @@ class EditBayBackend(LegacyEditBayBackend):
 
     def _set_source_selection(self, selection: Any) -> None:
         super()._set_source_selection(selection)
-        if self._loading_project_sources or self._project is None:
+        if self._loading_project_sources or self._relinking_project_sources or self._project is None:
             return
-        project_video = str(Path(str(self._project.get("video", {}).get("path", ""))).resolve())
-        selected_video = str(Path(selection.video).resolve()) if selection.video else ""
+        if not self._project_source_selection_matches(selection):
+            self._clear_project()
+
+    def _normalized_source_path(self, value: str) -> str:
+        if not value:
+            return ""
+        return str(Path(value).resolve()).casefold()
+
+    def _project_source_selection_matches(self, selection: Any) -> bool:
+        if self._project is None:
+            return False
+        project_video = self._normalized_source_path(str(self._project.get("video", {}).get("path", "")))
+        selected_video = self._normalized_source_path(selection.video)
         project_audio = {
-            str(Path(str(item.get("path", ""))).resolve())
+            self._normalized_source_path(str(item.get("path", "")))
             for item in self._project.get("audio_sources", [])
             if item.get("path")
         }
-        selected_audio = {str(Path(path).resolve()) for path in selection.audio_files}
-        project_output = str(Path(str(self._project.get("output_dir", ""))).resolve())
-        selected_output = str(Path(selection.output_dir).resolve()) if selection.output_dir else ""
-        if (
-            (selected_video and selected_video != project_video)
-            or selected_audio != project_audio
-            or (selected_output and selected_output != project_output)
-        ):
-            self._clear_project()
+        selected_audio = {self._normalized_source_path(path) for path in selection.audio_files}
+        project_output = self._normalized_source_path(str(self._project.get("output_dir", "")))
+        selected_output = self._normalized_source_path(selection.output_dir)
+        return (
+            selected_video == project_video
+            and selected_audio == project_audio
+            and selected_output == project_output
+        )
+
+    @Slot()
+    def beginSourceRelink(self) -> None:
+        self._relink_source_selection = self._source_selection
+        self._relinking_project_sources = True
+
+    @Slot()
+    def finishSourceRelink(self) -> None:
+        if not self._relinking_project_sources:
+            return
+        try:
+            if self._project is not None and self._relink_source_selection != self._source_selection:
+                self._clear_project()
+        finally:
+            self._relinking_project_sources = False
+            self._relink_source_selection = None
+
+    @Slot()
+    def relinkProjectSources(self) -> None:
+        if self._project is None:
+            return
+
+        old_project = deepcopy(self._project)
+        previous_sources = [dict(item) for item in self._project.get("audio_sources", [])]
+        previous_speakers = [dict(item) for item in self._project.get("speakers", [])]
+
+        source_entries = build_speaker_entries_from_files(
+            self._source_selection.audio_files,
+            self.color_config_path,
+        )
+        project_video = self._project.get("video", {})
+        selected_video = str(Path(self._source_selection.video).resolve()) if self._source_selection.video else ""
+        selected_output = str(Path(self._source_selection.output_dir).resolve()) if self._source_selection.output_dir else ""
+
+        if not selected_video or not selected_output or not source_entries:
+            self._set_status("Relink requires a complete source selection", "CHECK")
+            return
+
+        def _match(items: list[dict[str, Any]], **conditions: str) -> dict[str, Any] | None:
+            for index, item in enumerate(items):
+                for key, value in conditions.items():
+                    item_value = str(item.get(key, "")).strip().casefold()
+                    if value and item_value != str(value).strip().casefold():
+                        break
+                else:
+                    return items.pop(index)
+            return None
+
+        unmatched_speakers = previous_speakers.copy()
+        unmatched_audio_sources = previous_sources.copy()
+        new_audio_sources: list[dict[str, Any]] = []
+        new_speakers: list[dict[str, Any]] = []
+
+        for source in source_entries:
+            previous_source = (
+                _match(unmatched_audio_sources, path=source["path"])
+                or _match(unmatched_audio_sources, file_name=source["file_name"])
+                or _match(unmatched_audio_sources, file_name=str(Path(source["path"]).name))
+            )
+            source_payload: dict[str, Any] = {**previous_source} if previous_source else {}
+            source_payload["path"] = source["path"]
+            source_payload.setdefault("file_name", source["file_name"])
+            source_payload.setdefault("track_key", source["track_key"])
+            new_audio_sources.append(source_payload)
+
+            previous_speaker = (
+                _match(unmatched_speakers, path=source["path"])
+                or _match(unmatched_speakers, file_name=source["file_name"])
+                or _match(unmatched_speakers, name=source["name"])
+            )
+            if previous_speaker is None:
+                speaker_payload = {
+                    "name": source["name"],
+                    "style": style_name_for_speaker(source["name"]),
+                    "file_name": source["file_name"],
+                    "track_key": source["track_key"],
+                    "color": source["color"],
+                    "path": source["path"],
+                }
+            else:
+                speaker_payload = {
+                    **previous_speaker,
+                    "name": source["name"],
+                    "file_name": source["file_name"],
+                    "track_key": previous_speaker.get("track_key", source["track_key"]),
+                    "path": source["path"],
+                }
+                speaker_payload.setdefault("style", style_name_for_speaker(source["name"]))
+            new_speakers.append(speaker_payload)
+
+        self._project["video"] = {
+            **(project_video if isinstance(project_video, dict) else {}),
+            "path": selected_video,
+        }
+        self._project["output_dir"] = selected_output
+        self._project["audio_sources"] = new_audio_sources
+        self._project["speakers"] = new_speakers
+
+        if "video" in self._project and isinstance(self._project["video"], dict):
+            self._project["video"]["duration_seconds"] = float(
+                self._project["video"].get("duration_seconds", 0.0)
+            )
+
+        self._project_path = str(derive_project_path(selected_video, selected_output))
+        reconcile_audio_mix(self._project, self._mixer_video_tracks())
+
+        if self._project != old_project:
+            self._mark_project_dirty()
+            self._reset_audio_preview_cache()
+            self._sync_subtitle_model()
+            self.projectDataChanged.emit()
+            self.segmentsChanged.emit()
+            self.selectionChanged.emit()
+            self._set_status("Project sources relinked", "EDIT")
 
     def _default_project_path(self) -> Path | None:
         selection = self._source_selection
@@ -944,7 +1072,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.selectionChanged.emit()
 
     def _try_load_default_project(self) -> bool:
-        if self._loading_project_sources:
+        if self._loading_project_sources or self._relinking_project_sources:
             return False
         path = self._default_project_path()
         if path is not None and path.is_file():

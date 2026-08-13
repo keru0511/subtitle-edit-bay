@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import tempfile
 import subprocess
 from pathlib import Path
 
@@ -12,6 +14,16 @@ DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+
+
+def _copy_ass_for_filter_compatibility(subtitle: str) -> tuple[str, str | None]:
+    subtitle_path = Path(subtitle)
+    if "'" not in str(subtitle_path):
+        return str(subtitle_path), None
+
+    with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as temporary_ass:
+        shutil.copy2(subtitle_path, temporary_ass.name)
+        return temporary_ass.name, temporary_ass.name
 
 
 def build_ass_filter(subtitle: str) -> str:
@@ -72,23 +84,28 @@ def run_ffmpeg_burn(
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        build_ffmpeg_command(
-            video,
-            subtitle,
-            output,
-            video_codec=video_codec,
-            audio_codec=audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=audio_filter,
-            audio_track=audio_track,
-            audio_mix=audio_mix,
-            audio_offset_seconds=audio_offset_seconds,
-        ),
-        check=True,
-    )
+    subtitle_path, cleanup_path = _copy_ass_for_filter_compatibility(subtitle)
+    try:
+        subprocess.run(
+            build_ffmpeg_command(
+                video,
+                subtitle_path,
+                output,
+                video_codec=video_codec,
+                audio_codec=audio_codec,
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                audio_filter=audio_filter,
+                audio_track=audio_track,
+                audio_mix=audio_mix,
+                audio_offset_seconds=audio_offset_seconds,
+            ),
+            check=True,
+        )
+    finally:
+        if cleanup_path is not None:
+            Path(cleanup_path).unlink(missing_ok=True)
     return output_path
 
 

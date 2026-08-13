@@ -430,15 +430,49 @@ class RenderAssTests(unittest.TestCase):
             def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 calls.append(command)
                 Path(command[-1]).write_bytes(b"ok")
+    def test_run_ffmpeg_burn_preserves_existing_output_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "video.mp4"
+            subtitle = root / "caption.ass"
+            subtitle.write_text("dummy", encoding="utf-8")
+            output = root / "output.mp4"
+            output.write_bytes(b"previous output")
+            video.write_bytes(b"")
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                Path(command[-1]).write_bytes(b"")
+                raise subprocess.CalledProcessError(1, command)
+
+            with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_ffmpeg_burn(str(video), str(subtitle), str(output))
+
+            self.assertEqual(output.read_bytes(), b"previous output")
+            self.assertEqual(
+                [path.name for path in output.parent.iterdir() if path.name.startswith(f".{output.stem}.") and ".partial" in path.name],
+                [],
+            )
+
+    def test_run_ffmpeg_burn_replaces_output_only_when_run_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "video.mp4"
+            subtitle = root / "caption.ass"
+            subtitle.write_text("dummy", encoding="utf-8")
+            output = root / "output.mp4"
+            output.write_bytes(b"previous output")
+            video.write_bytes(b"")
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                Path(command[-1]).write_bytes(b"new output")
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
             with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
                 result = run_ffmpeg_burn(str(video), str(subtitle), str(output))
 
             self.assertEqual(result, output)
-            self.assertEqual(len(calls), 1)
-            vf_index = calls[0].index("-vf") + 1
-            self.assertNotIn("O'Brien", calls[0][vf_index])
+            self.assertEqual(output.read_bytes(), b"new output")
 
     def test_build_ffmpeg_command_uses_high_quality_nvenc(self) -> None:
         command = build_ffmpeg_command(

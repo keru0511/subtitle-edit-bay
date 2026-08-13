@@ -30,8 +30,28 @@ class GuiTranscriptionContextStateTests(unittest.TestCase):
                 "dictionary_path": "",
                 "dictionary_confirmed": False,
                 "web_dictionary_enabled": False,
+                "web_dictionary_candidates": [],
+                "web_dictionary_terms": [],
+                "web_dictionary_candidate_metadata": [],
             },
         )
+
+    def test_enabled_context_without_candidates_is_auto_populated(self) -> None:
+        state = gui_transcription_context_state_from_config(
+            {
+                "craig_pipeline": {
+                    "transcription_context": {
+                        "web_dictionary_enabled": True,
+                        "game_title": "Splatoon 3",
+                        "game_notes": "Splatfest Salmon",
+                    }
+                }
+            }
+        )
+
+        self.assertTrue(state["web_dictionary_enabled"])
+        self.assertIn("Splatoon 3", state["web_dictionary_candidates"])
+        self.assertIn("Splatfest", state["web_dictionary_candidates"])
 
     def test_config_context_is_rendered_as_gui_text_state(self) -> None:
         state = gui_transcription_context_state_from_config(
@@ -53,6 +73,24 @@ class GuiTranscriptionContextStateTests(unittest.TestCase):
         self.assertEqual(state["creator_terms_text"], "ナワバリバトル\nスプラッシュボム")
         self.assertEqual(state["dictionary_path"], "dictionary.json")
         self.assertTrue(state["dictionary_confirmed"])
+        self.assertEqual(state["web_dictionary_candidates"], [])
+
+    def test_web_dictionary_enabled_and_candidates_are_rendered_when_present(self) -> None:
+        state = gui_transcription_context_state_from_config(
+            {
+                "craig_pipeline": {
+                    "transcription_context": {
+                        "web_dictionary_enabled": True,
+                        "web_dictionary_candidates": ["候補A", "候補B", "候補A"],
+                        "web_dictionary_terms": ["候補A", "候補A"],
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(state["web_dictionary_enabled"], True)
+        self.assertEqual(state["web_dictionary_candidates"], ["候補A", "候補B"])
+        self.assertEqual(state["web_dictionary_terms"], ["候補A"])
 
     def test_gui_state_payload_splits_terms_and_normalizes_for_runtime_config(self) -> None:
         payload = gui_state_to_transcription_context(
@@ -63,6 +101,8 @@ class GuiTranscriptionContextStateTests(unittest.TestCase):
                 "dictionary_path": " dictionary.json ",
                 "dictionary_confirmed": True,
                 "web_dictionary_enabled": False,
+                "web_dictionary_candidates": ["候補A", "候補B"],
+                "web_dictionary_terms": ["候補A", "候補A"],
             }
         )
 
@@ -70,6 +110,8 @@ class GuiTranscriptionContextStateTests(unittest.TestCase):
         self.assertEqual(payload["creator_terms"], ["ナワバリバトル", "スプラッシュボム", "イカ"])
         self.assertEqual(payload["dictionary_path"], "dictionary.json")
         self.assertTrue(payload["dictionary_confirmed"])
+        self.assertEqual(payload["web_dictionary_candidates"], ["候補A", "候補B"])
+        self.assertEqual(payload["web_dictionary_terms"], ["候補A"])
 
     def test_explicit_creator_terms_array_takes_precedence_over_text_field(self) -> None:
         payload = gui_state_to_transcription_context(

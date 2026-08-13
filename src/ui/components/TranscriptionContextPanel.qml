@@ -22,6 +22,23 @@ Rectangle {
         return value === undefined || value === null ? "" : String(value)
     }
 
+    function _toStringList(value) {
+        if (!(value instanceof Array)) {
+            return []
+        }
+        var terms = []
+        for (var index = 0; index < value.length; index += 1) {
+            if (typeof value[index] !== "string") {
+                continue
+            }
+            var normalized = String(value[index]).trim()
+            if (normalized.length > 0) {
+                terms.push(normalized)
+            }
+        }
+        return terms
+    }
+
     function applyContext(value) {
         var current = value || ({})
         gameTitleField.text = valueOrEmpty(current.game_title)
@@ -30,16 +47,46 @@ Rectangle {
         dictionaryPathField.text = valueOrEmpty(current.dictionary_path)
         dictionaryConfirmedSwitch.checked = Boolean(current.dictionary_confirmed)
         webDictionarySwitch.checked = Boolean(current.web_dictionary_enabled)
+
+        webDictionaryCandidateModel.clear()
+        var candidates = _toStringList(current.web_dictionary_candidates)
+        var selected = _toStringList(current.web_dictionary_terms)
+        var selectedLookup = {}
+        for (var selectedIndex = 0; selectedIndex < selected.length; selectedIndex += 1) {
+            selectedLookup[selected[selectedIndex]] = true
+        }
+        for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+            var candidate = candidates[candidateIndex]
+            webDictionaryCandidateModel.append({
+                "term": candidate,
+                "selected": Boolean(selectedLookup[candidate]),
+            })
+        }
     }
 
     function contextPayload() {
+        var selectedTerms = []
+        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
+            var item = webDictionaryCandidateModel.get(index)
+            if (item.selected) {
+                selectedTerms.push(item.term)
+            }
+        }
+
+        var candidateTerms = []
+        for (var candidateTermIndex = 0; candidateTermIndex < webDictionaryCandidateModel.count; candidateTermIndex += 1) {
+            candidateTerms.push(webDictionaryCandidateModel.get(candidateTermIndex).term)
+        }
+
         return {
             "game_title": gameTitleField.text,
             "game_notes": gameNotesField.text,
             "creator_terms_text": creatorTermsField.text,
             "dictionary_path": dictionaryPathField.text,
             "dictionary_confirmed": dictionaryConfirmedSwitch.checked,
-            "web_dictionary_enabled": webDictionarySwitch.checked
+            "web_dictionary_enabled": webDictionarySwitch.checked,
+            "web_dictionary_candidates": candidateTerms,
+            "web_dictionary_terms": selectedTerms
         }
     }
 
@@ -190,6 +237,13 @@ Rectangle {
                 font.pixelSize: 10
                 wrapMode: Text.Wrap
             }
+            Button {
+                id: refreshWebDictionaryButton
+                objectName: "transcriptionWebDictionaryRefreshButton"
+                enabled: !panelRoot.running
+                text: "候補を再読込"
+                onClicked: panelRoot.commitContext()
+            }
         }
 
         Text {
@@ -200,5 +254,57 @@ Rectangle {
             font.pixelSize: 9
             wrapMode: Text.Wrap
         }
+
+        Text {
+            Layout.fillWidth: true
+            text: "Web候補（チェックがONのみ適用）"
+            color: panelRoot.textPrimaryColor
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            font.weight: Font.Bold
+        }
+
+        ScrollView {
+            id: webDictionaryCandidateList
+            objectName: "transcriptionWebDictionaryCandidateList"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 130
+            clip: true
+
+            ListView {
+                id: webDictionaryCandidates
+                model: webDictionaryCandidateModel
+                interactive: false
+                delegate: RowLayout {
+                    width: ListView.view.width
+                    spacing: 8
+                    CheckBox {
+                        Layout.fillWidth: true
+                        objectName: "transcriptionWebDictionaryCandidateItem"
+                        text: model.term
+                        checked: model.selected
+                        enabled: !panelRoot.running
+                        onToggled: {
+                            webDictionaryCandidateModel.setProperty(index, "selected", checked)
+                            panelRoot.commitContext()
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: webDictionaryCandidateModel.count === 0
+            text: "現在表示できる候補はありません。ゲームタイトルまたは補足ノートを追加してください。"
+            color: panelRoot.textMutedColor
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 9
+            wrapMode: Text.Wrap
+        }
+    }
+
+    ListModel {
+        id: webDictionaryCandidateModel
     }
 }

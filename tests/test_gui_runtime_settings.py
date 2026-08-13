@@ -104,6 +104,9 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
                 "dictionary_path": "dictionaries/splatoon.json",
                 "dictionary_confirmed": True,
                 "web_dictionary_enabled": False,
+                "web_dictionary_candidates": [],
+                "web_dictionary_terms": [],
+                "web_dictionary_candidate_metadata": [],
             },
         )
 

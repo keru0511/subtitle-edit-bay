@@ -47,6 +47,31 @@ class TranscriptionHintPlanTests(unittest.TestCase):
         self.assertEqual(plan.cache_settings["asr"]["device"], "cuda")
         self.assertEqual(plan.cache_settings["dictionary_hash"], plan.dictionary_hash)
 
+    def test_web_dictionary_terms_are_included_in_plan_prompt_and_cache(self) -> None:
+        context = TranscriptionContext(
+            web_dictionary_enabled=True,
+            web_dictionary_terms=("Ink", "Bomba"),
+        )
+
+        plan = build_craig_transcription_hint_plan(context, asr_settings=TranscriptionAsrSettings())
+
+        self.assertIn("ゲーム内用語: Ink, Bomba", plan.hint.initial_prompt)
+        self.assertIn("Ink", plan.hint.hotwords)
+        self.assertIn("Bomba", plan.hint.hotwords)
+        self.assertEqual(plan.dictionary_hash, "")
+        self.assertEqual(plan.cache_settings["transcription_context"]["web_dictionary_terms"], ["Ink", "Bomba"])
+
+    def test_web_dictionary_terms_are_ignored_when_disabled(self) -> None:
+        context = TranscriptionContext(
+            web_dictionary_enabled=False,
+            web_dictionary_terms=("Ink",),
+        )
+
+        plan = build_craig_transcription_hint_plan(context)
+
+        self.assertNotIn("Ink", plan.hint.hotwords)
+        self.assertNotIn("ゲーム内用語", plan.hint.initial_prompt)
+
     def test_unconfirmed_dictionary_is_inert(self) -> None:
         context = TranscriptionContext(
             game_title="Splatoon 3",

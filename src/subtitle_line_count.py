@@ -9,11 +9,13 @@ from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     normalize_text,
     pack_segment_pages,
+    text_width,
 )
 
 SUBTITLE_LINE_COUNT_AUTO = "auto"
 SUPPORTED_SUBTITLE_LINE_COUNTS = {SUBTITLE_LINE_COUNT_AUTO, "1", "2"}
 ELLIPSIS = "\u2026"
+UNTRUNCATED_MAX_LINES = 999
 
 
 def normalize_subtitle_line_count(value: object = SUBTITLE_LINE_COUNT_AUTO) -> str:
@@ -54,12 +56,15 @@ def format_segment_text(segment: dict[str, Any], default_max_width: int = 24) ->
     display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
     line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", SUBTITLE_LINE_COUNT_AUTO))
     max_lines = subtitle_line_count_max_lines(line_count)
-    if max_lines is None:
+    text_without_newlines = "\n" not in text and "\r" not in text
+    preserve_full_text = bool(segment.get("manual_text", False)) and text_without_newlines and max_lines is None
+    visible_lines = UNTRUNCATED_MAX_LINES if preserve_full_text else max_lines
+    if visible_lines is None:
         return normalize_text(text, max_width=max_width, display_duration=display_duration)
     return normalize_text(
         text,
         max_width=max_width,
-        max_lines=max_lines,
+        max_lines=visible_lines,
         display_duration=display_duration,
     )
 
@@ -119,6 +124,90 @@ def pack_event_with_line_count(segment: dict[str, Any], default_max_width: int =
     )
 
 
+def _manual_segment_lines(segment: dict[str, Any], max_width: int, display_duration: float) -> list[str]:
+    text = " ".join(str(segment.get("text", "")).split())
+    if not text:
+        return []
+    if " " not in text:
+        wrapped = normalize_text(
+            text,
+            max_width=max_width,
+            max_lines=UNTRUNCATED_MAX_LINES,
+            display_duration=display_duration,
+        )
+        return [line for line in wrapped.split(r"\N") if line]
+
+    lines: list[str] = []
+    current: list[str] = []
+    current_width = 0
+    for word in text.split():
+        if not current:
+            candidate = word
+        else:
+            candidate = " ".join(( *current, word))
+        if text_width(candidate) > max_width and current:
+            lines.append(" ".join(current))
+            current = [word]
+            current_width = text_width(word)
+            continue
+        if text_width(candidate) > max_width:
+            for segment_text in normalize_text(
+                word,
+                max_width=max_width,
+                max_lines=UNTRUNCATED_MAX_LINES,
+                display_duration=display_duration,
+            ).split(r"\N"):
+                if segment_text:
+                    lines.append(segment_text)
+            current = []
+            current_width = 0
+            continue
+        current.append(word)
+        current_width = text_width(candidate)
+    if current:
+        lines.append(" ".join(current))
+    return [line for line in lines if line.strip()]
+
+
+def _repack_manual_segment_by_duration(
+    segment: dict[str, Any],
+    lines: list[str],
+) -> list[dict[str, Any]]:
+    if not lines:
+        return [segment]
+    if len(lines) <= 2:
+        return [segment]
+
+    start = float(segment["start"])
+    end = float(segment["end"])
+    duration = max(0.01, end - start)
+    spans = [max(1, text_width(line)) for line in lines]
+    total = sum(spans)
+    events: list[dict[str, Any]] = []
+    cursor = start
+    accumulated = 0
+    for index in range(0, len(lines), 2):
+        chunk = lines[index : index + 2]
+        chunk_weight = sum(spans[index + offset] for offset in range(len(chunk)))
+        accumulated += chunk_weight
+        next_end = start + duration * (accumulated / max(1, total))
+        if index + 2 >= len(lines):
+            next_end = end
+        events.append(
+            {
+                **segment,
+                "start": round(cursor, 3),
+                "end": round(min(next_end, end), 3),
+                "text": r"\N".join(chunk),
+            }
+        )
+        cursor = events[-1]["end"]
+        if cursor >= end:
+            break
+    events[-1]["end"] = end
+    return events
+
+
 def pack_segments_with_line_count(
     data: dict[str, Any],
     default_max_width: int = 24,
@@ -126,14 +215,47 @@ def pack_segments_with_line_count(
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
 ) -> list[SubtitleEvent]:
+    def _repack_segment(segment: dict[str, Any]) -> list[dict[str, Any]]:
+        text = str(segment.get("text", "")).strip()
+        if (
+            bool(segment.get("manual_text", False))
+            and "\n" not in text
+            and "\r" not in text
+            and "\\N" not in text
+        ):
+            max_width = int(segment.get("max_width", default_max_width))
+            duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+            try:
+                pages = pack_segment_pages(
+                    segment,
+                    subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+                    subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+                    subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+                )
+            except RuntimeError:
+                return _repack_manual_segment_by_duration(
+                    segment,
+                    _manual_segment_lines(segment, max_width, duration),
+                )
+            if len(pages) > 1:
+                return pages
+            return _repack_manual_segment_by_duration(
+                segment,
+                _manual_segment_lines(segment, max_width, duration),
+            )
+        return [segment]
+
     events: list[SubtitleEvent] = []
     for segment in data.get("segments", []):
-        pages = [segment] if segment.get("layout_packed") else pack_segment_pages(
-            segment,
-            subtitle_max_gap_seconds=subtitle_max_gap_seconds,
-            subtitle_end_padding_seconds=subtitle_end_padding_seconds,
-            subtitle_min_duration_seconds=subtitle_min_duration_seconds,
-        )
+        if segment.get("layout_packed"):
+            pages = _repack_segment(segment)
+        else:
+            pages = pack_segment_pages(
+                segment,
+                subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+                subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+                subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+            )
         for page in pages:
             event = pack_event_with_line_count(page, default_max_width=default_max_width)
             if event is not None:

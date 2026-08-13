@@ -141,6 +141,28 @@ class RenderAssTests(unittest.TestCase):
         self.assertGreater(len(left), 3)
         self.assertTrue(right.endswith(r"\u2026".encode("ascii").decode("unicode_escape")))
 
+    def test_render_ass_preserves_edited_long_text_without_ellipsis(self) -> None:
+        ass = render_ass(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 3.0,
+                        "speaker": "Oz",
+                        "text": "alpha beta gamma delta epsilon zeta eta theta",
+                        "layout_packed": True,
+                        "manual_text": True,
+                        "max_width": 8,
+                    }
+                ]
+            }
+        )
+
+        dialogue_lines = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+        self.assertGreaterEqual(len(dialogue_lines), 1)
+        self.assertTrue(all("…" not in line for line in dialogue_lines))
+        self.assertTrue(any("theta" in line for line in dialogue_lines))
+
     def test_pack_segment_pages_split_long_duration_segment(self) -> None:
         text = r"\u306f\u3058\u3081\u308b\u3051\u3069\u79fb\u52d5\u3057\u3066\u3067\u3082\u56de\u5fa9\u3057\u3066\u3067\u3082\u96a0\u308c\u308b".encode("ascii").decode("unicode_escape")
         pages = pack_segment_pages({"start": 0.0, "end": 5.0, "speaker": "Oz", "text": text, "max_width": 18})

@@ -298,6 +298,10 @@ def _ass_build_options(
     }
 
 
+def _is_mp4_output(output_path: str | Path) -> bool:
+    return Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}
+
+
 def build_project_ass(
     project_path: str | Path,
     output_path: str | Path | None = None,
@@ -448,6 +452,8 @@ def render_project_video(
     else:
         log_progress(f"Rendering edited subtitles to {output.name}")
         burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec
+        if _is_mp4_output(output) and burn_audio_codec == "copy":
+            burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC
         run_ffmpeg_burn(
             video_path,
             str(ass_path),

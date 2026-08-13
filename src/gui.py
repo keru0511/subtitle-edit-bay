@@ -1576,10 +1576,21 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
-        if not Path(selection.video).is_file() or not audio_files or not selection.output_dir:
+        if not Path(selection.video).is_file():
             self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
             return
-        reference_audio = str(settings.get("reference_audio") or audio_files[0])
+        if not audio_files and not self._has_audio_source(audio_files):
+            self._set_status(
+                "動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。",
+                "CHECK",
+            )
+            return
+        if not selection.output_dir:
+            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
+            return
+        reference_audio = settings.get("reference_audio")
+        if not reference_audio and audio_files:
+            reference_audio = audio_files[0]
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
         self.saveSettings(settings)

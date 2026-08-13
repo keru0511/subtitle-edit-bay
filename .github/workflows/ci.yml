@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   pull_request:
@@ -76,9 +76,7 @@ jobs:
       - name: Install system runtime dependencies
         shell: pwsh
         run: |
-          choco install ffmpeg --yes --no-progress
-          ffmpeg -version
-          ffprobe -version
+          \ \ \ \ \ \ \ \ \ \ choco\ install\ ffmpeg\ --yes\ --no-progress\r\n\ \ \ \ \ \ \ \ \ \ if\ \(\$LASTEXITCODE\ -ne\ 0\)\ \{\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ Write-Host\ "Chocolatey\ install\ failed,\ attempting\ winget\ fallback\.\.\."\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ winget\ install\ --id\ Gyan\.FFmpeg\ --exact\ --silent\ --accept-package-agreements\ --accept-source-agreements\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ if\ \(\$LASTEXITCODE\ -ne\ 0\)\ \{\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ Write-Host\ "Winget\ fallback\ failed,\ retrying\ Chocolatey\ from\ explicit\ source\.\.\."\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ choco\ install\ ffmpeg\ --yes\ --no-progress\ --source=https://community\.chocolatey\.org/api/v2/\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ if\ \(\$LASTEXITCODE\ -ne\ 0\)\ \{\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ throw\ "Failed\ to\ install\ ffmpeg\ through\ choco\ and\ winget\."\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ if\ \(-not\ \(Get-Command\ ffmpeg\ -ErrorAction\ SilentlyContinue\)\)\ \{\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ throw\ "ffmpeg\ command\ not\ found\ after\ installation\ attempts\."\r\n\ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ if\ \(-not\ \(Get-Command\ ffprobe\ -ErrorAction\ SilentlyContinue\)\)\ \{\r\n\ \ \ \ \ \ \ \ \ \ \ \ \ \ throw\ "ffprobe\ command\ not\ found\ after\ installation\ attempts\."\r\n\ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ ffmpeg\ -version\r\n\ \ \ \ \ \ \ \ \ \ ffprobe\ -version
 
       - name: Install Python dependencies
         shell: pwsh
@@ -254,3 +252,4 @@ jobs:
           finally {
               Pop-Location
           }
+

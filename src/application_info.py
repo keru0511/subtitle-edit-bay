@@ -24,7 +24,9 @@ def resolve_application_version(project_root: Path | None = None) -> str:
 
 
 def resolve_application_info(project_root: Path | None = None) -> dict[str, str]:
-    root = Path(project_root or Path(__file__).resolve().parent.parent).resolve()
+    root = Path(project_root or Path(__file__).resolve().parent.parent)
+    if project_root is None:
+        root = root.resolve()
     return {
         "version": resolve_application_version(root),
         "executablePath": str(Path(sys.executable).resolve()),

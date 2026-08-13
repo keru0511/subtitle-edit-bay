@@ -207,6 +207,14 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "automaticVideoCodecText"', qml)
         self.assertIn("root.appBackend.dependencyStatus.nvenc", qml)
 
+    def test_detail_settings_preserve_zero_values_in_sync(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn('modelCombo.currentIndex = Math.max(0, modelCombo.find(coalesceSetting(value.model, "large-v3")))', qml)
+        self.assertIn('deviceCombo.currentIndex = Math.max(0, deviceCombo.find(coalesceSetting(value.device, "cuda")))', qml)
+        self.assertNotIn("value.model || \"large-v3\"", qml)
+        self.assertNotIn("value.device || \"cuda\"", qml)
+
     def test_main_font_size_control_supports_nine_hundred_percent(self) -> None:
         qml = read_workflow_qml()
 

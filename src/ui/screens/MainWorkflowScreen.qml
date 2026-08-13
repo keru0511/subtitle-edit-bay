@@ -154,8 +154,8 @@ ApplicationWindow {
         normalizeSwitch.checked = value.audio_normalize === undefined ? true : value.audio_normalize
         silenceSwitch.checked = Boolean(value.cut_no_speech)
         workersSpin.value = Number(coalesceSetting(value.postprocess_workers, 4))
-        modelCombo.currentIndex = Math.max(0, modelCombo.find(value.model || "large-v3"))
-        deviceCombo.currentIndex = Math.max(0, deviceCombo.find(value.device || "cuda"))
+        modelCombo.currentIndex = Math.max(0, modelCombo.find(coalesceSetting(value.model, "large-v3")))
+        deviceCombo.currentIndex = Math.max(0, deviceCombo.find(coalesceSetting(value.device, "cuda")))
         manualOffsetField.text = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function transcriptionBlockReason() {

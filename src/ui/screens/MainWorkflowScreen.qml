@@ -134,25 +134,29 @@ ApplicationWindow {
         }
     }
 
+    function coalesceSetting(value, fallback) {
+        return value === undefined || value === null ? fallback : value
+    }
+
     function syncSettings() {
         var value = root.appBackend.settings
-        qualitySpin.value = Number(value.nvenc_cq || 18)
-        fontSizeSpin.value = Math.round(Number(value.subtitle_font_size || root.defaultSubtitleFontSize) / root.defaultSubtitleFontSize * 100)
-        outlineColorButton.colorValue = String(value.subtitle_outline_color || "#000000")
+        qualitySpin.value = Number(coalesceSetting(value.nvenc_cq, 18))
+        fontSizeSpin.value = Math.round(Number(coalesceSetting(value.subtitle_font_size, root.defaultSubtitleFontSize)) / root.defaultSubtitleFontSize * 100)
+        outlineColorButton.colorValue = String(coalesceSetting(value.subtitle_outline_color, "#000000"))
         outlineThicknessSpin.value = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
         volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
-        gapField.text = Number(value.subtitle_max_gap_seconds || 0.1).toFixed(2)
-        paddingField.text = Number(value.subtitle_end_padding_seconds || 0.08).toFixed(2)
-        minDurationField.text = Number(value.subtitle_min_duration_seconds || 0.35).toFixed(2)
-        silenceField.text = Number(value.no_speech_min_seconds || 1.2).toFixed(1)
-        speechPaddingField.text = Number(value.speech_padding_seconds || 0.25).toFixed(2)
-        lufsField.text = Number(value.audio_target_lufs || -16).toFixed(0)
+        gapField.text = Number(coalesceSetting(value.subtitle_max_gap_seconds, 0.1)).toFixed(2)
+        paddingField.text = Number(coalesceSetting(value.subtitle_end_padding_seconds, 0.08)).toFixed(2)
+        minDurationField.text = Number(coalesceSetting(value.subtitle_min_duration_seconds, 0.35)).toFixed(2)
+        silenceField.text = Number(coalesceSetting(value.no_speech_min_seconds, 1.2)).toFixed(1)
+        speechPaddingField.text = Number(coalesceSetting(value.speech_padding_seconds, 0.25)).toFixed(2)
+        lufsField.text = Number(coalesceSetting(value.audio_target_lufs, -16)).toFixed(0)
         normalizeSwitch.checked = value.audio_normalize === undefined ? true : value.audio_normalize
         silenceSwitch.checked = Boolean(value.cut_no_speech)
-        workersSpin.value = Number(value.postprocess_workers || 4)
+        workersSpin.value = Number(coalesceSetting(value.postprocess_workers, 4))
         modelCombo.currentIndex = Math.max(0, modelCombo.find(value.model || "large-v3"))
         deviceCombo.currentIndex = Math.max(0, deviceCombo.find(value.device || "cuda"))
-        manualOffsetField.text = Number(value.alignment_offset_adjustment || 0).toFixed(3)
+        manualOffsetField.text = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function transcriptionBlockReason() {
         if (root.appBackend.running)

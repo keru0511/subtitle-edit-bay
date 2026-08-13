@@ -1381,6 +1381,31 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, toggle)
         self.assertFalse(panel.isVisible())
 
+    def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
+        self.app._settings.update(
+            {
+                "subtitle_max_gap_seconds": 0.0,
+                "subtitle_end_padding_seconds": 0.0,
+                "subtitle_min_duration_seconds": 0.0,
+                "no_speech_min_seconds": 0.0,
+                "speech_padding_seconds": 0.0,
+                "audio_target_lufs": 0.0,
+                "subtitle_volume_scale_percent": 0,
+            }
+        )
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "saveSettingsButton"))
+        self.app.processEvents()
+
+        self.assertEqual(self.app.settings["subtitle_max_gap_seconds"], 0.0)
+        self.assertEqual(self.app.settings["subtitle_end_padding_seconds"], 0.0)
+        self.assertEqual(self.app.settings["subtitle_min_duration_seconds"], 0.0)
+        self.assertEqual(self.app.settings["no_speech_min_seconds"], 0.0)
+        self.assertEqual(self.app.settings["speech_padding_seconds"], 0.0)
+        self.assertEqual(self.app.settings["audio_target_lufs"], 0.0)
+        self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 0)
+
     def test_qml_editor_content_is_loaded_only_when_opened(self) -> None:
         self._load_project()
         _, window = self._load_qml()

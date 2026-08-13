@@ -13,7 +13,14 @@ from src.burn_subs import build_ass_filter, build_ffmpeg_command, run_ffmpeg_bur
 from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
-from src.render_ass import format_ass_time, normalize_text, parse_track_color_args, render_ass
+from src.render_ass import (
+    format_ass_time,
+    normalize_text,
+    parse_track_color_args,
+    render_ass,
+    sanitize_ass_text,
+    style_name_for_speaker,
+)
 from unittest import mock
 
 from src.subtitle_packer import (
@@ -277,6 +284,7 @@ class RenderAssTests(unittest.TestCase):
                 {"start": 0.0, "end": 1.0, "speaker": "C", "text": "hello", "layout_row": 0, "source_track": "craig:speaker-d", "source_speaker": "speaker-d"}
             ]
         }
+        speaker_style = style_name_for_speaker("speaker-d")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "speaker_colors.json"
@@ -293,9 +301,12 @@ class RenderAssTests(unittest.TestCase):
             )
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
-        self.assertIn("Style: Speaker_speaker_d", output)
-        self.assertIn("Style: Speaker_speaker_d,Arial,50,&H00FF4422,&H0000FFFF,&H00000000", output)
-        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_speaker_d,C,0,0,34,,hello", output)
+        self.assertIn(f"Style: {speaker_style}", output)
+        self.assertIn(f"Style: {speaker_style},Arial,50,&H00FF4422,&H0000FFFF,&H00000000", output)
+        self.assertIn(
+            f"Dialogue: 0,0:00:00.00,0:00:01.00,{speaker_style},C,0,0,34,,hello",
+            output,
+        )
 
     def test_render_ass_prefers_file_name_color_mapping(self) -> None:
         data = {
@@ -303,6 +314,7 @@ class RenderAssTests(unittest.TestCase):
                 {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "hello", "layout_row": 0, "source_file": "1-speaker-a.aac", "source_speaker": "speaker-a"}
             ]
         }
+        file_style = style_name_for_speaker("1-speaker-a.aac")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "speaker_colors.json"
@@ -322,9 +334,41 @@ class RenderAssTests(unittest.TestCase):
             )
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
-        self.assertIn("Style: Speaker_1_speaker_a_aac", output)
-        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,50,&H00563412,&H0000FFFF,&H00000000", output)
-        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_1_speaker_a_aac,Oz,0,0,34,,hello", output)
+        self.assertIn(f"Style: {file_style}", output)
+        self.assertIn(f"Style: {file_style},Arial,50,&H00563412,&H0000FFFF,&H00000000", output)
+        self.assertIn(
+            f"Dialogue: 0,0:00:00.00,0:00:01.00,{file_style},Oz,0,0,34,,hello",
+            output,
+        )
+
+    def test_style_name_for_speaker_uniquifies_similar_names(self) -> None:
+        self.assertEqual(style_name_for_speaker("speaker-d"), style_name_for_speaker("speaker-d"))
+        self.assertNotEqual(style_name_for_speaker("speaker-d"), style_name_for_speaker("speaker.d"))
+        self.assertNotEqual(style_name_for_speaker("speaker d"), style_name_for_speaker("speaker.d"))
+        self.assertNotEqual(style_name_for_speaker("山田.wav"), style_name_for_speaker("佐藤.wav"))
+
+    def test_style_name_for_speaker_preserves_simple_ascii_names(self) -> None:
+        self.assertEqual(style_name_for_speaker("  speaker-d "), style_name_for_speaker("speaker-d"))
+
+    def test_render_ass_sanitizes_speaker_name_for_dialogue_actor(self) -> None:
+        output = render_ass(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "speaker": "Alice,Bob",
+                        "text": "hello",
+                    }
+                ]
+            }
+        )
+        dialogue = next(line for line in output.splitlines() if line.startswith("Dialogue:"))
+        self.assertIn(",Alice_Bob,", dialogue)
+        self.assertNotIn(",Alice,Bob,", dialogue)
+
+    def test_sanitize_ass_text_replaces_dangerous_chars(self) -> None:
+        self.assertEqual(sanitize_ass_text("A{lice}\\,Bob"), "A_lice___Bob")
 
     def test_render_ass_applies_base_size_and_per_caption_volume_scale(self) -> None:
         data = {

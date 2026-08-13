@@ -12,6 +12,39 @@ DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+NVENC_ERROR_HINTS = (
+    "driver does not support the required nvenc api version",
+    "could not open encoder",
+    "function not implemented",
+    "unknown encoder",
+)
+
+
+def _is_nvenc_fallback_candidate(stderr: str | None, stdout: str | None) -> bool:
+    combined = " ".join(part for part in (stderr, stdout) if part).lower()
+    if not combined:
+        return False
+    return any(hint in combined for hint in NVENC_ERROR_HINTS)
+
+
+def _run_ffmpeg_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            command,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+    return result
 
 
 def build_ass_filter(subtitle: str) -> str:
@@ -46,6 +79,7 @@ def build_ffmpeg_command(
         command.extend(["-map", "0:v:0", "-map", audio_track])
     command.extend(["-vf", build_ass_filter(subtitle), "-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
+    command.extend(["-pix_fmt", "yuv420p"])
     if audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE, "-shortest"])
         if audio_codec == "copy":
@@ -72,23 +106,45 @@ def run_ffmpeg_burn(
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        build_ffmpeg_command(
-            video,
-            subtitle,
-            output,
-            video_codec=video_codec,
-            audio_codec=audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=audio_filter,
-            audio_track=audio_track,
-            audio_mix=audio_mix,
-            audio_offset_seconds=audio_offset_seconds,
-        ),
-        check=True,
+    command = build_ffmpeg_command(
+        video,
+        subtitle,
+        output,
+        video_codec=video_codec,
+        audio_codec=audio_codec,
+        nvenc_preset=nvenc_preset,
+        nvenc_cq=nvenc_cq,
+        x264_crf=x264_crf,
+        audio_filter=audio_filter,
+        audio_track=audio_track,
+        audio_mix=audio_mix,
+        audio_offset_seconds=audio_offset_seconds,
     )
+    try:
+        _run_ffmpeg_command(command)
+    except subprocess.CalledProcessError as error:
+        if video_codec.endswith("_nvenc") and _is_nvenc_fallback_candidate(error.stderr, error.output):
+            fallback_command = build_ffmpeg_command(
+                video,
+                subtitle,
+                output,
+                video_codec="libx264",
+                audio_codec=audio_codec,
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                audio_filter=audio_filter,
+                audio_track=audio_track,
+                audio_mix=audio_mix,
+                audio_offset_seconds=audio_offset_seconds,
+            )
+            print(
+                f"[subtitle_workflow] Requested NVENC failed ({error.returncode}); "
+                "retrying with libx264 for compatibility.",
+            )
+            _run_ffmpeg_command(fallback_command)
+        else:
+            raise
     return output_path
 
 

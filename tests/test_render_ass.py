@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.assemble_video import build_concat_command, build_loudnorm_filter, build_normalize_command, optional_clip, write_concat_manifest
 from src.batch import derive_export_paths, derive_merged_export_paths, iter_video_files
-from src.burn_subs import build_ass_filter, build_ffmpeg_command
+from src.burn_subs import build_ass_filter, build_ffmpeg_command, run_ffmpeg_burn
 from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
@@ -421,6 +421,42 @@ class RenderAssTests(unittest.TestCase):
         self.assertEqual(command[command.index("-profile:v") + 1], "high")
         self.assertIn("-spatial-aq", command)
         self.assertIn("-temporal-aq", command)
+
+    def test_run_ffmpeg_burn_falls_back_to_libx264_when_nvenc_encoder_is_unsupported(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0",
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
+            result = run_ffmpeg_burn("input.mp4", "out/sample.ass", "out/final.mp4", video_codec="h264_nvenc", audio_codec="copy")
+
+        self.assertEqual(str(result), str(Path("out/final.mp4")))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][calls[0].index("-c:v") + 1], "h264_nvenc")
+        self.assertEqual(calls[1][calls[1].index("-c:v") + 1], "libx264")
+        self.assertNotIn("-cq", calls[1])
+        self.assertIn("-crf", calls[1])
+
+    def test_run_ffmpeg_burn_rethrows_non_nvenc_errors(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 1, stdout="failure", stderr="unexpected media error")
+
+        with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run), self.assertRaises(subprocess.CalledProcessError):
+            run_ffmpeg_burn("input.mp4", "out/sample.ass", "out/final.mp4", video_codec="h264_nvenc", audio_codec="copy")
+
+        self.assertEqual(len(calls), 1)
 
     def test_build_video_encoding_args_rejects_invalid_quality(self) -> None:
         with self.assertRaises(ValueError):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -31,6 +32,45 @@ DEFAULT_SPEAKER_STYLE = {
 }
 ROW_MARGIN_BASE = 34
 ROW_MARGIN_STEP = 156
+_STYLE_TOKEN_RE = re.compile(r"[^0-9A-Za-z\u0080-\uFFFF]+")
+
+
+def _style_token(value: str) -> str:
+    token = _STYLE_TOKEN_RE.sub("_", str(value).strip()).strip("_")
+    if not token:
+        token = hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:8]
+    return token[:64] or "track"
+
+
+def _escape_ass_dialogue_text(text: str) -> str:
+    escaped: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            if index + 1 >= len(text):
+                escaped.append("\\\\")
+                index += 1
+                continue
+            next_char = text[index + 1]
+            if next_char in {"N", "n", "h", "H", "\\", "{", "}"}:
+                escaped.append(f"\\{next_char}")
+            else:
+                escaped.append("\\\\")
+                escaped.append(next_char)
+            index += 2
+            continue
+        if char == "{":
+            escaped.append("\\{")
+            index += 1
+            continue
+        if char == "}":
+            escaped.append("\\}")
+            index += 1
+            continue
+        escaped.append(char)
+        index += 1
+    return "".join(escaped)
 
 
 def format_ass_time(seconds: float) -> str:
@@ -52,12 +92,12 @@ def parse_track_color_args(values: list[str] | None) -> dict[str, str]:
 
 
 def style_name_for_track(track: str) -> str:
-    normalized = re.sub(r"[^0-9A-Za-z]+", "_", track).strip("_") or "track"
+    normalized = _style_token(track)
     return f"Track_{normalized}"
 
 
 def style_name_for_speaker(speaker: str) -> str:
-    normalized = re.sub(r"[^0-9A-Za-z]+", "_", speaker).strip("_") or "speaker"
+    normalized = _style_token(speaker)
     return f"Speaker_{normalized}"
 
 
@@ -159,7 +199,8 @@ def render_dialogue(
         overrides += f"\\fn{font_family}"
     if scaled_font_size != subtitle_font_size:
         overrides += f"\\fs{scaled_font_size}"
-    dialogue_text = f"{{{overrides}}}{event.text}" if overrides else event.text
+    escaped_text = _escape_ass_dialogue_text(event.text)
+    dialogue_text = f"{{{overrides}}}{escaped_text}" if overrides else escaped_text
     margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step
     return (
         "Dialogue: "

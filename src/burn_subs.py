@@ -18,6 +18,7 @@ DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+PIX_FMT = "yuv420p"
 
 
 def _copy_ass_for_filter_compatibility(subtitle: str) -> tuple[str, str | None]:
@@ -75,6 +76,7 @@ def build_ffmpeg_command(
         command.extend(["-map", "0:v:0", "-map", audio_track])
     command.extend(["-vf", build_ass_filter(subtitle), "-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
+    command.extend(["-pix_fmt", PIX_FMT])
     if audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE, "-shortest"])
         if audio_codec == "copy":

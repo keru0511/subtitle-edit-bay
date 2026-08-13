@@ -188,6 +188,41 @@ class SubtitleWorkflowTests(unittest.TestCase):
             self.assertFalse(transcribe.called)
             self.assertEqual(load_project(project_path)["render_settings"]["last_output"], str(output.resolve()))
 
+    def test_render_phase_defaults_to_external_audio_when_video_track_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            audio = root / "speaker.wav"
+            audio.write_bytes(b"audio")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                audio_sources=[{"path": str(audio)}],
+                segments=[{"start": 0, "end": 1, "text": "edited", "speaker": "Oz"}],
+            )
+            project_path = root / "game.subtitle-project.json"
+            save_project(project_path, project)
+            ass_path = root / "game.edited.ass"
+            ass_path.write_text("ASS", encoding="utf-8")
+
+            with (
+                patch("src.subtitle_workflow.build_project_ass", return_value=ass_path),
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
+            ):
+                render_project_video(project_path, audio_normalize=False)
+
+            args = burn.call_args.kwargs
+            audio_mix = args["audio_mix"]
+            self.assertIsNotNone(audio_mix)
+            self.assertTrue(
+                any(
+                    channel.get("kind") == "external" and channel.get("enabled")
+                    for channel in audio_mix.get("channels", [])
+                )
+            )
+            self.assertEqual(args["audio_codec"], "aac")
+
     def test_render_phase_passes_custom_audio_mix_and_sync_offset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

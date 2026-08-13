@@ -1,11 +1,15 @@
-param(
-    [string]$ArchiveUrl = "https://github.com/keru0511/subtitle-edit-bay/archive/refs/heads/main.zip"
+﻿param(
+    [string]$ArchiveUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 Set-Location $projectRoot
+
+$releaseRepoOwner = "keru0511"
+$releaseRepoName = "subtitle-edit-bay"
+$releaseApiUrl = "https://api.github.com/repos/$releaseRepoOwner/$releaseRepoName/releases/latest"
 
 $preservedTopLevel = @(
     ".git",
@@ -20,6 +24,68 @@ $preservedTopLevel = @(
 $preservedFiles = @(
     "assets/speaker_colors.json"
 )
+
+function Normalize-Version {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $trimmed = $Value.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        return "development"
+    }
+
+    if ($trimmed -eq "development") {
+        return "development"
+    }
+
+    if ($trimmed.StartsWith("v", [StringComparison]::OrdinalIgnoreCase)) {
+        return $trimmed.ToLowerInvariant()
+    }
+
+    return "v$trimmed"
+}
+
+function Read-VersionFile {
+    param([Parameter(Mandatory = $true)][string]$FilePath)
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        return "development"
+    }
+
+    $raw = Get-Content -LiteralPath $FilePath -Raw -Encoding UTF8
+    return Normalize-Version($raw)
+}
+
+function Get-CurrentVersion {
+    return Read-VersionFile -FilePath (Join-Path $projectRoot "VERSION")
+}
+
+function Get-RelativePath {
+    param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$FullPath)
+
+    return $FullPath.Substring($Root.Length).TrimStart([char[]] "/\\")
+}
+
+function Get-LatestReleaseInfo {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{ "User-Agent" = "subtitle-edit-bay-update" }
+    $release = Invoke-RestMethod -Uri $releaseApiUrl -Headers $headers -ErrorAction Stop
+
+    if (-not $release -or -not $release.tag_name) {
+        throw "Could not resolve the latest GitHub release."
+    }
+
+    $tag = $release.tag_name.ToString()
+    return @{
+        tag = $tag
+        version = Normalize-Version($tag)
+    }
+}
+
+function Get-ReleaseArchiveUrl {
+    param([Parameter(Mandatory = $true)][string]$TagName)
+
+    return "https://github.com/$releaseRepoOwner/$releaseRepoName/archive/refs/tags/$TagName.zip"
+}
 
 function Test-ProjectGitCheckout {
     if (-not (Test-Path -LiteralPath (Join-Path $projectRoot ".git"))) {
@@ -74,7 +140,7 @@ function Test-PreservedPath {
 function Remove-UpdateTempDirectory {
     param([Parameter(Mandatory = $true)][string]$TempDirectory)
 
-    $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\\'
     $resolved = [IO.Path]::GetFullPath($TempDirectory)
     $leaf = Split-Path -Leaf $resolved
     if ($resolved.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase) -and $leaf.StartsWith("subtitle-edit-bay-update-")) {
@@ -82,22 +148,83 @@ function Remove-UpdateTempDirectory {
     }
 }
 
+function Backup-File {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [Parameter(Mandatory = $true)][string]$BackupRoot
+    )
+
+    $backupPath = Join-Path $BackupRoot $RelativePath
+    New-Item -ItemType Directory -Path (Split-Path -Parent $backupPath) -Force | Out-Null
+    Copy-Item -LiteralPath $FilePath -Destination $backupPath -Force
+    return $backupPath
+}
+
+function Restore-UpdateState {
+    param(
+        [Parameter(Mandatory = $true)][string]$BackupRoot,
+        [Parameter(Mandatory = $true)]$UpdatedFiles,
+        [Parameter(Mandatory = $true)]$AddedFiles,
+        [Parameter(Mandatory = $true)]$RemovedFiles
+    )
+
+    if (Test-Path -LiteralPath $BackupRoot) {
+        Write-Host "Update failed. Restoring files from $BackupRoot"
+    }
+
+    foreach ($entry in $RemovedFiles) {
+        $destination = Join-Path $projectRoot $entry.RelativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath $entry.BackupPath -Destination $destination -Force
+    }
+
+    foreach ($entry in $UpdatedFiles) {
+        Copy-Item -LiteralPath $entry.BackupPath -Destination $entry.DestinationPath -Force
+    }
+
+    foreach ($path in $AddedFiles) {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+}
+
 function Update-ZipDistribution {
+    $releaseInfo = if ([string]::IsNullOrWhiteSpace($ArchiveUrl)) { Get-LatestReleaseInfo } else { $null }
+    $resolvedArchiveUrl = if ($releaseInfo) { Get-ReleaseArchiveUrl -TagName $releaseInfo.tag } else { $ArchiveUrl }
+
+    if (-not $resolvedArchiveUrl) {
+        throw "No update archive URL is available."
+    }
+
+    if ($releaseInfo) {
+        Write-Host "Resolved latest release: $($releaseInfo.tag)"
+    }
+
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("subtitle-edit-bay-update-" + [guid]::NewGuid().ToString("N"))
     $zipPath = Join-Path $tempRoot "latest.zip"
     $extractRoot = Join-Path $tempRoot "extracted"
     New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
 
+    $updatedFiles = New-Object System.Collections.ArrayList
+    $addedFiles = New-Object System.Collections.ArrayList
+    $removedFiles = New-Object System.Collections.ArrayList
+    $currentVersion = Get-CurrentVersion
+    $backupRoot = Join-Path $projectRoot (".local\update_backups\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $copiedFiles = 0
+
     try {
-        if (Test-Path -LiteralPath $ArchiveUrl -PathType Leaf) {
+        if (Test-Path -LiteralPath $resolvedArchiveUrl -PathType Leaf) {
             Write-Host "Loading the specified ZIP distribution..."
-            Copy-Item -LiteralPath $ArchiveUrl -Destination $zipPath -Force
+            Copy-Item -LiteralPath $resolvedArchiveUrl -Destination $zipPath -Force
         }
         else {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Write-Host "Downloading the latest ZIP distribution..."
-            Invoke-WebRequest -UseBasicParsing -Uri $ArchiveUrl -OutFile $zipPath
+            Write-Host "Downloading ZIP distribution from $resolvedArchiveUrl"
+            Invoke-WebRequest -UseBasicParsing -Uri $resolvedArchiveUrl -OutFile $zipPath
         }
+
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
 
         $sourceRoot = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
@@ -107,34 +234,96 @@ function Update-ZipDistribution {
             throw "The downloaded ZIP does not contain a valid Subtitle Edit Bay distribution."
         }
 
-        $backupRoot = Join-Path $projectRoot (".local\update_backups\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-        $copiedFiles = 0
+        $downloadedVersion = Read-VersionFile -FilePath (Join-Path $sourceRoot.FullName "VERSION")
+        if ($releaseInfo -and $downloadedVersion -ne $releaseInfo.version) {
+            throw "Downloaded archive version ($downloadedVersion) does not match release version ($($releaseInfo.version))."
+        }
+
+        Write-Host "Source version: $currentVersion -> $downloadedVersion"
+
+        $sourceFiles = @{}
         foreach ($sourceFile in Get-ChildItem -LiteralPath $sourceRoot.FullName -File -Recurse) {
-            $relativePath = $sourceFile.FullName.Substring($sourceRoot.FullName.Length).TrimStart([char[]]"\/")
+            $relativePath = Get-RelativePath -Root $sourceRoot.FullName -FullPath $sourceFile.FullName
             if (Test-PreservedPath -RelativePath $relativePath) {
                 continue
             }
+            $sourceFiles[$relativePath] = $sourceFile.FullName
+        }
 
+        $targetFiles = @{}
+        foreach ($targetFile in Get-ChildItem -LiteralPath $projectRoot -File -Recurse) {
+            $relativePath = Get-RelativePath -Root $projectRoot -FullPath $targetFile.FullName
+            if (Test-PreservedPath -RelativePath $relativePath) {
+                continue
+            }
+            $targetFiles[$relativePath] = $targetFile.FullName
+        }
+
+        foreach ($relativePath in $sourceFiles.Keys) {
+            $sourceFilePath = $sourceFiles[$relativePath]
             $destination = Join-Path $projectRoot $relativePath
             if (Test-Path -LiteralPath $destination -PathType Leaf) {
-                $backupPath = Join-Path $backupRoot $relativePath
-                New-Item -ItemType Directory -Path (Split-Path -Parent $backupPath) -Force | Out-Null
-                Copy-Item -LiteralPath $destination -Destination $backupPath -Force
+                $backupPath = Backup-File -FilePath $destination -RelativePath $relativePath -BackupRoot $backupRoot
+                [void]$updatedFiles.Add([pscustomobject]@{
+                    RelativePath = $relativePath
+                    DestinationPath = $destination
+                    BackupPath = $backupPath
+                })
+            }
+            else {
+                [void]$addedFiles.Add($destination)
             }
 
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-            Copy-Item -LiteralPath $sourceFile.FullName -Destination $destination -Force
+            Copy-Item -LiteralPath $sourceFilePath -Destination $destination -Force
             $copiedFiles++
+        }
+
+        foreach ($relativePath in $targetFiles.Keys) {
+            if (-not $sourceFiles.ContainsKey($relativePath)) {
+                $destination = Join-Path $projectRoot $relativePath
+                $backupPath = Backup-File -FilePath $destination -RelativePath $relativePath -BackupRoot $backupRoot
+                Remove-Item -LiteralPath $destination -Force
+                [void]$removedFiles.Add([pscustomobject]@{
+                    RelativePath = $relativePath
+                    BackupPath = $backupPath
+                })
+            }
         }
 
         if ($copiedFiles -eq 0) {
             throw "The downloaded ZIP did not contain any update files."
         }
 
-        Write-Host "Updated $copiedFiles application files from ZIP."
-        if (Test-Path -LiteralPath $backupRoot) {
-            Write-Host "Previous files were backed up to $backupRoot"
+        $setupScript = Join-Path $projectRoot "scripts\setup.ps1"
+        if (-not (Test-Path -LiteralPath $setupScript)) {
+            throw "The updated setup script is missing: $setupScript"
         }
+
+        Write-Host "Refreshing dependencies..."
+        & $setupScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "Setup failed while refreshing dependencies."
+        }
+
+        $postUpdateVersion = Get-CurrentVersion
+        if ($postUpdateVersion -ne $downloadedVersion) {
+            throw "Post-update version is not the expected release version."
+        }
+
+        Write-Host "Updated $copiedFiles application files from ZIP release $downloadedVersion."
+        Write-Host "Previous files were backed up to $backupRoot"
+    }
+    catch {
+        if (Test-Path -LiteralPath $backupRoot) {
+            try {
+                Restore-UpdateState -BackupRoot $backupRoot -UpdatedFiles $updatedFiles -AddedFiles $addedFiles -RemovedFiles $removedFiles
+            }
+            catch {
+                throw "Update failed and rollback failed: $($_.Exception.Message)"
+            }
+        }
+        throw $_
     }
     finally {
         Remove-UpdateTempDirectory -TempDirectory $tempRoot
@@ -143,15 +332,15 @@ function Update-ZipDistribution {
 
 if (Test-ProjectGitCheckout) {
     Update-GitCheckout
+
+    $setupScript = Join-Path $projectRoot "scripts\setup.ps1"
+    if (-not (Test-Path -LiteralPath $setupScript)) {
+        throw "The setup script is missing: $setupScript"
+    }
+
+    Write-Host "Refreshing dependencies..."
+    & $setupScript
 }
 else {
     Update-ZipDistribution
 }
-
-$setupScript = Join-Path $projectRoot "scripts\setup.ps1"
-if (-not (Test-Path -LiteralPath $setupScript)) {
-    throw "The updated setup script is missing: $setupScript"
-}
-
-Write-Host "Refreshing dependencies..."
-& $setupScript

@@ -163,6 +163,11 @@ def sanitize_ass_font_family(value: object) -> str:
     )[:256]
 
 
+def escape_ass_text(value: object) -> str:
+    text = str(value)
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
 def render_dialogue(
     event: SubtitleEvent,
     speaker_color_map: dict[str, str] | None = None,
@@ -179,7 +184,7 @@ def render_dialogue(
         overrides += f"\\fn{font_family}"
     if scaled_font_size != subtitle_font_size:
         overrides += f"\\fs{scaled_font_size}"
-    dialogue_text = event.text
+    dialogue_text = escape_ass_text(event.text)
     if overrides:
         dialogue_text = f"{{{overrides}}}{dialogue_text}"
     margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step

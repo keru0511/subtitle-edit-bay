@@ -451,6 +451,23 @@ class RenderAssTests(unittest.TestCase):
         self.assertEqual(margins, [34, 630])
         self.assertLessEqual(max(margins), 1080)
 
+    def test_render_ass_escapes_ass_reserved_characters(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "speaker": "Oz",
+                    "text": r"a{b}c\d",
+                    "layout_row": 0,
+                }
+            ]
+        }
+
+        output = render_ass(data)
+
+        self.assertIn(r",,a\{b\}c\\d", output)
+
     def test_pack_segments_preserves_source_speaker_metadata(self) -> None:
         data = {
             "segments": [

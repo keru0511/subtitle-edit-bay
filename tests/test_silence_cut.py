@@ -137,6 +137,13 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("[a]", command)
         self.assertIn("output.mp4", command)
 
+    def test_build_silence_cut_command_uses_faststart(self) -> None:
+        command = build_silence_cut_command("input.mp4", "output.mp4", [(0.0, 1.0)])
+
+        self.assertIn("-movflags", command)
+        self.assertIn("+faststart", command)
+        self.assertEqual(command[command.index("-movflags") + 1], "+faststart")
+
     def test_build_silence_cut_command_uses_nvenc_and_audio_filter(self) -> None:
         command = build_silence_cut_command(
             "input.mp4",

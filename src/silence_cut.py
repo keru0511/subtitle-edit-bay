@@ -254,6 +254,7 @@ def build_silence_cut_command(
     command.extend(["-c:a", audio_codec])
     if audio_filter or audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
+    command.extend(["-movflags", "+faststart"])
     command.append(output_path)
     return command
 

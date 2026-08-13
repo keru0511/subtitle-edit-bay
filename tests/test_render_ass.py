@@ -498,6 +498,13 @@ class RenderAssTests(unittest.TestCase):
         self.assertIn("-pix_fmt", command)
         self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
 
+    def test_build_ffmpeg_command_uses_faststart(self) -> None:
+        command = build_ffmpeg_command("input.mp4", "out/sample.ass", "out/final.mp4")
+
+        self.assertIn("-movflags", command)
+        self.assertIn("+faststart", command)
+        self.assertEqual(command[command.index("-movflags") + 1], "+faststart")
+
     def test_build_ass_filter_escapes_windows_path(self) -> None:
         self.assertEqual(build_ass_filter(r"C:\work\sample.ass"), r"ass='C\:/work/sample.ass'")
 

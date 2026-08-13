@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from src.burn_subs import run_ffmpeg_burn
+from src.silence_cut import cut_media_ranges
 from src.subtitle_project import create_project, save_project
 from src.transcribe import probe_audio_streams
 
@@ -90,6 +91,30 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
         )
         return json.loads(result.stdout)["streams"][0]
 
+    def _assert_faststart_moov_before_mdat(self, output: Path) -> None:
+        data = output.read_bytes()
+        moov_offsets: list[int] = []
+        mdat_offsets: list[int] = []
+        index = 0
+        while index + 8 <= len(data):
+            size = int.from_bytes(data[index : index + 4], "big")
+            if size == 1:
+                if index + 16 > len(data):
+                    break
+                size = int.from_bytes(data[index + 8 : index + 16], "big")
+            elif size == 0 or size < 8:
+                break
+            box_type = data[index + 4 : index + 8].decode("ascii", errors="ignore")
+            if box_type == "moov":
+                moov_offsets.append(index)
+            elif box_type == "mdat":
+                mdat_offsets.append(index)
+            index += size
+
+        self.assertTrue(moov_offsets, "output missing moov atom")
+        self.assertTrue(mdat_offsets, "output missing mdat atom")
+        self.assertLess(moov_offsets[0], mdat_offsets[0])
+
     def test_ffmpeg_burns_ass_subtitles_on_real_media(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
             self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
@@ -130,6 +155,22 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertGreater(output.stat().st_size, 0)
             self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
+            self._assert_faststart_moov_before_mdat(output)
+
+    def test_cut_media_ranges_preserves_faststart_moov_position(self) -> None:
+        if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
+            self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = self._make_video(root / "input.mp4")
+            output = root / "cut.mp4"
+
+            cut_media_ranges(str(video), str(output), [(0.0, 1.0)])
+
+            self.assertTrue(output.is_file())
+            self.assertGreater(output.stat().st_size, 0)
+            self._assert_faststart_moov_before_mdat(output)
 
     def test_burn_subtitles_converts_10bit_and_444_inputs_to_yuv420p(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":

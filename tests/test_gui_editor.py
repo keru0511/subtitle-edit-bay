@@ -82,7 +82,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=True)
         app._settings = deepcopy(self._base_settings)
         app._running = False
-        app._status = "蜍慕判繝ｻ隧ｱ閠・浹螢ｰ繝ｻ蜃ｺ蜉帛・繧呈欠螳壹＠縺ｦ縺上□縺輔＞"
+        app._status = "保存済み"
         app._stage = "READY"
         app._progress = 0.0
         app._log = ""
@@ -360,7 +360,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.assertEqual([speaker["name"] for speaker in self.app.speakers], ["alice", "bob"])
         self.assertEqual(self.app.stage, "CHECK")
-        self.assertIn("譛ｪ蟇ｾ蠢懊ヵ繧｡繧､繝ｫ1莉ｶ", self.app.status)
+        self.assertIn("未対応", self.app.status)
 
     def test_drop_rejects_sources_while_processing(self) -> None:
         video = self.root / "capture.mkv"
@@ -748,7 +748,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.app.openOutputFolder()
         self.assertEqual(self.app.stage, "CHECK")
-        self.assertIn("蜃ｺ蜉帛・", self.app.status)
+        self.assertIn("出力先フォルダ", self.app.status)
 
         self.app.updateSegment(0, {"text": "after"})
         self.app.undoSubtitleEdit()
@@ -1052,7 +1052,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
             self.app.startTranscription(self.app.settings)
             self.assertEqual(self.app.stage, "CHECK")
-            self.assertIn("蜍慕判", self.app.status)
+            self.assertIn("出力先", self.app.status)
 
     def test_transcription_starts_with_video_audio_only(self) -> None:
         video = self.root / "game.mkv"
@@ -1168,7 +1168,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
         self.assertTrue(self.app.projectLoaded)
         self.assertEqual(self.app.stage, "EDIT")
-        self.assertIn("辟ｼ縺堺ｻ倥￠", self.app.status)
+        self.assertIn("焼き付け", self.app.status)
         self.assertEqual(self.app.progress, 1.0)
         self.assertEqual(self.app.activeJob, "")
         self.assertEqual(Path(self.app.projectPath), expected_path.resolve())
@@ -1284,7 +1284,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(edit.isVisible())
         self.assertFalse(render.isVisible())
         self.assertTrue(reason.isVisible())
-        self.assertIn("蜍慕判", reason.property("text"))
+        self.assertIn("素材設定で", reason.property("text"))
         self.assertFalse(output.isEnabled())
 
         self._set_ready_sources()
@@ -1303,7 +1303,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(transcribe.isVisible())
         self.assertTrue(edit.isVisible())
         self.assertTrue(render.isVisible())
-        self.assertIn("辟ｼ縺堺ｻ倥￠", render.property("text"))
+        self.assertIn("焼き付け", render.property("text"))
         self.assertTrue(edit.isEnabled())
         self.assertTrue(render.isEnabled())
 
@@ -1572,7 +1572,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
         render = self._quick_item(window, "editorRenderButton")
-        self.assertIn("辟ｼ縺堺ｻ倥￠", render.property("text"))
+        self.assertIn("焼き付け", render.property("text"))
 
         with (
             patch.object(self.app, "saveSettings"),

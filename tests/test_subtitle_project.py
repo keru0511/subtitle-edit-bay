@@ -19,7 +19,18 @@ from src.subtitle_project import (
     save_project,
     waveform_peaks_from_samples,
 )
-from src.subtitle_workflow import build_project_ass, render_project_video, transcribe_to_project
+from src.subtitle_workflow import (
+    SubtitleAlignmentResult,
+    SubtitlePipelineInputs,
+    SubtitleRefineResult,
+    build_project_stage,
+    resolve_subtitle_inputs,
+    run_subtitle_alignment_stage,
+    run_subtitle_refine_stage,
+    build_project_ass,
+    render_project_video,
+    transcribe_to_project,
+)
 
 
 class SubtitleProjectTests(unittest.TestCase):
@@ -128,6 +139,115 @@ class SubtitleWorkflowTests(unittest.TestCase):
             self.assertEqual(project["transcription"]["offset_seconds"], 0.25)
             self.assertEqual(project["segments"][0]["text"], "hi")
             self.assertFalse(burn.called)
+
+    def test_resolve_subtitle_inputs_sets_reference_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            audio_one = root / "1-alice.flac"
+            audio_two = root / "2-bob.flac"
+            video.write_bytes(b"video")
+            audio_one.write_bytes(b"audio")
+            audio_two.write_bytes(b"audio")
+
+            inputs = resolve_subtitle_inputs(
+                video_path=str(video),
+                audio_files=[str(audio_two), str(audio_one)],
+                output_dir=str(root / "export"),
+            )
+
+            self.assertEqual(inputs.reference_path, audio_one.resolve())
+            self.assertEqual(inputs.project_path, derive_project_path(str(video), inputs.output_dir))
+            self.assertEqual(len(inputs.audio_files), 2)
+
+    def test_alignment_stage_isolated(self) -> None:
+        with patch("src.subtitle_workflow.resolve_alignment", return_value=("0:a:1", 0.5, 0.91)) as resolve_alignment:
+            alignment = run_subtitle_alignment_stage(
+                "video.mkv",
+                Path("1-alice.flac"),
+                "0:a:1",
+                120,
+            )
+
+        resolve_alignment.assert_called_once_with("video.mkv", "1-alice.flac", "0:a:1", 120)
+        self.assertEqual(alignment, SubtitleAlignmentResult("0:a:1", 0.5, 0.91, "1-alice.flac"))
+
+    def test_refine_stage_isolated(self) -> None:
+        merged = [{"start": 0.0, "end": 1.0, "text": "a", "speaker": "Oz", "layout_row": 0}]
+        filtered = [{"start": 1.0, "end": 1.2, "text": "x", "speaker": "Oz", "layout_row": 0}]
+        with patch("src.subtitle_workflow.refine_segments", return_value=(merged, filtered)) as refine_segments:
+            result = run_subtitle_refine_stage(
+                [{"start": 0.0, "end": 1.0}],
+                subtitle_max_gap_seconds=0.2,
+                subtitle_end_padding_seconds=0.1,
+                subtitle_min_duration_seconds=0.5,
+            )
+
+        refine_segments.assert_called_once()
+        self.assertEqual(result, SubtitleRefineResult(merged_segments=merged, filtered_segments=filtered))
+
+    def test_project_stage_persists_subtitle_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            audio = root / "1-alice.flac"
+            video.write_bytes(b"video")
+            audio.write_bytes(b"audio")
+
+            inputs = resolve_subtitle_inputs(
+                video_path=str(video),
+                audio_files=[str(audio)],
+                output_dir=str(root / "export"),
+            )
+            project_inputs = SubtitlePipelineInputs(
+                video_path=inputs.video_path,
+                output_dir=inputs.output_dir,
+                project_path=inputs.project_path,
+                reference_path=inputs.reference_path,
+                audio_files=inputs.audio_files,
+                style_map=inputs.style_map,
+                speakers=inputs.speakers,
+            )
+            alignment = SubtitleAlignmentResult(
+                matched_track="0:a:0",
+                offset_seconds=0.5,
+                score=1.0,
+                reference_audio=str(audio),
+            )
+            refine_result = SubtitleRefineResult(
+                merged_segments=[{"start": 0.0, "end": 1.0, "text": "hi", "speaker": "Oz", "source_speaker": "alice", "source_track": "craig:alice", "source_file": audio.name, "layout_row": 0}],
+                filtered_segments=[],
+            )
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.video_track_entries", return_value=[]),
+            ):
+                project_path = build_project_stage(
+                    inputs=project_inputs,
+                    alignment=alignment,
+                    transcript_map={str(audio): "transcript.json"},
+                    refine_result=refine_result,
+                    waveforms=[],
+                    model="large-v3",
+                    device="cpu",
+                    compute_type="int8",
+                    language="ja",
+                    subtitle_font_size=50,
+                    subtitle_outline_color="#000000",
+                    subtitle_outline_thickness=3,
+                    subtitle_max_gap_seconds=0.32,
+                    subtitle_end_padding_seconds=0.08,
+                    subtitle_min_duration_seconds=0.35,
+                    volume_scale_percent=20.0,
+                    duration_seconds=10.0,
+                )
+
+            project = load_project(project_path)
+
+            self.assertEqual(project_path, inputs.project_path)
+            self.assertTrue(Path(project["transcription"]["merged_json"]).exists())
+            self.assertTrue(Path(project["transcription"]["filtered_json"]).exists())
+            self.assertTrue(project_path.exists())
 
     def test_build_ass_uses_canonical_project_segments(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

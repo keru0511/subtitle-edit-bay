@@ -953,6 +953,34 @@ ApplicationWindow {
                     font.family: "Yu Gothic UI"; font.pixelSize: 9
                 }
             }
+            ColumnLayout {
+                spacing: 1
+                Text {
+                    Layout.preferredWidth: 300
+                    text: "バージョン: " + root.appBackend.applicationInfo.version
+                    color: root.acid
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                }
+                Text {
+                    Layout.preferredWidth: 330
+                    text: "実行ファイル: " + root.appBackend.applicationInfo.executablePath
+                    color: root.textMuted
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 8
+                    elide: Text.ElideMiddle
+                }
+                Text {
+                    Layout.preferredWidth: 330
+                    text: "配置場所: " + root.appBackend.applicationInfo.applicationPath
+                    color: root.textMuted
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 8
+                    elide: Text.ElideMiddle
+                }
+            }
+            SmallButton { objectName: "copyApplicationInfoButton"; text: "診断情報をコピー"; enabled: !root.appBackend.running; onClicked: root.appBackend.copyApplicationInfoToClipboard() }
             SmallButton { objectName: "projectOpenButton"; text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
             SmallButton { objectName: "sourceSetupButton"; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             Rectangle { Layout.preferredWidth: 9; Layout.preferredHeight: 9; radius: 5; color: root.appBackend.running ? root.amber : root.acid }

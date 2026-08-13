@@ -61,6 +61,27 @@ class SubtitleProjectLayoutTests(unittest.TestCase):
         self.assertEqual(rows["long"]["layout_row_span"], 2)
         self.assertEqual(rows["short"]["layout_row"], 2)
 
+    def test_multiline_caption_reserves_all_rows_before_overlapping_caption(self) -> None:
+        project = create_project(
+            video_path="game.mkv",
+            output_dir="out",
+            segments=[
+                {
+                    "id": "four-lines",
+                    "start": 0,
+                    "end": 3,
+                    "text": "abcdefgh\nijklmnop",
+                    "speaker": "Oz",
+                    "max_width": 4,
+                },
+                {"id": "short", "start": 1, "end": 2, "text": "short", "speaker": "A"},
+            ],
+        )
+
+        rows = {segment["id"]: segment for segment in project["segments"]}
+        self.assertEqual(rows["four-lines"]["layout_row_span"], 4)
+        self.assertEqual(rows["short"]["layout_row"], 4)
+
     def test_fast_allocator_matches_first_fit_reference(self) -> None:
         randomizer = random.Random(20260717)
         for iteration in range(100):

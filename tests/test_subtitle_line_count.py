@@ -156,7 +156,7 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual(preview_text, ass_text.replace(r"\N", "\n"))
         self.assertEqual(segment_editor_text(segment), preview_text)
 
-    def test_editor_does_not_hide_source_text_when_preview_is_truncated(self) -> None:
+    def test_editor_shows_full_source_with_breaks_when_preview_is_truncated(self) -> None:
         segment = {
             "start": 0,
             "end": 3,
@@ -168,7 +168,10 @@ class SubtitleLineCountTests(unittest.TestCase):
         }
 
         self.assertTrue(segment_preview_text(segment).endswith("…"))
-        self.assertEqual(segment_editor_text(segment), segment["text"])
+        editor_text = segment_editor_text(segment)
+        self.assertIn("\n", editor_text)
+        self.assertNotIn("…", editor_text)
+        self.assertEqual("".join(editor_text.split()), "".join(segment["text"].split()))
 
     def test_manual_break_overrides_automatic_formatting_and_layout_span(self) -> None:
         project = create_project(
@@ -190,6 +193,25 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual(format_segment_text(segment), r"short first\Nshort second")
         self.assertEqual(segment_preview_text(segment), "short first\nshort second")
         self.assertEqual(segment["layout_row_span"], 2)
+
+    def test_overlong_manual_lines_wrap_and_reserve_every_layout_row(self) -> None:
+        project = create_project(
+            video_path="video.mkv",
+            output_dir="out",
+            segments=[
+                {
+                    "start": 0,
+                    "end": 3,
+                    "text": "abcdefgh\nijklmnop",
+                    "speaker": "Oz",
+                    "max_width": 4,
+                }
+            ],
+        )
+        segment = project["segments"][0]
+
+        self.assertEqual(format_segment_text(segment), r"abcd\Nefgh\Nijkl\Nmnop")
+        self.assertEqual(segment["layout_row_span"], 4)
 
     def test_line_count_normalizer_accepts_auto_one_and_two_only(self) -> None:
         self.assertEqual(normalize_subtitle_line_count(None), "auto")

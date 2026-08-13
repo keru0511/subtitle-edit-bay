@@ -537,14 +537,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("\n", automatic["preview_text"])
         self.assertEqual(
             self.app.formatSubtitlePreview(0, "manual first\nmanual second"),
-            "manual first\nmanual second",
+            "manual f\nirst\nmanual\nsecond",
         )
 
         self.app.updateSegment(0, {"text": "manual first\nmanual second"})
         saved = self.app.subtitleSegments[0]
         preview = self.app.activeSubtitleSegments(1.0)[0]
         self.assertEqual(saved["text"], "manual first\nmanual second")
-        self.assertEqual(preview["preview_text"], "manual first\nmanual second")
+        self.assertEqual(preview["preview_text"], "manual f\nirst\nmanual\nsecond")
         self.assertTrue(saved["manual_text"])
 
     def test_invalid_numeric_edits_preserve_segment_and_report_check(self) -> None:
@@ -1153,10 +1153,130 @@ class GuiEditorRegressionTests(unittest.TestCase):
         text_area.forceActiveFocus()
         text_area.setProperty("text", "manual first\nmanual second")
         self.app.processEvents()
-        self.assertEqual(caption.property("text"), "manual first\nmanual second")
+        self.assertEqual(caption.property("text"), "manual f\nirst\nmanual\nsecond")
 
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
+
+    def test_qml_multiline_draft_commits_before_escape_and_ass_generation(self) -> None:
+        path = self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "firstsecond",
+                    "speaker": "Speaker_Alice",
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+
+        text_area = self._quick_visual_item(window.contentItem(), "captionTextArea")
+        text_area.forceActiveFocus()
+        text_area.setProperty("cursorPosition", 5)
+        self.app.processEvents()
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.app.processEvents()
+
+        caption = self._quick_visual_item(
+            window.contentItem(),
+            "editorSubtitleOverlayCaption-0",
+        )
+        self.assertEqual(text_area.property("text"), "first\nsecond")
+        self.assertEqual(caption.property("text"), "first\nsecond")
+        self.assertTrue(window.property("editorDraftDirty"))
+
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        self.app.processEvents()
+
+        self.assertFalse(window.property("editorMode"))
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "first\nsecond")
+        self.app.buildSubtitlePreview(self.app.settings)
+        ass_text = path.with_name("game.edited.ass").read_text(encoding="utf-8")
+        self.assertIn(r"first\Nsecond", ass_text)
+
+    def test_qml_save_shortcut_commits_active_multiline_draft(self) -> None:
+        path = self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "before",
+                    "speaker": "Speaker_Alice",
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+
+        text_area = self._quick_visual_item(window.contentItem(), "captionTextArea")
+        text_area.forceActiveFocus()
+        text_area.setProperty("text", "manual first\nmanual second")
+        self.app.processEvents()
+        QTest.keyClick(
+            window,
+            Qt.Key.Key_S,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        self.app.processEvents()
+
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "manual first\nmanual second")
+        self.assertFalse(window.property("editorDraftDirty"))
+
+    def test_qml_delete_key_edits_active_caption_instead_of_deleting_segment(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "first\nsecond",
+                    "speaker": "Speaker_Alice",
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+
+        text_area = self._quick_visual_item(window.contentItem(), "captionTextArea")
+        text_area.forceActiveFocus()
+        text_area.setProperty("cursorPosition", 5)
+        self.app.processEvents()
+        QTest.keyClick(window, Qt.Key.Key_Delete)
+        self.app.processEvents()
+
+        self.assertEqual(text_area.property("text"), "firstsecond")
+        self.assertEqual(self.app.segmentCount, 1)
+        self.assertTrue(window.property("editorDraftDirty"))
+
+    def test_qml_window_close_commits_active_multiline_draft(self) -> None:
+        path = self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 4,
+                    "text": "before",
+                    "speaker": "Speaker_Alice",
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+
+        text_area = self._quick_visual_item(window.contentItem(), "captionTextArea")
+        text_area.forceActiveFocus()
+        text_area.setProperty("text", "manual first\nmanual second")
+        self.app.processEvents()
+        window.close()
+        self.app.processEvents()
+
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "manual first\nmanual second")
 
     def test_qml_settings_round_trip_and_expanded_layout_fit(self) -> None:
         _, window = self._load_qml()

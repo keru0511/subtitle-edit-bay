@@ -68,12 +68,18 @@ class RenderAssTests(unittest.TestCase):
 
     def test_normalize_text_preserves_manual_line_breaks_over_line_count(self) -> None:
         self.assertEqual(
-            normalize_text("first line\nsecond line", max_width=4, max_lines=1),
+            normalize_text("first line\nsecond line", max_width=24, max_lines=1),
             r"first line\Nsecond line",
         )
         self.assertEqual(
-            normalize_text("first line\r\nsecond line", max_width=4, max_lines=2),
+            normalize_text("first line\r\nsecond line", max_width=24, max_lines=2),
             r"first line\Nsecond line",
+        )
+
+    def test_normalize_text_wraps_each_overlong_manual_line(self) -> None:
+        self.assertEqual(
+            normalize_text("abcdefgh\nijklmnop", max_width=4, max_lines=1),
+            r"abcd\Nefgh\Nijkl\Nmnop",
         )
 
     def test_normalize_text_uses_budoux_boundary_for_two_lines(self) -> None:

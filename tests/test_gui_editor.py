@@ -205,7 +205,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         engine = QQmlApplicationEngine()
         engine.rootContext().setContextProperty("backend", self.app)
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        engine.load(qml_path)
+        engine.load(QUrl.fromLocalFile(str(qml_path.resolve())))
         self.assertTrue(engine.rootObjects())
         window = engine.rootObjects()[0]
         window.setWidth(1220)
@@ -442,7 +442,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             entry.output_path.unlink()
         self.app._audio_preview_cache_paths.clear()
 
-        def fake_prepare(_project, _cache_root):
+        def fake_prepare(_project, _cache_root, protected_paths=None):
             paths: dict[str, str] = {}
             for entry in entries:
                 entry.output_path.write_bytes(b"prepared-audio")
@@ -465,6 +465,47 @@ class GuiEditorRegressionTests(unittest.TestCase):
             for channel in self.app.audioMixerChannels
         ))
         self.assertFalse(self.app.projectDirty)
+
+    def test_audio_mixer_preparation_protects_cached_paths(self) -> None:
+        self._load_project()
+        entries = audio_preview_cache_entries(
+            self.app._project or {},
+            self.app.audio_preview_cache_root,
+        )
+        for entry in entries:
+            entry.output_path.write_bytes(b"prepared-audio")
+        self.app._audio_preview_cache_paths = cached_audio_preview_paths(entries)
+        entries[0].output_path.unlink()
+
+        def fake_prepare(_project, _cache_root, protected_paths):
+            expected_paths = {Path(path) for path in self.app._audio_preview_cache_paths.values()}
+            self.assertGreater(len(expected_paths), 0)
+            self.assertTrue(expected_paths.issuperset({Path(path) for path in protected_paths}))
+            return AudioPreviewCacheResult(self.app._audio_preview_cache_paths)
+
+        with patch("src.gui.prepare_audio_preview_cache", side_effect=fake_prepare):
+            self.app.prepareAudioMixerPreview()
+            deadline = time.monotonic() + 2
+            while self.app.audioPreviewPreparing and time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(0.01)
+                if not self.app.audioPreviewPreparing:
+                    break
+
+        self.assertFalse(self.app.audioPreviewPreparing)
+
+    def test_clear_audio_preview_cache_slot_invokes_cleanup_and_clears_paths(self) -> None:
+        self._load_project()
+        self._prime_audio_preview_cache()
+        self.assertGreater(len(self.app._audio_preview_cache_paths), 0)
+
+        with patch("src.gui.clear_audio_preview_cache") as clear_cache:
+            clear_cache.return_value = (0, 0)
+            self.app.clearAudioPreviewCache()
+
+        clear_cache.assert_called_once_with(self.app.audio_preview_cache_root)
+        self.assertFalse(self.app._audio_preview_cache_paths)
+        self.assertFalse(self.app.audioPreviewPreparing)
 
     def test_audio_mixer_updates_individual_source_and_resets(self) -> None:
         path = self._load_project()
@@ -1413,6 +1454,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
             preview_player,
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)
+        cache_summary = self._quick_item(window, "mixerAudioPreviewCacheSummary")
+        cache_clear = self._quick_item(window, "mixerClearAudioPreviewCacheButton")
+        self.assertIn("/", cache_summary.property("text"))
+        self.assertGreater(cache_clear.width(), 0)
 
         mixer_items = [
             channel_list,
@@ -1421,6 +1466,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._quick_item(window, "mixerSeek"),
             self._quick_item(window, "mixerForwardButton"),
             self._quick_item(window, "mixerTimeText"),
+            cache_clear,
             self._quick_item(window, "mixerSequence"),
             self._quick_visual_item(self._quick_item(window, "mixerSequence"), "mixerSequenceVolumeBar"),
             self._quick_visual_item(channel_list, "mixerChannelFader"),

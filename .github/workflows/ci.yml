@@ -88,14 +88,12 @@ jobs:
                   }
               }
           }
-
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
               throw "ffmpeg command not found after installation attempts."
           }
           if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
               throw "ffprobe command not found after installation attempts."
           }
-
           ffmpeg -version
           ffprobe -version
       - name: Install Python dependencies

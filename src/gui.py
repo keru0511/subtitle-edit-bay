@@ -1559,11 +1559,30 @@ class EditBayBackend(LegacyEditBayBackend):
         self.process.setWorkingDirectory(str(self.workspace_root))
         self.process.start(command[0], command[1:])
 
+    def _has_audio_source(self, audio_files: list[str], audio_tracks: list[dict[str, Any]] | None = None) -> bool:
+        if audio_files:
+            return True
+        tracks = audio_tracks if audio_tracks is not None else self._audio_tracks
+        for track in tracks:
+            if str(track.get("selector", "")).strip():
+                return True
+        return False
+
+    def _default_video_audio_track(self, audio_tracks: list[dict[str, Any]] | None = None) -> str:
+        tracks = audio_tracks if audio_tracks is not None else self._audio_tracks
+        for track in tracks:
+            selector = str(track.get("selector", "")).strip()
+            if selector:
+                return selector
+        return ""
+
     @Slot("QVariantMap")
     def startTranscription(self, settings: dict[str, Any]) -> None:
         if self._running:
             return
-        self.refreshDependencies()
+        audio_tracks = list(self._audio_tracks)
+        if not self._dependencies.ready:
+            self.refreshDependencies()
         if not self._dependencies.ready:
             missing = ", ".join(self._dependencies.missing())
             self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
@@ -1576,18 +1595,18 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
+        video_audio_track = ""
         if not Path(selection.video).is_file():
             self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
             return
-        if not audio_files and not self._has_audio_source(audio_files):
-            self._set_status(
-                "動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。",
-                "CHECK",
-            )
+        if not audio_files and not self._has_audio_source(audio_files, audio_tracks):
+            self._set_status("動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。", "CHECK")
             return
         if not selection.output_dir:
             self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
             return
+        if not audio_files:
+            video_audio_track = str(settings.get("reference_track") or self._default_video_audio_track(audio_tracks))
         reference_audio = settings.get("reference_audio")
         if not reference_audio and audio_files:
             reference_audio = audio_files[0]
@@ -1601,6 +1620,7 @@ class EditBayBackend(LegacyEditBayBackend):
             output_dir=selection.output_dir,
             reference_audio=reference_audio,
             reference_track=reference_track,
+            video_audio_track=video_audio_track,
             alignment_offset_adjustment=adjustment,
         )
         self._start_command(command, "transcribe", "文字起こしを開始しています")

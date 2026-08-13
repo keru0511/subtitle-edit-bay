@@ -43,7 +43,7 @@ from .subtitle_project import (
     derive_project_path,
     save_project,
 )
-from .transcribe import probe_audio_streams
+from .transcribe import build_extract_audio_command, probe_audio_streams
 from .transcription_context import TranscriptionContext, transcription_context_from_mapping
 from .transcription_hint_plan import TranscriptionAsrSettings
 from .transcription_hint_workflow import build_craig_hint_plan_from_context
@@ -111,6 +111,15 @@ def _build_waveforms(
             )
         )
     return waveforms
+
+
+def _extract_video_audio_track(video_path: str, selector: str, transcript_dir: Path) -> Path:
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    safe_selector = selector.replace(":", "_").replace("/", "_")
+    output = transcript_dir / f"{Path(video_path).stem}.{safe_selector}.wav"
+    if not output.exists():
+        subprocess.run(build_extract_audio_command(video_path, str(output), selector), check=True)
+    return output
 
 
 def build_workflow_asr_settings(
@@ -215,6 +224,7 @@ def transcribe_to_project_with_context(
     output_dir: str,
     reference_audio: str | None = None,
     reference_track: str | None = None,
+    video_audio_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
     alignment_sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE,
     model: str = DEFAULT_MODEL,
@@ -245,15 +255,22 @@ def transcribe_to_project_with_context(
     """
     context = transcription_context_from_mapping(transcription_context) if not isinstance(transcription_context, TranscriptionContext) else transcription_context
     context_payload = context.to_dict()
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
     resolved_audio = resolve_craig_audio_files(None, audio_files)
+    if not resolved_audio:
+        selected_track = (video_audio_track or reference_track or "").strip()
+        if not selected_track:
+            raise SystemExit("No Craig speaker audio files were selected.")
+        resolved_audio = [_extract_video_audio_track(video_path, selected_track, output / "transcripts")]
+        reference_track = selected_track
+        reference_audio = reference_audio or str(resolved_audio[0])
     if not resolved_audio:
         raise SystemExit("No Craig speaker audio files were selected.")
     reference_path = resolve_reference_audio_path(resolved_audio, reference_audio)
     if reference_path is None:
         reference_path = resolved_audio[0]
 
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
     project_path = derive_project_path(video_path, output)
     if project_path.exists() and not overwrite_project:
         raise SystemExit(

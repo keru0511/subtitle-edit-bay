@@ -45,6 +45,18 @@ class GuiStateCommandTests(unittest.TestCase):
 
         self.assertEqual(public, direct)
 
+    def test_transcribe_command_supports_video_audio_track(self) -> None:
+        command = build_gui_transcribe_command(
+            "runtime.json",
+            video="video.mkv",
+            audio_files=(),
+            output_dir="out",
+            video_audio_track="0:a:0",
+        )
+
+        self.assertIn("--video-audio-track", command)
+        self.assertNotIn("--audio-file", command)
+
     def test_legacy_runtime_command_helper_stays_available(self) -> None:
         command = build_legacy_gui_command(
             "runtime.json",

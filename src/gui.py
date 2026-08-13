@@ -1208,29 +1208,57 @@ class EditBayBackend(LegacyEditBayBackend):
 
     def _apply_project_subtitle_settings(self, project: dict[str, Any]) -> None:
         subtitle = project.get("subtitle_settings", {})
-        if not isinstance(subtitle, dict):
-            self.settingsChanged.emit()
-            return
-
         updates: dict[str, int | float | str] = {}
-        for project_key, setting_key, converter in (
-            ("font_size", "subtitle_font_size", int),
-            ("outline_color", "subtitle_outline_color", normalize_rgb_color),
-            ("outline_thickness", "subtitle_outline_thickness", int),
-            ("volume_scale_percent", "subtitle_volume_scale_percent", float),
-            ("max_gap_seconds", "subtitle_max_gap_seconds", float),
-            ("end_padding_seconds", "subtitle_end_padding_seconds", float),
-            ("min_duration_seconds", "subtitle_min_duration_seconds", float),
-        ):
-            if project_key not in subtitle:
-                continue
-            try:
-                value = converter(subtitle[project_key])
-            except (TypeError, ValueError, OverflowError):
-                continue
-            if isinstance(value, float) and not math.isfinite(value):
-                continue
-            updates[setting_key] = value
+        if isinstance(subtitle, dict):
+            for project_key, setting_key, converter in (
+                ("font_size", "subtitle_font_size", int),
+                ("outline_color", "subtitle_outline_color", normalize_rgb_color),
+                ("outline_thickness", "subtitle_outline_thickness", int),
+                ("volume_scale_percent", "subtitle_volume_scale_percent", float),
+                ("max_gap_seconds", "subtitle_max_gap_seconds", float),
+                ("end_padding_seconds", "subtitle_end_padding_seconds", float),
+                ("min_duration_seconds", "subtitle_min_duration_seconds", float),
+            ):
+                if project_key not in subtitle:
+                    continue
+                try:
+                    value = converter(subtitle[project_key])
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if isinstance(value, float) and not math.isfinite(value):
+                    continue
+                updates[setting_key] = value
+
+        render_settings = project.get("render_settings", {})
+        if isinstance(render_settings, dict):
+            for project_key, setting_key, converter in (
+                ("video_codec", "video_codec", str),
+                ("audio_normalize", "audio_normalize", bool),
+                ("audio_target_lufs", "audio_target_lufs", float),
+                ("cut_no_speech", "cut_no_speech", bool),
+                ("no_speech_min_seconds", "no_speech_min_seconds", float),
+                ("speech_padding_seconds", "speech_padding_seconds", float),
+                ("nvenc_cq", "nvenc_cq", int),
+                ("x264_crf", "x264_crf", int),
+            ):
+                if project_key not in render_settings:
+                    continue
+                value = render_settings[project_key]
+                if converter is bool:
+                    if not isinstance(value, bool):
+                        continue
+                elif converter is str:
+                    if not isinstance(value, str):
+                        continue
+                    value = value
+                else:
+                    try:
+                        value = converter(value)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if isinstance(value, float) and not math.isfinite(value):
+                        continue
+                updates[setting_key] = value
 
         self._settings.update(updates)
         self.settingsChanged.emit()

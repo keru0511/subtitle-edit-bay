@@ -36,14 +36,21 @@ ROW_MARGIN_STEP = 156
 def resolve_row_margin_step(
     subtitle_font_size: int,
     events: list[SubtitleEvent] | None = None,
+    height: int = 1080,
 ) -> int:
     max_font_scale = max(
         (max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0))) for event in events or []),
         default=1.0,
     )
-    return round(
+    scaled_step = round(
         ROW_MARGIN_STEP * max(1.0, subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * max_font_scale)
     )
+    max_layer = max((max(0, int(event.layer)) for event in events or []), default=0)
+    if max_layer == 0:
+        return scaled_step
+    scaled_font_size = max(3, round(subtitle_font_size * max_font_scale))
+    available = max(1, int(height) - ROW_MARGIN_BASE - scaled_font_size)
+    return max(1, min(scaled_step, available // max_layer))
 
 
 def format_ass_time(seconds: float) -> str:
@@ -202,7 +209,11 @@ def render_ass(
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
-    row_margin_step = resolve_row_margin_step(subtitle_font_size=subtitle_font_size, events=events)
+    row_margin_step = resolve_row_margin_step(
+        subtitle_font_size=subtitle_font_size,
+        events=events,
+        height=height,
+    )
     resolved_speaker_color_map = load_speaker_color_map() if speaker_color_map is None else speaker_color_map
     style_overrides = build_track_style_overrides(
         events,

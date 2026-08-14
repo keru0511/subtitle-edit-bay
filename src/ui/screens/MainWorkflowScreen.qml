@@ -421,12 +421,32 @@ ApplicationWindow {
             return maxScale
         }
 
+        function maxSubtitlePixelSize() {
+            return Math.max(
+                3,
+                Math.round(overlayRoot.baseFontSize * overlayRoot.maxSubtitleFontScale())
+            )
+        }
+
+        function maxLayoutRow() {
+            var maxRow = 0
+            var allSegments = root.appBackend.subtitleSegments
+            for (var index = 0; index < allSegments.length; index++)
+                maxRow = Math.max(maxRow, Number(allSegments[index].layout_row || 0))
+            return maxRow
+        }
+
         function previewRowMarginStep() {
             var scale = Math.max(
                 1,
                 overlayRoot.baseFontSize / root.defaultSubtitleFontSize * overlayRoot.maxSubtitleFontScale(),
             )
-            return Math.max(1, Math.round(overlayRoot.rowMarginStepBase * scale))
+            var scaledStep = Math.max(1, Math.round(overlayRoot.rowMarginStepBase * scale))
+            var maxRow = overlayRoot.maxLayoutRow()
+            if (maxRow <= 0)
+                return scaledStep
+            var available = Math.max(1, overlayRoot.height - overlayRoot.rowMarginBase - overlayRoot.maxSubtitlePixelSize())
+            return Math.max(1, Math.min(scaledStep, Math.floor(available / maxRow)))
         }
 
         function outlineOffsets(thickness) {

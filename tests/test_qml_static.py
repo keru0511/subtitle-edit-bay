@@ -221,6 +221,8 @@ class QmlStaticTests(unittest.TestCase):
         overlay_qml = qml.split("component SubtitleOverlay", 1)[1].split("component SubtitleTimeline", 1)[0]
 
         self.assertIn("function maxSubtitleFontScale()", overlay_qml)
+        self.assertIn("function maxSubtitlePixelSize()", overlay_qml)
+        self.assertIn("function maxLayoutRow()", overlay_qml)
         self.assertIn("function previewRowMarginStep()", overlay_qml)
         self.assertIn("rowMarginBase: 34", overlay_qml)
         self.assertIn("rowMarginStepBase: 156", overlay_qml)

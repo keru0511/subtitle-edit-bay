@@ -151,5 +151,14 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertNotIn("\npython -m src.gui", usage)
 
 
+    def test_update_script_reports_version_before_and_after_zip_update(self) -> None:
+        script = (Path(__file__).resolve().parents[1] / "scripts" / "update.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Source version before update", script)
+        self.assertIn("Source version after update", script)
+        self.assertIn("$postUpdateVersion", script)
+        self.assertIn("Write-InstalledManifest", script)
+
+
 if __name__ == "__main__":
     unittest.main()

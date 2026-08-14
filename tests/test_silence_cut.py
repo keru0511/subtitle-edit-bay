@@ -221,6 +221,30 @@ class SilenceCutTests(unittest.TestCase):
                 ],
                 [],
             )
+    def test_cut_media_ranges_falls_back_from_nvenc_to_x264(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "output.mp4"
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **_kwargs: object) -> None:
+                calls.append(command)
+                codec = command[command.index("-c:v") + 1]
+                if codec == "h264_nvenc":
+                    raise subprocess.CalledProcessError(1, command)
+                Path(command[-1]).write_bytes(b"x264 output")
+
+            with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
+                cut_media_ranges(
+                    "input.mp4",
+                    str(output_path),
+                    [(0.0, 1.0)],
+                    video_codec="h264_nvenc",
+                )
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[1][calls[1].index("-c:v") + 1], "libx264")
+            self.assertEqual(output_path.read_bytes(), b"x264 output")
+
     def test_build_silence_cut_command_uses_yuv420p(self) -> None:
         command = build_silence_cut_command(
             "input.mp4",

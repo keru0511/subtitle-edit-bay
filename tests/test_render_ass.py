@@ -560,6 +560,38 @@ class RenderAssTests(unittest.TestCase):
             self.assertEqual(result, output)
             self.assertEqual(output.read_bytes(), b"new output")
 
+    def test_run_ffmpeg_burn_falls_back_from_nvenc_to_x264(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "video.mp4"
+            subtitle = root / "caption.ass"
+            output = root / "output.mp4"
+            video.write_bytes(b"video")
+            subtitle.write_text("dummy", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                codec = command[command.index("-c:v") + 1]
+                if codec == "h264_nvenc":
+                    raise subprocess.CalledProcessError(1, command)
+                Path(command[-1]).write_bytes(b"x264 output")
+                return subprocess.CompletedProcess(command, 0)
+
+            with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
+                run_ffmpeg_burn(
+                    str(video),
+                    str(subtitle),
+                    str(output),
+                    video_codec="h264_nvenc",
+                    audio_codec="aac",
+                )
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0][calls[0].index("-c:v") + 1], "h264_nvenc")
+            self.assertEqual(calls[1][calls[1].index("-c:v") + 1], "libx264")
+            self.assertEqual(output.read_bytes(), b"x264 output")
+
     def test_build_ffmpeg_command_uses_high_quality_nvenc(self) -> None:
         command = build_ffmpeg_command(
             "input.mp4",

@@ -655,6 +655,7 @@ def render_project_video(
                     audio_track=output_audio_track,
                     audio_mix=audio_mix if use_audio_mix else None,
                     audio_offset_seconds=offset_seconds,
+                    progress_callback=log_progress,
                 )
         finally:
             cut_ass.unlink(missing_ok=True)
@@ -676,6 +677,7 @@ def render_project_video(
             audio_track=output_audio_track,
             audio_mix=audio_mix if use_audio_mix else None,
             audio_offset_seconds=offset_seconds,
+            progress_callback=log_progress,
         )
     project["render_settings"] = {
         **project.get("render_settings", {}),

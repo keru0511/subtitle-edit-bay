@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import os
 import shutil
 import tempfile
 import subprocess
 import uuid
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
@@ -42,6 +43,52 @@ def temporary_ass_path(subtitle: str) -> Iterator[str]:
 def _build_temporary_output(output_path: Path) -> Path:
     suffix = output_path.suffix or ".tmp"
     return output_path.with_name(f".{output_path.stem}.{uuid.uuid4().hex}.partial{suffix}")
+
+
+def run_ffmpeg_command(
+    command: list[str],
+    *,
+    progress_callback: Callable[[str], None] | None = None,
+) -> None:
+    if progress_callback is None:
+        subprocess.run(command, check=True)
+        return
+
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    tail: deque[str] = deque(maxlen=80)
+    if process.stdout is not None:
+        for raw_line in process.stdout:
+            line = raw_line.rstrip()
+            if line:
+                tail.append(line)
+                progress_callback(line)
+    return_code = process.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, command, output="\n".join(tail))
+
+
+def run_ffmpeg_with_nvenc_fallback(
+    command_factory: Callable[[str], list[str]],
+    video_codec: str,
+    *,
+    progress_callback: Callable[[str], None] | None = None,
+) -> None:
+    try:
+        run_ffmpeg_command(command_factory(video_codec), progress_callback=progress_callback)
+    except (OSError, subprocess.CalledProcessError):
+        if not video_codec.lower().endswith("_nvenc"):
+            raise
+        if progress_callback is not None:
+            progress_callback("NVENC failed; retrying subtitle render with libx264")
+        run_ffmpeg_command(command_factory("libx264"), progress_callback=progress_callback)
 
 
 def build_ass_filter(subtitle: str) -> str:
@@ -100,18 +147,19 @@ def run_ffmpeg_burn(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_output = _build_temporary_output(output_path)
     try:
         with temporary_ass_path(subtitle) as subtitle_path:
-            subprocess.run(
-                build_ffmpeg_command(
+            def command_factory(codec: str) -> list[str]:
+                return build_ffmpeg_command(
                     video,
                     subtitle_path,
                     str(temporary_output),
-                    video_codec=video_codec,
+                    video_codec=codec,
                     audio_codec=audio_codec,
                     nvenc_preset=nvenc_preset,
                     nvenc_cq=nvenc_cq,
@@ -120,8 +168,12 @@ def run_ffmpeg_burn(
                     audio_track=audio_track,
                     audio_mix=audio_mix,
                     audio_offset_seconds=audio_offset_seconds,
-                ),
-                check=True,
+                )
+
+            run_ffmpeg_with_nvenc_fallback(
+                command_factory,
+                video_codec,
+                progress_callback=progress_callback,
             )
 
         if not temporary_output.exists() or temporary_output.stat().st_size == 0:

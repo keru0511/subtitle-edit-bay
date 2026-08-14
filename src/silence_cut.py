@@ -5,9 +5,11 @@ import os
 import re
 import subprocess
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
+from .burn_subs import run_ffmpeg_with_nvenc_fallback
 from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -270,6 +272,7 @@ def cut_media_ranges(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -290,23 +293,29 @@ def cut_media_ranges(
         encoding="utf-8",
     )
     try:
-        command = build_silence_cut_command(
-            input_path,
-            str(temporary_output),
-            keep_ranges,
-            video_codec=video_codec,
-            audio_codec=audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=audio_filter,
-            video_filter=video_filter,
-            filter_script_path=str(filter_script),
-            audio_track=audio_track,
-            audio_mix=audio_mix,
-            audio_offset_seconds=audio_offset_seconds,
+        def command_factory(codec: str) -> list[str]:
+            return build_silence_cut_command(
+                input_path,
+                str(temporary_output),
+                keep_ranges,
+                video_codec=codec,
+                audio_codec=audio_codec,
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                audio_filter=audio_filter,
+                video_filter=video_filter,
+                filter_script_path=str(filter_script),
+                audio_track=audio_track,
+                audio_mix=audio_mix,
+                audio_offset_seconds=audio_offset_seconds,
+            )
+
+        run_ffmpeg_with_nvenc_fallback(
+            command_factory,
+            video_codec,
+            progress_callback=progress_callback,
         )
-        subprocess.run(command, check=True)
         if not temporary_output.exists() or temporary_output.stat().st_size == 0:
             raise RuntimeError(f"FFmpeg completed without a usable output file: {temporary_output}")
         os.replace(temporary_output, output)

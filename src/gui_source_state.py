@@ -6,8 +6,8 @@ from typing import Any
 
 from .color_config import load_speaker_color_map
 
-VIDEO_EXTENSIONS = {".mkv", ".mp4", ".mov", ".webm"}
-AUDIO_EXTENSIONS = {".aac", ".flac", ".wav", ".m4a"}
+VIDEO_EXTENSIONS = {".avi", ".m2ts", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+AUDIO_EXTENSIONS = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
 DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284", "#81C8BE"]
 SOURCE_CONFIG_KEYS = {"video", "audio_dir", "audio_file", "output_dir", "reference_audio", "reference_track", "target"}
 

@@ -112,6 +112,20 @@ class SubtitleRefineResult:
     filtered_segments: list[dict]
 
 
+@dataclass(frozen=True)
+class SubtitleTranscriptionResult:
+    transcript_map: dict[str, str]
+    segments: list[dict]
+
+
+@dataclass(frozen=True)
+class SubtitleProjectResult:
+    project_path: Path
+    merged_path: Path
+    filtered_path: Path
+    project: dict[str, Any]
+
+
 def resolve_subtitle_inputs(
     *,
     video_path: str,
@@ -179,7 +193,7 @@ def run_subtitle_transcription_stage(
     postprocess_workers: int,
     subtitle_font_size: int,
     subtitle_volume_scale_percent: float,
-) -> tuple[dict[str, str], list[dict]]:
+) -> SubtitleTranscriptionResult:
     result = transcribe_craig_audio_files(
         audio_files,
         transcript_dir,
@@ -196,7 +210,10 @@ def run_subtitle_transcription_stage(
         subtitle_font_size=subtitle_font_size,
         subtitle_volume_scale_percent=subtitle_volume_scale_percent,
     )
-    return result.transcript_map, result.segments
+    return SubtitleTranscriptionResult(
+        transcript_map=result.transcript_map,
+        segments=result.segments,
+    )
 
 
 def run_subtitle_refine_stage(
@@ -238,7 +255,7 @@ def build_project_stage(
     volume_scale_percent: float,
     duration_seconds: float,
     render_settings: dict[str, Any] | None = None,
-) -> Path:
+) -> SubtitleProjectResult:
     merged_path = write_json(str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.merged.json"), {"segments": refine_result.merged_segments})
     filtered_path = write_json(str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.filtered.json"), {"segments": refine_result.filtered_segments})
     project = create_project(
@@ -280,7 +297,12 @@ def build_project_stage(
     reconcile_audio_mix(project, video_tracks)
     save_project(inputs.project_path, project)
     log_progress(f"Project ready: {inputs.project_path}")
-    return inputs.project_path
+    return SubtitleProjectResult(
+        project_path=inputs.project_path,
+        merged_path=merged_path,
+        filtered_path=filtered_path,
+        project=project,
+    )
 
 
 def log_progress(message: str) -> None:
@@ -411,7 +433,7 @@ def transcribe_to_project(
             inputs.speakers,
             alignment.offset_seconds,
         )
-        transcript_map, merged_segments = run_subtitle_transcription_stage(
+        transcription_result = run_subtitle_transcription_stage(
             inputs.audio_files,
             transcript_dir,
             inputs.style_map,
@@ -429,7 +451,7 @@ def transcribe_to_project(
         )
         log_progress("Refining merged subtitle segments")
         refine_result = run_subtitle_refine_stage(
-            merged_segments,
+            transcription_result.segments,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
@@ -441,10 +463,10 @@ def transcribe_to_project(
     except (OSError, subprocess.CalledProcessError, ValueError):
         duration_seconds = max((float(segment["end"]) for segment in refine_result.merged_segments), default=0.0)
 
-    return build_project_stage(
+    project_result = build_project_stage(
         inputs=inputs,
         alignment=alignment,
-        transcript_map=transcript_map,
+        transcript_map=transcription_result.transcript_map,
         refine_result=refine_result,
         waveforms=waveforms,
         model=model,
@@ -461,6 +483,7 @@ def transcribe_to_project(
         duration_seconds=duration_seconds,
         render_settings=render_settings,
     )
+    return project_result.project_path
 
 
 def _ass_build_options(

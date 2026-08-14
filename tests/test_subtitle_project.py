@@ -222,7 +222,7 @@ class SubtitleWorkflowTests(unittest.TestCase):
                 patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
                 patch("src.subtitle_workflow.video_track_entries", return_value=[]),
             ):
-                project_path = build_project_stage(
+                project_result = build_project_stage(
                     inputs=project_inputs,
                     alignment=alignment,
                     transcript_map={str(audio): "transcript.json"},
@@ -242,12 +242,15 @@ class SubtitleWorkflowTests(unittest.TestCase):
                     duration_seconds=10.0,
                 )
 
+            project_path = project_result.project_path
             project = load_project(project_path)
 
             self.assertEqual(project_path, inputs.project_path)
             self.assertTrue(Path(project["transcription"]["merged_json"]).exists())
             self.assertTrue(Path(project["transcription"]["filtered_json"]).exists())
             self.assertTrue(project_path.exists())
+            self.assertEqual(project_result.merged_path.name, "game.craig.merged.json")
+            self.assertEqual(project_result.filtered_path.name, "game.craig.filtered.json")
 
     def test_build_ass_uses_canonical_project_segments(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

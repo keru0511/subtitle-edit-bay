@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from src.transcription_web_dictionary import build_web_dictionary_candidates
+from src.transcription_web_dictionary import (
+    build_web_dictionary_candidate_metadata,
+    build_web_dictionary_candidates,
+)
 
 
 class TranscriptionWebDictionaryTests(unittest.TestCase):
@@ -26,6 +29,18 @@ class TranscriptionWebDictionaryTests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 5)
         self.assertNotIn("game", candidates)
+
+    def test_candidate_metadata_exposes_source_and_score_for_review(self) -> None:
+        metadata = build_web_dictionary_candidate_metadata(
+            "Splatoon 3",
+            "Salmon Run",
+            snippets=["Bomba and Ink"],
+        )
+
+        by_term = {item["term"]: item for item in metadata}
+        self.assertEqual(by_term["Splatoon 3"]["source"], "title")
+        self.assertEqual(by_term["Splatoon 3"]["score"], "1.00")
+        self.assertEqual(by_term["Bomba"]["source"], "snippet:1")
 
 
 if __name__ == "__main__":

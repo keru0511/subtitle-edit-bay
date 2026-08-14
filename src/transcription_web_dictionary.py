@@ -3,6 +3,8 @@
 import html
 import re
 from typing import Any, Mapping, Sequence
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 
 _CJK_TERM_RE = re.compile(r"[\u4e00-\u9fff]{2,}|[\u3040-\u30ff]{2,}")
@@ -38,6 +40,20 @@ _MAX_TERM_LENGTH = 48
 _TITLE_SOURCE = "title"
 _NOTES_SOURCE = "notes"
 _SNIPPET_SOURCE_PREFIX = "snippet"
+
+
+def fetch_web_dictionary_source(url: str, *, timeout: float = 10.0) -> str:
+    normalized_url = str(url).strip()
+    if not normalized_url.startswith(("http://", "https://")):
+        raise ValueError("web dictionary URL must use http:// or https://")
+    request = Request(normalized_url, headers={"User-Agent": "SubtitleEditBay/1.0"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            raw = response.read(512_000)
+    except (OSError, URLError) as error:
+        raise ValueError(f"failed to fetch web dictionary source: {error}") from error
+    return _strip_html(raw.decode(charset, errors="replace"))
 
 
 def _normalize_term(term: str) -> str:
@@ -119,16 +135,18 @@ def _candidate_terms_with_sources(
     *,
     max_terms: int = _MAX_WEB_DICTIONARY_CANDIDATES,
     snippets: Sequence[str] | None = None,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, float]]:
     seen: set[str] = set()
-    items: list[tuple[str, str]] = []
+    items: list[tuple[str, str, float]] = []
     source_order = [
-        (_TITLE_SOURCE, game_title),
-        (_NOTES_SOURCE, game_notes),
+        (_TITLE_SOURCE, game_title, 1.0),
+        (_NOTES_SOURCE, game_notes, 0.7),
         *_coerce_snippets(snippets),
     ]
 
-    for source_label, raw_text in source_order:
+    for source_entry in source_order:
+        source_label, raw_text = source_entry[:2]
+        source_score = float(source_entry[2]) if len(source_entry) > 2 else 0.5
         if not isinstance(raw_text, str):
             continue
         normalized_source_text = _strip_html(raw_text)
@@ -145,10 +163,10 @@ def _candidate_terms_with_sources(
             if lowered in seen:
                 continue
             seen.add(lowered)
-            items.append((normalized_term, source_label))
+            items.append((normalized_term, source_label, source_score))
             if len(items) >= max_terms:
-                return items
-    return items
+                return sorted(items, key=lambda item: (-item[2], item[0].casefold()))[:max_terms]
+    return sorted(items, key=lambda item: (-item[2], item[0].casefold()))[:max_terms]
 
 
 def build_web_dictionary_candidate_metadata(
@@ -158,12 +176,15 @@ def build_web_dictionary_candidate_metadata(
     max_terms: int = _MAX_WEB_DICTIONARY_CANDIDATES,
     snippets: Sequence[str] | None = None,
 ) -> tuple[dict[str, str], ...]:
-    return tuple({"term": term, "source": source} for term, source in _candidate_terms_with_sources(
+    return tuple(
+        {"term": term, "source": source, "score": f"{score:.2f}"}
+        for term, source, score in _candidate_terms_with_sources(
         game_title,
         game_notes,
         max_terms=max_terms,
         snippets=snippets,
-    ))
+        )
+    )
 
 
 def build_web_dictionary_candidates(
@@ -174,7 +195,7 @@ def build_web_dictionary_candidates(
     snippets: Sequence[str] | None = None,
 ) -> tuple[str, ...]:
     """Build a deterministic candidate list from title/notes/snippets without network access."""
-    return tuple(term for term, _ in _candidate_terms_with_sources(
+    return tuple(term for term, _, _ in _candidate_terms_with_sources(
         game_title,
         game_notes,
         max_terms=max_terms,
@@ -202,11 +223,16 @@ def normalize_web_dictionary_candidate_metadata(
             raise TypeError(f"{field} must contain only objects")
         term = _normalize_term(str(raw.get("term", "")))
         source = _normalize_term(str(raw.get("source", ""))) or "unknown"
+        raw_score = raw.get("score", "0.00")
+        try:
+            score = f"{float(raw_score):.2f}"
+        except (TypeError, ValueError):
+            score = "0.00"
         if not term:
             continue
         key = (term.casefold(), source.casefold())
         if key in seen:
             continue
         seen.add(key)
-        terms.append({"term": term, "source": source})
+        terms.append({"term": term, "source": source, "score": score})
     return tuple(terms)

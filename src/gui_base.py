@@ -40,6 +40,10 @@ from .runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
 from .runtime_dependencies import check_runtime_dependencies
 from .media_probe import probe_media_stream_types
 from .transcribe import probe_audio_streams
+from .transcription_web_dictionary import (
+    build_web_dictionary_candidate_metadata,
+    fetch_web_dictionary_source,
+)
 
 APP_TITLE = "Subtitle Edit Bay"
 
@@ -573,6 +577,40 @@ class EditBayBackend(QApplication):
             return
         self.transcriptionContextChanged.emit()
         self._set_status("文字起こし辞書設定を更新しました", "SAVED")
+
+    @Slot(str, str)
+    def refreshTranscriptionWebDictionary(self, url: str, snippet: str) -> None:
+        if self._running:
+            self._set_status("処理中はWeb辞書候補を更新できません", "BUSY")
+            return
+        source_url = str(url or "").strip()
+        source_text = str(snippet or "").strip()
+        try:
+            if source_url:
+                fetched = fetch_web_dictionary_source(source_url)
+                source_text = "\n".join(part for part in (source_text, fetched) if part)
+            metadata = list(
+                build_web_dictionary_candidate_metadata(
+                    self._transcription_context.get("game_title", ""),
+                    self._transcription_context.get("game_notes", ""),
+                    snippets=[source_text] if source_text else None,
+                )
+            )
+            if source_url:
+                for item in metadata:
+                    if item.get("source", "").startswith("snippet:"):
+                        item["source"] = source_url
+            candidates = [str(item["term"]) for item in metadata]
+            self.setTranscriptionContext(
+                {
+                    **self._transcription_context,
+                    "web_dictionary_candidates": candidates,
+                    "web_dictionary_terms": [],
+                    "web_dictionary_candidate_metadata": metadata,
+                }
+            )
+        except (TypeError, ValueError) as error:
+            self._set_status(f"Web辞書候補を取得できません: {error}", "ERROR")
 
     @Slot("QVariantMap")
     def saveSettings(self, settings: dict[str, Any]) -> None:

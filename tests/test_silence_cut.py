@@ -191,7 +191,11 @@ class SilenceCutTests(unittest.TestCase):
         observed: dict[str, int] = {}
 
         def inspect_command(command: list[str], check: bool) -> None:
-            script_index = command.index("-filter_complex_script") + 1
+            filter_options = [
+                option for option in ("-/filter_complex", "-filter_complex_script") if option in command
+            ]
+            self.assertEqual(len(filter_options), 1)
+            script_index = command.index(filter_options[0]) + 1
             script_path = Path(command[script_index])
             observed["filter_length"] = len(script_path.read_text(encoding="utf-8"))
             observed["command_length"] = len(" ".join(command))

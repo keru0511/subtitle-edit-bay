@@ -252,6 +252,22 @@ class SilenceCutTests(unittest.TestCase):
             self.assertEqual(calls[1][calls[1].index("-c:v") + 1], "libx264")
             self.assertEqual(output_path.read_bytes(), b"x264 output")
 
+    def test_windows_long_silence_cut_keeps_filter_script_off_command_line(self) -> None:
+        keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "output.mp4"
+
+            def inspect_command(command: list[str], check: bool) -> None:
+                self.assertTrue(check)
+                self.assertIn("-/filter_complex", command)
+                self.assertLess(len(" ".join(command)), 1000)
+                Path(command[-1]).write_bytes(b"output")
+
+            with mock.patch("src.silence_cut.os.name", "nt"), mock.patch(
+                "src.silence_cut.subprocess.run", side_effect=inspect_command
+            ):
+                cut_media_ranges("input.mp4", str(output_path), keep_ranges)
+
     def test_build_silence_cut_command_uses_yuv420p(self) -> None:
         command = build_silence_cut_command(
             "input.mp4",
@@ -270,7 +286,7 @@ class SilenceCutTests(unittest.TestCase):
             [(0.0, 1.0)],
             filter_script_path="filters.txt",
         )
-        self.assertIn("-filter_complex_script", command)
+        self.assertIn(command[command.index("filters.txt") - 1], {"-filter_complex_script", "-/filter_complex"})
         self.assertIn("filters.txt", command)
         self.assertNotIn("trim=start=0.000:end=1.000", " ".join(command))
 

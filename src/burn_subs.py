@@ -124,6 +124,7 @@ def build_ffmpeg_command(
     command.extend(["-vf", build_ass_filter(subtitle), "-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
     command.extend(["-pix_fmt", PIX_FMT])
+    command.extend(["-movflags", "+faststart"])
     if audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE, "-shortest"])
         if audio_codec == "copy":

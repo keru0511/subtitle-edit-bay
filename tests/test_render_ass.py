@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.assemble_video import build_concat_command, build_loudnorm_filter, build_normalize_command, optional_clip, write_concat_manifest
 from src.batch import derive_export_paths, derive_merged_export_paths, iter_video_files
-from src.burn_subs import build_ass_filter, build_ffmpeg_command, run_ffmpeg_burn
+from src.burn_subs import build_ass_filter, build_ffmpeg_command, run_ffmpeg_burn, temporary_ass_path
 from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
@@ -37,6 +37,19 @@ from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
 
 
 class RenderAssTests(unittest.TestCase):
+    def test_temporary_ass_path_cleans_apostrophe_copy_after_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subtitle = Path(temp_dir) / "O'Brien" / "caption.ass"
+            subtitle.parent.mkdir()
+            subtitle.write_text("[Script Info]\n", encoding="utf-8")
+
+            with temporary_ass_path(str(subtitle)) as safe_path:
+                self.assertNotEqual(Path(safe_path), subtitle)
+                self.assertTrue(Path(safe_path).exists())
+                self.assertEqual(Path(safe_path).read_text(encoding="utf-8"), "[Script Info]\n")
+
+            self.assertFalse(Path(safe_path).exists())
+
     def test_boundary_and_width_helpers_reuse_bounded_caches(self) -> None:
         budoux_boundaries.cache_clear()
         text_width.cache_clear()

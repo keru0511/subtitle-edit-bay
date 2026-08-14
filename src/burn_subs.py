@@ -4,6 +4,8 @@ import argparse
 import shutil
 import tempfile
 import subprocess
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
@@ -24,6 +26,16 @@ def _copy_ass_for_filter_compatibility(subtitle: str) -> tuple[str, str | None]:
     with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as temporary_ass:
         shutil.copy2(subtitle_path, temporary_ass.name)
         return temporary_ass.name, temporary_ass.name
+
+
+@contextmanager
+def temporary_ass_path(subtitle: str) -> Iterator[str]:
+    safe_path, cleanup_path = _copy_ass_for_filter_compatibility(subtitle)
+    try:
+        yield safe_path
+    finally:
+        if cleanup_path is not None:
+            Path(cleanup_path).unlink(missing_ok=True)
 
 
 def build_ass_filter(subtitle: str) -> str:
@@ -84,8 +96,7 @@ def run_ffmpeg_burn(
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    subtitle_path, cleanup_path = _copy_ass_for_filter_compatibility(subtitle)
-    try:
+    with temporary_ass_path(subtitle) as subtitle_path:
         subprocess.run(
             build_ffmpeg_command(
                 video,
@@ -103,9 +114,6 @@ def run_ffmpeg_burn(
             ),
             check=True,
         )
-    finally:
-        if cleanup_path is not None:
-            Path(cleanup_path).unlink(missing_ok=True)
     return output_path
 
 

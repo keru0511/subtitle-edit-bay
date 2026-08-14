@@ -73,6 +73,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._active_job = ""
         app._ass_path = ""
         app._loading_project_sources = False
+        app._relinking_project_sources = False
         app._source_selection = SourceSelection()
         app._speakers = []
         app._audio_tracks = app._default_audio_tracks()
@@ -97,6 +98,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._audio_preview_cache_future = None
         app._audio_preview_preparing = False
         app.audio_preview_cache_root = self.root / ".audio-preview-cache"
+        self._media_probe_patch = patch.object(
+            app,
+            "_is_supported_media_file",
+            side_effect=self._fake_media_file_has_required_streams,
+        )
+        self._media_probe_patch.start()
 
     def tearDown(self) -> None:
         for engine in self._engines:
@@ -114,6 +121,23 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._running = False
         self.app._active_job = ""
         self.app._cancel_requested = False
+
+        self._media_probe_patch.stop()
+
+    @staticmethod
+    def _fake_media_file_has_required_streams(
+        source: Path | str,
+        required_streams: set[str],
+        _label: str,
+    ) -> bool:
+        ext = Path(source).suffix.lower()
+        video_exts = {".avi", ".m2ts", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+        audio_exts = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
+        if ext in video_exts:
+            return "video" in required_streams
+        if ext in audio_exts:
+            return "audio" in required_streams
+        return False
 
     def _make_project(
         self,
@@ -205,7 +229,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         engine = QQmlApplicationEngine()
         engine.rootContext().setContextProperty("backend", self.app)
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        engine.load(qml_path)
+        engine.load(QUrl.fromLocalFile(str(qml_path.resolve())))
         self.assertTrue(engine.rootObjects())
         window = engine.rootObjects()[0]
         window.setWidth(1220)
@@ -258,6 +282,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.selectedSegmentIndex, 0)
         self.assertEqual(self.app.stage, "EDIT")
 
+    def test_project_load_clears_missing_sources(self) -> None:
+        self._set_ready_sources()
+        missing_video = self.root / "missing-video.mkv"
+        missing_audio = self.root / "missing-audio.flac"
+        missing_output = self.root / "missing-output"
+        project = create_project(
+            video_path=missing_video,
+            output_dir=missing_output,
+            audio_sources=[{"path": str(missing_audio)}],
+            segments=[],
+            duration_seconds=10,
+            speakers=(),
+        )
+        missing_project = self.root / "missing.subtitle-project.json"
+        save_project(missing_project, project)
+
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(missing_project, update_sources=True))
+
+        self.assertEqual(self.app.sourceSelection["video"], "")
+        self.assertEqual(self.app.sourceSelection["audio_files"], [])
+        self.assertEqual(self.app.sourceSelection["output_dir"], "")
+
     def test_dropped_source_files_are_classified_as_video_and_audio(self) -> None:
         video = self.root / "capture.mkv"
         video.write_bytes(b"video")
@@ -296,6 +343,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(self.app.sourceSelection["video"], "")
         self.assertEqual(self.app.stage, "BUSY")
+
+    def test_video_file_dialog_allows_extended_video_extensions(self) -> None:
+        video = self.root / "capture.avi"
+        video.write_bytes(b"video")
+
+        self.app.setVideoFile(str(video))
+
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.assertEqual(self.app.stage, "INPUT")
+
+    def test_audio_file_dialog_allows_extended_audio_extensions(self) -> None:
+        audio = self.root / "voice.opus"
+        audio.write_bytes(b"audio")
+
+        self.app.setAudioFiles([str(audio)], False)
+
+        self.assertEqual(self.app.sourceSelection["audio_files"], [str(audio.resolve())])
+        self.assertEqual(self.app.stage, "INPUT")
 
     def test_source_speaker_color_is_saved_and_reloaded(self) -> None:
         _, audio, _ = self._set_ready_sources()
@@ -442,7 +507,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             entry.output_path.unlink()
         self.app._audio_preview_cache_paths.clear()
 
-        def fake_prepare(_project, _cache_root):
+        def fake_prepare(_project, _cache_root, protected_paths=None):
             paths: dict[str, str] = {}
             for entry in entries:
                 entry.output_path.write_bytes(b"prepared-audio")
@@ -465,6 +530,47 @@ class GuiEditorRegressionTests(unittest.TestCase):
             for channel in self.app.audioMixerChannels
         ))
         self.assertFalse(self.app.projectDirty)
+
+    def test_audio_mixer_preparation_protects_cached_paths(self) -> None:
+        self._load_project()
+        entries = audio_preview_cache_entries(
+            self.app._project or {},
+            self.app.audio_preview_cache_root,
+        )
+        for entry in entries:
+            entry.output_path.write_bytes(b"prepared-audio")
+        self.app._audio_preview_cache_paths = cached_audio_preview_paths(entries)
+        entries[0].output_path.unlink()
+
+        def fake_prepare(_project, _cache_root, protected_paths):
+            expected_paths = {Path(path) for path in self.app._audio_preview_cache_paths.values()}
+            self.assertGreater(len(expected_paths), 0)
+            self.assertTrue(expected_paths.issuperset({Path(path) for path in protected_paths}))
+            return AudioPreviewCacheResult(self.app._audio_preview_cache_paths)
+
+        with patch("src.gui.prepare_audio_preview_cache", side_effect=fake_prepare):
+            self.app.prepareAudioMixerPreview()
+            deadline = time.monotonic() + 2
+            while self.app.audioPreviewPreparing and time.monotonic() < deadline:
+                self.app.processEvents()
+                time.sleep(0.01)
+                if not self.app.audioPreviewPreparing:
+                    break
+
+        self.assertFalse(self.app.audioPreviewPreparing)
+
+    def test_clear_audio_preview_cache_slot_invokes_cleanup_and_clears_paths(self) -> None:
+        self._load_project()
+        self._prime_audio_preview_cache()
+        self.assertGreater(len(self.app._audio_preview_cache_paths), 0)
+
+        with patch("src.gui.clear_audio_preview_cache") as clear_cache:
+            clear_cache.return_value = (0, 0)
+            self.app.clearAudioPreviewCache()
+
+        clear_cache.assert_called_once_with(self.app.audio_preview_cache_root)
+        self.assertFalse(self.app._audio_preview_cache_paths)
+        self.assertFalse(self.app.audioPreviewPreparing)
 
     def test_audio_mixer_updates_individual_source_and_resets(self) -> None:
         path = self._load_project()
@@ -1048,6 +1154,58 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.projectLoaded)
         self.assertEqual(self.app.sourceSelection["video"], "")
 
+    def test_relinking_source_selection_updates_existing_project(self) -> None:
+        path, _, _ = self._make_project()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        relocated = self.root / "relinked"
+        relocated.mkdir()
+        original_project = load_project(path)
+        old_video = Path(original_project["video"]["path"])
+        old_audio = Path(original_project["audio_sources"][0]["path"])
+        new_video = relocated / old_video.name
+        new_audio = relocated / old_audio.name
+        new_output = relocated / "output"
+        new_output.mkdir()
+        new_video.write_bytes(b"video")
+        new_audio.write_bytes(b"audio")
+
+        self.app.beginSourceRelink()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(new_video))
+            self.app.setAudioFiles([str(new_audio)], False)
+            self.app.setOutputDirectory(str(new_output))
+        self.app.relinkProjectSources()
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertTrue(self.app.projectDirty)
+        self.assertEqual(self.app._project["segments"], original_project["segments"])
+        self.assertEqual(self.app.sourceSelection["video"], str(new_video.resolve()))
+        self.assertEqual(self.app.sourceSelection["output_dir"], str(new_output.resolve()))
+        self.assertEqual(self.app._project["video"]["path"], str(new_video.resolve()))
+        self.assertEqual(self.app._project["output_dir"], str(new_output.resolve()))
+        self.assertEqual(
+            [item["path"] for item in self.app._project["audio_sources"]],
+            [str(new_audio.resolve())],
+        )
+        self.assertEqual(self.app.projectSpeakers[0]["path"], str(new_audio.resolve()))
+        self.assertEqual(self.app.projectSpeakers[0]["style"], original_project["speakers"][0]["style"])
+        self.assertEqual(self.app.projectSpeakers[0]["color"], original_project["speakers"][0]["color"])
+        self.assertEqual(self.app.projectSpeakers[0]["track_key"], original_project["speakers"][0]["track_key"])
+        self.app.finishSourceRelink()
+
+    def test_finish_source_relink_clears_relinking_state(self) -> None:
+        path, _, _ = self._make_project()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        self.app.beginSourceRelink()
+        self.assertTrue(self.app._relinking_project_sources)
+        self.app.finishSourceRelink()
+        self.assertFalse(self.app._relinking_project_sources)
+        self.assertTrue(self.app.projectLoaded)
+
     def test_qml_workflow_state_matrix(self) -> None:
         _, window = self._load_qml()
         transcribe = self._quick_item(window, "transcribeButton")
@@ -1413,6 +1571,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
             preview_player,
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)
+        cache_summary = self._quick_item(window, "mixerAudioPreviewCacheSummary")
+        cache_clear = self._quick_item(window, "mixerClearAudioPreviewCacheButton")
+        self.assertIn("/", cache_summary.property("text"))
+        self.assertGreater(cache_clear.width(), 0)
 
         mixer_items = [
             channel_list,
@@ -1421,6 +1583,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._quick_item(window, "mixerSeek"),
             self._quick_item(window, "mixerForwardButton"),
             self._quick_item(window, "mixerTimeText"),
+            cache_clear,
             self._quick_item(window, "mixerSequence"),
             self._quick_visual_item(self._quick_item(window, "mixerSequence"), "mixerSequenceVolumeBar"),
             self._quick_visual_item(channel_list, "mixerChannelFader"),

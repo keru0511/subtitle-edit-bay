@@ -76,7 +76,20 @@ jobs:
       - name: Install system runtime dependencies
         shell: pwsh
         run: |
-          choco install ffmpeg --yes --no-progress
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+              choco install ffmpeg --yes --no-progress
+              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+                  $installed = $true
+                  break
+              }
+              if ($attempt -lt 3) {
+                  Start-Sleep -Seconds (10 * $attempt)
+              }
+          }
+          if (-not $installed) {
+              throw "FFmpeg installation failed after 3 attempts."
+          }
           ffmpeg -version
           ffprobe -version
 

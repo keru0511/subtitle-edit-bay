@@ -267,8 +267,9 @@ class SilenceCutTests(unittest.TestCase):
                 self.assertLess(len(" ".join(command)), 1000)
                 Path(command[-1]).write_bytes(b"output")
 
+            path_type = type(Path())
             with mock.patch("src.silence_cut.os.name", "nt"), mock.patch(
-                "src.silence_cut.Path", type(Path())
+                "src.silence_cut.Path", path_type
             ), mock.patch("src.silence_cut.subprocess.run", side_effect=inspect_command):
                 cut_media_ranges("input.mp4", str(output_path), keep_ranges)
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
@@ -17,6 +19,11 @@ DEFAULT_AUDIO_CODEC = "aac"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+
+
+def _build_temporary_output(output_path: Path) -> Path:
+    suffix = output_path.suffix or ".tmp"
+    return output_path.with_name(f".{output_path.stem}.{uuid.uuid4().hex}.partial{suffix}")
 
 
 def build_silencedetect_command(input_path: str, noise: str = "-35dB", duration: float = 0.4) -> list[str]:
@@ -264,6 +271,7 @@ def cut_media_ranges(
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output = _build_temporary_output(output)
     filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
     filter_script.write_text(
         (
@@ -282,7 +290,7 @@ def cut_media_ranges(
     try:
         command = build_silence_cut_command(
             input_path,
-            output_path,
+            str(temporary_output),
             keep_ranges,
             video_codec=video_codec,
             audio_codec=audio_codec,
@@ -297,8 +305,12 @@ def cut_media_ranges(
             audio_offset_seconds=audio_offset_seconds,
         )
         subprocess.run(command, check=True)
+        if not temporary_output.exists() or temporary_output.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg completed without a usable output file: {temporary_output}")
+        os.replace(temporary_output, output)
     finally:
         filter_script.unlink(missing_ok=True)
+        temporary_output.unlink(missing_ok=True)
     return output
 
 

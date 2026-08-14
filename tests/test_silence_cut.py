@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -188,6 +189,7 @@ class SilenceCutTests(unittest.TestCase):
             observed["filter_length"] = len(script_path.read_text(encoding="utf-8"))
             observed["command_length"] = len(" ".join(command))
             self.assertTrue(check)
+            Path(command[-1]).write_bytes(b"output")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
@@ -197,6 +199,28 @@ class SilenceCutTests(unittest.TestCase):
 
         self.assertGreater(observed["filter_length"], 8191)
         self.assertLess(observed["command_length"], 1000)
+
+    def test_cut_media_ranges_preserves_existing_output_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "output.mp4"
+            output_path.write_bytes(b"previous output")
+
+            with mock.patch(
+                "src.silence_cut.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, ["ffmpeg"]),
+            ):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    cut_media_ranges("input.mp4", str(output_path), [(0.0, 1.0)])
+
+            self.assertEqual(output_path.read_bytes(), b"previous output")
+            self.assertEqual(
+                [
+                    path
+                    for path in output_path.parent.iterdir()
+                    if ".partial" in path.name
+                ],
+                [],
+            )
 
     def test_build_silence_cut_command_can_use_filter_script(self) -> None:
         command = build_silence_cut_command(

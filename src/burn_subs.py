@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import tempfile
 import subprocess
+import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
@@ -36,6 +38,9 @@ def temporary_ass_path(subtitle: str) -> Iterator[str]:
     finally:
         if cleanup_path is not None:
             Path(cleanup_path).unlink(missing_ok=True)
+def _build_temporary_output(output_path: Path) -> Path:
+    suffix = output_path.suffix or ".tmp"
+    return output_path.with_name(f".{output_path.stem}.{uuid.uuid4().hex}.partial{suffix}")
 
 
 def build_ass_filter(subtitle: str) -> str:
@@ -96,24 +101,33 @@ def run_ffmpeg_burn(
 ) -> Path:
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with temporary_ass_path(subtitle) as subtitle_path:
-        subprocess.run(
-            build_ffmpeg_command(
-                video,
-                subtitle_path,
-                output,
-                video_codec=video_codec,
-                audio_codec=audio_codec,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=audio_filter,
-                audio_track=audio_track,
-                audio_mix=audio_mix,
-                audio_offset_seconds=audio_offset_seconds,
-            ),
-            check=True,
-        )
+    temporary_output = _build_temporary_output(output_path)
+    try:
+        with temporary_ass_path(subtitle) as subtitle_path:
+            subprocess.run(
+                build_ffmpeg_command(
+                    video,
+                    subtitle_path,
+                    str(temporary_output),
+                    video_codec=video_codec,
+                    audio_codec=audio_codec,
+                    nvenc_preset=nvenc_preset,
+                    nvenc_cq=nvenc_cq,
+                    x264_crf=x264_crf,
+                    audio_filter=audio_filter,
+                    audio_track=audio_track,
+                    audio_mix=audio_mix,
+                    audio_offset_seconds=audio_offset_seconds,
+                ),
+                check=True,
+            )
+
+        if not temporary_output.exists() or temporary_output.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg completed without a usable output file: {temporary_output}")
+
+        os.replace(temporary_output, output_path)
+    finally:
+        temporary_output.unlink(missing_ok=True)
     return output_path
 
 

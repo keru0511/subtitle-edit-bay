@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.assemble_video import build_concat_command, build_loudnorm_filter, build_normalize_command, optional_clip, write_concat_manifest
 from src.batch import derive_export_paths, derive_merged_export_paths, iter_video_files
-from src.burn_subs import build_ass_filter, build_ffmpeg_command
+from src.burn_subs import build_ass_filter, build_ffmpeg_command, run_ffmpeg_burn, temporary_ass_path
 from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
@@ -37,6 +37,19 @@ from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
 
 
 class RenderAssTests(unittest.TestCase):
+    def test_temporary_ass_path_cleans_apostrophe_copy_after_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subtitle = Path(temp_dir) / "O'Brien" / "caption.ass"
+            subtitle.parent.mkdir()
+            subtitle.write_text("[Script Info]\n", encoding="utf-8")
+
+            with temporary_ass_path(str(subtitle)) as safe_path:
+                self.assertNotEqual(Path(safe_path), subtitle)
+                self.assertTrue(Path(safe_path).exists())
+                self.assertEqual(Path(safe_path).read_text(encoding="utf-8"), "[Script Info]\n")
+
+            self.assertFalse(Path(safe_path).exists())
+
     def test_boundary_and_width_helpers_reuse_bounded_caches(self) -> None:
         budoux_boundaries.cache_clear()
         text_width.cache_clear()
@@ -401,6 +414,31 @@ class RenderAssTests(unittest.TestCase):
 
     def test_build_ass_filter_escapes_windows_path(self) -> None:
         self.assertEqual(build_ass_filter(r"C:\work\sample.ass"), r"ass='C\:/work/sample.ass'")
+
+    def test_run_ffmpeg_burn_uses_temporary_copy_for_apostrophe_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "video.mp4"
+            subtitle = root / "O'Brien" / "caption.ass"
+            subtitle.parent.mkdir(parents=True, exist_ok=True)
+            subtitle.write_text("dummy", encoding="utf-8")
+            output = root / "output.mp4"
+            video.write_bytes(b"")
+
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                Path(command[-1]).write_bytes(b"ok")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
+                result = run_ffmpeg_burn(str(video), str(subtitle), str(output))
+
+            self.assertEqual(result, output)
+            self.assertEqual(len(calls), 1)
+            vf_index = calls[0].index("-vf") + 1
+            self.assertNotIn("O'Brien", calls[0][vf_index])
 
     def test_build_ffmpeg_command_uses_high_quality_nvenc(self) -> None:
         command = build_ffmpeg_command(

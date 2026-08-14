@@ -12,7 +12,7 @@ from .ass_template import (
     DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 )
 from .assemble_video import build_loudnorm_filter
-from .burn_subs import build_ass_filter, run_ffmpeg_burn
+from .burn_subs import build_ass_filter, run_ffmpeg_burn, temporary_ass_path
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
     DEFAULT_AUDIO_LOUDNESS_RANGE,
@@ -427,21 +427,22 @@ def render_project_video(
                 **_ass_build_options(project),
             )
             log_progress(f"Rendering edited video and cutting {len(no_speech_ranges)} silent ranges")
-            cut_media_ranges(
-                video_path,
-                str(output),
-                keep_ranges,
-                video_codec=video_codec,
-                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=loudnorm_filter,
-                video_filter=build_ass_filter(str(cut_ass)),
-                audio_track=output_audio_track,
-                audio_mix=audio_mix if use_audio_mix else None,
-                audio_offset_seconds=offset_seconds,
-            )
+            with temporary_ass_path(str(cut_ass)) as safe_cut_ass:
+                cut_media_ranges(
+                    video_path,
+                    str(output),
+                    keep_ranges,
+                    video_codec=video_codec,
+                    audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+                    nvenc_preset=nvenc_preset,
+                    nvenc_cq=nvenc_cq,
+                    x264_crf=x264_crf,
+                    audio_filter=loudnorm_filter,
+                    video_filter=build_ass_filter(safe_cut_ass),
+                    audio_track=output_audio_track,
+                    audio_mix=audio_mix if use_audio_mix else None,
+                    audio_offset_seconds=offset_seconds,
+                )
         finally:
             cut_ass.unlink(missing_ok=True)
     else:

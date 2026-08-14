@@ -4,6 +4,7 @@ import heapq
 import json
 import math
 import unicodedata
+from dataclasses import dataclass, field
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,358 @@ PROJECT_TYPE = "subtitle-edit-project"
 MIN_SEGMENT_DURATION_SECONDS = 0.05
 DEFAULT_WAVEFORM_BINS = 720
 DEFAULT_WAVEFORM_SAMPLE_RATE = 400
+
+
+@dataclass(frozen=True)
+class SubtitleSegment:
+    id: str
+    start: float
+    end: float
+    text: str
+    speaker: str
+    emphasis: str
+    position: str
+    layout_row: int
+    layout_row_span: int
+    max_width: int
+    subtitle_line_count: str
+    subtitle_font_scale: float
+    subtitle_font_family: str
+    subtitle_volume_level: float
+    layout_packed: bool
+    manual_text: bool
+    manual_timing: bool
+    manual_speaker: bool
+    manual_line_count: bool
+    manual_font_scale: bool
+    manual_font_family: bool
+    source_speaker: str = ""
+    source_track: str = ""
+    source_file: str = ""
+    words: list[dict[str, Any]] = field(default_factory=list)
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any], index: int = 0) -> "SubtitleSegment":
+        normalized = normalize_segment(payload, index)
+        return cls(
+            id=str(normalized["id"]),
+            start=float(normalized["start"]),
+            end=float(normalized["end"]),
+            text=str(normalized["text"]),
+            speaker=str(normalized["speaker"]),
+            emphasis=str(normalized["emphasis"]),
+            position=str(normalized["position"]),
+            layout_row=int(normalized["layout_row"]),
+            layout_row_span=max(1, int(normalized.get("layout_row_span", 1))),
+            max_width=max(4, int(normalized["max_width"])),
+            subtitle_line_count=str(normalized["subtitle_line_count"]),
+            subtitle_font_scale=float(normalized["subtitle_font_scale"]),
+            subtitle_font_family=str(normalized["subtitle_font_family"]),
+            subtitle_volume_level=float(normalized["subtitle_volume_level"]),
+            layout_packed=bool(normalized["layout_packed"]),
+            manual_text=bool(normalized["manual_text"]),
+            manual_timing=bool(normalized["manual_timing"]),
+            manual_speaker=bool(normalized["manual_speaker"]),
+            manual_line_count=bool(normalized["manual_line_count"]),
+            manual_font_scale=bool(normalized["manual_font_scale"]),
+            manual_font_family=bool(normalized["manual_font_family"]),
+            source_speaker=str(normalized.get("source_speaker", "")),
+            source_track=str(normalized.get("source_track", "")),
+            source_file=str(normalized.get("source_file", "")),
+            words=deepcopy(normalized.get("words", [])),
+            extras=deepcopy({
+                key: value
+                for key, value in normalized.items()
+                if key not in {
+                    "id", "start", "end", "text", "speaker", "emphasis", "position",
+                    "layout_row", "layout_row_span", "max_width", "subtitle_line_count",
+                    "subtitle_font_scale", "subtitle_font_family", "subtitle_volume_level",
+                    "layout_packed", "manual_text", "manual_timing", "manual_speaker",
+                    "manual_line_count", "manual_font_scale", "manual_font_family",
+                    "source_speaker", "source_track", "source_file", "words",
+                }
+            }),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        payload = {
+            "id": self.id,
+            "start": self.start,
+            "end": self.end,
+            "text": self.text,
+            "speaker": self.speaker,
+            "emphasis": self.emphasis,
+            "position": self.position,
+            "layout_row": self.layout_row,
+            "layout_row_span": self.layout_row_span,
+            "max_width": self.max_width,
+            "subtitle_line_count": self.subtitle_line_count,
+            "subtitle_font_scale": self.subtitle_font_scale,
+            "subtitle_font_family": self.subtitle_font_family,
+            "subtitle_volume_level": self.subtitle_volume_level,
+            "layout_packed": self.layout_packed,
+            "manual_text": self.manual_text,
+            "manual_timing": self.manual_timing,
+            "manual_speaker": self.manual_speaker,
+            "manual_line_count": self.manual_line_count,
+            "manual_font_scale": self.manual_font_scale,
+            "manual_font_family": self.manual_font_family,
+            "words": list(self.words),
+            "source_speaker": self.source_speaker,
+            "source_track": self.source_track,
+            "source_file": self.source_file,
+        }
+        payload.update(deepcopy(self.extras))
+        return payload
+
+
+@dataclass(frozen=True)
+class SpeakerInfo:
+    name: str
+    style: str
+    track_key: str
+    file_name: str
+    path: str
+    color: str = "#7FD957"
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "SpeakerInfo":
+        return cls(
+            name=str(payload.get("name", "Oz")),
+            style=str(payload.get("style", payload.get("speaker", "Oz"))),
+            track_key=str(payload.get("track_key", "")),
+            file_name=str(payload.get("file_name", "")),
+            path=str(payload.get("path", "")),
+            color=str(payload.get("color", "#7FD957")),
+            extras=deepcopy({key: value for key, value in payload.items() if key not in {
+                "name", "style", "track_key", "file_name", "path", "color",
+            }}),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        payload = {
+            "name": self.name,
+            "style": self.style,
+            "track_key": self.track_key,
+            "file_name": self.file_name,
+            "path": self.path,
+            "color": self.color,
+        }
+        payload.update(deepcopy(self.extras))
+        return payload
+
+
+@dataclass(frozen=True)
+class WaveformInfo:
+    speaker: str
+    style: str
+    color: str
+    source_path: str
+    offset_seconds: float
+    duration_seconds: float
+    sample_rate: int
+    peaks: list[float]
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "WaveformInfo":
+        return cls(
+            speaker=str(payload.get("speaker", "")),
+            style=str(payload.get("style", "")),
+            color=str(payload.get("color", "#7FD957")),
+            source_path=str(payload.get("source_path", "")),
+            offset_seconds=float(payload.get("offset_seconds", 0.0)),
+            duration_seconds=float(payload.get("duration_seconds", 0.0)),
+            sample_rate=int(payload.get("sample_rate", DEFAULT_WAVEFORM_SAMPLE_RATE)),
+            peaks=list(deepcopy(payload.get("peaks", []))),
+            extras=deepcopy({key: value for key, value in payload.items() if key not in {
+                "speaker", "style", "color", "source_path", "offset_seconds",
+                "duration_seconds", "sample_rate", "peaks",
+            }}),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        payload = {
+            "speaker": self.speaker,
+            "style": self.style,
+            "color": self.color,
+            "source_path": self.source_path,
+            "offset_seconds": self.offset_seconds,
+            "duration_seconds": self.duration_seconds,
+            "sample_rate": self.sample_rate,
+            "peaks": list(self.peaks),
+        }
+        payload.update(deepcopy(self.extras))
+        return payload
+
+
+@dataclass(frozen=True)
+class AudioMixChannel:
+    id: str
+    kind: str
+    label: str
+    enabled: bool
+    muted: bool
+    solo: bool
+    volume_percent: float
+    selector: str | None = None
+    path: str | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "AudioMixChannel":
+        return cls(
+            id=str(payload.get("id", "")),
+            kind=str(payload.get("kind", "external")),
+            label=str(payload.get("label", "")),
+            enabled=bool(payload.get("enabled", False)),
+            muted=bool(payload.get("muted", False)),
+            solo=bool(payload.get("solo", False)),
+            volume_percent=float(payload.get("volume_percent", 100.0)),
+            selector=str(payload.get("selector")) if payload.get("selector") is not None else None,
+            path=str(payload.get("path")) if payload.get("path") is not None else None,
+            extras={},
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        payload = {
+            "id": self.id,
+            "kind": self.kind,
+            "label": self.label,
+            "enabled": self.enabled,
+            "muted": self.muted,
+            "solo": self.solo,
+            "volume_percent": self.volume_percent,
+        }
+        if self.selector is not None:
+            payload["selector"] = self.selector
+        if self.path is not None:
+            payload["path"] = self.path
+        payload.update(deepcopy(self.extras))
+        return payload
+
+
+@dataclass(frozen=True)
+class AudioMix:
+    version: int
+    customized: bool
+    channels: list[AudioMixChannel]
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "AudioMix":
+        channels = [
+            AudioMixChannel.from_json(channel)
+            for channel in payload.get("channels", [])
+            if isinstance(channel, dict)
+        ]
+        return cls(
+            version=int(payload.get("version", 1)),
+            customized=bool(payload.get("customized", False)),
+            channels=channels,
+            extras={},
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        payload = {
+            "version": self.version,
+            "customized": self.customized,
+            "channels": [channel.to_json() for channel in self.channels],
+        }
+        payload.update(deepcopy(self.extras))
+        return payload
+
+
+@dataclass(frozen=True)
+class SubtitleProject:
+    schema_version: int
+    project_type: str
+    created_at: str
+    updated_at: str
+    video: dict[str, Any]
+    output_dir: str
+    audio_sources: list[SpeakerInfo]
+    speakers: list[SpeakerInfo]
+    waveforms: list[WaveformInfo]
+    subtitle_settings: dict[str, Any]
+    render_settings: dict[str, Any]
+    transcription: dict[str, Any]
+    transcription_context: dict[str, Any]
+    audio_mix: AudioMix | None
+    segments: list[SubtitleSegment]
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "SubtitleProject":
+        video = payload.get("video", {})
+        if not isinstance(video, dict):
+            raise SubtitleProjectError("video must be an object")
+        migrated = migrate_project_payload(payload)
+        segments = [
+            SubtitleSegment.from_json(segment, index=index)
+            for index, segment in enumerate(migrated.get("segments", []))
+            if isinstance(segment, dict)
+        ]
+        return cls(
+            schema_version=int(migrated.get("schema_version", PROJECT_SCHEMA_VERSION)),
+            project_type=str(migrated.get("project_type", PROJECT_TYPE)),
+            created_at=str(migrated.get("created_at", utc_timestamp())),
+            updated_at=str(migrated.get("updated_at", utc_timestamp())),
+            video=deepcopy(video),
+            output_dir=str(migrated.get("output_dir", "")),
+            audio_sources=[SpeakerInfo.from_json(source) for source in migrated.get("audio_sources", []) if isinstance(source, dict)],
+            speakers=[SpeakerInfo.from_json(speaker) for speaker in migrated.get("speakers", []) if isinstance(speaker, dict)],
+            waveforms=[WaveformInfo.from_json(waveform) for waveform in migrated.get("waveforms", []) if isinstance(waveform, dict)],
+            subtitle_settings=deepcopy(migrated.get("subtitle_settings", {})),
+            render_settings=deepcopy(migrated.get("render_settings", {})),
+            transcription=deepcopy(migrated.get("transcription", {})),
+            transcription_context=deepcopy(migrated.get("transcription_context", {})),
+            audio_mix=AudioMix.from_json(migrated["audio_mix"]) if isinstance(migrated.get("audio_mix"), dict) else None,
+            segments=segments,
+            extras=deepcopy({key: value for key, value in migrated.items() if key not in {
+                "schema_version", "project_type", "created_at", "updated_at", "video", "output_dir",
+                "audio_sources", "speakers", "waveforms", "subtitle_settings", "render_settings",
+                "transcription", "transcription_context", "audio_mix", "segments",
+            }}),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        payload = {
+            "schema_version": self.schema_version,
+            "project_type": self.project_type,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "video": deepcopy(self.video),
+            "output_dir": self.output_dir,
+            "audio_sources": [speaker.to_json() for speaker in self.audio_sources],
+            "speakers": [speaker.to_json() for speaker in self.speakers],
+            "waveforms": [waveform.to_json() for waveform in self.waveforms],
+            "subtitle_settings": deepcopy(self.subtitle_settings),
+            "render_settings": deepcopy(self.render_settings),
+            "transcription": deepcopy(self.transcription),
+            "transcription_context": deepcopy(self.transcription_context),
+            "segments": [segment.to_json() for segment in self.segments],
+        }
+        if self.audio_mix is not None:
+            payload["audio_mix"] = self.audio_mix.to_json()
+        payload.update(deepcopy(self.extras))
+        return payload
+
+
+def migrate_project_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    migrated = deepcopy(payload)
+    schema_version = int(migrated.get("schema_version", PROJECT_SCHEMA_VERSION) or PROJECT_SCHEMA_VERSION)
+    if schema_version > PROJECT_SCHEMA_VERSION:
+        raise SubtitleProjectError(f"unsupported project schema_version: {migrated.get('schema_version')!r}")
+
+    if "project_type" not in migrated:
+        migrated["project_type"] = PROJECT_TYPE
+    if schema_version < PROJECT_SCHEMA_VERSION:
+        migrated["schema_version"] = PROJECT_SCHEMA_VERSION
+
+    return migrated
 
 
 class SubtitleProjectError(ValueError):
@@ -178,7 +531,10 @@ def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str,
 def validate_project(project: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(project, dict):
         raise SubtitleProjectError("project root must be an object")
-    if int(project.get("schema_version", 0)) != PROJECT_SCHEMA_VERSION:
+    migrated = migrate_project_payload(project)
+    model = SubtitleProject.from_json(migrated)
+    project = model.to_json()
+    if project.get("schema_version") != PROJECT_SCHEMA_VERSION:
         raise SubtitleProjectError(
             f"unsupported project schema_version: {project.get('schema_version')!r}"
         )
@@ -190,7 +546,8 @@ def validate_project(project: dict[str, Any]) -> dict[str, Any]:
     segments = project.get("segments")
     if not isinstance(segments, list):
         raise SubtitleProjectError("segments must be an array")
-    normalized = [normalize_segment(segment, index) for index, segment in enumerate(segments)]
+    typed_segments = [SubtitleSegment.from_json(segment, index=index) for index, segment in enumerate(segments)]
+    normalized = [segment.to_json() for segment in typed_segments]
     ids = [segment["id"] for segment in normalized]
     if len(ids) != len(set(ids)):
         raise SubtitleProjectError("segment ids must be unique")
@@ -288,6 +645,11 @@ def load_project(path: str | Path) -> dict[str, Any]:
     return validate_project(payload)
 
 
+def load_project_model(path: str | Path) -> SubtitleProject:
+    """Load a validated project as the canonical internal domain model."""
+    return SubtitleProject.from_json(load_project(path))
+
+
 def save_project(
     path: str | Path,
     project: dict[str, Any],
@@ -310,13 +672,62 @@ def save_project(
     return output
 
 
+def save_project_model(
+    path: str | Path,
+    project: SubtitleProject,
+) -> Path:
+    """Serialize a domain model only at the persistence boundary."""
+    return save_project(path, project.to_json())
+
+
+def project_to_view_payload(project: SubtitleProject | dict[str, Any]) -> dict[str, Any]:
+    """Build a GUI-specific payload without exposing persistence models to QML."""
+    model = project if isinstance(project, SubtitleProject) else SubtitleProject.from_json(validate_project(project))
+    return {
+        "video": deepcopy(model.video),
+        "output_dir": model.output_dir,
+        "speakers": [
+            {
+                "name": speaker.name,
+                "style": speaker.style,
+                "track_key": speaker.track_key,
+                "color": speaker.color,
+            }
+            for speaker in model.speakers
+        ],
+        "segments": [
+            {
+                "id": segment.id,
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+                "speaker": segment.speaker,
+                "layout_row": segment.layout_row,
+                "layout_row_span": segment.layout_row_span,
+                "subtitle_font_scale": segment.subtitle_font_scale,
+                "subtitle_font_family": segment.subtitle_font_family,
+                "subtitle_line_count": segment.subtitle_line_count,
+            }
+            for segment in model.segments
+        ],
+        "subtitle_settings": deepcopy(model.subtitle_settings),
+        "render_settings": deepcopy(model.render_settings),
+    }
+
+
 def project_to_transcript(
-    project: dict[str, Any],
+    project: SubtitleProject | dict[str, Any],
     *,
     project_is_validated: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    source = project if project_is_validated else validate_project(deepcopy(project))
-    return {"segments": [deepcopy(segment) for segment in source["segments"] if segment["text"]]}
+    if isinstance(project, SubtitleProject):
+        model = project
+    else:
+        payload = project if project_is_validated else validate_project(deepcopy(project))
+        model = SubtitleProject.from_json(payload)
+    return {
+        "segments": [segment.to_json() for segment in model.segments if segment.text]
+    }
 
 
 def waveform_peaks_from_samples(samples: np.ndarray, bins: int = DEFAULT_WAVEFORM_BINS) -> list[float]:

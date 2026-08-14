@@ -404,11 +404,53 @@ ApplicationWindow {
         property int baseFontSize: root.selectedSubtitleFontSize
         property var activeSegments: []
         property string activeSignature: ""
+        property int rowMarginBase: 34
+        property int rowMarginStepBase: 156
 
         function previewPixelSize(fontScale) {
             var normalizedScale = Math.max(0.1, Number(fontScale) || 1)
             var outputFontSize = Math.max(3, Math.round(overlayRoot.baseFontSize * normalizedScale))
             return Math.max(1, Math.round(22 * outputFontSize / root.defaultSubtitleFontSize))
+        }
+
+        function maxSubtitleFontScale() {
+            var maxScale = 1
+            var allSegments = root.appBackend.subtitleSegments
+            for (var index = 0; index < allSegments.length; index++) {
+                var candidate = Number(allSegments[index].subtitle_font_scale)
+                if (candidate > 0) {
+                    maxScale = Math.max(maxScale, Math.max(0.1, candidate))
+                }
+            }
+            return maxScale
+        }
+
+        function maxSubtitlePixelSize() {
+            return Math.max(
+                3,
+                Math.round(overlayRoot.baseFontSize * overlayRoot.maxSubtitleFontScale())
+            )
+        }
+
+        function maxLayoutRow() {
+            var maxRow = 0
+            var allSegments = root.appBackend.subtitleSegments
+            for (var index = 0; index < allSegments.length; index++)
+                maxRow = Math.max(maxRow, Number(allSegments[index].layout_row || 0))
+            return maxRow
+        }
+
+        function previewRowMarginStep() {
+            var scale = Math.max(
+                1,
+                overlayRoot.baseFontSize / root.defaultSubtitleFontSize * overlayRoot.maxSubtitleFontScale(),
+            )
+            var scaledStep = Math.max(1, Math.round(overlayRoot.rowMarginStepBase * scale))
+            var maxRow = overlayRoot.maxLayoutRow()
+            if (maxRow <= 0)
+                return scaledStep
+            var available = Math.max(1, overlayRoot.height - overlayRoot.rowMarginBase - overlayRoot.maxSubtitlePixelSize())
+            return Math.max(1, Math.min(scaledStep, Math.floor(available / maxRow)))
         }
 
         function outlineOffsets(thickness) {
@@ -460,7 +502,7 @@ ApplicationWindow {
                 width: Math.min(implicitWidth + 30, parent.width - 30)
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: 26 + Number(segmentData.layout_row || 0) * 54
+                anchors.bottomMargin: overlayRoot.rowMarginBase + Number(segmentData.layout_row || 0) * overlayRoot.previewRowMarginStep()
                 text: root.subtitlePreviewText(segmentData)
                 color: root.speakerColor(segmentData.speaker || "")
                 font.family: segmentData.subtitle_font_family || "Yu Gothic UI"

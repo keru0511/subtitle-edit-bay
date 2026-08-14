@@ -985,6 +985,16 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "end_padding_seconds": 0.04,
             "min_duration_seconds": 0.5,
         }
+        project["render_settings"] = {
+            "audio_normalize": False,
+            "audio_target_lufs": -20,
+            "cut_no_speech": True,
+            "no_speech_min_seconds": 1.7,
+            "speech_padding_seconds": 0.25,
+            "video_codec": "h264_nvenc",
+            "nvenc_cq": 22,
+            "x264_crf": 17,
+        }
         save_project(path, project)
         settings_changes = QSignalSpy(self.app.settingsChanged)
 
@@ -998,6 +1008,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.settings["subtitle_max_gap_seconds"], 0.2)
         self.assertEqual(self.app.settings["subtitle_end_padding_seconds"], 0.04)
         self.assertEqual(self.app.settings["subtitle_min_duration_seconds"], 0.5)
+        self.assertFalse(self.app.settings["audio_normalize"])
+        self.assertEqual(self.app.settings["audio_target_lufs"], -20)
+        self.assertTrue(self.app.settings["cut_no_speech"])
+        self.assertEqual(self.app.settings["no_speech_min_seconds"], 1.7)
+        self.assertEqual(self.app.settings["speech_padding_seconds"], 0.25)
+        self.assertEqual(self.app.settings["video_codec"], "h264_nvenc")
+        self.assertEqual(self.app.settings["nvenc_cq"], 22)
+        self.assertEqual(self.app.settings["x264_crf"], 17)
         self.assertFalse(self.app.projectDirty)
 
         _, window = self._load_qml()
@@ -1005,6 +1023,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self._quick_item(window, "outlineColorButton").property("colorValue"), "#123456")
         self.assertEqual(self._quick_item(window, "outlineThicknessSpin").property("value"), 6)
         self.assertEqual(self._quick_item(window, "volumeScaleSpin").property("value"), 35)
+        self.assertEqual(self._quick_item(window, "qualitySpin").property("value"), 22)
+        self.assertFalse(self._quick_item(window, "normalizeSwitch").property("checked"))
+        self.assertTrue(self._quick_item(window, "silenceSwitch").property("checked"))
+        self.assertEqual(self._quick_item(window, "silenceField").property("text"), "1.7")
+        self.assertEqual(self._quick_item(window, "speechPaddingField").property("text"), "0.25")
+        self.assertEqual(self._quick_item(window, "lufsField").property("text"), "-20")
         self.assertEqual(window.property("selectedSubtitleFontSize"), 100)
         caption = self._quick_visual_item(
             window.contentItem(),

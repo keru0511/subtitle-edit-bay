@@ -1,4 +1,6 @@
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -467,6 +469,40 @@ class RenderAssTests(unittest.TestCase):
         output = render_ass(data)
 
         self.assertIn(r",,a\{b\}c\\d", output)
+
+    @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
+    def test_ffmpeg_libass_renders_reserved_characters(self) -> None:
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("ffmpeg is required for ASS rendering smoke tests")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "input.mp4"
+            subtitle = root / "reserved.ass"
+            output = root / "output.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x180:d=0.4:r=2",
+                    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "0.4",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video),
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subtitle.write_text(
+                render_ass({
+                    "segments": [{
+                        "start": 0.0,
+                        "end": 0.4,
+                        "speaker": "Smoke",
+                        "text": r"C:\temp\video {take}\N next",
+                    }]
+                }),
+                encoding="utf-8",
+            )
+            run_ffmpeg_burn(str(video), str(subtitle), str(output), audio_codec="aac")
+            self.assertGreater(output.stat().st_size, 0)
 
     def test_pack_segments_preserves_source_speaker_metadata(self) -> None:
         data = {

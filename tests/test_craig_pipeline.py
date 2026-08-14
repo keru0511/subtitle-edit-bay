@@ -4,7 +4,10 @@ from unittest import mock
 import numpy as np
 
 from src.craig_pipeline import (
+    AlignmentResult,
+    SegmentRefinementResult,
     build_craig_segments_for_transcript,
+    CraigTranscriptionBatch,
     build_speaker_style_map,
     calculate_segment_volume_levels,
     estimate_offset,
@@ -17,6 +20,9 @@ from src.craig_pipeline import (
     resolve_craig_audio_files,
     resolve_craig_target_paths,
     resolve_reference_audio_path,
+    run_alignment_stage,
+    run_refine_stage,
+    run_transcription_stage,
     shift_segment,
     transcribe_audio_file,
     transcribe_craig_audio_files,
@@ -154,6 +160,80 @@ class CraigPipelineTests(unittest.TestCase):
 
             self.assertEqual([path.name for path in files], ["1-speaker-a.flac", "2-speaker-b.aac"])
             self.assertTrue(all(path.is_absolute() for path in files))
+
+    def test_run_alignment_stage_adjusts_offset(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio = Path(temp_dir) / "1-speaker-a.flac"
+            audio.write_bytes(b"audio")
+            with mock.patch("src.craig_pipeline.resolve_alignment", return_value=("0:a:2", 0.4, 0.77)) as resolve_alignment:
+                alignment = run_alignment_stage(
+                    video_path="video.mkv",
+                    reference_audio=audio,
+                    reference_track="0:a:2",
+                    alignment_sample_rate=160,
+                    alignment_offset_adjustment=0.25,
+                )
+
+            resolve_alignment.assert_called_once_with("video.mkv", str(audio), "0:a:2", 160)
+            self.assertEqual(
+                alignment,
+                AlignmentResult(
+                    matched_track="0:a:2",
+                    offset_seconds=0.65,
+                    score=0.77,
+                    reference_audio=str(audio),
+                ),
+            )
+
+    def test_run_refine_stage_returns_refinement_dataclass(self) -> None:
+        merged = [{"start": 0.0, "end": 1.0, "text": "a", "speaker": "Oz", "layout_row": 0}]
+        filtered = [{"start": 2.0, "end": 3.0, "text": "b", "speaker": "Oz", "layout_row": 0}]
+        with mock.patch("src.craig_pipeline.refine_segments", return_value=(merged, filtered)) as refine_segments:
+            result = run_refine_stage(
+                [{"start": 0.0, "end": 1.0}],
+                subtitle_max_gap_seconds=0.2,
+                subtitle_end_padding_seconds=0.05,
+                subtitle_min_duration_seconds=0.5,
+            )
+
+        refine_segments.assert_called_once()
+        self.assertEqual(result, SegmentRefinementResult(merged_segments=merged, filtered_segments=filtered))
+
+    def test_run_transcription_stage_delegates_to_batch_transcriber(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio = Path(temp_dir) / "1-speaker-a.flac"
+            audio.write_bytes(b"audio")
+            expected = CraigTranscriptionBatch(
+                {str(audio): str(Path(temp_dir) / "transcript.json")},
+                [{"start": 0.1, "end": 0.6, "text": "hello", "speaker": "Oz"}],
+            )
+            with mock.patch("src.craig_pipeline.transcribe_craig_audio_files", return_value=expected) as transcribe:
+                result = run_transcription_stage(
+                    audio_files=[audio],
+                    output_dir=Path(temp_dir),
+                    style_map={"speaker-a": "Oz"},
+                    offset_seconds=0.25,
+                    model="large-v3",
+                    device="cpu",
+                    compute_type="int8",
+                    language="ja",
+                    vad_onset=0.35,
+                    vad_offset=0.2,
+                    skip_existing_transcripts=True,
+                    postprocess_workers=1,
+                    subtitle_font_size=50,
+                    subtitle_volume_scale_percent=20.0,
+                )
+
+            transcribe.assert_called_once()
+            self.assertEqual(result.transcript_map, expected.transcript_map)
+            self.assertEqual(result.segments, expected.segments)
 
     def test_resolve_reference_audio_accepts_absolute_path_and_file_name(self) -> None:
         import tempfile

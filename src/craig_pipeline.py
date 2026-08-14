@@ -72,6 +72,331 @@ SUPPORTED_CRAIG_EXTENSIONS = {".aac", ".flac", ".wav", ".m4a"}
 EMPHASIS_MARKERS = ["!", "?", "?", "?"]
 
 
+@dataclass(frozen=True)
+class PipelineInputs:
+    video_path: str
+    audio_files: list[Path]
+    reference_audio: Path
+    output_dir: Path
+    style_map: dict[str, str]
+
+
+@dataclass(frozen=True)
+class AlignmentResult:
+    matched_track: str
+    offset_seconds: float
+    score: float
+    reference_audio: str
+
+
+@dataclass(frozen=True)
+class TranscriptionResult:
+    transcript_map: dict[str, str]
+    segments: list[dict]
+
+
+@dataclass(frozen=True)
+class SegmentRefinementResult:
+    merged_segments: list[dict]
+    filtered_segments: list[dict]
+
+
+@dataclass(frozen=True)
+class SegmentArtifacts:
+    merged_json: Path
+    filtered_json: Path
+    ass_path: Path
+
+
+@dataclass(frozen=True)
+class RenderResult:
+    final_video: Path
+    no_speech_report: Path | None
+    cut_merged_json: Path | None
+    cut_ass_path: Path | None
+
+
+def resolve_pipeline_inputs(
+    video_path: str,
+    audio_dir: str | None,
+    output_dir: str,
+    reference_audio_name: str | None = None,
+    selected_audio_files: list[str] | None = None,
+) -> PipelineInputs:
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    audio_files = resolve_craig_audio_files(audio_dir, selected_audio_files)
+    if not audio_files:
+        raise SystemExit("No Craig speaker audio files were selected.")
+
+    reference_audio = resolve_reference_audio_path(audio_files, reference_audio_name, audio_dir)
+    if reference_audio is None or not reference_audio.exists():
+        raise SystemExit("Reference audio file was not found.")
+
+    style_map = build_speaker_style_map(audio_files)
+    return PipelineInputs(
+        video_path=str(video_path),
+        audio_files=audio_files,
+        reference_audio=reference_audio,
+        output_dir=output_path,
+        style_map=style_map,
+    )
+
+
+def run_alignment_stage(
+    video_path: str,
+    reference_audio: Path,
+    reference_track: str | None,
+    alignment_sample_rate: int,
+    alignment_offset_adjustment: float,
+) -> AlignmentResult:
+    matched_track, offset_seconds, score = resolve_alignment(
+        video_path,
+        str(reference_audio),
+        reference_track,
+        alignment_sample_rate,
+    )
+    offset_seconds += alignment_offset_adjustment
+    return AlignmentResult(
+        matched_track=matched_track,
+        offset_seconds=offset_seconds,
+        score=score,
+        reference_audio=str(reference_audio),
+    )
+
+
+def run_transcription_stage(
+    audio_files: list[Path],
+    output_dir: Path,
+    style_map: dict[str, str],
+    offset_seconds: float,
+    *,
+    model: str = DEFAULT_MODEL,
+    device: str = DEFAULT_DEVICE,
+    compute_type: str = DEFAULT_COMPUTE_TYPE,
+    language: str = DEFAULT_LANGUAGE,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
+    skip_existing_transcripts: bool = True,
+    postprocess_workers: int = DEFAULT_POSTPROCESS_WORKERS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
+) -> TranscriptionResult:
+    transcript_dir = output_dir / "transcripts"
+    batch = transcribe_craig_audio_files(
+        audio_files,
+        transcript_dir,
+        style_map,
+        offset_seconds,
+        model=model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        vad_onset=vad_onset,
+        vad_offset=vad_offset,
+        skip_existing_transcripts=skip_existing_transcripts,
+        postprocess_workers=postprocess_workers,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_volume_scale_percent=subtitle_volume_scale_percent,
+    )
+    return TranscriptionResult(
+        transcript_map=batch.transcript_map,
+        segments=batch.segments,
+    )
+
+
+def run_refine_stage(
+    segments: list[dict],
+    *,
+    subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
+    subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
+    subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+) -> SegmentRefinementResult:
+    merged_segments, filtered_segments = refine_segments(
+        segments,
+        subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+        subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+        subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+    )
+    return SegmentRefinementResult(
+        merged_segments=merged_segments,
+        filtered_segments=filtered_segments,
+    )
+
+
+def write_segment_outputs(
+    video_path: str,
+    output_dir: Path,
+    refinement: SegmentRefinementResult,
+    *,
+    track_color_map: dict[str, str] | None = None,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
+    subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
+    subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+) -> SegmentArtifacts:
+    merged_path = output_dir / f"{Path(video_path).stem}.craig.merged.json"
+    filtered_path = output_dir / f"{Path(video_path).stem}.craig.filtered.json"
+    ass_path = output_dir / f"{Path(video_path).stem}.craig.ass"
+    merged_json = write_json(str(merged_path), {"segments": refinement.merged_segments})
+    write_json(str(filtered_path), {"segments": refinement.filtered_segments})
+    build_ass_from_transcript(
+        str(merged_json),
+        str(ass_path),
+        track_color_map=track_color_map,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+        subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+        subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+    )
+    return SegmentArtifacts(
+        merged_json=merged_json,
+        filtered_json=filtered_path,
+        ass_path=ass_path,
+    )
+
+
+def run_render_stage(
+    video_path: str,
+    output_dir: Path,
+    audio_files: list[Path],
+    merged_segments: list[dict],
+    ass_path: Path,
+    alignment: AlignmentResult,
+    *,
+    track_color_map: dict[str, str] | None = None,
+    cut_no_speech: bool = DEFAULT_CUT_NO_SPEECH,
+    no_speech_min_seconds: float = DEFAULT_NO_SPEECH_MIN_SECONDS,
+    speech_padding_seconds: float = DEFAULT_SPEECH_PADDING_SECONDS,
+    speech_threshold_db: str = DEFAULT_SPEECH_THRESHOLD_DB,
+    speech_min_clip_seconds: float = DEFAULT_SPEECH_MIN_CLIP_SECONDS,
+    video_codec: str = "libx264",
+    audio_codec: str = "copy",
+    output_audio_track: str = DEFAULT_OUTPUT_AUDIO_TRACK,
+    nvenc_preset: str = "p5",
+    nvenc_cq: int = DEFAULT_NVENC_CQ,
+    x264_crf: int = DEFAULT_X264_CRF,
+    audio_normalize: bool = DEFAULT_AUDIO_NORMALIZE,
+    audio_target_lufs: float = DEFAULT_AUDIO_TARGET_LUFS,
+    audio_loudness_range: float = DEFAULT_AUDIO_LOUDNESS_RANGE,
+    audio_true_peak_db: float = DEFAULT_AUDIO_TRUE_PEAK_DB,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
+    subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
+    subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+) -> RenderResult:
+    final_video = output_dir / f"{Path(video_path).stem}.craig.subtitled.mp4"
+    loudnorm_filter = (
+        build_loudnorm_filter(
+            target_lufs=audio_target_lufs,
+            loudness_range=audio_loudness_range,
+            true_peak_db=audio_true_peak_db,
+        )
+        if audio_normalize
+        else None
+    )
+
+    if cut_no_speech:
+        video_duration = probe_media_duration(video_path)
+        speaker_speech_ranges: list[tuple[float, float]] = []
+        for audio_file in audio_files:
+            log_progress(f"Detecting speech activity in {audio_file.name} at {speech_threshold_db}")
+            speaker_speech_ranges.extend(
+                detect_speech_ranges(
+                    str(audio_file),
+                    noise=speech_threshold_db,
+                    duration=DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
+                )
+            )
+
+        no_speech_ranges, keep_ranges = build_no_speech_plan(
+            video_duration,
+            speaker_speech_ranges,
+            alignment.offset_seconds,
+            min_no_speech_seconds=no_speech_min_seconds,
+            padding=speech_padding_seconds,
+            min_clip_duration=speech_min_clip_seconds,
+        )
+        if not keep_ranges:
+            raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
+
+        estimated_duration = sum(end - start for start, end in keep_ranges)
+        no_speech_report = write_json(
+            str(output_dir / f"{Path(video_path).stem}.craig.no_speech.json"),
+            {
+                "video_duration": video_duration,
+                "estimated_output_duration": estimated_duration,
+                "offset_seconds": alignment.offset_seconds,
+                "speech_threshold_db": speech_threshold_db,
+                "no_speech_min_seconds": no_speech_min_seconds,
+                "speech_padding_seconds": speech_padding_seconds,
+                "no_speech_ranges": no_speech_ranges,
+                "keep_ranges": keep_ranges,
+            },
+        )
+        cut_merged_json = write_json(
+            str(output_dir / f"{Path(video_path).stem}.craig.cut.merged.json"),
+            {"segments": retime_segments_for_keep_ranges(merged_segments, keep_ranges)},
+        )
+        cut_ass_path = output_dir / f"{Path(video_path).stem}.craig.cut.ass"
+        build_ass_from_transcript(
+            str(cut_merged_json),
+            str(cut_ass_path),
+            track_color_map=track_color_map,
+            subtitle_font_size=subtitle_font_size,
+            subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+            subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+            subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+        )
+        removed_duration = max(0.0, video_duration - estimated_duration)
+        log_progress(
+            f"Rendering subtitles and cutting {len(no_speech_ranges)} no-speech ranges in one pass "
+            f"({removed_duration:.1f}s removed, estimated output {estimated_duration:.1f}s)"
+        )
+        cut_media_ranges(
+            video_path,
+            str(final_video),
+            keep_ranges,
+            video_codec=video_codec,
+            audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+            nvenc_preset=nvenc_preset,
+            nvenc_cq=nvenc_cq,
+            x264_crf=x264_crf,
+            audio_filter=loudnorm_filter,
+            video_filter=build_ass_filter(str(cut_ass_path)),
+            audio_track=output_audio_track,
+        )
+        return RenderResult(
+            final_video=final_video,
+            no_speech_report=no_speech_report,
+            cut_merged_json=cut_merged_json,
+            cut_ass_path=cut_ass_path,
+        )
+
+    burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter else audio_codec
+    normalize_label = f" with audio normalization to {audio_target_lufs:g} LUFS" if loudnorm_filter else ""
+    log_progress(f"Burning subtitles into {final_video.name} with {video_codec}{normalize_label}")
+    run_ffmpeg_burn(
+        video_path,
+        str(ass_path),
+        str(final_video),
+        video_codec=video_codec,
+        audio_codec=burn_audio_codec,
+        nvenc_preset=nvenc_preset,
+        nvenc_cq=nvenc_cq,
+        x264_crf=x264_crf,
+        audio_filter=loudnorm_filter,
+        audio_track=output_audio_track,
+    )
+    return RenderResult(
+        final_video=final_video,
+        no_speech_report=None,
+        cut_merged_json=None,
+        cut_ass_path=None,
+    )
+
+
 def log_progress(message: str) -> None:
     print(f"[craig_pipeline] {message}")
 
@@ -507,13 +832,13 @@ def merge_craig_transcripts(
     merged_segments: list[dict] = []
     for audio_path, transcript_path in transcript_map.items():
         merged_segments.extend(build_craig_segments_for_transcript(audio_path, transcript_path, style_map, offset_seconds))
-    refined, filtered = refine_segments(
+    refined_result = run_refine_stage(
         merged_segments,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
-    return {"segments": refined}, {"segments": filtered}
+    return {"segments": refined_result.merged_segments}, {"segments": refined_result.filtered_segments}
 
 
 def write_json(path: str, payload: dict) -> Path:
@@ -562,26 +887,28 @@ def run_craig_pipeline(
     selected_audio_files: list[str] | None = None,
     alignment_offset_adjustment: float = DEFAULT_ALIGNMENT_OFFSET_ADJUSTMENT,
 ) -> dict[str, Path | str | float | None]:
-    audio_files = resolve_craig_audio_files(audio_dir, selected_audio_files)
-    if not audio_files:
-        raise SystemExit("No Craig speaker audio files were selected.")
+    inputs = resolve_pipeline_inputs(
+        video_path,
+        audio_dir,
+        output_dir,
+        reference_audio_name=reference_audio_name,
+        selected_audio_files=selected_audio_files,
+    )
+    log_progress(f"Resolving alignment from {inputs.reference_audio.name} against video audio tracks")
+    alignment = run_alignment_stage(
+        inputs.video_path,
+        inputs.reference_audio,
+        reference_track,
+        alignment_sample_rate,
+        alignment_offset_adjustment=alignment_offset_adjustment,
+    )
+    log_progress(f"Matched {alignment.matched_track} with offset {alignment.offset_seconds:.3f}s (score={alignment.score:.3f})")
 
-    reference_audio = resolve_reference_audio_path(audio_files, reference_audio_name, audio_dir)
-    if reference_audio is None or not reference_audio.exists():
-        raise SystemExit("Reference audio file was not found.")
-
-    style_map = build_speaker_style_map(audio_files)
-    log_progress(f"Resolving alignment from {reference_audio.name} against video audio tracks")
-    matched_track, offset_seconds, score = resolve_alignment(video_path, str(reference_audio), reference_track, alignment_sample_rate)
-    offset_seconds += alignment_offset_adjustment
-    log_progress(f"Matched {matched_track} with offset {offset_seconds:.3f}s (score={score:.3f})")
-
-    transcript_dir = Path(output_dir) / "transcripts"
-    transcription = transcribe_craig_audio_files(
-        audio_files,
-        transcript_dir,
-        style_map,
-        offset_seconds,
+    transcription = run_transcription_stage(
+        inputs.audio_files,
+        inputs.output_dir,
+        inputs.style_map,
+        alignment.offset_seconds,
         model=model,
         device=device,
         compute_type=compute_type,
@@ -593,143 +920,64 @@ def run_craig_pipeline(
         subtitle_font_size=subtitle_font_size,
         subtitle_volume_scale_percent=subtitle_volume_scale_percent,
     )
-    merged_segments = transcription.segments
-
     log_progress("Refining merged subtitle segments")
-    refined, filtered = refine_segments(
-        merged_segments,
+    refinement = run_refine_stage(
+        transcription.segments,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
-    merged = {"segments": refined}
-    filtered = {"segments": filtered}
-    merged_json = write_json(str(Path(output_dir) / f"{Path(video_path).stem}.craig.merged.json"), merged)
-    filtered_json = write_json(str(Path(output_dir) / f"{Path(video_path).stem}.craig.filtered.json"), filtered)
-    ass_path = Path(output_dir) / f"{Path(video_path).stem}.craig.ass"
-    log_progress(f"Writing ASS to {ass_path.name}")
-    build_ass_from_transcript(
-        str(merged_json),
-        str(ass_path),
+    artifacts = write_segment_outputs(
+        inputs.video_path,
+        inputs.output_dir,
+        refinement,
         track_color_map=track_color_map,
         subtitle_font_size=subtitle_font_size,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
         subtitle_end_padding_seconds=subtitle_end_padding_seconds,
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
-    final_video = Path(output_dir) / f"{Path(video_path).stem}.craig.subtitled.mp4"
-    loudnorm_filter = (
-        build_loudnorm_filter(
-            target_lufs=audio_target_lufs,
-            loudness_range=audio_loudness_range,
-            true_peak_db=audio_true_peak_db,
-        )
-        if audio_normalize
-        else None
+    render = run_render_stage(
+        inputs.video_path,
+        inputs.output_dir,
+        inputs.audio_files,
+        refinement.merged_segments,
+        artifacts.ass_path,
+        alignment,
+        track_color_map=track_color_map,
+        cut_no_speech=cut_no_speech,
+        no_speech_min_seconds=no_speech_min_seconds,
+        speech_padding_seconds=speech_padding_seconds,
+        speech_threshold_db=speech_threshold_db,
+        speech_min_clip_seconds=speech_min_clip_seconds,
+        video_codec=video_codec,
+        audio_codec=audio_codec,
+        output_audio_track=output_audio_track,
+        nvenc_preset=nvenc_preset,
+        nvenc_cq=nvenc_cq,
+        x264_crf=x264_crf,
+        audio_normalize=audio_normalize,
+        audio_target_lufs=audio_target_lufs,
+        audio_loudness_range=audio_loudness_range,
+        audio_true_peak_db=audio_true_peak_db,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+        subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+        subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
 
-    no_speech_report: Path | None = None
-    cut_merged_json: Path | None = None
-    cut_ass_path: Path | None = None
-    if cut_no_speech:
-        video_duration = probe_media_duration(video_path)
-        speaker_speech_ranges: list[tuple[float, float]] = []
-        for audio_file in audio_files:
-            log_progress(f"Detecting speech activity in {audio_file.name} at {speech_threshold_db}")
-            speaker_speech_ranges.extend(
-                detect_speech_ranges(
-                    str(audio_file),
-                    noise=speech_threshold_db,
-                    duration=DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
-                )
-            )
-
-        no_speech_ranges, keep_ranges = build_no_speech_plan(
-            video_duration,
-            speaker_speech_ranges,
-            offset_seconds,
-            min_no_speech_seconds=no_speech_min_seconds,
-            padding=speech_padding_seconds,
-            min_clip_duration=speech_min_clip_seconds,
-        )
-        if not keep_ranges:
-            raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
-
-        estimated_duration = sum(end - start for start, end in keep_ranges)
-        no_speech_report = write_json(
-            str(Path(output_dir) / f"{Path(video_path).stem}.craig.no_speech.json"),
-            {
-                "video_duration": video_duration,
-                "estimated_output_duration": estimated_duration,
-                "offset_seconds": offset_seconds,
-                "speech_threshold_db": speech_threshold_db,
-                "no_speech_min_seconds": no_speech_min_seconds,
-                "speech_padding_seconds": speech_padding_seconds,
-                "no_speech_ranges": no_speech_ranges,
-                "keep_ranges": keep_ranges,
-            },
-        )
-        cut_merged_json = write_json(
-            str(Path(output_dir) / f"{Path(video_path).stem}.craig.cut.merged.json"),
-            {"segments": retime_segments_for_keep_ranges(merged["segments"], keep_ranges)},
-        )
-        cut_ass_path = Path(output_dir) / f"{Path(video_path).stem}.craig.cut.ass"
-        build_ass_from_transcript(
-            str(cut_merged_json),
-            str(cut_ass_path),
-            track_color_map=track_color_map,
-            subtitle_font_size=subtitle_font_size,
-            subtitle_max_gap_seconds=subtitle_max_gap_seconds,
-            subtitle_end_padding_seconds=subtitle_end_padding_seconds,
-            subtitle_min_duration_seconds=subtitle_min_duration_seconds,
-        )
-        removed_duration = max(0.0, video_duration - estimated_duration)
-        log_progress(
-            f"Rendering subtitles and cutting {len(no_speech_ranges)} no-speech ranges in one pass "
-            f"({removed_duration:.1f}s removed, estimated output {estimated_duration:.1f}s)"
-        )
-        cut_media_ranges(
-            video_path,
-            str(final_video),
-            keep_ranges,
-            video_codec=video_codec,
-            audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=loudnorm_filter,
-            video_filter=build_ass_filter(str(cut_ass_path)),
-            audio_track=output_audio_track,
-        )
-    else:
-        burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter else audio_codec
-        normalize_label = f" with audio normalization to {audio_target_lufs:g} LUFS" if loudnorm_filter else ""
-        log_progress(f"Burning subtitles into {final_video.name} with {video_codec}{normalize_label}")
-        run_ffmpeg_burn(
-            video_path,
-            str(ass_path),
-            str(final_video),
-            video_codec=video_codec,
-            audio_codec=burn_audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=loudnorm_filter,
-            audio_track=output_audio_track,
-        )
-
     return {
-        "reference_audio": reference_audio,
-        "matched_track": matched_track,
-        "offset_seconds": offset_seconds,
-        "alignment_score": score,
-        "merged_json": merged_json,
-        "filtered_json": filtered_json,
-        "ass_path": ass_path,
-        "final_video": final_video,
-        "no_speech_report": no_speech_report,
-        "cut_merged_json": cut_merged_json,
-        "cut_ass_path": cut_ass_path,
+        "reference_audio": inputs.reference_audio,
+        "matched_track": alignment.matched_track,
+        "offset_seconds": alignment.offset_seconds,
+        "alignment_score": alignment.score,
+        "merged_json": artifacts.merged_json,
+        "filtered_json": artifacts.filtered_json,
+        "ass_path": artifacts.ass_path,
+        "final_video": render.final_video,
+        "no_speech_report": render.no_speech_report,
+        "cut_merged_json": render.cut_merged_json,
+        "cut_ass_path": render.cut_ass_path,
     }
 
 

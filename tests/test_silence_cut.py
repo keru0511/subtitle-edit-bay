@@ -268,8 +268,8 @@ class SilenceCutTests(unittest.TestCase):
                 Path(command[-1]).write_bytes(b"output")
 
             with mock.patch("src.silence_cut.os.name", "nt"), mock.patch(
-                "src.silence_cut.subprocess.run", side_effect=inspect_command
-            ):
+                "src.silence_cut.Path", type(Path())
+            ), mock.patch("src.silence_cut.subprocess.run", side_effect=inspect_command):
                 cut_media_ranges("input.mp4", str(output_path), keep_ranges)
 
     def test_build_silence_cut_command_uses_yuv420p(self) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from array import array
 from bisect import bisect_left, bisect_right
+from dataclasses import replace
 import json
 import math
 import os
@@ -1125,15 +1126,18 @@ class EditBayBackend(LegacyEditBayBackend):
             self._loading_project_sources = True
             try:
                 video = Path(str(project.get("video", {}).get("path", "")))
-                if video.is_file():
-                    super().setVideoFile(str(video))
-                output_dir = Path(str(project.get("output_dir", path.parent)))
-                if output_dir.is_dir():
-                    super().setOutputDirectory(str(output_dir))
+                output_dir = Path(str(project.get("output_dir", "")))
                 audio_files = [str(item.get("path", "")) for item in project.get("audio_sources", [])]
-                existing_audio = [item for item in audio_files if Path(item).is_file()]
-                if existing_audio:
-                    super().setAudioFiles(existing_audio, False)
+                resolved_audio_files = [str(Path(item).resolve()) for item in audio_files if Path(item).is_file()]
+
+                self._set_source_selection(
+                    replace(
+                        self._source_selection,
+                        video=str(video.resolve()) if video.is_file() else "",
+                        output_dir=str(output_dir.resolve()) if output_dir.is_dir() else "",
+                        audio_files=tuple(resolved_audio_files),
+                    )
+                )
             finally:
                 self._loading_project_sources = False
         reconcile_audio_mix(self._project, self._mixer_video_tracks())

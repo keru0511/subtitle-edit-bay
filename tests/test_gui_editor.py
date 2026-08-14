@@ -281,6 +281,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.selectedSegmentIndex, 0)
         self.assertEqual(self.app.stage, "EDIT")
 
+    def test_project_load_clears_missing_sources(self) -> None:
+        self._set_ready_sources()
+        missing_video = self.root / "missing-video.mkv"
+        missing_audio = self.root / "missing-audio.flac"
+        missing_output = self.root / "missing-output"
+        project = create_project(
+            video_path=missing_video,
+            output_dir=missing_output,
+            audio_sources=[{"path": str(missing_audio)}],
+            segments=[],
+            duration_seconds=10,
+            speakers=(),
+        )
+        missing_project = self.root / "missing.subtitle-project.json"
+        save_project(missing_project, project)
+
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(missing_project, update_sources=True))
+
+        self.assertEqual(self.app.sourceSelection["video"], "")
+        self.assertEqual(self.app.sourceSelection["audio_files"], [])
+        self.assertEqual(self.app.sourceSelection["output_dir"], "")
+
     def test_dropped_source_files_are_classified_as_video_and_audio(self) -> None:
         video = self.root / "capture.mkv"
         video.write_bytes(b"video")

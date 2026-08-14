@@ -19,6 +19,7 @@ DEFAULT_AUDIO_CODEC = "aac"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+PIX_FMT = "yuv420p"
 
 
 def _build_temporary_output(output_path: Path) -> Path:
@@ -247,6 +248,7 @@ def build_silence_cut_command(
         video_codec,
     ])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
+    command.extend(["-pix_fmt", PIX_FMT])
     command.extend(["-c:a", audio_codec])
     if audio_filter or audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])

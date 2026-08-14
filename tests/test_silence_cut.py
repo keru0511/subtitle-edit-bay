@@ -221,6 +221,16 @@ class SilenceCutTests(unittest.TestCase):
                 ],
                 [],
             )
+    def test_build_silence_cut_command_uses_yuv420p(self) -> None:
+        command = build_silence_cut_command(
+            "input.mp4",
+            "output.mp4",
+            [(0.0, 1.0)],
+            video_codec="libx264",
+        )
+
+        self.assertIn("-pix_fmt", command)
+        self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
 
     def test_build_silence_cut_command_can_use_filter_script(self) -> None:
         command = build_silence_cut_command(

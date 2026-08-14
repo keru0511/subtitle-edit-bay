@@ -84,7 +84,18 @@ class SubtitleSegment:
             source_track=str(normalized.get("source_track", "")),
             source_file=str(normalized.get("source_file", "")),
             words=deepcopy(normalized.get("words", [])),
-            extras={},
+            extras=deepcopy({
+                key: value
+                for key, value in normalized.items()
+                if key not in {
+                    "id", "start", "end", "text", "speaker", "emphasis", "position",
+                    "layout_row", "layout_row_span", "max_width", "subtitle_line_count",
+                    "subtitle_font_scale", "subtitle_font_family", "subtitle_volume_level",
+                    "layout_packed", "manual_text", "manual_timing", "manual_speaker",
+                    "manual_line_count", "manual_font_scale", "manual_font_family",
+                    "source_speaker", "source_track", "source_file", "words",
+                }
+            }),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -138,7 +149,9 @@ class SpeakerInfo:
             file_name=str(payload.get("file_name", "")),
             path=str(payload.get("path", "")),
             color=str(payload.get("color", "#7FD957")),
-            extras={},
+            extras=deepcopy({key: value for key, value in payload.items() if key not in {
+                "name", "style", "track_key", "file_name", "path", "color",
+            }}),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -177,7 +190,10 @@ class WaveformInfo:
             duration_seconds=float(payload.get("duration_seconds", 0.0)),
             sample_rate=int(payload.get("sample_rate", DEFAULT_WAVEFORM_SAMPLE_RATE)),
             peaks=list(deepcopy(payload.get("peaks", []))),
-            extras={},
+            extras=deepcopy({key: value for key, value in payload.items() if key not in {
+                "speaker", "style", "color", "source_path", "offset_seconds",
+                "duration_seconds", "sample_rate", "peaks",
+            }}),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -629,6 +645,11 @@ def load_project(path: str | Path) -> dict[str, Any]:
     return validate_project(payload)
 
 
+def load_project_model(path: str | Path) -> SubtitleProject:
+    """Load a validated project as the canonical internal domain model."""
+    return SubtitleProject.from_json(load_project(path))
+
+
 def save_project(
     path: str | Path,
     project: dict[str, Any],
@@ -651,13 +672,62 @@ def save_project(
     return output
 
 
+def save_project_model(
+    path: str | Path,
+    project: SubtitleProject,
+) -> Path:
+    """Serialize a domain model only at the persistence boundary."""
+    return save_project(path, project.to_json())
+
+
+def project_to_view_payload(project: SubtitleProject | dict[str, Any]) -> dict[str, Any]:
+    """Build a GUI-specific payload without exposing persistence models to QML."""
+    model = project if isinstance(project, SubtitleProject) else SubtitleProject.from_json(validate_project(project))
+    return {
+        "video": deepcopy(model.video),
+        "output_dir": model.output_dir,
+        "speakers": [
+            {
+                "name": speaker.name,
+                "style": speaker.style,
+                "track_key": speaker.track_key,
+                "color": speaker.color,
+            }
+            for speaker in model.speakers
+        ],
+        "segments": [
+            {
+                "id": segment.id,
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+                "speaker": segment.speaker,
+                "layout_row": segment.layout_row,
+                "layout_row_span": segment.layout_row_span,
+                "subtitle_font_scale": segment.subtitle_font_scale,
+                "subtitle_font_family": segment.subtitle_font_family,
+                "subtitle_line_count": segment.subtitle_line_count,
+            }
+            for segment in model.segments
+        ],
+        "subtitle_settings": deepcopy(model.subtitle_settings),
+        "render_settings": deepcopy(model.render_settings),
+    }
+
+
 def project_to_transcript(
-    project: dict[str, Any],
+    project: SubtitleProject | dict[str, Any],
     *,
     project_is_validated: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    source = project if project_is_validated else validate_project(deepcopy(project))
-    return {"segments": [deepcopy(segment) for segment in source["segments"] if segment["text"]]}
+    if isinstance(project, SubtitleProject):
+        model = project
+    else:
+        payload = project if project_is_validated else validate_project(deepcopy(project))
+        model = SubtitleProject.from_json(payload)
+    return {
+        "segments": [segment.to_json() for segment in model.segments if segment.text]
+    }
 
 
 def waveform_peaks_from_samples(samples: np.ndarray, bins: int = DEFAULT_WAVEFORM_BINS) -> list[float]:

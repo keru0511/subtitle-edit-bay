@@ -23,7 +23,8 @@ missing required metadata before converting to typed models.
 
 1. Incoming payload is normalized in `validate_project`.
 2. The normalized payload is parsed through typed models.
-3. Internal processing continues with canonical dictionary output (`to_json`) to preserve existing call sites.
+3. Internal processing uses `SubtitleProject` / `SubtitleSegment`; `to_json()` is called only by `save_project_model()` or the legacy compatibility boundary.
+4. QML receives `project_to_view_payload()` output rather than persistence dictionaries.
 
 ## Extending segment fields
 

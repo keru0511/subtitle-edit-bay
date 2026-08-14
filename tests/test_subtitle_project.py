@@ -18,7 +18,10 @@ from src.subtitle_project import (
     derive_project_path,
     derive_render_path,
     load_project,
+    load_project_model,
     project_to_transcript,
+    project_to_view_payload,
+    save_project_model,
     save_project,
     SubtitleProject,
     SubtitleSegment,
@@ -96,6 +99,24 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertEqual(round_trip["video"]["path"], "video.mkv")
         self.assertEqual(round_trip["segments"][0]["id"], "subtitle-000001")
         self.assertIsInstance(SubtitleProject.from_json(round_trip), SubtitleProject)
+
+    def test_model_persistence_and_view_payload_keep_boundaries_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_path = root / "game.subtitle-project.json"
+            project = create_project(
+                video_path="video.mkv",
+                output_dir=root,
+                segments=[{"start": 0.0, "end": 1.0, "text": "hello", "speaker": "Oz", "view_only": "kept"}],
+            )
+            save_project_model(project_path, SubtitleProject.from_json(project))
+            model = load_project_model(project_path)
+            view = project_to_view_payload(model)
+
+        self.assertIsInstance(model, SubtitleProject)
+        self.assertEqual(model.segments[0].extras["view_only"], "kept")
+        self.assertNotIn("updated_at", view)
+        self.assertEqual(view["segments"][0]["text"], "hello")
 
     def test_create_project_normalizes_editable_segments(self) -> None:
         project = create_project(

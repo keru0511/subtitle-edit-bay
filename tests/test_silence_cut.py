@@ -260,14 +260,14 @@ class SilenceCutTests(unittest.TestCase):
         keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
+            path_type = type(Path())
 
             def inspect_command(command: list[str], check: bool) -> None:
                 self.assertTrue(check)
                 self.assertIn("-/filter_complex", command)
                 self.assertLess(len(" ".join(command)), 1000)
-                Path(command[-1]).write_bytes(b"output")
+                path_type(command[-1]).write_bytes(b"output")
 
-            path_type = type(Path())
             with mock.patch("src.silence_cut.os.name", "nt"), mock.patch(
                 "src.silence_cut.Path", path_type
             ), mock.patch("src.silence_cut.subprocess.run", side_effect=inspect_command):

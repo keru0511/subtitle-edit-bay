@@ -5,11 +5,18 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import subprocess
+import time
 from typing import Any, Iterable
 from uuid import uuid4
 
 
 AUDIO_PREVIEW_CACHE_VERSION = 2
+MAX_CACHE_SIZE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_CACHE_AGE_SECONDS = 30 * 24 * 60 * 60
+
+
+def _cache_version_prefix() -> str:
+    return f"v{AUDIO_PREVIEW_CACHE_VERSION}-"
 
 
 @dataclass(frozen=True)
@@ -26,6 +33,19 @@ class AudioPreviewCacheResult:
     errors: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class AudioPreviewCacheStats:
+    file_count: int
+    total_bytes: int
+    max_bytes: int
+    max_age_seconds: int
+
+
+def _safe_stat(path: Path) -> tuple[int, float]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime
+
+
 def _source_cache_key(source_path: Path, selector: str) -> str:
     resolved = source_path.resolve()
     try:
@@ -36,8 +56,12 @@ def _source_cache_key(source_path: Path, selector: str) -> str:
     payload = (
         f"{AUDIO_PREVIEW_CACHE_VERSION}\0{str(resolved).casefold()}\0"
         f"{fingerprint}\0{selector}"
-    )
+        )
     return sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _cache_filename(channel_kind: str, cache_key: str) -> str:
+    return f"{_cache_version_prefix()}{channel_kind}-{cache_key}.mka"
 
 
 def audio_preview_cache_entries(
@@ -72,7 +96,7 @@ def audio_preview_cache_entries(
                 channel_id=str(channel["id"]),
                 source_path=source_path.resolve(),
                 selector=selector,
-                output_path=root / f"{kind}-{cache_key}.mka",
+                output_path=root / _cache_filename(kind, cache_key),
             )
         )
     return entries
@@ -88,11 +112,115 @@ def _valid_cache_file(path: Path) -> bool:
 def cached_audio_preview_paths(
     entries: Iterable[AudioPreviewCacheEntry],
 ) -> dict[str, str]:
-    return {
-        entry.channel_id: str(entry.output_path.resolve())
-        for entry in entries
-        if _valid_cache_file(entry.output_path)
-    }
+    output_paths: dict[str, str] = {}
+    for entry in entries:
+        if not _valid_cache_file(entry.output_path):
+            continue
+        output_path = entry.output_path.resolve()
+        try:
+            output_path.touch()
+        except OSError:
+            pass
+        output_paths[entry.channel_id] = str(output_path)
+    return output_paths
+
+
+def prune_audio_preview_cache(
+    cache_root: str | Path,
+    *,
+    protected_paths: Iterable[Path] | None = None,
+    max_bytes: int = MAX_CACHE_SIZE_BYTES,
+    max_age_seconds: int = MAX_CACHE_AGE_SECONDS,
+) -> tuple[int, int]:
+    root = Path(cache_root)
+    if not root.is_dir():
+        return 0, 0
+
+    protected = {Path(path).resolve() for path in (protected_paths or ())}
+    current_files: list[tuple[int, float, Path]] = []
+    prefix = _cache_version_prefix()
+    now = time.time()
+    removed_files = 0
+    removed_bytes = 0
+
+    def _remove(path: Path) -> None:
+        nonlocal removed_files, removed_bytes
+        try:
+            removed_bytes += path.stat().st_size
+            path.unlink()
+            removed_files += 1
+        except OSError:
+            pass
+
+    for path in root.glob("*.mka"):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved in protected:
+            continue
+        try:
+            size, mtime = _safe_stat(resolved)
+        except OSError:
+            continue
+        if not path.name.startswith(prefix):
+            _remove(resolved)
+            continue
+        if max_age_seconds > 0 and now - mtime > max_age_seconds:
+            _remove(resolved)
+            continue
+        current_files.append((int(size), mtime, resolved))
+
+    current_total = sum(size for size, _mtime, _path in current_files)
+    current_files.sort(key=lambda item: item[1])
+    if max_bytes == 0:
+        for size, _mtime, path in current_files:
+            _remove(path)
+            current_total -= size
+    elif max_bytes > 0 and current_total > max_bytes:
+        for size, _mtime, path in current_files:
+            if current_total <= max_bytes:
+                break
+            _remove(path)
+            current_total -= size
+
+    return removed_files, removed_bytes
+
+
+def clear_audio_preview_cache(
+    cache_root: str | Path,
+    *,
+    protected_paths: Iterable[Path] | None = None,
+) -> tuple[int, int]:
+    return prune_audio_preview_cache(
+        cache_root,
+        protected_paths=protected_paths,
+        max_bytes=0,
+        max_age_seconds=0,
+    )
+
+
+def audio_preview_cache_stats(
+    cache_root: str | Path,
+) -> AudioPreviewCacheStats:
+    root = Path(cache_root)
+    file_count = 0
+    total = 0
+    if root.is_dir():
+        for path in root.glob("*.mka"):
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if size <= 0:
+                continue
+            file_count += 1
+            total += size
+    return AudioPreviewCacheStats(
+        file_count=file_count,
+        total_bytes=total,
+        max_bytes=MAX_CACHE_SIZE_BYTES,
+        max_age_seconds=MAX_CACHE_AGE_SECONDS,
+    )
 
 
 def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
@@ -180,8 +308,13 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
 def prepare_audio_preview_cache(
     project: dict[str, Any],
     cache_root: str | Path,
+    protected_paths: Iterable[Path] | None = None,
 ) -> AudioPreviewCacheResult:
     entries = audio_preview_cache_entries(project, cache_root)
+    required_paths = {entry.output_path for entry in entries}
+    if protected_paths is not None:
+        required_paths.update(Path(path).resolve() for path in protected_paths)
+    prune_audio_preview_cache(cache_root, protected_paths=required_paths)
     groups: dict[Path, list[AudioPreviewCacheEntry]] = {}
     for entry in entries:
         if not _valid_cache_file(entry.output_path):
@@ -192,6 +325,10 @@ def prepare_audio_preview_cache(
         for group in groups.values()
         if (error := _run_cache_group(group)) is not None
     ]
+    prune_audio_preview_cache(
+        cache_root,
+        protected_paths=required_paths,
+    )
     return AudioPreviewCacheResult(
         paths=cached_audio_preview_paths(entries),
         errors=tuple(errors),

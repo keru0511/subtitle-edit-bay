@@ -24,6 +24,7 @@ $preservedTopLevel = @(
 $preservedFiles = @(
     "assets/speaker_colors.json"
 )
+$manifestRelativePath = ".local/update-manifest.json"
 
 function Normalize-Version {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -63,6 +64,40 @@ function Get-RelativePath {
     param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$FullPath)
 
     return $FullPath.Substring($Root.Length).TrimStart([char[]] "/\\")
+}
+
+function Get-InstalledManifest {
+    $manifestPath = Join-Path $projectRoot ($manifestRelativePath.Replace('/', '\'))
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($manifest -is [System.Array]) {
+            return @($manifest | ForEach-Object { [string]$_ })
+        }
+        if ($manifest.files -is [System.Array]) {
+            return @($manifest.files | ForEach-Object { [string]$_ })
+        }
+    }
+    catch {
+        Write-Warning "Could not read the previous application manifest. No files will be deleted."
+    }
+
+    return @()
+}
+
+function Write-InstalledManifest {
+    param([Parameter(Mandatory = $true)][string[]]$Files)
+
+    $manifestPath = Join-Path $projectRoot ($manifestRelativePath.Replace('/', '\'))
+    New-Item -ItemType Directory -Path (Split-Path -Parent $manifestPath) -Force | Out-Null
+    [IO.File]::WriteAllText(
+        $manifestPath,
+        (($Files | Sort-Object -Unique | ConvertTo-Json -Compress) + [Environment]::NewLine),
+        [Text.UTF8Encoding]::new($false)
+    )
 }
 
 function Get-LatestReleaseInfo {
@@ -213,6 +248,20 @@ function Update-ZipDistribution {
     $currentVersion = Get-CurrentVersion
     $backupRoot = Join-Path $projectRoot (".local\update_backups\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
     $copiedFiles = 0
+    $previousManifest = @(Get-InstalledManifest)
+    $manifestPath = Join-Path $projectRoot ($manifestRelativePath.Replace('/', '\'))
+
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+        $manifestBackupPath = Backup-File -FilePath $manifestPath -RelativePath $manifestRelativePath -BackupRoot $backupRoot
+        [void]$updatedFiles.Add([pscustomobject]@{
+            RelativePath = $manifestRelativePath
+            DestinationPath = $manifestPath
+            BackupPath = $manifestBackupPath
+        })
+    }
+    else {
+        [void]$addedFiles.Add($manifestPath)
+    }
 
     try {
         if (Test-Path -LiteralPath $resolvedArchiveUrl -PathType Leaf) {
@@ -234,8 +283,18 @@ function Update-ZipDistribution {
             throw "The downloaded ZIP does not contain a valid Subtitle Edit Bay distribution."
         }
 
-        $downloadedVersion = Read-VersionFile -FilePath (Join-Path $sourceRoot.FullName "VERSION")
-        if ($releaseInfo -and $downloadedVersion -ne $releaseInfo.version) {
+        $archiveVersionPath = Join-Path $sourceRoot.FullName "VERSION"
+        $archiveHasVersion = Test-Path -LiteralPath $archiveVersionPath -PathType Leaf
+        $downloadedVersion = if ($archiveHasVersion) {
+            Read-VersionFile -FilePath $archiveVersionPath
+        }
+        elseif ($releaseInfo) {
+            $releaseInfo.version
+        }
+        else {
+            "development"
+        }
+        if ($releaseInfo -and $archiveHasVersion -and $downloadedVersion -ne $releaseInfo.version) {
             throw "Downloaded archive version ($downloadedVersion) does not match release version ($($releaseInfo.version))."
         }
 
@@ -251,12 +310,12 @@ function Update-ZipDistribution {
         }
 
         $targetFiles = @{}
-        foreach ($targetFile in Get-ChildItem -LiteralPath $projectRoot -File -Recurse) {
-            $relativePath = Get-RelativePath -Root $projectRoot -FullPath $targetFile.FullName
-            if (Test-PreservedPath -RelativePath $relativePath) {
-                continue
+        foreach ($relativePath in $previousManifest) {
+            $normalizedPath = ([string]$relativePath).Replace('/', '\')
+            $destination = Join-Path $projectRoot $normalizedPath
+            if ((Test-Path -LiteralPath $destination -PathType Leaf) -and -not (Test-PreservedPath -RelativePath $normalizedPath)) {
+                $targetFiles[$normalizedPath] = $destination
             }
-            $targetFiles[$relativePath] = $targetFile.FullName
         }
 
         foreach ($relativePath in $sourceFiles.Keys) {
@@ -287,8 +346,26 @@ function Update-ZipDistribution {
                 [void]$removedFiles.Add([pscustomobject]@{
                     RelativePath = $relativePath
                     BackupPath = $backupPath
+            })
+        }
+
+        if ($releaseInfo -and -not $archiveHasVersion) {
+            $versionPath = Join-Path $projectRoot "VERSION"
+            if (Test-Path -LiteralPath $versionPath -PathType Leaf) {
+                $backupPath = Backup-File -FilePath $versionPath -RelativePath "VERSION" -BackupRoot $backupRoot
+                [void]$updatedFiles.Add([pscustomobject]@{
+                    RelativePath = "VERSION"
+                    DestinationPath = $versionPath
+                    BackupPath = $backupPath
                 })
             }
+            else {
+                [void]$addedFiles.Add($versionPath)
+            }
+            [IO.File]::WriteAllText($versionPath, "$downloadedVersion`n", [Text.UTF8Encoding]::new($false))
+            $copiedFiles++
+            $sourceFiles["VERSION"] = $versionPath
+        }
         }
 
         if ($copiedFiles -eq 0) {
@@ -311,6 +388,8 @@ function Update-ZipDistribution {
         if ($postUpdateVersion -ne $downloadedVersion) {
             throw "Post-update version is not the expected release version."
         }
+
+        Write-InstalledManifest -Files @($sourceFiles.Keys)
 
         Write-Host "Updated $copiedFiles application files from ZIP release $downloadedVersion."
         Write-Host "Previous files were backed up to $backupRoot"

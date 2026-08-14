@@ -366,6 +366,7 @@ def run_render_stage(
             audio_filter=loudnorm_filter,
             video_filter=build_ass_filter(str(cut_ass_path)),
             audio_track=output_audio_track,
+            progress_callback=log_progress,
         )
         return RenderResult(
             final_video=final_video,
@@ -388,6 +389,7 @@ def run_render_stage(
         x264_crf=x264_crf,
         audio_filter=loudnorm_filter,
         audio_track=output_audio_track,
+        progress_callback=log_progress,
     )
     return RenderResult(
         final_video=final_video,

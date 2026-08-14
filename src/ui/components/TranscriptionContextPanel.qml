@@ -17,9 +17,27 @@ Rectangle {
     property color accentColor: "#C8FF3D"
 
     signal transcriptionContextEdited(var context)
+    signal webDictionaryRefreshRequested(string url, string snippet)
 
     function valueOrEmpty(value) {
         return value === undefined || value === null ? "" : String(value)
+    }
+
+    function _toStringList(value) {
+        if (!(value instanceof Array)) {
+            return []
+        }
+        var terms = []
+        for (var index = 0; index < value.length; index += 1) {
+            if (typeof value[index] !== "string") {
+                continue
+            }
+            var normalized = String(value[index]).trim()
+            if (normalized.length > 0) {
+                terms.push(normalized)
+            }
+        }
+        return terms
     }
 
     function applyContext(value) {
@@ -30,17 +48,100 @@ Rectangle {
         dictionaryPathField.text = valueOrEmpty(current.dictionary_path)
         dictionaryConfirmedSwitch.checked = Boolean(current.dictionary_confirmed)
         webDictionarySwitch.checked = Boolean(current.web_dictionary_enabled)
+        if (current.web_dictionary_url !== undefined) {
+            webDictionaryUrlField.text = valueOrEmpty(current.web_dictionary_url)
+        }
+        if (current.web_dictionary_snippet !== undefined) {
+            webDictionarySnippetField.text = valueOrEmpty(current.web_dictionary_snippet)
+        }
+
+        webDictionaryCandidateModel.clear()
+        var candidates = _toStringList(current.web_dictionary_candidates)
+        var selected = _toStringList(current.web_dictionary_terms)
+        var metadata = current.web_dictionary_candidate_metadata instanceof Array ? current.web_dictionary_candidate_metadata : []
+        var metadataLookup = {}
+        for (var metadataIndex = 0; metadataIndex < metadata.length; metadataIndex += 1) {
+            var metadataItem = metadata[metadataIndex]
+            if (metadataItem && typeof metadataItem.term === "string") {
+                metadataLookup[metadataItem.term] = metadataItem
+            }
+        }
+        var selectedLookup = {}
+        for (var selectedIndex = 0; selectedIndex < selected.length; selectedIndex += 1) {
+            selectedLookup[selected[selectedIndex]] = true
+        }
+        for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+            var candidate = candidates[candidateIndex]
+            webDictionaryCandidateModel.append({
+                "term": candidate,
+                "source": metadataLookup[candidate] ? valueOrEmpty(metadataLookup[candidate].source) : "manual",
+                "score": metadataLookup[candidate] ? valueOrEmpty(metadataLookup[candidate].score) : "0.00",
+                "selected": Boolean(selectedLookup[candidate]),
+            })
+        }
     }
 
     function contextPayload() {
+        var selectedTerms = []
+        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
+            var item = webDictionaryCandidateModel.get(index)
+            if (item.selected) {
+                selectedTerms.push(item.term)
+            }
+        }
+
+        var candidateTerms = []
+        var candidateMetadata = []
+        for (var candidateTermIndex = 0; candidateTermIndex < webDictionaryCandidateModel.count; candidateTermIndex += 1) {
+            var candidateItem = webDictionaryCandidateModel.get(candidateTermIndex)
+            candidateTerms.push(candidateItem.term)
+            candidateMetadata.push({
+                "term": candidateItem.term,
+                "source": candidateItem.source,
+                "score": candidateItem.score,
+            })
+        }
+
         return {
             "game_title": gameTitleField.text,
             "game_notes": gameNotesField.text,
             "creator_terms_text": creatorTermsField.text,
             "dictionary_path": dictionaryPathField.text,
             "dictionary_confirmed": dictionaryConfirmedSwitch.checked,
-            "web_dictionary_enabled": webDictionarySwitch.checked
+            "web_dictionary_enabled": webDictionarySwitch.checked,
+            "web_dictionary_candidates": candidateTerms,
+            "web_dictionary_terms": selectedTerms,
+            "web_dictionary_candidate_metadata": candidateMetadata,
+            "web_dictionary_url": webDictionaryUrlField.text,
+            "web_dictionary_snippet": webDictionarySnippetField.text
         }
+    }
+
+    function addManualCandidate() {
+        var term = webDictionaryManualTermField.text.trim()
+        if (term.length === 0) {
+            return
+        }
+        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
+            if (webDictionaryCandidateModel.get(index).term === term) {
+                return
+            }
+        }
+        webDictionaryCandidateModel.append({"term": term, "source": "manual", "score": "0.00", "selected": false})
+        webDictionaryManualTermField.clear()
+        panelRoot.commitContext()
+    }
+
+    function removeCandidate(index) {
+        webDictionaryCandidateModel.remove(index)
+        panelRoot.commitContext()
+    }
+
+    function setAllCandidates(selected) {
+        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
+            webDictionaryCandidateModel.setProperty(index, "selected", selected)
+        }
+        panelRoot.commitContext()
     }
 
     function commitContext() {
@@ -132,6 +233,46 @@ Rectangle {
         }
 
         TextField {
+            id: webDictionaryUrlField
+            objectName: "transcriptionWebDictionaryUrlField"
+            Layout.fillWidth: true
+            enabled: !panelRoot.running
+            placeholderText: "Web辞書URL（任意）"
+            text: ""
+            color: panelRoot.textPrimaryColor
+            selectionColor: panelRoot.accentColor
+            selectedTextColor: "#10140F"
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            background: Rectangle {
+                radius: 6
+                color: panelRoot.raisedColor
+                border.color: webDictionaryUrlField.activeFocus ? panelRoot.accentColor : panelRoot.borderColor
+            }
+        }
+
+        TextArea {
+            id: webDictionarySnippetField
+            objectName: "transcriptionWebDictionarySnippetField"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 54
+            enabled: !panelRoot.running
+            placeholderText: "WebページのHTMLまたはsnippet（URLなしでも可）"
+            text: ""
+            wrapMode: TextEdit.Wrap
+            color: panelRoot.textPrimaryColor
+            selectionColor: panelRoot.accentColor
+            selectedTextColor: "#10140F"
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            background: Rectangle {
+                radius: 6
+                color: panelRoot.raisedColor
+                border.color: webDictionarySnippetField.activeFocus ? panelRoot.accentColor : panelRoot.borderColor
+            }
+        }
+
+        TextField {
             id: dictionaryPathField
             objectName: "transcriptionDictionaryPathField"
             Layout.fillWidth: true
@@ -190,6 +331,13 @@ Rectangle {
                 font.pixelSize: 10
                 wrapMode: Text.Wrap
             }
+            Button {
+                id: refreshWebDictionaryButton
+                objectName: "transcriptionWebDictionaryRefreshButton"
+                enabled: !panelRoot.running
+                text: "候補を再読込"
+                onClicked: panelRoot.webDictionaryRefreshRequested(webDictionaryUrlField.text, webDictionarySnippetField.text)
+            }
         }
 
         Text {
@@ -200,5 +348,103 @@ Rectangle {
             font.pixelSize: 9
             wrapMode: Text.Wrap
         }
+
+        Text {
+            Layout.fillWidth: true
+            text: "Web候補（チェックがONのみ適用）"
+            color: panelRoot.textPrimaryColor
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            font.weight: Font.Bold
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            TextField {
+                id: webDictionaryManualTermField
+                objectName: "transcriptionWebDictionaryManualTermField"
+                Layout.fillWidth: true
+                enabled: !panelRoot.running
+                placeholderText: "候補を手動追加"
+                color: panelRoot.textPrimaryColor
+                background: Rectangle {
+                    radius: 6
+                    color: panelRoot.raisedColor
+                    border.color: webDictionaryManualTermField.activeFocus ? panelRoot.accentColor : panelRoot.borderColor
+                }
+            }
+            Button {
+                objectName: "transcriptionWebDictionaryAddButton"
+                enabled: !panelRoot.running
+                text: "追加"
+                onClicked: panelRoot.addManualCandidate()
+            }
+            Button {
+                objectName: "transcriptionWebDictionarySelectAllButton"
+                enabled: !panelRoot.running
+                text: "全ON"
+                onClicked: panelRoot.setAllCandidates(true)
+            }
+            Button {
+                objectName: "transcriptionWebDictionaryClearAllButton"
+                enabled: !panelRoot.running
+                text: "全OFF"
+                onClicked: panelRoot.setAllCandidates(false)
+            }
+        }
+
+        ScrollView {
+            id: webDictionaryCandidateList
+            objectName: "transcriptionWebDictionaryCandidateList"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 130
+            clip: true
+
+            ListView {
+                id: webDictionaryCandidates
+                model: webDictionaryCandidateModel
+                interactive: false
+                delegate: RowLayout {
+                    width: ListView.view.width
+                    spacing: 8
+                    CheckBox {
+                        objectName: "transcriptionWebDictionaryCandidateItem"
+                        text: model.term
+                        checked: model.selected
+                        enabled: !panelRoot.running
+                        onToggled: {
+                            webDictionaryCandidateModel.setProperty(index, "selected", checked)
+                            panelRoot.commitContext()
+                        }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: model.source + " · score " + model.score
+                        color: panelRoot.textMutedColor
+                        elide: Text.ElideRight
+                    }
+                    Button {
+                        objectName: "transcriptionWebDictionaryRemoveButton"
+                        enabled: !panelRoot.running
+                        text: "削除"
+                        onClicked: panelRoot.removeCandidate(index)
+                    }
+                }
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: webDictionaryCandidateModel.count === 0
+            text: "現在表示できる候補はありません。ゲームタイトルまたは補足ノートを追加してください。"
+            color: panelRoot.textMutedColor
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 9
+            wrapMode: Text.Wrap
+        }
+    }
+
+    ListModel {
+        id: webDictionaryCandidateModel
     }
 }

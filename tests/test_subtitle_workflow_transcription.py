@@ -84,6 +84,35 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
         self.assertNotIn("未使用語", hint.hotwords)
         self.assertTrue(hint.cache_settings["dictionary_hash"])
 
+    def test_web_dictionary_terms_enable_hint_generation(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            hint = build_default_workflow_transcription_hint(
+                {
+                    "web_dictionary_enabled": True,
+                    "web_dictionary_terms": ["Ink", "Bomba"],
+                },
+                output_dir=temp_dir,
+                asr_settings=build_workflow_asr_settings(),
+            )
+
+        self.assertIsInstance(hint, CraigTranscriptionHint)
+        assert hint is not None
+        self.assertIn("ゲーム内用語", hint.initial_prompt)
+        self.assertIn("Ink", hint.hotwords)
+
+    def test_web_dictionary_terms_without_enable_do_not_build_hint(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            hint = build_default_workflow_transcription_hint(
+                {
+                    "web_dictionary_enabled": False,
+                    "web_dictionary_terms": ["Ink", "Bomba"],
+                },
+                output_dir=temp_dir,
+                asr_settings=build_workflow_asr_settings(),
+            )
+
+        self.assertIsNone(hint)
+
     def test_unconfirmed_dictionary_only_is_inert(self) -> None:
         with TemporaryDirectory() as temp_dir:
             hint = build_default_workflow_transcription_hint(

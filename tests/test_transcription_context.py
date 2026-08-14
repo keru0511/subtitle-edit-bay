@@ -24,6 +24,9 @@ class TranscriptionContextTests(unittest.TestCase):
                 "dictionary_path": None,
                 "dictionary_confirmed": False,
                 "web_dictionary_enabled": False,
+                "web_dictionary_candidates": [],
+                "web_dictionary_terms": [],
+                "web_dictionary_candidate_metadata": [],
             },
         )
 
@@ -35,6 +38,8 @@ class TranscriptionContextTests(unittest.TestCase):
             "dictionary_path": " dictionaries/splatoon.json ",
             "dictionary_confirmed": True,
             "web_dictionary_enabled": True,
+            "web_dictionary_candidates": ["候補A", "候補A", "候補B", ""],
+            "web_dictionary_terms": ["web語", "web語", " "],
         })
 
         self.assertEqual(context.game_title, "Splatoon 3")
@@ -43,6 +48,8 @@ class TranscriptionContextTests(unittest.TestCase):
         self.assertEqual(context.dictionary_path, "dictionaries/splatoon.json")
         self.assertTrue(context.dictionary_confirmed)
         self.assertTrue(context.web_dictionary_enabled)
+        self.assertEqual(context.web_dictionary_candidates, ("候補A", "候補B"))
+        self.assertEqual(context.web_dictionary_terms, ("web語",))
 
     def test_context_rejects_invalid_shapes(self) -> None:
         with self.assertRaises(TranscriptionContextError):
@@ -51,6 +58,8 @@ class TranscriptionContextTests(unittest.TestCase):
             normalize_transcription_context({"dictionary_confirmed": "yes"})
         with self.assertRaises(TranscriptionContextError):
             normalize_transcription_context({"game_title": 123})
+        with self.assertRaises(TranscriptionContextError):
+            normalize_transcription_context({"web_dictionary_candidates": "bad"})
 
     def test_project_context_round_trips_through_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -68,6 +77,8 @@ class TranscriptionContextTests(unittest.TestCase):
                     "dictionary_path": "dict/splatoon.json",
                     "dictionary_confirmed": True,
                     "web_dictionary_enabled": False,
+                    "web_dictionary_candidates": ["Splatfest", "Splatfest"],
+                    "web_dictionary_terms": ["Splatfest"],
                 },
             )
             path = root / "game.subtitle-project.json"
@@ -79,6 +90,8 @@ class TranscriptionContextTests(unittest.TestCase):
         self.assertEqual(loaded["transcription_context"]["creator_terms"], ["ヒーローモード", "クマサン"])
         self.assertEqual(loaded["transcription_context"]["dictionary_path"], "dict/splatoon.json")
         self.assertTrue(loaded["transcription_context"]["dictionary_confirmed"])
+        self.assertEqual(loaded["transcription_context"].get("web_dictionary_candidates"), ["Splatfest"])
+        self.assertEqual(loaded["transcription_context"].get("web_dictionary_terms"), ["Splatfest"])
 
     def test_missing_project_context_is_backfilled_for_existing_projects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

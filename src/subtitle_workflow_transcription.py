@@ -60,6 +60,7 @@ def _context_has_active_hint_inputs(context: TranscriptionContext) -> bool:
         context.game_title
         or context.game_notes
         or context.creator_terms
+        or (context.web_dictionary_enabled and context.web_dictionary_terms)
         or (context.dictionary_confirmed and context.dictionary_path)
     )
 

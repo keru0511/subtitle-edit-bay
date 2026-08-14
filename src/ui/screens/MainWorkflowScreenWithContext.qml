@@ -70,6 +70,9 @@ MainWorkflowScreen {
                     onTranscriptionContextEdited: function(context) {
                         screenRoot.appBackend.setTranscriptionContext(context)
                     }
+                    onWebDictionaryRefreshRequested: function(url, snippet) {
+                        screenRoot.appBackend.refreshTranscriptionWebDictionary(url, snippet)
+                    }
                 }
             }
         }

@@ -15,6 +15,16 @@ class TranscriptionContextPanelQmlTests(unittest.TestCase):
             'objectName: "transcriptionDictionaryPathField"',
             'objectName: "transcriptionDictionaryConfirmedSwitch"',
             'objectName: "transcriptionWebDictionarySwitch"',
+            'objectName: "transcriptionWebDictionaryRefreshButton"',
+            'objectName: "transcriptionWebDictionaryCandidateList"',
+            'objectName: "transcriptionWebDictionaryCandidateItem"',
+            'objectName: "transcriptionWebDictionaryUrlField"',
+            'objectName: "transcriptionWebDictionarySnippetField"',
+            'objectName: "transcriptionWebDictionaryManualTermField"',
+            'objectName: "transcriptionWebDictionaryAddButton"',
+            'objectName: "transcriptionWebDictionaryRemoveButton"',
+            'objectName: "transcriptionWebDictionarySelectAllButton"',
+            'objectName: "transcriptionWebDictionaryClearAllButton"',
         ]
         for object_name in expected_object_names:
             with self.subTest(object_name=object_name):
@@ -28,6 +38,8 @@ class TranscriptionContextPanelQmlTests(unittest.TestCase):
             '"dictionary_path"',
             '"dictionary_confirmed"',
             '"web_dictionary_enabled"',
+            '"web_dictionary_candidates"',
+            '"web_dictionary_terms"',
         ]
         self.assertIn("signal transcriptionContextEdited(var context)", self.qml)
         self.assertIn("function contextPayload()", self.qml)
@@ -38,6 +50,11 @@ class TranscriptionContextPanelQmlTests(unittest.TestCase):
     def test_panel_preserves_confirmation_warning_copy(self) -> None:
         self.assertIn("未確認の辞書候補は文字起こしへ渡されません", self.qml)
         self.assertIn("transcript cache", self.qml)
+
+    def test_panel_exposes_source_score_and_refresh_signal(self) -> None:
+        self.assertIn("signal webDictionaryRefreshRequested(string url, string snippet)", self.qml)
+        self.assertIn("model.source", self.qml)
+        self.assertIn("model.score", self.qml)
 
 
 if __name__ == "__main__":

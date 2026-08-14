@@ -44,6 +44,10 @@ from .transcription_web_dictionary import (
     build_web_dictionary_candidate_metadata,
     fetch_web_dictionary_source,
 )
+from .application_info import (
+    build_application_info_payload,
+    resolve_application_info,
+)
 
 APP_TITLE = "Subtitle Edit Bay"
 
@@ -60,6 +64,7 @@ class EditBayBackend(QApplication):
     transcriptionContextChanged = Signal()
     runningChanged = Signal()
     statusChanged = Signal()
+    applicationInfoChanged = Signal()
     progressChanged = Signal()
     logChanged = Signal()
     elapsedChanged = Signal()
@@ -70,6 +75,7 @@ class EditBayBackend(QApplication):
         self.setOrganizationName("Subtitle Edit Bay")
 
         self.workspace_root = (workspace_root or Path(__file__).resolve().parent.parent).resolve()
+        self._application_info = resolve_application_info(self.workspace_root)
         self.gui_config_path = self.workspace_root / ".gui" / "runtime_config.json"
         self.color_config_path = self.workspace_root / "assets" / "speaker_colors.json"
         self._base_config = load_runtime_config(DEFAULT_RUNTIME_CONFIG)
@@ -221,6 +227,14 @@ class EditBayBackend(QApplication):
         hours, remainder = divmod(self._elapsed_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    @Property("QVariantMap", notify=applicationInfoChanged)
+    def applicationInfo(self) -> dict[str, str]:
+        return dict(self._application_info)
+
+    @Slot()
+    def copyApplicationInfoToClipboard(self) -> None:
+        self.clipboard().setText(build_application_info_payload(self.workspace_root))
 
     @Property(str, notify=sourceSelectionChanged)
     def previewUrl(self) -> str:

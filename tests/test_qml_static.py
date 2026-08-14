@@ -116,6 +116,13 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn('objectName: "sourcePanelSetupButton"', qml)
         self.assertNotIn('text: "素材を変更"', qml)
 
+    def test_header_exposes_application_information_for_troubleshooting(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn("applicationInfo.version", qml)
+        self.assertIn("copyApplicationInfoToClipboard", qml)
+        self.assertIn('objectName: "copyApplicationInfoButton"', qml)
+
     def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
         qml = read_workflow_qml()
 

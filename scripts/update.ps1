@@ -122,6 +122,24 @@ function Get-ReleaseArchiveUrl {
     return "https://github.com/$releaseRepoOwner/$releaseRepoName/archive/refs/tags/$TagName.zip"
 }
 
+function Get-ApplicationVersion {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    $versionFile = Join-Path $ProjectRoot "VERSION"
+    if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+        return "development"
+    }
+
+    $raw = (Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8).Trim()
+    if (-not $raw) {
+        return "development"
+    }
+    if ($raw.StartsWith("v", [StringComparison]::Ordinal)) {
+        return $raw
+    }
+    return "v$raw"
+}
+
 function Test-ProjectGitCheckout {
     if (-not (Test-Path -LiteralPath (Join-Path $projectRoot ".git"))) {
         return $false
@@ -141,6 +159,9 @@ function Test-ProjectGitCheckout {
 }
 
 function Update-GitCheckout {
+    $before = Get-ApplicationVersion -ProjectRoot $projectRoot
+    Write-Host "Source version before update: $before"
+
     $localChanges = & git -C $projectRoot status --porcelain --untracked-files=no
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect the repository status."
@@ -149,19 +170,17 @@ function Update-GitCheckout {
         throw "Tracked files have local changes. Commit or restore them before running update.bat. Personal videos and GUI settings are not affected."
     }
 
-    $before = (& git -C $projectRoot rev-parse --short HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not determine the current version."
-    }
-
-    Write-Host "Updating Git checkout from $before..."
+    Write-Host "Updating Git checkout..."
     & git -C $projectRoot pull --ff-only
     if ($LASTEXITCODE -ne 0) {
         throw "git pull failed. Check the remote URL, authentication, and current branch, then try again."
     }
 
     $after = (& git -C $projectRoot rev-parse --short HEAD).Trim()
-    Write-Host "Source version: $before -> $after"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not determine version after update."
+    }
+    Write-Host "Source version: $before -> $(Get-ApplicationVersion -ProjectRoot $projectRoot) (commit $after)"
 }
 
 function Test-PreservedPath {
@@ -236,6 +255,8 @@ function Update-ZipDistribution {
     if ($releaseInfo) {
         Write-Host "Resolved latest release: $($releaseInfo.tag)"
     }
+    $before = Get-ApplicationVersion -ProjectRoot $projectRoot
+    Write-Host "Source version before update: $before"
 
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("subtitle-edit-bay-update-" + [guid]::NewGuid().ToString("N"))
     $zipPath = Join-Path $tempRoot "latest.zip"
@@ -393,6 +414,8 @@ function Update-ZipDistribution {
 
         Write-Host "Updated $copiedFiles application files from ZIP release $downloadedVersion."
         Write-Host "Previous files were backed up to $backupRoot"
+        Write-Host "Updated $copiedFiles application files from ZIP."
+        Write-Host "Source version after update: $(Get-ApplicationVersion -ProjectRoot $projectRoot)"
     }
     catch {
         if (Test-Path -LiteralPath $backupRoot) {

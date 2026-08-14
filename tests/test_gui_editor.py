@@ -1026,6 +1026,43 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("動画", self.app.status)
 
+    def test_transcription_starts_with_video_audio_only(self) -> None:
+        video = self.root / "game.mkv"
+        video.write_bytes(b"video")
+        output = self.root / "export"
+        output.mkdir(exist_ok=True)
+        self.app.setVideoFile(str(video))
+        self.app.setOutputDirectory(str(output))
+        self.app._speakers = []
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0 (aac / 2ch)"}]
+
+        with (
+            patch.object(self.app, "saveSettings"),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self.app.startTranscription(self.app.settings)
+
+        transcribe_command, transcribe_job, _ = start.call_args.args
+        self.assertEqual(transcribe_job, "transcribe")
+        self.assertIn("transcribe", transcribe_command)
+        self.assertNotIn("--audio-file", transcribe_command)
+
+    def test_transcription_reports_missing_video_audio_track(self) -> None:
+        video = self.root / "game.mkv"
+        video.write_bytes(b"video")
+        output = self.root / "export"
+        output.mkdir(exist_ok=True)
+        self.app.setVideoFile(str(video))
+        self.app.setOutputDirectory(str(output))
+        self.app._speakers = []
+        self.app._audio_tracks = [{"selector": "", "label": "No tracks"}]
+
+        with patch.object(self.app, "_start_command") as start:
+            self.app.startTranscription(self.app.settings)
+
+        self.assertEqual(start.call_count, 0)
+        self.assertEqual(self.app.stage, "CHECK")
+
     def test_transcription_and_render_start_independent_phase_commands(self) -> None:
         _, audio, _ = self._set_ready_sources()
         settings = {

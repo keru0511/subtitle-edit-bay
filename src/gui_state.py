@@ -14,13 +14,16 @@ def build_gui_transcribe_command(
     output_dir: str,
     reference_audio: str | None = None,
     reference_track: str | None = None,
+    video_audio_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
 ) -> list[str]:
-    if not video or not audio_files or not output_dir:
-        raise ValueError("video, audio_files, and output_dir are required")
+    if not video or not output_dir or (not audio_files and not video_audio_track):
+        raise ValueError("video, either audio_files/video_audio_track, and output_dir are required")
     command = [sys.executable, "-u", "-m", "src.subtitle_workflow", "transcribe", "--video", video]
     for audio_file in audio_files:
         command.extend(["--audio-file", audio_file])
+    if video_audio_track:
+        command.extend(["--video-audio-track", video_audio_track])
     command.extend(["--output-dir", output_dir])
     if reference_audio:
         command.extend(["--reference-audio", reference_audio])

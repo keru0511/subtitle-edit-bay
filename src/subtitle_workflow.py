@@ -504,7 +504,8 @@ def main() -> None:
     transcribe = subparsers.add_parser("transcribe", help="Transcribe sources and create an editable project.")
     _add_shared_options(transcribe)
     transcribe.add_argument("--video", required=True)
-    transcribe.add_argument("--audio-file", action="append", required=True)
+    transcribe.add_argument("--audio-file", action="append")
+    transcribe.add_argument("--video-audio-track")
     transcribe.add_argument("--output-dir", required=True)
     transcribe.add_argument("--reference-audio")
     transcribe.add_argument("--reference-track")
@@ -564,10 +565,11 @@ def main() -> None:
         )
         result = transcribe_to_project_with_context(
             video_path=args.video,
-            audio_files=args.audio_file,
+            audio_files=args.audio_file or [],
             output_dir=args.output_dir,
             reference_audio=args.reference_audio,
             reference_track=args.reference_track,
+            video_audio_track=args.video_audio_track,
             transcription_context=transcription_context,
             **transcribe_options,
         )

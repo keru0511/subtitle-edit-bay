@@ -350,6 +350,41 @@ def render_project_video(
         for channel in active_audio_mix_channels(audio_mix):
             if channel.get("kind") == "external" and not Path(str(channel.get("path", ""))).is_file():
                 raise SystemExit(f"Mixer audio source was not found: {channel.get('path', '')}")
+    if not use_audio_mix:
+        try:
+            actual_video_track_selectors = {
+                entry["selector"] for entry in video_track_entries(probe_audio_streams(video_path))
+            }
+            has_known_video_tracks = True
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            has_known_video_tracks = False
+            actual_video_track_selectors = set()
+        has_real_video_track = any(
+            isinstance(channel, dict)
+            and channel.get("kind") == "video"
+            and str(channel.get("selector", "")).strip()
+            and (
+                has_known_video_tracks
+                and str(channel.get("selector", "")) in actual_video_track_selectors
+            )
+            for channel in (audio_mix.get("channels") if isinstance(audio_mix.get("channels"), list) else [])
+        )
+        has_enabled_external = any(
+            isinstance(channel, dict)
+            and channel.get("kind") == "external"
+            and bool(channel.get("enabled"))
+            for channel in audio_mix.get("channels", [])
+        )
+        if not has_real_video_track and not has_enabled_external:
+            for channel in audio_mix.get("channels", []):
+                if (
+                    isinstance(channel, dict)
+                    and channel.get("kind") == "external"
+                    and Path(str(channel.get("path", ""))).is_file()
+                ):
+                    channel["enabled"] = True
+                    use_audio_mix = True
+                    break
 
     if cut_no_speech:
         speech_ranges: list[tuple[float, float]] = []

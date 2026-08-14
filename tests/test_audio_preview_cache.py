@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from src.audio_preview_cache import (
+    MAX_CACHE_AGE_SECONDS,
+    MAX_CACHE_SIZE_BYTES,
+    audio_preview_cache_stats,
     audio_preview_cache_entries,
+    clear_audio_preview_cache,
     cached_audio_preview_paths,
+    prune_audio_preview_cache,
     prepare_audio_preview_cache,
 )
 
@@ -104,6 +111,74 @@ class AudioPreviewCacheTests(unittest.TestCase):
 
             run_again.assert_not_called()
             self.assertEqual(reused.paths, result.paths)
+
+    def test_prune_audio_preview_cache_removes_stale_and_excess(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache_root = root / ".cache"
+            cache_root.mkdir()
+            now = time.time()
+            legacy = cache_root / "legacy-old.mka"
+            old = cache_root / "v2-video-old.mka"
+            fresh = cache_root / "v2-video-fresh.mka"
+            huge = cache_root / "v2-video-huge.mka"
+
+            legacy.write_bytes(b"z" * 1024)
+            old.write_bytes(b"y" * 1024)
+            fresh.write_bytes(b"x" * 1024)
+            huge.write_bytes(b"w" * 3072)
+            legacy.touch()
+            future = now - 120
+            os.utime(legacy, (future, future))
+            os.utime(old, (future, future))
+            os.utime(fresh, (now - 10, now - 10))
+            os.utime(huge, (now - 2, now - 2))
+
+            removed_files, removed_bytes = prune_audio_preview_cache(
+                cache_root,
+                max_bytes=2000,
+                max_age_seconds=60,
+            )
+            self.assertEqual(removed_files, 4)
+            self.assertEqual(removed_bytes, 6144)
+            self.assertFalse(legacy.is_file())
+            self.assertFalse(old.is_file())
+            self.assertFalse(fresh.is_file())
+            self.assertFalse(huge.is_file())
+
+    def test_clear_audio_preview_cache_keeps_protected_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache_root = root / ".cache"
+            cache_root.mkdir()
+            protected = cache_root / "v2-keep.mka"
+            removable = cache_root / "v2-remove.mka"
+            protected.write_bytes(b"keep")
+            removable.write_bytes(b"remove")
+
+            removed_files, removed_bytes = clear_audio_preview_cache(
+                cache_root,
+                protected_paths=[protected],
+            )
+            self.assertEqual(removed_files, 1)
+            self.assertEqual(removed_bytes, 6)
+            self.assertTrue(protected.is_file())
+            self.assertFalse(removable.is_file())
+
+    def test_audio_preview_cache_stats_reports_total_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache_root = root / ".cache"
+            cache_root.mkdir()
+            (cache_root / "v2-first.mka").write_bytes(b"1" * 9)
+            (cache_root / "v2-second.mka").write_bytes(b"2" * 12)
+            (cache_root / "ignore.txt").write_bytes(b"ignored")
+
+            stats = audio_preview_cache_stats(cache_root)
+            self.assertEqual(stats.file_count, 2)
+            self.assertEqual(stats.total_bytes, 21)
+            self.assertEqual(stats.max_bytes, MAX_CACHE_SIZE_BYTES)
+            self.assertEqual(stats.max_age_seconds, MAX_CACHE_AGE_SECONDS)
 
     def test_failed_source_does_not_publish_partial_temporary_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

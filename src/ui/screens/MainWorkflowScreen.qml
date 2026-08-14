@@ -1,4 +1,4 @@
-pragma ComponentBehavior: Bound
+﻿pragma ComponentBehavior: Bound
 import QtQuick
 import QtQml.Models
 import QtQuick.Controls
@@ -1183,6 +1183,8 @@ ApplicationWindow {
         id: sourcePopup
         anchors.centerIn: Overlay.overlay
         width: 620; height: 520; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
+        onOpened: root.appBackend.beginSourceRelink()
+        onClosed: root.appBackend.finishSourceRelink()
         background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
         ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
             RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
@@ -1242,7 +1244,7 @@ ApplicationWindow {
             RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
             PanelTitle { text: "出力先フォルダ" }
             RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "再リンク"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
         }
     }
 
@@ -1487,6 +1489,19 @@ ApplicationWindow {
                             Text { text: "動画内トラックと個別音声を、完成動画用にミックス"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                         }
                         Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                        Text {
+                            objectName: "mixerAudioPreviewCacheSummary"
+                            text: "Cache: " + root.appBackend.audioPreviewCacheSummary
+                            color: root.textMuted
+                            font.family: "Cascadia Mono"
+                            font.pixelSize: 9
+                        }
+                        SmallButton {
+                            objectName: "mixerClearAudioPreviewCacheButton"
+                            text: "キャッシュを削除"
+                            enabled: !root.appBackend.running
+                            onClicked: root.appBackend.clearAudioPreviewCache()
+                        }
                         SmallButton { objectName: "mixerResetButton"; text: "全チャンネルをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
                         SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
                         SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }

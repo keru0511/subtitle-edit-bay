@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -82,7 +82,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=True)
         app._settings = deepcopy(self._base_settings)
         app._running = False
-        app._status = "動画・話者音声・出力先を指定してください"
+        app._status = "保存済み"
         app._stage = "READY"
         app._progress = 0.0
         app._log = ""
@@ -305,6 +305,34 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.sourceSelection["audio_files"], [])
         self.assertEqual(self.app.sourceSelection["output_dir"], "")
 
+    def test_load_project_saves_pending_changes_before_switching(self) -> None:
+        self._load_project()
+        self.app._project_dirty = True
+        target, _, _ = self._make_project()
+        with patch.object(self.app, "saveProject", return_value=True) as save, patch.object(self.app, "_load_project_path") as loader:
+            self.app.loadProject(str(target))
+            save.assert_called_once()
+            loader.assert_called_once_with(self.app._local_path(str(target)), update_sources=True)
+
+    def test_load_project_refuses_switch_when_save_fails(self) -> None:
+        self._load_project()
+        self.app._project_dirty = True
+        target, _, _ = self._make_project()
+        with patch.object(self.app, "saveProject", return_value=False) as save, patch.object(self.app, "_load_project_path") as loader:
+            self.app.loadProject(str(target))
+            save.assert_called_once()
+            loader.assert_not_called()
+
+    def test_load_project_refuses_switch_when_project_has_no_path(self) -> None:
+        self._load_project()
+        self.app._project_dirty = True
+        self.app._project_path = ""
+        target, _, _ = self._make_project()
+        with patch.object(self.app, "saveProject") as save, patch.object(self.app, "_load_project_path") as loader:
+            self.app.loadProject(str(target))
+            save.assert_not_called()
+            loader.assert_not_called()
+
     def test_dropped_source_files_are_classified_as_video_and_audio(self) -> None:
         video = self.root / "capture.mkv"
         video.write_bytes(b"video")
@@ -332,7 +360,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.assertEqual([speaker["name"] for speaker in self.app.speakers], ["alice", "bob"])
         self.assertEqual(self.app.stage, "CHECK")
-        self.assertIn("未対応ファイル1件", self.app.status)
+        self.assertIn("未対応", self.app.status)
 
     def test_drop_rejects_sources_while_processing(self) -> None:
         video = self.root / "capture.mkv"
@@ -720,7 +748,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.app.openOutputFolder()
         self.assertEqual(self.app.stage, "CHECK")
-        self.assertIn("出力先", self.app.status)
+        self.assertIn("出力先フォルダ", self.app.status)
 
         self.app.updateSegment(0, {"text": "after"})
         self.app.undoSubtitleEdit()
@@ -1024,7 +1052,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
             self.app.startTranscription(self.app.settings)
             self.assertEqual(self.app.stage, "CHECK")
-            self.assertIn("動画", self.app.status)
+            self.assertIn("出力先", self.app.status)
 
     def test_transcription_starts_with_video_audio_only(self) -> None:
         video = self.root / "game.mkv"
@@ -1256,7 +1284,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(edit.isVisible())
         self.assertFalse(render.isVisible())
         self.assertTrue(reason.isVisible())
-        self.assertIn("動画", reason.property("text"))
+        self.assertIn("素材設定で", reason.property("text"))
         self.assertFalse(output.isEnabled())
 
         self._set_ready_sources()

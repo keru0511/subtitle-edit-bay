@@ -1203,6 +1203,12 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._running:
             self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
             return
+        if self._project_dirty:
+            if not self._project_path:
+                self._set_status("先に出力先フォルダを指定してください", "ERROR")
+                return
+            if not self.saveProject():
+                return
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
 
@@ -1636,7 +1642,7 @@ class EditBayBackend(LegacyEditBayBackend):
         pending = self._autosave_pending
         self._autosave_pending = False
         if error:
-            self._set_status(f"繝励Ο繧ｸ繧ｧ繧ｯ繝医ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
+            self._set_status(f"保存に失敗しました: {error}", "ERROR")
             return
         if (
             self._project is not None

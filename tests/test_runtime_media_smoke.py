@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import json
 import subprocess
 import tempfile
 import unittest
@@ -25,7 +26,7 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
         if not (_has_tool("ffmpeg") and _has_tool("ffprobe")):
             self.skipTest("ffmpeg and ffprobe are required for runtime media smoke tests")
 
-    def _make_video(self, path: Path, duration: float = 1.0) -> Path:
+    def _make_video(self, path: Path, pix_fmt: str = "yuv420p", duration: float = 1.0) -> Path:
         self._require_ffmpeg()
         _run([
             "ffmpeg",
@@ -42,7 +43,7 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             "-c:v",
             "libx264",
             "-pix_fmt",
-            "yuv420p",
+            pix_fmt,
             "-c:a",
             "aac",
             str(path),
@@ -65,6 +66,29 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             str(path),
         ])
         return path
+
+    def _probe_video_stream(self, path: Path) -> dict:
+        self._require_ffmpeg()
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,pix_fmt,profile",
+                "-of",
+                "json",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return json.loads(result.stdout)["streams"][0]
 
     def test_ffmpeg_burns_ass_subtitles_on_real_media(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
@@ -106,6 +130,49 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertGreater(output.stat().st_size, 0)
             self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
+
+    def test_burn_subtitles_converts_10bit_and_444_inputs_to_yuv420p(self) -> None:
+        if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
+            self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            subtitle = root / "caption.ass"
+            subtitle.write_text(
+                "\n".join([
+                    "[Script Info]",
+                    "ScriptType: v4.00+",
+                    "PlayResX: 320",
+                    "PlayResY: 180",
+                    "",
+                    "[V4+ Styles]",
+                    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                    "Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1",
+                    "",
+                    "[Events]",
+                    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                    "Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,smoke subtitle",
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+
+            for pix_fmt in ["yuv420p10le", "yuv444p"]:
+                video = self._make_video(root / f"input-{pix_fmt}.mp4", pix_fmt=pix_fmt)
+                output = root / f"burned-{pix_fmt}.mp4"
+                result = run_ffmpeg_burn(
+                    str(video),
+                    str(subtitle),
+                    str(output),
+                    video_codec="libx264",
+                    audio_codec="aac",
+                )
+
+                self.assertEqual(result, output)
+                stream = self._probe_video_stream(output)
+                self.assertEqual(stream["codec_name"], "h264")
+                self.assertEqual(stream.get("profile"), "High")
+                self.assertEqual(stream["pix_fmt"], "yuv420p")
 
     def test_qt_multimedia_can_play_generated_video(self) -> None:
         if os.environ.get("RUN_QT_MEDIA_SMOKE") != "1":

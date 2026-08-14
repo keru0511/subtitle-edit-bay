@@ -264,6 +264,55 @@ class SubtitleWorkflowTests(unittest.TestCase):
             self.assertEqual(kwargs["audio_offset_seconds"], 0.25)
             self.assertEqual(kwargs["audio_codec"], "aac")
 
+    def test_render_phase_converts_copy_audio_codec_to_aac_for_mp4_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[{"start": 0, "end": 1, "text": "edited", "speaker": "Oz"}],
+            )
+            project_path = root / "game.subtitle-project.json"
+            save_project(project_path, project)
+            ass_path = root / "game.edited.ass"
+            ass_path.write_text("ASS", encoding="utf-8")
+
+            with (
+                patch("src.subtitle_workflow.build_project_ass", return_value=ass_path),
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
+            ):
+                render_project_video(project_path, audio_normalize=False, audio_codec="copy")
+
+            self.assertEqual(burn.call_args.kwargs["audio_codec"], "aac")
+            self.assertTrue(str(burn.call_args.args[2]).endswith(".mp4"))
+
+    def test_render_phase_keeps_copy_audio_codec_for_non_mp4_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[{"start": 0, "end": 1, "text": "edited", "speaker": "Oz"}],
+            )
+            project_path = root / "game.subtitle-project.json"
+            save_project(project_path, project)
+            ass_path = root / "game.edited.ass"
+            ass_path.write_text("ASS", encoding="utf-8")
+            output_path = root / "game.subtitled.mkv"
+
+            with (
+                patch("src.subtitle_workflow.build_project_ass", return_value=ass_path),
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
+            ):
+                render_project_video(project_path, output_path=output_path, audio_normalize=False, audio_codec="copy")
+
+            self.assertEqual(burn.call_args.kwargs["audio_codec"], "copy")
+            self.assertTrue(str(burn.call_args.args[2]).endswith(".mkv"))
+
     def test_render_reuses_loaded_project_for_ass_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

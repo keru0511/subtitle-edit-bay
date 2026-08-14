@@ -41,7 +41,10 @@ from .audio_mixer import (
 )
 from .audio_preview_cache import (
     AudioPreviewCacheResult,
+    AudioPreviewCacheStats,
     audio_preview_cache_entries,
+    audio_preview_cache_stats,
+    clear_audio_preview_cache,
     cached_audio_preview_paths,
     prepare_audio_preview_cache,
 )
@@ -74,6 +77,16 @@ def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
         {"label": "既定フォント", "family": ""},
         *({"label": family, "family": family} for family in families),
     ]
+
+
+def _format_bytes(value: int) -> str:
+    size = float(max(0, value))
+    units = ["B", "KB", "MB", "GB", "TB"]
+    index = 0
+    while size >= 1024 and index < len(units) - 1:
+        size /= 1024
+        index += 1
+    return f"{size:.1f} {units[index]}"
 
 
 class SubtitleListModel(QAbstractListModel):
@@ -432,6 +445,11 @@ class EditBayBackend(LegacyEditBayBackend):
     def audioPreviewPreparing(self) -> bool:
         return self._audio_preview_preparing
 
+    @Property(str, notify=audioPreviewCacheChanged)
+    def audioPreviewCacheSummary(self) -> str:
+        stats: AudioPreviewCacheStats = audio_preview_cache_stats(self.audio_preview_cache_root)
+        return f"{_format_bytes(stats.total_bytes)} / {_format_bytes(stats.max_bytes)}"
+
     @Property(str, notify=audioMixerPreviewChannelsChanged)
     def audioPreviewClockUrl(self) -> str:
         if self._project is None:
@@ -471,6 +489,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self.audio_preview_cache_root,
         )
         cached_paths = cached_audio_preview_paths(entries)
+        protected_paths = [Path(path) for path in cached_paths.values()]
         required_ids = {entry.channel_id for entry in entries}
         if cached_paths != self._audio_preview_cache_paths:
             self._audio_preview_cache_paths = cached_paths
@@ -501,6 +520,7 @@ class EditBayBackend(LegacyEditBayBackend):
             prepare_audio_preview_cache,
             project_snapshot,
             cache_root,
+            protected_paths=protected_paths,
         )
         self._audio_preview_cache_future = future
 
@@ -538,6 +558,22 @@ class EditBayBackend(LegacyEditBayBackend):
             )
         else:
             self._set_status("音声プレビューの準備が完了しました", "MIX")
+
+    @Slot()
+    def clearAudioPreviewCache(self) -> None:
+        self.stopAudioMixerPreview()
+        self._audio_preview_cache_request += 1
+        self._audio_preview_cache_paths.clear()
+        self._audio_preview_preparing = False
+        future = self._audio_preview_cache_future
+        if future is not None and not future.done():
+            future.cancel()
+        self._audio_preview_cache_future = None
+        clear_audio_preview_cache(self.audio_preview_cache_root)
+        self.audioPreviewCacheChanged.emit()
+        self.projectDataChanged.emit()
+        self._notify_audio_mixer_preview(structure_changed=True)
+        self._set_status("音声プレビューキャッシュをクリアしました", "CHECK")
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerChannels(self) -> list[dict[str, Any]]:

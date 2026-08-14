@@ -1,4 +1,4 @@
-pragma ComponentBehavior: Bound
+﻿pragma ComponentBehavior: Bound
 import QtQuick
 import QtQml.Models
 import QtQuick.Controls
@@ -1487,6 +1487,19 @@ ApplicationWindow {
                             Text { text: "動画内トラックと個別音声を、完成動画用にミックス"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                         }
                         Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                        Text {
+                            objectName: "mixerAudioPreviewCacheSummary"
+                            text: "Cache: " + root.appBackend.audioPreviewCacheSummary
+                            color: root.textMuted
+                            font.family: "Cascadia Mono"
+                            font.pixelSize: 9
+                        }
+                        SmallButton {
+                            objectName: "mixerClearAudioPreviewCacheButton"
+                            text: "キャッシュを削除"
+                            enabled: !root.appBackend.running
+                            onClicked: root.appBackend.clearAudioPreviewCache()
+                        }
                         SmallButton { objectName: "mixerResetButton"; text: "全チャンネルをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
                         SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
                         SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }

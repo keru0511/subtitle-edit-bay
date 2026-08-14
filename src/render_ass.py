@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -31,6 +32,9 @@ DEFAULT_SPEAKER_STYLE = {
 }
 ROW_MARGIN_BASE = 34
 ROW_MARGIN_STEP = 156
+
+_STYLE_TOKEN_RE = re.compile(r"[^0-9A-Za-z\u0080-\uFFFF]+")
+_STYLE_TOKEN_SAFE_RE = re.compile(r"^[0-9A-Za-z_]+$")
 
 
 def resolve_row_margin_step(
@@ -76,8 +80,19 @@ def style_name_for_track(track: str) -> str:
     return f"Track_{normalized}"
 
 
+def _style_token_for_speaker(value: str) -> str:
+    raw = str(value).strip()
+    token = _STYLE_TOKEN_RE.sub("_", raw).strip("_")
+    if not token:
+        token = "speaker"
+    if _STYLE_TOKEN_SAFE_RE.fullmatch(token) and raw == token:
+        return token
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+    return f"{token[:48]}_{digest}"
+
+
 def style_name_for_speaker(speaker: str) -> str:
-    normalized = re.sub(r"[^0-9A-Za-z]+", "_", speaker).strip("_") or "speaker"
+    normalized = _style_token_for_speaker(speaker)
     return f"Speaker_{normalized}"
 
 
@@ -167,6 +182,11 @@ def escape_ass_text(value: object) -> str:
     text = str(value)
     return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
 
+def sanitize_ass_text(value: object) -> str:
+    sanitized = str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    sanitized = sanitized.replace("{", "_").replace("}", "_").replace("\\", "_").replace(",", "_")
+    return "".join(char for char in sanitized if char >= " " and char != "\x7f")
+
 
 def render_dialogue(
     event: SubtitleEvent,
@@ -187,11 +207,12 @@ def render_dialogue(
     dialogue_text = escape_ass_text(event.text)
     if overrides:
         dialogue_text = f"{{{overrides}}}{dialogue_text}"
+    actor = sanitize_ass_text(event.speaker)
     margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step
     return (
         "Dialogue: "
         f"{event.layer},{format_ass_time(event.start)},{format_ass_time(event.end)},"
-        f"{style},{event.speaker},0,0,{margin_v},,{dialogue_text}"
+        f"{style},{actor},0,0,{margin_v},,{dialogue_text}"
     )
 
 

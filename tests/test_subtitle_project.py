@@ -253,6 +253,60 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertTrue(segment["manual_line_count"])
         self.assertEqual(segment["layout_row_span"], 1)
 
+    def test_build_project_ass_respects_line_count_and_preserves_literal_backslash_n(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[
+                    {
+                        "start": 0,
+                        "end": 1,
+                        "text": "first\\nsecond",
+                        "speaker": "Oz",
+                        "max_width": 24,
+                    },
+                    {
+                        "start": 1,
+                        "end": 2,
+                        "text": "alpha beta gamma delta epsilon zeta",
+                        "speaker": "Oz",
+                        "max_width": 8,
+                        "subtitle_line_count": "2",
+                    },
+                    {
+                        "start": 2,
+                        "end": 3,
+                        "text": "alpha beta gamma delta epsilon zeta",
+                        "speaker": "Oz",
+                        "max_width": 8,
+                        "subtitle_line_count": "1",
+                    },
+                ],
+            )
+            project_path = root / "game.subtitle-project.json"
+            save_project(project_path, project)
+            ass_path = root / "game.edited.ass"
+            build_project_ass(project_path, ass_path)
+            ass_text = ass_path.read_text(encoding="utf-8")
+            dialogue_lines = [line for line in ass_text.splitlines() if line.startswith("Dialogue:")]
+
+        self.assertEqual(len(dialogue_lines), 3)
+        self.assertEqual(project["segments"][1]["layout_row_span"], 2)
+        self.assertEqual(project["segments"][2]["layout_row_span"], 1)
+
+        literal_line = next(line for line in dialogue_lines if "first" in line)
+        self.assertIn(r"first\\nsecond", literal_line)
+
+        two_line = next(line for line in dialogue_lines if line.count(r"\N") == 1)
+        self.assertIn(r"\N", two_line)
+
+        one_line = next(line for line in dialogue_lines if line.count(r"\N") == 0 and "alpha" in line)
+        self.assertIn("…", one_line)
+
     def test_rejects_unknown_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "future.subtitle-project.json"

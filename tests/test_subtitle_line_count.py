@@ -212,6 +212,19 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual(segment_preview_text(segment), "short first\nshort second")
         self.assertEqual(segment["layout_row_span"], 2)
 
+    def test_backslash_n_line_break_is_normalized_like_backslash_N(self) -> None:
+        segment = {
+            "start": 0,
+            "end": 2,
+            "text": "first\\nsecond",
+            "speaker": "Oz",
+            "max_width": 24,
+        }
+
+        self.assertEqual(format_segment_text(segment), r"first\Nsecond")
+        self.assertEqual(segment_preview_text(segment), "first\nsecond")
+        self.assertEqual(segment_editor_text(segment), "first\nsecond")
+
     def test_line_count_normalizer_accepts_auto_one_and_two_only(self) -> None:
         self.assertEqual(normalize_subtitle_line_count(None), "auto")
         self.assertEqual(normalize_subtitle_line_count(""), "auto")

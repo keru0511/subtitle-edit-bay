@@ -531,6 +531,49 @@ class RenderAssTests(unittest.TestCase):
 
         self.assertIn(r",,first\Nsecond", output)
 
+    def test_render_ass_preserves_backslash_n_line_break_marker(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "speaker": "Oz",
+                    "text": "first\\nsecond",
+                    "layout_row": 0,
+                    "layout_packed": True,
+                    "manual_text": True,
+                    "max_width": 24,
+                }
+            ]
+        }
+
+        output = render_ass(data)
+
+        self.assertIn(r",,first\Nsecond", output)
+
+    def test_render_ass_does_not_corrupt_manual_backslash_n_during_wrapping(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 5.0,
+                    "speaker": "Oz",
+                    "text": "alpha\\nbeta gamma delta",
+                    "layout_row": 0,
+                    "layout_packed": True,
+                    "manual_text": True,
+                    "max_width": 12,
+                }
+            ]
+        }
+
+        output = render_ass(data)
+        dialogue_lines = [line for line in output.splitlines() if line.startswith("Dialogue:")]
+
+        self.assertEqual(len(dialogue_lines), 1)
+        self.assertIn(r"alpha\Nbeta gamma delta", dialogue_lines[0])
+        self.assertNotIn(r"\\", dialogue_lines[0])
+
     @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
     def test_ffmpeg_libass_renders_reserved_characters(self) -> None:
         if shutil.which("ffmpeg") is None:

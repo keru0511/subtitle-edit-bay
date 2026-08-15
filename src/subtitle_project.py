@@ -426,7 +426,14 @@ def normalize_segment(segment: dict[str, Any], index: int) -> dict[str, Any]:
     end = _finite_number(segment.get("end", start + MIN_SEGMENT_DURATION_SECONDS), "segment.end")
     if end < start + MIN_SEGMENT_DURATION_SECONDS:
         end = start + MIN_SEGMENT_DURATION_SECONDS
-    text = str(segment.get("text", "")).strip()
+    text = (
+        str(segment.get("text", ""))
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace(r"\N", "\n")
+        .replace(r"\n", "\n")
+        .strip()
+    )
     speaker = str(segment.get("speaker", "Oz")).strip() or "Oz"
     font_scale = max(0.1, min(4.0, _finite_number(segment.get("subtitle_font_scale", 1.0), "segment.subtitle_font_scale")))
     font_family = "".join(
@@ -468,7 +475,7 @@ def _display_width(text: str) -> int:
 
 
 def _layout_row_span(segment: dict[str, Any]) -> int:
-    text = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n")
+    text = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").replace(r"\n", "\n")
     if "\n" in text:
         return 2
     return 2 if _display_width(text) > int(segment.get("max_width", 24)) else 1

@@ -514,6 +514,23 @@ class RenderAssTests(unittest.TestCase):
 
         self.assertIn(r",,a\{b\}c\\d", output)
 
+    def test_render_ass_preserves_line_break_marker(self) -> None:
+        data = {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "speaker": "Oz",
+                    "text": "first\\Nsecond",
+                    "layout_row": 0,
+                }
+            ]
+        }
+
+        output = render_ass(data)
+
+        self.assertIn(r",,first\Nsecond", output)
+
     @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
     def test_ffmpeg_libass_renders_reserved_characters(self) -> None:
         if shutil.which("ffmpeg") is None:

@@ -180,7 +180,26 @@ def sanitize_ass_font_family(value: object) -> str:
 
 def escape_ass_text(value: object) -> str:
     text = str(value)
-    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+    result: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and index + 1 < len(text) and text[index + 1] in ("N", "n"):
+            result.append(text[index : index + 2])
+            index += 2
+        elif char == "{":
+            result.append("\\{")
+            index += 1
+        elif char == "}":
+            result.append("\\}")
+            index += 1
+        elif char == "\\":
+            result.append("\\\\")
+            index += 1
+        else:
+            result.append(char)
+            index += 1
+    return "".join(result)
 
 def sanitize_ass_text(value: object) -> str:
     sanitized = str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")

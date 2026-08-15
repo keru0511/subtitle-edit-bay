@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -114,10 +115,22 @@ def _build_waveforms(
     return waveforms
 
 
+def _audio_cache_fingerprint(video_path: str, selector: str) -> str:
+    path = Path(video_path).resolve()
+    components = [str(path), selector]
+    try:
+        stat = path.stat()
+        components.extend([str(stat.st_size), str(stat.st_mtime_ns)])
+    except (OSError, ValueError):
+        pass
+    return hashlib.sha256("|".join(components).encode("utf-8")).hexdigest()[:16]
+
+
 def _extract_video_audio_track(video_path: str, selector: str, transcript_dir: Path) -> Path:
     transcript_dir.mkdir(parents=True, exist_ok=True)
     safe_selector = selector.replace(":", "_").replace("/", "_")
-    output = transcript_dir / f"{Path(video_path).stem}.{safe_selector}.wav"
+    fingerprint = _audio_cache_fingerprint(video_path, selector)
+    output = transcript_dir / f"{Path(video_path).stem}.{safe_selector}.{fingerprint}.wav"
     if not output.exists():
         subprocess.run(build_extract_audio_command(video_path, str(output), selector), check=True)
     return output

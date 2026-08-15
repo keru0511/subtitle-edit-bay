@@ -184,8 +184,8 @@ def escape_ass_text(value: object) -> str:
     index = 0
     while index < len(text):
         char = text[index]
-        if char == "\\" and index + 1 < len(text) and text[index + 1] in ("N", "n"):
-            result.append(text[index : index + 2])
+        if char == "\\" and index + 1 < len(text) and text[index + 1] == "N":
+            result.append("\\N")
             index += 2
         elif char == "{":
             result.append("\\{")

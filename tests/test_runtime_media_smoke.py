@@ -11,6 +11,8 @@ from pathlib import Path
 from src.burn_subs import run_ffmpeg_burn
 from src.silence_cut import cut_media_ranges
 from src.subtitle_project import create_project, save_project
+from src.subtitle_workflow import build_project_ass
+from src.subtitle_workflow_transcription import _extract_video_audio_track
 from src.transcribe import probe_audio_streams
 
 
@@ -214,6 +216,66 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
                 self.assertEqual(stream["codec_name"], "h264")
                 self.assertEqual(stream.get("profile"), "High")
                 self.assertEqual(stream["pix_fmt"], "yuv420p")
+
+    def test_extract_video_audio_track_uses_distinct_cache_for_same_stem(self) -> None:
+        if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
+            self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            dir1 = root / "dir1"
+            dir2 = root / "dir2"
+            dir1.mkdir()
+            dir2.mkdir()
+            video1 = self._make_video(dir1 / "game.mp4", duration=1.0)
+            video2 = self._make_video(dir2 / "game.mp4", duration=1.2)
+            transcript_dir = root / "transcripts"
+
+            path1 = _extract_video_audio_track(str(video1), "0:a:0", transcript_dir)
+            path2 = _extract_video_audio_track(str(video2), "0:a:0", transcript_dir)
+
+            self.assertNotEqual(path1, path2)
+            self.assertTrue(path1.exists())
+            self.assertTrue(path2.exists())
+            self.assertEqual(path1, _extract_video_audio_track(str(video1), "0:a:0", transcript_dir))
+
+    def test_burn_subtitles_renders_line_count_and_literal_backslash_n(self) -> None:
+        if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
+            self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = self._make_video(root / "game.mp4", duration=1.0)
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[
+                    {
+                        "start": 0.0,
+                        "end": 0.5,
+                        "text": "first\\nsecond",
+                        "speaker": "Oz",
+                        "max_width": 24,
+                    },
+                    {
+                        "start": 0.5,
+                        "end": 1.0,
+                        "text": "alpha beta gamma delta",
+                        "speaker": "Oz",
+                        "max_width": 8,
+                        "subtitle_line_count": "2",
+                    },
+                ],
+            )
+            project_path = save_project(root / "game.subtitle-project.json", project)
+            ass_path = build_project_ass(project_path)
+            output = root / "burned.mp4"
+
+            run_ffmpeg_burn(str(video), str(ass_path), str(output), audio_codec="aac")
+
+            self.assertTrue(output.is_file())
+            self.assertGreater(output.stat().st_size, 0)
+            self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
 
     def test_qt_multimedia_can_play_generated_video(self) -> None:
         if os.environ.get("RUN_QT_MEDIA_SMOKE") != "1":

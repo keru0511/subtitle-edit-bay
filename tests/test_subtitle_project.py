@@ -149,6 +149,25 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertFalse(project["audio_mix"]["customized"])
         self.assertEqual(project["audio_mix"]["channels"][0]["selector"], "0:a:0")
 
+    def test_create_project_normalizes_backslash_n_line_breaks(self) -> None:
+        project = create_project(
+            video_path="video.mkv",
+            output_dir="out",
+            segments=[
+                {
+                    "start": 0,
+                    "end": 2,
+                    "text": "first\\nsecond",
+                    "speaker": "Oz",
+                    "max_width": 24,
+                }
+            ],
+        )
+
+        segment = project["segments"][0]
+        self.assertEqual(segment["text"], "first\nsecond")
+        self.assertEqual(segment["layout_row_span"], 2)
+
     def test_save_load_and_transcript_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

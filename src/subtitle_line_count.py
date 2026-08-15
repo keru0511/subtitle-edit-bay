@@ -76,7 +76,7 @@ def segment_preview_text(segment: dict[str, Any], default_max_width: int = 24) -
 
 def segment_editor_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
     """Show automatic breaks in the editor without hiding truncated source text."""
-    source = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").strip()
+    source = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").replace(r"\n", "\n").strip()
     preview = segment_preview_text(segment, default_max_width=default_max_width)
     if preview.endswith(ELLIPSIS) and not source.endswith(ELLIPSIS):
         return source
@@ -214,6 +214,7 @@ def pack_segments_with_line_count(
             and "\n" not in text
             and "\r" not in text
             and "\\N" not in text
+            and "\\n" not in text
         ):
             max_width = int(segment.get("max_width", default_max_width))
             duration = max(0.01, float(segment["end"]) - float(segment["start"]))

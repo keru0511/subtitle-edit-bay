@@ -461,7 +461,7 @@ def truncate_visible_lines(lines: list[str], max_width: int, max_lines: int, dis
 
 
 def normalize_text(text: str, max_width: int = 24, max_lines: int = MAX_LINES, display_duration: float | None = None) -> str:
-    normalized_source = str(text).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").strip()
+    normalized_source = str(text).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").replace(r"\n", "\n").strip()
     if "\n" in normalized_source:
         manual_lines = [" ".join(line.split()) for line in normalized_source.split("\n")]
         return r"\N".join(manual_lines)

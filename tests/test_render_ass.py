@@ -531,7 +531,7 @@ class RenderAssTests(unittest.TestCase):
 
         self.assertIn(r",,first\Nsecond", output)
 
-    def test_render_ass_preserves_backslash_n_line_break_marker(self) -> None:
+    def test_render_ass_escapes_literal_backslash_n(self) -> None:
         data = {
             "segments": [
                 {
@@ -540,8 +540,6 @@ class RenderAssTests(unittest.TestCase):
                     "speaker": "Oz",
                     "text": "first\\nsecond",
                     "layout_row": 0,
-                    "layout_packed": True,
-                    "manual_text": True,
                     "max_width": 24,
                 }
             ]
@@ -549,20 +547,18 @@ class RenderAssTests(unittest.TestCase):
 
         output = render_ass(data)
 
-        self.assertIn(r",,first\Nsecond", output)
+        self.assertIn(r",,first\\nsecond", output)
 
-    def test_render_ass_does_not_corrupt_manual_backslash_n_during_wrapping(self) -> None:
+    def test_render_ass_preserves_windows_path_and_code_examples(self) -> None:
         data = {
             "segments": [
                 {
                     "start": 0.0,
-                    "end": 5.0,
+                    "end": 3.0,
                     "speaker": "Oz",
-                    "text": "alpha\\nbeta gamma delta",
+                    "text": r"Use C:\new\folder; regex: \n; " + r'printf("\\n")',
                     "layout_row": 0,
-                    "layout_packed": True,
-                    "manual_text": True,
-                    "max_width": 12,
+                    "max_width": 60,
                 }
             ]
         }
@@ -571,8 +567,10 @@ class RenderAssTests(unittest.TestCase):
         dialogue_lines = [line for line in output.splitlines() if line.startswith("Dialogue:")]
 
         self.assertEqual(len(dialogue_lines), 1)
-        self.assertIn(r"alpha\Nbeta gamma delta", dialogue_lines[0])
-        self.assertNotIn(r"\\", dialogue_lines[0])
+        # ASS uses \\ as a literal backslash, so user text stays visually identical.
+        self.assertIn(r"C:\\new\\folder", dialogue_lines[0])
+        self.assertIn(r"regex: \\n", dialogue_lines[0])
+        self.assertIn(r'printf("\\\\n")', dialogue_lines[0])
 
     @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
     def test_ffmpeg_libass_renders_reserved_characters(self) -> None:

@@ -39,7 +39,7 @@ class SubtitleLineCountTests(unittest.TestCase):
                 ],
             )
 
-    def test_project_migrates_legacy_line_count_choices_to_auto(self) -> None:
+    def test_project_preserves_subtitle_line_count_and_manual_flag(self) -> None:
         one_line = create_project(
             video_path="video.mkv",
             output_dir="out",
@@ -70,12 +70,12 @@ class SubtitleLineCountTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(one_line["segments"][0]["subtitle_line_count"], "auto")
-        self.assertEqual(one_line["segments"][0]["layout_row_span"], 2)
-        self.assertFalse(one_line["segments"][0]["manual_line_count"])
-        self.assertEqual(two_line["segments"][0]["subtitle_line_count"], "auto")
-        self.assertEqual(two_line["segments"][0]["layout_row_span"], 1)
-        self.assertFalse(two_line["segments"][0]["manual_line_count"])
+        self.assertEqual(one_line["segments"][0]["subtitle_line_count"], "1")
+        self.assertEqual(one_line["segments"][0]["layout_row_span"], 1)
+        self.assertTrue(one_line["segments"][0]["manual_line_count"])
+        self.assertEqual(two_line["segments"][0]["subtitle_line_count"], "2")
+        self.assertEqual(two_line["segments"][0]["layout_row_span"], 2)
+        self.assertTrue(two_line["segments"][0]["manual_line_count"])
 
     def test_auto_line_count_matches_legacy_packing(self) -> None:
         segment = {
@@ -212,7 +212,7 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual(segment_preview_text(segment), "short first\nshort second")
         self.assertEqual(segment["layout_row_span"], 2)
 
-    def test_backslash_n_line_break_is_normalized_like_backslash_N(self) -> None:
+    def test_literal_backslash_n_is_preserved_as_text(self) -> None:
         segment = {
             "start": 0,
             "end": 2,
@@ -221,9 +221,9 @@ class SubtitleLineCountTests(unittest.TestCase):
             "max_width": 24,
         }
 
-        self.assertEqual(format_segment_text(segment), r"first\Nsecond")
-        self.assertEqual(segment_preview_text(segment), "first\nsecond")
-        self.assertEqual(segment_editor_text(segment), "first\nsecond")
+        self.assertEqual(format_segment_text(segment), r"first\nsecond")
+        self.assertEqual(segment_preview_text(segment), r"first\nsecond")
+        self.assertEqual(segment_editor_text(segment), r"first\nsecond")
 
     def test_line_count_normalizer_accepts_auto_one_and_two_only(self) -> None:
         self.assertEqual(normalize_subtitle_line_count(None), "auto")

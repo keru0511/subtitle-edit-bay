@@ -2,12 +2,14 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.craig_pipeline import CraigTranscriptionBatch
 from src.craig_transcription_execution import CraigTranscriptionHint
 from src.subtitle_project import load_project
 from src.subtitle_workflow_transcription import (
+    _audio_cache_fingerprint,
+    _extract_video_audio_track,
     build_default_workflow_transcription_hint,
     build_workflow_asr_settings,
     transcribe_craig_audio_files_for_workflow,
@@ -207,6 +209,83 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
         passed_context = transcribe.call_args.kwargs["transcription_context"]
         self.assertIsInstance(passed_context, TranscriptionContext)
         self.assertEqual(passed_context.game_title, "Splatoon 3")
+
+    def test_audio_cache_fingerprint_changes_with_input(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "game.mp4"
+            video.write_bytes(b"videoA")
+            fp1 = _audio_cache_fingerprint(str(video), "0:a:0")
+
+            video.write_bytes(b"videoDifferent")
+            fp2 = _audio_cache_fingerprint(str(video), "0:a:0")
+
+            other = Path(temp_dir) / "other" / "game.mp4"
+            other.parent.mkdir(parents=True, exist_ok=True)
+            other.write_bytes(b"videoA")
+            fp3 = _audio_cache_fingerprint(str(other), "0:a:0")
+
+            fp4 = _audio_cache_fingerprint(str(video), "0:a:1")
+
+        self.assertNotEqual(fp1, fp2, "content/size change should change fingerprint")
+        self.assertNotEqual(fp1, fp3, "different path should change fingerprint")
+        self.assertNotEqual(fp1, fp4, "different selector should change fingerprint")
+
+    def _make_extract_audio_side_effect(self) -> object:
+        def _side_effect(*args, **kwargs):
+            command = args[0] if args else kwargs.get("args", [])
+            if command:
+                Path(command[-1]).touch()
+            return MagicMock(returncode=0)
+        return _side_effect
+
+    def test_extract_video_audio_track_reuses_cache_for_same_input(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "game.mp4"
+            video.write_bytes(b"videoA")
+            transcript_dir = Path(temp_dir) / "transcripts"
+            with patch("src.subtitle_workflow_transcription.subprocess.run") as run:
+                run.side_effect = self._make_extract_audio_side_effect()
+                path1 = _extract_video_audio_track(str(video), "0:a:0", transcript_dir)
+                path2 = _extract_video_audio_track(str(video), "0:a:0", transcript_dir)
+
+            self.assertEqual(path1, path2)
+            self.assertTrue(path1.exists())
+            run.assert_called_once()
+
+    def test_extract_video_audio_track_reextracts_when_video_changes(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "game.mp4"
+            video.write_bytes(b"videoA")
+            transcript_dir = Path(temp_dir) / "transcripts"
+            with patch("src.subtitle_workflow_transcription.subprocess.run") as run:
+                run.side_effect = self._make_extract_audio_side_effect()
+                path1 = _extract_video_audio_track(str(video), "0:a:0", transcript_dir)
+                video.write_bytes(b"videoDifferent")
+                path2 = _extract_video_audio_track(str(video), "0:a:0", transcript_dir)
+
+            self.assertNotEqual(path1, path2)
+            self.assertTrue(path1.exists())
+            self.assertTrue(path2.exists())
+            self.assertEqual(run.call_count, 2)
+
+    def test_extract_video_audio_track_avoids_collision_for_same_stem(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            dir1 = Path(temp_dir) / "dir1"
+            dir2 = Path(temp_dir) / "dir2"
+            dir1.mkdir()
+            dir2.mkdir()
+            video1 = dir1 / "game.mp4"
+            video2 = dir2 / "game.mp4"
+            video1.write_bytes(b"videoA")
+            video2.write_bytes(b"videoB")
+            transcript_dir = Path(temp_dir) / "transcripts"
+            with patch("src.subtitle_workflow_transcription.subprocess.run") as run:
+                run.side_effect = self._make_extract_audio_side_effect()
+                path1 = _extract_video_audio_track(str(video1), "0:a:0", transcript_dir)
+                path2 = _extract_video_audio_track(str(video2), "0:a:0", transcript_dir)
+
+            self.assertNotEqual(path1, path2)
+            self.assertEqual(run.call_count, 2)
 
 
 if __name__ == "__main__":

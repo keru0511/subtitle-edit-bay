@@ -149,7 +149,7 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertFalse(project["audio_mix"]["customized"])
         self.assertEqual(project["audio_mix"]["channels"][0]["selector"], "0:a:0")
 
-    def test_create_project_normalizes_backslash_n_line_breaks(self) -> None:
+    def test_create_project_preserves_literal_backslash_n(self) -> None:
         project = create_project(
             video_path="video.mkv",
             output_dir="out",
@@ -165,8 +165,8 @@ class SubtitleProjectTests(unittest.TestCase):
         )
 
         segment = project["segments"][0]
-        self.assertEqual(segment["text"], "first\nsecond")
-        self.assertEqual(segment["layout_row_span"], 2)
+        self.assertEqual(segment["text"], "first\\nsecond")
+        self.assertEqual(segment["layout_row_span"], 1)
 
     def test_save_load_and_transcript_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -185,6 +185,73 @@ class SubtitleProjectTests(unittest.TestCase):
             self.assertEqual(loaded["project_type"], "subtitle-edit-project")
             self.assertEqual(project_to_transcript(loaded)["segments"][0]["text"], "字幕")
             self.assertFalse((root / ".game.subtitle-project.json.tmp").exists())
+
+    def test_save_load_preserves_subtitle_line_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[
+                    {"start": 0, "end": 1, "text": "one line", "speaker": "Oz", "subtitle_line_count": "1"},
+                    {"start": 1, "end": 2, "text": "two lines", "speaker": "Oz", "subtitle_line_count": "2"},
+                    {"start": 2, "end": 3, "text": "auto", "speaker": "Oz"},
+                ],
+            )
+            path = root / "game.subtitle-project.json"
+            save_project(path, project)
+            loaded = load_project(path)
+
+        one_line = loaded["segments"][0]
+        two_line = loaded["segments"][1]
+        auto_line = loaded["segments"][2]
+        self.assertEqual(one_line["subtitle_line_count"], "1")
+        self.assertEqual(one_line["layout_row_span"], 1)
+        self.assertTrue(one_line["manual_line_count"])
+        self.assertEqual(two_line["subtitle_line_count"], "2")
+        self.assertEqual(two_line["layout_row_span"], 2)
+        self.assertTrue(two_line["manual_line_count"])
+        self.assertEqual(auto_line["subtitle_line_count"], "auto")
+        self.assertFalse(auto_line["manual_line_count"])
+
+    def test_save_load_preserves_literal_backslash_n(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[{"start": 0, "end": 1, "text": "first\\nsecond", "speaker": "Oz", "max_width": 24}],
+            )
+            path = root / "game.subtitle-project.json"
+            save_project(path, project)
+            loaded = load_project(path)
+
+        segment = loaded["segments"][0]
+        self.assertEqual(segment["text"], "first\\nsecond")
+        self.assertEqual(segment["layout_row_span"], 1)
+
+    def test_legacy_line_count_override_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[{"start": 0, "end": 1, "text": "line", "speaker": "Oz", "line_count_override": "1"}],
+            )
+            path = root / "game.subtitle-project.json"
+            save_project(path, project)
+            loaded = load_project(path)
+
+        segment = loaded["segments"][0]
+        self.assertEqual(segment["subtitle_line_count"], "1")
+        self.assertTrue(segment["manual_line_count"])
+        self.assertEqual(segment["layout_row_span"], 1)
 
     def test_rejects_unknown_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -981,9 +981,43 @@ ApplicationWindow {
                 }
             }
             SmallButton { objectName: "copyApplicationInfoButton"; text: "診断情報をコピー"; enabled: !root.appBackend.running; onClicked: root.appBackend.copyApplicationInfoToClipboard() }
+            SmallButton { objectName: "checkForUpdatesButton"; text: "更新確認"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: root.appBackend.checkForUpdates() }
             SmallButton { objectName: "projectOpenButton"; text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
             SmallButton { objectName: "sourceSetupButton"; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             Rectangle { Layout.preferredWidth: 9; Layout.preferredHeight: 9; radius: 5; color: root.appBackend.running ? root.amber : root.acid }
+        }
+    }
+
+    Dialog {
+        id: updateDialog
+        objectName: "updateDialog"
+        anchors.centerIn: parent
+        modal: true
+        title: "更新の確認"
+        visible: root.appBackend.updateAvailable && !root.appBackend.updateBusy
+        standardButtons: Dialog.NoButton
+        width: 500
+        height: 320
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 8
+            Text { text: "現在のバージョン: " + root.appBackend.updateCurrentVersion; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text { text: "最新バージョン: " + root.appBackend.updateLatestVersion; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text {
+                text: root.appBackend.updateReleaseNotes
+                color: root.textMuted
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+            }
+            RowLayout {
+                Button { objectName: "applyUpdateButton"; text: "更新"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
+                Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.restartApplication() }
+                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
+            }
         }
     }
 

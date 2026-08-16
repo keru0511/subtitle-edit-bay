@@ -3,6 +3,7 @@
 import json
 import os
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +27,7 @@ from src.audio_preview_cache import (
     audio_preview_cache_entries,
     cached_audio_preview_paths,
 )
+from src import updater
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
@@ -88,6 +90,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._log = ""
         app._elapsed_seconds = 0
         app._cancel_requested = False
+        app._update_info = None
+        app._update_error = ""
+        app._update_busy = False
         app._audio_master_mixer.stop()
         app._audio_preview_gains.clear()
         app._audio_preview_levels.clear()
@@ -1774,6 +1779,94 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(page.isVisible())
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
+
+
+    def _fake_update_info(self) -> updater.UpdateInfo:
+        return updater.UpdateInfo(
+            current_version="v0.1.0",
+            latest_version="v0.2.0",
+            release_notes="Release notes",
+            download_url="https://example.com/app.zip",
+            tag_name="v0.2.0",
+            available=True,
+        )
+
+    def test_backend_check_for_updates_exposes_info(self) -> None:
+        info = self._fake_update_info()
+        with patch.object(updater, "fetch_latest_release", return_value=info) as fetch:
+            self.app.checkForUpdates()
+            QTest.qWait(50)
+            while self.app._update_busy:
+                self.app.processEvents()
+                QTest.qWait(50)
+            fetch.assert_called_once_with(self.app.workspace_root)
+
+        self.assertTrue(self.app.updateAvailable)
+        self.assertEqual(self.app.updateCurrentVersion, "v0.1.0")
+        self.assertEqual(self.app.updateLatestVersion, "v0.2.0")
+        self.assertEqual(self.app.updateReleaseNotes, "Release notes")
+        self.assertEqual(self.app.updateDownloadUrl, "https://example.com/app.zip")
+        self.assertFalse(self.app.updateBusy)
+
+    def test_backend_apply_update_starts_update_command(self) -> None:
+        self.app._update_info = self._fake_update_info()
+        with patch.object(self.app.process, "start") as start:
+            self.app.applyUpdate()
+            start.assert_called_once()
+            program, args = start.call_args[0]
+            self.assertEqual(program, sys.executable)
+            self.assertIn("-m", args)
+            self.assertIn("src.updater", args)
+            self.assertIn(self.app._update_info.download_url, args)
+            self.app.process.started.emit()
+        self.assertEqual(self.app._active_job, "update")
+        self.assertTrue(self.app.running)
+
+        self.app.process.finished.emit(0, QProcess.ExitStatus.NormalExit)
+        self.app.processEvents()
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.stage, "UPDATE")
+        self.assertIn("完了", self.app.status)
+
+    def test_backend_apply_update_blocked_when_project_dirty(self) -> None:
+        self.app._update_info = self._fake_update_info()
+        self.app._project_dirty = True
+        with patch.object(self.app.process, "start") as start:
+            self.app.applyUpdate()
+            start.assert_not_called()
+        self.assertIn("未保存", self.app.status)
+
+    def test_backend_restart_application_launches_and_quits(self) -> None:
+        with patch("src.gui.subprocess.Popen") as popen, patch.object(self.app, "quit") as quit:
+            self.app.restartApplication()
+            popen.assert_called_once()
+            quit.assert_called_once()
+
+    def test_qml_update_dialog_flow(self) -> None:
+        _, window = self._load_qml()
+        check_button = self._quick_item(window, "checkForUpdatesButton")
+        dialog = window.findChild(QObject, "updateDialog")
+        self.assertIsNotNone(dialog)
+        self.assertFalse(dialog.property("visible"))
+
+        with patch.object(updater, "fetch_latest_release", return_value=self._fake_update_info()):
+            self._click(window, check_button)
+            QTest.qWait(50)
+            while self.app._update_busy:
+                self.app.processEvents()
+                QTest.qWait(50)
+
+        self.assertTrue(dialog.property("visible"))
+        apply_button = self._quick_item(window, "applyUpdateButton")
+        self.assertTrue(apply_button.property("visible"))
+
+        with patch.object(self.app.process, "start"):
+            self._click(window, apply_button)
+
+        self.app.process.finished.emit(0, QProcess.ExitStatus.NormalExit)
+        self.app.processEvents()
+        restart_button = self._quick_item(window, "restartApplicationButton")
+        self.assertTrue(restart_button.property("visible"))
 
 
 if __name__ == "__main__":

@@ -1306,7 +1306,7 @@ ApplicationWindow {
                 }
             }
             PanelTitle { text: "動画" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
+            RowLayout { Layout.fillWidth: true; Text { objectName: "sourceVideoPathText"; Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
             PanelTitle { text: "話者音声" }
             ListView {
                 id: sourceAudioList

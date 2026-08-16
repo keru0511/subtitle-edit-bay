@@ -1776,5 +1776,77 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.gui_config_path.is_file())
 
 
+    def test_transcribe_without_existing_project_starts_transcription(self) -> None:
+        self._set_ready_sources()
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            if dialog is not None:
+                self.assertFalse(dialog.property("visible"))
+
+            start_command.assert_called_once()
+            command = start_command.call_args[0][0]
+            self.assertEqual(start_command.call_args[0][1], "transcribe")
+            self.assertNotIn("--overwrite-project", command)
+
+    def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path.write_text("{}", encoding="utf-8")
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            self.assertIsNotNone(dialog)
+            self.assertTrue(dialog.property("visible"))
+            self.assertEqual(dialog.property("title"), "既存プロジェクトの上書き")
+            start_command.assert_not_called()
+
+    def test_transcribe_reject_overwrite_does_not_start(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path.write_text("{}", encoding="utf-8")
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            self.assertIsNotNone(dialog)
+            dialog.reject()
+            self.app.processEvents()
+
+            start_command.assert_not_called()
+            self.assertFalse(dialog.property("visible"))
+
+    def test_transcribe_accept_overwrite_passes_overwrite_flag(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path.write_text("{}", encoding="utf-8")
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            self.assertIsNotNone(dialog)
+            dialog.accept()
+            self.app.processEvents()
+
+            start_command.assert_called_once()
+            command = start_command.call_args[0][0]
+            self.assertEqual(start_command.call_args[0][1], "transcribe")
+            self.assertIn("--overwrite-project", command)
+
+
 if __name__ == "__main__":
     unittest.main()

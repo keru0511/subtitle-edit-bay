@@ -37,6 +37,8 @@ class MediaProbeTests(unittest.TestCase):
             )
             types = probe_media_stream_types("/tmp/video.mkv")
             self.assertEqual(types, {"audio", "video"})
+            command = run.call_args[0][0]
+            self.assertNotIn("-select_streams", command)
 
     def test_probe_media_stream_types_returns_empty_for_no_streams(self) -> None:
         with mock.patch("src.media_probe.subprocess.run") as run:

@@ -1940,6 +1940,118 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(main.isVisible())
         self.assertTrue(editor.isVisible())
 
+    def _simulate_long_running(
+        self,
+        command: list[str],
+        job: str,
+        status: str,
+    ) -> None:
+        app = self.app
+        app._active_job = job
+        app.activeJobChanged.emit()
+        app._log = f"> {' '.join(command)}\n"
+        app.logChanged.emit()
+        app._progress = 0.02
+        app.progressChanged.emit()
+        app._elapsed_seconds = 0
+        app.elapsedChanged.emit()
+        app._cancel_requested = False
+        app._set_status(status, "STARTING")
+        app._process_started()
+
+    def _simulate_failure(
+        self,
+        command: list[str],
+        job: str,
+        status: str,
+    ) -> None:
+        self._simulate_long_running(command, job, status)
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+
+    def test_cancel_processing_while_running_stops_and_returns_to_idle(self) -> None:
+        self._set_ready_sources()
+        self.app._running = True
+        self.app._active_job = "transcribe"
+        self.app.runningChanged.emit()
+
+        _, window = self._load_qml()
+        with patch.object(
+            self.app,
+            "_start_command",
+            side_effect=lambda *args, **kwargs: self._simulate_long_running(*args, **kwargs),
+        ):
+            with patch.object(self.app.process, "terminate") as terminate:
+                self._click(window, self._quick_item(window, "transcribeButton"))
+                self.app.processEvents()
+
+                self.assertTrue(self.app.running)
+                self._click(window, self._quick_item(window, "saveSettingsButton"))
+                self.app.processEvents()
+
+                self.assertTrue(self.app._cancel_requested)
+                terminate.assert_called_once()
+
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+        self.app.processEvents()
+
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self.app.stage, "CANCELLED")
+        self.assertIn("処理を停止しました", self.app.status)
+
+    def test_failed_transcription_shows_error_and_allows_retry(self) -> None:
+        self._set_ready_sources()
+
+        _, window = self._load_qml()
+        with patch.object(
+            self.app,
+            "_start_command",
+            side_effect=lambda *args, **kwargs: self._simulate_failure(*args, **kwargs),
+        ) as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            start_command.assert_called_once()
+
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("終了コード 1", self.app.status)
+
+        with patch.object(self.app, "_start_command") as retry_start:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+            retry_start.assert_called_once()
+
+    def test_cancelled_transcription_can_be_retried(self) -> None:
+        self._set_ready_sources()
+        self.app._running = True
+        self.app._active_job = "transcribe"
+        self.app.runningChanged.emit()
+
+        _, window = self._load_qml()
+        with patch.object(
+            self.app,
+            "_start_command",
+            side_effect=lambda *args, **kwargs: self._simulate_long_running(*args, **kwargs),
+        ):
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            self._click(window, self._quick_item(window, "saveSettingsButton"))
+            self.app.processEvents()
+
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+        self.app.processEvents()
+
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.stage, "CANCELLED")
+
+        with patch.object(self.app, "_start_command") as retry_start:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+            retry_start.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

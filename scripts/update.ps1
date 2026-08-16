@@ -367,7 +367,8 @@ function Update-ZipDistribution {
                 [void]$removedFiles.Add([pscustomobject]@{
                     RelativePath = $relativePath
                     BackupPath = $backupPath
-            })
+                })
+            }
         }
 
         if ($releaseInfo -and -not $archiveHasVersion) {
@@ -386,7 +387,6 @@ function Update-ZipDistribution {
             [IO.File]::WriteAllText($versionPath, "$downloadedVersion`n", [Text.UTF8Encoding]::new($false))
             $copiedFiles++
             $sourceFiles["VERSION"] = $versionPath
-        }
         }
 
         if ($copiedFiles -eq 0) {

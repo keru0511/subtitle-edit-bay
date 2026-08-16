@@ -2204,6 +2204,117 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(external.get("solo"))
         self.assertAlmostEqual(external.get("volume_percent", 0.0), 150.0)
 
+    def test_project_save_and_restart_reloads_edits_and_settings(self) -> None:
+        path, video, audio = self._make_project()
+        self.app._load_project_path(path, update_sources=False)
+        self.app.autosave_timer.stop()
+
+        self.app.updateSegment(
+            0,
+            {
+                "text": "hello world",
+                "start": 0.5,
+                "end": 3.5,
+                "speaker": "Speaker_Bob",
+            },
+        )
+        display_settings = {
+            "subtitle_font_size": 72,
+            "subtitle_outline_color": "#123456",
+            "subtitle_outline_thickness": 5,
+            "subtitle_volume_scale_percent": 30.0,
+            "subtitle_max_gap_seconds": 0.5,
+            "subtitle_end_padding_seconds": 0.1,
+            "subtitle_min_duration_seconds": 0.4,
+        }
+        self.app.buildSubtitlePreview(display_settings)
+        self.app.processEvents()
+
+        self.app._project = None
+        self.app._project_path = ""
+        self.app._project_dirty = False
+        self.app._undo_stack.clear()
+        self.app._redo_stack.clear()
+        self.app._selected_segment_index = -1
+        self.app._ass_path = ""
+        self.app._source_selection = SourceSelection()
+        self.app._speakers = []
+        self.app._audio_tracks = self.app._default_audio_tracks()
+        self.app._alignment_result = self.app._empty_alignment_result()
+        self.app._settings = deepcopy(self._base_settings)
+        self.app.loadProject(str(path))
+        self.app.processEvents()
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app._project_path, str(path.resolve()))
+        self.assertEqual(self.app._source_selection.video, str(video.resolve()))
+        self.assertEqual(self.app._source_selection.audio_files, (str(audio.resolve()),))
+
+        segment = self.app._project["segments"][0]
+        self.assertEqual(segment["text"], "hello world")
+        self.assertEqual(segment["start"], 0.5)
+        self.assertEqual(segment["end"], 3.5)
+        self.assertEqual(segment["speaker"], "Speaker_Bob")
+
+        subtitle = self.app._project["subtitle_settings"]
+        self.assertEqual(subtitle["font_size"], 72)
+        self.assertEqual(subtitle["outline_color"], "#123456")
+        self.assertEqual(subtitle["outline_thickness"], 5)
+        self.assertAlmostEqual(subtitle["volume_scale_percent"], 30.0)
+        self.assertAlmostEqual(subtitle["max_gap_seconds"], 0.5)
+        self.assertAlmostEqual(subtitle["end_padding_seconds"], 0.1)
+        self.assertAlmostEqual(subtitle["min_duration_seconds"], 0.4)
+        self.assertFalse(self.app._project_dirty)
+
+    def test_load_other_project_with_unsaved_changes_saves_first(self) -> None:
+        path_a, video, audio = self._make_project()
+        self.app._load_project_path(path_a, update_sources=False)
+        self.app.autosave_timer.stop()
+
+        output_b = self.root / "export_b"
+        output_b.mkdir(exist_ok=True)
+        project_b = create_project(
+            video_path=video,
+            output_dir=output_b,
+            audio_sources=[{"path": str(audio)}],
+            speakers=[
+                {
+                    "name": "Alice",
+                    "style": "Speaker_Alice",
+                    "file_name": audio.name,
+                    "track_key": "craig:Alice",
+                    "color": "#7FD957",
+                    "path": str(audio),
+                },
+            ],
+            segments=[
+                {
+                    "id": "segment-b",
+                    "start": 0,
+                    "end": 4,
+                    "text": "project-b-text",
+                    "speaker": "Speaker_Alice",
+                    "words": [{"word": "project-b-text", "start": 0, "end": 4}],
+                }
+            ],
+            duration_seconds=30,
+        )
+        path_b = output_b / "game.subtitle-project.json"
+        save_project(path_b, project_b)
+
+        self.app.updateSegment(0, {"text": "modified in A"})
+        self.assertTrue(self.app._project_dirty)
+
+        self.app.loadProject(str(path_b))
+        self.app.processEvents()
+
+        saved_a = json.loads(path_a.read_text(encoding="utf-8"))
+        self.assertEqual(saved_a["segments"][0]["text"], "modified in A")
+
+        self.assertEqual(self.app._project_path, str(path_b.resolve()))
+        self.assertEqual(self.app._project["segments"][0]["text"], "project-b-text")
+        self.assertFalse(self.app._project_dirty)
+
 
 if __name__ == "__main__":
     unittest.main()

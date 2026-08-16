@@ -64,13 +64,17 @@ def run_ffmpeg_command(
         bufsize=1,
     )
     tail: deque[str] = deque(maxlen=80)
-    if process.stdout is not None:
-        for raw_line in process.stdout:
-            line = raw_line.rstrip()
-            if line:
-                tail.append(line)
-                progress_callback(line)
-    return_code = process.wait()
+    try:
+        if process.stdout is not None:
+            for raw_line in process.stdout:
+                line = raw_line.rstrip()
+                if line:
+                    tail.append(line)
+                    progress_callback(line)
+        return_code = process.wait()
+    finally:
+        if process.stdout is not None and hasattr(process.stdout, "close"):
+            process.stdout.close()
     if return_code:
         raise subprocess.CalledProcessError(return_code, command, output="\n".join(tail))
 

@@ -33,6 +33,7 @@ from src.subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     assign_project_layout_rows,
     create_project,
+    derive_render_path,
     load_project,
     save_project,
 )
@@ -2051,6 +2052,75 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._click(window, self._quick_item(window, "transcribeButton"))
             self.app.processEvents()
             retry_start.assert_called_once()
+
+    def _simulate_render(
+        self,
+        command: list[str],
+        job: str,
+        status: str,
+    ) -> None:
+        app = self.app
+        app._active_job = job
+        app.activeJobChanged.emit()
+        app._log = f"> {' '.join(command)}\n"
+        app.logChanged.emit()
+        app._progress = 0.02
+        app.progressChanged.emit()
+        app._elapsed_seconds = 0
+        app.elapsedChanged.emit()
+        app._cancel_requested = False
+        app._set_status(status, "STARTING")
+        app._process_started()
+
+        config = json.loads(app.gui_config_path.read_text(encoding="utf-8"))
+        craig = config.get("craig_pipeline", {})
+        self.assertTrue(craig.get("cut_no_speech"))
+        self.assertEqual(craig.get("no_speech_min_seconds"), 0.5)
+        self.assertEqual(craig.get("speech_padding_seconds"), 0.1)
+
+        render_path = derive_render_path(app._project_path)
+        render_path.parent.mkdir(parents=True, exist_ok=True)
+        render_path.write_bytes(b"fake-rendered-output")
+
+        app._update_stage("Rendering edited subtitles to game.edited.subtitled.mp4")
+        app._update_stage("Render complete: game.edited.subtitled.mp4")
+        app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+    def test_silence_cut_settings_flow_to_render_completion(self) -> None:
+        self._load_project()
+
+        _, window = self._load_qml()
+        silence_switch = self._quick_item(window, "silenceSwitch")
+        silence_field = self._quick_item(window, "silenceField")
+        speech_padding_field = self._quick_item(window, "speechPaddingField")
+
+        silence_switch.setProperty("checked", True)
+        silence_field.setProperty("text", "0.5")
+        speech_padding_field.setProperty("text", "0.1")
+        self.app.processEvents()
+
+        with patch.object(
+            self.app,
+            "_start_command",
+            side_effect=lambda *args, **kwargs: self._simulate_render(*args, **kwargs),
+        ) as start_command:
+            self._click(window, self._quick_item(window, "renderVideoButton"))
+            self.app.processEvents()
+
+            start_command.assert_called_once()
+            command = start_command.call_args[0][0]
+            self.assertIn("render", command)
+            self.assertIn(str(self.app.gui_config_path), command)
+            self.assertIn(str(self.app._project_path), command)
+            self.assertIn("--run", command)
+
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.stage, "COMPLETE")
+        self.assertIn("編集済み動画の書き出しが完了しました", self.app.status)
+        self.assertAlmostEqual(self.app.progress, 1.0)
+
+        render_path = derive_render_path(self.app._project_path)
+        self.assertTrue(render_path.is_file())
 
 
 if __name__ == "__main__":

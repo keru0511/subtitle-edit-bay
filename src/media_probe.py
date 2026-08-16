@@ -34,8 +34,6 @@ def probe_media_stream_types(input_path: str) -> set[str]:
         "ffprobe",
         "-v",
         "error",
-        "-select_streams",
-        "v,a",
         "-show_entries",
         "stream=codec_type",
         "-of",

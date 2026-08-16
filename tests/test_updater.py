@@ -1,5 +1,6 @@
 import json
 import shutil
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -80,14 +81,20 @@ class FetchLatestReleaseTests(unittest.TestCase):
 
 
 class ApplyZipUpdateTests(unittest.TestCase):
-    def _build_archive(self, root: Path, version: str = "v0.2.0") -> Path:
+    @staticmethod
+    def _setup_script_content(*, fail: bool = False) -> str:
+        if sys.platform == "win32" and shutil.which("powershell.exe"):
+            return 'throw "setup failed"\n' if fail else "Write-Output 'ok'\n"
+        return "raise RuntimeError('fail')\n" if fail else "print('ok')\n"
+
+    def _build_archive(self, root: Path, version: str = "v0.2.0", *, fail: bool = False) -> Path:
         archive_root = root / "archive" / "subtitle-edit-bay-main"
         (archive_root / "src").mkdir(parents=True)
         (archive_root / "scripts").mkdir(parents=True)
         (archive_root / "VERSION").write_text(f"{version}\n", encoding="utf-8")
         (archive_root / "README.md").write_text("new readme", encoding="utf-8")
         (archive_root / "src" / "app.py").write_text("new code", encoding="utf-8")
-        (archive_root / "scripts" / "setup.ps1").write_text("print('ok')\n", encoding="utf-8")
+        (archive_root / "scripts" / "setup.ps1").write_text(self._setup_script_content(fail=fail), encoding="utf-8")
 
         zip_path = root / "latest.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as handle:
@@ -132,19 +139,7 @@ class ApplyZipUpdateTests(unittest.TestCase):
             (distribution / "README.md").write_text("old readme", encoding="utf-8")
             (distribution / "src" / "app.py").write_text("old code", encoding="utf-8")
 
-            archive_root = base / "archive" / "subtitle-edit-bay-main"
-            (archive_root / "src").mkdir(parents=True)
-            (archive_root / "scripts").mkdir(parents=True)
-            (archive_root / "VERSION").write_text("v0.2.0\n", encoding="utf-8")
-            (archive_root / "README.md").write_text("new readme", encoding="utf-8")
-            (archive_root / "src" / "app.py").write_text("new code", encoding="utf-8")
-            (archive_root / "scripts" / "setup.ps1").write_text("raise RuntimeError('fail')\n", encoding="utf-8")
-
-            zip_path = base / "latest.zip"
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as handle:
-                for file in archive_root.rglob("*"):
-                    if file.is_file():
-                        handle.write(file, file.relative_to(archive_root.parent))
+            zip_path = self._build_archive(base, fail=True)
 
             with self.assertRaises(updater.UpdaterError):
                 updater.apply_zip_update(distribution, str(zip_path))

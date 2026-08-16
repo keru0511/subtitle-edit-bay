@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -1814,9 +1815,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app.applyUpdate()
             start.assert_called_once()
             program, args = start.call_args[0]
-            self.assertEqual(program, sys.executable)
-            self.assertIn("-m", args)
-            self.assertIn("src.updater", args)
+            if sys.platform == "win32" and shutil.which("powershell.exe"):
+                self.assertEqual(program, "powershell.exe")
+                self.assertIn("-File", args)
+                self.assertIn("update.ps1", " ".join(args))
+            else:
+                self.assertEqual(program, sys.executable)
+                self.assertIn("-m", args)
+                self.assertIn("src.updater", args)
             self.assertIn(self.app._update_info.download_url, args)
             self.app.process.started.emit()
         self.assertEqual(self.app._active_job, "update")

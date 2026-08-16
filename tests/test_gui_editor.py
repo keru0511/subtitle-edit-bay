@@ -2513,7 +2513,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         start_command.assert_called_once()
         command = start_command.call_args[0][0]
         self.assertIn("render", command)
-        self.assertIn(str(path), command)
+        self.assertIn(str(path.resolve()), command)
         self.assertIn("--run", command)
 
         self.assertFalse(self.app.running)

@@ -1776,6 +1776,61 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.gui_config_path.is_file())
 
 
+    def _simulate_transcription(
+        self,
+        command: list[str],
+        job: str,
+        status: str,
+    ) -> None:
+        app = self.app
+        app._active_job = job
+        app.activeJobChanged.emit()
+        app._log = f"> {' '.join(command)}\n"
+        app.logChanged.emit()
+        app._progress = 0.02
+        app.progressChanged.emit()
+        app._elapsed_seconds = 0
+        app.elapsedChanged.emit()
+        app._set_status(status, "STARTING")
+
+        app._process_started()
+
+        for marker in (
+            "Resolving alignment",
+            "Starting WhisperX",
+            "Refining merged",
+            "Building waveform",
+        ):
+            app._update_stage(marker)
+
+        project_path = app._default_project_path()
+        if project_path is not None:
+            project_speakers = [
+                {**speaker, "style": f"Speaker_{speaker['name']}"}
+                for speaker in app.speakers
+            ]
+            project = create_project(
+                video_path=app.sourceSelection["video"],
+                output_dir=app.sourceSelection["output_dir"],
+                audio_sources=[{"path": path} for path in app.sourceSelection["audio_files"]],
+                speakers=project_speakers,
+                segments=[
+                    {
+                        "id": "segment-a",
+                        "start": 0,
+                        "end": 4,
+                        "text": "abcdefgh",
+                        "speaker": project_speakers[0]["style"],
+                        "words": [{"word": "abcdefgh", "start": 0, "end": 4}],
+                    }
+                ],
+                duration_seconds=30,
+            )
+            save_project(project_path, project)
+
+        app._update_stage("Project ready")
+        app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
     def test_transcribe_without_existing_project_starts_transcription(self) -> None:
         self._set_ready_sources()
 
@@ -1846,6 +1901,44 @@ class GuiEditorRegressionTests(unittest.TestCase):
             command = start_command.call_args[0][0]
             self.assertEqual(start_command.call_args[0][1], "transcribe")
             self.assertIn("--overwrite-project", command)
+
+    def test_transcription_start_to_project_creation_and_editor_open(self) -> None:
+        video, audio, output = self._set_ready_sources()
+
+        _, window = self._load_qml()
+        main = self._quick_item(window, "mainWorkspace")
+        editor = self._quick_item(window, "editorPage")
+        self.assertTrue(main.isVisible())
+        self.assertFalse(editor.isVisible())
+
+        with patch.object(
+            self.app,
+            "_start_command",
+            side_effect=lambda *args, **kwargs: self._simulate_transcription(*args, **kwargs),
+        ) as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            start_command.assert_called_once()
+            command = start_command.call_args[0][0]
+            self.assertIn(str(video.resolve()), command)
+            self.assertIn(str(audio.resolve()), command)
+            self.assertIn(str(output.resolve()), command)
+            self.assertIn("--config", command)
+            self.assertIn("--run", command)
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.stage, "EDIT")
+        self.assertIn("文字起こし完了", self.app.status)
+        self.assertAlmostEqual(self.app.progress, 1.0)
+
+        project_path = output / f"{video.stem}.subtitle-project.json"
+        self.assertTrue(project_path.is_file())
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.app.processEvents()
+        self.assertFalse(main.isVisible())
+        self.assertTrue(editor.isVisible())
 
 
 if __name__ == "__main__":

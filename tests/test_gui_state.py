@@ -113,6 +113,15 @@ class GuiStateTests(unittest.TestCase):
             self.assertIn("0.25", command)
             self.assertEqual(command[-1], "--run")
 
+            overwrite_command = build_gui_command(
+                config_path,
+                video="game.mkv",
+                audio_files=["1-speaker-a.flac"],
+                output_dir="export",
+                overwrite_project=True,
+            )
+            self.assertIn("--overwrite-project", overwrite_command)
+
     def test_build_source_command_requires_all_inputs(self) -> None:
         with self.assertRaises(ValueError):
             build_gui_command("gui.json", video="", audio_files=[], output_dir="")

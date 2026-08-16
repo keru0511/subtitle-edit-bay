@@ -151,6 +151,15 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "transcriptionDictionaryPage"', wrapper)
         self.assertIn("visible: screenRoot.dictionaryMode", wrapper)
 
+    def test_transcription_overwrite_confirmation_is_wired(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn('objectName: "overwriteProjectDialog"', qml)
+        self.assertIn("transcriptionProjectExists()", qml)
+        self.assertIn("startTranscription(root.currentSettings(), false)", qml)
+        self.assertIn("startTranscription(root.currentSettings(), true)", qml)
+        self.assertIn("standardButtons: Dialog.Yes | Dialog.No", qml)
+
     def test_audio_mixer_is_wired_to_project_channels(self) -> None:
         qml = read_workflow_qml()
         mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]

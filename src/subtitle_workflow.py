@@ -4,6 +4,7 @@ import argparse
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 from .audio_mixer import active_audio_mix_channels, reconcile_audio_mix, video_track_entries
@@ -12,9 +13,10 @@ from .ass_template import (
     DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 )
 from .assemble_video import build_loudnorm_filter
-from .burn_subs import build_ass_filter, run_ffmpeg_burn
+from .burn_subs import build_ass_filter_path_with_cleanup, run_ffmpeg_burn
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
+    DEFAULT_ALIGNMENT_OFFSET_ADJUSTMENT,
     DEFAULT_AUDIO_LOUDNESS_RANGE,
     DEFAULT_AUDIO_NORMALIZE,
     DEFAULT_AUDIO_TARGET_LUFS,
@@ -78,7 +80,7 @@ from .subtitle_project import (
     save_project,
 )
 from .subtitle_workflow_transcription import transcribe_to_project_with_context
-from .transcribe import probe_audio_streams
+from .transcribe import build_extract_audio_command, probe_audio_streams
 from .transcription_context_config import transcription_context_from_runtime_config
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 
@@ -88,6 +90,216 @@ DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284",
 
 def log_progress(message: str) -> None:
     print(f"[subtitle_workflow] {message}", flush=True)
+
+
+@dataclass(frozen=True)
+class SubtitleInputs:
+    video_path: str
+    output_dir: Path
+    resolved_audio: list[Path]
+    alignment_reference_track: str
+    reference_path: Path
+    project_path: Path
+
+
+@dataclass(frozen=True)
+class SubtitleAlignment:
+    matched_track: str
+    offset_seconds: float
+    score: float
+
+
+@dataclass(frozen=True)
+class SubtitleTranscriptionResult:
+    transcript_map: dict[str, str]
+    segments: list[dict]
+
+
+@dataclass(frozen=True)
+class SubtitleRefinedSegments:
+    refined_segments: list[dict]
+    filtered_segments: list[dict]
+
+
+@dataclass(frozen=True)
+class SubtitleProjectBuildResult:
+    project: dict[str, Any]
+    project_path: Path
+
+
+def resolve_inputs_stage(
+    video_path: str,
+    audio_files: list[str],
+    output_dir: str,
+    reference_audio: str | None = None,
+    reference_track: str | None = None,
+) -> SubtitleInputs:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    resolved_audio = resolve_craig_audio_files(None, audio_files)
+    if not resolved_audio:
+        alignment_reference_track = _select_reference_track(video_path, reference_track)
+        resolved_audio = [_extract_video_reference_audio(video_path, output, alignment_reference_track)]
+    else:
+        alignment_reference_track = reference_track
+    reference_path = resolve_reference_audio_path(resolved_audio, reference_audio)
+    if reference_path is None:
+        reference_path = resolved_audio[0]
+
+    return SubtitleInputs(
+        video_path=video_path,
+        output_dir=output,
+        resolved_audio=resolved_audio,
+        alignment_reference_track=alignment_reference_track,
+        reference_path=reference_path,
+        project_path=derive_project_path(video_path, output),
+    )
+
+
+def alignment_stage(
+    video_path: str,
+    reference_path: Path,
+    alignment_reference_track: str | None,
+    alignment_sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE,
+    alignment_offset_adjustment: float = DEFAULT_ALIGNMENT_OFFSET_ADJUSTMENT,
+) -> SubtitleAlignment:
+    matched_track, offset_seconds, score = resolve_alignment(
+        video_path,
+        str(reference_path),
+        alignment_reference_track,
+        alignment_sample_rate,
+    )
+    return SubtitleAlignment(
+        matched_track=matched_track,
+        offset_seconds=offset_seconds + alignment_offset_adjustment,
+        score=score,
+    )
+
+
+def transcription_stage(
+    audio_files: list[Path],
+    transcript_dir: Path,
+    style_map: dict[str, str],
+    offset_seconds: float,
+    *,
+    model: str = DEFAULT_MODEL,
+    device: str = DEFAULT_DEVICE,
+    compute_type: str = DEFAULT_COMPUTE_TYPE,
+    language: str = DEFAULT_LANGUAGE,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
+    skip_existing_transcripts: bool = True,
+    postprocess_workers: int = DEFAULT_POSTPROCESS_WORKERS,
+    subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
+    subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
+) -> SubtitleTranscriptionResult:
+    batch = transcribe_craig_audio_files(
+        audio_files,
+        transcript_dir,
+        style_map,
+        offset_seconds,
+        model=model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        vad_onset=vad_onset,
+        vad_offset=vad_offset,
+        skip_existing_transcripts=skip_existing_transcripts,
+        postprocess_workers=postprocess_workers,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_volume_scale_percent=subtitle_volume_scale_percent,
+    )
+    return SubtitleTranscriptionResult(
+        transcript_map=batch.transcript_map,
+        segments=batch.segments,
+    )
+
+
+def refine_segments_stage(
+    segments: list[dict],
+    *,
+    subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
+    subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
+    subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+) -> SubtitleRefinedSegments:
+    refined, filtered = refine_segments(
+        segments,
+        subtitle_max_gap_seconds=subtitle_max_gap_seconds,
+        subtitle_end_padding_seconds=subtitle_end_padding_seconds,
+        subtitle_min_duration_seconds=subtitle_min_duration_seconds,
+    )
+    return SubtitleRefinedSegments(refined_segments=refined, filtered_segments=filtered)
+
+
+def write_transcript_artifacts_stage(
+    video_path: str,
+    output_dir: Path,
+    refined_segments: list[dict],
+    filtered_segments: list[dict],
+) -> tuple[Path, Path]:
+    merged_path = write_json(str(output_dir / f"{Path(video_path).stem}.craig.merged.json"), {"segments": refined_segments})
+    filtered_path = write_json(str(output_dir / f"{Path(video_path).stem}.craig.filtered.json"), {"segments": filtered_segments})
+    return merged_path, filtered_path
+
+
+def build_project_stage(
+    *,
+    video_path: str,
+    output_dir: Path,
+    duration_seconds: float,
+    segments: list[dict],
+    audio_sources: list[dict[str, Any]],
+    speakers: list[dict[str, Any]],
+    waveforms: list[dict[str, Any]],
+    subtitle_settings: dict[str, Any],
+    render_settings: dict[str, Any] | None = None,
+    transcription: dict[str, Any] | None = None,
+) -> SubtitleProjectBuildResult:
+    project = create_project(
+        video_path=video_path,
+        output_dir=output_dir,
+        duration_seconds=duration_seconds,
+        segments=segments,
+        audio_sources=audio_sources,
+        speakers=speakers,
+        waveforms=waveforms,
+        subtitle_settings=subtitle_settings,
+        render_settings=render_settings,
+        transcription=transcription or {},
+    )
+    return SubtitleProjectBuildResult(project=project, project_path=derive_project_path(video_path, output_dir))
+
+
+def _select_reference_track(video_path: str, reference_track: str | None) -> str:
+    streams = probe_audio_streams(video_path)
+    if not streams:
+        raise SystemExit("No audio tracks found in the video for alignment.")
+    selectors = [f"0:a:{index}" for index in range(len(streams))]
+    if reference_track:
+        if reference_track not in selectors:
+            raise SystemExit(f"No such audio track in video: {reference_track}")
+        return reference_track
+    return selectors[0]
+
+
+def _video_reference_audio_path(video_path: str, output_dir: Path, track_selector: str) -> Path:
+    media_stem = Path(video_path).stem
+    safe_track = track_selector.replace(":", "_")
+    return output_dir / "transcripts" / f"{media_stem}.1-video-{safe_track}.wav"
+
+
+def _extract_video_reference_audio(
+    video_path: str,
+    output_dir: Path,
+    track_selector: str,
+) -> Path:
+    output_path = _video_reference_audio_path(video_path, output_dir, track_selector)
+    if output_path.exists():
+        return output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    extract_command = build_extract_audio_command(video_path, str(output_path), track_selector)
+    subprocess.run(extract_command, check=True)
+    return output_path
 
 
 def _project_speakers(
@@ -167,47 +379,44 @@ def transcribe_to_project(
     render_settings: dict[str, Any] | None = None,
     overwrite_project: bool = False,
 ) -> Path:
-    resolved_audio = resolve_craig_audio_files(None, audio_files)
-    if not resolved_audio:
-        raise SystemExit("No Craig speaker audio files were selected.")
-    reference_path = resolve_reference_audio_path(resolved_audio, reference_audio)
-    if reference_path is None:
-        reference_path = resolved_audio[0]
-
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    project_path = derive_project_path(video_path, output)
-    if project_path.exists() and not overwrite_project:
+    inputs = resolve_inputs_stage(
+        video_path=video_path,
+        audio_files=audio_files,
+        output_dir=output_dir,
+        reference_audio=reference_audio,
+        reference_track=reference_track,
+    )
+    if inputs.project_path.exists() and not overwrite_project:
         raise SystemExit(
-            f"Editable project already exists: {project_path}. "
+            f"Editable project already exists: {inputs.project_path}. "
             "Move it or pass --overwrite-project to replace it explicitly."
         )
     colors = dict(track_color_map or {})
-    style_map = build_speaker_style_map(resolved_audio)
-    speakers = _project_speakers(resolved_audio, style_map, colors)
-    log_progress(f"Resolving alignment from {reference_path.name}")
-    matched_track, offset_seconds, score = resolve_alignment(
-        video_path,
-        str(reference_path),
-        reference_track,
-        alignment_sample_rate,
+    style_map = build_speaker_style_map(inputs.resolved_audio)
+    speakers = _project_speakers(inputs.resolved_audio, style_map, colors)
+    log_progress(f"Resolving alignment from {inputs.reference_path.name}")
+    alignment = alignment_stage(
+        video_path=inputs.video_path,
+        reference_path=inputs.reference_path,
+        alignment_reference_track=inputs.alignment_reference_track,
+        alignment_sample_rate=alignment_sample_rate,
+        alignment_offset_adjustment=alignment_offset_adjustment,
     )
-    offset_seconds += alignment_offset_adjustment
-    log_progress(f"Alignment ready at {offset_seconds:+.3f}s on {matched_track}")
+    log_progress(f"Alignment ready at {alignment.offset_seconds:+.3f}s on {alignment.matched_track}")
 
-    transcript_dir = output / "transcripts"
+    transcript_dir = inputs.output_dir / "transcripts"
     with ThreadPoolExecutor(max_workers=1) as waveform_executor:
         waveform_future = waveform_executor.submit(
             _build_waveforms,
-            resolved_audio,
+            inputs.resolved_audio,
             speakers,
-            offset_seconds,
+            alignment.offset_seconds,
         )
-        transcription = transcribe_craig_audio_files(
-            resolved_audio,
+        transcription = transcription_stage(
+            inputs.resolved_audio,
             transcript_dir,
             style_map,
-            offset_seconds,
+            alignment.offset_seconds,
             model=model,
             device=device,
             compute_type=compute_type,
@@ -220,7 +429,7 @@ def transcribe_to_project(
             subtitle_volume_scale_percent=subtitle_volume_scale_percent,
         )
         log_progress("Refining merged subtitle segments")
-        refined, filtered = refine_segments(
+        refined = refine_segments_stage(
             transcription.segments,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
@@ -228,18 +437,22 @@ def transcribe_to_project(
         )
         waveforms = waveform_future.result()
     transcript_map = transcription.transcript_map
-    merged_path = write_json(str(output / f"{Path(video_path).stem}.craig.merged.json"), {"segments": refined})
-    filtered_path = write_json(str(output / f"{Path(video_path).stem}.craig.filtered.json"), {"segments": filtered})
+    merged_path, filtered_path = write_transcript_artifacts_stage(
+        video_path=video_path,
+        output_dir=inputs.output_dir,
+        refined_segments=refined.refined_segments,
+        filtered_segments=refined.filtered_segments,
+    )
     try:
         duration_seconds = probe_media_duration(video_path)
     except (OSError, subprocess.CalledProcessError, ValueError):
-        duration_seconds = max((float(segment["end"]) for segment in refined), default=0.0)
+        duration_seconds = max((float(segment["end"]) for segment in refined.refined_segments), default=0.0)
 
-    project = create_project(
+    built_project = build_project_stage(
         video_path=video_path,
-        output_dir=output,
+        output_dir=inputs.output_dir,
         duration_seconds=duration_seconds,
-        segments=refined,
+        segments=refined.refined_segments,
         audio_sources=speakers,
         speakers=speakers,
         waveforms=waveforms,
@@ -258,15 +471,17 @@ def transcribe_to_project(
             "device": device,
             "compute_type": compute_type,
             "language": language,
-            "reference_audio": str(reference_path.resolve()),
-            "matched_track": matched_track,
-            "offset_seconds": offset_seconds,
-            "alignment_score": score,
+            "reference_audio": str(inputs.reference_path.resolve()),
+            "matched_track": alignment.matched_track,
+            "offset_seconds": alignment.offset_seconds,
+            "alignment_score": alignment.score,
             "transcripts": transcript_map,
             "merged_json": str(merged_path.resolve()),
             "filtered_json": str(filtered_path.resolve()),
         },
     )
+    project = built_project.project
+    project_path = built_project.project_path
     try:
         video_tracks = video_track_entries(probe_audio_streams(video_path))
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -296,6 +511,10 @@ def _ass_build_options(
         "subtitle_end_padding_seconds": float(settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),
         "subtitle_min_duration_seconds": float(settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)),
     }
+
+
+def _is_mp4_output(output_path: str | Path) -> bool:
+    return Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}
 
 
 def build_project_ass(
@@ -392,26 +611,33 @@ def render_project_video(
                 **_ass_build_options(project),
             )
             log_progress(f"Rendering edited video and cutting {len(no_speech_ranges)} silent ranges")
-            cut_media_ranges(
-                video_path,
-                str(output),
-                keep_ranges,
-                video_codec=video_codec,
-                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=loudnorm_filter,
-                video_filter=build_ass_filter(str(cut_ass)),
-                audio_track=output_audio_track,
-                audio_mix=audio_mix if use_audio_mix else None,
-                audio_offset_seconds=offset_seconds,
-            )
+            video_filter, video_filter_cleanup = build_ass_filter_path_with_cleanup(str(cut_ass))
+            try:
+                cut_media_ranges(
+                    video_path,
+                    str(output),
+                    keep_ranges,
+                    video_codec=video_codec,
+                    audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+                    nvenc_preset=nvenc_preset,
+                    nvenc_cq=nvenc_cq,
+                    x264_crf=x264_crf,
+                    audio_filter=loudnorm_filter,
+                    video_filter=video_filter,
+                    audio_track=output_audio_track,
+                    audio_mix=audio_mix if use_audio_mix else None,
+                    audio_offset_seconds=offset_seconds,
+                )
+            finally:
+                if video_filter_cleanup is not None:
+                    Path(video_filter_cleanup).unlink(missing_ok=True)
         finally:
             cut_ass.unlink(missing_ok=True)
     else:
         log_progress(f"Rendering edited subtitles to {output.name}")
         burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec
+        if _is_mp4_output(output) and burn_audio_codec == "copy":
+            burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC
         run_ffmpeg_burn(
             video_path,
             str(ass_path),
@@ -468,9 +694,10 @@ def main() -> None:
     transcribe = subparsers.add_parser("transcribe", help="Transcribe sources and create an editable project.")
     _add_shared_options(transcribe)
     transcribe.add_argument("--video", required=True)
-    transcribe.add_argument("--audio-file", action="append", required=True)
+    transcribe.add_argument("--audio-file", action="append")
     transcribe.add_argument("--output-dir", required=True)
     transcribe.add_argument("--reference-audio")
+    transcribe.add_argument("--video-audio-track")
     transcribe.add_argument("--reference-track")
     transcribe.add_argument("--alignment-offset-adjustment", type=float, default=None)
     transcribe.add_argument("--skip-existing-transcripts", action=argparse.BooleanOptionalAction, default=None)
@@ -528,9 +755,10 @@ def main() -> None:
         )
         result = transcribe_to_project_with_context(
             video_path=args.video,
-            audio_files=args.audio_file,
+            audio_files=args.audio_file or [],
             output_dir=args.output_dir,
             reference_audio=args.reference_audio,
+            video_audio_track=args.video_audio_track,
             reference_track=args.reference_track,
             transcription_context=transcription_context,
             **transcribe_options,

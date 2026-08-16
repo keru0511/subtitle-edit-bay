@@ -216,6 +216,13 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('property int baseFontSize: root.selectedSubtitleFontSize', qml)
         self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', qml)
 
+    def test_subtitle_overlay_row_margin_scales_with_font_size(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn("function previewRowStep(fontScale)", qml)
+        self.assertIn("anchors.bottomMargin: 26 + Number(segmentData.layout_row || 0) * overlayRoot.previewRowStep(segmentData.subtitle_font_scale)", qml)
+        self.assertIn("Math.max(1, Math.round(overlayRoot.previewPixelSize(fontScale) * 2.45))", qml)
+
     def test_global_subtitle_outline_controls_are_wired_to_preview(self) -> None:
         qml = read_workflow_qml()
 

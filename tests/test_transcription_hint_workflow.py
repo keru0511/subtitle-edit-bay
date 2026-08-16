@@ -59,6 +59,32 @@ class TranscriptionHintWorkflowTests(unittest.TestCase):
             self.assertEqual(plan.dictionary_hash, "")
             self.assertEqual(plan.cache_settings["dictionary_hash"], "")
 
+    def test_web_dictionary_terms_are_applied_by_workflow(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            context = {
+                "web_dictionary_enabled": True,
+                "web_dictionary_terms": ["Ink", "Bomba"],
+            }
+
+            plan = build_craig_hint_plan_from_context(context, base_dir=tmp_path)
+
+            self.assertIn("Ink", plan.hint.hotwords)
+            self.assertIn("ゲーム内用語", plan.hint.initial_prompt)
+
+    def test_web_dictionary_disabled_is_not_used(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            context = {
+                "web_dictionary_enabled": False,
+                "web_dictionary_terms": ["Ink"],
+            }
+
+            plan = build_craig_hint_plan_from_context(context, base_dir=tmp_path)
+
+            self.assertNotIn("Ink", plan.hint.hotwords)
+            self.assertNotIn("ゲーム内用語", plan.hint.initial_prompt)
+
     def test_confirmed_relative_dictionary_loads_and_affects_hints(self) -> None:
         with TemporaryDirectory() as directory:
             tmp_path = Path(directory)

@@ -6,6 +6,7 @@ from pathlib import Path
 from src.gui_state import (
     SourceSelection,
     build_gui_command,
+    build_gui_transcribe_command,
     build_gui_runtime_config,
     build_speaker_entries_from_files,
     write_gui_runtime_config,
@@ -113,7 +114,21 @@ class GuiStateTests(unittest.TestCase):
             self.assertIn("0.25", command)
             self.assertEqual(command[-1], "--run")
 
-    def test_build_source_command_requires_all_inputs(self) -> None:
+    def test_build_transcribe_command_allows_missing_audio_files(self) -> None:
+        command = build_gui_transcribe_command(
+            "gui.json",
+            video="game.mkv",
+            audio_files=[],
+            output_dir="export",
+        )
+        self.assertTrue(Path(command[0]).name.lower().startswith("python"))
+        self.assertIn("--video", command)
+        self.assertIn("game.mkv", command)
+        self.assertIn("--output-dir", command)
+        self.assertIn("export", command)
+        self.assertNotIn("--audio-file", command)
+
+    def test_build_source_command_requires_video_and_output(self) -> None:
         with self.assertRaises(ValueError):
             build_gui_command("gui.json", video="", audio_files=[], output_dir="")
 

@@ -80,22 +80,19 @@ def reconcile_audio_mix(
     preferred_selector = str(
         project.get("render_settings", {}).get("output_audio_track") or DEFAULT_AUDIO_TRACK
     )
-    supplied_tracks = list(video_tracks) if video_tracks is not None else []
-    if supplied_tracks:
-        track_entries = [
-            {"selector": str(track.get("selector", "")), "label": str(track.get("label", ""))}
-            for track in supplied_tracks
-            if str(track.get("selector", "")).strip()
-        ]
-    elif existing_video:
+    if video_tracks is None:
         track_entries = [
             {"selector": str(channel.get("selector", "")), "label": str(channel.get("label", ""))}
             for channel in existing_video
             if str(channel.get("selector", "")).strip()
         ]
     else:
-        track_entries = [{"selector": preferred_selector, "label": preferred_selector}]
-
+        supplied_tracks = list(video_tracks)
+        track_entries = [
+            {"selector": str(track.get("selector", "")), "label": str(track.get("label", ""))}
+            for track in supplied_tracks
+            if str(track.get("selector", "")).strip()
+        ]
     selectors = {entry["selector"] for entry in track_entries}
     enabled_selector = preferred_selector if preferred_selector in selectors else (track_entries[0]["selector"] if track_entries else "")
     channels: list[dict[str, Any]] = []
@@ -129,6 +126,16 @@ def reconcile_audio_mix(
             "volume_percent": 100.0,
         }
         channels.append(_normalized_channel(existing_by_id.get(channel_id, {}), defaults))
+
+    if not track_entries:
+        has_enabled_external = any(
+            bool(channel.get("enabled")) for channel in channels if channel.get("kind") == "external"
+        )
+        if not has_enabled_external:
+            for channel in channels:
+                if channel.get("kind") == "external":
+                    channel["enabled"] = True
+                    break
 
     audio_mix = {
         "version": AUDIO_MIX_VERSION,

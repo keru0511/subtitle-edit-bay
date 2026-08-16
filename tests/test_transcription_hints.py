@@ -64,6 +64,30 @@ class TranscriptionHintsTests(unittest.TestCase):
         self.assertEqual(hints.hotwords, ("Oz", "ナワバリバトル", "ナワバリ", "スプラシューター", "スシ"))
         self.assertNotIn("未使用語", hints.hotwords)
 
+    def test_web_terms_are_applied_only_when_web_dictionary_enabled(self) -> None:
+        hints = build_transcription_hints(
+            TranscriptionContext(
+                game_title="Splatoon 3",
+                web_dictionary_enabled=True,
+                web_dictionary_terms=("スプラボム", "ナワバリバトル"),
+            )
+        )
+
+        self.assertIn("ゲーム内用語: スプラボム, ナワバリバトル", hints.initial_prompt)
+        self.assertEqual(hints.hotwords, ("スプラボム", "ナワバリバトル"))
+
+    def test_web_terms_are_ignored_when_not_enabled(self) -> None:
+        hints = build_transcription_hints(
+            TranscriptionContext(
+                game_title="Splatoon 3",
+                web_dictionary_enabled=False,
+                web_dictionary_terms=("スプラボム", "ナワバリバトル"),
+            )
+        )
+
+        self.assertNotIn("スプラボム", hints.initial_prompt)
+        self.assertNotIn("ナワバリバトル", hints.hotwords)
+
     def test_hotwords_and_prompt_are_limited(self) -> None:
         dictionary = transcription_dictionary_from_mapping(
             {

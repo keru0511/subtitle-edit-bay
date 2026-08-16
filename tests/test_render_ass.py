@@ -7,11 +7,24 @@ from pathlib import Path
 
 from src.assemble_video import build_concat_command, build_loudnorm_filter, build_normalize_command, optional_clip, write_concat_manifest
 from src.batch import derive_export_paths, derive_merged_export_paths, iter_video_files
-from src.burn_subs import build_ass_filter, build_ffmpeg_command, run_ffmpeg_burn
+from src.burn_subs import (
+    build_ass_filter,
+    build_ass_filter_path_with_cleanup,
+    build_ffmpeg_command,
+    run_ffmpeg_burn,
+)
 from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
-from src.render_ass import format_ass_time, normalize_text, parse_track_color_args, render_ass
+from src.ass_template import DEFAULT_SUBTITLE_FONT_SIZE
+from src.render_ass import (
+    format_ass_time,
+    normalize_text,
+    parse_track_color_args,
+    render_ass,
+    sanitize_ass_text,
+    style_name_for_speaker,
+)
 from unittest import mock
 
 from src.subtitle_packer import (
@@ -268,6 +281,7 @@ class RenderAssTests(unittest.TestCase):
                 {"start": 0.0, "end": 1.0, "speaker": "C", "text": "hello", "layout_row": 0, "source_track": "craig:speaker-d", "source_speaker": "speaker-d"}
             ]
         }
+        speaker_style = style_name_for_speaker("speaker-d")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "speaker_colors.json"
@@ -284,9 +298,12 @@ class RenderAssTests(unittest.TestCase):
             )
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
-        self.assertIn("Style: Speaker_speaker_d", output)
-        self.assertIn("Style: Speaker_speaker_d,Arial,50,&H00FF4422,&H0000FFFF,&H00000000", output)
-        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_speaker_d,C,0,0,34,,hello", output)
+        self.assertIn(f"Style: {speaker_style}", output)
+        self.assertIn(f"Style: {speaker_style},Arial,50,&H00FF4422,&H0000FFFF,&H00000000", output)
+        self.assertIn(
+            f"Dialogue: 0,0:00:00.00,0:00:01.00,{speaker_style},C,0,0,34,,hello",
+            output,
+        )
 
     def test_render_ass_prefers_file_name_color_mapping(self) -> None:
         data = {
@@ -294,6 +311,7 @@ class RenderAssTests(unittest.TestCase):
                 {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "hello", "layout_row": 0, "source_file": "1-speaker-a.aac", "source_speaker": "speaker-a"}
             ]
         }
+        file_style = style_name_for_speaker("1-speaker-a.aac")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "speaker_colors.json"
@@ -313,9 +331,116 @@ class RenderAssTests(unittest.TestCase):
             )
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
-        self.assertIn("Style: Speaker_1_speaker_a_aac", output)
-        self.assertIn("Style: Speaker_1_speaker_a_aac,Arial,50,&H00563412,&H0000FFFF,&H00000000", output)
-        self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Speaker_1_speaker_a_aac,Oz,0,0,34,,hello", output)
+        self.assertIn(f"Style: {file_style}", output)
+        self.assertIn(f"Style: {file_style},Arial,50,&H00563412,&H0000FFFF,&H00000000", output)
+        self.assertIn(
+            f"Dialogue: 0,0:00:00.00,0:00:01.00,{file_style},Oz,0,0,34,,hello",
+            output,
+        )
+
+    def test_style_name_for_speaker_uniquifies_similar_names(self) -> None:
+        self.assertEqual(style_name_for_speaker("speaker-d"), style_name_for_speaker("speaker-d"))
+        self.assertNotEqual(style_name_for_speaker("speaker-d"), style_name_for_speaker("speaker.d"))
+        self.assertNotEqual(style_name_for_speaker("speaker d"), style_name_for_speaker("speaker.d"))
+
+    def test_render_ass_sanitizes_speaker_name_for_dialogue_actor(self) -> None:
+        output = render_ass(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "speaker": "Alice,Bob",
+                        "text": "hello",
+                    }
+                ]
+            }
+        )
+        dialogue = next(line for line in output.splitlines() if line.startswith("Dialogue:"))
+        self.assertIn(",Alice_Bob,", dialogue)
+        self.assertNotIn(",Alice,Bob,", dialogue)
+
+    def test_sanitize_ass_text_replaces_dangerous_chars(self) -> None:
+        self.assertEqual(sanitize_ass_text("A{lice}\\,Bob"), "A_lice__Bob")
+
+    def test_render_ass_escapes_text_markers_and_backslashes(self) -> None:
+        output = render_ass(
+            {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "speaker": "Oz",
+                        "text": r"C:\\backslash\\ and newline\N and brace\{\} mix",
+                    }
+                ]
+            }
+        )
+        dialogue = next(line for line in output.splitlines() if line.startswith("Dialogue:"))
+        self.assertIn(r"C\\backslash\\ and newline\N and brace\{\} mix", dialogue)
+        self.assertIn(r"and brace\{\} mix", dialogue)
+        output_unknown = render_ass(
+            {
+                "segments": [{"start": 0.0, "end": 1.0, "speaker": "Oz", "text": r"before\after"}]
+            }
+        )
+        self.assertIn(r"Dialogue: 0,0:00:00.00,0:00:01.00,Oz,Oz,0,0,34,,before\\after", output_unknown)
+
+    def _expected_row_margin_step(self, subtitle_font_scale: float, subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE) -> int:
+        output_font_size = max(3, round(subtitle_font_size * max(0.1, subtitle_font_scale)))
+        preview_pixel_size = max(1, round(22 * output_font_size / DEFAULT_SUBTITLE_FONT_SIZE))
+        return max(1, round(preview_pixel_size * 2.45))
+
+    def _dialogue_margin_v(self, line: str) -> int:
+        return int(line.split(",")[7])
+
+    def _dialogue_layer(self, line: str) -> int:
+        return int(line.split(",")[1])
+
+    def test_render_ass_scales_row_margin_with_font_setting(self) -> None:
+        for scale in [1.0, 2.0, 4.0, 9.0]:
+            data = {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "speaker": "Oz",
+                        "text": "hello",
+                        "layout_row": 0,
+                        "subtitle_font_scale": scale,
+                    },
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "speaker": "Guest",
+                        "text": "world",
+                        "layout_row": 1,
+                        "subtitle_font_scale": scale,
+                    },
+                ]
+            }
+
+            output = render_ass(data, subtitle_font_size=DEFAULT_SUBTITLE_FONT_SIZE)
+            dialogues = [line for line in output.splitlines() if line.startswith("Dialogue:")]
+            self.assertEqual(len(dialogues), 2)
+            step = self._expected_row_margin_step(scale)
+            margin_by_layer = {self._dialogue_layer(line): self._dialogue_margin_v(line) for line in dialogues}
+            self.assertEqual(margin_by_layer[1] - margin_by_layer[0], step)
+            self.assertLessEqual(margin_by_layer[1], 1080)
+            self.assertLessEqual(margin_by_layer[0], 1080)
+
+    def test_render_ass_keeps_three_rows_visible_at_large_scale(self) -> None:
+        data = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": "one", "layout_row": 0, "subtitle_font_scale": 9.0},
+                {"start": 0.0, "end": 1.0, "speaker": "Guest", "text": "two", "layout_row": 1, "subtitle_font_scale": 9.0},
+                {"start": 0.0, "end": 1.0, "speaker": "A", "text": "three", "layout_row": 2, "subtitle_font_scale": 9.0},
+            ]
+        }
+        output = render_ass(data, subtitle_font_size=DEFAULT_SUBTITLE_FONT_SIZE)
+        dialogues = [line for line in output.splitlines() if line.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 3)
+        self.assertTrue(all(self._dialogue_margin_v(line) <= 1080 for line in dialogues))
 
     def test_render_ass_applies_base_size_and_per_caption_volume_scale(self) -> None:
         data = {
@@ -415,9 +540,10 @@ class RenderAssTests(unittest.TestCase):
         output = render_ass(data)
 
         self.assertIn("Style: Guest", output)
+        expected_step = self._expected_row_margin_step(1.0)
         self.assertIn("Dialogue: 0,0:00:00.00,0:00:01.00,Oz,Oz,0,0,34,,hello", output)
-        self.assertIn("Dialogue: 1,0:00:01.00,0:00:02.00,Guest,Guest,0,0,190,,tsukkomi", output)
-        self.assertIn("Dialogue: 2,0:00:02.00,0:00:03.00,ShoutGuest,Guest,0,0,346,,wow", output)
+        self.assertIn(f"Dialogue: 1,0:00:01.00,0:00:02.00,Guest,Guest,0,0,{34 + expected_step},,tsukkomi", output)
+        self.assertIn(f"Dialogue: 2,0:00:02.00,0:00:03.00,ShoutGuest,Guest,0,0,{34 + expected_step * 2},,wow", output)
 
     def test_build_ffmpeg_command_uses_ass_filter(self) -> None:
         command = build_ffmpeg_command("input.mp4", "out\\sample.ass", "out/final.mp4")
@@ -429,6 +555,21 @@ class RenderAssTests(unittest.TestCase):
 
     def test_build_ass_filter_escapes_windows_path(self) -> None:
         self.assertEqual(build_ass_filter(r"C:\work\sample.ass"), r"ass='C\:/work/sample.ass'")
+
+    def test_build_ass_filter_path_with_cleanup_copies_when_quoted_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw_path = Path(temp_dir) / "quote's.ass"
+            raw_path.write_text("ASS", encoding="utf-8")
+
+            filter_text, cleanup = build_ass_filter_path_with_cleanup(str(raw_path))
+            self.assertTrue(filter_text.startswith("ass='") and filter_text.endswith("'"))
+            self.assertIsNotNone(cleanup)
+            safe_filter = filter_text.split("'")[1]
+            self.assertNotIn("'", safe_filter)
+            self.assertNotIn("quote's.ass", safe_filter)
+            self.assertNotEqual(Path(safe_filter).name, raw_path.name)
+            self.assertNotEqual(cleanup, str(raw_path))
+            Path(cleanup).unlink(missing_ok=True)
 
     def test_build_ffmpeg_command_uses_high_quality_nvenc(self) -> None:
         command = build_ffmpeg_command(
@@ -450,15 +591,15 @@ class RenderAssTests(unittest.TestCase):
         def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             calls.append(command)
             if len(calls) == 1:
-                return subprocess.CompletedProcess(
-                    command,
+                raise subprocess.CalledProcessError(
                     1,
+                    command,
                     stdout="",
                     stderr="Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0",
                 )
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-        with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run):
+        with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
             result = run_ffmpeg_burn("input.mp4", "out/sample.ass", "out/final.mp4", video_codec="h264_nvenc", audio_codec="copy")
 
         self.assertEqual(str(result), str(Path("out/final.mp4")))
@@ -473,9 +614,14 @@ class RenderAssTests(unittest.TestCase):
 
         def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             calls.append(command)
-            return subprocess.CompletedProcess(command, 1, stdout="failure", stderr="unexpected media error")
+            raise subprocess.CalledProcessError(
+                1,
+                command,
+                stdout="",
+                stderr="unexpected media error",
+            )
 
-        with mock.patch("src.burn_subs.subprocess.run", side_effect=fake_run), self.assertRaises(subprocess.CalledProcessError):
+        with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run), self.assertRaises(subprocess.CalledProcessError):
             run_ffmpeg_burn("input.mp4", "out/sample.ass", "out/final.mp4", video_codec="h264_nvenc", audio_codec="copy")
 
         self.assertEqual(len(calls), 1)

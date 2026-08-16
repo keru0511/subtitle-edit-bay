@@ -38,6 +38,20 @@ class AudioMixerTests(unittest.TestCase):
         )
         self.assertFalse(audio_mix["customized"])
 
+    def test_reconcile_prefers_external_when_no_video_tracks_are_available(self) -> None:
+        project = self._project()
+        reconcile_audio_mix(project, [{"selector": "0:a:1", "label": "game"}])
+
+        audio_mix = reconcile_audio_mix(project, [])
+
+        video_channels = [channel for channel in audio_mix["channels"] if channel.get("kind") == "video"]
+        external_channels = [channel for channel in audio_mix["channels"] if channel.get("kind") == "external"]
+        self.assertEqual(video_channels, [])
+        self.assertEqual(len(external_channels), 2)
+        self.assertTrue(external_channels[0]["enabled"])
+        self.assertEqual(external_channels[0]["label"], "alice")
+        self.assertFalse(external_channels[1]["enabled"])
+
     def test_reconcile_preserves_channel_controls_and_clamps_volume(self) -> None:
         project = self._project()
         reconcile_audio_mix(project, [{"selector": "0:a:0", "label": "game"}])
@@ -118,6 +132,19 @@ class AudioMixerTests(unittest.TestCase):
 
         self.assertIn("atrim=start=0.375,asetpts=PTS-STARTPTS", negative_graph)
         self.assertIn("anullsrc=channel_layout=stereo:sample_rate=48000", silent_graph)
+
+    def test_reconcile_without_video_tracks_and_no_explicit_video_track_list_prefers_external(self) -> None:
+        project = self._project()
+
+        audio_mix = reconcile_audio_mix(project)
+
+        video_channels = [channel for channel in audio_mix["channels"] if channel.get("kind") == "video"]
+        external_channels = [channel for channel in audio_mix["channels"] if channel.get("kind") == "external"]
+        self.assertEqual(video_channels, [])
+        self.assertEqual(len(external_channels), 2)
+        self.assertTrue(external_channels[0]["enabled"])
+        self.assertEqual(external_channels[0]["label"], "alice")
+        self.assertFalse(external_channels[1]["enabled"])
 
     def test_reset_restores_legacy_default(self) -> None:
         project = self._project()

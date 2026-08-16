@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
+from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -17,6 +19,7 @@ DEFAULT_AUDIO_CODEC = "aac"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+_FILTER_SCRIPT_THRESHOLD = 8192
 
 
 def build_silencedetect_command(input_path: str, noise: str = "-35dB", duration: float = 0.4) -> list[str]:
@@ -240,9 +243,11 @@ def build_silence_cut_command(
         video_codec,
     ])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    command.extend(["-c:a", audio_codec])
+    command.extend(["-pix_fmt", "yuv420p", "-c:a", audio_codec])
     if audio_filter or audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
+    if Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
+        command.extend(["-movflags", "+faststart"])
     command.append(output_path)
     return command
 
@@ -264,41 +269,66 @@ def cut_media_ranges(
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
-    filter_script.write_text(
-        (
-            build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)[1] + ";"
-            if audio_mix is not None
-            else ""
-        )
-        + build_concat_filter(
+    mix_filter = ""
+    if audio_mix is not None:
+        _, mix_filter = build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)
+    filter_graph = (
+        f"{mix_filter};{build_concat_filter(
+            keep_ranges,
+            audio_filter=audio_filter,
+            video_filter=video_filter,
+            audio_track=\"mixed_audio\" if audio_mix is not None else audio_track,
+        )}"
+        if mix_filter
+        else build_concat_filter(
             keep_ranges,
             audio_filter=audio_filter,
             video_filter=video_filter,
             audio_track="mixed_audio" if audio_mix is not None else audio_track,
-        ),
-        encoding="utf-8",
-    )
-    try:
-        command = build_silence_cut_command(
-            input_path,
-            output_path,
-            keep_ranges,
-            video_codec=video_codec,
-            audio_codec=audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=audio_filter,
-            video_filter=video_filter,
-            filter_script_path=str(filter_script),
-            audio_track=audio_track,
-            audio_mix=audio_mix,
-            audio_offset_seconds=audio_offset_seconds,
         )
-        subprocess.run(command, check=True)
+    )
+    use_filter_script = (
+        filter_script_path is not None
+        or os.name == "nt"
+        or len(filter_graph) > _FILTER_SCRIPT_THRESHOLD
+    )
+    filter_script = None
+    created_filter_script = False
+    if use_filter_script:
+        if filter_script_path:
+            filter_script = Path(filter_script_path)
+        else:
+            filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
+            created_filter_script = True
+        if not filter_script_path:
+            filter_script.write_text(filter_graph, encoding="utf-8")
+    try:
+        def command_builder(selected_codec: str, command_output: str) -> list[str]:
+            return build_silence_cut_command(
+                input_path,
+                command_output,
+                keep_ranges,
+                video_codec=selected_codec,
+                audio_codec=audio_codec,
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                audio_filter=audio_filter,
+                video_filter=video_filter,
+                filter_script_path=str(filter_script) if use_filter_script else None,
+                audio_track=audio_track,
+                audio_mix=audio_mix,
+                audio_offset_seconds=audio_offset_seconds,
+            )
+
+        run_atomic_ffmpeg_export(
+            command_builder,
+            output,
+            video_codec=video_codec,
+        )
     finally:
-        filter_script.unlink(missing_ok=True)
+        if filter_script is not None and created_filter_script:
+            filter_script.unlink(missing_ok=True)
     return output
 
 

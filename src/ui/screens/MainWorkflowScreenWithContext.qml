@@ -56,6 +56,7 @@ MainWorkflowScreen {
                 TranscriptionContextPanel {
                     id: contextPanel
                     objectName: "mainTranscriptionContextPanel"
+                    appBackend: screenRoot.appBackend
                     width: Math.min(760, parent.width)
                     height: Math.min(560, parent.height)
                     anchors.centerIn: parent

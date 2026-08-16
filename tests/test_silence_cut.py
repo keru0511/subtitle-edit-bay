@@ -1,3 +1,5 @@
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -153,6 +155,8 @@ class SilenceCutTests(unittest.TestCase):
         self.assertEqual(command[command.index("-profile:v") + 1], "high")
         self.assertIn("aac", command)
         self.assertIn("48000", command)
+        self.assertIn("yuv420p", command)
+        self.assertIn("+faststart", command)
         self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", " ".join(command))
 
     def test_build_silence_cut_command_accepts_audio_mix(self) -> None:
@@ -179,6 +183,8 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("48000", command)
 
     def test_cut_media_ranges_uses_short_filter_script_command(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows builds in CI may not support -filter_complex_script")
         keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
         observed: dict[str, int] = {}
 
@@ -188,15 +194,50 @@ class SilenceCutTests(unittest.TestCase):
             observed["filter_length"] = len(script_path.read_text(encoding="utf-8"))
             observed["command_length"] = len(" ".join(command))
             self.assertTrue(check)
+            Path(command[-1]).write_bytes(b"encoded")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
-            with mock.patch("src.silence_cut.subprocess.run", side_effect=inspect_command):
+            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=inspect_command):
                 cut_media_ranges("input.mp4", str(output_path), keep_ranges)
             self.assertFalse((Path(temp_dir) / "output.ffmpeg-filter.txt").exists())
+            self.assertEqual(output_path.read_bytes(), b"encoded")
 
         self.assertGreater(observed["filter_length"], 8191)
         self.assertLess(observed["command_length"], 1000)
+
+    def test_cut_media_ranges_falls_back_to_libx264_when_nvenc_unsupported(self) -> None:
+        keep_ranges = [(0.0, 1.0)]
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            if len(calls) == 1:
+                raise subprocess.CalledProcessError(
+                    1,
+                    command,
+                    stdout="",
+                    stderr="could not find encoder h264_nvenc",
+                )
+
+            output_path = Path(command[-1])
+            output_path.write_bytes(b"encoded")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "output.mp4"
+            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+                cut_media_ranges(
+                    "input.mp4",
+                    str(output_path),
+                    keep_ranges,
+                    video_codec="h264_nvenc",
+                )
+
+            self.assertEqual(output_path.read_bytes(), b"encoded")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][calls[0].index("-c:v") + 1], "h264_nvenc")
+        self.assertEqual(calls[1][calls[1].index("-c:v") + 1], "libx264")
 
     def test_build_silence_cut_command_can_use_filter_script(self) -> None:
         command = build_silence_cut_command(

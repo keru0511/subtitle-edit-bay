@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from array import array
 from bisect import bisect_left, bisect_right
@@ -47,6 +47,8 @@ from .audio_preview_cache import (
 )
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
+from .gui_source_state import build_speaker_entries_from_files
+from .render_ass import style_name_for_speaker
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_state import build_gui_render_command, build_gui_transcribe_command
 from .subtitle_project import (
@@ -71,7 +73,7 @@ def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
         unique.setdefault(family.casefold(), family)
     families = sorted(unique.values(), key=str.casefold)
     return [
-        {"label": "既定フォント", "family": ""},
+        {"label": "譌｢螳壹ヵ繧ｩ繝ｳ繝・, "family": ""},
         *({"label": family, "family": family} for family in families),
     ]
 
@@ -260,6 +262,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._active_job = ""
         self._ass_path = ""
         self._loading_project_sources = False
+        self._relinking_project_sources = False
         super().__init__(argv, workspace_root=workspace_root)
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
@@ -484,7 +487,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if not self._dependencies.ffmpeg:
             self._audio_preview_preparing = False
             self.audioPreviewCacheChanged.emit()
-            self._set_status("音声プレビューの準備にはFFmpegが必要です", "SETUP")
+            self._set_status("髻ｳ螢ｰ繝励Ξ繝薙Η繝ｼ縺ｮ貅門ｙ縺ｫ縺ｯFFmpeg縺悟ｿ・ｦ√〒縺・, "SETUP")
             return
         future = self._audio_preview_cache_future
         if future is not None and not future.done():
@@ -533,11 +536,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self.projectDataChanged.emit()
         if result.errors:
             self._set_status(
-                "音声プレビューの準備に失敗しました: " + "; ".join(result.errors),
+                "髻ｳ螢ｰ繝励Ξ繝薙Η繝ｼ縺ｮ貅門ｙ縺ｫ螟ｱ謨励＠縺ｾ縺励◆: " + "; ".join(result.errors),
                 "CHECK",
             )
         else:
-            self._set_status("音声プレビューの準備が完了しました", "MIX")
+            self._set_status("髻ｳ螢ｰ繝励Ξ繝薙Η繝ｼ縺ｮ貅門ｙ縺悟ｮ御ｺ・＠縺ｾ縺励◆", "MIX")
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerChannels(self) -> list[dict[str, Any]]:
@@ -581,7 +584,7 @@ class EditBayBackend(LegacyEditBayBackend):
             view.update(
                 {
                     "lane_id": str(view.get("id", "")),
-                    "name": str(view.get("label", "入力")),
+                    "name": str(view.get("label", "蜈･蜉・)),
                     "color": str((waveform or {}).get("color") or colors[index % len(colors)]),
                     "offset_seconds": float((waveform or {}).get("offset_seconds", offset)),
                     "duration_seconds": float(
@@ -887,31 +890,157 @@ class EditBayBackend(LegacyEditBayBackend):
                 color=normalized,
             )
         except (OSError, ValueError, TypeError) as error:
-            self._set_status(f"話者色を保存できません: {error}", "ERROR")
+            self._set_status(f"隧ｱ閠・牡繧剃ｿ晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
             return
         self._apply_project_speaker_color(index, normalized)
-        self._set_status(f"{speaker.get('name', '話者')} の字幕色を保存しました", "SAVED")
+        self._set_status(f"{speaker.get('name', '隧ｱ閠・)} 縺ｮ蟄怜ｹ戊牡繧剃ｿ晏ｭ倥＠縺ｾ縺励◆", "SAVED")
 
     def _set_source_selection(self, selection: Any) -> None:
         super()._set_source_selection(selection)
-        if self._loading_project_sources or self._project is None:
+        if (
+            self._loading_project_sources
+            or self._project is None
+            or self._relinking_project_sources
+        ):
             return
-        project_video = str(Path(str(self._project.get("video", {}).get("path", ""))).resolve())
-        selected_video = str(Path(selection.video).resolve()) if selection.video else ""
+        if not self._project_source_selection_matches(selection):
+            self._clear_project()
+
+    def _normalized_source_path(self, value: str) -> str:
+        if not value:
+            return ""
+        return str(Path(value).resolve()).casefold()
+
+    def _project_source_selection_matches(self, selection: Any) -> bool:
+        if self._project is None:
+            return False
+        project_video = self._normalized_source_path(str(self._project.get("video", {}).get("path", "")))
+        selected_video = self._normalized_source_path(selection.video)
         project_audio = {
-            str(Path(str(item.get("path", ""))).resolve())
+            self._normalized_source_path(str(item.get("path", "")))
             for item in self._project.get("audio_sources", [])
             if item.get("path")
         }
-        selected_audio = {str(Path(path).resolve()) for path in selection.audio_files}
-        project_output = str(Path(str(self._project.get("output_dir", ""))).resolve())
-        selected_output = str(Path(selection.output_dir).resolve()) if selection.output_dir else ""
-        if (
-            (selected_video and selected_video != project_video)
-            or selected_audio != project_audio
-            or (selected_output and selected_output != project_output)
-        ):
-            self._clear_project()
+        selected_audio = {self._normalized_source_path(path) for path in selection.audio_files}
+        project_output = self._normalized_source_path(str(self._project.get("output_dir", "")))
+        selected_output = self._normalized_source_path(selection.output_dir)
+        return (
+            selected_video == project_video
+            and selected_audio == project_audio
+            and selected_output == project_output
+        )
+
+    @Slot()
+    def beginSourceRelink(self) -> None:
+        self._relinking_project_sources = True
+
+    @Slot()
+    def finishSourceRelink(self) -> None:
+        if not self._relinking_project_sources:
+            return
+        try:
+            if self._project is not None and not self._project_source_selection_matches(self._source_selection):
+                self._clear_project()
+        finally:
+            self._relinking_project_sources = False
+
+    @Slot()
+    def relinkProjectSources(self) -> None:
+        if self._project is None:
+            return
+
+        old_project = deepcopy(self._project)
+        previous_sources = [dict(item) for item in self._project.get("audio_sources", [])]
+        previous_speakers = [dict(item) for item in self._project.get("speakers", [])]
+
+        source_entries = build_speaker_entries_from_files(
+            self._source_selection.audio_files,
+            self.color_config_path,
+        )
+        project_video = self._project.get("video", {})
+        selected_video = str(Path(self._source_selection.video).resolve()) if self._source_selection.video else ""
+        selected_output = str(Path(self._source_selection.output_dir).resolve()) if self._source_selection.output_dir else ""
+
+        if not selected_video or not selected_output or not source_entries:
+            self._set_status("Relink requires a complete source selection", "CHECK")
+            return
+
+        def _match(items: list[dict[str, Any]], **conditions: str) -> dict[str, Any] | None:
+            for index, item in enumerate(items):
+                for key, value in conditions.items():
+                    item_value = str(item.get(key, "")).strip().casefold()
+                    if value and item_value != str(value).strip().casefold():
+                        break
+                else:
+                    return items.pop(index)
+            return None
+
+        unmatched_speakers = previous_speakers.copy()
+        unmatched_audio_sources = previous_sources.copy()
+        new_audio_sources: list[dict[str, Any]] = []
+        new_speakers: list[dict[str, Any]] = []
+
+        for source in source_entries:
+            previous_source = (
+                _match(unmatched_audio_sources, path=source["path"])
+                or _match(unmatched_audio_sources, file_name=source["file_name"])
+                or _match(unmatched_audio_sources, file_name=str(Path(source["path"]).name))
+            )
+            source_payload: dict[str, Any] = {**previous_source} if previous_source else {}
+            source_payload["path"] = source["path"]
+            source_payload.setdefault("file_name", source["file_name"])
+            source_payload.setdefault("track_key", source["track_key"])
+            new_audio_sources.append(source_payload)
+
+            previous_speaker = (
+                _match(unmatched_speakers, path=source["path"])
+                or _match(unmatched_speakers, file_name=source["file_name"])
+                or _match(unmatched_speakers, name=source["name"])
+            )
+            if previous_speaker is None:
+                speaker_payload = {
+                    "name": source["name"],
+                    "style": style_name_for_speaker(source["name"]),
+                    "file_name": source["file_name"],
+                    "track_key": source["track_key"],
+                    "color": source["color"],
+                    "path": source["path"],
+                }
+            else:
+                speaker_payload = {
+                    **previous_speaker,
+                    "name": source["name"],
+                    "file_name": source["file_name"],
+                    "track_key": source["track_key"],
+                    "path": source["path"],
+                }
+                speaker_payload.setdefault("style", style_name_for_speaker(source["name"]))
+            new_speakers.append(speaker_payload)
+
+        self._project["video"] = {
+            **(project_video if isinstance(project_video, dict) else {}),
+            "path": selected_video,
+        }
+        self._project["output_dir"] = selected_output
+        self._project["audio_sources"] = new_audio_sources
+        self._project["speakers"] = new_speakers
+
+        if "video" in self._project and isinstance(self._project["video"], dict):
+            self._project["video"]["duration_seconds"] = float(
+                self._project["video"].get("duration_seconds", 0.0)
+            )
+
+        self._project_path = str(derive_project_path(selected_video, selected_output))
+        reconcile_audio_mix(self._project, self._mixer_video_tracks())
+
+        if self._project != old_project:
+            self._mark_project_dirty()
+            self._reset_audio_preview_cache()
+            self._sync_subtitle_model()
+            self.projectDataChanged.emit()
+            self.segmentsChanged.emit()
+            self.selectionChanged.emit()
+            self._set_status("Project sources relinked", "EDIT")
 
     def _default_project_path(self) -> Path | None:
         selection = self._source_selection
@@ -944,7 +1073,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.selectionChanged.emit()
 
     def _try_load_default_project(self) -> bool:
-        if self._loading_project_sources:
+        if self._loading_project_sources or self._relinking_project_sources:
             return False
         path = self._default_project_path()
         if path is not None and path.is_file():
@@ -972,12 +1101,12 @@ class EditBayBackend(LegacyEditBayBackend):
     @Slot()
     def browseProjectFile(self) -> None:
         if self._running:
-            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ邱ｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝医ｒ螟画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         start_dir = self._source_selection.output_dir or str(self.workspace_root)
         path, _ = QFileDialog.getOpenFileName(
             None,
-            "字幕編集プロジェクトを開く",
+            "蟄怜ｹ慕ｷｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝医ｒ髢九￥",
             start_dir,
             "Subtitle projects (*.subtitle-project.json);;JSON files (*.json)",
         )
@@ -999,7 +1128,7 @@ class EditBayBackend(LegacyEditBayBackend):
         audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks())
         channels = audio_mix["channels"]
         if not 0 <= index < len(channels):
-            self._set_status("音量ミキサーのチャンネルが見つかりません", "CHECK")
+            self._set_status("髻ｳ驥上Α繧ｭ繧ｵ繝ｼ縺ｮ繝√Ε繝ｳ繝阪Ν縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ", "CHECK")
             return
         channel = channels[index]
         enabled_before = bool(channel.get("enabled"))
@@ -1013,7 +1142,7 @@ class EditBayBackend(LegacyEditBayBackend):
                     min(MAX_VOLUME_PERCENT, float(changes["volume_percent"])),
                 )
             except (TypeError, ValueError):
-                self._set_status("音量は0〜200%で指定してください", "CHECK")
+                self._set_status("髻ｳ驥上・0?200%縺ｧ謖・ｮ壹＠縺ｦ縺上□縺輔＞", "CHECK")
                 return
         audio_mix["customized"] = True
         self.projectDataChanged.emit()
@@ -1021,7 +1150,7 @@ class EditBayBackend(LegacyEditBayBackend):
             structure_changed=enabled_before != bool(channel.get("enabled"))
         )
         self._mark_project_dirty()
-        self._set_status("音量ミキサー設定を更新しました", "EDIT")
+        self._set_status("髻ｳ驥上Α繧ｭ繧ｵ繝ｼ險ｭ螳壹ｒ譖ｴ譁ｰ縺励∪縺励◆", "EDIT")
 
     @Slot()
     def resetAudioMixer(self) -> None:
@@ -1031,13 +1160,19 @@ class EditBayBackend(LegacyEditBayBackend):
         self.projectDataChanged.emit()
         self._notify_audio_mixer_preview(structure_changed=True)
         self._mark_project_dirty()
-        self._set_status("音量ミキサーを既定値へ戻しました", "EDIT")
+        self._set_status("髻ｳ驥上Α繧ｭ繧ｵ繝ｼ繧呈里螳壼､縺ｸ謌ｻ縺励∪縺励◆", "EDIT")
 
     @Slot(str)
     def loadProject(self, path: str) -> None:
         if self._running:
-            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            self._set_status("????????????????????", "BUSY")
             return
+        if self._project_dirty:
+            if not self._project_path:
+                self._set_status("?????????????????????????????????", "ERROR")
+                return
+            if not self.saveProject():
+                return
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
 
@@ -1074,7 +1209,7 @@ class EditBayBackend(LegacyEditBayBackend):
         try:
             project = load_project(path)
         except (OSError, json.JSONDecodeError, SubtitleProjectError, TypeError, ValueError) as error:
-            self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
+            self._set_status(f"繝励Ο繧ｸ繧ｧ繧ｯ繝医ｒ髢九￠縺ｾ縺帙ｓ: {error}", "ERROR")
             return False
         self._project = project
         self._apply_project_subtitle_settings(project)
@@ -1107,7 +1242,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.segmentsChanged.emit()
         self.historyChanged.emit()
         self.selectionChanged.emit()
-        self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
+        self._set_status(f"邱ｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝医ｒ髢九″縺ｾ縺励◆・亥ｭ怜ｹ・{len(project['segments'])} 莉ｶ・・, "EDIT")
         return True
 
     def _record_history(
@@ -1230,10 +1365,10 @@ class EditBayBackend(LegacyEditBayBackend):
         try:
             number = float(value)
         except (TypeError, ValueError):
-            self._set_status(f"{label}には数値を入力してください", "CHECK")
+            self._set_status(f"{label}縺ｫ縺ｯ謨ｰ蛟､繧貞・蜉帙＠縺ｦ縺上□縺輔＞", "CHECK")
             return None
         if not math.isfinite(number):
-            self._set_status(f"{label}には有限の数値を入力してください", "CHECK")
+            self._set_status(f"{label}縺ｫ縺ｯ譛蛾剞縺ｮ謨ｰ蛟､繧貞・蜉帙＠縺ｦ縺上□縺輔＞", "CHECK")
             return None
         return number
 
@@ -1250,8 +1385,8 @@ class EditBayBackend(LegacyEditBayBackend):
             updated.pop("words", None)
             reflow_layout = True
         if "start" in changes or "end" in changes:
-            start_value = self._edit_number(changes.get("start", updated["start"]), "開始時刻")
-            end_value = self._edit_number(changes.get("end", updated["end"]), "終了時刻")
+            start_value = self._edit_number(changes.get("start", updated["start"]), "髢句ｧ区凾蛻ｻ")
+            end_value = self._edit_number(changes.get("end", updated["end"]), "邨ゆｺ・凾蛻ｻ")
             if start_value is None or end_value is None:
                 return
             start = max(0.0, start_value)
@@ -1273,7 +1408,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 updated["source_file"] = speaker.get("file_name", "")
                 updated["source_track"] = speaker.get("track_key", "")
         if "subtitle_font_scale" in changes:
-            font_scale = self._edit_number(changes["subtitle_font_scale"], "文字サイズ倍率")
+            font_scale = self._edit_number(changes["subtitle_font_scale"], "譁・ｭ励し繧､繧ｺ蛟咲紫")
             if font_scale is None:
                 return
             updated["subtitle_font_scale"] = max(0.1, min(4.0, font_scale))
@@ -1347,7 +1482,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 "id": f"subtitle-{uuid4().hex[:12]}",
                 "start": start,
                 "end": start + 2.0,
-                "text": "新しい字幕",
+                "text": "譁ｰ縺励＞蟄怜ｹ・,
                 "speaker": speaker.get("style", "Oz"),
                 "source_speaker": speaker.get("name", ""),
                 "source_track": speaker.get("track_key", ""),
@@ -1373,7 +1508,7 @@ class EditBayBackend(LegacyEditBayBackend):
         segment = deepcopy(self._project["segments"][index])
         split_at = float(at_seconds)
         if not float(segment["start"]) + MIN_SEGMENT_DURATION_SECONDS < split_at < float(segment["end"]) - MIN_SEGMENT_DURATION_SECONDS:
-            self._set_status("再生位置を選択字幕の途中へ移動してください", "CHECK")
+            self._set_status("蜀咲函菴咲ｽｮ繧帝∈謚槫ｭ怜ｹ輔・騾比ｸｭ縺ｸ遘ｻ蜍輔＠縺ｦ縺上□縺輔＞", "CHECK")
             return
         text = str(segment.get("text", ""))
         midpoint = max(1, min(len(text) - 1, round(len(text) * (split_at - segment["start"]) / (segment["end"] - segment["start"])))) if len(text) > 1 else len(text)
@@ -1408,19 +1543,19 @@ class EditBayBackend(LegacyEditBayBackend):
     @Slot(result=bool)
     def saveProject(self) -> bool:
         if self._project is None or not self._project_path:
-            self._set_status("保存する字幕編集プロジェクトがありません", "CHECK")
+            self._set_status("菫晏ｭ倥☆繧句ｭ怜ｹ慕ｷｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝医′縺ゅｊ縺ｾ縺帙ｓ", "CHECK")
             return False
         self.autosave_timer.stop()
         self._wait_for_autosave()
         try:
             save_project(self._project_path, self._project, project_is_validated=True)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
-            self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
+            self._set_status(f"繝励Ο繧ｸ繧ｧ繧ｯ繝医ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
             return False
         self._sync_subtitle_model()
         self._project_dirty = False
         self.projectChanged.emit()
-        self._set_status("字幕編集を保存しました", "SAVED")
+        self._set_status("蟄怜ｹ慕ｷｨ髮・ｒ菫晏ｭ倥＠縺ｾ縺励◆", "SAVED")
         return True
 
     def _autosave_project(self) -> None:
@@ -1468,7 +1603,7 @@ class EditBayBackend(LegacyEditBayBackend):
         pending = self._autosave_pending
         self._autosave_pending = False
         if error:
-            self._set_status(f"繝励Ο繧ｸ繧ｧ繧ｯ繝医ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
+            self._set_status(f"郢晏干ﾎ溽ｹｧ・ｸ郢ｧ・ｧ郢ｧ・ｯ郢晏現・定将譎擾ｽｭ蛟･縲堤ｸｺ髦ｪ竏ｪ邵ｺ蟶呻ｽ・ {error}", "ERROR")
             return
         if (
             self._project is not None
@@ -1535,11 +1670,11 @@ class EditBayBackend(LegacyEditBayBackend):
         try:
             output = build_project_ass(self._project_path)
         except (OSError, ValueError) as error:
-            self._set_status(f"自動保存に失敗しました: {error}", "ERROR")
+            self._set_status(f"閾ｪ蜍穂ｿ晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆: {error}", "ERROR")
             return
         self._ass_path = str(output.resolve())
         self.assPathChanged.emit()
-        self._set_status(f"ASSプレビューを生成しました: {output.name}", "ASS")
+        self._set_status(f"ASS繝励Ξ繝薙Η繝ｼ繧堤函謌舌＠縺ｾ縺励◆: {output.name}", "ASS")
 
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         self._active_job = job
@@ -1566,20 +1701,33 @@ class EditBayBackend(LegacyEditBayBackend):
         self.refreshDependencies()
         if not self._dependencies.ready:
             missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
+            self._set_status(f"螳溯｡後〒縺阪∪縺帙ｓ縲ゅう繝ｳ繧ｹ繝医・繝ｫ縺悟ｿ・ｦ√〒縺・ {missing}", "SETUP")
             return
         if str(settings.get("device") or self._settings.get("device")) == "cuda" and not self._dependencies.cuda:
             self._set_status(
-                "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください",
+                "CUDA迚・yTorch縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲Ｔetup.bat繧貞・螳溯｡後☆繧九°縲∝・逅・ョ繝舌う繧ｹ繧辰PU縺ｸ螟画峩縺励※縺上□縺輔＞",
                 "SETUP",
             )
             return
         selection = self._source_selection
-        audio_files = [speaker["path"] for speaker in self._speakers]
-        if not Path(selection.video).is_file() or not audio_files or not selection.output_dir:
-            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
+        audio_files = [str(speaker["path"]) for speaker in self._speakers]
+        if not Path(selection.video).is_file() or not selection.output_dir or not self._has_audio_source(audio_files):
+            self._set_status("蜍慕判繝ｻ隧ｱ閠・浹螢ｰ繝ｻ蜃ｺ蜉帛・繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
-        reference_audio = str(settings.get("reference_audio") or audio_files[0])
+        reference_audio = None
+        if audio_files:
+            reference_audio = str(settings.get("reference_audio") or audio_files[0])
+        video_audio_track = None
+        if not audio_files:
+            video_audio_track = str(settings.get("reference_track") or "")
+            if not video_audio_track:
+                for track in self._audio_tracks:
+                    candidate = str(track.get("selector", "")).strip()
+                    if candidate:
+                        video_audio_track = candidate
+                        break
+                if not video_audio_track:
+                    video_audio_track = None
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
         self.saveSettings(settings)
@@ -1588,11 +1736,12 @@ class EditBayBackend(LegacyEditBayBackend):
             video=selection.video,
             audio_files=audio_files,
             output_dir=selection.output_dir,
+            video_audio_track=video_audio_track,
             reference_audio=reference_audio,
             reference_track=reference_track,
             alignment_offset_adjustment=adjustment,
         )
-        self._start_command(command, "transcribe", "文字起こしを開始しています")
+        self._start_command(command, "transcribe", "譁・ｭ苓ｵｷ縺薙＠繧帝幕蟋九＠縺ｦ縺・∪縺・)
 
     @Slot("QVariantMap")
     def startProcessing(self, settings: dict[str, Any]) -> None:
@@ -1613,27 +1762,27 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         command = build_gui_render_command(self.gui_config_path, project_path=self._project_path)
         mode = "GPU" if self._dependencies.nvenc else "CPU"
-        self._start_command(command, "render", f"{mode}を自動選択して動画を書き出しています")
+        self._start_command(command, "render", f"{mode}繧定・蜍暮∈謚槭＠縺ｦ蜍慕判繧呈嶌縺榊・縺励※縺・∪縺・)
 
     def _process_started(self) -> None:
         self._running = True
         self.runningChanged.emit()
         self.elapsed_timer.start()
         if self._active_job == "transcribe":
-            self._set_status("文字起こしと編集プロジェクト作成を実行しています", "TRANSCRIBE")
+            self._set_status("譁・ｭ苓ｵｷ縺薙＠縺ｨ邱ｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝井ｽ懈・繧貞ｮ溯｡後＠縺ｦ縺・∪縺・, "TRANSCRIBE")
         else:
-            self._set_status("編集済み字幕を動画へ焼き付けています", "ENCODE")
+            self._set_status("邱ｨ髮・ｸ医∩蟄怜ｹ輔ｒ蜍慕判縺ｸ辟ｼ縺堺ｻ倥￠縺ｦ縺・∪縺・, "ENCODE")
 
     def _update_stage(self, output: str) -> None:
         markers = [
-            ("Resolving alignment", "ALIGN", "動画と話者音声を同期しています", 0.08),
-            ("Starting WhisperX", "WHISPERX", "文字起こししています", 0.22),
-            ("Refining merged", "LAYOUT", "編集用字幕を組み立てています", 0.64),
-            ("Building waveform", "WAVEFORM", "タイムライン波形を作成しています", 0.78),
-            ("Project ready", "PROJECT", "編集プロジェクトを保存しています", 0.92),
-            ("ASS preview ready", "ASS", "ASS字幕を生成しています", 0.3),
-            ("Rendering edited", "ENCODE", "字幕を動画へ焼き付けています", 0.45),
-            ("Render complete", "ENCODE", "動画を書き出しました", 0.96),
+            ("Resolving alignment", "ALIGN", "蜍慕判縺ｨ隧ｱ閠・浹螢ｰ繧貞酔譛溘＠縺ｦ縺・∪縺・, 0.08),
+            ("Starting WhisperX", "WHISPERX", "譁・ｭ苓ｵｷ縺薙＠縺励※縺・∪縺・, 0.22),
+            ("Refining merged", "LAYOUT", "邱ｨ髮・畑蟄怜ｹ輔ｒ邨・∩遶九※縺ｦ縺・∪縺・, 0.64),
+            ("Building waveform", "WAVEFORM", "繧ｿ繧､繝繝ｩ繧､繝ｳ豕｢蠖｢繧剃ｽ懈・縺励※縺・∪縺・, 0.78),
+            ("Project ready", "PROJECT", "邱ｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝医ｒ菫晏ｭ倥＠縺ｦ縺・∪縺・, 0.92),
+            ("ASS preview ready", "ASS", "ASS蟄怜ｹ輔ｒ逕滓・縺励※縺・∪縺・, 0.3),
+            ("Rendering edited", "ENCODE", "蟄怜ｹ輔ｒ蜍慕判縺ｸ辟ｼ縺堺ｻ倥￠縺ｦ縺・∪縺・, 0.45),
+            ("Render complete", "ENCODE", "蜍慕判繧呈嶌縺榊・縺励∪縺励◆", 0.96),
         ]
         for marker, stage, status, progress in markers:
             if marker in output:
@@ -1649,22 +1798,22 @@ class EditBayBackend(LegacyEditBayBackend):
         self._active_job = ""
         self.activeJobChanged.emit()
         if self._cancel_requested:
-            self._set_status("処理を停止しました", "CANCELLED")
+            self._set_status("蜃ｦ逅・ｒ蛛懈ｭ｢縺励∪縺励◆", "CANCELLED")
         elif exit_code == 0:
             self._progress = 1.0
             self.progressChanged.emit()
             if completed_job == "transcribe":
                 loaded = self._try_load_default_project()
                 self._set_status(
-                    "文字起こし完了。字幕を確認して動画へ焼き付けられます"
+                    "譁・ｭ苓ｵｷ縺薙＠螳御ｺ・ょｭ怜ｹ輔ｒ遒ｺ隱阪＠縺ｦ蜍慕判縺ｸ辟ｼ縺堺ｻ倥￠繧峨ｌ縺ｾ縺・
                     if loaded
-                    else "文字起こしが完了しました。編集プロジェクトを開いてください",
+                    else "譁・ｭ苓ｵｷ縺薙＠縺悟ｮ御ｺ・＠縺ｾ縺励◆縲らｷｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝医ｒ髢九＞縺ｦ縺上□縺輔＞",
                     "EDIT" if loaded else "CHECK",
                 )
             else:
-                self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
+                self._set_status("邱ｨ髮・ｸ医∩蜍慕判縺ｮ譖ｸ縺榊・縺励′螳御ｺ・＠縺ｾ縺励◆", "COMPLETE")
         else:
-            self._set_status(f"処理が終了しました（終了コード {exit_code}）", "ERROR")
+            self._set_status(f"蜃ｦ逅・′邨ゆｺ・＠縺ｾ縺励◆・育ｵゆｺ・さ繝ｼ繝・{exit_code}・・, "ERROR")
 
 
 def main() -> None:
@@ -1682,3 +1831,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

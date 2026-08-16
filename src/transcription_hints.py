@@ -54,6 +54,12 @@ def _confirmed_dictionary_terms(
     return tuple(enabled_dictionary_terms(dictionary))
 
 
+def _confirmed_web_dictionary_terms(context: TranscriptionContext) -> tuple[str, ...]:
+    if not context.web_dictionary_enabled:
+        return ()
+    return tuple(context.web_dictionary_terms)
+
+
 def _trim_prompt(prompt: str, max_chars: int) -> str:
     if max_chars <= 0:
         return ""
@@ -82,8 +88,18 @@ def build_transcription_hints(
         max_terms=max_hotwords,
         max_term_length=max_hotword_length,
     )
+    web_terms = _unique_limited_terms(
+        _confirmed_web_dictionary_terms(context),
+        max_terms=max_hotwords,
+        max_term_length=max_hotword_length,
+    )
+    game_terms = _unique_limited_terms(
+        [*dictionary_terms, *web_terms],
+        max_terms=max_hotwords,
+        max_term_length=max_hotword_length,
+    )
     hotwords = _unique_limited_terms(
-        [*creator_terms, *dictionary_terms],
+        [*creator_terms, *game_terms],
         max_terms=max_hotwords,
         max_term_length=max_hotword_length,
     )
@@ -97,8 +113,8 @@ def build_transcription_hints(
         prompt_parts.append(f"補足: {game_notes}。")
     if creator_terms:
         prompt_parts.append(f"作成者用語: {', '.join(creator_terms[:max_prompt_terms])}。")
-    if dictionary_terms:
-        prompt_parts.append(f"ゲーム内用語: {', '.join(dictionary_terms[:max_prompt_terms])}。")
+    if game_terms:
+        prompt_parts.append(f"ゲーム内用語: {', '.join(game_terms[:max_prompt_terms])}。")
     if len(prompt_parts) == 1 and not hotwords:
         return TranscriptionHints()
     prompt_parts.append("固有名詞と略称をできるだけ維持してください。")

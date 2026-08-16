@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import subprocess
@@ -38,6 +38,7 @@ from .gui_state import (
 )
 from .runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
 from .runtime_dependencies import check_runtime_dependencies
+from .transcription_web_dictionary import build_web_dictionary_candidate_metadata, HeuristicWebDictionaryProvider
 from .transcribe import probe_audio_streams
 
 APP_TITLE = "Subtitle Edit Bay"
@@ -78,7 +79,7 @@ class EditBayBackend(QApplication):
         self._settings = self._settings_from_config(self._config)
         self._transcription_context = gui_transcription_context_state_from_config(self._config)
         self._running = False
-        self._status = "動画・話者音声・出力先を指定してください"
+        self._status = "蜍慕判繝ｻ隧ｱ閠・浹螢ｰ繝ｻ蜃ｺ蜉帛・繧呈欠螳壹＠縺ｦ縺上□縺輔＞"
         self._stage = "READY"
         self._progress = 0.0
         self._log = ""
@@ -104,10 +105,10 @@ class EditBayBackend(QApplication):
 
     @staticmethod
     def _default_audio_tracks() -> list[dict[str, str]]:
-        return [{"selector": "", "label": "自動検出（推奨）"}]
+        return [{"selector": "", "label": "No tracks"}]
 
     @staticmethod
-    def _empty_alignment_result(status: str = "未解析") -> dict[str, Any]:
+    def _empty_alignment_result(status: str = "OK") -> dict[str, Any]:
         return {
             "status": status,
             "track": "",
@@ -240,18 +241,27 @@ class EditBayBackend(QApplication):
         self.speakersChanged.emit()
         self._update_source_status()
 
+    def _has_referenceable_audio_track(self) -> bool:
+        return any(track.get("selector") for track in self._audio_tracks)
+
+    def _has_audio_source(self, audio_files: list[str]) -> bool:
+        return bool(audio_files) or self._has_referenceable_audio_track()
+
     def _update_source_status(self) -> None:
         if not self._dependencies.ready:
             missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行ツールが不足しています: {missing}", "SETUP")
+            self._set_status(f"螳溯｡後ヤ繝ｼ繝ｫ縺御ｸ崎ｶｳ縺励※縺・∪縺・ {missing}", "SETUP")
         elif not self._source_selection.video:
-            self._set_status("動画をドロップしてください", "INPUT")
-        elif not self._source_selection.audio_files:
-            self._set_status("1つ以上の話者音声をドロップしてください", "INPUT")
+            self._set_status("蜍慕判繧偵ラ繝ｭ繝・・縺励※縺上□縺輔＞", "INPUT")
+        elif not self._has_audio_source(list(self._source_selection.audio_files)):
+            self._set_status("隴ｭ隧ｱ閠・浹螢ｰ繧偵ラ繝ｭ繝・・縺励※縺上□縺輔＞", "INPUT")
         elif not self._source_selection.output_dir:
-            self._set_status("出力先フォルダを指定してください", "INPUT")
+            self._set_status("蜃ｺ蜉帛・繝輔か繝ｫ繝繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "INPUT")
         else:
-            self._set_status(f"入力準備完了: {len(self._speakers)}人の話者音声", "READY")
+            self._set_status(
+                f"蜈･蜉帶ｺ門ｙ螳御ｺ・ {len(self._speakers)}莠ｺ縺ｮ隧ｱ閠・浹螢ｰ",
+                "READY",
+            )
 
     def _probe_audio_tracks(self, video_path: str) -> None:
         tracks = self._default_audio_tracks()
@@ -266,7 +276,7 @@ class EditBayBackend(QApplication):
                     detail = title or f"{codec} / {channels}ch"
                     tracks.append({"selector": selector, "label": f"{selector}  {detail}"})
             except (OSError, subprocess.SubprocessError, ValueError) as error:
-                self._set_status(f"動画音声トラックを取得できません: {error}", "CHECK")
+                self._set_status(f"蜍慕判髻ｳ螢ｰ繝医Λ繝・け繧貞叙蠕励〒縺阪∪縺帙ｓ: {error}", "CHECK")
         self._audio_tracks = tracks
         self.audioTracksChanged.emit()
 
@@ -281,12 +291,12 @@ class EditBayBackend(QApplication):
     @Slot()
     def browseVideoFile(self) -> None:
         if self._running:
-            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜈･蜉帙た繝ｼ繧ｹ繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         start_dir = str(Path(self._source_selection.video).parent) if self._source_selection.video else str(self.workspace_root)
         path, _ = QFileDialog.getOpenFileName(
             None,
-            "動画ファイルを選択",
+            "蜍慕判繝輔ぃ繧､繝ｫ繧帝∈謚・,
             start_dir,
             "Video files (*.mkv *.mp4 *.mov *.webm);;All files (*)",
         )
@@ -296,18 +306,18 @@ class EditBayBackend(QApplication):
     @Slot(str)
     def setVideoFile(self, path: str) -> None:
         if self._running:
-            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜈･蜉帙た繝ｼ繧ｹ繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         video = self._local_path(path)
         if not video.is_file() or video.suffix.lower() not in VIDEO_EXTENSIONS:
-            self._set_status("対応する動画ファイルを指定してください", "CHECK")
+            self._set_status("蟇ｾ蠢懊☆繧句虚逕ｻ繝輔ぃ繧､繝ｫ繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
         self._set_source_selection(replace(self._source_selection, video=str(video.resolve())))
 
     @Slot()
     def browseAudioFiles(self) -> None:
         if self._running:
-            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜈･蜉帙た繝ｼ繧ｹ繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         if self._source_selection.audio_files:
             start_dir = str(Path(self._source_selection.audio_files[0]).parent)
@@ -315,7 +325,7 @@ class EditBayBackend(QApplication):
             start_dir = str(self.workspace_root)
         paths, _ = QFileDialog.getOpenFileNames(
             None,
-            "話者音声ファイルを選択",
+            "隧ｱ閠・浹螢ｰ繝輔ぃ繧､繝ｫ繧帝∈謚・,
             start_dir,
             "Audio files (*.aac *.flac *.wav *.m4a);;All files (*)",
         )
@@ -325,7 +335,7 @@ class EditBayBackend(QApplication):
     @Slot("QVariantList", bool)
     def setAudioFiles(self, paths: list[Any], append: bool) -> None:
         if self._running:
-            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜈･蜉帙た繝ｼ繧ｹ繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         valid_files: list[str] = []
         for value in paths:
@@ -333,7 +343,7 @@ class EditBayBackend(QApplication):
             if audio.is_file() and audio.suffix.lower() in AUDIO_EXTENSIONS:
                 valid_files.append(str(audio.resolve()))
         if not valid_files:
-            self._set_status("対応する話者音声ファイルを指定してください", "CHECK")
+            self._set_status("蟇ｾ蠢懊☆繧玖ｩｱ閠・浹螢ｰ繝輔ぃ繧､繝ｫ繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
 
         existing = list(self._source_selection.audio_files) if append else []
@@ -346,7 +356,7 @@ class EditBayBackend(QApplication):
     @Slot("QVariantList")
     def importDroppedSourceFiles(self, values: list[Any]) -> None:
         if self._running:
-            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜈･蜉帙た繝ｼ繧ｹ繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
 
         video_files: list[str] = []
@@ -366,7 +376,7 @@ class EditBayBackend(QApplication):
                 ignored_count += 1
 
         if not video_files and not audio_files:
-            self._set_status("対応する動画または話者音声をドロップしてください", "CHECK")
+            self._set_status("蟇ｾ蠢懊☆繧句虚逕ｻ縺ｾ縺溘・隧ｱ閠・浹螢ｰ繧偵ラ繝ｭ繝・・縺励※縺上□縺輔＞", "CHECK")
             return
 
         if video_files:
@@ -378,15 +388,15 @@ class EditBayBackend(QApplication):
         if skipped_videos or ignored_count:
             details: list[str] = []
             if skipped_videos:
-                details.append(f"追加の動画{skipped_videos}件")
+                details.append(f"霑ｽ蜉縺ｮ蜍慕判{skipped_videos}莉ｶ")
             if ignored_count:
-                details.append(f"未対応ファイル{ignored_count}件")
-            self._set_status(f"{'、'.join(details)}を無視し、対応する素材を追加しました", "CHECK")
+                details.append(f"譛ｪ蟇ｾ蠢懊ヵ繧｡繧､繝ｫ{ignored_count}莉ｶ")
+            self._set_status(f"{'縲・.join(details)}繧堤┌隕悶＠縲∝ｯｾ蠢懊☆繧狗ｴ譚舌ｒ霑ｽ蜉縺励∪縺励◆", "CHECK")
 
     @Slot(int)
     def removeAudioFile(self, index: int) -> None:
         if self._running:
-            self._set_status("処理中は入力ソースを変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜈･蜉帙た繝ｼ繧ｹ繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         audio_files = list(self._source_selection.audio_files)
         if not 0 <= index < len(audio_files):
@@ -403,21 +413,21 @@ class EditBayBackend(QApplication):
     @Slot()
     def browseOutputDirectory(self) -> None:
         if self._running:
-            self._set_status("処理中は出力先を変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜃ｺ蜉帛・繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         start_dir = self._source_selection.output_dir or str(self.workspace_root)
-        folder = QFileDialog.getExistingDirectory(None, "出力先を選択", start_dir)
+        folder = QFileDialog.getExistingDirectory(None, "蜃ｺ蜉帛・繧帝∈謚・, start_dir)
         if folder:
             self.setOutputDirectory(folder)
 
     @Slot(str)
     def setOutputDirectory(self, path: str) -> None:
         if self._running:
-            self._set_status("処理中は出力先を変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜃ｺ蜉帛・繧貞､画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         output = self._local_path(path)
         if not output.is_dir():
-            self._set_status("存在する出力フォルダを指定してください", "CHECK")
+            self._set_status("蟄伜惠縺吶ｋ蜃ｺ蜉帙ヵ繧ｩ繝ｫ繝繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
         self._set_source_selection(replace(self._source_selection, output_dir=str(output.resolve())))
 
@@ -452,35 +462,35 @@ class EditBayBackend(QApplication):
                 color=normalized,
             )
         except (OSError, ValueError, TypeError) as error:
-            self._set_status(f"話者色を保存できません: {error}", "ERROR")
+            self._set_status(f"隧ｱ閠・牡繧剃ｿ晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
             return
         updated = {**speaker, "color": normalized}
         self._speakers[index] = updated
         self.speakersChanged.emit()
         self._source_speaker_color_updated(updated)
-        self._set_status(f"{updated.get('name', '話者')} の字幕色を保存しました", "SAVED")
+        self._set_status(f"{updated.get('name', '隧ｱ閠・)} 縺ｮ蟄怜ｹ戊牡繧剃ｿ晏ｭ倥＠縺ｾ縺励◆", "SAVED")
 
     @Slot(str, str, float)
     def analyzeAlignment(self, reference_audio: str, reference_track: str, adjustment: float) -> None:
         if self._running:
-            self._set_status("処理中は同期解析を開始できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ蜷梧悄隗｣譫舌ｒ髢句ｧ九〒縺阪∪縺帙ｓ", "BUSY")
             return
         if self._alignment_busy:
             return
         self.refreshDependencies()
         if not self._dependencies.ffmpeg or not self._dependencies.ffprobe:
-            self._set_status("同期解析にはffmpegとffprobeが必要です", "SETUP")
+            self._set_status("蜷梧悄隗｣譫舌↓縺ｯffmpeg縺ｨffprobe縺悟ｿ・ｦ√〒縺・, "SETUP")
             return
         video = self._source_selection.video
         if not Path(video).is_file() or not Path(reference_audio).is_file():
-            self._set_status("同期解析には動画と基準音声が必要です", "CHECK")
+            self._set_status("蜷梧悄隗｣譫舌↓縺ｯ蜍慕判縺ｨ蝓ｺ貅夜浹螢ｰ縺悟ｿ・ｦ√〒縺・, "CHECK")
             return
 
         self._alignment_busy = True
-        self._alignment_result = self._empty_alignment_result("解析中")
+        self._alignment_result = self._empty_alignment_result("隗｣譫蝉ｸｭ")
         self._alignment_result["adjustment"] = float(adjustment)
         self.alignmentChanged.emit()
-        self._set_status("基準音声と動画トラックを同期解析しています", "ALIGN")
+        self._set_status("蝓ｺ貅夜浹螢ｰ縺ｨ蜍慕判繝医Λ繝・け繧貞酔譛溯ｧ｣譫舌＠縺ｦ縺・∪縺・, "ALIGN")
         future = self._alignment_executor.submit(
             self._calculate_alignment,
             video,
@@ -504,7 +514,7 @@ class EditBayBackend(QApplication):
             DEFAULT_ALIGNMENT_SAMPLE_RATE,
         )
         return {
-            "status": "解析完了",
+            "status": "隗｣譫仙ｮ御ｺ・,
             "track": matched_track,
             "detected_offset": detected_offset,
             "adjustment": adjustment,
@@ -526,32 +536,62 @@ class EditBayBackend(QApplication):
         if self._running or self._stage == "ERROR":
             return
         self._set_status(
-            f"同期完了: {result['track']} / offset {float(result['offset']):+.3f}s",
+            f"蜷梧悄螳御ｺ・ {result['track']} / offset {float(result['offset']):+.3f}s",
             "READY",
         )
 
     @Slot(str)
     def _apply_alignment_error(self, message: str) -> None:
         self._alignment_busy = False
-        self._alignment_result = self._empty_alignment_result("解析失敗")
+        self._alignment_result = self._empty_alignment_result("隗｣譫仙､ｱ謨・)
         self._alignment_result["error"] = message
         self.alignmentChanged.emit()
         if self._running or self._stage == "ERROR":
             return
-        self._set_status(f"同期解析に失敗しました: {message}", "ERROR")
+        self._set_status(f"蜷梧悄隗｣譫舌↓螟ｱ謨励＠縺ｾ縺励◆: {message}", "ERROR")
 
     @Slot("QVariantMap")
     def setTranscriptionContext(self, context: dict[str, Any]) -> None:
         if self._running:
-            self._set_status("処理中は文字起こし辞書設定を変更できません", "BUSY")
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ譁・ｭ苓ｵｷ縺薙＠霎樊嶌險ｭ螳壹ｒ螟画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
             return
         try:
             self._transcription_context = self._normalized_gui_transcription_context(context)
         except (TypeError, ValueError) as error:
-            self._set_status(f"文字起こし辞書設定を更新できません: {error}", "ERROR")
+            self._set_status(f"譁・ｭ苓ｵｷ縺薙＠霎樊嶌險ｭ螳壹ｒ譖ｴ譁ｰ縺ｧ縺阪∪縺帙ｓ: {error}", "ERROR")
             return
         self.transcriptionContextChanged.emit()
-        self._set_status("文字起こし辞書設定を更新しました", "SAVED")
+        self._set_status("譁・ｭ苓ｵｷ縺薙＠霎樊嶌險ｭ螳壹ｒ譖ｴ譁ｰ縺励∪縺励◆", "SAVED")
+
+    @Slot("QVariantMap")
+    def refreshWebDictionaryCandidates(self, context: dict[str, Any]) -> None:
+        if self._running:
+            self._set_status("蜃ｦ逅・ｸｭ縺ｯ譁・ｭ苓ｵｷ縺薙＠霎樊嶌險ｭ螳壹ｒ螟画峩縺ｧ縺阪∪縺帙ｓ", "BUSY")
+            return
+        try:
+            runtime_context = gui_state_to_transcription_context(context)
+        except (TypeError, ValueError) as error:
+            self._set_status(f"Web候補を再読込できませんでした: {error}", "ERROR")
+            return
+
+        provider = HeuristicWebDictionaryProvider(max_snippets=3)
+        candidate_records = provider.build_candidate_records(
+            runtime_context["game_title"],
+            runtime_context["game_notes"],
+            max_terms=40,
+        )
+        candidate_metadata = [record.to_dict() for record in candidate_records]
+        candidate_terms = [record["term"] for record in candidate_metadata]
+        selected_lookup = {str(term).casefold() for term in runtime_context["web_dictionary_terms"]}
+        selected_terms = [term for term in candidate_terms if term.casefold() in selected_lookup]
+
+        refreshed = dict(runtime_context)
+        refreshed["web_dictionary_candidates"] = candidate_terms
+        refreshed["web_dictionary_terms"] = selected_terms
+        refreshed["web_dictionary_candidate_metadata"] = candidate_metadata
+        self._transcription_context = self._normalized_gui_transcription_context(refreshed)
+        self.transcriptionContextChanged.emit()
+        self._set_status("Web候補を再読込しました", "READY")
 
     @Slot("QVariantMap")
     def saveSettings(self, settings: dict[str, Any]) -> None:
@@ -563,7 +603,7 @@ class EditBayBackend(QApplication):
                     incoming_context
                 )
             except (TypeError, ValueError) as error:
-                self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
+                self._set_status(f"譁・ｭ苓ｵｷ縺薙＠霎樊嶌險ｭ螳壹ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
                 return
             self.transcriptionContextChanged.emit()
 
@@ -573,7 +613,7 @@ class EditBayBackend(QApplication):
         try:
             transcription_context = gui_state_to_transcription_context(self._transcription_context)
         except (TypeError, ValueError) as error:
-            self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
+            self._set_status(f"譁・ｭ苓ｵｷ縺薙＠霎樊嶌險ｭ螳壹ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ: {error}", "ERROR")
             return
         payload = build_gui_runtime_config(
             self._base_config,
@@ -584,7 +624,7 @@ class EditBayBackend(QApplication):
         write_gui_runtime_config(self.gui_config_path, payload)
         self._config = payload
         self.settingsChanged.emit()
-        self._set_status("GUI設定を保存しました", "SAVED")
+        self._set_status("GUI險ｭ螳壹ｒ菫晏ｭ倥＠縺ｾ縺励◆", "SAVED")
 
     @Slot("QVariantMap")
     def startProcessing(self, settings: dict[str, Any]) -> None:
@@ -594,19 +634,19 @@ class EditBayBackend(QApplication):
         self.refreshDependencies()
         if not self._dependencies.ready:
             missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
+            self._set_status(f"螳溯｡後〒縺阪∪縺帙ｓ縲ゅう繝ｳ繧ｹ繝医・繝ｫ縺悟ｿ・ｦ√〒縺・ {missing}", "SETUP")
             return
 
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
-        if not Path(selection.video).is_file() or not audio_files:
-            self._set_status("動画と1つ以上の話者音声を指定してください", "CHECK")
+        if not Path(selection.video).is_file() or not self._has_audio_source(audio_files):
+            self._set_status("蜍慕判縺ｨ1縺､莉･荳翫・隧ｱ閠・浹螢ｰ繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
         if not selection.output_dir:
-            self._set_status("出力先を指定してください", "CHECK")
+            self._set_status("蜃ｺ蜉帛・繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
 
-        reference_audio = str(settings.get("reference_audio") or audio_files[0])
+        reference_audio = str(settings.get("reference_audio") or "")
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
         self.saveSettings(settings)
@@ -626,7 +666,7 @@ class EditBayBackend(QApplication):
         self._elapsed_seconds = 0
         self._cancel_requested = False
         self.elapsedChanged.emit()
-        self._set_status("パイプラインを起動しています", "STARTING")
+        self._set_status("繝代う繝励Λ繧､繝ｳ繧定ｵｷ蜍輔＠縺ｦ縺・∪縺・, "STARTING")
 
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUTF8", "1")
@@ -640,7 +680,7 @@ class EditBayBackend(QApplication):
         if not self._running:
             return
         self._cancel_requested = True
-        self._set_status("停止を要求しています", "STOPPING")
+        self._set_status("蛛懈ｭ｢繧定ｦ∵ｱゅ＠縺ｦ縺・∪縺・, "STOPPING")
         if os.name == "nt" and self.process.processId():
             subprocess.run(
                 ["taskkill", "/PID", str(self.process.processId()), "/T"],
@@ -667,22 +707,22 @@ class EditBayBackend(QApplication):
     @Slot()
     def openOutputFolder(self) -> None:
         if not self._source_selection.output_dir:
-            self._set_status("先に出力先フォルダを指定してください", "CHECK")
+            self._set_status("蜈医↓蜃ｺ蜉帛・繝輔か繝ｫ繝繧呈欠螳壹＠縺ｦ縺上□縺輔＞", "CHECK")
             return
         output = Path(self._source_selection.output_dir)
         try:
             output.mkdir(parents=True, exist_ok=True)
         except OSError as error:
-            self._set_status(f"出力先フォルダを準備できません: {error}", "ERROR")
+            self._set_status(f"蜃ｺ蜉帛・繝輔か繝ｫ繝繧呈ｺ門ｙ縺ｧ縺阪∪縺帙ｓ: {error}", "ERROR")
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(output))):
-            self._set_status("出力先フォルダを開けませんでした", "ERROR")
+            self._set_status("蜃ｺ蜉帛・繝輔か繝ｫ繝繧帝幕縺代∪縺帙ｓ縺ｧ縺励◆", "ERROR")
 
     def _process_started(self) -> None:
         self._running = True
         self.runningChanged.emit()
         self.elapsed_timer.start()
-        self._set_status("音声と映像を解析しています", "ALIGN")
+        self._set_status("髻ｳ螢ｰ縺ｨ譏蜒上ｒ隗｣譫舌＠縺ｦ縺・∪縺・, "ALIGN")
 
     def _read_process_output(self) -> None:
         data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
@@ -695,14 +735,14 @@ class EditBayBackend(QApplication):
 
     def _update_stage(self, output: str) -> None:
         markers = [
-            ("Resolving alignment", "ALIGN", "基準音声を同期しています", 0.08),
-            ("Starting WhisperX", "WHISPERX", "GPUで文字起こししています", 0.22),
-            ("CPU postprocess", "LAYOUT", "字幕を整形しています", 0.58),
-            ("Refining merged", "LAYOUT", "字幕ページを組み立てています", 0.66),
-            ("Writing ASS", "ASS", "字幕スタイルを書き出しています", 0.72),
-            ("Detecting speech", "SPEECH", "発話区間を検出しています", 0.78),
-            ("Rendering subtitles", "ENCODE", "字幕を焼き込みながら出力しています", 0.84),
-            ("Burning subtitles", "ENCODE", "字幕を焼き込みながら出力しています", 0.84),
+            ("Resolving alignment", "ALIGN", "蝓ｺ貅夜浹螢ｰ繧貞酔譛溘＠縺ｦ縺・∪縺・, 0.08),
+            ("Starting WhisperX", "WHISPERX", "GPU縺ｧ譁・ｭ苓ｵｷ縺薙＠縺励※縺・∪縺・, 0.22),
+            ("CPU postprocess", "LAYOUT", "蟄怜ｹ輔ｒ謨ｴ蠖｢縺励※縺・∪縺・, 0.58),
+            ("Refining merged", "LAYOUT", "蟄怜ｹ輔・繝ｼ繧ｸ繧堤ｵ・∩遶九※縺ｦ縺・∪縺・, 0.66),
+            ("Writing ASS", "ASS", "蟄怜ｹ輔せ繧ｿ繧､繝ｫ繧呈嶌縺榊・縺励※縺・∪縺・, 0.72),
+            ("Detecting speech", "SPEECH", "逋ｺ隧ｱ蛹ｺ髢薙ｒ讀懷・縺励※縺・∪縺・, 0.78),
+            ("Rendering subtitles", "ENCODE", "蟄怜ｹ輔ｒ辟ｼ縺崎ｾｼ縺ｿ縺ｪ縺後ｉ蜃ｺ蜉帙＠縺ｦ縺・∪縺・, 0.84),
+            ("Burning subtitles", "ENCODE", "蟄怜ｹ輔ｒ辟ｼ縺崎ｾｼ縺ｿ縺ｪ縺後ｉ蜃ｺ蜉帙＠縺ｦ縺・∪縺・, 0.84),
         ]
         for marker, stage, status, progress in markers:
             if marker in output:
@@ -715,13 +755,13 @@ class EditBayBackend(QApplication):
         self._running = False
         self.runningChanged.emit()
         if self._cancel_requested:
-            self._set_status("処理を停止しました", "CANCELLED")
+            self._set_status("蜃ｦ逅・ｒ蛛懈ｭ｢縺励∪縺励◆", "CANCELLED")
         elif exit_code == 0:
             self._progress = 1.0
             self.progressChanged.emit()
-            self._set_status("動画の生成が完了しました", "COMPLETE")
+            self._set_status("蜍慕判縺ｮ逕滓・縺悟ｮ御ｺ・＠縺ｾ縺励◆", "COMPLETE")
         else:
-            self._set_status(f"処理が終了しました（終了コード {exit_code}）", "ERROR")
+            self._set_status(f"蜃ｦ逅・′邨ゆｺ・＠縺ｾ縺励◆・育ｵゆｺ・さ繝ｼ繝・{exit_code}・・, "ERROR")
 
     def _process_error(self, _error: QProcess.ProcessError) -> None:
         if not self._running and self.process.state() == QProcess.ProcessState.NotRunning:
@@ -754,3 +794,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

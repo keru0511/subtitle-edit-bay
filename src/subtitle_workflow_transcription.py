@@ -44,6 +44,7 @@ from .subtitle_project import (
     save_project,
 )
 from .transcribe import probe_audio_streams
+from .transcribe import build_extract_audio_command
 from .transcription_context import TranscriptionContext, transcription_context_from_mapping
 from .transcription_hint_plan import TranscriptionAsrSettings
 from .transcription_hint_workflow import build_craig_hint_plan_from_context
@@ -60,8 +61,41 @@ def _context_has_active_hint_inputs(context: TranscriptionContext) -> bool:
         context.game_title
         or context.game_notes
         or context.creator_terms
+        or (context.web_dictionary_enabled and context.web_dictionary_terms)
         or (context.dictionary_confirmed and context.dictionary_path)
     )
+
+
+def _select_reference_track(video_path: str, reference_track: str | None) -> str:
+    streams = probe_audio_streams(video_path)
+    if not streams:
+        raise SystemExit("No audio tracks found in the video for alignment.")
+    selectors = [f"0:a:{index}" for index in range(len(streams))]
+    if reference_track:
+        if reference_track not in selectors:
+            raise SystemExit(f"No such audio track in video: {reference_track}")
+        return reference_track
+    return selectors[0]
+
+
+def _video_reference_audio_path(video_path: str, output_dir: Path, track_selector: str) -> Path:
+    media_stem = Path(video_path).stem
+    safe_track = track_selector.replace(":", "_")
+    return output_dir / "transcripts" / f"{media_stem}.1-video-{safe_track}.wav"
+
+
+def _extract_video_reference_audio(
+    video_path: str,
+    output_dir: Path,
+    track_selector: str,
+) -> Path:
+    output_path = _video_reference_audio_path(video_path, output_dir, track_selector)
+    if output_path.exists():
+        return output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    extract_command = build_extract_audio_command(video_path, str(output_path), track_selector)
+    subprocess.run(extract_command, check=True)
+    return output_path
 
 
 def _project_speakers(
@@ -214,6 +248,7 @@ def transcribe_to_project_with_context(
     audio_files: list[str],
     output_dir: str,
     reference_audio: str | None = None,
+    video_audio_track: str | None = None,
     reference_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
     alignment_sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE,
@@ -246,14 +281,18 @@ def transcribe_to_project_with_context(
     context = transcription_context_from_mapping(transcription_context) if not isinstance(transcription_context, TranscriptionContext) else transcription_context
     context_payload = context.to_dict()
     resolved_audio = resolve_craig_audio_files(None, audio_files)
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
     if not resolved_audio:
-        raise SystemExit("No Craig speaker audio files were selected.")
+        extracted_track = _select_reference_track(video_path, video_audio_track or reference_track)
+        alignment_reference_track = _select_reference_track(video_path, reference_track) if reference_track else extracted_track
+        resolved_audio = [_extract_video_reference_audio(video_path, output, extracted_track)]
+    else:
+        alignment_reference_track = reference_track
     reference_path = resolve_reference_audio_path(resolved_audio, reference_audio)
     if reference_path is None:
         reference_path = resolved_audio[0]
 
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
     project_path = derive_project_path(video_path, output)
     if project_path.exists() and not overwrite_project:
         raise SystemExit(
@@ -268,7 +307,7 @@ def transcribe_to_project_with_context(
     matched_track, offset_seconds, score = resolve_alignment(
         video_path,
         str(reference_path),
-        reference_track,
+        alignment_reference_track,
         alignment_sample_rate,
     )
     offset_seconds += alignment_offset_adjustment

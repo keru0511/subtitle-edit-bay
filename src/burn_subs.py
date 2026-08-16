@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
+import shutil
+import tempfile
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
+from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 DEFAULT_VIDEO_CODEC = "libx264"
@@ -12,43 +14,28 @@ DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
-NVENC_ERROR_HINTS = (
-    "driver does not support the required nvenc api version",
-    "could not open encoder",
-    "function not implemented",
-    "unknown encoder",
-)
 
 
-def _is_nvenc_fallback_candidate(stderr: str | None, stdout: str | None) -> bool:
-    combined = " ".join(part for part in (stderr, stdout) if part).lower()
-    if not combined:
-        return False
-    return any(hint in combined for hint in NVENC_ERROR_HINTS)
+def _as_escaped_ass_input(subtitle: str) -> tuple[str, str | None]:
+    subtitle_path = Path(subtitle)
+    if "'" not in str(subtitle_path):
+        return str(subtitle_path), None
+
+    handle = tempfile.NamedTemporaryFile(suffix=".ass", prefix="subtitle-workflow-ass-", delete=False)
+    handle.close()
+    safe_path = Path(handle.name)
+    shutil.copy2(subtitle_path, safe_path)
+    return str(safe_path), str(safe_path)
 
 
-def _run_ffmpeg_command(command: list[str]) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode,
-            command,
-            output=result.stdout,
-            stderr=result.stderr,
-        )
-    return result
+def build_ass_filter_path_with_cleanup(subtitle: str) -> tuple[str, str | None]:
+    subtitle_path, cleanup_path = _as_escaped_ass_input(subtitle)
+    return build_ass_filter(subtitle_path), cleanup_path
 
 
 def build_ass_filter(subtitle: str) -> str:
     subtitle_path = subtitle.replace("\\", "/").replace(":", r"\:")
+    subtitle_path = subtitle_path.replace("'", r"\\\'")
     return f"ass='{subtitle_path}'"
 
 
@@ -86,6 +73,10 @@ def build_ffmpeg_command(
             audio_codec = "aac"
     elif audio_filter:
         command.extend(["-af", audio_filter, "-ar", DEFAULT_FILTERED_AUDIO_RATE])
+    if Path(output).suffix.lower() in {".mp4", ".m4v", ".mov"}:
+        if audio_codec == "copy":
+            audio_codec = "aac"
+        command.extend(["-movflags", "+faststart"])
     command.extend(["-c:a", audio_codec, output])
     return command
 
@@ -104,48 +95,33 @@ def run_ffmpeg_burn(
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
 ) -> Path:
-    output_path = Path(output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = build_ffmpeg_command(
-        video,
-        subtitle,
-        output,
-        video_codec=video_codec,
-        audio_codec=audio_codec,
-        nvenc_preset=nvenc_preset,
-        nvenc_cq=nvenc_cq,
-        x264_crf=x264_crf,
-        audio_filter=audio_filter,
-        audio_track=audio_track,
-        audio_mix=audio_mix,
-        audio_offset_seconds=audio_offset_seconds,
-    )
+    subtitle_for_filter, cleanup_path = build_ass_filter_path_with_cleanup(subtitle)
+
+    def command_builder(selected_codec: str, command_output: str) -> list[str]:
+        return build_ffmpeg_command(
+            video,
+            subtitle_for_filter,
+            command_output,
+            video_codec=selected_codec,
+            audio_codec=audio_codec,
+            nvenc_preset=nvenc_preset,
+            nvenc_cq=nvenc_cq,
+            x264_crf=x264_crf,
+            audio_filter=audio_filter,
+            audio_track=audio_track,
+            audio_mix=audio_mix,
+            audio_offset_seconds=audio_offset_seconds,
+        )
+
     try:
-        _run_ffmpeg_command(command)
-    except subprocess.CalledProcessError as error:
-        if video_codec.endswith("_nvenc") and _is_nvenc_fallback_candidate(error.stderr, error.output):
-            fallback_command = build_ffmpeg_command(
-                video,
-                subtitle,
-                output,
-                video_codec="libx264",
-                audio_codec=audio_codec,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=audio_filter,
-                audio_track=audio_track,
-                audio_mix=audio_mix,
-                audio_offset_seconds=audio_offset_seconds,
-            )
-            print(
-                f"[subtitle_workflow] Requested NVENC failed ({error.returncode}); "
-                "retrying with libx264 for compatibility.",
-            )
-            _run_ffmpeg_command(fallback_command)
-        else:
-            raise
-    return output_path
+        return run_atomic_ffmpeg_export(
+            command_builder,
+            output,
+            video_codec=video_codec,
+        )
+    finally:
+        if cleanup_path is not None:
+            Path(cleanup_path).unlink(missing_ok=True)
 
 
 def main() -> None:

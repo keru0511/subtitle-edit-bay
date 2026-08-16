@@ -47,6 +47,42 @@ class SubtitleWorkflowContextCliTests(unittest.TestCase):
         self.assertEqual(transcribe.call_args.kwargs["audio_files"], ["1-alice.flac"])
         self.assertEqual(transcribe.call_args.kwargs["device"], "cpu")
 
+    def test_transcribe_phase_accepts_video_audio_track_without_audio_files(self) -> None:
+        import src.subtitle_workflow as subtitle_workflow
+
+        with TemporaryDirectory() as temp_dir:
+            argv = [
+                "subtitle_workflow",
+                "transcribe",
+                "--video",
+                "video.mkv",
+                "--output-dir",
+                temp_dir,
+                "--video-audio-track",
+                "0:a:1",
+                "--run",
+            ]
+
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch("src.subtitle_workflow.load_command_runtime_config", return_value={}),
+                mock.patch("src.subtitle_workflow.settings_from_config", return_value=object()),
+                mock.patch("src.subtitle_workflow.transcribe_runtime_options", return_value={"device": "cpu"}),
+                mock.patch("src.subtitle_workflow.check_runtime_dependencies", return_value=object()),
+                mock.patch("src.subtitle_workflow.format_dependency_error", return_value=None),
+                mock.patch("src.subtitle_workflow.parse_track_color_args", return_value={}),
+                mock.patch("src.subtitle_workflow.configured_render_settings", return_value={}),
+                mock.patch(
+                    "src.subtitle_workflow.transcribe_to_project_with_context",
+                    return_value=Path(temp_dir) / "video.editbay.json",
+                ) as transcribe,
+            ):
+                subtitle_workflow.main()
+
+        self.assertEqual(transcribe.call_args.kwargs["video_path"], "video.mkv")
+        self.assertEqual(transcribe.call_args.kwargs["audio_files"], [])
+        self.assertEqual(transcribe.call_args.kwargs["video_audio_track"], "0:a:1")
+
     def test_transcribe_plan_mode_does_not_require_context_file(self) -> None:
         import src.subtitle_workflow as subtitle_workflow
 

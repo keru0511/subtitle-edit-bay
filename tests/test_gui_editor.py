@@ -80,6 +80,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._alignment_busy = False
         app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=True)
         app._settings = deepcopy(self._base_settings)
+        app._relinking_project_sources = False
         app._running = False
         app._status = "動画・話者音声・出力先を指定してください"
         app._stage = "READY"
@@ -442,7 +443,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             entry.output_path.unlink()
         self.app._audio_preview_cache_paths.clear()
 
-        def fake_prepare(_project, _cache_root):
+        def fake_prepare(_project, _cache_root, **_kwargs):
             paths: dict[str, str] = {}
             for entry in entries:
                 entry.output_path.write_bytes(b"prepared-audio")
@@ -878,6 +879,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.assertEqual(caption.property("font").pixelSize(), 44)
 
+    def test_loading_project_with_zero_subtitle_timing_and_alignment_settings_keeps_zero_values(self) -> None:
+        path, _, _ = self._make_project()
+        project = load_project(path)
+        project["subtitle_settings"] = {
+            "max_gap_seconds": 0,
+            "end_padding_seconds": 0,
+            "min_duration_seconds": 0,
+        }
+        save_project(path, project)
+
+        self.app._settings["audio_target_lufs"] = 0
+        self.app._settings["no_speech_min_seconds"] = 0
+        self.app._settings["speech_padding_seconds"] = 0
+        self.app._settings["alignment_offset_adjustment"] = 0
+
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        _, window = self._load_qml()
+        self.assertEqual(self.app.settings["subtitle_max_gap_seconds"], 0)
+        self.assertEqual(self.app.settings["subtitle_end_padding_seconds"], 0)
+        self.assertEqual(self.app.settings["subtitle_min_duration_seconds"], 0)
+        self.assertEqual(self.app.settings["audio_target_lufs"], 0)
+        self.assertEqual(self.app.settings["no_speech_min_seconds"], 0)
+        self.assertEqual(self.app.settings["speech_padding_seconds"], 0)
+        self.assertEqual(self.app.settings["alignment_offset_adjustment"], 0)
+
+        self.assertEqual(self._quick_item(window, "gapField").property("text"), "0.00")
+        self.assertEqual(self._quick_item(window, "paddingField").property("text"), "0.00")
+        self.assertEqual(self._quick_item(window, "minDurationField").property("text"), "0.00")
+        self.assertEqual(self._quick_item(window, "lufsField").property("text"), "0")
+        self.assertEqual(self._quick_item(window, "silenceField").property("text"), "0.0")
+        self.assertEqual(self._quick_item(window, "speechPaddingField").property("text"), "0.00")
+        self.assertEqual(self._quick_item(window, "manualOffsetField").property("text"), "0.000")
+
     def test_preview_updates_project_settings_and_ass_path(self) -> None:
         path = self._load_project()
         ass_path = self.root / "game.edited.ass"
@@ -954,6 +989,35 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(render_job, "render")
         self.assertIn("render", render_command)
         self.assertNotIn("--audio-file", render_command)
+
+    def test_transcription_starts_without_external_audio_when_video_track_is_available(self) -> None:
+        video = self.root / "game.mkv"
+        video.write_bytes(b"video")
+        output = self.root / "export"
+        output.mkdir(exist_ok=True)
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+            self.app.setOutputDirectory(str(output))
+
+        self.app._speakers = []
+        self.app._audio_tracks = [
+            {"selector": "", "label": "No tracks"},
+            {"selector": "0:a:0", "label": "0:a:0 (aac / 2ch)"},
+        ]
+        self.app.speakersChanged.emit()
+        self.app.audioTracksChanged.emit()
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "saveSettings"),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self.app.startTranscription(self.app.settings)
+
+        transcribe_command, transcribe_job, _ = start.call_args.args
+        self.assertEqual(transcribe_job, "transcribe")
+        self.assertIn("transcribe", transcribe_command)
+        self.assertNotIn("--audio-file", transcribe_command)
 
     def test_render_automatically_selects_the_available_video_encoder(self) -> None:
         self._load_project()
@@ -1048,6 +1112,58 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.projectLoaded)
         self.assertEqual(self.app.sourceSelection["video"], "")
 
+    def test_relinking_source_selection_updates_existing_project(self) -> None:
+        path, _, _ = self._make_project()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        relocated = self.root / "relinked"
+        relocated.mkdir()
+        original_project = load_project(path)
+        old_video = Path(original_project["video"]["path"])
+        old_audio = Path(original_project["audio_sources"][0]["path"])
+        new_video = relocated / old_video.name
+        new_audio = relocated / old_audio.name
+        new_output = relocated / "output"
+        new_output.mkdir()
+        new_video.write_bytes(b"video")
+        new_audio.write_bytes(b"audio")
+
+        self.app.beginSourceRelink()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(new_video))
+            self.app.setAudioFiles([str(new_audio)], False)
+            self.app.setOutputDirectory(str(new_output))
+        self.app.relinkProjectSources()
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertTrue(self.app.projectDirty)
+        self.assertEqual(self.app._project["segments"], original_project["segments"])
+        self.assertEqual(self.app.sourceSelection["video"], str(new_video.resolve()))
+        self.assertEqual(self.app.sourceSelection["output_dir"], str(new_output.resolve()))
+        self.assertEqual(self.app._project["video"]["path"], str(new_video.resolve()))
+        self.assertEqual(self.app._project["output_dir"], str(new_output.resolve()))
+        self.assertEqual(
+            [item["path"] for item in self.app._project["audio_sources"]],
+            [str(new_audio.resolve())],
+        )
+        self.assertEqual(self.app.projectSpeakers[0]["path"], str(new_audio.resolve()))
+        self.assertEqual(self.app.projectSpeakers[0]["style"], original_project["speakers"][0]["style"])
+        self.assertEqual(self.app.projectSpeakers[0]["color"], original_project["speakers"][0]["color"])
+        self.assertEqual(self.app.projectSpeakers[0]["track_key"], original_project["speakers"][0]["track_key"])
+        self.app.finishSourceRelink()
+
+    def test_finish_source_relink_clears_relinking_state(self) -> None:
+        path, _, _ = self._make_project()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+
+        self.app.beginSourceRelink()
+        self.assertTrue(self.app._relinking_project_sources)
+        self.app.finishSourceRelink()
+        self.assertFalse(self.app._relinking_project_sources)
+        self.assertTrue(self.app.projectLoaded)
+
     def test_qml_workflow_state_matrix(self) -> None:
         _, window = self._load_qml()
         transcribe = self._quick_item(window, "transcribeButton")
@@ -1068,6 +1184,17 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(transcribe.isEnabled())
         self.assertFalse(reason.isVisible())
         self.assertTrue(output.isEnabled())
+
+        self.app._speakers = []
+        self.app._audio_tracks = [
+            {"selector": "", "label": "No tracks"},
+            {"selector": "0:a:0", "label": "0:a:0"},
+        ]
+        self.app.speakersChanged.emit()
+        self.app.audioTracksChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(transcribe.isEnabled())
+        self.assertFalse(reason.isVisible())
 
         self.app._source_selection = SourceSelection()
         self.app._speakers = []
@@ -1536,6 +1663,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         mixer_items = [
             channel_list,
+            self._quick_item(window, "mixerAudioPreviewCacheSummary"),
+            self._quick_item(window, "mixerClearAudioPreviewCacheButton"),
             self._quick_item(window, "mixerPlayButton"),
             self._quick_item(window, "mixerRewindButton"),
             self._quick_item(window, "mixerSeek"),

@@ -15,6 +15,11 @@ class TranscriptionContextPanelQmlTests(unittest.TestCase):
             'objectName: "transcriptionDictionaryPathField"',
             'objectName: "transcriptionDictionaryConfirmedSwitch"',
             'objectName: "transcriptionWebDictionarySwitch"',
+            'objectName: "transcriptionWebDictionaryRefreshButton"',
+            'objectName: "transcriptionWebDictionarySelectAllButton"',
+            'objectName: "transcriptionWebDictionarySelectNoneButton"',
+            'objectName: "transcriptionWebDictionaryCandidateList"',
+            'objectName: "transcriptionWebDictionaryCandidateItem"',
         ]
         for object_name in expected_object_names:
             with self.subTest(object_name=object_name):
@@ -28,6 +33,9 @@ class TranscriptionContextPanelQmlTests(unittest.TestCase):
             '"dictionary_path"',
             '"dictionary_confirmed"',
             '"web_dictionary_enabled"',
+            '"web_dictionary_candidates"',
+            '"web_dictionary_terms"',
+            '"web_dictionary_candidate_metadata"',
         ]
         self.assertIn("signal transcriptionContextEdited(var context)", self.qml)
         self.assertIn("function contextPayload()", self.qml)

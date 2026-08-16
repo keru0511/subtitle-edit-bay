@@ -32,7 +32,10 @@ DEFAULT_SPEAKER_STYLE = {
 }
 ROW_MARGIN_BASE = 34
 ROW_MARGIN_STEP = 156
+PREVIEW_PIXEL_FONT_SCALE = 22
+ROW_MARGIN_STEP_MULTIPLIER = 2.45
 _STYLE_TOKEN_RE = re.compile(r"[^0-9A-Za-z\u0080-\uFFFF]+")
+_STYLE_TOKEN_SAFE_RE = re.compile(r"^[0-9A-Za-z_]+$")
 
 
 def _style_token(value: str) -> str:
@@ -40,6 +43,34 @@ def _style_token(value: str) -> str:
     if not token:
         token = hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:8]
     return token[:64] or "track"
+
+
+def _style_token_for_speaker(value: str) -> str:
+    raw = str(value).strip()
+    token = _STYLE_TOKEN_RE.sub("_", raw).strip("_")
+    if not token:
+        token = "item"
+    if _STYLE_TOKEN_SAFE_RE.fullmatch(token) and raw == token:
+        return token
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+    return f"{token[:48]}_{digest}"
+
+
+def sanitize_ass_text(value: object) -> str:
+    sanitized = str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    sanitized = sanitized.replace("{", "_").replace("}", "_").replace("\\", "_").replace(",", "_")
+    return "".join(char for char in sanitized if char >= " " and char != "\x7f")
+
+
+def _sanitize_ass_field(value: object) -> str:
+    return sanitize_ass_text(value)
+
+
+def resolve_row_margin_step(subtitle_font_size: int, max_font_scale: float) -> int:
+    normalized_scale = max(0.1, max_font_scale)
+    output_font_size = max(3, round(subtitle_font_size * normalized_scale))
+    preview_pixel_size = max(1, round(PREVIEW_PIXEL_FONT_SCALE * output_font_size / DEFAULT_SUBTITLE_FONT_SIZE))
+    return max(1, round(preview_pixel_size * ROW_MARGIN_STEP_MULTIPLIER))
 
 
 def _escape_ass_dialogue_text(text: str) -> str:
@@ -53,11 +84,13 @@ def _escape_ass_dialogue_text(text: str) -> str:
                 index += 1
                 continue
             next_char = text[index + 1]
-            if next_char in {"N", "n", "h", "H", "\\", "{", "}"}:
-                escaped.append(f"\\{next_char}")
-            else:
-                escaped.append("\\\\")
+            if next_char in {"N", "n", "h", "H", "{", "}", "\\"}:
+                escaped.append("\\")
                 escaped.append(next_char)
+                index += 2
+                continue
+            escaped.append("\\\\")
+            escaped.append(next_char)
             index += 2
             continue
         if char == "{":
@@ -97,7 +130,7 @@ def style_name_for_track(track: str) -> str:
 
 
 def style_name_for_speaker(speaker: str) -> str:
-    normalized = _style_token(speaker)
+    normalized = _style_token_for_speaker(speaker)
     return f"Speaker_{normalized}"
 
 
@@ -202,10 +235,11 @@ def render_dialogue(
     escaped_text = _escape_ass_dialogue_text(event.text)
     dialogue_text = f"{{{overrides}}}{escaped_text}" if overrides else escaped_text
     margin_v = ROW_MARGIN_BASE + max(0, event.layer) * row_margin_step
+    actor = sanitize_ass_text(event.speaker)
     return (
         "Dialogue: "
         f"{event.layer},{format_ass_time(event.start)},{format_ass_time(event.end)},"
-        f"{style},{event.speaker},0,0,{margin_v},,{dialogue_text}"
+        f"{style},{actor},0,0,{margin_v},,{dialogue_text}"
     )
 
 
@@ -232,9 +266,7 @@ def render_ass(
         (max(0.1, float(event.metadata.get("subtitle_font_scale", 1.0))) for event in events),
         default=1.0,
     )
-    row_margin_step = round(
-        ROW_MARGIN_STEP * max(1.0, subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * max_font_scale)
-    )
+    row_margin_step = resolve_row_margin_step(subtitle_font_size=subtitle_font_size, max_font_scale=max_font_scale)
     resolved_speaker_color_map = load_speaker_color_map() if speaker_color_map is None else speaker_color_map
     style_overrides = build_track_style_overrides(
         events,
@@ -292,3 +324,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

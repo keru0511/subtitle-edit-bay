@@ -1,25 +1,35 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 import numpy as np
 
 from src.craig_pipeline import (
+    CraigInputResolution,
+    RefineSegmentResult,
+    CraigTranscriptionBatch,
+    TranscriptionStageResult,
     build_craig_segments_for_transcript,
     build_speaker_style_map,
     calculate_segment_volume_levels,
     estimate_offset,
-    find_best_reference_track,
+    parse_craig_speaker_name,
+    refine_segment_stage,
+    resolve_alignment,
+    resolve_alignment_stage,
+    resolve_inputs_stage,
     list_craig_audio_files,
     merge_craig_transcripts,
     normalize_db_threshold,
-    parse_craig_speaker_name,
-    resolve_alignment,
+    find_best_reference_track,
     resolve_craig_audio_files,
     resolve_craig_target_paths,
     resolve_reference_audio_path,
     shift_segment,
     transcribe_audio_file,
     transcribe_craig_audio_files,
+    transcription_stage,
 )
 
 
@@ -369,9 +379,94 @@ class CraigPipelineTests(unittest.TestCase):
                     None,
                     input_root=str(root / "video_import"),
                     export_root=str(root / "video_export"),
-                )
+            )
 
             self.assertIn("Multiple video file", str(raised.exception))
+
+    def test_resolve_inputs_stage_raises_without_audio_files(self) -> None:
+        with self.assertRaises(SystemExit):
+            resolve_inputs_stage(
+                video_path="game.mkv",
+                audio_dir=None,
+                output_dir="out",
+                reference_audio_name=None,
+                selected_audio_files=None,
+            )
+
+    def test_resolve_inputs_stage_builds_output_dir_and_style_map(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            audio_dir = Path(temp_dir) / "audio"
+            audio_dir.mkdir()
+            (audio_dir / "1-speaker-a.flac").write_bytes(b"a")
+            (audio_dir / "2-speaker-b.aac").write_bytes(b"b")
+
+            result = resolve_inputs_stage(
+                video_path="game.mkv",
+                audio_dir=str(audio_dir),
+                output_dir=str(Path(temp_dir) / "output"),
+                reference_audio_name=None,
+                selected_audio_files=None,
+            )
+
+            self.assertIsInstance(result, CraigInputResolution)
+            self.assertTrue(result.output_dir.exists())
+            self.assertIsInstance(result.audio_files, tuple)
+            self.assertEqual(result.reference_audio.name, "1-speaker-a.flac")
+            self.assertEqual(result.style_map["speaker-a"], "Oz")
+            self.assertEqual(len(result.audio_files), 2)
+
+    def test_resolve_alignment_stage_adjusts_offset(self) -> None:
+        with mock.patch("src.craig_pipeline.resolve_alignment", return_value=("0:a:1", 1.0, 0.55)) as resolve_alignment_mock:
+            result = resolve_alignment_stage(
+                video_path="game.mkv",
+                reference_audio=Path("ref.flac"),
+                reference_track="0:a:1",
+                alignment_sample_rate=16000,
+                alignment_offset_adjustment=0.25,
+            )
+
+        self.assertEqual(result.matched_track, "0:a:1")
+        self.assertEqual(result.offset_seconds, 1.25)
+        self.assertEqual(result.alignment_score, 0.55)
+        resolve_alignment_mock.assert_called_once_with("game.mkv", "ref.flac", "0:a:1", 16000)
+
+    def test_transcription_stage_returns_batch(self) -> None:
+        fake_batch = CraigTranscriptionBatch({"a": "tmp.json"}, [{"speaker": "Oz", "text": "hello"}])
+        with mock.patch("src.craig_pipeline.transcribe_craig_audio_files", return_value=fake_batch) as transcribe:
+            result = transcription_stage(
+                audio_files=(Path("1-a.flac"),),
+                transcript_dir=Path("transcripts"),
+                style_map={"a": "Oz"},
+                offset_seconds=0.5,
+                model="large-v3",
+                device="cuda",
+                compute_type="float16",
+                language="ja",
+                vad_onset=0.25,
+                vad_offset=0.15,
+                skip_existing_transcripts=False,
+                postprocess_workers=4,
+                subtitle_font_size=36,
+                subtitle_volume_scale_percent=70,
+            )
+
+        self.assertEqual(result, TranscriptionStageResult({"a": "tmp.json"}, [{"speaker": "Oz", "text": "hello"}]))
+        transcribe.assert_called_once()
+
+    def test_refine_segment_stage_wraps_segment_lists(self) -> None:
+        result = refine_segment_stage(
+            segments=[{"start": 0.0, "end": 1.0, "text": "hello", "source_track": "craig:speaker-a", "speaker": "speaker-a"}],
+            subtitle_max_gap_seconds=0.75,
+            subtitle_end_padding_seconds=0.2,
+            subtitle_min_duration_seconds=0.1,
+        )
+
+        self.assertIsInstance(result, RefineSegmentResult)
+        self.assertIsInstance(result.merged["segments"], list)
+        self.assertIsInstance(result.filtered["segments"], list)
+        self.assertEqual(result.merged["segments"][0]["start"], 0.0)
+        if result.filtered["segments"]:
+            self.assertEqual(result.filtered["segments"][0]["start"], 0.0)
 
 
 if __name__ == "__main__":

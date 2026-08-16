@@ -56,6 +56,19 @@ class GuiStateCommandTests(unittest.TestCase):
         self.assertIn("src.craig_pipeline", command)
         self.assertNotIn("src.subtitle_workflow", command)
 
+    def test_transcribe_command_supports_video_audio_track(self) -> None:
+        command = build_gui_transcribe_command(
+            "runtime.json",
+            video="video.mkv",
+            audio_files=(),
+            video_audio_track="0:a:1",
+            output_dir="out",
+        )
+
+        self.assertIn("--video-audio-track", command)
+        self.assertIn("0:a:1", command)
+        self.assertNotIn("--audio-file", command)
+
 
 if __name__ == "__main__":
     unittest.main()

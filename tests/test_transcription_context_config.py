@@ -25,6 +25,9 @@ class TranscriptionContextConfigTests(unittest.TestCase):
                 "dictionary_path": None,
                 "dictionary_confirmed": False,
                 "web_dictionary_enabled": False,
+                "web_dictionary_candidates": [],
+                "web_dictionary_terms": [],
+                "web_dictionary_candidate_metadata": [],
             },
         )
 

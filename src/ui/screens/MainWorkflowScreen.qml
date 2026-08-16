@@ -1,4 +1,4 @@
-pragma ComponentBehavior: Bound
+﻿pragma ComponentBehavior: Bound
 import QtQuick
 import QtQml.Models
 import QtQuick.Controls
@@ -73,7 +73,7 @@ ApplicationWindow {
     ColorDialog {
         id: speakerColorDialog
         objectName: "speakerColorDialog"
-        title: "話者の字幕色を選択"
+        title: "隧ｱ閠・・蟄怜ｹ戊牡繧帝∈謚・
         onAccepted: {
             var colorValue = selectedColor.toString()
             if (root.colorTarget === "source")
@@ -92,7 +92,7 @@ ApplicationWindow {
     ColorDialog {
         id: outlineColorDialog
         objectName: "outlineColorDialog"
-        title: "字幕の縁取り色を選択"
+        title: "蟄怜ｹ輔・邵∝叙繧願牡繧帝∈謚・
         onAccepted: outlineColorButton.colorValue = selectedColor.toString()
     }
 
@@ -107,6 +107,17 @@ ApplicationWindow {
             return
         root.appBackend.importDroppedSourceFiles(drop.urls)
         drop.acceptProposedAction()
+    }
+
+    function _numericOrDefault(value, defaultValue) {
+        if (value === undefined || value === null) {
+            return defaultValue
+        }
+        var numeric = Number(value)
+        if (!isFinite(numeric)) {
+            return defaultValue
+        }
+        return numeric
     }
 
     function currentSettings() {
@@ -132,43 +143,58 @@ ApplicationWindow {
             "postprocess_workers": workersSpin.value,
             "reference_audio": root.appBackend.speakers.length > 0 ? referenceCombo.currentValue : "",
             "reference_track": root.appBackend.audioTracks.length > 0 ? trackCombo.currentValue : "",
-            "alignment_offset_adjustment": Number(manualOffsetField.text || 0)
+            "alignment_offset_adjustment": _numericOrDefault(manualOffsetField.text, 0)
         }
     }
 
     function syncSettings() {
         var value = root.appBackend.settings
-        qualitySpin.value = Number(value.nvenc_cq || 18)
-        fontSizeSpin.value = Math.round(Number(value.subtitle_font_size || root.defaultSubtitleFontSize) / root.defaultSubtitleFontSize * 100)
-        outlineColorButton.colorValue = String(value.subtitle_outline_color || "#000000")
+        qualitySpin.value = _numericOrDefault(value.nvenc_cq, 18)
+        fontSizeSpin.value = Math.round(_numericOrDefault(value.subtitle_font_size, root.defaultSubtitleFontSize) / root.defaultSubtitleFontSize * 100)
+        outlineColorButton.colorValue = String(
+            value.subtitle_outline_color === undefined || value.subtitle_outline_color === null
+                ? "#000000"
+                : value.subtitle_outline_color
+        )
         outlineThicknessSpin.value = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
         volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
-        gapField.text = Number(value.subtitle_max_gap_seconds || 0.1).toFixed(2)
-        paddingField.text = Number(value.subtitle_end_padding_seconds || 0.08).toFixed(2)
-        minDurationField.text = Number(value.subtitle_min_duration_seconds || 0.35).toFixed(2)
-        silenceField.text = Number(value.no_speech_min_seconds || 1.2).toFixed(1)
-        speechPaddingField.text = Number(value.speech_padding_seconds || 0.25).toFixed(2)
-        lufsField.text = Number(value.audio_target_lufs || -16).toFixed(0)
+        gapField.text = _numericOrDefault(value.subtitle_max_gap_seconds, 0.1).toFixed(2)
+        paddingField.text = _numericOrDefault(value.subtitle_end_padding_seconds, 0.08).toFixed(2)
+        minDurationField.text = _numericOrDefault(value.subtitle_min_duration_seconds, 0.35).toFixed(2)
+        silenceField.text = _numericOrDefault(value.no_speech_min_seconds, 1.2).toFixed(1)
+        speechPaddingField.text = _numericOrDefault(value.speech_padding_seconds, 0.25).toFixed(2)
+        lufsField.text = _numericOrDefault(value.audio_target_lufs, -16).toFixed(0)
         normalizeSwitch.checked = value.audio_normalize === undefined ? true : value.audio_normalize
         silenceSwitch.checked = Boolean(value.cut_no_speech)
         workersSpin.value = Number(value.postprocess_workers || 4)
         modelCombo.currentIndex = Math.max(0, modelCombo.find(value.model || "large-v3"))
         deviceCombo.currentIndex = Math.max(0, deviceCombo.find(value.device || "cuda"))
-        manualOffsetField.text = Number(value.alignment_offset_adjustment || 0).toFixed(3)
+        manualOffsetField.text = _numericOrDefault(value.alignment_offset_adjustment, 0).toFixed(3)
+    }
+    function hasReferenceableAudioTrack() {
+        for (var i = 0; i < root.appBackend.audioTracks.length; ++i) {
+            if (root.appBackend.audioTracks[i].selector)
+                return true;
+        }
+        return false;
+    }
+
+    function hasAudioSource() {
+        return root.appBackend.speakers.length > 0 || hasReferenceableAudioTrack();
     }
     function transcriptionBlockReason() {
         if (root.appBackend.running)
-            return "処理中です。完了または停止するまで入力と編集は変更できません"
+            return "蜃ｦ逅・ｸｭ縺ｧ縺吶ょｮ御ｺ・∪縺溘・蛛懈ｭ｢縺吶ｋ縺ｾ縺ｧ蜈･蜉帙→邱ｨ髮・・螟画峩縺ｧ縺阪∪縺帙ｓ"
         if (!root.appBackend.dependencyStatus.ready)
-            return "実行ツールが不足しています: " + root.appBackend.dependencyStatus.missing.join(", ")
+            return "螳溯｡後ヤ繝ｼ繝ｫ縺御ｸ崎ｶｳ縺励※縺・∪縺・ " + root.appBackend.dependencyStatus.missing.join(", ")
         if (deviceCombo.currentText === "cuda" && !root.appBackend.dependencyStatus.cuda)
-            return "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください"
+            return "CUDA迚・yTorch縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲Ｔetup.bat繧貞・螳溯｡後☆繧九°縲∝・逅・ョ繝舌う繧ｹ繧辰PU縺ｸ螟画峩縺励※縺上□縺輔＞"
         if (!root.appBackend.sourceSelection.video)
-            return "素材設定で動画を指定してください"
-        if (root.appBackend.speakers.length === 0)
-            return "素材設定で1つ以上の話者音声を指定してください"
+            return "邏譚占ｨｭ螳壹〒蜍慕判繧呈欠螳壹＠縺ｦ縺上□縺輔＞"
+        if (!hasAudioSource())
+            return "邏譚占ｨｭ螳壹〒1縺､莉･荳翫・隧ｱ閠・浹螢ｰ繧呈欠螳壹＠縺ｦ縺上□縺輔＞"
         if (!root.appBackend.sourceSelection.output_dir)
-            return "素材設定で出力先フォルダを指定してください"
+            return "邏譚占ｨｭ螳壹〒蜃ｺ蜉帛・繝輔か繝ｫ繝繧呈欠螳壹＠縺ｦ縺上□縺輔＞"
         if (root.appBackend.projectLoaded)
             return ""
         return ""
@@ -229,7 +255,7 @@ ApplicationWindow {
             return 4
         if (root.appBackend.projectLoaded)
             return 3
-        if (root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready)
+        if (root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && hasAudioSource() && root.appBackend.dependencyStatus.ready)
             return 2
         return 1
     }
@@ -386,7 +412,7 @@ ApplicationWindow {
             height: compactSpin.height
             color: compactSpin.down.pressed ? "#303B35" : "transparent"
             border.color: root.border
-            Text { anchors.centerIn: parent; text: "−"; color: root.textPrimary; font.pixelSize: 18 }
+            Text { anchors.centerIn: parent; text: "竏・; color: root.textPrimary; font.pixelSize: 18 }
         }
         background: Rectangle {
             radius: 6
@@ -422,6 +448,9 @@ ApplicationWindow {
             var normalizedScale = Math.max(0.1, Number(fontScale) || 1)
             var outputFontSize = Math.max(3, Math.round(overlayRoot.baseFontSize * normalizedScale))
             return Math.max(1, Math.round(22 * outputFontSize / root.defaultSubtitleFontSize))
+        }
+        function previewRowStep(fontScale) {
+            return Math.max(1, Math.round(overlayRoot.previewPixelSize(fontScale) * 2.45))
         }
 
         function outlineOffsets(thickness) {
@@ -473,7 +502,7 @@ ApplicationWindow {
                 width: Math.min(implicitWidth + 30, parent.width - 30)
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: 26 + Number(segmentData.layout_row || 0) * 54
+                anchors.bottomMargin: 26 + Number(segmentData.layout_row || 0) * overlayRoot.previewRowStep(segmentData.subtitle_font_scale)
                 text: root.subtitlePreviewText(segmentData)
                 color: root.speakerColor(segmentData.speaker || "")
                 font.family: segmentData.subtitle_font_family || "Yu Gothic UI"
@@ -906,7 +935,7 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 0
                 Text { text: "SUBTITLE EDIT BAY"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 18; font.weight: Font.Bold; font.letterSpacing: 1.5 }
-                Text { text: "素材  /  文字起こし  /  字幕・音量編集  /  書き出し"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
+                Text { text: "邏譚・ /  譁・ｭ苓ｵｷ縺薙＠  /  蟄怜ｹ輔・髻ｳ驥冗ｷｨ髮・ /  譖ｸ縺榊・縺・; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
             }
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 30; color: root.border }
             ColumnLayout {
@@ -914,18 +943,18 @@ ApplicationWindow {
                 spacing: 1
                 Text {
                     Layout.fillWidth: true
-                    text: root.appBackend.projectLoaded ? root.appBackend.projectName : "編集プロジェクト未作成"
+                    text: root.appBackend.projectLoaded ? root.appBackend.projectName : "邱ｨ髮・・繝ｭ繧ｸ繧ｧ繧ｯ繝域悴菴懈・"
                     color: root.appBackend.projectLoaded ? root.textPrimary : root.textMuted
                     font.family: "Yu Gothic UI"; font.pixelSize: 12; elide: Text.ElideMiddle
                 }
                 Text {
-                    text: root.appBackend.projectDirty ? "● 保存待ち" : (root.appBackend.projectLoaded ? "✓ 保存済み" : "文字起こし後に自動作成")
+                    text: root.appBackend.projectDirty ? "笳・菫晏ｭ伜ｾ・■" : (root.appBackend.projectLoaded ? "笨・菫晏ｭ俶ｸ医∩" : "譁・ｭ苓ｵｷ縺薙＠蠕後↓閾ｪ蜍穂ｽ懈・")
                     color: root.appBackend.projectDirty ? root.amber : root.textMuted
                     font.family: "Yu Gothic UI"; font.pixelSize: 9
                 }
             }
-            SmallButton { objectName: "projectOpenButton"; text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
-            SmallButton { objectName: "sourceSetupButton"; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
+            SmallButton { objectName: "projectOpenButton"; text: "繝励Ο繧ｸ繧ｧ繧ｯ繝医ｒ髢九￥"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
+            SmallButton { objectName: "sourceSetupButton"; text: "邏譚占ｨｭ螳・; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
             Rectangle { Layout.preferredWidth: 9; Layout.preferredHeight: 9; radius: 5; color: root.appBackend.running ? root.amber : root.acid }
         }
     }
@@ -947,13 +976,13 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 14
                 spacing: 10
-                PanelTitle { text: "素材と話者" }
+                PanelTitle { text: "邏譚舌→隧ｱ閠・ }
                 Rectangle {
                     Layout.fillWidth: true; Layout.preferredHeight: 70; radius: 9; color: root.raised; border.color: root.border
                     Column { anchors.fill: parent; anchors.margins: 10; spacing: 3
-                        Text { text: "動画"; color: root.textMuted; font.pixelSize: 9; font.family: "Yu Gothic UI" }
-                        Text { width: parent.width; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text { width: parent.width; text: root.appBackend.sourceSelection.output_dir || "出力先未選択"; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
+                        Text { text: "蜍慕判"; color: root.textMuted; font.pixelSize: 9; font.family: "Yu Gothic UI" }
+                        Text { width: parent.width; text: root.appBackend.sourceSelection.video || "譛ｪ驕ｸ謚・; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
+                        Text { width: parent.width; text: root.appBackend.sourceSelection.output_dir || "蜃ｺ蜉帛・譛ｪ驕ｸ謚・; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                     }
                 }
                 ListView {
@@ -975,26 +1004,26 @@ ApplicationWindow {
                                 contentItem: Rectangle { radius: 5; color: speakerSourceDelegate.modelData.color; border.color: root.textPrimary; border.width: 1 }
                                 background: Rectangle { radius: 6; color: "transparent"; border.color: sourceSpeakerColorButton.hovered ? root.acid : root.border }
                                 ToolTip.visible: hovered
-                                ToolTip.text: "字幕色を変更"
+                                ToolTip.text: "蟄怜ｹ戊牡繧貞､画峩"
                             }
                             ColumnLayout { Layout.fillWidth: true; spacing: 0
                                 Text { Layout.fillWidth: true; text: speakerSourceDelegate.modelData.name; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideRight }
                                 Text { Layout.fillWidth: true; text: speakerSourceDelegate.modelData.file_name; color: root.textMuted; font.pixelSize: 9; font.family: "Bahnschrift"; elide: Text.ElideMiddle }
                             }
-                            ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(speakerSourceDelegate.index) }
+                            ToolButton { text: "ﾃ・; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(speakerSourceDelegate.index) }
                         }
                     }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                PanelTitle { text: "音声同期" }
+                PanelTitle { text: "髻ｳ螢ｰ蜷梧悄" }
                 ComboBox { id: referenceCombo; Layout.fillWidth: true; model: root.appBackend.speakers; textRole: "file_name"; valueRole: "path" }
                 ComboBox { id: trackCombo; Layout.fillWidth: true; model: root.appBackend.audioTracks; textRole: "label"; valueRole: "selector" }
                 RowLayout { Layout.fillWidth: true
-                    TimeField { id: manualOffsetField; Layout.fillWidth: true; text: "0.000"; validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 } }
+                    TimeField { id: manualOffsetField; objectName: "manualOffsetField"; Layout.fillWidth: true; text: "0.000"; validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 } }
                     SmallButton {
-                        text: root.appBackend.alignmentBusy ? "解析中" : "同期解析"
-                        enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
-                        onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
+                        text: root.appBackend.alignmentBusy ? "隗｣譫蝉ｸｭ" : "蜷梧悄隗｣譫・
+                        enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && hasAudioSource() && root.appBackend.sourceSelection.video
+                        onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(_numericOrDefault(manualOffsetField.text, 0)))
                     }
                 }
                 Text { Layout.fillWidth: true; text: root.appBackend.alignmentResult.status + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "s" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
@@ -1016,7 +1045,7 @@ ApplicationWindow {
                     anchors.margins: 10
                     spacing: 8
                     Repeater {
-                        model: ["素材", "文字起こし", "字幕・音量編集", "書き出し"]
+                        model: ["邏譚・, "譁・ｭ苓ｵｷ縺薙＠", "蟄怜ｹ輔・髻ｳ驥冗ｷｨ髮・, "譖ｸ縺榊・縺・]
                         delegate: ColumnLayout {
                             id: stepDelegate
                             required property int index
@@ -1052,8 +1081,8 @@ ApplicationWindow {
                     anchors.margins: 12; spacing: 2
                     Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
                     RowLayout { Layout.fillWidth: true
-                        ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
+                        ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "竇｡" : "笆ｶ"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
+                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "蜍慕判譛ｪ驕ｸ謚・; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                         Text { text: root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000); color: root.textMuted; font.pixelSize: 10; font.family: "Cascadia Mono" }
                     }
                 }
@@ -1069,7 +1098,7 @@ ApplicationWindow {
                     }
                     ProgressBar { Layout.preferredWidth: 160; from: 0; to: 1; value: root.appBackend.progress }
                     ScrollView { Layout.fillWidth: true; Layout.fillHeight: true
-                        TextArea { readOnly: true; text: root.appBackend.logText || "処理ログ"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; wrapMode: TextEdit.WrapAnywhere; background: Rectangle { color: "transparent" } }
+                        TextArea { readOnly: true; text: root.appBackend.logText || "蜃ｦ逅・Ο繧ｰ"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; wrapMode: TextEdit.WrapAnywhere; background: Rectangle { color: "transparent" } }
                     }
                 }
             }
@@ -1082,23 +1111,23 @@ ApplicationWindow {
             ColumnLayout { anchors.fill: parent; spacing: 0
                 RowLayout {
                     Layout.fillWidth: true; Layout.preferredHeight: 56; Layout.maximumHeight: 56; Layout.margins: 12
-                    Text { Layout.fillWidth: true; text: "次の操作"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 15; font.weight: Font.Bold }
-                    SmallButton { objectName: "settingsToggleButton"; text: root.settingsExpanded ? "設定を閉じる" : "詳細設定"; onClicked: root.settingsExpanded = !root.settingsExpanded }
+                    Text { Layout.fillWidth: true; text: "谺｡縺ｮ謫堺ｽ・; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 15; font.weight: Font.Bold }
+                    SmallButton { objectName: "settingsToggleButton"; text: root.settingsExpanded ? "險ｭ螳壹ｒ髢峨§繧・ : "隧ｳ邏ｰ險ｭ螳・; onClicked: root.settingsExpanded = !root.settingsExpanded }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 ScrollView { objectName: "advancedSettingsPanel"; visible: root.settingsExpanded; Layout.fillWidth: true; Layout.fillHeight: root.settingsExpanded; Layout.preferredHeight: root.settingsExpanded ? 320 : 0; Layout.maximumHeight: root.settingsExpanded ? 420 : 0; clip: true
                     ColumnLayout { width: 286; x: 16; spacing: 10
                         Item { Layout.preferredHeight: 2 }
-                        PanelTitle { text: "文字起こしエンジン" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
+                        PanelTitle { text: "譁・ｭ苓ｵｷ縺薙＠繧ｨ繝ｳ繧ｸ繝ｳ" }
+                        RowLayout { Layout.fillWidth: true; Text { text: "蜃ｦ逅・ョ繝舌う繧ｹ"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "Whisper繝｢繝・Ν"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "CPU荳ｦ蛻玲焚"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "字幕" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100 } Text { text: "%"; color: root.textMuted } }
+                        PanelTitle { text: "蟄怜ｹ・ }
+                        RowLayout { Layout.fillWidth: true; Text { text: "蝓ｺ貅匁枚蟄励し繧､繧ｺ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100 } Text { text: "%"; color: root.textMuted } }
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { text: "縁取り色"; color: root.textPrimary; Layout.fillWidth: true }
+                            Text { text: "邵∝叙繧願牡"; color: root.textPrimary; Layout.fillWidth: true }
                             Button {
                                 id: outlineColorButton
                                 objectName: "outlineColorButton"
@@ -1114,32 +1143,32 @@ ApplicationWindow {
                                 background: Rectangle { radius: 6; color: root.raised; border.color: root.border }
                             }
                         }
-                        RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3 } Text { text: "px"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "音量サイズ比率"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "最短表示時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "邵∝叙繧雁､ｪ縺・; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3 } Text { text: "px"; color: root.textMuted } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "髻ｳ驥上し繧､繧ｺ豈皮紫"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "蜊倩ｪ樣俣髫・; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; objectName: "gapField"; Layout.preferredWidth: 76; text: "0.10" } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "邨ゆｺ・ｽ咏區"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; objectName: "paddingField"; Layout.preferredWidth: 76; text: "0.08" } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "譛遏ｭ陦ｨ遉ｺ譎る俣"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; objectName: "minDurationField"; Layout.preferredWidth: 76; text: "0.35" } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "動画・音声" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "動画書き出し"; color: root.textPrimary; Layout.fillWidth: true } Text { objectName: "automaticVideoCodecText"; text: root.appBackend.dependencyStatus.nvenc ? "GPU（自動）" : "CPU（自動）"; color: root.acid; font.family: "Yu Gothic UI" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "画質"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; from: 14; to: 28; value: 18 } }
-                        Switch { id: normalizeSwitch; text: "音量を正規化"; checked: true }
-                        RowLayout { Layout.fillWidth: true; Text { text: "目標LUFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }
-                        Switch { id: silenceSwitch; text: "無音部分をカット" }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "最短無音時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; Layout.preferredWidth: 76; text: "1.2" } }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "発話余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; Layout.preferredWidth: 76; text: "0.25" } }
+                        PanelTitle { text: "蜍慕判繝ｻ髻ｳ螢ｰ" }
+                        RowLayout { Layout.fillWidth: true; Text { text: "蜍慕判譖ｸ縺榊・縺・; color: root.textPrimary; Layout.fillWidth: true } Text { objectName: "automaticVideoCodecText"; text: root.appBackend.dependencyStatus.nvenc ? "GPU・郁・蜍包ｼ・ : "CPU・郁・蜍包ｼ・; color: root.acid; font.family: "Yu Gothic UI" } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "逕ｻ雉ｪ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; from: 14; to: 28; value: 18 } }
+                        Switch { id: normalizeSwitch; text: "髻ｳ驥上ｒ豁｣隕丞喧"; checked: true }
+                        RowLayout { Layout.fillWidth: true; Text { text: "逶ｮ讓儉UFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; objectName: "lufsField"; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }
+                        Switch { id: silenceSwitch; text: "辟｡髻ｳ驛ｨ蛻・ｒ繧ｫ繝・ヨ" }
+                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "譛遏ｭ辟｡髻ｳ譎る俣"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; objectName: "silenceField"; Layout.preferredWidth: 76; text: "1.2" } }
+                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "逋ｺ隧ｱ菴咏區"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; objectName: "speechPaddingField"; Layout.preferredWidth: 76; text: "0.25" } }
                         Item { Layout.preferredHeight: 6 }
                     }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 ColumnLayout { objectName: "workflowActions"; Layout.fillWidth: true; Layout.fillHeight: false; Layout.margins: 12; spacing: 7
-                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "字幕と音量をそれぞれ編集するか、このまま動画へ焼き付けられます" : "素材の準備ができたら文字起こしを開始します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                    Text { Layout.fillWidth: true; text: root.appBackend.projectLoaded ? "蟄怜ｹ輔→髻ｳ驥上ｒ縺昴ｌ縺槭ｌ邱ｨ髮・☆繧九°縲√％縺ｮ縺ｾ縺ｾ蜍慕判縺ｸ辟ｼ縺堺ｻ倥￠繧峨ｌ縺ｾ縺・ : "邏譚舌・貅門ｙ縺後〒縺阪◆繧画枚蟄苓ｵｷ縺薙＠繧帝幕蟋九＠縺ｾ縺・; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
                     Button {
                         id: dictionaryOpenButton
                         objectName: "transcriptionDictionaryOpenButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 38; visible: !root.appBackend.projectLoaded
                         enabled: !root.appBackend.running
-                        text: "文字起こし辞書を設定"
+                        text: "譁・ｭ苓ｵｷ縺薙＠霎樊嶌繧定ｨｭ螳・
                         onClicked: root.openDictionaryScreen()
                         contentItem: Text { text: dictionaryOpenButton.text; color: dictionaryOpenButton.enabled ? root.textPrimary : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: dictionaryOpenButton.enabled ? root.raised : "#252C28"; border.color: dictionaryOpenButton.enabled ? root.border : "#252C28" }
@@ -1148,8 +1177,8 @@ ApplicationWindow {
                         id: transcribeButton
                         objectName: "transcribeButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: !root.appBackend.projectLoaded || root.appBackend.activeJob === "transcribe"
-                        enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda) && !root.appBackend.projectLoaded
-                        text: root.appBackend.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
+                        enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && hasAudioSource() && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda) && !root.appBackend.projectLoaded
+                        text: root.appBackend.activeJob === "transcribe" ? "譁・ｭ苓ｵｷ縺薙＠荳ｭ..." : "譁・ｭ苓ｵｷ縺薙＠繧帝幕蟋・
                         onClicked: root.appBackend.startTranscription(root.currentSettings())
                         contentItem: Text { text: transcribeButton.text; color: transcribeButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: transcribeButton.enabled ? root.acid : "#252C28" }
@@ -1159,7 +1188,7 @@ ApplicationWindow {
                         objectName: "editSubtitlesButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded
                         enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                        text: "字幕を編集する"
+                        text: "蟄怜ｹ輔ｒ邱ｨ髮・☆繧・
                         onClicked: root.openEditorScreen()
                         contentItem: Text { text: editButton.text; color: editButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: editButton.enabled ? root.acid : "#252C28" }
@@ -1169,7 +1198,7 @@ ApplicationWindow {
                         objectName: "audioMixerOpenButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded
                         enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                        text: "音量を調整する"
+                        text: "髻ｳ驥上ｒ隱ｿ謨ｴ縺吶ｋ"
                         onClicked: root.openMixerScreen()
                         contentItem: Text { text: mixerOpenButton.text; color: mixerOpenButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: mixerOpenButton.enabled ? root.acid : "#252C28" }
@@ -1179,15 +1208,15 @@ ApplicationWindow {
                         objectName: "renderVideoButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded || root.appBackend.activeJob === "render"
                         enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                        text: root.appBackend.activeJob === "render" ? "字幕を焼き付け中..." : "字幕を焼き付けて動画を書き出す"
+                        text: root.appBackend.activeJob === "render" ? "蟄怜ｹ輔ｒ辟ｼ縺堺ｻ倥￠荳ｭ..." : "蟄怜ｹ輔ｒ辟ｼ縺堺ｻ倥￠縺ｦ蜍慕判繧呈嶌縺榊・縺・
                         onClicked: root.appBackend.renderVideo(root.currentSettings())
                         contentItem: Text { text: renderButton.text; color: renderButton.enabled ? root.textPrimary : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: renderButton.enabled ? root.raised : "#252C28"; border.color: renderButton.enabled ? root.border : "#252C28" }
                     }
                     Text { objectName: "workflowBlockReason"; Layout.fillWidth: true; text: root.transcriptionBlockReason(); visible: text.length > 0; color: root.amber; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.Wrap }
                     RowLayout { Layout.fillWidth: true
-                        SmallButton { objectName: "saveSettingsButton"; Layout.fillWidth: true; text: root.appBackend.running ? "停止" : "設定を保存"; onClicked: root.appBackend.running ? root.appBackend.cancelProcessing() : root.appBackend.saveSettings(root.currentSettings()) }
-                        SmallButton { objectName: "outputFolderButton"; Layout.fillWidth: true; text: "出力先を開く"; enabled: Boolean(root.appBackend.sourceSelection.output_dir); onClicked: root.appBackend.openOutputFolder() }
+                        SmallButton { objectName: "saveSettingsButton"; Layout.fillWidth: true; text: root.appBackend.running ? "蛛懈ｭ｢" : "險ｭ螳壹ｒ菫晏ｭ・; onClicked: root.appBackend.running ? root.appBackend.cancelProcessing() : root.appBackend.saveSettings(root.currentSettings()) }
+                        SmallButton { objectName: "outputFolderButton"; Layout.fillWidth: true; text: "蜃ｺ蜉帛・繧帝幕縺・; enabled: Boolean(root.appBackend.sourceSelection.output_dir); onClicked: root.appBackend.openOutputFolder() }
                     }
                 }
                 Item { visible: !root.settingsExpanded; Layout.fillHeight: true; Layout.preferredHeight: 1; Layout.maximumHeight: 100000 }
@@ -1200,9 +1229,11 @@ ApplicationWindow {
         id: sourcePopup
         anchors.centerIn: Overlay.overlay
         width: 620; height: 520; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
+        onOpened: root.appBackend.beginSourceRelink()
+        onClosed: root.appBackend.finishSourceRelink()
         background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
         ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
-            RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; Text { text: "邏譚占ｨｭ螳・; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "ﾃ・; onClicked: sourcePopup.close() } }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? 62 : 0
@@ -1215,13 +1246,13 @@ ApplicationWindow {
                     anchors.margins: 9
                     Text {
                         Layout.fillWidth: true
-                        text: "不足ツール: " + root.appBackend.dependencyStatus.missing.join(", ")
+                        text: "荳崎ｶｳ繝・・繝ｫ: " + root.appBackend.dependencyStatus.missing.join(", ")
                         color: root.textPrimary
                         font.family: "Yu Gothic UI"
                         font.pixelSize: 10
                         wrapMode: Text.Wrap
                     }
-                    SmallButton { text: "再確認"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
+                    SmallButton { text: "蜀咲｢ｺ隱・; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
                 }
             }
             Rectangle {
@@ -1235,8 +1266,8 @@ ApplicationWindow {
                 Column {
                     anchors.centerIn: parent
                     spacing: 3
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画・話者音声をここにドロップ"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画1件と複数の音声を自動判別します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "蜍慕判繝ｻ隧ｱ閠・浹螢ｰ繧偵％縺薙↓繝峨Ο繝・・"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "蜍慕判1莉ｶ縺ｨ隍・焚縺ｮ髻ｳ螢ｰ繧定・蜍募愛蛻･縺励∪縺・; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 }
                 DropArea {
                     id: sourcePopupDropArea
@@ -1246,20 +1277,20 @@ ApplicationWindow {
                     onDropped: function(drop) { root.importSourceDrop(drop) }
                 }
             }
-            PanelTitle { text: "動画" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
-            PanelTitle { text: "話者音声" }
+            PanelTitle { text: "蜍慕判" }
+            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "譛ｪ驕ｸ謚・; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "驕ｸ謚・; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
+            PanelTitle { text: "隧ｱ閠・浹螢ｰ" }
             ListView {
                 id: sourceAudioList
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5; model: root.appBackend.speakers
                 delegate: Rectangle { id: sourceAudioDelegate; required property int index; required property var modelData; width: sourceAudioList.width; height: 38; radius: 7; color: root.raised
-                    RowLayout { anchors.fill: parent; anchors.margins: 7; Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 22; radius: 3; color: sourceAudioDelegate.modelData.color } Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle } ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) } }
+                    RowLayout { anchors.fill: parent; anchors.margins: 7; Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 22; radius: 3; color: sourceAudioDelegate.modelData.color } Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle } ToolButton { text: "ﾃ・; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) } }
                 }
             }
-            RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
-            PanelTitle { text: "出力先フォルダ" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; SmallButton { text: "髻ｳ螢ｰ繧定ｿｽ蜉"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "繧ｯ繝ｪ繧｢"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
+            PanelTitle { text: "蜃ｺ蜉帛・繝輔か繝ｫ繝" }
+            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "譛ｪ驕ｸ謚・; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "驕ｸ謚・; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "繧ｬ繧ｴ繝ｪ繝励さ蜀崎ｭ・; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "螳御ｺ・; onClicked: sourcePopup.close() } }
         }
     }
 
@@ -1500,18 +1531,31 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 1
-                            Text { text: "音量ミキサー"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 19; font.weight: Font.Bold; font.letterSpacing: 1.0 }
-                            Text { text: "動画内トラックと個別音声を、完成動画用にミックス"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                        }
-                        Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                        SmallButton { objectName: "mixerResetButton"; text: "全チャンネルをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
-                        SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
-                        SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
+                        Text { text: "髻ｳ驥上Α繧ｭ繧ｵ繝ｼ"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 19; font.weight: Font.Bold; font.letterSpacing: 1.0 }
+                        Text { text: "蜍慕判蜀・ヨ繝ｩ繝・け縺ｨ蛟句挨髻ｳ螢ｰ繧偵∝ｮ梧・蜍慕判逕ｨ縺ｫ繝溘ャ繧ｯ繧ｹ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                    }
+                    Text { text: root.appBackend.projectDirty ? "笳・菫晏ｭ伜ｾ・■" : "笨・菫晏ｭ俶ｸ医∩"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                    Text {
+                        objectName: "mixerAudioPreviewCacheSummary"
+                        text: root.appBackend.audioPreviewCacheSummary
+                        color: root.textMuted
+                        font.family: "Cascadia Mono"
+                        font.pixelSize: 9
+                    }
+                    SmallButton {
+                        objectName: "mixerClearAudioPreviewCacheButton"
+                        text: "繧ｭ繝｣繝・す繝･蜑企勁"
+                        enabled: !root.appBackend.running
+                        onClicked: root.appBackend.clearAudioPreviewCache()
+                    }
+                    SmallButton { objectName: "mixerResetButton"; text: "蜈ｨ繝√Ε繝ｳ繝阪Ν繧偵Μ繧ｻ繝・ヨ"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
+                    SmallButton { objectName: "mixerSaveButton"; text: "菫晏ｭ・; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
+                        SmallButton { objectName: "mixerToEditorButton"; text: "蟄怜ｹ慕ｷｨ髮・∈"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
                         Button {
                             id: mixerRenderButton
                             objectName: "mixerRenderButton"
                             implicitHeight: 34
-                            text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
+                            text: root.appBackend.activeJob === "render" ? "譖ｸ縺榊・縺嶺ｸｭ..." : "蜍慕判繧呈嶌縺榊・縺・
                             enabled: root.appBackend.projectLoaded && !root.appBackend.running
                             onClicked: {
                                 root.closeMixerScreen()
@@ -1520,7 +1564,7 @@ ApplicationWindow {
                             contentItem: Text { text: mixerRenderButton.text; color: mixerRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             background: Rectangle { radius: 7; color: mixerRenderButton.enabled ? root.acid : "#252C28" }
                         }
-                        SmallButton { objectName: "mixerBackButton"; text: "メインへ戻る"; onClicked: root.closeMixerScreen() }
+                        SmallButton { objectName: "mixerBackButton"; text: "繝｡繧､繝ｳ縺ｸ謌ｻ繧・; onClicked: root.closeMixerScreen() }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
 
@@ -1548,7 +1592,7 @@ ApplicationWindow {
                                     enabled: mixerContent.previewReady
                                     onClicked: mixerContent.togglePlayback()
                                     contentItem: Text {
-                                        text: mixerPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
+                                        text: mixerPlayer.playbackState === MediaPlayer.PlayingState ? "竇｡" : "笆ｶ"
                                         color: mixerPlayButton.enabled ? "#10140F" : root.textMuted
                                         font.pixelSize: 14
                                         horizontalAlignment: Text.AlignHCenter
@@ -1556,7 +1600,7 @@ ApplicationWindow {
                                     }
                                     background: Rectangle { radius: 7; color: mixerPlayButton.enabled ? root.acid : "#252C28" }
                                 }
-                                SmallButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(-5000) }
+                                SmallButton { objectName: "mixerRewindButton"; text: "竏・遘・; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(-5000) }
                                 Slider {
                                     id: mixerSeek
                                     objectName: "mixerSeek"
@@ -1567,7 +1611,7 @@ ApplicationWindow {
                                     enabled: mixerContent.previewReady
                                     onMoved: mixerContent.seekTo(value)
                                 }
-                                SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(5000) }
+                                SmallButton { objectName: "mixerForwardButton"; text: "+5遘・; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(5000) }
                                 Text {
                                     objectName: "mixerTimeText"
                                     Layout.preferredWidth: 142
@@ -1581,9 +1625,9 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 PanelTitle { text: "SEQUENCE" }
-                                Text { text: root.appBackend.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Text { text: root.appBackend.audioPreviewPreparing ? "繝励Ξ繝薙Η繝ｼ髻ｳ螢ｰ繧呈ｺ門ｙ荳ｭ窶ｦ" : "蜃ｺ蜉幃浹繝ｩ繧､繝悶・繝ｬ繝薙Η繝ｼ"; color: root.appBackend.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                                 Item { Layout.fillWidth: true }
-                                Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
+                                Text { text: "繧ｯ繝ｪ繝・け縺ｧ蜀咲函菴咲ｽｮ繧堤ｧｻ蜍・; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                             }
                             SubtitleTimeline {
                                 objectName: "mixerSequence"
@@ -1618,7 +1662,7 @@ ApplicationWindow {
                                 PanelTitle { text: "INPUT CHANNELS" }
                                 Text { text: root.appBackend.audioMixerChannels.length + " CH"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 10 }
                                 Item { Layout.fillWidth: true }
-                                Text { text: "フェーダー: −60〜+6 dB  /  M: ミュート  /  S: ソロ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Text { text: "繝輔ぉ繝ｼ繝繝ｼ: 竏・0縲・6 dB  /  M: 繝溘Η繝ｼ繝・ /  S: 繧ｽ繝ｭ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                             }
                             ListView {
                                 id: mixerChannelList
@@ -1663,7 +1707,7 @@ ApplicationWindow {
                                             }
                                         }
                                         Text { Layout.fillWidth: true; text: mixerStrip.modelData.label; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle }
-                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.kind === "external" ? "同期オフセット適用" : mixerStrip.modelData.selector; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.kind === "external" ? "蜷梧悄繧ｪ繝輔そ繝・ヨ驕ｩ逕ｨ" : mixerStrip.modelData.selector; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
                                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
 
                                         Item {
@@ -1683,13 +1727,13 @@ ApplicationWindow {
                                                     Item { width: 1; height: (parent.height - 62) * 0.15 }
                                                     Text { width: parent.width; text: "0"; color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
                                                     Item { width: 1; height: (parent.height - 62) * 0.12 }
-                                                    Text { width: parent.width; text: "−6"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Text { width: parent.width; text: "竏・"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
                                                     Item { width: 1; height: (parent.height - 62) * 0.12 }
-                                                    Text { width: parent.width; text: "−12"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Text { width: parent.width; text: "竏・2"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
                                                     Item { width: 1; height: (parent.height - 62) * 0.18 }
-                                                    Text { width: parent.width; text: "−24"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Text { width: parent.width; text: "竏・4"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
                                                     Item { width: 1; height: (parent.height - 62) * 0.22 }
-                                                    Text { width: parent.width; text: "−∞"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
+                                                    Text { width: parent.width; text: "竏停・"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
                                                 }
                                                 Slider {
                                                     id: channelFader
@@ -1750,7 +1794,7 @@ ApplicationWindow {
 
                                         Text {
                                             Layout.fillWidth: true
-                                            text: channelFader.value <= -59.9 ? "−∞ dB" : (channelFader.value >= 0 ? "+" : "") + channelFader.value.toFixed(1) + " dB"
+                                            text: channelFader.value <= -59.9 ? "竏停・ dB" : (channelFader.value >= 0 ? "+" : "") + channelFader.value.toFixed(1) + " dB"
                                             color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter
                                         }
                                         Text { Layout.fillWidth: true; text: Math.round(Number(mixerStrip.modelData.volume_percent)) + "%"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter }
@@ -1767,7 +1811,7 @@ ApplicationWindow {
                                                 contentItem: Text { text: channelMuteButton.text; color: mixerStrip.modelData.muted ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                                 background: Rectangle { radius: 6; color: mixerStrip.modelData.muted ? root.amber : root.raised; border.color: mixerStrip.modelData.muted ? root.amber : root.border }
                                                 ToolTip.visible: hovered
-                                                ToolTip.text: "ミュート"
+                                                ToolTip.text: "繝溘Η繝ｼ繝・
                                             }
                                             Button {
                                                 id: channelSoloButton
@@ -1779,7 +1823,7 @@ ApplicationWindow {
                                                 contentItem: Text { text: channelSoloButton.text; color: mixerStrip.modelData.solo ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                                 background: Rectangle { radius: 6; color: mixerStrip.modelData.solo ? root.acid : root.raised; border.color: mixerStrip.modelData.solo ? root.acid : root.border }
                                                 ToolTip.visible: hovered
-                                                ToolTip.text: "ソロ"
+                                                ToolTip.text: "繧ｽ繝ｭ"
                                             }
                                         }
                                         CheckBox {
@@ -1797,7 +1841,7 @@ ApplicationWindow {
                             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: "INPUT ON・ミュート・ソロ・フェーダーを出力プレビューへ即時反映します。同期後に1本のマスターバスへ合成し、−1.5 dBFSリミッターを適用します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { Layout.fillWidth: true; text: "INPUT ON繝ｻ繝溘Η繝ｼ繝医・繧ｽ繝ｭ繝ｻ繝輔ぉ繝ｼ繝繝ｼ繧貞・蜉帙・繝ｬ繝薙Η繝ｼ縺ｸ蜊ｳ譎ょ渚譏縺励∪縺吶ょ酔譛溷ｾ後↓1譛ｬ縺ｮ繝槭せ繧ｿ繝ｼ繝舌せ縺ｸ蜷域・縺励≫・1.5 dBFS繝ｪ繝溘ャ繧ｿ繝ｼ繧帝←逕ｨ縺励∪縺吶・; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
                                 Text { text: "MASTER"; color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 9; font.weight: Font.Bold }
                                 Rectangle { objectName: "mixerMasterMeter"; Layout.preferredWidth: 120; Layout.preferredHeight: 9; radius: 4; color: "#070908"; border.color: root.border; Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 2; width: Math.max(0, (parent.width - 4) * Number(root.appBackend.audioMasterLevel || 0)); radius: 2; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.acid; Behavior on width { NumberAnimation { duration: 45 } } } }
                                 Text { objectName: "mixerLimiterReduction"; text: "GR " + Number(root.appBackend.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; Layout.preferredWidth: 72 }
@@ -1852,27 +1896,27 @@ ApplicationWindow {
                     spacing: 0
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
-                Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
-                Text { text: root.appBackend.projectDirty || root.editorDraftDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty || root.editorDraftDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.appBackend.stage + " · " + root.appBackend.status; color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: { root.commitSubtitleDraft(); root.appBackend.undoSubtitleEdit() } }
-                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: { root.commitSubtitleDraft(); root.appBackend.redoSubtitleEdit() } }
-                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: { root.commitSubtitleDraft(); root.appBackend.addSegment(editorPlayer.position / 1000) } }
-                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: { root.commitSubtitleDraft(); root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) } }
-                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: { root.commitSubtitleDraft(); root.appBackend.deleteSelectedSegment() } }
-                SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: { root.commitSubtitleDraft(); root.appBackend.saveProject() } }
-                SmallButton { objectName: "buildAssButton"; text: "ASSを更新"; onClicked: { root.commitSubtitleDraft(); root.appBackend.buildSubtitlePreview(root.currentSettings()) } }
+                Text { text: "蟄怜ｹ慕ｷｨ髮・; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
+                Text { text: root.appBackend.projectDirty || root.editorDraftDirty ? "笳・邱ｨ髮・≠繧・ : "笨・菫晏ｭ俶ｸ医∩"; color: root.appBackend.projectDirty || root.editorDraftDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.appBackend.stage + " ﾂｷ " + root.appBackend.status; color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
+                SmallButton { objectName: "undoCaptionButton"; text: "蜈・↓謌ｻ縺・; enabled: root.appBackend.canUndo; onClicked: { root.commitSubtitleDraft(); root.appBackend.undoSubtitleEdit() } }
+                SmallButton { objectName: "redoCaptionButton"; text: "繧・ｊ逶ｴ縺・; enabled: root.appBackend.canRedo; onClicked: { root.commitSubtitleDraft(); root.appBackend.redoSubtitleEdit() } }
+                SmallButton { objectName: "addCaptionButton"; text: "+ 蟄怜ｹ戊ｿｽ蜉"; onClicked: { root.commitSubtitleDraft(); root.appBackend.addSegment(editorPlayer.position / 1000) } }
+                SmallButton { objectName: "splitCaptionButton"; text: "蛻・牡"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: { root.commitSubtitleDraft(); root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) } }
+                SmallButton { objectName: "deleteCaptionButton"; text: "蜑企勁"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: { root.commitSubtitleDraft(); root.appBackend.deleteSelectedSegment() } }
+                SmallButton { objectName: "saveProjectButton"; text: "菫晏ｭ・; onClicked: { root.commitSubtitleDraft(); root.appBackend.saveProject() } }
+                SmallButton { objectName: "buildAssButton"; text: "ASS繧呈峩譁ｰ"; onClicked: { root.commitSubtitleDraft(); root.appBackend.buildSubtitlePreview(root.currentSettings()) } }
                 Button {
                     id: editorRenderButton
                     objectName: "editorRenderButton"
                     implicitHeight: 34
-                    text: root.appBackend.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
+                    text: root.appBackend.activeJob === "render" ? "辟ｼ縺堺ｻ倥￠荳ｭ..." : "蟄怜ｹ輔ｒ辟ｼ縺堺ｻ倥￠繧・
                     enabled: root.appBackend.projectLoaded && !root.appBackend.running
                     onClicked: root.renderFromEditor()
                     contentItem: Text { text: editorRenderButton.text; color: editorRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     background: Rectangle { radius: 7; color: editorRenderButton.enabled ? root.acid : "#252C28" }
                 }
-                SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; onClicked: root.closeEditorScreen() }
+                SmallButton { objectName: "editorBackButton"; text: "繝｡繧､繝ｳ縺ｸ謌ｻ繧・; onClicked: root.closeEditorScreen() }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
 
@@ -1887,19 +1931,19 @@ ApplicationWindow {
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
                             Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: editorPlayer.position = value }
                             RowLayout { Layout.fillWidth: true
-                                ToolButton { text: editorPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: editorPlayer.playbackState === MediaPlayer.PlayingState ? editorPlayer.pause() : editorPlayer.play() }
+                                ToolButton { text: editorPlayer.playbackState === MediaPlayer.PlayingState ? "竇｡" : "笆ｶ"; onClicked: editorPlayer.playbackState === MediaPlayer.PlayingState ? editorPlayer.pause() : editorPlayer.play() }
                                 Text { Layout.fillWidth: true; text: root.stamp(editorPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
-                                Text { text: editorOverlay.activeSegments.length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
+                                Text { text: editorOverlay.activeSegments.length + "莉ｶ陦ｨ遉ｺ荳ｭ"; color: root.textMuted; font.pixelSize: 10 }
                             }
                         }
                     }
                     RowLayout { Layout.fillWidth: true
-                        PanelTitle { text: "タイムライン" }
+                        PanelTitle { text: "繧ｿ繧､繝繝ｩ繧､繝ｳ" }
                         Item { Layout.fillWidth: true }
-                        Text { text: "スナップ"; color: root.textMuted; font.pixelSize: 9 }
+                        Text { text: "繧ｹ繝翫ャ繝・; color: root.textMuted; font.pixelSize: 9 }
                         SpinBox { id: snapSpin; from: 0; to: 1000; stepSize: 10; value: root.snapMilliseconds; editable: true; onValueModified: root.snapMilliseconds = value }
                         Text { text: "ms"; color: root.textMuted; font.pixelSize: 9 }
-                        Text { text: "表示倍率"; color: root.textMuted; font.pixelSize: 9 }
+                        Text { text: "陦ｨ遉ｺ蛟咲紫"; color: root.textMuted; font.pixelSize: 9 }
                         Slider { Layout.preferredWidth: 140; from: 16; to: 180; value: root.editorPixelsPerSecond; onMoved: root.editorPixelsPerSecond = value }
                     }
                     SubtitleTimeline {
@@ -1923,9 +1967,9 @@ ApplicationWindow {
                     Layout.preferredWidth: 620; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
                     ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 7
                         RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "話者ごとの字幕色" }
+                            PanelTitle { text: "隧ｱ閠・＃縺ｨ縺ｮ蟄怜ｹ戊牡" }
                             Item { Layout.fillWidth: true }
-                            Text { text: "色を押して変更"; color: root.textMuted; font.pixelSize: 8 }
+                            Text { text: "濶ｲ繧呈款縺励※螟画峩"; color: root.textMuted; font.pixelSize: 8 }
                         }
                         ListView {
                             id: projectSpeakerColorList
@@ -1947,14 +1991,14 @@ ApplicationWindow {
                                 }
                                 background: Rectangle { radius: 7; color: projectSpeakerColorButton.hovered ? "#27312C" : root.raised; border.color: projectSpeakerColorButton.hovered ? root.acid : root.border }
                                 ToolTip.visible: hovered
-                                ToolTip.text: modelData.name + " の字幕色を変更"
+                                ToolTip.text: modelData.name + " 縺ｮ蟄怜ｹ戊牡繧貞､画峩"
                             }
                             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                         }
                         RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "字幕一覧" }
+                            PanelTitle { text: "蟄怜ｹ穂ｸ隕ｧ" }
                             Item { Layout.fillWidth: true }
-                            Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
+                            Text { text: "髢句ｧ・/ 邨ゆｺ・/ 隧ｱ閠・/ 繝輔か繝ｳ繝・/ 繧ｵ繧､繧ｺ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                         }
                         ListView {
                             id: captionTable
@@ -2087,8 +2131,8 @@ ApplicationWindow {
         Column {
             anchors.centerIn: parent
             spacing: 8
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "素材をドロップして追加"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 24; font.weight: Font.Bold }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画または話者音声"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "邏譚舌ｒ繝峨Ο繝・・縺励※霑ｽ蜉"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 24; font.weight: Font.Bold }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "蜍慕判縺ｾ縺溘・隧ｱ閠・浹螢ｰ"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
         }
     }
     DropArea {
@@ -2124,3 +2168,5 @@ ApplicationWindow {
         mainPlayer.stop()
     }
 }
+
+

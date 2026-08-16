@@ -166,7 +166,10 @@ class WindowsLauncherTests(unittest.TestCase):
             (archive_root / "README.md").write_text("new readme", encoding="utf-8")
             (archive_root / "src" / "app.py").write_text("new code", encoding="utf-8")
             (archive_root / "VERSION").write_text("v0.2.0\n", encoding="utf-8")
-            (archive_root / "scripts" / "setup.ps1").write_text("exit 1\n", encoding="utf-8")
+            (archive_root / "scripts" / "setup.ps1").write_text(
+                'throw "setup failed"\n',
+                encoding="utf-8",
+            )
 
             zip_path = Path(shutil.make_archive(str(base / "latest"), "zip", root_dir=archive_parent))
             result = subprocess.run(

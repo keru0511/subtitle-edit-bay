@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import struct
+import subprocess
 import tempfile
 import threading
 import time
@@ -10,6 +12,8 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
+
+import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -37,6 +41,7 @@ from src.subtitle_project import (
     load_project,
     save_project,
 )
+from src.subtitle_workflow import render_project_video
 
 
 class GuiEditorRegressionTests(unittest.TestCase):
@@ -2314,6 +2319,224 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._project_path, str(path_b.resolve()))
         self.assertEqual(self.app._project["segments"][0]["text"], "project-b-text")
         self.assertFalse(self.app._project_dirty)
+
+    def _require_ffmpeg(self) -> None:
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("ffmpeg is required for this test")
+
+    def _make_real_project(
+        self,
+        *,
+        duration: float = 2.0,
+    ) -> tuple[Path, Path, Path]:
+        self._require_ffmpeg()
+        video = self.root / "black.mp4"
+        audio = self.root / "sine.flac"
+        output = self.root / "export"
+        output.mkdir(exist_ok=True)
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=black:s=320x180:r=15:d={duration}",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=48000:cl=mono",
+                "-t",
+                str(duration),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                str(video),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency=880:sample_rate=48000:duration={duration}",
+                "-t",
+                str(duration),
+                "-ac",
+                "1",
+                str(audio),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        project = create_project(
+            video_path=video,
+            output_dir=output,
+            audio_sources=[{"path": str(audio)}],
+            speakers=[
+                {
+                    "name": "Alice",
+                    "style": "Speaker_Alice",
+                    "file_name": audio.name,
+                    "track_key": "craig:Alice",
+                    "color": "#7FD957",
+                    "path": str(audio),
+                },
+            ],
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0.0,
+                    "end": duration,
+                    "text": "E2E subtitle",
+                    "speaker": "Speaker_Alice",
+                    "words": [
+                        {"word": "E2E", "start": 0.0, "end": duration / 2},
+                        {"word": "subtitle", "start": duration / 2, "end": duration},
+                    ],
+                }
+            ],
+            duration_seconds=duration,
+        )
+        path = output / "game.subtitle-project.json"
+        save_project(path, project)
+        return path, video, audio
+
+    def _extract_frame_luma(
+        self,
+        video_path: Path,
+        time_seconds: float = 0.5,
+    ) -> np.ndarray:
+        frame = self.root / "frame.gray"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(time_seconds),
+                "-i",
+                str(video_path),
+                "-vframes",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                str(frame),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        raw = frame.read_bytes()
+        expected = 320 * 180
+        if len(raw) != expected:
+            self.fail(f"Unexpected frame size: {len(raw)} (expected {expected})")
+        return np.frombuffer(raw, dtype=np.uint8)
+
+    def _real_render_start(
+        self,
+        command: list[str],
+        job: str,
+        status: str,
+    ) -> None:
+        app = self.app
+        app._active_job = job
+        app.activeJobChanged.emit()
+        app._log = f"> {' '.join(command)}\n"
+        app.logChanged.emit()
+        app._progress = 0.02
+        app.progressChanged.emit()
+        app._elapsed_seconds = 0
+        app.elapsedChanged.emit()
+        app._cancel_requested = False
+        app._set_status(status, "STARTING")
+        app._process_started()
+
+        project_index = command.index("--project") + 1
+        project_path = Path(command[project_index])
+        output = render_project_video(
+            project_path,
+            video_codec="libx264",
+            audio_normalize=False,
+        )
+
+        app._update_stage(f"Rendering edited subtitles to {output.name}")
+        app._update_stage(f"Render complete: {output.name}")
+        app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+    def test_subtitle_editing_to_rendered_video(self) -> None:
+        path, video, audio = self._make_real_project()
+        self.app._dependencies = RuntimeDependencyStatus(
+            ffmpeg=True,
+            ffprobe=False,
+            whisperx=True,
+            cuda=True,
+            nvenc=False,
+        )
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self.app.autosave_timer.stop()
+
+        _, window = self._load_qml()
+        render_button = self._quick_item(window, "renderVideoButton")
+        self.assertTrue(render_button.isVisible())
+        self.assertTrue(render_button.isEnabled())
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(
+                self.app,
+                "_start_command",
+                side_effect=lambda *args, **kwargs: self._real_render_start(*args, **kwargs),
+            ) as start_command,
+        ):
+            self._click(window, render_button)
+            self.app.processEvents()
+
+        start_command.assert_called_once()
+        command = start_command.call_args[0][0]
+        self.assertIn("render", command)
+        self.assertIn(str(path.resolve()), command)
+        self.assertIn("--run", command)
+
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.stage, "COMPLETE")
+        self.assertIn("編集済み動画の書き出しが完了しました", self.app.status)
+        self.assertAlmostEqual(self.app.progress, 1.0)
+
+        render_path = derive_render_path(path)
+        self.assertTrue(render_path.is_file())
+        self.assertGreater(render_path.stat().st_size, 0)
+
+        project = load_project(path)
+        self.assertEqual(
+            project["render_settings"]["last_output"],
+            str(render_path.resolve()),
+        )
+
+        luma = self._extract_frame_luma(render_path, time_seconds=0.5)
+        self.assertGreater(
+            int(luma.max()),
+            100,
+            "subtitles do not appear to be burned into the rendered video",
+        )
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import struct
+import subprocess
 import tempfile
 import threading
 import time
@@ -129,15 +131,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         source: Path | str,
         required_streams: set[str],
         _label: str,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         ext = Path(source).suffix.lower()
         video_exts = {".avi", ".m2ts", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
         audio_exts = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
         if ext in video_exts:
-            return "video" in required_streams
+            return ("video" in required_streams), ""
         if ext in audio_exts:
-            return "audio" in required_streams
-        return False
+            return ("audio" in required_streams), ""
+        return False, ""
 
     def _make_project(
         self,
@@ -1774,6 +1776,75 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(page.isVisible())
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
+
+    def _generate_test_video(self, path: Path) -> None:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=320x240:rate=1",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_video_source_selection_via_gui_updates_source_panel_and_backend(self) -> None:
+        video = self.root / "test_video.mp4"
+        self._generate_test_video(video)
+
+        self._media_probe_patch.stop()
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        self.app.processEvents()
+
+        video_label = self._quick_item(window, "sourceVideoPathText")
+        self.assertEqual(video_label.property("text"), "未選択")
+
+        self.app.setVideoFile(str(video))
+        self.app.processEvents()
+
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.assertIn(video.name, video_label.property("text"))
+        self.assertEqual(self.app.stage, "INPUT")
+        self.assertIn("話者音声", self.app.status)
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_ffprobe_failure_during_video_selection_is_diagnosable_in_gui(self) -> None:
+        bad_video = self.root / "fake_video.mp4"
+        bad_video.write_text("not a video file", encoding="utf-8")
+
+        self._media_probe_patch.stop()
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        self.app.processEvents()
+
+        video_label = self._quick_item(window, "sourceVideoPathText")
+        self.assertEqual(video_label.property("text"), "未選択")
+
+        self.app.setVideoFile(str(bad_video))
+        self.app.processEvents()
+
+        self.assertEqual(self.app.sourceSelection["video"], "")
+        self.assertEqual(video_label.property("text"), "未選択")
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertIn("検証に失敗", self.app.status)
 
 
 if __name__ == "__main__":

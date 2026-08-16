@@ -294,20 +294,18 @@ class EditBayBackend(QApplication):
         source: Path,
         required_streams: set[str],
         label: str,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         if source.suffix.lower() not in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS:
-            return False
+            return False, f"{label} の拡張子が対応していません"
         if not self._dependencies.ffprobe:
-            return True
+            return True, ""
         try:
             detected = probe_media_stream_types(str(source))
         except (OSError, subprocess.CalledProcessError, ValueError) as error:
-            self._set_status(f"{label} の検証に失敗しました: {error}", "CHECK")
-            return False
+            return False, f"{label} の検証に失敗しました: {error}"
         if not required_streams.intersection(detected):
-            self._set_status(f"{label} は指定された種類のメディアではありません", "CHECK")
-            return False
-        return True
+            return False, f"{label} は指定された種類のメディアではありません"
+        return True, ""
 
     @Slot()
     def refreshDependencies(self) -> None:
@@ -338,8 +336,12 @@ class EditBayBackend(QApplication):
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
         video = self._local_path(path)
-        if not video.is_file() or not self._is_supported_media_file(video, {"video"}, "動画ファイル"):
+        if not video.is_file():
             self._set_status("対応する動画ファイルを指定してください", "CHECK")
+            return
+        valid, reason = self._is_supported_media_file(video, {"video"}, "動画ファイル")
+        if not valid:
+            self._set_status(reason or "対応する動画ファイルを指定してください", "CHECK")
             return
         self._set_source_selection(replace(self._source_selection, video=str(video.resolve())))
 
@@ -369,7 +371,7 @@ class EditBayBackend(QApplication):
         valid_files: list[str] = []
         for value in paths:
             audio = self._local_path(str(value))
-            if audio.is_file() and self._is_supported_media_file(audio, {"audio"}, "音声ファイル"):
+            if audio.is_file() and self._is_supported_media_file(audio, {"audio"}, "音声ファイル")[0]:
                 valid_files.append(str(audio.resolve()))
         if not valid_files:
             self._set_status("対応する話者音声ファイルを指定してください", "CHECK")
@@ -397,9 +399,9 @@ class EditBayBackend(QApplication):
                 ignored_count += 1
                 continue
             resolved = str(source.resolve())
-            if self._is_supported_media_file(source, {"video"}, "動画ファイル"):
+            if self._is_supported_media_file(source, {"video"}, "動画ファイル")[0]:
                 video_files.append(resolved)
-            elif self._is_supported_media_file(source, {"audio"}, "音声ファイル"):
+            elif self._is_supported_media_file(source, {"audio"}, "音声ファイル")[0]:
                 audio_files.append(resolved)
             else:
                 ignored_count += 1

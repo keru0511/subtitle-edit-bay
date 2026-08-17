@@ -1846,6 +1846,22 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "CHECK")
         self.assertIn("検証に失敗", self.app.status)
 
+    def test_short_mode_screen_opens_and_closes(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+
+        open_button = self._quick_item(window, "shortModeOpenButton")
+        self.assertTrue(open_button.property("visible"))
+        self.assertTrue(open_button.property("enabled"))
+
+        self._click(window, open_button)
+        short_page = self._quick_item(window, "shortModePage")
+        self.assertTrue(short_page.property("visible"))
+
+        back_button = self._quick_item(window, "shortModeBackButton")
+        self._click(window, back_button)
+        self.assertFalse(short_page.property("visible"))
+
 
 if __name__ == "__main__":
     unittest.main()

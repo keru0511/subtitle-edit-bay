@@ -31,6 +31,7 @@ ApplicationWindow {
     property bool editorMode: false
     property bool mixerMode: false
     property bool dictionaryMode: false
+    property bool shortMode: false
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -231,6 +232,7 @@ ApplicationWindow {
             root.appBackend.stopAudioMixerPreview()
         root.mixerMode = false
         root.dictionaryMode = false
+        root.shortMode = false
         root.editorMode = true
     }
 
@@ -244,6 +246,7 @@ ApplicationWindow {
         mainPlayer.pause()
         root.editorMode = false
         root.dictionaryMode = false
+        root.shortMode = false
         root.appBackend.prepareAudioMixerPreview()
         root.mixerMode = true
     }
@@ -262,12 +265,30 @@ ApplicationWindow {
         root.appBackend.stopAudioMixerPreview()
         root.editorMode = false
         root.mixerMode = false
+        root.shortMode = false
         root.dictionaryMode = true
     }
 
     function closeDictionaryScreen() {
         mainPlayer.position = root.editorPositionCache
         root.dictionaryMode = false
+    }
+
+    function openShortModeScreen() {
+        if (root.appBackend.running)
+            return
+        root.editorPositionCache = mainPlayer.position
+        mainPlayer.pause()
+        root.appBackend.stopAudioMixerPreview()
+        root.editorMode = false
+        root.mixerMode = false
+        root.dictionaryMode = false
+        root.shortMode = true
+    }
+
+    function closeShortModeScreen() {
+        root.shortMode = false
+        mainPlayer.position = root.editorPositionCache
     }
 
     function volumePercentToDb(percent) {
@@ -923,8 +944,8 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: root.editorMode || root.mixerMode || root.dictionaryMode ? 0 : 62
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
+        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode ? 0 : 62
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         color: "#101512"
         border.color: root.border
         RowLayout {
@@ -989,7 +1010,7 @@ ApplicationWindow {
 
     RowLayout {
         objectName: "mainWorkspace"
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         anchors.fill: parent
         anchors.margins: 12
         spacing: 10
@@ -1230,6 +1251,16 @@ ApplicationWindow {
                         onClicked: root.openMixerScreen()
                         contentItem: Text { text: mixerOpenButton.text; color: mixerOpenButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: mixerOpenButton.enabled ? root.acid : "#252C28" }
+                    }
+                    Button {
+                        id: shortModeOpenButton
+                        objectName: "shortModeOpenButton"
+                        Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded && root.appBackend.subtitleSegments.length > 0
+                        enabled: root.appBackend.projectLoaded && !root.appBackend.running
+                        text: "ショート動画を作成"
+                        onClicked: root.openShortModeScreen()
+                        contentItem: Text { text: shortModeOpenButton.text; color: shortModeOpenButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: shortModeOpenButton.enabled ? root.acid : "#252C28" }
                     }
                     Button {
                         id: renderButton
@@ -2147,6 +2178,27 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+
+    Rectangle {
+        id: shortModePage
+        objectName: "shortModePage"
+        anchors.fill: parent
+        visible: root.shortMode
+        z: 100
+        color: "#0D1210"
+        border.color: "#46564E"
+        focus: visible
+        Keys.onEscapePressed: root.closeShortModeScreen()
+        onVisibleChanged: if (visible) forceActiveFocus()
+
+        Loader {
+            id: shortModeLoader
+            anchors.fill: parent
+            active: root.shortMode
+            source: "ShortModeScreen.qml"
+            onLoaded: shortModeLoader.item.mainRoot = root
         }
     }
 

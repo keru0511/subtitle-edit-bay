@@ -79,7 +79,15 @@ def segment_editor_text(segment: dict[str, Any], default_max_width: int = 24) ->
     source = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").strip()
     preview = segment_preview_text(segment, default_max_width=default_max_width)
     if preview.endswith(ELLIPSIS) and not source.endswith(ELLIPSIS):
-        return source
+        max_width = int(segment.get("max_width", default_max_width))
+        display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+        expanded = normalize_text(
+            source,
+            max_width=max_width,
+            max_lines=max(2, len(source) + 1),
+            display_duration=display_duration,
+        )
+        return expanded.replace(r"\N", "\n")
     return preview
 
 

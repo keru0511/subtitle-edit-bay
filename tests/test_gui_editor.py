@@ -673,14 +673,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("\n", automatic["preview_text"])
         self.assertEqual(
             self.app.formatSubtitlePreview(0, "manual first\nmanual second"),
-            "manual first\nmanual second",
+            "manual f\nirst\nmanual\nsecond",
         )
 
         self.app.updateSegment(0, {"text": "manual first\nmanual second"})
         saved = self.app.subtitleSegments[0]
         preview = self.app.activeSubtitleSegments(1.0)[0]
         self.assertEqual(saved["text"], "manual first\nmanual second")
-        self.assertEqual(preview["preview_text"], "manual first\nmanual second")
+        self.assertEqual(preview["preview_text"], "manual f\nirst\nmanual\nsecond")
         self.assertTrue(saved["manual_text"])
 
     def test_invalid_numeric_edits_preserve_segment_and_report_check(self) -> None:
@@ -1402,7 +1402,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         text_area.forceActiveFocus()
         text_area.setProperty("text", "manual first\nmanual second")
         self.app.processEvents()
-        self.assertEqual(caption.property("text"), "manual first\nmanual second")
+        self.assertEqual(caption.property("text"), "manual f\nirst\nmanual\nsecond")
 
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")

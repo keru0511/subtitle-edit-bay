@@ -230,7 +230,10 @@ def build_silence_cut_command(
         video_filter=video_filter,
         audio_track=audio_track,
     )
-    filter_option = "-filter_complex_script" if filter_script_path else "-filter_complex"
+    if filter_script_path:
+        filter_option = "-/filter_complex" if os.name == "nt" else "-filter_complex_script"
+    else:
+        filter_option = "-filter_complex"
     filter_value = filter_script_path or (f"{mix_filter};{concat_filter}" if mix_filter else concat_filter)
     command = ["ffmpeg", "-y", "-i", input_path]
     command.extend(input_args)

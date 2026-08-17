@@ -4,12 +4,11 @@ import argparse
 import os
 import re
 import subprocess
-import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
-from .burn_subs import run_ffmpeg_with_nvenc_fallback
+from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -22,11 +21,7 @@ DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
 PIX_FMT = "yuv420p"
-
-
-def _build_temporary_output(output_path: Path) -> Path:
-    suffix = output_path.suffix or ".tmp"
-    return output_path.with_name(f".{output_path.stem}.{uuid.uuid4().hex}.partial{suffix}")
+_FILTER_SCRIPT_THRESHOLD = 8192
 
 
 def build_silencedetect_command(input_path: str, noise: str = "-35dB", duration: float = 0.4) -> list[str]:
@@ -236,9 +231,6 @@ def build_silence_cut_command(
         audio_track=audio_track,
     )
     if filter_script_path:
-        # FFmpeg 9 removed the deprecated option on Windows.  The replacement
-        # reads the option value from the temporary filter file without adding
-        # its contents to the command line.
         filter_option = "-/filter_complex" if os.name == "nt" else "-filter_complex_script"
     else:
         filter_option = "-filter_complex"
@@ -256,11 +248,13 @@ def build_silence_cut_command(
         video_codec,
     ])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    command.extend(["-pix_fmt", PIX_FMT])
-    command.extend(["-c:a", audio_codec])
+    command.extend(["-pix_fmt", PIX_FMT, "-c:a", audio_codec])
     if audio_filter or audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
-    command.extend(["-movflags", "+faststart"])
+    if Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
+        if audio_codec == "copy":
+            audio_codec = "aac"
+        command.extend(["-movflags", "+faststart"])
     command.append(output_path)
     return command
 
@@ -279,56 +273,64 @@ def cut_media_ranges(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    filter_script_path: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary_output = _build_temporary_output(output)
-    filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
-    filter_script.write_text(
-        (
-            build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)[1] + ";"
-            if audio_mix is not None
-            else ""
-        )
-        + build_concat_filter(
-            keep_ranges,
-            audio_filter=audio_filter,
-            video_filter=video_filter,
-            audio_track="mixed_audio" if audio_mix is not None else audio_track,
-        ),
-        encoding="utf-8",
+    mix_filter = ""
+    if audio_mix is not None:
+        _, mix_filter = build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)
+    concat_filter = build_concat_filter(
+        keep_ranges,
+        audio_filter=audio_filter,
+        video_filter=video_filter,
+        audio_track="mixed_audio" if audio_mix is not None else audio_track,
     )
+    filter_graph = f"{mix_filter};{concat_filter}" if mix_filter else concat_filter
+    use_filter_script = (
+        filter_script_path is not None
+        or os.name == "nt"
+        or len(filter_graph) > _FILTER_SCRIPT_THRESHOLD
+    )
+    filter_script = None
+    created_filter_script = False
+    if use_filter_script:
+        if filter_script_path:
+            filter_script = Path(filter_script_path)
+        else:
+            filter_script = output.parent / f"{output.stem}.ffmpeg-filter.txt"
+            created_filter_script = True
+        if not filter_script_path:
+            filter_script.write_text(filter_graph, encoding="utf-8")
     try:
-        def command_factory(codec: str) -> list[str]:
+        def command_builder(selected_codec: str, command_output: str) -> list[str]:
             return build_silence_cut_command(
                 input_path,
-                str(temporary_output),
+                command_output,
                 keep_ranges,
-                video_codec=codec,
+                video_codec=selected_codec,
                 audio_codec=audio_codec,
                 nvenc_preset=nvenc_preset,
                 nvenc_cq=nvenc_cq,
                 x264_crf=x264_crf,
                 audio_filter=audio_filter,
                 video_filter=video_filter,
-                filter_script_path=str(filter_script),
+                filter_script_path=str(filter_script) if use_filter_script else None,
                 audio_track=audio_track,
                 audio_mix=audio_mix,
                 audio_offset_seconds=audio_offset_seconds,
             )
 
-        run_ffmpeg_with_nvenc_fallback(
-            command_factory,
-            video_codec,
+        run_atomic_ffmpeg_export(
+            command_builder,
+            output,
+            video_codec=video_codec,
             progress_callback=progress_callback,
         )
-        if not temporary_output.exists() or temporary_output.stat().st_size == 0:
-            raise RuntimeError(f"FFmpeg completed without a usable output file: {temporary_output}")
-        os.replace(temporary_output, output)
     finally:
-        filter_script.unlink(missing_ok=True)
-        temporary_output.unlink(missing_ok=True)
+        if filter_script is not None and created_filter_script:
+            filter_script.unlink(missing_ok=True)
     return output
 
 

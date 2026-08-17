@@ -21,8 +21,8 @@ Rectangle {
     Layout.minimumWidth: 200
 
     readonly property string backgroundColor: {
-        if (!clip || !clip.background_color) return fallbackBackgroundColor
-        return clip.background_color.startsWith("#") ? clip.background_color : "#" + clip.background_color
+        if (!clipData || !clipData.background_color) return fallbackBackgroundColor
+        return clipData.background_color.startsWith("#") ? clipData.background_color : "#" + clipData.background_color
     }
 
     MediaPlayer {
@@ -76,10 +76,10 @@ Rectangle {
         wrapMode: Text.Wrap
     }
 
-    onClipChanged: {
-        if (clip && previewRoot.appBackend && previewRoot.appBackend.previewUrl) {
+    onClipDataChanged: {
+        if (clipData && previewRoot.appBackend && previewRoot.appBackend.previewUrl) {
             previewPlayer.stop()
-            previewPlayer.position = clip.start * 1000
+            previewPlayer.position = clipData.start * 1000
             previewPlayer.play()
         } else {
             previewPlayer.stop()

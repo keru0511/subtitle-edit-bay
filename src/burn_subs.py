@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from collections import deque
-import os
 import shutil
 import tempfile
-import subprocess
-import uuid
-from contextlib import contextmanager
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
+from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 DEFAULT_VIDEO_CODEC = "libx264"
@@ -19,80 +16,38 @@ DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
-PIX_FMT = "yuv420p"
 
 
-def _copy_ass_for_filter_compatibility(subtitle: str) -> tuple[str, str | None]:
+def _as_escaped_ass_input(subtitle: str) -> tuple[str, str | None]:
     subtitle_path = Path(subtitle)
     if "'" not in str(subtitle_path):
         return str(subtitle_path), None
 
-    with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as temporary_ass:
-        shutil.copy2(subtitle_path, temporary_ass.name)
-        return temporary_ass.name, temporary_ass.name
+    handle = tempfile.NamedTemporaryFile(suffix=".ass", prefix="subtitle-workflow-ass-", delete=False)
+    handle.close()
+    safe_path = Path(handle.name)
+    shutil.copy2(subtitle_path, safe_path)
+    return str(safe_path), str(safe_path)
+
+
+def build_ass_filter_path_with_cleanup(subtitle: str) -> tuple[str, str | None]:
+    subtitle_path, cleanup_path = _as_escaped_ass_input(subtitle)
+    return build_ass_filter(subtitle_path), cleanup_path
 
 
 @contextmanager
 def temporary_ass_path(subtitle: str) -> Iterator[str]:
-    safe_path, cleanup_path = _copy_ass_for_filter_compatibility(subtitle)
+    safe_path, cleanup_path = _as_escaped_ass_input(subtitle)
     try:
         yield safe_path
     finally:
         if cleanup_path is not None:
             Path(cleanup_path).unlink(missing_ok=True)
-def _build_temporary_output(output_path: Path) -> Path:
-    suffix = output_path.suffix or ".tmp"
-    return output_path.with_name(f".{output_path.stem}.{uuid.uuid4().hex}.partial{suffix}")
-
-
-def run_ffmpeg_command(
-    command: list[str],
-    *,
-    progress_callback: Callable[[str], None] | None = None,
-) -> None:
-    if progress_callback is None:
-        subprocess.run(command, check=True)
-        return
-
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    tail: deque[str] = deque(maxlen=80)
-    if process.stdout is not None:
-        for raw_line in process.stdout:
-            line = raw_line.rstrip()
-            if line:
-                tail.append(line)
-                progress_callback(line)
-    return_code = process.wait()
-    if return_code:
-        raise subprocess.CalledProcessError(return_code, command, output="\n".join(tail))
-
-
-def run_ffmpeg_with_nvenc_fallback(
-    command_factory: Callable[[str], list[str]],
-    video_codec: str,
-    *,
-    progress_callback: Callable[[str], None] | None = None,
-) -> None:
-    try:
-        run_ffmpeg_command(command_factory(video_codec), progress_callback=progress_callback)
-    except (OSError, subprocess.CalledProcessError):
-        if not video_codec.lower().endswith("_nvenc"):
-            raise
-        if progress_callback is not None:
-            progress_callback("NVENC failed; retrying subtitle render with libx264")
-        run_ffmpeg_command(command_factory("libx264"), progress_callback=progress_callback)
 
 
 def build_ass_filter(subtitle: str) -> str:
     subtitle_path = subtitle.replace("\\", "/").replace(":", r"\:")
+    subtitle_path = subtitle_path.replace("'", r"\\\'")
     return f"ass='{subtitle_path}'"
 
 
@@ -123,14 +78,17 @@ def build_ffmpeg_command(
         command.extend(["-map", "0:v:0", "-map", audio_track])
     command.extend(["-vf", build_ass_filter(subtitle), "-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    command.extend(["-pix_fmt", PIX_FMT])
-    command.extend(["-movflags", "+faststart"])
+    command.extend(["-pix_fmt", "yuv420p"])
     if audio_mix is not None:
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE, "-shortest"])
         if audio_codec == "copy":
             audio_codec = "aac"
     elif audio_filter:
         command.extend(["-af", audio_filter, "-ar", DEFAULT_FILTERED_AUDIO_RATE])
+    if Path(output).suffix.lower() in {".mp4", ".m4v", ".mov"}:
+        if audio_codec == "copy":
+            audio_codec = "aac"
+        command.extend(["-movflags", "+faststart"])
     command.extend(["-c:a", audio_codec, output])
     return command
 
@@ -150,40 +108,34 @@ def run_ffmpeg_burn(
     audio_offset_seconds: float = 0.0,
     progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
-    output_path = Path(output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_output = _build_temporary_output(output_path)
+    subtitle_for_filter, cleanup_path = build_ass_filter_path_with_cleanup(subtitle)
+
+    def command_builder(selected_codec: str, command_output: str) -> list[str]:
+        return build_ffmpeg_command(
+            video,
+            subtitle_for_filter,
+            command_output,
+            video_codec=selected_codec,
+            audio_codec=audio_codec,
+            nvenc_preset=nvenc_preset,
+            nvenc_cq=nvenc_cq,
+            x264_crf=x264_crf,
+            audio_filter=audio_filter,
+            audio_track=audio_track,
+            audio_mix=audio_mix,
+            audio_offset_seconds=audio_offset_seconds,
+        )
+
     try:
-        with temporary_ass_path(subtitle) as subtitle_path:
-            def command_factory(codec: str) -> list[str]:
-                return build_ffmpeg_command(
-                    video,
-                    subtitle_path,
-                    str(temporary_output),
-                    video_codec=codec,
-                    audio_codec=audio_codec,
-                    nvenc_preset=nvenc_preset,
-                    nvenc_cq=nvenc_cq,
-                    x264_crf=x264_crf,
-                    audio_filter=audio_filter,
-                    audio_track=audio_track,
-                    audio_mix=audio_mix,
-                    audio_offset_seconds=audio_offset_seconds,
-                )
-
-            run_ffmpeg_with_nvenc_fallback(
-                command_factory,
-                video_codec,
-                progress_callback=progress_callback,
-            )
-
-        if not temporary_output.exists() or temporary_output.stat().st_size == 0:
-            raise RuntimeError(f"FFmpeg completed without a usable output file: {temporary_output}")
-
-        os.replace(temporary_output, output_path)
+        return run_atomic_ffmpeg_export(
+            command_builder,
+            output,
+            video_codec=video_codec,
+            progress_callback=progress_callback,
+        )
     finally:
-        temporary_output.unlink(missing_ok=True)
-    return output_path
+        if cleanup_path is not None:
+            Path(cleanup_path).unlink(missing_ok=True)
 
 
 def main() -> None:

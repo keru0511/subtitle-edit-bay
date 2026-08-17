@@ -35,6 +35,7 @@ from PySide6.QtWidgets import QFileDialog
 
 from .audio_mixer import (
     AUDIO_MIX_MASTER_GAIN,
+    DEFAULT_AUDIO_TRACK,
     MAX_VOLUME_PERCENT,
     active_audio_mix_channels,
     reconcile_audio_mix,
@@ -1067,7 +1068,7 @@ class EditBayBackend(LegacyEditBayBackend):
             )
 
         self._project_path = str(derive_project_path(selected_video, selected_output))
-        reconcile_audio_mix(self._project, self._mixer_video_tracks())
+        reconcile_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
 
         if self._project != old_project:
             self._mark_project_dirty()
@@ -1157,11 +1158,14 @@ class EditBayBackend(LegacyEditBayBackend):
         ]
         return tracks or None
 
+    def _fallback_video_tracks(self) -> list[dict[str, str]]:
+        return [{"selector": DEFAULT_AUDIO_TRACK, "label": "既定の動画音声"}]
+
     @Slot(int, "QVariantMap")
     def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
         if self._project is None or self._running:
             return
-        audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks())
+        audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
         channels = audio_mix["channels"]
         if not 0 <= index < len(channels):
             self._set_status("音量ミキサーのチャンネルが見つかりません", "CHECK")
@@ -1192,7 +1196,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def resetAudioMixer(self) -> None:
         if self._project is None or self._running:
             return
-        reset_audio_mix(self._project, self._mixer_video_tracks())
+        reset_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
         self.projectDataChanged.emit()
         self._notify_audio_mixer_preview(structure_changed=True)
         self._mark_project_dirty()
@@ -1302,7 +1306,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 )
             finally:
                 self._loading_project_sources = False
-        reconcile_audio_mix(self._project, self._mixer_video_tracks())
+        reconcile_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
         self._sync_subtitle_model()
         self.projectChanged.emit()
         self.projectDataChanged.emit()

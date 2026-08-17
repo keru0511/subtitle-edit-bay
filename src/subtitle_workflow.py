@@ -588,7 +588,9 @@ def render_project_video(
             and bool(channel.get("enabled"))
             for channel in audio_mix.get("channels", [])
         )
-        if not has_real_video_track and not has_enabled_external:
+        if has_enabled_external:
+            use_audio_mix = True
+        elif not has_real_video_track:
             for channel in audio_mix.get("channels", []):
                 if (
                     isinstance(channel, dict)

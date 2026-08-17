@@ -1862,6 +1862,62 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, back_button)
         self.assertFalse(short_page.property("visible"))
 
+    def test_short_mode_clip_list_and_preview(self) -> None:
+        segments = [
+            {
+                "id": "seg-1",
+                "start": 1.0,
+                "end": 3.0,
+                "text": "first clip",
+                "speaker": "Speaker_Alice",
+                "words": [],
+            },
+            {
+                "id": "seg-2",
+                "start": 5.0,
+                "end": 8.0,
+                "text": "second clip",
+                "speaker": "Speaker_Bob",
+                "words": [],
+            },
+        ]
+        self._load_project(segments=segments)
+        _, window = self._load_qml()
+
+        open_button = self._quick_item(window, "shortModeOpenButton")
+        self._click(window, open_button)
+        QTest.qWait(100)
+
+        short_page = self._quick_item(window, "shortModePage")
+        self.assertTrue(short_page.property("visible"))
+
+        preview = self._quick_item(window, "shortModePreview")
+        clip_list = self._quick_item(window, "shortModeClipList")
+        settings_panel = self._quick_item(window, "shortModeSettingsPanel")
+        self.assertTrue(preview.property("visible"))
+        self.assertTrue(clip_list.property("visible"))
+        self.assertTrue(settings_panel.property("visible"))
+
+        clip_view = self._quick_item(window, "shortModeClipListView")
+        self.assertEqual(clip_view.property("count"), 2)
+
+        self.assertIsNotNone(preview.property("clipData"))
+        self.assertEqual(preview.property("clipData").get("segment_id"), "seg-1")
+
+        self.assertEqual(len(self.app.shortVideoClips), 2)
+        self.assertEqual(self.app.shortVideoClips[1]["segment_id"], "seg-2")
+        self.assertEqual(self.app.shortVideoSettings["global_fit"], "cover")
+
+        # remove second clip and reorder the remaining clip
+        self.app.removeShortVideoClip(1)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+        self.app.moveShortVideoClip(0, 0)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+
+        back_button = self._quick_item(window, "shortModeBackButton")
+        self._click(window, back_button)
+        self.assertFalse(short_page.property("visible"))
+
 
 if __name__ == "__main__":
     unittest.main()

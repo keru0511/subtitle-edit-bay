@@ -64,6 +64,7 @@ from .subtitle_project import (
     normalize_segment,
     save_project,
 )
+from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
@@ -266,6 +267,7 @@ class EditBayBackend(LegacyEditBayBackend):
     audioMasterMetricsChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
+    shortVideoChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
@@ -345,6 +347,29 @@ class EditBayBackend(LegacyEditBayBackend):
             return []
         return deepcopy(self._project.get("segments", []))
 
+    @Property("QVariantList", notify=shortVideoChanged)
+    def shortVideoClips(self) -> list[dict[str, Any]]:
+        if self._project is None:
+            return []
+        section = self._short_video_section()
+        clips = section.get("clips", [])
+        return [self._build_short_video_clip_view(clip, index) for index, clip in enumerate(clips)]
+
+    @Property("QVariantMap", notify=shortVideoChanged)
+    def shortVideoSettings(self) -> dict[str, Any]:
+        if self._project is None:
+            return {}
+        section = self._short_video_section()
+        return {
+            "enabled": bool(section.get("enabled", False)),
+            "output": deepcopy(section.get("output", {})),
+            "global_fit": str(section.get("global_fit", "cover")),
+            "global_background_color": str(section.get("global_background_color", "000000")),
+            "subtitle_scale_percent": float(section.get("subtitle_scale_percent", 150.0)),
+            "transition": deepcopy(section.get("transition", {})),
+            "bgm": deepcopy(section.get("bgm", {})),
+        }
+
     @Property(QObject, constant=True)
     def subtitleModel(self) -> QObject:
         return self._subtitle_model
@@ -384,6 +409,277 @@ class EditBayBackend(LegacyEditBayBackend):
         if source_index is not None:
             view["sourceIndex"] = source_index
         return view
+
+    def _short_video_section(self) -> dict[str, Any]:
+        if self._project is None:
+            return {}
+        section = self._project.setdefault(
+            "short_video",
+            {
+                "enabled": False,
+                "output": {"width": 1080, "height": 1920, "fps": 30},
+                "global_fit": "cover",
+                "global_background_color": "000000",
+                "subtitle_scale_percent": 150.0,
+                "transition": {"type": "crossfade", "duration": 0.5},
+                "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
+                "clips": [],
+            },
+        )
+        if not isinstance(section, dict):
+            section = self._project["short_video"] = {
+                "enabled": False,
+                "output": {"width": 1080, "height": 1920, "fps": 30},
+                "global_fit": "cover",
+                "global_background_color": "000000",
+                "subtitle_scale_percent": 150.0,
+                "transition": {"type": "crossfade", "duration": 0.5},
+                "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
+                "clips": [],
+            }
+        return section
+
+    def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
+        if self._project is None:
+            return None
+        for segment in self._project.get("segments", []):
+            if str(segment.get("id", "")) == segment_id:
+                return segment
+        return None
+
+    def _build_short_video_clip_view(self, clip: dict[str, Any], index: int) -> dict[str, Any]:
+        segment_id = str(clip.get("segment_id", ""))
+        segment = self._find_segment_by_id(segment_id) or {}
+        section = self._short_video_section()
+        global_fit = str(section.get("global_fit", "cover"))
+        global_background_color = str(section.get("global_background_color", "000000"))
+        fit = str(clip.get("fit", global_fit))
+        background_color = str(clip.get("background_color", global_background_color))
+        start = float(clip.get("start", segment.get("start", 0.0)))
+        end = float(clip.get("end", segment.get("end", 0.0)))
+        return {
+            "index": index,
+            "segment_id": segment_id,
+            "start": start,
+            "end": end,
+            "fit": fit,
+            "background_color": background_color,
+            "text": str(segment.get("text", clip.get("text", ""))),
+            "speaker": str(segment.get("speaker", clip.get("speaker", ""))),
+            "preview_text": segment_preview_text(segment) if segment else str(clip.get("text", "")),
+        }
+
+    @Slot()
+    def initializeShortVideoClips(self) -> None:
+        if self._project is None:
+            return
+        section = self._short_video_section()
+        if section.get("clips"):
+            return
+        clips: list[dict[str, Any]] = []
+        global_fit = str(section.get("global_fit", "cover"))
+        global_background_color = str(section.get("global_background_color", "000000"))
+        for segment in sorted(
+            self._project.get("segments", []),
+            key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)), str(item.get("id", ""))),
+        ):
+            clips.append(
+                {
+                    "segment_id": str(segment.get("id", "")),
+                    "start": float(segment.get("start", 0.0)),
+                    "end": float(segment.get("end", 0.0)),
+                    "fit": global_fit,
+                    "background_color": global_background_color,
+                }
+            )
+        section["enabled"] = True
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+
+    @Slot(str, result=bool)
+    def addShortVideoClip(self, segment_id: str) -> bool:
+        if self._project is None or self._running:
+            return False
+        segment = self._find_segment_by_id(segment_id)
+        if segment is None:
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        global_fit = str(section.get("global_fit", "cover"))
+        global_background_color = str(section.get("global_background_color", "000000"))
+        clips.append(
+            {
+                "segment_id": segment_id,
+                "start": float(segment.get("start", 0.0)),
+                "end": float(segment.get("end", 0.0)),
+                "fit": global_fit,
+                "background_color": global_background_color,
+            }
+        )
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def removeShortVideoClip(self, index: int) -> bool:
+        if self._project is None or self._running:
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        if not 0 <= index < len(clips):
+            return False
+        clips.pop(index)
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(int, int, result=bool)
+    def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
+        if self._project is None or self._running:
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        if not (0 <= from_index < len(clips)):
+            return False
+        if to_index < 0:
+            to_index = 0
+        if to_index > len(clips):
+            to_index = len(clips)
+        if from_index == to_index:
+            return True
+        clip = clips.pop(from_index)
+        if to_index > from_index:
+            to_index -= 1
+        clips.insert(to_index, clip)
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(int, "QVariantMap", result=bool)
+    def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+        if self._project is None or self._running:
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        if not 0 <= index < len(clips):
+            return False
+        clip = dict(clips[index])
+        if "start" in fields:
+            clip["start"] = max(0.0, float(fields["start"]))
+        if "end" in fields:
+            clip["end"] = max(clip.get("start", 0.0), float(fields["end"]))
+        if "fit" in fields:
+            fit = str(fields["fit"]).lower()
+            if fit not in VALID_FIT_MODES:
+                return False
+            clip["fit"] = fit
+        if "background_color" in fields:
+            try:
+                clip["background_color"] = normalize_rgb_color(fields["background_color"])
+            except (TypeError, ValueError, OverflowError):
+                return False
+        clips[index] = clip
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def setShortVideoGlobalFit(self, fit: str) -> bool:
+        if self._project is None or self._running:
+            return False
+        fit = str(fit).lower()
+        if fit not in VALID_FIT_MODES:
+            return False
+        section = self._short_video_section()
+        section["global_fit"] = fit
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            normalized = normalize_rgb_color(color)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        section = self._short_video_section()
+        section["global_background_color"] = normalized
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(str, float, result=bool)
+    def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        transition_type = str(transition_type).lower()
+        if transition_type not in VALID_TRANSITION_TYPES:
+            return False
+        section = self._short_video_section()
+        section["transition"] = {"type": transition_type, "duration": max(0.0, round(float(duration), 3))}
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot("QVariantMap", result=bool)
+    def setShortVideoBgm(self, fields: dict[str, Any]) -> bool:
+        if self._project is None or self._running:
+            return False
+        section = self._short_video_section()
+        bgm = dict(section.get("bgm", {}))
+        if "path" in fields:
+            bgm["path"] = str(fields["path"])
+        if "in" in fields:
+            bgm["in"] = max(0.0, float(fields["in"]))
+        if "out" in fields:
+            bgm["out"] = max(bgm.get("in", 0.0), float(fields["out"]))
+        if "start" in fields:
+            bgm["start"] = max(0.0, float(fields["start"]))
+        if "volume" in fields:
+            volume = float(fields["volume"])
+            bgm["volume"] = max(0.0, min(1.0, volume))
+        section["bgm"] = bgm
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(int, int, int, result=bool)
+    def setShortVideoOutput(self, width: int, height: int, fps: int) -> bool:
+        if self._project is None or self._running:
+            return False
+        section = self._short_video_section()
+        section["output"] = {"width": max(1, int(width)), "height": max(1, int(height)), "fps": max(1, int(fps))}
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(float, result=bool)
+    def setShortVideoSubtitleScale(self, percent: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        section = self._short_video_section()
+        section["subtitle_scale_percent"] = max(0.0, float(percent))
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:

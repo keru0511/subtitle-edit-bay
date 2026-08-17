@@ -8,6 +8,9 @@ from typing import Any, Mapping, Sequence
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .runtime_config import load_command_runtime_config
 
+VALID_SHORT_FIT_MODES = ("cover", "contain", "blur")
+VALID_SHORT_TRANSITION_TYPES = ("crossfade", "fade", "cut")
+
 RuntimeConfig = Mapping[str, Any]
 DEFAULT_POSTPROCESS_WORKERS = max(1, min(4, os.cpu_count() or 1))
 
@@ -77,6 +80,24 @@ class PipelineSettings:
 
 
 @dataclass(frozen=True)
+class ShortModeSettings:
+    short_mode_enabled: bool = False
+    short_mode_output_width: int = 1080
+    short_mode_output_height: int = 1920
+    short_mode_output_fps: int = 30
+    short_mode_global_fit: str = "cover"
+    short_mode_global_background_color: str = "000000"
+    short_mode_transition_type: str = "crossfade"
+    short_mode_transition_duration: float = 0.5
+    short_mode_bgm_path: str = ""
+    short_mode_bgm_in: float = 0.0
+    short_mode_bgm_out: float = 0.0
+    short_mode_bgm_start: float = 0.0
+    short_mode_bgm_volume: float = 0.3
+    short_mode_subtitle_scale_percent: float = 150.0
+
+
+@dataclass(frozen=True)
 class RuntimeSettings:
     transcription: TranscriptionSettings
     subtitle_layout: SubtitleLayoutSettings
@@ -85,6 +106,7 @@ class RuntimeSettings:
     silence_cut: SilenceCutSettings
     alignment: AlignmentSettings
     pipeline: PipelineSettings
+    short_video: ShortModeSettings
 
 
 TRANSCRIBE_OPTION_KEYS = (
@@ -208,6 +230,13 @@ def _bool(config: RuntimeConfig, key: str, default: bool) -> bool:
     raise ValueError(f"Runtime setting '{key}' must be true or false.")
 
 
+def _choice(config: RuntimeConfig, key: str, choices: Sequence[str], default: str) -> str:
+    value = _str(config, key, default)
+    if value not in choices:
+        raise ValueError(f"Runtime setting '{key}' must be one of {choices}.")
+    return value
+
+
 def settings_from_config(config: RuntimeConfig) -> RuntimeSettings:
     return RuntimeSettings(
         transcription=TranscriptionSettings(
@@ -304,6 +333,22 @@ def settings_from_config(config: RuntimeConfig) -> RuntimeSettings:
         pipeline=PipelineSettings(
             postprocess_workers=_int(config, "postprocess_workers", PipelineSettings.postprocess_workers),
         ),
+        short_video=ShortModeSettings(
+            short_mode_enabled=_bool(config, "short_mode_enabled", ShortModeSettings.short_mode_enabled),
+            short_mode_output_width=_int(config, "short_mode_output_width", ShortModeSettings.short_mode_output_width),
+            short_mode_output_height=_int(config, "short_mode_output_height", ShortModeSettings.short_mode_output_height),
+            short_mode_output_fps=_int(config, "short_mode_output_fps", ShortModeSettings.short_mode_output_fps),
+            short_mode_global_fit=_choice(config, "short_mode_global_fit", VALID_SHORT_FIT_MODES, ShortModeSettings.short_mode_global_fit),
+            short_mode_global_background_color=_str(config, "short_mode_global_background_color", ShortModeSettings.short_mode_global_background_color),
+            short_mode_transition_type=_choice(config, "short_mode_transition_type", VALID_SHORT_TRANSITION_TYPES, ShortModeSettings.short_mode_transition_type),
+            short_mode_transition_duration=_float(config, "short_mode_transition_duration", ShortModeSettings.short_mode_transition_duration),
+            short_mode_bgm_path=_str(config, "short_mode_bgm_path", ShortModeSettings.short_mode_bgm_path),
+            short_mode_bgm_in=_float(config, "short_mode_bgm_in", ShortModeSettings.short_mode_bgm_in),
+            short_mode_bgm_out=_float(config, "short_mode_bgm_out", ShortModeSettings.short_mode_bgm_out),
+            short_mode_bgm_start=_float(config, "short_mode_bgm_start", ShortModeSettings.short_mode_bgm_start),
+            short_mode_bgm_volume=_float(config, "short_mode_bgm_volume", ShortModeSettings.short_mode_bgm_volume),
+            short_mode_subtitle_scale_percent=_float(config, "short_mode_subtitle_scale_percent", ShortModeSettings.short_mode_subtitle_scale_percent),
+        ),
     )
 
 
@@ -321,6 +366,7 @@ def settings_to_flat_dict(settings: RuntimeSettings) -> dict[str, Any]:
         settings.silence_cut,
         settings.alignment,
         settings.pipeline,
+        settings.short_video,
     ):
         flattened.update(asdict(group))
     return flattened

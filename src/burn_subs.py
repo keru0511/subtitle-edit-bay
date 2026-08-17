@@ -108,7 +108,7 @@ def run_ffmpeg_burn(
     audio_offset_seconds: float = 0.0,
     progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
-    subtitle_for_filter, cleanup_path = build_ass_filter_path_with_cleanup(subtitle)
+    subtitle_for_filter, cleanup_path = _as_escaped_ass_input(subtitle)
 
     def command_builder(selected_codec: str, command_output: str) -> list[str]:
         return build_ffmpeg_command(

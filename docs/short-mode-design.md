@@ -71,34 +71,9 @@ header.visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
 mainWorkspace.visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
 ```
 
-### 3.3 既存画面遷移
+### 3.3 画面遷移図（ShortModeScreen 追加後）
 
-```mermaid
-flowchart TD
-    Start([アプリ起動]) --> Main[MainWorkflowScreen]
-
-    Main --> |字幕を編集する| Editor[字幕編集モード]
-    Main --> |音量を調整する| Mixer[ミキサーモード]
-    Main --> |文字起こし辞書| Dictionary[辞書モード]
-    Main --> |字幕を焼き付けて動画を書き出す| Render[横長書き出し]
-
-    Editor --> |メインへ戻る / Esc| Main
-    Mixer --> |メインへ戻る / Esc| Main
-    Dictionary --> |保存してメインへ戻る| Main
-```
-
-## 4. 新規画面遷移
-
-### 4.1 遷移表
-
-| 遷移 | トリガー | 備考 |
-|------|---------|------|
-| `MainWorkflowScreen` → `ShortModeScreen` | 右パネル「ショート動画を作成」ボタン | プロジェクト読み込み済み & 字幕セグメントあり & 処理中でない |
-| `ShortModeScreen` → `MainWorkflowScreen` | 「メインへ戻る」ボタン / `Esc` | 変更はプロジェクトに随時保存 |
-| `ShortModeScreen` → レンダリング | 「ショート動画を書き出す」ボタン | バックグラウンドで `src.subtitle_workflow short` を実行 |
-| Editor / Mixer / Dictionary → Short | MVP では非対応 | 必ず `Main` を経由して遷移 |
-
-### 4.2 全体遷移図
+`ShortModeScreen` は `MainWorkflowScreen.qml` 内の `shortModePage`（`Loader` + `Rectangle` オーバレイ）として追加される。別ウィンドウではない。
 
 ```mermaid
 flowchart TD
@@ -116,6 +91,23 @@ flowchart TD
     Short --> |メインへ戻る / Esc| Main
     Short --> |ショート動画を書き出す| ShortRender[縦長書き出し]
 ```
+
+## 4. ShortModeScreen の遷移トリガー
+
+### 4.1 遷移表
+
+| 遷移 | トリガー | 備考 |
+|------|---------|------|
+| `MainWorkflowScreen` → `ShortModeScreen` | 右パネル「ショート動画を作成」ボタン | プロジェクト読み込み済み & 字幕セグメントあり & 処理中でない |
+| `ShortModeScreen` → `MainWorkflowScreen` | 「メインへ戻る」ボタン / `Esc` | 変更はプロジェクトに随時保存 |
+| `ShortModeScreen` → レンダリング | 「ショート動画を書き出す」ボタン | バックグラウンドで `src.subtitle_workflow short` を実行 |
+| Editor / Mixer / Dictionary → Short | MVP では非対応 | 必ず `Main` を経由して遷移 |
+
+### 4.2 追加される位置
+
+- `MainWorkflowScreen.qml` に `shortMode` プロパティと `shortModePage`（`Loader` + `Rectangle` オーバレイ）を追加する。
+- `MainWorkflowScreenWithContext.qml` は `MainWorkflowScreen` を継承しているため、辞書モードと同じウィンドウで `ShortModeScreen` を開ける。
+- `MainWorkflowScreen` 右パネルの `workflowActions` 内に「ショート動画を作成」ボタンを追加する。`projectLoaded` かつ字幕セグメントが存在し、処理中でない場合に有効。
 
 ## 5. ShortModeScreen の構成
 

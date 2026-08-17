@@ -712,6 +712,63 @@ class SubtitleWorkflowTests(unittest.TestCase):
         self.assertIn("render", render)
         self.assertNotIn("--audio-file", render)
 
+    def test_project_short_video_round_trip(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "project_type": "subtitle-edit-project",
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-01T00:00:01",
+            "video": {"path": "video.mkv"},
+            "output_dir": "/tmp/out",
+            "audio_sources": [],
+            "speakers": [],
+            "waveforms": [],
+            "subtitle_settings": {},
+            "render_settings": {},
+            "transcription": {},
+            "transcription_context": {},
+            "segments": [{"start": 0.0, "end": 1.0, "text": "hi", "speaker": "Oz"}],
+            "short_video": {
+                "enabled": True,
+                "output": {"width": 720, "height": 1280, "fps": 60},
+                "global_fit": "contain",
+                "clips": [
+                    {"segment_id": "subtitle-000001", "start": 0.2, "end": 0.8, "fit": "blur"}
+                ],
+            },
+        }
+        model = SubtitleProject.from_json(payload)
+        self.assertTrue(model.short_video.enabled)
+        self.assertEqual(model.short_video.output.width, 720)
+        self.assertEqual(model.short_video.clips[0].fit, "blur")
+
+        round_trip = model.to_json()
+        self.assertEqual(round_trip["short_video"]["output"]["width"], 720)
+        self.assertEqual(round_trip["short_video"]["clips"][0]["fit"], "blur")
+        self.assertTrue(SubtitleProject.from_json(round_trip).short_video.enabled)
+
+    def test_legacy_project_gets_default_short_video(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "project_type": "subtitle-edit-project",
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-01T00:00:01",
+            "video": {"path": "video.mkv"},
+            "output_dir": "/tmp/out",
+            "audio_sources": [],
+            "speakers": [],
+            "waveforms": [],
+            "subtitle_settings": {},
+            "render_settings": {},
+            "transcription": {},
+            "transcription_context": {},
+            "segments": [{"start": 0.0, "end": 1.0, "text": "hi", "speaker": "Oz"}],
+        }
+        model = SubtitleProject.from_json(payload)
+        self.assertFalse(model.short_video.enabled)
+        self.assertEqual(model.short_video.output.height, 1920)
+        self.assertEqual(model.to_json()["short_video"]["enabled"], False)
+
 
 if __name__ == "__main__":
     unittest.main()

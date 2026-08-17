@@ -15,6 +15,7 @@ import numpy as np
 from .audio_mixer import reconcile_audio_mix
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .color_config import normalize_rgb_color
+from .short_video_schema import ShortVideo
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 
@@ -305,6 +306,7 @@ class SubtitleProject:
     transcription_context: dict[str, Any]
     audio_mix: AudioMix | None
     segments: list[SubtitleSegment]
+    short_video: ShortVideo = field(default_factory=ShortVideo)
     extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -334,10 +336,11 @@ class SubtitleProject:
             transcription_context=deepcopy(migrated.get("transcription_context", {})),
             audio_mix=AudioMix.from_json(migrated["audio_mix"]) if isinstance(migrated.get("audio_mix"), dict) else None,
             segments=segments,
+            short_video=ShortVideo.from_json(migrated.get("short_video")),
             extras=deepcopy({key: value for key, value in migrated.items() if key not in {
                 "schema_version", "project_type", "created_at", "updated_at", "video", "output_dir",
                 "audio_sources", "speakers", "waveforms", "subtitle_settings", "render_settings",
-                "transcription", "transcription_context", "audio_mix", "segments",
+                "transcription", "transcription_context", "audio_mix", "segments", "short_video",
             }}),
         )
 
@@ -360,6 +363,7 @@ class SubtitleProject:
         }
         if self.audio_mix is not None:
             payload["audio_mix"] = self.audio_mix.to_json()
+        payload["short_video"] = self.short_video.to_json()
         payload.update(deepcopy(self.extras))
         return payload
 

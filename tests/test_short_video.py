@@ -5,6 +5,7 @@ import unittest
 from src.short_video import build_short_video_filter_complex
 from src.short_video_schema import (
     ShortVideo,
+    ShortVideoBgm,
     ShortVideoClip,
     ShortVideoError,
     ShortVideoOutput,
@@ -169,6 +170,102 @@ class BuildShortVideoFilterComplexTests(unittest.TestCase):
         )
         fc = build_short_video_filter_complex(short, ass_path="C:/temp/short.ass")
         self.assertIn("ass='C\\:/temp/short.ass'", fc)
+
+    def test_bgm_with_main_audio_is_mixed(self) -> None:
+        short = ShortVideo(
+            enabled=True,
+            output=ShortVideoOutput(width=1080, height=1920, fps=30),
+            clips=[ShortVideoClip(start=0.0, end=2.0)],
+            bgm=ShortVideoBgm(
+                path="/tmp/bgm.mp3",
+                in_point=0.0,
+                out_point=0.0,
+                start=0.0,
+                volume=0.4,
+            ),
+        )
+        fc = build_short_video_filter_complex(short, has_audio=True, include_bgm=True)
+        self.assertIn("[1:a:0]", fc)
+        self.assertIn("aloop=loop=-1:size=0", fc)
+        self.assertIn("atrim=0:2", fc)
+        self.assertIn("adelay=0:all=1", fc)
+        self.assertIn("volume=0.4", fc)
+        self.assertIn("aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[bgm]", fc)
+        self.assertIn(
+            "[sa0][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0:weights='1 1'[aout]",
+            fc,
+        )
+
+    def test_bgm_trimmed_and_delayed(self) -> None:
+        short = ShortVideo(
+            enabled=True,
+            output=ShortVideoOutput(width=1080, height=1920, fps=30),
+            clips=[ShortVideoClip(start=0.0, end=5.0)],
+            bgm=ShortVideoBgm(
+                path="/tmp/bgm.mp3",
+                in_point=1.0,
+                out_point=4.0,
+                start=2.0,
+                volume=0.5,
+            ),
+        )
+        fc = build_short_video_filter_complex(short, has_audio=True, include_bgm=True)
+        self.assertIn("atrim=start=1.000:end=4.000,asetpts=PTS-STARTPTS,", fc)
+        self.assertIn("atrim=0:3", fc)
+        self.assertIn("adelay=2000:all=1", fc)
+        self.assertIn("volume=0.5", fc)
+
+    def test_bgm_without_main_audio_is_output(self) -> None:
+        short = ShortVideo(
+            enabled=True,
+            output=ShortVideoOutput(width=1080, height=1920, fps=30),
+            clips=[ShortVideoClip(start=0.0, end=2.0)],
+            bgm=ShortVideoBgm(
+                path="/tmp/bgm.mp3",
+                in_point=0.0,
+                out_point=0.0,
+                start=0.0,
+                volume=0.3,
+            ),
+        )
+        fc = build_short_video_filter_complex(short, has_audio=False, include_bgm=True)
+        self.assertIn("[1:a:0]", fc)
+        self.assertNotIn("[sa0]", fc)
+        self.assertIn("[bgm]anull[aout]", fc)
+
+    def test_bgm_not_included_when_disabled(self) -> None:
+        short = ShortVideo(
+            enabled=True,
+            output=ShortVideoOutput(width=1080, height=1920, fps=30),
+            clips=[ShortVideoClip(start=0.0, end=2.0)],
+            bgm=ShortVideoBgm(
+                path="/tmp/bgm.mp3",
+                in_point=0.0,
+                out_point=0.0,
+                start=0.0,
+                volume=0.3,
+            ),
+        )
+        fc = build_short_video_filter_complex(short, has_audio=True, include_bgm=False)
+        self.assertNotIn("[1:a:0]", fc)
+        self.assertIn("[sa0]anull[aout]", fc)
+
+    def test_bgm_start_after_total_duration_is_ignored(self) -> None:
+        short = ShortVideo(
+            enabled=True,
+            output=ShortVideoOutput(width=1080, height=1920, fps=30),
+            clips=[ShortVideoClip(start=0.0, end=2.0)],
+            bgm=ShortVideoBgm(
+                path="/tmp/bgm.mp3",
+                in_point=0.0,
+                out_point=0.0,
+                start=2.0,
+                volume=0.3,
+            ),
+        )
+        fc = build_short_video_filter_complex(short, has_audio=True, include_bgm=True)
+        self.assertNotIn("[1:a:0]", fc)
+        self.assertIn("[sa0]anull[aout]", fc)
 
 
 if __name__ == "__main__":

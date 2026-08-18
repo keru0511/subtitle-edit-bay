@@ -11,7 +11,7 @@ from .burn_subs import DEFAULT_FILTERED_AUDIO_RATE, build_ass_filter
 from .color_config import normalize_rgb_color
 from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .media_probe import probe_media_duration, probe_media_stream_types
-from .short_video_schema import ShortVideo, ShortVideoClip, ShortVideoError
+from .short_video_schema import ShortVideo, ShortVideoBgm, ShortVideoClip, ShortVideoError
 from .subtitle_project import derive_short_render_path, load_project
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -107,18 +107,53 @@ def _build_clip_audio_filter(index: int, clip: ShortVideoClip) -> str:
     )
 
 
+def _build_bgm_filter(bgm: ShortVideoBgm, total_duration: float) -> str | None:
+    """Build the FFmpeg audio filter chain for the BGM track.
+
+    The BGM is trimmed to the requested in/out points, looped to cover the
+    active portion of the short video (total duration minus start offset),
+    delayed by the start offset, attenuated by volume, and converted to a
+    consistent sample format for mixing.
+    """
+    if not bgm.path or total_duration <= 0.0:
+        return None
+    active_duration = total_duration - bgm.start
+    if active_duration <= 0.0:
+        return None
+
+    start_ms = max(0, int(round(bgm.start * 1000)))
+    volume = max(0.0, min(1.0, bgm.volume))
+    parts: list[str] = ["[1:a:0]"]
+    if bgm.out_point > bgm.in_point > 0.0 or (bgm.in_point == 0.0 and bgm.out_point > 0.0):
+        parts.append(
+            f"atrim=start={_format_filter_time(bgm.in_point)}:"
+            f"end={_format_filter_time(bgm.out_point)},asetpts=PTS-STARTPTS,"
+        )
+    else:
+        parts.append("asetpts=PTS-STARTPTS,")
+    parts.append(
+        f"aloop=loop=-1:size=0,"
+        f"atrim=0:{_format_filter_time(active_duration)},"
+        f"adelay={start_ms}:all=1,"
+        f"volume={_format_filter_time(volume)},"
+        "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[bgm]"
+    )
+    return "".join(parts)
+
+
 def build_short_video_filter_complex(
     short_video: ShortVideo,
     *,
     has_audio: bool = True,
+    include_bgm: bool = False,
     ass_path: str | None = None,
 ) -> str:
     """Build an FFmpeg filter_complex for the short mode video pipeline.
 
     Each selected clip is trimmed from the source video, converted to 9:16
     using the requested fit (cover / contain / blur), optionally crossfaded with
-    neighbouring clips, and finally has ASS subtitles burned in if ``ass_path``
-    is provided.
+    neighbouring clips, mixed with an optional BGM track, and finally has ASS
+    subtitles burned in if ``ass_path`` is provided.
     """
     clips = short_video.clips
     if not clips:
@@ -130,6 +165,7 @@ def build_short_video_filter_complex(
     global_fit = short_video.global_fit
     global_background_color = _normalize_hex_color(short_video.global_background_color)
     transition = short_video.transition
+    use_bgm = include_bgm and bool(short_video.bgm.path)
 
     stream_filters: list[str] = []
     for index, clip in enumerate(clips):
@@ -145,6 +181,7 @@ def build_short_video_filter_complex(
     a_out = "sa0" if has_audio else ""
     total_duration = clips[0].end - clips[0].start
     clip_count = len(clips)
+    full_duration = sum(clip.end - clip.start for clip in clips)
 
     if clip_count > 1:
         transition_duration = max(0.0, transition.duration)
@@ -156,6 +193,7 @@ def build_short_video_filter_complex(
                 a_inputs = "".join(f"[sa{i}]" for i in range(clip_count))
                 stream_filters.append(f"{a_inputs}concat=n={clip_count}:v=0:a=1[a_concat]")
                 a_out = "a_concat"
+            total_duration = full_duration
         else:
             for index in range(1, clip_count):
                 current_duration = clips[index].end - clips[index].start
@@ -170,6 +208,9 @@ def build_short_video_filter_complex(
                         a_inputs = f"[{a_out}]" + "".join(f"[sa{i}]" for i in range(index, clip_count))
                         stream_filters.append(f"{a_inputs}concat=n={remaining}:v=0:a=1[a_concat]")
                         a_out = "a_concat"
+                    total_duration += sum(
+                        clip.end - clip.start for clip in clips[index:]
+                    )
                     break
                 offset = total_duration - td
                 new_v = f"vx{index}"
@@ -192,9 +233,6 @@ def build_short_video_filter_complex(
                 total_duration = offset + current_duration
                 v_out = new_v
                 a_out = new_a
-            else:
-                # All transitions were applied without a fallback concat.
-                pass
 
     if ass_path:
         ass_filter = build_ass_filter(str(ass_path))
@@ -202,7 +240,25 @@ def build_short_video_filter_complex(
     else:
         stream_filters.append(f"[{v_out}]format=yuv420p[v_final]")
 
-    if has_audio and a_out != "aout":
+    if use_bgm:
+        bgm_filter = _build_bgm_filter(short_video.bgm, total_duration)
+        if bgm_filter:
+            stream_filters.append(bgm_filter)
+            main_label = a_out if has_audio else None
+            if main_label is not None:
+                if main_label == "aout":
+                    stream_filters.append("[aout]anull[main_audio]")
+                    main_label = "main_audio"
+                stream_filters.append(
+                    f"[{main_label}][bgm]amix=inputs=2:"
+                    "duration=first:dropout_transition=0:normalize=0:"
+                    "weights='1 1'[aout]"
+                )
+            else:
+                stream_filters.append("[bgm]anull[aout]")
+        elif has_audio and a_out != "aout":
+            stream_filters.append(f"[{a_out}]anull[aout]")
+    elif has_audio and a_out != "aout":
         stream_filters.append(f"[{a_out}]anull[aout]")
 
     return ";".join(stream_filters)
@@ -218,6 +274,7 @@ def build_short_video_command(
     output_height: int,
     output_fps: int,
     has_audio: bool = True,
+    bgm_path: str | None = None,
     audio_codec: str = DEFAULT_SHORT_AUDIO_CODEC,
     nvenc_preset: str = "p5",
     nvenc_cq: int = DEFAULT_NVENC_CQ,
@@ -233,6 +290,8 @@ def build_short_video_command(
         filter_value = filter_complex
 
     command = ["ffmpeg", "-y", "-i", video_path]
+    if bgm_path:
+        command.extend(["-i", str(bgm_path)])
     command.extend([filter_option, filter_value])
     command.extend(["-map", "[v_final]"])
     if has_audio:
@@ -345,9 +404,14 @@ def render_short_video(
     except (OSError, subprocess.CalledProcessError, ValueError):
         has_audio = False
 
+    bgm_path = short_video.bgm.path
+    include_bgm = bool(bgm_path) and Path(bgm_path).is_file()
+    command_has_audio = has_audio or include_bgm
+
     filter_complex = build_short_video_filter_complex(
         short_video,
         has_audio=has_audio,
+        include_bgm=include_bgm,
         ass_path=str(ass_path) if ass_path else None,
     )
 
@@ -375,7 +439,8 @@ def render_short_video(
                 output_width=short_video.output.width,
                 output_height=short_video.output.height,
                 output_fps=short_video.output.fps,
-                has_audio=has_audio,
+                has_audio=command_has_audio,
+                bgm_path=bgm_path if include_bgm else None,
                 audio_codec=audio_codec,
                 nvenc_preset=nvenc_preset,
                 nvenc_cq=nvenc_cq,

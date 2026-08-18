@@ -408,6 +408,13 @@ def derive_render_path(project_path: str | Path) -> Path:
     return path.with_name(f"{name}.edited.subtitled.mp4")
 
 
+def derive_short_render_path(project_path: str | Path) -> Path:
+    path = Path(project_path)
+    suffix = ".subtitle-project.json"
+    name = path.name[:-len(suffix)] if path.name.endswith(suffix) else path.stem
+    return path.with_name(f"{name}.short.mp4")
+
+
 def _finite_number(value: Any, field: str) -> float:
     try:
         result = float(value)

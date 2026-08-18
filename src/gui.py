@@ -54,7 +54,11 @@ from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
-from .gui_state import build_gui_render_command, build_gui_transcribe_command
+from .gui_state import (
+    build_gui_render_command,
+    build_gui_short_video_command,
+    build_gui_transcribe_command,
+)
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     SubtitleProjectError,
@@ -477,8 +481,6 @@ class EditBayBackend(LegacyEditBayBackend):
         if section.get("clips"):
             return
         clips: list[dict[str, Any]] = []
-        global_fit = str(section.get("global_fit", "cover"))
-        global_background_color = str(section.get("global_background_color", "000000"))
         for segment in sorted(
             self._project.get("segments", []),
             key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)), str(item.get("id", ""))),
@@ -488,8 +490,6 @@ class EditBayBackend(LegacyEditBayBackend):
                     "segment_id": str(segment.get("id", "")),
                     "start": float(segment.get("start", 0.0)),
                     "end": float(segment.get("end", 0.0)),
-                    "fit": global_fit,
-                    "background_color": global_background_color,
                 }
             )
         section["enabled"] = True
@@ -507,15 +507,11 @@ class EditBayBackend(LegacyEditBayBackend):
             return False
         section = self._short_video_section()
         clips = list(section.get("clips", []))
-        global_fit = str(section.get("global_fit", "cover"))
-        global_background_color = str(section.get("global_background_color", "000000"))
         clips.append(
             {
                 "segment_id": segment_id,
                 "start": float(segment.get("start", 0.0)),
                 "end": float(segment.get("end", 0.0)),
-                "fit": global_fit,
-                "background_color": global_background_color,
             }
         )
         section["clips"] = clips
@@ -2148,12 +2144,27 @@ class EditBayBackend(LegacyEditBayBackend):
         mode = "GPU" if self._dependencies.nvenc else "CPU"
         self._start_command(command, "render", f"{mode}を自動選択して動画を書き出しています")
 
+    @Slot()
+    def renderShortVideo(self) -> None:
+        if self._running or self._project is None:
+            return
+        self.refreshDependencies()
+        if not self.saveProject():
+            return
+        command = build_gui_short_video_command(
+            self.gui_config_path, project_path=self._project_path
+        )
+        mode = "GPU" if self._dependencies.nvenc else "CPU"
+        self._start_command(command, "render_short", f"{mode}を自動選択してショート動画を書き出しています")
+
     def _process_started(self) -> None:
         self._running = True
         self.runningChanged.emit()
         self.elapsed_timer.start()
         if self._active_job == "transcribe":
             self._set_status("文字起こしと編集プロジェクト作成を実行しています", "TRANSCRIBE")
+        elif self._active_job == "render_short":
+            self._set_status("ショート動画を書き出しています", "ENCODE")
         else:
             self._set_status("編集済み字幕を動画へ焼き付けています", "ENCODE")
 
@@ -2194,6 +2205,8 @@ class EditBayBackend(LegacyEditBayBackend):
                     else "文字起こしが完了しました。編集プロジェクトを開いてください",
                     "EDIT" if loaded else "CHECK",
                 )
+            elif completed_job == "render_short":
+                self._set_status("ショート動画の書き出しが完了しました", "COMPLETE")
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:

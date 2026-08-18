@@ -86,3 +86,28 @@ def build_gui_render_command(
         command.extend(["--output", output_path])
     command.append("--run")
     return command
+
+
+def build_gui_short_video_command(
+    config_path: str | Path,
+    *,
+    project_path: str,
+    output_path: str | None = None,
+) -> list[str]:
+    if not project_path:
+        raise ValueError("project_path is required")
+    command = [
+        sys.executable,
+        "-u",
+        "-m",
+        "src.subtitle_workflow",
+        "render-short",
+        "--project",
+        project_path,
+        "--config",
+        str(config_path),
+    ]
+    if output_path:
+        command.extend(["--output", output_path])
+    command.append("--run")
+    return command

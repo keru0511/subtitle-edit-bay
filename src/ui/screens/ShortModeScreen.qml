@@ -50,7 +50,7 @@ Item {
                 enabled: shortRoot.appBackend && !shortRoot.appBackend.running && shortRoot.appBackend.shortVideoClips.length > 0
                 text: "書き出す"
                 onClicked: {
-                    // Step 4 で実装
+                    shortRoot.appBackend.renderShortVideo()
                 }
                 contentItem: Text {
                     text: exportButton.text

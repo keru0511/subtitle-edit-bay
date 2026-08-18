@@ -481,8 +481,6 @@ class EditBayBackend(LegacyEditBayBackend):
         if section.get("clips"):
             return
         clips: list[dict[str, Any]] = []
-        global_fit = str(section.get("global_fit", "cover"))
-        global_background_color = str(section.get("global_background_color", "000000"))
         for segment in sorted(
             self._project.get("segments", []),
             key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)), str(item.get("id", ""))),
@@ -492,8 +490,6 @@ class EditBayBackend(LegacyEditBayBackend):
                     "segment_id": str(segment.get("id", "")),
                     "start": float(segment.get("start", 0.0)),
                     "end": float(segment.get("end", 0.0)),
-                    "fit": global_fit,
-                    "background_color": global_background_color,
                 }
             )
         section["enabled"] = True
@@ -511,15 +507,11 @@ class EditBayBackend(LegacyEditBayBackend):
             return False
         section = self._short_video_section()
         clips = list(section.get("clips", []))
-        global_fit = str(section.get("global_fit", "cover"))
-        global_background_color = str(section.get("global_background_color", "000000"))
         clips.append(
             {
                 "segment_id": segment_id,
                 "start": float(segment.get("start", 0.0)),
                 "end": float(segment.get("end", 0.0)),
-                "fit": global_fit,
-                "background_color": global_background_color,
             }
         )
         section["clips"] = clips

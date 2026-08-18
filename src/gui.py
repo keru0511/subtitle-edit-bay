@@ -1427,6 +1427,21 @@ class EditBayBackend(LegacyEditBayBackend):
         super().setOutputDirectory(path)
         self._try_load_default_project()
 
+    @Slot(result=str)
+    def browseShortModeBgm(self) -> str:
+        if self._running:
+            return ""
+        start_dir = self._source_selection.output_dir or str(self.workspace_root)
+        path, _ = QFileDialog.getOpenFileName(
+            None,
+            "BGM ファイルを選択",
+            start_dir,
+            "Audio files (*.mp3 *.wav *.m4a *.aac *.ogg *.flac);;All files (*.*)",
+        )
+        if path:
+            self.setShortVideoBgm({"path": path})
+        return path
+
     @Slot()
     def browseProjectFile(self) -> None:
         if self._running:

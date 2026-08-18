@@ -18,6 +18,19 @@ ColumnLayout {
         transitionCombo.currentIndex = transitionCombo.model.indexOf(s.transition.type)
         transitionDuration.value = s.transition.duration
         scaleSpin.value = s.subtitle_scale_percent
+
+        var bgm = s.bgm || {}
+        bgmFileLabel.text = bgm.path ? bgm.path.toString() : "BGM ファイルを選択"
+        bgmIn.text = bgm["in"] ? bgm["in"].toString() : "0"
+        bgmOut.text = bgm.out ? bgm.out.toString() : "0"
+        bgmStart.text = bgm.start ? bgm.start.toString() : "0"
+        bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
+    }
+
+    function _sendBgmUpdate(changes) {
+        if (settingsRoot.appBackend) {
+            settingsRoot.appBackend.setShortVideoBgm(changes)
+        }
     }
 
     Connections {
@@ -126,6 +139,83 @@ ColumnLayout {
                 if (settingsRoot.appBackend) {
                     settingsRoot.appBackend.setShortVideoSubtitleScale(value)
                 }
+            }
+        }
+    }
+
+    Rectangle {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 1
+        color: "#2A3530"
+    }
+
+    Text {
+        text: "BGM"
+        color: "#E8EFEA"
+        font.family: "Yu Gothic UI"
+        font.pixelSize: 14
+        font.weight: Font.Bold
+    }
+
+    Button {
+        id: bgmBrowseButton
+        objectName: "shortModeBgmBrowseButton"
+        Layout.fillWidth: true
+        contentItem: Text {
+            id: bgmFileLabel
+            objectName: "shortModeBgmFileLabel"
+            text: "BGM ファイルを選択"
+            color: "#F4F1E8"
+            elide: Text.ElideMiddle
+            verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: Text.AlignLeft
+        }
+        onClicked: {
+            if (settingsRoot.appBackend) {
+                settingsRoot.appBackend.browseShortModeBgm()
+            }
+        }
+    }
+
+    GridLayout {
+        columns: 4
+        columnSpacing: 10
+        rowSpacing: 6
+
+        Text { text: "IN"; color: "#F4F1E8" }
+        Text { text: "OUT"; color: "#F4F1E8" }
+        Text { text: "START"; color: "#F4F1E8" }
+        Text { text: ""; color: "#F4F1E8" }
+
+        TimeField {
+            id: bgmIn
+            objectName: "shortModeBgmInField"
+            Layout.preferredWidth: 70
+            text: "0"
+            onEditingFinished: _sendBgmUpdate({"in": parseFloat(text) || 0})
+        }
+        TimeField {
+            id: bgmOut
+            objectName: "shortModeBgmOutField"
+            Layout.preferredWidth: 70
+            text: "0"
+            onEditingFinished: _sendBgmUpdate({"out": parseFloat(text) || 0})
+        }
+        TimeField {
+            id: bgmStart
+            objectName: "shortModeBgmStartField"
+            Layout.preferredWidth: 70
+            text: "0"
+            onEditingFinished: _sendBgmUpdate({"start": parseFloat(text) || 0})
+        }
+        ColumnLayout {
+            spacing: 2
+            Text { text: "VOLUME"; color: "#F4F1E8"; font.pixelSize: 9 }
+            Slider {
+                id: bgmVolumeSlider
+                objectName: "shortModeBgmVolumeSlider"
+                from: 0.0; to: 1.0; stepSize: 0.05
+                onValueChanged: _sendBgmUpdate({"volume": value})
             }
         }
     }

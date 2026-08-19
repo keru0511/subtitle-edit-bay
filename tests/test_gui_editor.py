@@ -321,6 +321,98 @@ class GuiEditorRegressionTests(unittest.TestCase):
             save.assert_called_once()
             loader.assert_called_once_with(self.app._local_path(str(target)), update_sources=True)
 
+    def test_project_save_restart_reload_e2e_preserves_edits_and_unsaved_switch(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        QTest.qWait(100)
+
+        caption = self._quick_visual_item(
+            self._quick_item(window, "captionTable"),
+            "captionTextArea",
+        )
+        caption.forceActiveFocus()
+        caption.setProperty("text", "saved across restart")
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+
+        self.app.updateSegment(
+            0,
+            {
+                "start": 1.25,
+                "end": 3.5,
+                "speaker": "Speaker_Bob",
+                "subtitle_font_scale": 1.45,
+                "subtitle_font_family": "Yu Mincho",
+            },
+        )
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+
+        saved_segment = load_project(project_path)["segments"][0]
+        self.assertEqual(saved_segment["text"], "saved across restart")
+        self.assertEqual(saved_segment["start"], 1.25)
+        self.assertEqual(saved_segment["end"], 3.5)
+        self.assertEqual(saved_segment["speaker"], "Speaker_Bob")
+        self.assertEqual(saved_segment["subtitle_font_scale"], 1.45)
+        self.assertEqual(saved_segment["subtitle_font_family"], "Yu Mincho")
+
+        result_path = self.root / "reloaded-project.json"
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        probe = subprocess.run(
+            [
+                process_python,
+                "-u",
+                "-m",
+                "tests.project_reload_probe",
+                "--project",
+                str(project_path),
+                "--result",
+                str(result_path),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env={**os.environ, "PYTHONUTF8": "1"},
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        reloaded = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertTrue(reloaded["project_loaded"])
+        self.assertTrue(reloaded["qml_loaded"])
+        self.assertTrue(reloaded["edit_button_enabled"])
+        self.assertFalse(reloaded["project_dirty"])
+        self.assertEqual(Path(reloaded["project_path"]).resolve(), project_path.resolve())
+        self.assertEqual(reloaded["segments"][0]["text"], "saved across restart")
+        self.assertEqual(reloaded["segments"][0]["start"], 1.25)
+        self.assertEqual(reloaded["segments"][0]["end"], 3.5)
+        self.assertEqual(reloaded["segments"][0]["speaker"], "Speaker_Bob")
+        self.assertEqual(reloaded["segments"][0]["subtitle_font_scale"], 1.45)
+        self.assertEqual(reloaded["segments"][0]["subtitle_font_family"], "Yu Mincho")
+
+        other_project = deepcopy(load_project(project_path))
+        other_project["segments"][0] = {
+            **other_project["segments"][0],
+            "id": "other-project-segment",
+            "text": "other project",
+        }
+        other_path = self.root / "other.subtitle-project.json"
+        save_project(other_path, other_project)
+
+        self.app.updateSegment(0, {"text": "saved before project switch"})
+        self.assertTrue(self.app.projectDirty)
+        self.app.loadProject(str(other_path))
+        self.app.autosave_timer.stop()
+
+        self.assertEqual(
+            load_project(project_path)["segments"][0]["text"],
+            "saved before project switch",
+        )
+        self.assertEqual(Path(self.app.projectPath).resolve(), other_path.resolve())
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "other project")
+
     def test_load_project_refuses_switch_when_save_fails(self) -> None:
         self._load_project()
         self.app._project_dirty = True

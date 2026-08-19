@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -2007,6 +2009,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         return float(payload["format"]["duration"]), str(payload["streams"][0]["pix_fmt"])
 
+    def _measure_audio_mean_volume(self, media: Path, audio_filter: str = "") -> float:
+        filters = f"{audio_filter},volumedetect" if audio_filter else "volumedetect"
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "info", "-i", str(media), "-map", "0:a:0", "-vn",
+                "-af", filters, "-f", "null", os.devnull,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        matches = re.findall(r"mean_volume:\s*(-?[0-9]+(?:\.[0-9]+)?) dB", result.stderr)
+        self.assertTrue(matches, result.stderr)
+        return float(matches[-1])
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
@@ -2188,6 +2205,101 @@ class GuiEditorRegressionTests(unittest.TestCase):
         output_frame = self._extract_gray_frame(output, 1.5)
         self.assertEqual(len(output_frame), len(cut_frame))
         self.assertGreater(max(output_frame), max(cut_frame) + 80)
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    @unittest.skipIf(
+        os.name == "nt"
+        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
+        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
+    )
+    def test_audio_mixer_gui_settings_are_saved_and_applied_to_rendered_output(self) -> None:
+        project_path = self._load_project()
+        video = self.root / "game.mkv"
+        external_audio = self.root / "1-alice.flac"
+        self._generate_black_test_video_with_audio(video, external_audio)
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+
+        def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
+            return [
+                process_python, "-u", "-m", "src.subtitle_workflow", "render",
+                "--project", str(kwargs["project_path"]),
+                "--config", str(config_path), "--run",
+            ]
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        QTest.qWait(100)
+        self.assertTrue(self._quick_item(window, "mixerPage").isVisible())
+
+        channels = self.app.audioMixerChannels
+        video_index = next(index for index, channel in enumerate(channels) if channel["kind"] == "video")
+        external_index = next(index for index, channel in enumerate(channels) if channel["kind"] == "external")
+        video_id = str(channels[video_index]["id"])
+        external_id = str(channels[external_index]["id"])
+
+        video_strip = self._quick_item(window, f"mixerChannelStrip-{video_index}")
+        self._click(window, self._quick_visual_item(video_strip, "mixerMuteButton"))
+        QTest.qWait(50)
+        external_strip = self._quick_item(window, f"mixerChannelStrip-{external_index}")
+        self._click(window, self._quick_visual_item(external_strip, "mixerSoloButton"))
+        QTest.qWait(50)
+        external_strip = self._quick_item(window, f"mixerChannelStrip-{external_index}")
+        fader = self._quick_visual_item(external_strip, "mixerChannelFader")
+        target_db = 20.0 * math.log10(0.5)
+        target_position = (target_db - float(fader.property("from"))) / (
+            float(fader.property("to")) - float(fader.property("from"))
+        )
+        scene_point = fader.mapToScene(
+            QPointF(float(fader.width()) / 2.0, float(fader.height()) * (1.0 - target_position))
+        ).toPoint()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, scene_point)
+        QTest.qWait(50)
+
+        updated_channels = self.app.audioMixerChannels
+        updated_video = next(channel for channel in updated_channels if str(channel["id"]) == video_id)
+        updated_external = next(channel for channel in updated_channels if str(channel["id"]) == external_id)
+        self.assertTrue(updated_video["muted"])
+        self.assertTrue(updated_external["solo"])
+        self.assertGreater(float(updated_external["volume_percent"]), 40.0)
+        self.assertLess(float(updated_external["volume_percent"]), 60.0)
+        configured_volume = float(updated_external["volume_percent"])
+
+        self._quick_item(window, "normalizeSwitch").setProperty("checked", False)
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui.build_gui_render_command", side_effect=build_test_command):
+            self._click(window, self._quick_item(window, "mixerRenderButton"))
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(60_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        self.assertEqual(self.app.stage, "COMPLETE", f"{self.app.status}\n{self.app._log}")
+        self.assertIn("Rendering edited subtitles", self.app._log)
+        self.assertIn("Render complete", self.app._log)
+        saved_project = load_project(project_path)
+        self.assertTrue(saved_project["audio_mix"]["customized"])
+        saved_video = next(
+            channel for channel in saved_project["audio_mix"]["channels"] if str(channel["id"]) == video_id
+        )
+        saved_external = next(
+            channel for channel in saved_project["audio_mix"]["channels"] if str(channel["id"]) == external_id
+        )
+        self.assertTrue(saved_video["muted"])
+        self.assertTrue(saved_external["solo"])
+        self.assertAlmostEqual(float(saved_external["volume_percent"]), configured_volume, delta=0.1)
+
+        output = Path(saved_project["render_settings"]["last_output"])
+        self.assertTrue(output.is_file())
+        source_mean_volume = self._measure_audio_mean_volume(external_audio)
+        output_mean_volume = self._measure_audio_mean_volume(output)
+        expected_gain_db = 20.0 * math.log10(configured_volume / 100.0)
+        self.assertAlmostEqual(output_mean_volume - source_mean_volume, expected_gain_db, delta=2.0)
+        video_band_volume = self._measure_audio_mean_volume(output, "bandpass=f=440:w=80")
+        external_band_volume = self._measure_audio_mean_volume(output, "bandpass=f=880:w=80")
+        self.assertGreater(external_band_volume, video_band_volume + 15.0)
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),

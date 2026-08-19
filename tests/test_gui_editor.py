@@ -1933,7 +1933,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(Path(captured_options["project_path"]).resolve(), project_path.resolve())
         self.assertFalse(editor.isVisible())
         self.assertTrue(self._quick_item(window, "mainWorkspace").isVisible())
-        self.assertEqual(self.app.stage, "COMPLETE")
+        self.assertEqual(
+            self.app.stage,
+            "COMPLETE",
+            f"{self.app.status}\n{self.app._log}",
+        )
         self.assertEqual(self.app.progress, 1.0)
         self.assertGreaterEqual(progress_changes.count(), 3)
         self.assertIn("ASS preview ready", self.app._log)

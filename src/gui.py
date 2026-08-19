@@ -2361,7 +2361,19 @@ class EditBayBackend(LegacyEditBayBackend):
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:
-                self._set_status(f"処理が終了しました（終了コード {exit_code}）", "ERROR")
+                detail = next(
+                    (
+                        line.strip()
+                        for line in reversed(self._log.splitlines())
+                        if line.strip() and not line.lstrip().startswith(">")
+                    ),
+                    "",
+                )
+                suffix = f": {detail}" if detail else ""
+                self._set_status(
+                    f"処理が終了しました（終了コード {exit_code}）{suffix}",
+                    "ERROR",
+                )
 
 
 def main() -> None:

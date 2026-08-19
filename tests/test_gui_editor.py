@@ -1315,6 +1315,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
 
+    def test_cancel_fallback_does_not_kill_replacement_process(self) -> None:
+        with (
+            patch.object(self.app.process, "processId", return_value=222),
+            patch.object(self.app.process, "kill") as kill,
+        ):
+            self.app._kill_if_running(111)
+
+        kill.assert_not_called()
+
     def test_delayed_alignment_result_does_not_hide_process_error(self) -> None:
         self.app._status = "WhisperX failed"
         self.app._stage = "ERROR"
@@ -2271,6 +2280,146 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(edit_button.isEnabled())
         self._click(window, edit_button)
         self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+
+    @unittest.skipIf(
+        os.name == "nt"
+        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
+        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
+    )
+    def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
+        self._set_ready_sources()
+        helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+
+        def build_wait_command(_config_path: Path, **_kwargs: object) -> list[str]:
+            return [
+                process_python,
+                "-u",
+                str(helper_path),
+                "--mode",
+                "wait",
+            ]
+
+        _, window = self._load_qml()
+        started = QSignalSpy(self.app.process.started)
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui.build_gui_transcribe_command", side_effect=build_wait_command):
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            if started.count() == 0:
+                self.assertTrue(started.wait(10_000), self.app.process.errorString())
+            QTest.qWait(100)
+            self.app.processEvents()
+
+            self.assertTrue(self.app.running)
+            self.assertEqual(self.app.stage, "WHISPERX")
+            stop_button = self._quick_item(window, "saveSettingsButton")
+            self.assertEqual(stop_button.property("text"), "停止")
+            self._click(window, stop_button)
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(10_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.process.state(), QProcess.ProcessState.NotRunning)
+        self.assertEqual(self.app.stage, "CANCELLED")
+        self.assertIn("停止", self.app.status)
+        self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self._quick_item(window, "saveSettingsButton").property("text"), "設定を保存")
+        self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
+
+    @unittest.skipIf(
+        os.name == "nt"
+        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
+        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
+    )
+    def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
+        video, audio, output = self._set_ready_sources()
+        project_path = output / "game.subtitle-project.json"
+        template_path = self.root / "retry-result-template.json"
+        project = create_project(
+            video_path=video,
+            output_dir=output,
+            audio_sources=[{"path": str(audio.resolve())}],
+            speakers=[
+                {
+                    "name": "alice",
+                    "style": "Speaker_alice",
+                    "file_name": audio.name,
+                    "track_key": "craig:alice",
+                    "color": "#7FD957",
+                    "path": str(audio.resolve()),
+                }
+            ],
+            segments=[
+                {
+                    "id": "retry-success",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "retry completed",
+                    "speaker": "Speaker_alice",
+                    "words": [],
+                }
+            ],
+            duration_seconds=1.0,
+        )
+        save_project(template_path, project)
+        helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        attempts = 0
+
+        def build_attempt_command(_config_path: Path, **_kwargs: object) -> list[str]:
+            nonlocal attempts
+            attempts += 1
+            command = [
+                process_python,
+                "-u",
+                str(helper_path),
+                "--mode",
+                "fail" if attempts == 1 else "success",
+            ]
+            if attempts > 1:
+                command.extend(
+                    [
+                        "--template",
+                        str(template_path),
+                        "--project-path",
+                        str(project_path),
+                    ]
+                )
+            return command
+
+        _, window = self._load_qml()
+        with patch("src.gui.build_gui_transcribe_command", side_effect=build_attempt_command):
+            first_finished = QSignalSpy(self.app.process.finished)
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            if first_finished.count() == 0:
+                self.assertTrue(first_finished.wait(10_000), self.app.process.errorString())
+            self.app.processEvents()
+
+            self.assertFalse(self.app.running)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertIn("23", self.app.status)
+            self.assertIn("input audio became unavailable", self.app.status)
+            self.assertIn(
+                "input audio became unavailable",
+                self._quick_item(window, "workflowStatusText").property("text"),
+            )
+            self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
+
+            second_finished = QSignalSpy(self.app.process.finished)
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            if second_finished.count() == 0:
+                self.assertTrue(second_finished.wait(10_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        self.assertEqual(attempts, 2)
+        self.assertFalse(self.app.running)
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.stage, "EDIT")
+        self.assertEqual(self.app.progress, 1.0)
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "retry completed")
+        self.assertNotIn("input audio became unavailable", self.app._log)
+        self.assertTrue(self._quick_item(window, "editSubtitlesButton").isEnabled())
 
     def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:
         video, _audio, _output = self._set_ready_sources()

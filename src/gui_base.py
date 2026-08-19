@@ -716,18 +716,21 @@ class EditBayBackend(QApplication):
             return
         self._cancel_requested = True
         self._set_status("停止を要求しています", "STOPPING")
-        if os.name == "nt" and self.process.processId():
+        process_id = int(self.process.processId())
+        if os.name == "nt" and process_id:
             subprocess.run(
-                ["taskkill", "/PID", str(self.process.processId()), "/T"],
+                ["taskkill", "/PID", str(process_id), "/T"],
                 capture_output=True,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 check=False,
             )
         else:
             self.process.terminate()
-        QTimer.singleShot(5000, self._kill_if_running)
+        QTimer.singleShot(5000, lambda: self._kill_if_running(process_id))
 
-    def _kill_if_running(self) -> None:
+    def _kill_if_running(self, expected_process_id: int = 0) -> None:
+        if expected_process_id and int(self.process.processId()) != expected_process_id:
+            return
         if self.process.state() != QProcess.ProcessState.NotRunning:
             if os.name == "nt" and self.process.processId():
                 subprocess.run(

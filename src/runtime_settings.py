@@ -159,6 +159,8 @@ PERSISTED_RENDER_SETTING_KEYS = (
     "cut_no_speech",
     "no_speech_min_seconds",
     "speech_padding_seconds",
+    "speech_threshold_db",
+    "speech_min_clip_seconds",
 )
 
 GUI_SHARED_SETTING_KEYS = (
@@ -184,6 +186,7 @@ GUI_CRAIG_PIPELINE_SETTING_KEYS = (
     "subtitle_volume_scale_percent",
     "no_speech_min_seconds",
     "speech_padding_seconds",
+    "speech_threshold_db",
     "alignment_offset_adjustment",
     "postprocess_workers",
 )

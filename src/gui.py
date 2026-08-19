@@ -1599,6 +1599,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 ("cut_no_speech", "cut_no_speech", bool),
                 ("no_speech_min_seconds", "no_speech_min_seconds", float),
                 ("speech_padding_seconds", "speech_padding_seconds", float),
+                ("speech_threshold_db", "speech_threshold_db", str),
+                ("speech_min_clip_seconds", "speech_min_clip_seconds", float),
                 ("nvenc_cq", "nvenc_cq", int),
                 ("x264_crf", "x264_crf", int),
             ):

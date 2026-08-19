@@ -1878,6 +1878,7 @@ ApplicationWindow {
                                                     stepSize: 0.5
                                                     value: root.volumePercentToDb(mixerStrip.modelData.volume_percent)
                                                     enabled: !root.appBackend.running && mixerStrip.modelData.enabled
+                                                    onMoved: mixerContent.updateMixerChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
                                                     onPressedChanged: if (!pressed) mixerContent.updateMixerChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
                                                     background: Rectangle {
                                                         x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2

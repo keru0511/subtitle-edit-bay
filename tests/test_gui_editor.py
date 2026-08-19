@@ -2250,20 +2250,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         fader = self._quick_visual_item(external_strip, "mixerChannelFader")
-        handle_height = 18.0
-        handle_center_y = (
-            float(fader.property("topPadding"))
-            + (1.0 - float(fader.property("position")))
-            * (float(fader.property("availableHeight")) - handle_height)
-            + handle_height / 2.0
-        )
-        drag_start = fader.mapToScene(QPointF(float(fader.width()) / 2.0, handle_center_y)).toPoint()
-        drag_end = fader.mapToScene(
-            QPointF(float(fader.width()) / 2.0, float(fader.height()) / 2.0)
-        ).toPoint()
-        QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, drag_start)
-        QTest.mouseMove(window, drag_end, 50)
-        QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, drag_end)
+        fader.forceActiveFocus()
+        for _ in range(12):
+            QTest.keyClick(window, Qt.Key_Down)
         QTest.qWait(50)
 
         updated_channels = self.app.audioMixerChannels
@@ -2271,8 +2260,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         updated_external = next(channel for channel in updated_channels if str(channel["id"]) == external_id)
         self.assertTrue(updated_video["muted"])
         self.assertTrue(updated_external["solo"])
-        self.assertGreater(float(updated_external["volume_percent"]), 1.0)
-        self.assertLess(float(updated_external["volume_percent"]), 20.0)
+        self.assertGreater(float(updated_external["volume_percent"]), 35.0)
+        self.assertLess(float(updated_external["volume_percent"]), 65.0)
         configured_volume = float(updated_external["volume_percent"])
 
         self._quick_item(window, "normalizeSwitch").setProperty("checked", False)

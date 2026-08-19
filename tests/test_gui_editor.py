@@ -1090,6 +1090,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "cut_no_speech": True,
             "no_speech_min_seconds": 1.7,
             "speech_padding_seconds": 0.25,
+            "speech_threshold_db": "-35dB",
+            "speech_min_clip_seconds": 0.4,
             "video_codec": "h264_nvenc",
             "nvenc_cq": 22,
             "x264_crf": 17,
@@ -1112,6 +1114,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.settings["cut_no_speech"])
         self.assertEqual(self.app.settings["no_speech_min_seconds"], 1.7)
         self.assertEqual(self.app.settings["speech_padding_seconds"], 0.25)
+        self.assertEqual(self.app.settings["speech_threshold_db"], "-35dB")
+        self.assertEqual(self.app.settings["speech_min_clip_seconds"], 0.4)
         self.assertEqual(self.app.settings["video_codec"], "h264_nvenc")
         self.assertEqual(self.app.settings["nvenc_cq"], 22)
         self.assertEqual(self.app.settings["x264_crf"], 17)
@@ -1127,6 +1131,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self._quick_item(window, "silenceSwitch").property("checked"))
         self.assertEqual(self._quick_item(window, "silenceField").property("text"), "1.7")
         self.assertEqual(self._quick_item(window, "speechPaddingField").property("text"), "0.25")
+        self.assertEqual(self._quick_item(window, "speechThresholdField").property("text"), "-35")
         self.assertEqual(self._quick_item(window, "lufsField").property("text"), "-20")
         self.assertEqual(window.property("selectedSubtitleFontSize"), 100)
         caption = self._quick_visual_item(
@@ -1943,14 +1948,37 @@ class GuiEditorRegressionTests(unittest.TestCase):
             capture_output=True,
         )
 
-    def _extract_gray_frame(self, video: Path) -> bytes:
+    def _generate_silence_cut_test_media(self, video: Path, audio: Path) -> None:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=black:size=320x180:rate=15:duration=3",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3",
+                "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                str(video),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=3",
+                "-af", "volume=0:enable=between(t\\,1\\,2)",
+                "-c:a", "flac", str(audio),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    def _extract_gray_frame(self, video: Path, at_seconds: float = 0.5) -> bytes:
         result = subprocess.run(
             [
                 "ffmpeg",
                 "-v",
                 "error",
                 "-ss",
-                "0.5",
+                str(at_seconds),
                 "-i",
                 str(video),
                 "-frames:v",
@@ -1965,6 +1993,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
             capture_output=True,
         )
         return result.stdout
+
+    def _probe_video_output(self, video: Path) -> tuple[float, str]:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "format=duration:stream=pix_fmt", "-of", "json", str(video),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(result.stdout)
+        return float(payload["format"]["duration"]), str(payload["streams"][0]["pix_fmt"])
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
@@ -2058,6 +2099,95 @@ class GuiEditorRegressionTests(unittest.TestCase):
         output_frame = self._extract_gray_frame(output)
         self.assertEqual(len(output_frame), len(source_frame))
         self.assertGreater(max(output_frame), max(source_frame) + 80)
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    @unittest.skipIf(
+        os.name == "nt"
+        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
+        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
+    )
+    def test_silence_cut_gui_render_e2e_retimes_and_burns_subtitles(self) -> None:
+        project_path = self._load_project(
+            segments=[
+                {
+                    "id": "before-silence",
+                    "start": 0.15,
+                    "end": 0.85,
+                    "text": "FIRST CAPTION",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                },
+                {
+                    "id": "after-silence",
+                    "start": 2.15,
+                    "end": 2.85,
+                    "text": "RETIMED CAPTION",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                },
+            ]
+        )
+        video = self.root / "game.mkv"
+        audio = self.root / "1-alice.flac"
+        self._generate_silence_cut_test_media(video, audio)
+        self.app._project["video"]["duration_seconds"] = 3.0
+        save_project(project_path, self.app._project)
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+
+        def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
+            return [
+                process_python, "-u", "-m", "src.subtitle_workflow", "render",
+                "--project", str(kwargs["project_path"]),
+                "--config", str(config_path), "--run",
+            ]
+
+        _, window = self._load_qml()
+        self._quick_item(window, "silenceSwitch").setProperty("checked", True)
+        self._quick_item(window, "silenceField").setProperty("text", "0.5")
+        self._quick_item(window, "speechPaddingField").setProperty("text", "0.00")
+        self._quick_item(window, "speechThresholdField").setProperty("text", "-35")
+        self._quick_item(window, "normalizeSwitch").setProperty("checked", False)
+        self.app.processEvents()
+
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui.build_gui_render_command", side_effect=build_test_command):
+            self._click(window, self._quick_item(window, "renderVideoButton"))
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(60_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        self.assertEqual(self.app.stage, "COMPLETE", f"{self.app.status}\n{self.app._log}")
+        self.assertIn("Cutting 1 silent ranges", self.app._log)
+        self.assertIn("Rendering edited subtitles", self.app._log)
+        self.assertIn("Render complete", self.app._log)
+
+        saved_project = load_project(project_path)
+        render_settings = saved_project["render_settings"]
+        self.assertTrue(render_settings["cut_no_speech"])
+        self.assertEqual(render_settings["no_speech_min_seconds"], 0.5)
+        self.assertEqual(render_settings["speech_padding_seconds"], 0.0)
+        self.assertEqual(render_settings["speech_threshold_db"], "-35dB")
+        cut_output = Path(render_settings["last_cut_output"])
+        output = Path(render_settings["last_output"])
+        self.assertTrue(cut_output.is_file())
+        self.assertTrue(output.is_file())
+
+        source_duration, _ = self._probe_video_output(video)
+        cut_duration, cut_pixel_format = self._probe_video_output(cut_output)
+        output_duration, output_pixel_format = self._probe_video_output(output)
+        self.assertLess(cut_duration, source_duration - 0.5)
+        self.assertAlmostEqual(output_duration, cut_duration, delta=0.2)
+        self.assertEqual(cut_pixel_format, "yuv420p")
+        self.assertEqual(output_pixel_format, "yuv420p")
+
+        cut_frame = self._extract_gray_frame(cut_output, 1.5)
+        output_frame = self._extract_gray_frame(output, 1.5)
+        self.assertEqual(len(output_frame), len(cut_frame))
+        self.assertGreater(max(output_frame), max(cut_frame) + 80)
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),

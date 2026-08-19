@@ -205,9 +205,9 @@ class RuntimeSettingsTests(unittest.TestCase):
                 "video_codec": "h264_nvenc",
                 "audio_codec": "copy",
                 "audio_normalize": False,
+                "speech_threshold_db": "-42dB",
             },
         )
-        self.assertNotIn("speech_threshold_db", persisted)
         self.assertNotIn("output_audio_track", persisted)
         self.assertNotIn("nvenc_cq", persisted)
 

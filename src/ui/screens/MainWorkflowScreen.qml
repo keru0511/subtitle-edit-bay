@@ -128,6 +128,7 @@ ApplicationWindow {
             "cut_no_speech": silenceSwitch.checked,
             "no_speech_min_seconds": Number(silenceField.text),
             "speech_padding_seconds": Number(speechPaddingField.text),
+            "speech_threshold_db": String(Number(speechThresholdField.text)) + "dB",
             "postprocess_workers": workersSpin.value,
             "reference_audio": root.appBackend.speakers.length > 0 ? referenceCombo.currentValue : "",
             "reference_track": root.appBackend.audioTracks.length > 0 ? trackCombo.currentValue : "",
@@ -151,6 +152,7 @@ ApplicationWindow {
         minDurationField.text = Number(coalesceSetting(value.subtitle_min_duration_seconds, 0.35)).toFixed(2)
         silenceField.text = Number(coalesceSetting(value.no_speech_min_seconds, 1.2)).toFixed(1)
         speechPaddingField.text = Number(coalesceSetting(value.speech_padding_seconds, 0.25)).toFixed(2)
+        speechThresholdField.text = parseFloat(String(coalesceSetting(value.speech_threshold_db, "-40dB"))).toFixed(0)
         lufsField.text = Number(coalesceSetting(value.audio_target_lufs, -16)).toFixed(0)
         normalizeSwitch.checked = value.audio_normalize === undefined ? true : value.audio_normalize
         silenceSwitch.checked = Boolean(value.cut_no_speech)
@@ -1240,6 +1242,7 @@ ApplicationWindow {
                         Switch { id: silenceSwitch; objectName: "silenceSwitch"; text: "無音部分をカット" }
                         RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "最短無音時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; objectName: "silenceField"; Layout.preferredWidth: 76; text: "1.2" } }
                         RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "発話余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; objectName: "speechPaddingField"; Layout.preferredWidth: 76; text: "0.25" } }
+                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "無音判定閾値"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechThresholdField; objectName: "speechThresholdField"; Layout.preferredWidth: 76; text: "-40"; validator: DoubleValidator { bottom: -100; top: 0; decimals: 1 } } }
                         Item { Layout.preferredHeight: 6 }
                     }
                 }

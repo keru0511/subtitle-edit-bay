@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.subtitle_project import create_project, save_project
+from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_video
 
 
@@ -93,6 +93,7 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
                 patch("src.subtitle_workflow.build_no_speech_plan", return_value=([(1.0, 4.0)], [(0.0, 1.0)])),
                 patch("src.subtitle_workflow.build_ass_from_data", side_effect=fake_build_ass),
                 patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn_subtitles,
             ):
                 render_project_video(project_path, cut_no_speech=True, audio_normalize=False)
 
@@ -105,9 +106,19 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
             )
             self.assertEqual(detect.call_count, 2)
             cut_media.assert_called_once()
+            cut_output = Path(cut_media.call_args.args[1])
+            self.assertIn(".silence-cut", cut_output.stem)
             cut_kwargs = cut_media.call_args.kwargs
             self.assertTrue(cut_kwargs["audio_mix"]["customized"])
             self.assertEqual(cut_kwargs["audio_offset_seconds"], 0.25)
+            burn_subtitles.assert_called_once()
+            self.assertEqual(Path(burn_subtitles.call_args.args[0]), cut_output)
+            saved_project = load_project(project_path)
+            self.assertEqual(
+                Path(saved_project["render_settings"]["last_cut_output"]),
+                cut_output.resolve(),
+            )
+            self.assertEqual(saved_project["render_settings"]["speech_threshold_db"], "-40dB")
 
 
 if __name__ == "__main__":

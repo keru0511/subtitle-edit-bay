@@ -160,6 +160,9 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
             audio_path = root / "1-alice.flac"
             video_path.write_bytes(b"video")
             audio_path.write_bytes(b"audio")
+            existing_project_path = root / "export" / "game.subtitle-project.json"
+            existing_project_path.parent.mkdir(parents=True)
+            existing_project_path.write_text('{"sentinel": true}', encoding="utf-8")
             segment = {
                 "start": 0.0,
                 "end": 1.0,
@@ -201,6 +204,8 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
 
             project = load_project(project_path)
 
+        self.assertEqual(project_path.resolve(), existing_project_path.resolve())
+        self.assertNotIn("sentinel", project)
         self.assertEqual(project["transcription_context"]["game_title"], "Splatoon 3")
         self.assertEqual(project["transcription_context"]["creator_terms"], ["ナワバリバトル"])
         self.assertEqual(project["subtitle_settings"]["outline_color"], "#345678")

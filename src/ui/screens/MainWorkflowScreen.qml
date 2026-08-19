@@ -1228,7 +1228,12 @@ ApplicationWindow {
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: !root.appBackend.projectLoaded || root.appBackend.activeJob === "transcribe"
                         enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda) && !root.appBackend.projectLoaded
                         text: root.appBackend.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
-                        onClicked: root.appBackend.startTranscription(root.currentSettings())
+      onClicked: {
+          if (root.appBackend.transcriptionProjectExists())
+              overwriteProjectDialog.open()
+          else
+              root.appBackend.startTranscription(root.currentSettings(), false)
+      }
                         contentItem: Text { text: transcribeButton.text; color: transcribeButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: transcribeButton.enabled ? root.acid : "#252C28" }
                     }
@@ -1283,7 +1288,27 @@ ApplicationWindow {
         }
     }
 
-    Popup {
+  Dialog {
+      id: overwriteProjectDialog
+      objectName: "overwriteProjectDialog"
+      anchors.centerIn: Overlay.overlay
+      modal: true
+      title: "既存プロジェクトの上書き"
+      standardButtons: Dialog.Yes | Dialog.No
+
+      contentItem: Text {
+          width: 420
+          text: "同じ動画の編集プロジェクトが既に存在します。\n既存プロジェクトを上書きして文字起こしを再実行しますか？"
+          color: root.textPrimary
+          font.family: "Yu Gothic UI"
+          font.pixelSize: 12
+          wrapMode: Text.Wrap
+      }
+
+      onAccepted: root.appBackend.startTranscription(root.currentSettings(), true)
+  }
+
+  Popup {
         objectName: "sourcePopup"
         id: sourcePopup
         anchors.centerIn: Overlay.overlay

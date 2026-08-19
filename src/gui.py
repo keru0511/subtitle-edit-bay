@@ -1377,6 +1377,11 @@ class EditBayBackend(LegacyEditBayBackend):
             return None
         return derive_project_path(selection.video, selection.output_dir)
 
+    @Slot(result=bool)
+    def transcriptionProjectExists(self) -> bool:
+        path = self._default_project_path()
+        return path is not None and path.is_file()
+
     def _clear_project(self) -> None:
         if self._project_dirty:
             self.saveProject()
@@ -2089,8 +2094,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 return selector
         return ""
 
-    @Slot("QVariantMap")
-    def startTranscription(self, settings: dict[str, Any]) -> None:
+    @Slot("QVariantMap", bool)
+    def startTranscription(self, settings: dict[str, Any], overwrite_project: bool = False) -> None:
         if self._running:
             return
         audio_tracks = list(self._audio_tracks)
@@ -2135,6 +2140,7 @@ class EditBayBackend(LegacyEditBayBackend):
             reference_track=reference_track,
             video_audio_track=video_audio_track,
             alignment_offset_adjustment=adjustment,
+            overwrite_project=overwrite_project,
         )
         self._start_command(command, "transcribe", "文字起こしを開始しています")
 

@@ -1891,6 +1891,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         audio = self.root / "1-alice.flac"
         self._generate_black_test_video_with_audio(video, audio)
         process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
         captured_options: dict[str, object] = {}
 
         def build_test_command(config_path: Path, **kwargs: object) -> list[str]:

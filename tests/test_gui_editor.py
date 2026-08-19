@@ -1801,6 +1801,163 @@ class GuiEditorRegressionTests(unittest.TestCase):
             capture_output=True,
         )
 
+    def _generate_black_test_video_with_audio(self, video: Path, audio: Path) -> None:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:size=320x180:rate=15:duration=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=1",
+                "-shortest",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                str(video),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:sample_rate=48000:duration=1",
+                "-c:a",
+                "flac",
+                str(audio),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    def _extract_gray_frame(self, video: Path) -> bytes:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                "0.5",
+                "-i",
+                str(video),
+                "-frames:v",
+                "1",
+                "-vf",
+                "format=gray",
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return result.stdout
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    @unittest.skipIf(
+        os.name == "nt"
+        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
+        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
+    )
+    def test_editor_render_e2e_saves_edits_and_burns_subtitles(self) -> None:
+        project_path = self._load_project(
+            segments=[
+                {
+                    "id": "render-e2e",
+                    "start": 0.05,
+                    "end": 0.95,
+                    "text": "before edit",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ]
+        )
+        video = self.root / "game.mkv"
+        audio = self.root / "1-alice.flac"
+        self._generate_black_test_video_with_audio(video, audio)
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+        captured_options: dict[str, object] = {}
+
+        def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
+            captured_options["config_path"] = config_path
+            captured_options.update(kwargs)
+            return [
+                process_python,
+                "-u",
+                "-m",
+                "src.subtitle_workflow",
+                "render",
+                "--project",
+                str(kwargs["project_path"]),
+                "--config",
+                str(config_path),
+                "--run",
+            ]
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        editor = self._quick_item(window, "editorPage")
+        QTest.qWait(100)
+        caption = self._quick_visual_item(
+            self._quick_item(window, "captionTable"),
+            "captionTextArea",
+        )
+        caption.forceActiveFocus()
+        caption.setProperty("text", "E2E BURNED CAPTION")
+        self.app.processEvents()
+
+        progress_changes = QSignalSpy(self.app.progressChanged)
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui.build_gui_render_command", side_effect=build_test_command):
+            self._click(window, self._quick_item(window, "editorRenderButton"))
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(30_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        self.assertEqual(Path(captured_options["config_path"]).resolve(), self.app.gui_config_path.resolve())
+        self.assertEqual(Path(captured_options["project_path"]).resolve(), project_path.resolve())
+        self.assertFalse(editor.isVisible())
+        self.assertTrue(self._quick_item(window, "mainWorkspace").isVisible())
+        self.assertEqual(
+            self.app.stage,
+            "COMPLETE",
+            f"{self.app.status}\n{self.app._log}",
+        )
+        self.assertEqual(self.app.progress, 1.0)
+        self.assertGreaterEqual(progress_changes.count(), 3)
+        self.assertIn("ASS preview ready", self.app._log)
+        self.assertIn("Rendering edited", self.app._log)
+        self.assertIn("Render complete", self.app._log)
+
+        saved_project = load_project(project_path)
+        self.assertEqual(saved_project["segments"][0]["text"], "E2E BURNED CAPTION")
+        self.assertTrue(saved_project["segments"][0]["manual_text"])
+        self.assertGreater(saved_project["subtitle_settings"]["font_size"], 0)
+        output = Path(saved_project["render_settings"]["last_output"])
+        self.assertTrue(output.is_file())
+        self.assertGreater(output.stat().st_size, 0)
+
+        source_frame = self._extract_gray_frame(video)
+        output_frame = self._extract_gray_frame(output)
+        self.assertEqual(len(output_frame), len(source_frame))
+        self.assertGreater(max(output_frame), max(source_frame) + 80)
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",

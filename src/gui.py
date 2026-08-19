@@ -8,6 +8,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
@@ -72,6 +73,7 @@ from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
+from . import updater
 
 
 def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
@@ -271,6 +273,10 @@ class EditBayBackend(LegacyEditBayBackend):
     audioMasterMetricsChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
+    updateInfoChanged = Signal()
+    updateBusyChanged = Signal()
+    updateErrorChanged = Signal()
+    updateCheckFinished = Signal(object, str)
     shortVideoChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
@@ -329,6 +335,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self.autosave_timer.setInterval(700)
         self.autosave_timer.timeout.connect(self._autosave_project)
 
+        self._update_info: updater.UpdateInfo | None = None
+        self._update_error = ""
+        self._update_busy = False
+        self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
+
     @Property(bool, notify=projectChanged)
     def projectLoaded(self) -> bool:
         return self._project is not None
@@ -344,6 +355,34 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(bool, notify=projectChanged)
     def projectDirty(self) -> bool:
         return self._project_dirty
+
+    @Property(str, notify=updateInfoChanged)
+    def updateCurrentVersion(self) -> str:
+        return self._update_info.current_version if self._update_info else ""
+
+    @Property(str, notify=updateInfoChanged)
+    def updateLatestVersion(self) -> str:
+        return self._update_info.latest_version if self._update_info else ""
+
+    @Property(str, notify=updateInfoChanged)
+    def updateReleaseNotes(self) -> str:
+        return self._update_info.release_notes if self._update_info else ""
+
+    @Property(str, notify=updateInfoChanged)
+    def updateDownloadUrl(self) -> str:
+        return self._update_info.download_url if self._update_info else ""
+
+    @Property(bool, notify=updateInfoChanged)
+    def updateAvailable(self) -> bool:
+        return self._update_info.available if self._update_info else False
+
+    @Property(bool, notify=updateBusyChanged)
+    def updateBusy(self) -> bool:
+        return self._update_busy
+
+    @Property(str, notify=updateErrorChanged)
+    def updateError(self) -> str:
+        return self._update_error
 
     @Property("QVariantList", notify=segmentsChanged)
     def subtitleSegments(self) -> list[dict[str, Any]]:
@@ -2166,6 +2205,90 @@ class EditBayBackend(LegacyEditBayBackend):
         self._start_command(command, "render", f"{mode}を自動選択して動画を書き出しています")
 
     @Slot()
+    def checkForUpdates(self) -> None:
+        if self._update_busy:
+            return
+        self._update_busy = True
+        self.updateBusyChanged.emit()
+        self._update_error = ""
+        self.updateErrorChanged.emit()
+        self._set_status("最新リリースを確認しています", "UPDATE")
+        threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
+
+    def _check_for_updates_worker(self) -> None:
+        try:
+            info = updater.fetch_latest_release(self.workspace_root)
+            self.updateCheckFinished.emit(info, "")
+        except updater.UpdaterError as error:
+            self.updateCheckFinished.emit(None, str(error))
+        except Exception as error:
+            self.updateCheckFinished.emit(None, f"更新確認に失敗しました: {error}")
+
+    def _on_update_check_finished(self, info: Any, error: str) -> None:
+        self._update_info = info
+        self._update_error = error
+        self._update_busy = False
+        self.updateInfoChanged.emit()
+        self.updateErrorChanged.emit()
+        self.updateBusyChanged.emit()
+        if error:
+            self._set_status(error, "ERROR")
+        elif info and info.available:
+            self._set_status(f"新しいバージョン {info.latest_version} が利用可能です", "READY")
+        elif info:
+            self._set_status(f"最新バージョンです ({info.current_version})", "READY")
+
+    @Slot()
+    def dismissUpdateInfo(self) -> None:
+        if self._running and self._active_job == "update":
+            self._set_status("更新中は更新画面を閉じられません", "UPDATE")
+            return
+        self._update_info = None
+        self._update_error = ""
+        self.updateInfoChanged.emit()
+        self.updateErrorChanged.emit()
+
+    @Slot()
+    def applyUpdate(self) -> None:
+        if self._running:
+            self._set_status("処理中は更新を開始できません", "BUSY")
+            return
+        if self._project_dirty:
+            self._set_status("未保存の変更があります。更新前に保存してください", "CHECK")
+            return
+        if not self._update_info or not self._update_info.available:
+            self._set_status("更新可能なバージョンがありません", "CHECK")
+            return
+        if self._project is not None and not self.saveProject():
+            self._set_status("プロジェクトを保存できませんでした", "ERROR")
+            return
+        self.saveSettings(self._settings)
+        command = updater.launch_update_script(
+            self.workspace_root, self._update_info.download_url
+        )
+        self._start_command(command, "update", "アプリケーションを更新しています")
+
+    @Slot()
+    def cancelProcessing(self) -> None:
+        if self._running and self._active_job == "update":
+            self._set_status("更新処理は途中で停止できません", "UPDATE")
+            return
+        super().cancelProcessing()
+
+    @Slot()
+    def restartApplication(self) -> None:
+        try:
+            subprocess.Popen(
+                [sys.executable, "-m", "src.gui"],
+                cwd=str(self.workspace_root),
+                start_new_session=True,
+            )
+        except OSError as error:
+            self._set_status(f"再起動に失敗しました: {error}", "ERROR")
+            return
+        self.quit()
+
+    @Slot()
     def renderShortVideo(self) -> None:
         if self._running or self._project is None:
             return
@@ -2184,6 +2307,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self.elapsed_timer.start()
         if self._active_job == "transcribe":
             self._set_status("文字起こしと編集プロジェクト作成を実行しています", "TRANSCRIBE")
+        elif self._active_job == "update":
+            self._set_status("アプリケーションを更新しています", "UPDATE")
         elif self._active_job == "render_short":
             self._set_status("ショート動画を書き出しています", "ENCODE")
         else:
@@ -2226,12 +2351,17 @@ class EditBayBackend(LegacyEditBayBackend):
                     else "文字起こしが完了しました。編集プロジェクトを開いてください",
                     "EDIT" if loaded else "CHECK",
                 )
+            elif completed_job == "update":
+                self._set_status("更新が完了しました。アプリを再起動してください", "UPDATE")
             elif completed_job == "render_short":
                 self._set_status("ショート動画の書き出しが完了しました", "COMPLETE")
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
-            self._set_status(f"処理が終了しました（終了コード {exit_code}）", "ERROR")
+            if completed_job == "update":
+                self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
+            else:
+                self._set_status(f"処理が終了しました（終了コード {exit_code}）", "ERROR")
 
 
 def main() -> None:

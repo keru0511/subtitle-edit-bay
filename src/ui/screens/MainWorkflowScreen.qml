@@ -1177,7 +1177,7 @@ ApplicationWindow {
                     ColumnLayout { Layout.preferredWidth: 180
                         PanelTitle { text: root.appBackend.stage }
                         Text { text: Math.round(root.appBackend.progress * 100) + "%"; color: root.acid; font.family: "Bahnschrift"; font.pixelSize: 25; font.weight: Font.Bold }
-                        Text { Layout.fillWidth: true; text: root.appBackend.status; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; wrapMode: Text.Wrap }
+                        Text { objectName: "workflowStatusText"; Layout.fillWidth: true; text: root.appBackend.status; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; wrapMode: Text.Wrap }
                     }
                     ProgressBar { Layout.preferredWidth: 160; from: 0; to: 1; value: root.appBackend.progress }
                     ScrollView { Layout.fillWidth: true; Layout.fillHeight: true

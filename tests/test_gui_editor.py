@@ -2234,6 +2234,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "audioMixerOpenButton"))
         QTest.qWait(100)
         self.assertTrue(self._quick_item(window, "mixerPage").isVisible())
+        channel_list = self._quick_item(window, "mixerChannelList")
 
         channels = self.app.audioMixerChannels
         video_index = next(index for index, channel in enumerate(channels) if channel["kind"] == "video")
@@ -2241,13 +2242,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         video_id = str(channels[video_index]["id"])
         external_id = str(channels[external_index]["id"])
 
-        video_strip = self._quick_item(window, f"mixerChannelStrip-{video_index}")
+        video_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{video_index}")
         self._click(window, self._quick_visual_item(video_strip, "mixerMuteButton"))
         QTest.qWait(50)
-        external_strip = self._quick_item(window, f"mixerChannelStrip-{external_index}")
+        external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         self._click(window, self._quick_visual_item(external_strip, "mixerSoloButton"))
         QTest.qWait(50)
-        external_strip = self._quick_item(window, f"mixerChannelStrip-{external_index}")
+        external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         fader = self._quick_visual_item(external_strip, "mixerChannelFader")
         target_db = 20.0 * math.log10(0.5)
         target_position = (target_db - float(fader.property("from"))) / (

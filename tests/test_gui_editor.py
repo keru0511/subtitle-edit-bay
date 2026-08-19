@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import shutil
@@ -2296,10 +2295,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         output = Path(saved_project["render_settings"]["last_output"])
         self.assertTrue(output.is_file())
-        source_mean_volume = self._measure_audio_mean_volume(external_audio)
         output_mean_volume = self._measure_audio_mean_volume(output)
-        expected_gain_db = 20.0 * math.log10(configured_volume / 100.0)
-        self.assertAlmostEqual(output_mean_volume - source_mean_volume, expected_gain_db, delta=2.0)
+        reference_mean_volume = self._measure_audio_mean_volume(
+            external_audio,
+            "aresample=48000:async=1:first_pts=0,"
+            "aformat=sample_fmts=fltp:channel_layouts=stereo,"
+            f"volume={configured_volume / 100.0:.4f}",
+        )
+        self.assertAlmostEqual(output_mean_volume, reference_mean_volume, delta=2.0)
         video_band_volume = self._measure_audio_mean_volume(output, "bandpass=f=440:w=80")
         external_band_volume = self._measure_audio_mean_volume(output, "bandpass=f=880:w=80")
         self.assertGreater(external_band_volume, video_band_volume + 15.0)

@@ -1941,6 +1941,88 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(start_command.call_args[0][1], "transcribe")
             self.assertNotIn("--overwrite-project", command)
 
+    @unittest.skipIf(
+        os.name == "nt" and not sys.executable.isascii(),
+        "Qt QProcess cannot launch from this non-ASCII virtual-environment path",
+    )
+    def test_transcription_gui_process_creates_and_loads_project(self) -> None:
+        video, audio, output = self._set_ready_sources()
+        project_path = output / "game.subtitle-project.json"
+        template_path = self.root / "transcription-result-template.json"
+        project = create_project(
+            video_path=video,
+            output_dir=output,
+            audio_sources=[{"path": str(audio.resolve())}],
+            speakers=[
+                {
+                    "name": "alice",
+                    "style": "Speaker_alice",
+                    "file_name": audio.name,
+                    "track_key": "craig:alice",
+                    "color": "#7FD957",
+                    "path": str(audio.resolve()),
+                }
+            ],
+            segments=[
+                {
+                    "id": "segment-e2e",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "E2E transcription result",
+                    "speaker": "Speaker_alice",
+                    "words": [],
+                }
+            ],
+            duration_seconds=1.0,
+        )
+        save_project(template_path, project)
+        helper_path = Path(__file__).with_name("fake_transcription_process.py").resolve()
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        captured_options: dict[str, object] = {}
+
+        def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
+            captured_options["config_path"] = config_path
+            captured_options.update(kwargs)
+            return [
+                process_python,
+                "-u",
+                str(helper_path),
+                "--template",
+                str(template_path),
+                "--project-path",
+                str(project_path),
+            ]
+
+        _, window = self._load_qml()
+        progress_changes = QSignalSpy(self.app.progressChanged)
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui.build_gui_transcribe_command", side_effect=build_test_command):
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(10_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        self.assertEqual(Path(captured_options["config_path"]).resolve(), self.app.gui_config_path.resolve())
+        self.assertEqual(captured_options["video"], str(video.resolve()))
+        self.assertEqual(captured_options["audio_files"], [str(audio.resolve())])
+        self.assertEqual(captured_options["output_dir"], str(output.resolve()))
+        self.assertFalse(captured_options["overwrite_project"])
+        self.assertTrue(self.app.gui_config_path.is_file())
+        self.assertTrue(project_path.is_file())
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(Path(self.app.projectPath), project_path.resolve())
+        self.assertEqual(self.app.stage, "EDIT")
+        self.assertEqual(self.app.progress, 1.0)
+        self.assertGreaterEqual(progress_changes.count(), 3)
+        self.assertIn("Starting WhisperX", self.app._log)
+        self.assertIn("Project ready", self.app._log)
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "E2E transcription result")
+
+        edit_button = self._quick_item(window, "editSubtitlesButton")
+        self.assertTrue(edit_button.isEnabled())
+        self._click(window, edit_button)
+        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+
     def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:
         video, _audio, _output = self._set_ready_sources()
         project_path = _output / f"{video.stem}.subtitle-project.json"

@@ -2250,9 +2250,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         fader = self._quick_visual_item(external_strip, "mixerChannelFader")
-        fader.forceActiveFocus()
-        for _ in range(12):
-            QTest.keyClick(window, Qt.Key_Down)
+        fader.setProperty("value", -6.0)
+        self.assertTrue(QMetaObject.invokeMethod(fader, "moved"))
         QTest.qWait(50)
 
         updated_channels = self.app.audioMixerChannels

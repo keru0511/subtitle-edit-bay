@@ -2246,6 +2246,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_visual_item(video_strip, "mixerMuteButton"))
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
+        if not bool(channels[external_index]["enabled"]):
+            self._click(window, self._quick_visual_item(external_strip, "mixerChannelEnabledCheck"))
+            QTest.qWait(50)
+            external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         self._click(window, self._quick_visual_item(external_strip, "mixerSoloButton"))
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
@@ -2258,6 +2262,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         updated_video = next(channel for channel in updated_channels if str(channel["id"]) == video_id)
         updated_external = next(channel for channel in updated_channels if str(channel["id"]) == external_id)
         self.assertTrue(updated_video["muted"])
+        self.assertTrue(updated_external["enabled"])
         self.assertTrue(updated_external["solo"])
         self.assertGreater(float(updated_external["volume_percent"]), 35.0)
         self.assertLess(float(updated_external["volume_percent"]), 65.0)
@@ -2283,6 +2288,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             channel for channel in saved_project["audio_mix"]["channels"] if str(channel["id"]) == external_id
         )
         self.assertTrue(saved_video["muted"])
+        self.assertTrue(saved_external["enabled"])
         self.assertTrue(saved_external["solo"])
         self.assertAlmostEqual(float(saved_external["volume_percent"]), configured_volume, delta=0.1)
 

@@ -16,6 +16,7 @@ def build_gui_transcribe_command(
     reference_track: str | None = None,
     video_audio_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
+    overwrite_project: bool = False,
 ) -> list[str]:
     if not video or not output_dir or (not audio_files and not video_audio_track):
         raise ValueError("video, either audio_files/video_audio_track, and output_dir are required")
@@ -29,6 +30,8 @@ def build_gui_transcribe_command(
         command.extend(["--reference-audio", reference_audio])
     if reference_track:
         command.extend(["--reference-track", reference_track])
+    if overwrite_project:
+        command.append("--overwrite-project")
     command.extend(
         [
             "--alignment-offset-adjustment",
@@ -50,6 +53,7 @@ def build_gui_command(
     reference_audio: str | None = None,
     reference_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
+    overwrite_project: bool = False,
 ) -> list[str]:
     """Build the GUI transcription command using the editable workflow path."""
     return build_gui_transcribe_command(
@@ -60,6 +64,7 @@ def build_gui_command(
         reference_audio=reference_audio,
         reference_track=reference_track,
         alignment_offset_adjustment=alignment_offset_adjustment,
+        overwrite_project=overwrite_project,
     )
 
 
@@ -77,6 +82,31 @@ def build_gui_render_command(
         "-m",
         "src.subtitle_workflow",
         "render",
+        "--project",
+        project_path,
+        "--config",
+        str(config_path),
+    ]
+    if output_path:
+        command.extend(["--output", output_path])
+    command.append("--run")
+    return command
+
+
+def build_gui_short_video_command(
+    config_path: str | Path,
+    *,
+    project_path: str,
+    output_path: str | None = None,
+) -> list[str]:
+    if not project_path:
+        raise ValueError("project_path is required")
+    command = [
+        sys.executable,
+        "-u",
+        "-m",
+        "src.subtitle_workflow",
+        "render-short",
         "--project",
         project_path,
         "--config",

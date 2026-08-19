@@ -15,7 +15,8 @@ import numpy as np
 from .audio_mixer import reconcile_audio_mix
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .color_config import normalize_rgb_color
-from .subtitle_line_count import normalize_subtitle_line_count
+from .short_video_schema import ShortVideo
+from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 
 
@@ -305,6 +306,7 @@ class SubtitleProject:
     transcription_context: dict[str, Any]
     audio_mix: AudioMix | None
     segments: list[SubtitleSegment]
+    short_video: ShortVideo = field(default_factory=ShortVideo)
     extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -334,10 +336,11 @@ class SubtitleProject:
             transcription_context=deepcopy(migrated.get("transcription_context", {})),
             audio_mix=AudioMix.from_json(migrated["audio_mix"]) if isinstance(migrated.get("audio_mix"), dict) else None,
             segments=segments,
+            short_video=ShortVideo.from_json(migrated.get("short_video")),
             extras=deepcopy({key: value for key, value in migrated.items() if key not in {
                 "schema_version", "project_type", "created_at", "updated_at", "video", "output_dir",
                 "audio_sources", "speakers", "waveforms", "subtitle_settings", "render_settings",
-                "transcription", "transcription_context", "audio_mix", "segments",
+                "transcription", "transcription_context", "audio_mix", "segments", "short_video",
             }}),
         )
 
@@ -360,6 +363,7 @@ class SubtitleProject:
         }
         if self.audio_mix is not None:
             payload["audio_mix"] = self.audio_mix.to_json()
+        payload["short_video"] = self.short_video.to_json()
         payload.update(deepcopy(self.extras))
         return payload
 
@@ -402,6 +406,13 @@ def derive_render_path(project_path: str | Path) -> Path:
     suffix = ".subtitle-project.json"
     name = path.name[:-len(suffix)] if path.name.endswith(suffix) else path.stem
     return path.with_name(f"{name}.edited.subtitled.mp4")
+
+
+def derive_short_render_path(project_path: str | Path) -> Path:
+    path = Path(project_path)
+    suffix = ".subtitle-project.json"
+    name = path.name[:-len(suffix)] if path.name.endswith(suffix) else path.stem
+    return path.with_name(f"{name}.short.mp4")
 
 
 def _finite_number(value: Any, field: str) -> float:
@@ -479,15 +490,12 @@ def _display_width(text: str) -> int:
 
 
 def _layout_row_span(segment: dict[str, Any]) -> int:
-    text = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n")
-    if "\n" in text:
-        return 2
+    formatted = format_segment_text(segment)
+    span = max(1, formatted.count(r"\N") + 1)
     subtitle_line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", "auto"))
     if subtitle_line_count == "2":
-        return 2
-    if subtitle_line_count == "1":
-        return 1
-    return 2 if _display_width(text) > int(segment.get("max_width", 24)) else 1
+        return max(2, span)
+    return span
 
 
 def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -531,11 +539,37 @@ def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str,
             row_is_free.append(False)
         return trailing_pair
 
+    def take_free_span(span: int) -> int:
+        if span <= 1:
+            return take_free_row()
+        if span == 2:
+            return take_free_pair()
+
+        run_start = -1
+        run_length = 0
+        for row, is_free in enumerate(row_is_free):
+            if is_free:
+                if run_length == 0:
+                    run_start = row
+                run_length += 1
+                if run_length >= span:
+                    return run_start
+            else:
+                run_start = -1
+                run_length = 0
+
+        if run_length > 0:
+            row_is_free.extend([False] * (span - run_length))
+            return run_start
+        base_row = len(row_is_free)
+        row_is_free.extend([False] * span)
+        return base_row
+
     for segment in sorted(segments, key=lambda item: (item["start"], item["end"], item["id"])):
         span = _layout_row_span(segment)
         start = float(segment["start"])
         release_finished(start)
-        base_row = take_free_pair() if span == 2 else take_free_row()
+        base_row = take_free_span(span)
         segment["layout_row"] = base_row
         segment["layout_row_span"] = span
         for row in range(base_row, base_row + span):

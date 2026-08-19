@@ -52,14 +52,22 @@ class FetchLatestReleaseTests(unittest.TestCase):
         self.assertEqual(info.current_version, "v0.1.0")
         self.assertEqual(info.latest_version, "v0.2.0")
         self.assertEqual(info.release_notes, "Release notes")
-        self.assertEqual(info.download_url, "https://example.com/app.zip")
+        self.assertEqual(
+            info.download_url,
+            "https://github.com/keru0511/subtitle-edit-bay/archive/refs/tags/v0.2.0.zip",
+        )
         self.assertTrue(info.available)
 
-    def test_fetch_latest_release_falls_back_to_archive_url(self) -> None:
+    def test_fetch_latest_release_ignores_unrelated_zip_assets(self) -> None:
         payload = {
             "tag_name": "v0.2.0",
             "body": "",
-            "assets": [],
+            "assets": [
+                {
+                    "name": "debug-symbols.zip",
+                    "browser_download_url": "https://example.com/debug-symbols.zip",
+                }
+            ],
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -70,7 +78,10 @@ class FetchLatestReleaseTests(unittest.TestCase):
                 urlopen.return_value = BytesIO(json.dumps(payload).encode("utf-8"))
                 info = updater.fetch_latest_release(root)
 
-        self.assertIn("github.com/keru0511/subtitle-edit-bay/archive/refs/tags/v0.2.0.zip", info.download_url)
+        self.assertEqual(
+            info.download_url,
+            "https://github.com/keru0511/subtitle-edit-bay/archive/refs/tags/v0.2.0.zip",
+        )
 
     def test_fetch_latest_release_raises_on_network_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -154,7 +165,7 @@ class LaunchUpdateScriptTests(unittest.TestCase):
             command = updater.launch_update_script(Path("/app"), "https://example.com/app.zip")
         self.assertEqual(command[0], "powershell.exe")
         self.assertIn("update.ps1", command[command.index("-File") + 1])
-        self.assertIn("https://example.com/app.zip", command)
+        self.assertNotIn("https://example.com/app.zip", command)
 
     def test_launch_update_script_falls_back_to_python_module(self) -> None:
         with patch("sys.platform", "linux"), patch("shutil.which", return_value=None):

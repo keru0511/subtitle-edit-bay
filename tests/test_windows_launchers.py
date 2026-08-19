@@ -131,6 +131,84 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "old readme")
 
+    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_zip_update_rolls_back_when_setup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            distribution = base / "distribution"
+            archive_parent = base / "archive"
+            archive_root = archive_parent / "subtitle-edit-bay-main"
+
+            (distribution / "scripts").mkdir(parents=True)
+            (distribution / "src").mkdir()
+            (distribution / "assets").mkdir()
+            (distribution / "video_import").mkdir()
+            (distribution / ".gui").mkdir()
+            (distribution / ".venv").mkdir()
+            (distribution / ".local").mkdir()
+            shutil.copy2(ROOT / "scripts" / "update.ps1", distribution / "scripts" / "update.ps1")
+            (distribution / "README.md").write_text("old readme", encoding="utf-8")
+            (distribution / "src" / "app.py").write_text("old code", encoding="utf-8")
+            (distribution / "legacy.txt").write_text("remove me", encoding="utf-8")
+            (distribution / ".env").write_text("keep me", encoding="utf-8")
+            (distribution / ".local" / "update-manifest.json").write_text(
+                '["README.md", "src/app.py", "legacy.txt"]\n',
+                encoding="utf-8",
+            )
+            (distribution / "assets" / "speaker_colors.json").write_text("old colors", encoding="utf-8")
+            (distribution / "video_import" / "keep.mkv").write_bytes(b"video")
+            (distribution / ".gui" / "runtime_config.json").write_text("old gui", encoding="utf-8")
+            (distribution / ".venv" / "marker.txt").write_text("old venv", encoding="utf-8")
+            (distribution / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
+
+            (archive_root / "scripts").mkdir(parents=True)
+            (archive_root / "src").mkdir()
+            (archive_root / "README.md").write_text("new readme", encoding="utf-8")
+            (archive_root / "src" / "app.py").write_text("new code", encoding="utf-8")
+            (archive_root / "VERSION").write_text("v0.2.0\n", encoding="utf-8")
+            (archive_root / "scripts" / "setup.ps1").write_text(
+                'throw "setup failed"\n',
+                encoding="utf-8",
+            )
+
+            zip_path = Path(shutil.make_archive(str(base / "latest"), "zip", root_dir=archive_parent))
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(distribution / "scripts" / "update.ps1"),
+                    "-ArchiveUrl",
+                    str(zip_path),
+                ],
+                cwd=distribution,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Update failed", result.stdout)
+            self.assertIn("Restoring files", result.stdout)
+            self.assertEqual((distribution / "README.md").read_text(encoding="utf-8"), "old readme")
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "old code")
+            self.assertTrue((distribution / "legacy.txt").is_file())
+            self.assertEqual((distribution / "legacy.txt").read_text(encoding="utf-8"), "remove me")
+            self.assertEqual((distribution / ".env").read_text(encoding="utf-8"), "keep me")
+            self.assertEqual(
+                (distribution / "assets" / "speaker_colors.json").read_text(encoding="utf-8"),
+                "old colors",
+            )
+            self.assertTrue((distribution / "video_import" / "keep.mkv").is_file())
+            self.assertFalse((distribution / "setup-ran.txt").exists())
+
+            backups = list((distribution / ".local" / "update_backups").glob("*/README.md"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), "old readme")
+
     def test_local_install_artifacts_are_ignored(self) -> None:
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 

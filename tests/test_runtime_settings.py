@@ -8,6 +8,7 @@ from pathlib import Path
 from src.runtime_config import DEFAULT_RUNTIME_CONFIG, load_command_runtime_config
 from src.runtime_settings import (
     DEFAULT_POSTPROCESS_WORKERS,
+    ShortModeSettings,
     configured_render_settings,
     load_runtime_settings,
     render_runtime_options,
@@ -222,6 +223,54 @@ class RuntimeSettingsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "postprocess_workers"):
             settings_from_config({"postprocess_workers": 2.5})
+
+    def test_short_mode_settings_use_defaults(self) -> None:
+        settings = settings_from_config({})
+
+        self.assertFalse(settings.short_video.short_mode_enabled)
+        self.assertEqual(settings.short_video.short_mode_output_width, 1080)
+        self.assertEqual(settings.short_video.short_mode_output_height, 1920)
+        self.assertEqual(settings.short_video.short_mode_output_fps, 30)
+        self.assertEqual(settings.short_video.short_mode_global_fit, "cover")
+        self.assertEqual(settings.short_video.short_mode_global_background_color, "000000")
+        self.assertEqual(settings.short_video.short_mode_transition_type, "crossfade")
+        self.assertAlmostEqual(settings.short_video.short_mode_transition_duration, 0.5)
+        self.assertEqual(settings.short_video.short_mode_bgm_path, "")
+        self.assertAlmostEqual(settings.short_video.short_mode_bgm_volume, 0.3)
+        self.assertAlmostEqual(settings.short_video.short_mode_subtitle_scale_percent, 150.0)
+
+    def test_short_mode_settings_override_and_flatten(self) -> None:
+        settings = settings_from_config(
+            {
+                "short_mode_enabled": True,
+                "short_mode_output_width": 720,
+                "short_mode_output_height": 1280,
+                "short_mode_output_fps": 60,
+                "short_mode_global_fit": "contain",
+                "short_mode_global_background_color": "ffffff",
+                "short_mode_transition_type": "fade",
+                "short_mode_transition_duration": 1.0,
+                "short_mode_bgm_path": "/tmp/bgm.mp3",
+                "short_mode_bgm_in": 5.0,
+                "short_mode_bgm_out": 65.0,
+                "short_mode_bgm_start": 0.5,
+                "short_mode_bgm_volume": 0.8,
+                "short_mode_subtitle_scale_percent": 200.0,
+            }
+        )
+
+        self.assertTrue(settings.short_video.short_mode_enabled)
+        self.assertIsInstance(settings.short_video, ShortModeSettings)
+
+        flat = settings_to_flat_dict(settings)
+        self.assertEqual(flat["short_mode_output_width"], 720)
+        self.assertEqual(flat["short_mode_global_fit"], "contain")
+        self.assertAlmostEqual(flat["short_mode_bgm_volume"], 0.8)
+        self.assertAlmostEqual(flat["short_mode_subtitle_scale_percent"], 200.0)
+
+    def test_invalid_short_mode_fit_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "short_mode_global_fit"):
+            settings_from_config({"short_mode_global_fit": "stretch"})
 
 
 if __name__ == "__main__":

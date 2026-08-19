@@ -4,7 +4,7 @@ import argparse
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from dataclasses import dataclass
 
 from .audio_mixer import active_audio_mix_channels, reconcile_audio_mix, video_track_entries
@@ -67,6 +67,7 @@ from .silence_cut import (
     probe_media_duration,
     retime_segments_for_keep_ranges,
 )
+from .short_video import render_short_video
 from .subtitle_project import (
     DEFAULT_WAVEFORM_SAMPLE_RATE,
     build_waveform,
@@ -74,6 +75,7 @@ from .subtitle_project import (
     derive_ass_path,
     derive_project_path,
     derive_render_path,
+    derive_short_render_path,
     load_project,
     project_to_transcript,
     save_project,
@@ -588,7 +590,9 @@ def render_project_video(
             and bool(channel.get("enabled"))
             for channel in audio_mix.get("channels", [])
         )
-        if not has_real_video_track and not has_enabled_external:
+        if has_enabled_external:
+            use_audio_mix = True
+        elif not has_real_video_track:
             for channel in audio_mix.get("channels", []):
                 if (
                     isinstance(channel, dict)
@@ -696,6 +700,52 @@ def render_project_video(
     return output
 
 
+def render_project_short_video(
+    project_path: str | Path,
+    output_path: str | Path | None = None,
+    *,
+    video_codec: str = "libx264",
+    audio_codec: str = "aac",
+    nvenc_preset: str = "p5",
+    nvenc_cq: int = DEFAULT_NVENC_CQ,
+    x264_crf: int = DEFAULT_X264_CRF,
+    progress_callback: Callable[[str], None] | None = None,
+    **_kwargs: Any,
+) -> Path:
+    project = load_project(project_path)
+    short_video = project.get("short_video", {})
+    if not short_video.get("enabled") or not short_video.get("clips"):
+        raise SystemExit("short_video is not enabled or has no clips")
+
+    video_path = str(project.get("video", {}).get("path", ""))
+    if not video_path or not Path(video_path).is_file():
+        raise SystemExit(f"Project video was not found: {video_path}")
+
+    output = Path(output_path) if output_path else derive_short_render_path(project_path)
+    if audio_codec == "copy":
+        audio_codec = "aac"
+    result = render_short_video(
+        project_path,
+        output,
+        video_codec=video_codec,
+        audio_codec=audio_codec,
+        nvenc_preset=nvenc_preset,
+        nvenc_cq=nvenc_cq,
+        x264_crf=x264_crf,
+        progress_callback=progress_callback,
+        _project=project,
+    )
+    project["render_settings"] = {
+        **project.get("render_settings", {}),
+        "short_video_codec": video_codec,
+        "short_audio_codec": audio_codec,
+        "short_last_output": str(result.resolve()),
+    }
+    save_project(project_path, project)
+    log_progress(f"Short render complete: {result}")
+    return result
+
+
 def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", help="Runtime JSON config path.")
 
@@ -743,6 +793,12 @@ def main() -> None:
     render.add_argument("--project", required=True)
     render.add_argument("--output")
     render.add_argument("--run", action="store_true")
+
+    render_short = subparsers.add_parser("render-short", help="Render a 9:16 short video from project clips.")
+    _add_shared_options(render_short)
+    render_short.add_argument("--project", required=True)
+    render_short.add_argument("--output")
+    render_short.add_argument("--run", action="store_true")
 
     args = parser.parse_args()
     config = load_command_runtime_config("craig_pipeline", args.config)
@@ -796,6 +852,20 @@ def main() -> None:
     if args.phase == "ass":
         result = build_project_ass(args.project, args.output, subtitle_font_size=args.subtitle_font_size)
         print(f"ass_path: {result}")
+        return
+
+    if args.phase == "render-short":
+        if not args.run:
+            print(Path(args.output) if args.output else derive_short_render_path(args.project))
+            return
+        settings = settings_from_config(config)
+        dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=False)
+        if dependency_error:
+            raise SystemExit(dependency_error)
+        render_options = render_runtime_options(settings)
+        render_options["speech_threshold_db"] = normalize_db_threshold(render_options["speech_threshold_db"])
+        result = render_project_short_video(args.project, args.output, **render_options)
+        print(f"final_video: {result}")
         return
 
     if not args.run:

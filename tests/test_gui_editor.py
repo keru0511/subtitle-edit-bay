@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -135,15 +136,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         source: Path | str,
         required_streams: set[str],
         _label: str,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         ext = Path(source).suffix.lower()
         video_exts = {".avi", ".m2ts", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
         audio_exts = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
         if ext in video_exts:
-            return "video" in required_streams
+            return ("video" in required_streams), ""
         if ext in audio_exts:
-            return "audio" in required_streams
-        return False
+            return ("audio" in required_streams), ""
+        return False, ""
 
     def _make_project(
         self,
@@ -677,14 +678,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("\n", automatic["preview_text"])
         self.assertEqual(
             self.app.formatSubtitlePreview(0, "manual first\nmanual second"),
-            "manual first\nmanual second",
+            "manual f\nirst\nmanual\nsecond",
         )
 
         self.app.updateSegment(0, {"text": "manual first\nmanual second"})
         saved = self.app.subtitleSegments[0]
         preview = self.app.activeSubtitleSegments(1.0)[0]
         self.assertEqual(saved["text"], "manual first\nmanual second")
-        self.assertEqual(preview["preview_text"], "manual first\nmanual second")
+        self.assertEqual(preview["preview_text"], "manual f\nirst\nmanual\nsecond")
         self.assertTrue(saved["manual_text"])
 
     def test_invalid_numeric_edits_preserve_segment_and_report_check(self) -> None:
@@ -1406,7 +1407,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         text_area.forceActiveFocus()
         text_area.setProperty("text", "manual first\nmanual second")
         self.app.processEvents()
-        self.assertEqual(caption.property("text"), "manual first\nmanual second")
+        self.assertEqual(caption.property("text"), "manual f\nirst\nmanual\nsecond")
 
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
@@ -1781,6 +1782,219 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
 
+    def _generate_test_video(self, path: Path) -> None:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=320x240:rate=1",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_video_source_selection_via_gui_updates_source_panel_and_backend(self) -> None:
+        video = self.root / "test_video.mp4"
+        self._generate_test_video(video)
+
+        self._media_probe_patch.stop()
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        self.app.processEvents()
+
+        video_label = self._quick_item(window, "sourceVideoPathText")
+        self.assertEqual(video_label.property("text"), "未選択")
+
+        self.app.setVideoFile(str(video))
+        self.app.processEvents()
+
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.assertIn(video.name, video_label.property("text"))
+        self.assertEqual(self.app.stage, "INPUT")
+        self.assertIn("話者音声", self.app.status)
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_ffprobe_failure_during_video_selection_is_diagnosable_in_gui(self) -> None:
+        bad_video = self.root / "fake_video.mp4"
+        bad_video.write_text("not a video file", encoding="utf-8")
+
+        self._media_probe_patch.stop()
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        self.app.processEvents()
+
+        video_label = self._quick_item(window, "sourceVideoPathText")
+        self.assertEqual(video_label.property("text"), "未選択")
+
+        self.app.setVideoFile(str(bad_video))
+        self.app.processEvents()
+
+        self.assertEqual(self.app.sourceSelection["video"], "")
+        self.assertEqual(video_label.property("text"), "未選択")
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertIn("検証に失敗", self.app.status)
+
+    def test_short_mode_screen_opens_and_closes(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+
+        open_button = self._quick_item(window, "shortModeOpenButton")
+        self.assertTrue(open_button.property("visible"))
+        self.assertTrue(open_button.property("enabled"))
+
+        self._click(window, open_button)
+        short_page = self._quick_item(window, "shortModePage")
+        self.assertTrue(short_page.property("visible"))
+
+        back_button = self._quick_item(window, "shortModeBackButton")
+        self._click(window, back_button)
+        self.assertFalse(short_page.property("visible"))
+
+    def test_short_mode_clip_list_and_preview(self) -> None:
+        segments = [
+            {
+                "id": "seg-1",
+                "start": 1.0,
+                "end": 3.0,
+                "text": "first clip",
+                "speaker": "Speaker_Alice",
+                "words": [],
+            },
+            {
+                "id": "seg-2",
+                "start": 5.0,
+                "end": 8.0,
+                "text": "second clip",
+                "speaker": "Speaker_Bob",
+                "words": [],
+            },
+        ]
+        self._load_project(segments=segments)
+        _, window = self._load_qml()
+
+        open_button = self._quick_item(window, "shortModeOpenButton")
+        self._click(window, open_button)
+        QTest.qWait(100)
+
+        short_page = self._quick_item(window, "shortModePage")
+        self.assertTrue(short_page.property("visible"))
+
+        preview = self._quick_item(window, "shortModePreview")
+        clip_list = self._quick_item(window, "shortModeClipList")
+        settings_panel = self._quick_item(window, "shortModeSettingsPanel")
+        self.assertTrue(preview.property("visible"))
+        self.assertTrue(clip_list.property("visible"))
+        self.assertTrue(settings_panel.property("visible"))
+
+        clip_view = self._quick_item(window, "shortModeClipListView")
+        self.assertEqual(clip_view.property("count"), 2)
+
+        self.assertIsNotNone(preview.property("clipData"))
+        self.assertEqual(preview.property("clipData").get("segment_id"), "seg-1")
+
+        self.assertEqual(len(self.app.shortVideoClips), 2)
+        self.assertEqual(self.app.shortVideoClips[1]["segment_id"], "seg-2")
+        self.assertEqual(self.app.shortVideoSettings["global_fit"], "cover")
+
+        # remove second clip and reorder the remaining clip
+        self.app.removeShortVideoClip(1)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+        self.app.moveShortVideoClip(0, 0)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+
+        back_button = self._quick_item(window, "shortModeBackButton")
+        self._click(window, back_button)
+        self.assertFalse(short_page.property("visible"))
+
+
+    def test_transcribe_without_existing_project_starts_transcription(self) -> None:
+        self._set_ready_sources()
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            if dialog is not None:
+                self.assertFalse(dialog.property("visible"))
+
+            start_command.assert_called_once()
+            command = start_command.call_args[0][0]
+            self.assertEqual(start_command.call_args[0][1], "transcribe")
+            self.assertNotIn("--overwrite-project", command)
+
+    def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path.write_text("{}", encoding="utf-8")
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            self.assertIsNotNone(dialog)
+            self.assertTrue(dialog.property("visible"))
+            self.assertEqual(dialog.property("title"), "既存プロジェクトの上書き")
+            start_command.assert_not_called()
+
+    def test_transcribe_reject_overwrite_does_not_start(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path.write_text("{}", encoding="utf-8")
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            self.assertIsNotNone(dialog)
+            dialog.reject()
+            self.app.processEvents()
+
+            start_command.assert_not_called()
+            self.assertFalse(dialog.property("visible"))
+
+    def test_transcribe_accept_overwrite_passes_overwrite_flag(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path.write_text("{}", encoding="utf-8")
+
+        _, window = self._load_qml()
+        with patch.object(self.app, "_start_command") as start_command:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.app.processEvents()
+
+            dialog = window.findChild(QObject, "overwriteProjectDialog")
+            self.assertIsNotNone(dialog)
+            dialog.accept()
+            self.app.processEvents()
+
+            start_command.assert_called_once()
+            command = start_command.call_args[0][0]
+            self.assertEqual(start_command.call_args[0][1], "transcribe")
+            self.assertIn("--overwrite-project", command)
+
 
     def _fake_update_info(self) -> updater.UpdateInfo:
         return updater.UpdateInfo(
@@ -1819,11 +2033,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertEqual(program, "powershell.exe")
                 self.assertIn("-File", args)
                 self.assertIn("update.ps1", " ".join(args))
+                self.assertNotIn(self.app._update_info.download_url, args)
             else:
                 self.assertEqual(program, sys.executable)
                 self.assertIn("-m", args)
                 self.assertIn("src.updater", args)
-            self.assertIn(self.app._update_info.download_url, args)
+                self.assertIn(self.app._update_info.download_url, args)
             self.app.process.started.emit()
         self.assertEqual(self.app._active_job, "update")
         self.assertTrue(self.app.running)
@@ -1841,6 +2056,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app.applyUpdate()
             start.assert_not_called()
         self.assertIn("未保存", self.app.status)
+
+    def test_backend_update_cannot_be_cancelled_or_dismissed(self) -> None:
+        self.app._update_info = self._fake_update_info()
+        self.app._running = True
+        self.app._active_job = "update"
+
+        self.app.cancelProcessing()
+        self.assertFalse(self.app._cancel_requested)
+        self.assertIn("停止できません", self.app.status)
+
+        self.app.dismissUpdateInfo()
+        self.assertIsNotNone(self.app._update_info)
+        self.assertIn("閉じられません", self.app.status)
 
     def test_backend_restart_application_launches_and_quits(self) -> None:
         with patch("src.gui.subprocess.Popen") as popen, patch.object(self.app, "quit") as quit:

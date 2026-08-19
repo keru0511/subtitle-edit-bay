@@ -31,6 +31,7 @@ ApplicationWindow {
     property bool editorMode: false
     property bool mixerMode: false
     property bool dictionaryMode: false
+    property bool shortMode: false
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -231,6 +232,7 @@ ApplicationWindow {
             root.appBackend.stopAudioMixerPreview()
         root.mixerMode = false
         root.dictionaryMode = false
+        root.shortMode = false
         root.editorMode = true
     }
 
@@ -244,6 +246,7 @@ ApplicationWindow {
         mainPlayer.pause()
         root.editorMode = false
         root.dictionaryMode = false
+        root.shortMode = false
         root.appBackend.prepareAudioMixerPreview()
         root.mixerMode = true
     }
@@ -262,12 +265,30 @@ ApplicationWindow {
         root.appBackend.stopAudioMixerPreview()
         root.editorMode = false
         root.mixerMode = false
+        root.shortMode = false
         root.dictionaryMode = true
     }
 
     function closeDictionaryScreen() {
         mainPlayer.position = root.editorPositionCache
         root.dictionaryMode = false
+    }
+
+    function openShortModeScreen() {
+        if (root.appBackend.running)
+            return
+        root.editorPositionCache = mainPlayer.position
+        mainPlayer.pause()
+        root.appBackend.stopAudioMixerPreview()
+        root.editorMode = false
+        root.mixerMode = false
+        root.dictionaryMode = false
+        root.shortMode = true
+    }
+
+    function closeShortModeScreen() {
+        root.shortMode = false
+        mainPlayer.position = root.editorPositionCache
     }
 
     function volumePercentToDb(percent) {
@@ -923,8 +944,8 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: root.editorMode || root.mixerMode || root.dictionaryMode ? 0 : 62
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
+        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode ? 0 : 62
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         color: "#101512"
         border.color: root.border
         RowLayout {
@@ -1016,14 +1037,14 @@ ApplicationWindow {
             RowLayout {
                 Button { objectName: "applyUpdateButton"; text: "更新"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
                 Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.restartApplication() }
-                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
+                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
             }
         }
     }
 
     RowLayout {
         objectName: "mainWorkspace"
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         anchors.fill: parent
         anchors.margins: 12
         spacing: 10
@@ -1241,7 +1262,12 @@ ApplicationWindow {
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: !root.appBackend.projectLoaded || root.appBackend.activeJob === "transcribe"
                         enabled: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda) && !root.appBackend.projectLoaded
                         text: root.appBackend.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
-                        onClicked: root.appBackend.startTranscription(root.currentSettings())
+      onClicked: {
+          if (root.appBackend.transcriptionProjectExists())
+              overwriteProjectDialog.open()
+          else
+              root.appBackend.startTranscription(root.currentSettings(), false)
+      }
                         contentItem: Text { text: transcribeButton.text; color: transcribeButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 8; color: transcribeButton.enabled ? root.acid : "#252C28" }
                     }
@@ -1266,6 +1292,16 @@ ApplicationWindow {
                         background: Rectangle { radius: 8; color: mixerOpenButton.enabled ? root.acid : "#252C28" }
                     }
                     Button {
+                        id: shortModeOpenButton
+                        objectName: "shortModeOpenButton"
+                        Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded && root.appBackend.subtitleSegments.length > 0
+                        enabled: root.appBackend.projectLoaded && !root.appBackend.running
+                        text: "ショート動画を作成"
+                        onClicked: root.openShortModeScreen()
+                        contentItem: Text { text: shortModeOpenButton.text; color: shortModeOpenButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { radius: 8; color: shortModeOpenButton.enabled ? root.acid : "#252C28" }
+                    }
+                    Button {
                         id: renderButton
                         objectName: "renderVideoButton"
                         Layout.fillWidth: true; Layout.preferredHeight: 46; visible: root.appBackend.projectLoaded || root.appBackend.activeJob === "render"
@@ -1277,7 +1313,18 @@ ApplicationWindow {
                     }
                     Text { objectName: "workflowBlockReason"; Layout.fillWidth: true; text: root.transcriptionBlockReason(); visible: text.length > 0; color: root.amber; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.Wrap }
                     RowLayout { Layout.fillWidth: true
-                        SmallButton { objectName: "saveSettingsButton"; Layout.fillWidth: true; text: root.appBackend.running ? "停止" : "設定を保存"; onClicked: root.appBackend.running ? root.appBackend.cancelProcessing() : root.appBackend.saveSettings(root.currentSettings()) }
+                        SmallButton {
+                            objectName: "saveSettingsButton"
+                            Layout.fillWidth: true
+                            text: root.appBackend.running ? (root.appBackend.activeJob === "update" ? "更新中..." : "停止") : "設定を保存"
+                            enabled: !(root.appBackend.running && root.appBackend.activeJob === "update")
+                            onClicked: {
+                                if (!root.appBackend.running)
+                                    root.appBackend.saveSettings(root.currentSettings())
+                                else if (root.appBackend.activeJob !== "update")
+                                    root.appBackend.cancelProcessing()
+                            }
+                        }
                         SmallButton { objectName: "outputFolderButton"; Layout.fillWidth: true; text: "出力先を開く"; enabled: Boolean(root.appBackend.sourceSelection.output_dir); onClicked: root.appBackend.openOutputFolder() }
                     }
                 }
@@ -1286,7 +1333,27 @@ ApplicationWindow {
         }
     }
 
-    Popup {
+  Dialog {
+      id: overwriteProjectDialog
+      objectName: "overwriteProjectDialog"
+      anchors.centerIn: Overlay.overlay
+      modal: true
+      title: "既存プロジェクトの上書き"
+      standardButtons: Dialog.Yes | Dialog.No
+
+      contentItem: Text {
+          width: 420
+          text: "同じ動画の編集プロジェクトが既に存在します。\n既存プロジェクトを上書きして文字起こしを再実行しますか？"
+          color: root.textPrimary
+          font.family: "Yu Gothic UI"
+          font.pixelSize: 12
+          wrapMode: Text.Wrap
+      }
+
+      onAccepted: root.appBackend.startTranscription(root.currentSettings(), true)
+  }
+
+  Popup {
         objectName: "sourcePopup"
         id: sourcePopup
         anchors.centerIn: Overlay.overlay
@@ -1340,7 +1407,7 @@ ApplicationWindow {
                 }
             }
             PanelTitle { text: "動画" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
+            RowLayout { Layout.fillWidth: true; Text { objectName: "sourceVideoPathText"; Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
             PanelTitle { text: "話者音声" }
             ListView {
                 id: sourceAudioList
@@ -2185,6 +2252,27 @@ ApplicationWindow {
     }
 
     Rectangle {
+        id: shortModePage
+        objectName: "shortModePage"
+        anchors.fill: parent
+        visible: root.shortMode
+        z: 100
+        color: "#0D1210"
+        border.color: "#46564E"
+        focus: visible
+        Keys.onEscapePressed: root.closeShortModeScreen()
+        onVisibleChanged: if (visible) forceActiveFocus()
+
+        Loader {
+            id: shortModeLoader
+            anchors.fill: parent
+            active: root.shortMode
+            source: "ShortModeScreen.qml"
+            onLoaded: shortModeLoader.item.mainRoot = root
+        }
+    }
+
+    Rectangle {
         anchors.fill: parent
         anchors.margins: 22
         z: 999
@@ -2227,7 +2315,11 @@ ApplicationWindow {
     Component.onCompleted: {
         root.syncSettings()
     }
-    onClosing: {
+    onClosing: function(close) {
+        if (root.appBackend.running && root.appBackend.activeJob === "update") {
+            close.accepted = false
+            return
+        }
         root.appBackend.saveProject()
         mainPlayer.stop()
     }

@@ -41,13 +41,19 @@ Python を使う場合は 4 スペースインデント、タブは禁止です�
 新機能を追加する場合は、実装と同じ変更でテストも追加してください。
 
 ## Commit & Pull Request Guidelines
-まだコミット履歴がないため、最初から短く明確な命令形で統一してください。
+まだコミット履歴がないため、最初から短く明確な命令形で統一してください。以降、コミットメッセージと Pull Request タイトルは日本語で記述してください。
 
-- `Add ASS subtitle renderer`
-- `Implement speaker color mapping`
-- `Add tests for timestamp formatting`
+- `ASS 字幕レンダラーを追加`
+- `話者ごとの色割り当てを実装`
+- `タイムスタンプ整形のテストを追加`
 
 Pull Request には、変更内容、目的、確認手順、見た目に影響する場合は字幕サンプルやスクリーンショットを含めてください。
+
+## コミュニケーション言語
+本リポジトリでは、以下を日本語で記載します。
+
+- Pull Request のタイトルと説明文
+- Pull Request / Issue へのコメント、レビューコメント
 
 ## Security & Configuration Tips
 API キー、認証情報、生成済みの大容量動画はコミットしないでください。ローカル設定は `.env` などの ignore 対象に置き、必要な環境変数や外部ツール依存は `docs/` か `README` に明記します。

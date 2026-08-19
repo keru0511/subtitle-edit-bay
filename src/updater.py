@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -80,14 +81,8 @@ def fetch_latest_release(
 
     latest = normalize_version(tag)
     body = str(data.get("body", "") or "")
-    download_url = ""
-    for asset in data.get("assets") or []:
-        name = str(asset.get("name", ""))
-        if name.endswith(".zip"):
-            download_url = str(asset.get("browser_download_url", ""))
-            break
-    if not download_url:
-        download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip"
+    encoded_tag = urllib.parse.quote(tag, safe="")
+    download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{encoded_tag}.zip"
 
     return UpdateInfo(
         current_version=current,
@@ -340,8 +335,8 @@ def launch_update_script(project_root: Path, archive_url: str | None = None) -> 
             "-File",
             str(update_script),
         ]
-        if archive_url:
-            command.extend(["-ArchiveUrl", archive_url])
+        # Let update.ps1 resolve the release itself so it can validate the
+        # downloaded VERSION against the release tag before replacing files.
         return command
     return [sys.executable, "-m", "src.updater", "apply", "--archive-url", archive_url or ""]
 

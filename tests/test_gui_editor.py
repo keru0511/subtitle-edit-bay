@@ -2247,7 +2247,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         if not bool(channels[external_index]["enabled"]):
-            self._click(window, self._quick_visual_item(external_strip, "mixerChannelEnabledCheck"))
+            enabled_check = self._quick_visual_item(external_strip, "mixerChannelEnabledCheck")
+            enabled_check.setProperty("checked", True)
+            self.assertTrue(QMetaObject.invokeMethod(enabled_check, "toggled"))
             QTest.qWait(50)
             external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         self._click(window, self._quick_visual_item(external_strip, "mixerSoloButton"))

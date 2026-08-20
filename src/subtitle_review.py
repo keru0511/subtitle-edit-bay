@@ -27,6 +27,8 @@ class SubtitleReviewIssue:
     status: str = "open"
     created_at: str = ""
     reviewed_at: str = ""
+    logical_key: str = ""
+    supersedes: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -42,6 +44,8 @@ class SubtitleReviewIssue:
             "status": self.status,
             "created_at": self.created_at,
             "reviewed_at": self.reviewed_at,
+            "logical_key": self.logical_key,
+            "supersedes": self.supersedes,
         }
 
 
@@ -69,9 +73,10 @@ def generate_review_queue(
         for finding in findings:
             segment_id = str(segment.get("id", f"segment-{index}"))
             fingerprint = _fingerprint(segment, finding.rule_id, rule_version)
+            logical_key = _logical_key((segment_id,), finding.rule_id, rule_version)
             issues.append(
                 SubtitleReviewIssue(
-                    issue_id=hashlib.sha1(f"{segment_id}:{finding.rule_id}:{fingerprint}".encode()).hexdigest()[:16],
+                    issue_id=hashlib.sha1(f"{logical_key}:{fingerprint}".encode()).hexdigest()[:16],
                     segment_ids=(segment_id,),
                     rule_id=finding.rule_id,
                     rule_version=rule_version,
@@ -81,6 +86,7 @@ def generate_review_queue(
                     project_revision=project_revision,
                     content_fingerprint=fingerprint,
                     created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    logical_key=logical_key,
                 )
             )
         if progress_callback:
@@ -100,6 +106,52 @@ class SubtitleReviewQueue:
         updated = SubtitleReviewIssue(**{**issue.__dict__, "status": status, "reviewed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
         self.issues[issue_id] = updated
         return updated
+
+    def reconcile(
+        self,
+        generated: Iterable[SubtitleReviewIssue],
+    ) -> list[SubtitleReviewIssue]:
+        """Merge a newly generated queue without losing review decisions."""
+        generated_items = list(generated)
+        existing_by_key = {
+            _issue_logical_key(issue): issue for issue in self.issues.values()
+        }
+        reconciled: dict[str, SubtitleReviewIssue] = {}
+        matched_keys: set[str] = set()
+        for current in generated_items:
+            key = _issue_logical_key(current)
+            previous = existing_by_key.get(key)
+            matched_keys.add(key)
+            if previous is None:
+                reconciled[current.issue_id] = current
+                continue
+            if previous.content_fingerprint == current.content_fingerprint:
+                reconciled[previous.issue_id] = SubtitleReviewIssue(
+                    **{
+                        **current.__dict__,
+                        "issue_id": previous.issue_id,
+                        "status": previous.status,
+                        "created_at": previous.created_at or current.created_at,
+                        "reviewed_at": previous.reviewed_at,
+                        "logical_key": key,
+                        "supersedes": previous.supersedes,
+                    }
+                )
+                continue
+            reconciled[previous.issue_id] = SubtitleReviewIssue(
+                **{**previous.__dict__, "status": "stale"}
+            )
+            reconciled[current.issue_id] = SubtitleReviewIssue(
+                **{**current.__dict__, "logical_key": key, "supersedes": previous.issue_id}
+            )
+        for issue in self.issues.values():
+            key = _issue_logical_key(issue)
+            if key not in matched_keys and issue.issue_id not in reconciled:
+                reconciled[issue.issue_id] = SubtitleReviewIssue(
+                    **{**issue.__dict__, "status": "stale"}
+                )
+        self.issues = reconciled
+        return list(self.issues.values())
 
     def mark_stale(self, segments: Iterable[Mapping[str, Any]], rule_version: str = RULE_VERSION) -> list[SubtitleReviewIssue]:
         by_id = {str(item.get("id")): item for item in segments}
@@ -135,4 +187,19 @@ def _fingerprint(segment: Mapping[str, Any], rule_id: str, rule_version: str) ->
         "rule_version": rule_version,
     }
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _logical_key(segment_ids: Iterable[str], rule_id: str, rule_version: str) -> str:
+    payload = {
+        "segment_ids": list(segment_ids),
+        "rule_id": rule_id,
+        "rule_version": rule_version,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:24]
+
+
+def _issue_logical_key(issue: SubtitleReviewIssue) -> str:
+    return issue.logical_key or _logical_key(issue.segment_ids, issue.rule_id, issue.rule_version)
 

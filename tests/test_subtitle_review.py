@@ -31,6 +31,27 @@ class SubtitleReviewTests(unittest.TestCase):
         self.assertEqual(stale[0].status, "stale")
         self.assertEqual(queue.issues[issue.issue_id].status, "stale")
 
+    def test_reconcile_preserves_status_and_links_changed_content(self) -> None:
+        original = generate_review_queue(self.segments, project_revision=1)
+        issue = next(item for item in original if item.segment_ids == ("s1",))
+        queue = SubtitleReviewQueue(original)
+        queue.update_status(issue.issue_id, "ignored")
+
+        same = generate_review_queue(self.segments, project_revision=2)
+        queue.reconcile(same)
+        self.assertEqual(queue.issues[issue.issue_id].status, "ignored")
+
+        changed_segments = [{**self.segments[0], "text": "修正後"}, self.segments[1]]
+        changed = generate_review_queue(changed_segments, project_revision=3)
+        queue.reconcile(changed)
+        replacement = next(
+            item for item in queue.issues.values()
+            if item.logical_key == issue.logical_key and item.issue_id != issue.issue_id
+        )
+        self.assertEqual(queue.issues[issue.issue_id].status, "stale")
+        self.assertEqual(replacement.status, "open")
+        self.assertEqual(replacement.supersedes, issue.issue_id)
+
     def test_filter_and_cancel(self) -> None:
         issues = generate_review_queue(self.segments)
         queue = SubtitleReviewQueue(issues)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing import Any, Iterable, Mapping
 FEEDBACK_SCHEMA_VERSION = 1
 ALLOWED_EVENTS = {"accepted", "rejected", "skipped", "boundary_adjusted"}
 ALLOWED_FEATURES = {"text", "intensity", "speaker_diversity", "duration", "category"}
+NUMERIC_FEATURES = {"text", "intensity", "speaker_diversity", "duration"}
 
 
 @dataclass(frozen=True)
@@ -30,11 +32,17 @@ class HighlightFeedbackEvent:
     ) -> "HighlightFeedbackEvent":
         if event not in ALLOWED_EVENTS:
             raise ValueError(f"unsupported feedback event: {event}")
-        safe_features = {
-            str(key): value
-            for key, value in (features or {}).items()
-            if str(key) in ALLOWED_FEATURES and isinstance(value, (int, float, str))
-        }
+        safe_features: dict[str, float | str] = {}
+        for key, value in (features or {}).items():
+            feature = str(key)
+            if feature not in ALLOWED_FEATURES:
+                continue
+            if feature in NUMERIC_FEATURES:
+                if type(value) not in (int, float) or not math.isfinite(float(value)):
+                    continue
+                safe_features[feature] = float(value)
+            elif feature == "category" and isinstance(value, str):
+                safe_features[feature] = value
         return cls(
             candidate_id=str(candidate_id),
             event=event,
@@ -79,11 +87,15 @@ class HighlightFeedbackStore:
         features: Mapping[str, float | str] | None = None,
     ) -> HighlightFeedbackEvent:
         created = HighlightFeedbackEvent.create(candidate_id, event, features)
-        self.events.append(created)
-        self.save()
+        next_events = [*self.events, created]
+        self._save_events(next_events)
+        self.events = next_events
         return created
 
     def save(self) -> None:
+        self._save_events(self.events)
+
+    def _save_events(self, events: Iterable[HighlightFeedbackEvent]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self.path.parent, prefix="highlight-feedback-", suffix=".tmp", delete=False
@@ -92,7 +104,7 @@ class HighlightFeedbackStore:
         try:
             with handle:
                 json.dump(
-                    {"schema_version": FEEDBACK_SCHEMA_VERSION, "events": [item.to_json() for item in self.events]},
+                    {"schema_version": FEEDBACK_SCHEMA_VERSION, "events": [item.to_json() for item in events]},
                     handle,
                     ensure_ascii=False,
                     indent=2,
@@ -106,8 +118,8 @@ class HighlightFeedbackStore:
         return {"schema_version": FEEDBACK_SCHEMA_VERSION, "events": [item.to_json() for item in self.events]}
 
     def reset(self) -> None:
+        self._save_events([])
         self.events = []
-        self.save()
 
     def delete(self) -> None:
         self.events = []

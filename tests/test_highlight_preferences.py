@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest import mock
 
 from src.highlight_feedback import HighlightFeedbackStore
 from src.highlight_preferences import HighlightPreferenceModel, PreferenceSettings
@@ -19,6 +20,26 @@ class HighlightPreferenceTests(unittest.TestCase):
             self.assertEqual(store.events, [])
             store.record("h2", "rejected", {"intensity": 0.2})
             store.delete()
+            self.assertFalse(store.path.exists())
+
+    def test_text_feature_accepts_only_numeric_signal_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = HighlightFeedbackStore(f"{temp_dir}/feedback.json")
+            store.record("h1", "accepted", {"text": "実際の字幕本文", "intensity": 0.8})
+
+            features = store.events[0].features
+            self.assertNotIn("text", features)
+            self.assertEqual(features["intensity"], 0.8)
+            self.assertNotIn("実際の字幕本文", store.path.read_text(encoding="utf-8"))
+
+    def test_record_does_not_commit_memory_when_atomic_save_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = HighlightFeedbackStore(f"{temp_dir}/feedback.json")
+            with mock.patch("src.highlight_feedback.os.replace", side_effect=OSError("injected")):
+                with self.assertRaises(OSError):
+                    store.record("h1", "accepted", {"intensity": 0.8})
+
+            self.assertEqual(store.events, [])
             self.assertFalse(store.path.exists())
 
     def test_baseline_is_unchanged_until_minimum_history(self) -> None:

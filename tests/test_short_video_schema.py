@@ -42,6 +42,25 @@ class ShortVideoSchemaTests(unittest.TestCase):
         restored = ShortVideo.from_json(short_video.to_json())
         self.assertEqual(restored.to_json(), short_video.to_json())
 
+    def test_clip_inheritance_remains_distinguishable_after_round_trip(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "global_fit": "contain",
+                "global_background_color": "FF0000",
+                "clips": [{"segment_id": "inherited", "start": 0.0, "end": 1.0}],
+            }
+        )
+
+        self.assertIsNone(short_video.clips[0].fit)
+        self.assertIsNone(short_video.clips[0].background_color)
+        serialized = short_video.to_json()
+        self.assertNotIn("fit", serialized["clips"][0])
+        self.assertNotIn("background_color", serialized["clips"][0])
+
+        restored = ShortVideo.from_json(serialized)
+        self.assertIsNone(restored.clips[0].fit)
+        self.assertIsNone(restored.clips[0].background_color)
+
     def test_bgm_uses_in_out_keys(self) -> None:
         bgm = ShortVideoBgm.from_json({"in": 10.0, "out": 20.0, "volume": 0.8})
         self.assertAlmostEqual(bgm.in_point, 10.0)

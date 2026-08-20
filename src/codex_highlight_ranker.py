@@ -204,23 +204,11 @@ def _preserve_candidate_constraints(
 ) -> list[dict[str, Any]]:
     if not candidates or limit <= 0:
         return []
-    max_end = max(float(item.get("end", 0.0)) for item in candidates)
-    buckets: dict[int, list[dict[str, Any]]] = {index: [] for index in range(5)}
-    for item in candidates:
-        bucket = min(4, int((float(item.get("start", 0.0)) / max(1.0, max_end)) * 5))
-        buckets[bucket].append(item)
     selected: list[dict[str, Any]] = []
-    for bucket in range(5):
-        for item in buckets[bucket]:
-            if len(selected) >= limit:
-                break
-            if not _overlaps_selected(item, selected):
-                selected.append(item)
-                break
     for item in candidates:
         if len(selected) >= limit:
             break
-        if item not in selected and not _overlaps_selected(item, selected):
+        if not _overlaps_selected(item, selected):
             selected.append(item)
     return selected
 

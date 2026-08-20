@@ -16,11 +16,20 @@ Rectangle {
     property string fallbackBackgroundColor: "#000000"
     readonly property var shortSettings: appBackend ? appBackend.shortVideoSettings : ({})
     readonly property var appSettings: appBackend ? appBackend.settings : ({})
+
+    function normalizedSubtitleScalePercent() {
+        var configuredScale = shortSettings ? shortSettings.subtitle_scale_percent : undefined
+        if (configuredScale === undefined || configuredScale === null || configuredScale === "")
+            return 150
+        var numericScale = Number(configuredScale)
+        return isFinite(numericScale) ? Math.max(0, numericScale) : 150
+    }
+
     readonly property int subtitleBaseFontSize: Math.max(
         3,
         Math.round(
             Number(appSettings.subtitle_font_size || 50)
-            * Number(shortSettings.subtitle_scale_percent || 150) / 100
+            * previewRoot.normalizedSubtitleScalePercent() / 100
         )
     )
     readonly property string subtitleOutlineColor: String(appSettings.subtitle_outline_color || "#000000")

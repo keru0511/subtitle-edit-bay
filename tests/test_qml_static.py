@@ -267,6 +267,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("activeSubtitleSegments", overlay_qml)
         self.assertIn("shortSubtitleOverlayCaption", preview_qml)
         self.assertIn("subtitle_scale_percent", preview_qml)
+        self.assertIn("normalizedSubtitleScalePercent", preview_qml)
+        self.assertNotIn("subtitle_scale_percent || 150", preview_qml)
         self.assertIn("SubtitleOverlay", workflow_qml)
 
     def test_global_subtitle_outline_controls_are_wired_to_preview(self) -> None:

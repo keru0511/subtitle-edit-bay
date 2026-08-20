@@ -69,6 +69,20 @@ class ProjectSnapshotTests(unittest.TestCase):
             self.assertIn(first.snapshot_id, ids)
             self.assertEqual(len(ids), 2)
 
+    def test_restore_loads_target_before_pre_restore_pruning(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SnapshotStore(
+                Path(temp_dir) / "snapshots",
+                retention_count=1,
+                retention_days=None,
+                retention_bytes=None,
+            )
+            target = store.create({"title": "target"}, 1, "manual")
+            self.assertEqual(
+                store.restore(target.snapshot_id, current_project={"title": "current"}),
+                {"title": "target"},
+            )
+
     def test_recovery_only_returns_newer_state_and_clears_after_restore(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             journal = RecoveryJournal(Path(temp_dir) / "recovery")

@@ -217,15 +217,15 @@ class SnapshotStore:
         destination: str | os.PathLike[str] | None = None,
         overwrite: bool = False,
     ) -> dict[str, Any]:
+        target_project = copy.deepcopy(self.get(snapshot_id).project)
         if current_project is not None:
             self.create(current_project, current_revision, "pre-restore")
-        project = copy.deepcopy(self.get(snapshot_id).project)
         if destination is not None:
             path = Path(destination)
             if path.exists() and not overwrite:
                 raise SnapshotError(f"restore destination already exists: {path}")
-            _atomic_json(path, project, overwrite=True)
-        return project
+            _atomic_json(path, target_project, overwrite=True)
+        return target_project
 
     def prune(self, *, now: datetime | None = None) -> None:
         current = now or datetime.now(timezone.utc)

@@ -19,7 +19,7 @@ class CodexRuntimeTests(unittest.TestCase):
 
         def run(command, **kwargs):
             calls.append((command, kwargs))
-            return subprocess.CompletedProcess(command, 0, stdout="codex 1.2.3\n", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="codex 0.27.1\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             info = detect_codex(

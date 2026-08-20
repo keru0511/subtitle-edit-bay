@@ -211,16 +211,40 @@ def write_post_package(
     package = build_post_package(project, chapters=chapters, thumbnail_candidates=thumbnail_candidates, settings=settings)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{path.name}.", dir=path.parent))
+    backup: Path | None = None
+    existing_moved = False
     try:
         _write_package_files(temporary, package)
         if path.exists():
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-        os.replace(temporary, path)
+            descriptor, backup_name = tempfile.mkstemp(prefix=f".{path.name}.backup-", dir=path.parent)
+            os.close(descriptor)
+            os.unlink(backup_name)
+            backup = Path(backup_name)
+            os.replace(path, backup)
+            existing_moved = True
+        try:
+            os.replace(temporary, path)
+        except Exception:
+            if path.exists():
+                _remove_package_path(path)
+            if existing_moved and backup is not None and backup.exists():
+                os.replace(backup, path)
+                existing_moved = False
+            raise
+        if existing_moved and backup is not None:
+            _remove_package_path(backup)
+            existing_moved = False
     except Exception:
         if temporary.exists():
             shutil.rmtree(temporary, ignore_errors=True)
+        if existing_moved and backup is not None and backup.exists() and not path.exists():
+            os.replace(backup, path)
         raise
     return path
+
+
+def _remove_package_path(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()

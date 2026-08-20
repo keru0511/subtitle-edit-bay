@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.thumbnail_candidates import build_contact_sheet_command, build_thumbnail_command, rank_thumbnail_candidates
 from src.youtube_package import (
@@ -56,6 +58,22 @@ class YouTubePackageTests(unittest.TestCase):
             self.assertFalse(manifest["upload_performed"])
             with self.assertRaises(YouTubePackageError):
                 write_post_package(_project(), output, settings={"style": "default"})
+
+            original_package = (output / "package.json").read_text(encoding="utf-8")
+            replace_calls = 0
+            real_replace = os.replace
+
+            def fail_install(source, destination):
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 2:
+                    raise OSError("injected package replacement failure")
+                return real_replace(source, destination)
+
+            with patch("src.youtube_package.os.replace", side_effect=fail_install):
+                with self.assertRaises(OSError):
+                    write_post_package(_project() | {"revision": 13}, output, settings={"style": "default"}, overwrite=True)
+            self.assertEqual((output / "package.json").read_text(encoding="utf-8"), original_package)
 
     def test_chapter_validation_rejects_duplicate_or_invalid_values(self):
         with self.assertRaises(YouTubePackageError):

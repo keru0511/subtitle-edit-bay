@@ -14,6 +14,17 @@ Rectangle {
     property var appBackend: null
     property var clipData: null
     property string fallbackBackgroundColor: "#000000"
+    readonly property var shortSettings: appBackend ? appBackend.shortVideoSettings : ({})
+    readonly property var appSettings: appBackend ? appBackend.settings : ({})
+    readonly property int subtitleBaseFontSize: Math.max(
+        3,
+        Math.round(
+            Number(appSettings.subtitle_font_size || 50)
+            * Number(shortSettings.subtitle_scale_percent || 150) / 100
+        )
+    )
+    readonly property string subtitleOutlineColor: String(appSettings.subtitle_outline_color || "#000000")
+    readonly property int subtitleOutlineThickness: Number(appSettings.subtitle_outline_thickness || 3)
 
     Layout.fillHeight: true
     Layout.preferredWidth: parent ? parent.height * 9 / 16 : 540
@@ -62,6 +73,19 @@ Rectangle {
             if (previewRoot.clipData.fit === "contain") return VideoOutput.PreserveAspectFit
             return VideoOutput.PreserveAspectCrop
         }
+    }
+
+    SubtitleOverlay {
+        id: subtitleOverlay
+        anchors.fill: previewVideo
+        appBackend: previewRoot.appBackend
+        player: previewPlayer
+        captionObjectPrefix: "shortSubtitleOverlayCaption"
+        baseFontSize: previewRoot.subtitleBaseFontSize
+        defaultSubtitleFontSize: 50
+        outlineColor: previewRoot.subtitleOutlineColor
+        outlineThickness: previewRoot.subtitleOutlineThickness
+        speakerColors: previewRoot.appBackend ? previewRoot.appBackend.projectSpeakers : []
     }
 
     Text {

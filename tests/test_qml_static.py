@@ -256,6 +256,16 @@ class QmlStaticTests(unittest.TestCase):
         )
         self.assertIn("root.defaultSubtitleFontSize", overlay_qml)
 
+    def test_short_preview_uses_shared_subtitle_overlay(self) -> None:
+        overlay_qml = read_component_qml("SubtitleOverlay.qml")
+        preview_qml = read_component_qml("ShortModePreview.qml")
+        workflow_qml = read_workflow_qml()
+        self.assertIn("property var subtitleTextResolver", overlay_qml)
+        self.assertIn("activeSubtitleSegments", overlay_qml)
+        self.assertIn("shortSubtitleOverlayCaption", preview_qml)
+        self.assertIn("subtitle_scale_percent", preview_qml)
+        self.assertIn("SubtitleOverlay", workflow_qml)
+
     def test_global_subtitle_outline_controls_are_wired_to_preview(self) -> None:
         qml = read_workflow_qml()
 

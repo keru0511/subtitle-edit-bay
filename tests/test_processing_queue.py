@@ -13,12 +13,26 @@ class ProcessingQueueTests(unittest.TestCase):
             source = Path(temp_dir) / "input.mkv"
             source.write_bytes(b"input")
             queue = ProcessingQueue(Path(temp_dir) / "queue.json")
-            item = queue.add(source, settings={"language": "ja", "api_token": "hidden"})
+            item = queue.add(
+                source,
+                settings={
+                    "language": "ja",
+                    "codex": {
+                        "api_token": "hidden",
+                        "headers": [{"authorization": "Bearer hidden"}],
+                    },
+                },
+            )
             queue.get(item.item_id).status = "running"
             queue.save()
             restored = ProcessingQueue(queue.path)
             self.assertEqual(restored.mark_interrupted_on_startup()[0].status, "interrupted")
             self.assertNotIn("hidden", queue.path.read_text(encoding="utf-8"))
+            self.assertIn("[REDACTED]", queue.path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                restored.items[0].settings["codex"]["api_token"],
+                "[REDACTED]",
+            )
             source.write_bytes(b"changed")
             self.assertTrue(restored.mark_stale())
 

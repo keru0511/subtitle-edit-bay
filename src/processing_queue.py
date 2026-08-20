@@ -13,6 +13,8 @@ from typing import Any, Callable, Iterable, Mapping
 
 QUEUE_SCHEMA_VERSION = 1
 QUEUE_STATUSES = {"pending", "running", "success", "failed", "canceled", "interrupted", "stale"}
+_SECRET_SETTING_KEY_PARTS = ("token", "password", "secret", "api_key", "api-key", "authorization")
+_REDACTED_SETTING_VALUE = "[REDACTED]"
 
 
 class ProcessingQueueError(RuntimeError):
@@ -268,8 +270,20 @@ def fingerprint_path(path: str | Path) -> str:
 
 
 def _safe_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        str(key): value
-        for key, value in settings.items()
-        if not any(secret in str(key).casefold() for secret in ("token", "password", "secret", "api_key", "authorization"))
-    }
+    sanitized = _sanitize_setting_value(settings)
+    return dict(sanitized)
+
+
+def _sanitize_setting_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        sanitized: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            key_text = str(key)
+            if any(secret in key_text.casefold() for secret in _SECRET_SETTING_KEY_PARTS):
+                sanitized[key_text] = _REDACTED_SETTING_VALUE
+            else:
+                sanitized[key_text] = _sanitize_setting_value(nested_value)
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_setting_value(item) for item in value]
+    return value

@@ -606,10 +606,25 @@ class EditBayBackend(LegacyEditBayBackend):
         if not 0 <= index < len(clips):
             return False
         clip = dict(clips[index])
-        if "start" in fields:
-            clip["start"] = max(0.0, float(fields["start"]))
-        if "end" in fields:
-            clip["end"] = max(clip.get("start", 0.0), float(fields["end"]))
+        segment = self._find_segment_by_id(str(clip.get("segment_id", "")))
+        if segment is None:
+            return False
+        try:
+            segment_start = float(segment.get("start", 0.0))
+            segment_end = float(segment.get("end", segment_start))
+            start = float(fields.get("start", clip.get("start", segment_start)))
+            end = float(fields.get("end", clip.get("end", segment_end)))
+            if not all(math.isfinite(value) for value in (segment_start, segment_end, start, end)):
+                return False
+        except (TypeError, ValueError):
+            return False
+        video_duration = self.projectDuration
+        upper_bound = min(segment_end, video_duration) if video_duration > 0.0 else segment_end
+        lower_bound = max(0.0, segment_start)
+        if upper_bound <= lower_bound or start < lower_bound or end > upper_bound or start >= end:
+            return False
+        clip["start"] = start
+        clip["end"] = end
         if "fit" in fields:
             fit = str(fields["fit"]).lower()
             if fit not in VALID_FIT_MODES:

@@ -273,6 +273,7 @@ class EditBayBackend(LegacyEditBayBackend):
     audioMasterMetricsChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
+    logChanged = Signal()
     updateInfoChanged = Signal()
     updateBusyChanged = Signal()
     updateErrorChanged = Signal()

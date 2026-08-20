@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import pytest
+import tempfile
+import unittest
+from pathlib import Path
 
 from src.timeline_interchange import (
     TimelineInterchangeError,
@@ -25,26 +27,28 @@ def _project():
     }
 
 
-def test_timeline_json_is_lossless_and_versioned(tmp_path):
-    destination = tmp_path / "編集 timeline.json"
-    export_timeline_json(_project(), destination)
-    assert import_timeline_json(destination) == _project()
-    with pytest.raises(TimelineInterchangeError):
-        export_timeline_json(_project(), destination)
+class TimelineInterchangeTests(unittest.TestCase):
+    def test_timeline_json_is_lossless_and_versioned(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "編集 timeline.json"
+            export_timeline_json(_project(), destination)
+            self.assertEqual(import_timeline_json(destination), _project())
+            with self.assertRaises(TimelineInterchangeError):
+                export_timeline_json(_project(), destination)
 
+    def test_edl_contains_source_and_timeline_timecodes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "timeline.edl"
+            export_edl(_project(), destination, fps=30)
+            text = destination.read_text(encoding="utf-8")
+            self.assertIn("FCM: NON-DROP FRAME", text)
+            self.assertIn("00:00:01:00 00:00:04:00 00:00:00:00 00:00:03:00", text)
+            self.assertIn("C:/素材/録画.mkv", text)
+            self.assertEqual(export_warnings(_project()), [])
 
-def test_edl_contains_source_and_timeline_timecodes(tmp_path):
-    destination = tmp_path / "timeline.edl"
-    export_edl(_project(), destination, fps=30)
-    text = destination.read_text(encoding="utf-8")
-    assert "FCM: NON-DROP FRAME" in text
-    assert "00:00:01:00 00:00:04:00 00:00:00:00 00:00:03:00" in text
-    assert "C:/素材/録画.mkv" in text
-    assert export_warnings(_project()) == []
-
-
-def test_edl_reports_unrepresentable_features():
-    project = _project() | {"transitions": [{"type": "wipe"}]}
-    assert "unsupported transition: wipe" in export_warnings(project)
-    with pytest.raises(TimelineInterchangeError):
-        export_edl(project | {"clips": [{"start": 0}]}, "out.edl")
+    def test_edl_reports_unrepresentable_features(self):
+        project = _project() | {"transitions": [{"type": "wipe"}]}
+        self.assertIn("unsupported transition: wipe", export_warnings(project))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(TimelineInterchangeError):
+                export_edl(project | {"clips": [{"start": 0}]}, Path(temp_dir) / "out.edl")

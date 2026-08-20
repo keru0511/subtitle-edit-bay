@@ -49,6 +49,32 @@ class ProcessingQueueTests(unittest.TestCase):
             queue.run_item(item.item_id, runner, output_validator=lambda path: True, allow_overwrite=True)
             self.assertEqual(calls, ["render"])
 
+    def test_success_stage_is_reprocessed_when_output_is_missing_or_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "input.mkv"
+            source.write_bytes(b"input")
+            output = Path(temp_dir) / "result.mp4"
+            queue = ProcessingQueue(Path(temp_dir) / "queue.json")
+            item = queue.add(source, stages=("render",))
+            calls: list[str] = []
+
+            def runner(item, stage, progress, cancel):
+                calls.append(stage.name)
+                output.write_bytes(f"output-{len(calls)}".encode())
+                return output
+
+            queue.run_item(item.item_id, runner, output_validator=lambda path: path.stat().st_size > 0, allow_overwrite=True)
+            output.unlink()
+            queue.run_item(item.item_id, runner, output_validator=lambda path: path.stat().st_size > 0, allow_overwrite=True)
+            output.write_bytes(b"external-change")
+            queue.run_item(item.item_id, runner, output_validator=lambda path: path.stat().st_size > 0, allow_overwrite=True)
+            self.assertEqual(calls, ["render", "render", "render"])
+
+    def test_concurrency_is_capped_until_cancellation_is_per_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            queue = ProcessingQueue(Path(temp_dir) / "queue.json", max_concurrency=4)
+            self.assertEqual(queue.max_concurrency, 1)
+
     def test_cancel_failure_and_existing_output_are_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "input.mkv"

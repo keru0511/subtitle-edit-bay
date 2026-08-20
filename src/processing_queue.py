@@ -59,9 +59,13 @@ class QueueItem:
 class ProcessingQueue:
     def __init__(self, path: str | Path, *, max_concurrency: int = 1) -> None:
         self.path = Path(path)
-        self.max_concurrency = max(1, int(max_concurrency))
+        # run_item mutates the queue and persists progress synchronously. Until
+        # per-item cancellation and a concurrent state store exist, advertise
+        # the safe serialized behavior instead of accepting an unsafe value.
+        self.max_concurrency = 1
         self.items: list[QueueItem] = []
         self._cancel = threading.Event()
+        self._run_lock = threading.Lock()
         self.load()
 
     def add(
@@ -138,6 +142,22 @@ class ProcessingQueue:
         output_validator: Callable[[Path], bool] | None = None,
         allow_overwrite: bool = False,
     ) -> QueueItem:
+        with self._run_lock:
+            return self._run_item(
+                item_id,
+                stage_runner,
+                output_validator=output_validator,
+                allow_overwrite=allow_overwrite,
+            )
+
+    def _run_item(
+        self,
+        item_id: str,
+        stage_runner: Callable[[QueueItem, QueueStage, Callable[[float], None], threading.Event], str | Path | None],
+        *,
+        output_validator: Callable[[Path], bool] | None,
+        allow_overwrite: bool,
+    ) -> QueueItem:
         item = self.get(item_id)
         if item.status == "stale":
             raise ProcessingQueueError("stale queue item requires requeue")
@@ -147,8 +167,14 @@ class ProcessingQueue:
         self.save()
         try:
             for stage in item.stages:
-                if stage.status == "success":
+                if stage.status == "success" and self._stage_output_is_valid(stage, output_validator):
                     continue
+                if stage.status == "success":
+                    stage.status = "pending"
+                    stage.progress = 0.0
+                    stage.error = "stored output is missing, stale, or invalid"
+                    stage.output_fingerprint = ""
+                    self.save()
                 if self._cancel.is_set():
                     raise ProcessingQueueError("canceled")
                 if stage.output_path and Path(stage.output_path).exists() and not allow_overwrite:
@@ -184,6 +210,17 @@ class ProcessingQueue:
         self.save()
         return item
 
+    @staticmethod
+    def _stage_output_is_valid(stage: QueueStage, output_validator: Callable[[Path], bool] | None) -> bool:
+        if not stage.output_path:
+            return True
+        if not stage.output_fingerprint:
+            return False
+        output_path = Path(stage.output_path)
+        if not output_path.is_file() or fingerprint_path(output_path) != stage.output_fingerprint:
+            return False
+        return output_validator is None or bool(output_validator(output_path))
+
     def _set_progress(self, item: QueueItem, stage: QueueStage, value: float) -> None:
         stage.progress = max(0.0, min(1.0, float(value)))
         self.save()
@@ -206,7 +243,7 @@ class ProcessingQueue:
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         if int(payload.get("schema_version", 0)) != QUEUE_SCHEMA_VERSION:
             raise ProcessingQueueError("unsupported queue schema")
-        self.max_concurrency = max(1, int(payload.get("max_concurrency", 1)))
+        self.max_concurrency = 1
         self.items = [
             QueueItem(
                 item_id=str(item["item_id"]),

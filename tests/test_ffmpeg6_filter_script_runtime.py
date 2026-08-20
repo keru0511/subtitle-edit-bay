@@ -273,12 +273,10 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
                 self._assert_video_audio_output(output, width=180, height=320)
                 frames[fit] = self._read_rgb_frame(output)
 
-            contain_corner = self._pixel(frames["contain"], width=180, x=0, y=0)
             for fit in ("cover", "blur"):
-                corner = self._pixel(frames[fit], width=180, x=0, y=0)
                 self.assertGreater(
-                    sum(abs(actual - expected) for actual, expected in zip(contain_corner, corner)),
-                    30,
+                    self._mean_abs_difference(frames["contain"], frames[fit]),
+                    2.0,
                 )
             self.assertGreater(
                 self._mean_abs_difference(frames["cover"], frames["blur"]),

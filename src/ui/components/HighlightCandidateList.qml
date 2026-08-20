@@ -37,7 +37,7 @@ ColumnLayout {
         Button {
             objectName: "highlightAnalyzeButton"
             text: appBackend && appBackend.highlightAnalysisState === "running" ? "解析中" : "解析"
-            enabled: appBackend && appBackend.highlightAnalysisState !== "running" && !appBackend.running
+            enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0 && !appBackend.running
             onClicked: appBackend.startHighlightAnalysis()
         }
         Button {
@@ -52,7 +52,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Text { text: appBackend ? appBackend.highlightAnalysisState : "idle"; color: "#8E9B94"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
-        Button { objectName: "highlightRetryButton"; text: "再解析"; enabled: appBackend && appBackend.highlightAnalysisState !== "running"; onClicked: appBackend.retryHighlightAnalysis() }
+        Button { objectName: "highlightRetryButton"; text: "再解析"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
         Button { objectName: "highlightUndoRejectButton"; text: "却下を戻す"; enabled: appBackend; onClicked: appBackend.undoHighlightRejection() }
     }
 

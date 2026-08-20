@@ -165,6 +165,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "highlightPreviewButton"', candidate_qml)
         self.assertIn('objectName: "highlightAddButton"', candidate_qml)
         self.assertIn('objectName: "highlightRejectButton"', candidate_qml)
+        self.assertIn('"cancelling"', candidate_qml)
         self.assertIn("appBackend.addHighlightCandidate", candidate_qml)
         self.assertIn("appBackend.rejectHighlightCandidate", candidate_qml)
         self.assertIn("shortPreview.previewAt(seconds)", short_qml)

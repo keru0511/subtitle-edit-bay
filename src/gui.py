@@ -351,6 +351,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._highlight_status = "idle"
         self._highlight_progress = 0.0
         self._highlight_cancel = threading.Event()
+        self._highlight_generation = 0
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
         self._audio_preview_pending_levels: dict[str, float] = {}
@@ -863,9 +864,13 @@ class EditBayBackend(LegacyEditBayBackend):
     def startHighlightAnalysis(self) -> bool:
         if self._project is None or self._running:
             return False
-        if self._highlight_status == "running":
+        if self._highlight_status in {"running", "cancelling"}:
             return False
-        self._highlight_cancel.clear()
+        self._highlight_generation += 1
+        generation = self._highlight_generation
+        cancel_event = threading.Event()
+        self._highlight_cancel = cancel_event
+        self._highlight_rejected = []
         self._highlight_status = "running"
         self._highlight_progress = 0.0
         self.highlightAnalysisChanged.emit()
@@ -884,18 +889,29 @@ class EditBayBackend(LegacyEditBayBackend):
                 candidates = generate_highlight_candidates(
                     segments,
                     duration_seconds=duration,
-                    cancel_check=self._highlight_cancel.is_set,
-                    progress_callback=self._update_highlight_progress,
+                    cancel_check=cancel_event.is_set,
+                    progress_callback=lambda value: self._update_highlight_progress(
+                        generation, value
+                    ),
                     cache_directory=cache_directory,
                 )
+                if not self._is_current_highlight_run(generation):
+                    return
+                if cancel_event.is_set():
+                    self._highlight_status = "cancelled"
+                    self.highlightAnalysisChanged.emit()
+                    return
                 self._highlight_candidates = [item.to_json() for item in candidates]
                 self._highlight_status = "completed"
                 self._highlight_progress = 1.0
                 self.highlightCandidatesChanged.emit()
                 self.highlightAnalysisChanged.emit()
             except Exception as error:
-                self._highlight_status = "cancelled" if self._highlight_cancel.is_set() else "error"
-                self._set_status(f"見どころ候補の解析に失敗しました: {error}", "ERROR")
+                if not self._is_current_highlight_run(generation):
+                    return
+                self._highlight_status = "cancelled" if cancel_event.is_set() else "error"
+                if not cancel_event.is_set():
+                    self._set_status(f"見どころ候補の解析に失敗しました: {error}", "ERROR")
                 self.highlightAnalysisChanged.emit()
 
         threading.Thread(target=worker, name="highlight-analysis", daemon=True).start()
@@ -912,6 +928,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(result=bool)
     def retryHighlightAnalysis(self) -> bool:
+        if self._highlight_status in {"running", "cancelling"}:
+            return False
         self._highlight_candidates = []
         self.highlightCandidatesChanged.emit()
         return self.startHighlightAnalysis()
@@ -967,7 +985,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self.highlightCandidatesChanged.emit()
         return True
 
-    def _update_highlight_progress(self, value: float) -> None:
+    def _is_current_highlight_run(self, generation: int) -> bool:
+        return generation == self._highlight_generation
+
+    def _update_highlight_progress(self, generation: int, value: float) -> None:
+        if not self._is_current_highlight_run(generation):
+            return
         self._highlight_progress = max(0.0, min(1.0, float(value)))
         self.highlightAnalysisChanged.emit()
 

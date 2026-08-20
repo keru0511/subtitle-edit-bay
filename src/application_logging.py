@@ -14,24 +14,32 @@ DEFAULT_FILE_BYTES = 5 * 1024 * 1024
 DEFAULT_RETENTION_DAYS = 14
 
 _SECRET_PATTERNS = (
-    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
+    re.compile(r"(?i)(bearer\s+)([^\s,;}\]]+)"),
     re.compile(
-        r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
-        r"(\s*[:=]\s*)([^\s,;]+)"
+        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
+        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;}\]]+)"
     ),
 )
-_WINDOWS_PATH_PATTERN = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"']+")
-_UNIX_PATH_PATTERN = re.compile(r"(?<![\w])/(?:[^\s\"']+/)+[^\s\"']+")
+_WINDOWS_PATH_PATTERN = re.compile(
+    r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
+)
+_WINDOWS_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"']+")
+_UNIX_PATH_PATTERN = re.compile(
+    r"(?<![\w])/(?:[^\r\n\"'<>|?*]+/)*[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
+)
+_UNIX_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])/(?:[^\s\"']+/)+[^\s\"']+")
 
 
 def redact_text(value: object, *, paths: bool = False) -> str:
     """Remove credentials from log text, optionally masking local paths."""
     text = str(value)
     for pattern in _SECRET_PATTERNS:
-        text = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]" if match.lastindex == 3 else f"{match.group(1)}[REDACTED]", text)
+        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
     if paths:
         text = _WINDOWS_PATH_PATTERN.sub("<local-path>", text)
+        text = _WINDOWS_PATH_TOKEN_PATTERN.sub("<local-path>", text)
         text = _UNIX_PATH_PATTERN.sub("<local-path>", text)
+        text = _UNIX_PATH_TOKEN_PATTERN.sub("<local-path>", text)
     return text
 
 
@@ -142,7 +150,7 @@ class ApplicationLogger:
             info_lines.append(f"{redact_text(key)}: {redact_text(value, paths=True)}")
         info_lines.extend(
             [
-                f"完全ログ: {self.log_path}",
+                "完全ログ: <local-path>",
                 "直近の処理ログ:",
                 redact_text(self.text, paths=True).rstrip(),
             ]

@@ -16,6 +16,22 @@ class ApplicationLoggingTests(unittest.TestCase):
         self.assertNotIn("private-token", redact_text(value))
         self.assertIn("<local-path>", redact_text(value, paths=True))
 
+    def test_redacts_json_credentials_and_paths_containing_spaces(self) -> None:
+        value = (
+            '{"access_token":"json-secret","password": "json-password", '
+            '"authorization":"Bearer json-bearer"} '
+            r'C:\Users\Alice\My Projects\video.mkv '
+            "/home/Alice/My Projects/clip.mp4"
+        )
+
+        redacted = redact_text(value, paths=True)
+
+        for secret in ("json-secret", "json-password", "json-bearer"):
+            self.assertNotIn(secret, redacted)
+        self.assertNotIn("My Projects", redacted)
+        self.assertNotIn("C:\\Users\\Alice", redacted)
+        self.assertNotIn("/home/Alice", redacted)
+
     def test_structured_file_and_bounded_memory_are_written(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             logger = ApplicationLogger(
@@ -61,8 +77,10 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertIn("ENCODE", diagnostic)
             self.assertIn("終了コード: 7", diagnostic)
             self.assertIn("完全ログ:", diagnostic)
+            self.assertIn("完全ログ: <local-path>", diagnostic)
             self.assertNotIn("hidden", diagnostic)
             self.assertNotIn("C:\\private", diagnostic)
+            self.assertNotIn(str(Path(temp_dir)), diagnostic)
 
 
 if __name__ == "__main__":

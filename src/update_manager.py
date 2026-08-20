@@ -120,9 +120,10 @@ def validate_package(
     actual = _sha256(package_path)
     if actual.lower() != expected_sha256.lower():
         raise UpdatePackageError("package SHA-256 does not match the release checksum")
-    if package_path.suffix.lower() == ".zip":
+    package_name = package_path.name.lower()
+    if package_name.endswith((".zip", ".zip.partial")):
         _validate_zip_layout(package_path, expected_version)
-    elif package_path.suffix.lower() == ".exe":
+    elif package_name.endswith((".exe", ".exe.partial")):
         with package_path.open("rb") as handle:
             if handle.read(2) != b"MZ":
                 raise UpdatePackageError("installer package is not a Windows executable")

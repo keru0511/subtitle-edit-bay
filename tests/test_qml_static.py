@@ -125,7 +125,7 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_application_log_panel_exposes_copy_and_error_actions(self) -> None:
         qml = read_workflow_qml()
-        panel = (ROOT / "src" / "ui" / "components" / "ApplicationLogPanel.qml").read_text(encoding="utf-8")
+        panel = read_component_qml("ApplicationLogPanel.qml")
 
         self.assertIn('objectName: "applicationLogPanel"', qml)
         self.assertIn('objectName: "applicationLogToggleButton"', panel)

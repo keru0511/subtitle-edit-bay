@@ -2346,6 +2346,10 @@ class EditBayBackend(LegacyEditBayBackend):
         self.logChanged.emit()
 
     @Property(str, notify=logChanged)
+    def logText(self) -> str:
+        return self._log
+
+    @Property(str, notify=logChanged)
     def logFilePath(self) -> str:
         return str(self._application_logger.log_path)
 

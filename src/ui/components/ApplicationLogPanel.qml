@@ -27,6 +27,15 @@ Rectangle {
                 font.pixelSize: 11
                 font.weight: Font.Bold
             }
+            Text {
+                objectName: "workflowStatusText"
+                Layout.fillWidth: true
+                text: backend ? backend.status : ""
+                color: "#AEBEB3"
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
             Item { Layout.fillWidth: true }
             Button {
                 objectName: "applicationLogToggleButton"

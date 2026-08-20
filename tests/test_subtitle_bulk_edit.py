@@ -72,7 +72,7 @@ class SubtitleBulkEditTests(unittest.TestCase):
             BulkEditQuery(text=r"a(l)pha", regex=True, case_sensitive=False),
             BulkEditAction(text_replace_from=r"a(l)pha", text_replace_to=r"A\1PHA"),
         )
-        self.assertEqual(regex_result.project["segments"][0]["text"], "ALPHA")
+        self.assertEqual(regex_result.project["segments"][0]["text"], "AlPHA")
 
     def test_invalid_regex_and_cancel_do_not_change_project(self) -> None:
         project = self._project()

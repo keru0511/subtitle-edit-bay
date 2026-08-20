@@ -2466,7 +2466,7 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
-        if completed_job == "update":
+            if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:
                 suffix = f": {failure_detail}" if failure_detail else ""

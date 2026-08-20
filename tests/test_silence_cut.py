@@ -205,7 +205,12 @@ class SilenceCutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
             with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=inspect_command):
-                cut_media_ranges("input.mp4", str(output_path), keep_ranges)
+                cut_media_ranges(
+                    "input.mp4",
+                    str(output_path),
+                    keep_ranges,
+                    filter_script_option="-filter_complex_script",
+                )
             self.assertFalse((Path(temp_dir) / "output.ffmpeg-filter.txt").exists())
             self.assertEqual(output_path.read_bytes(), b"output")
 
@@ -222,7 +227,12 @@ class SilenceCutTests(unittest.TestCase):
                 side_effect=subprocess.CalledProcessError(1, ["ffmpeg"]),
             ):
                 with self.assertRaises(subprocess.CalledProcessError):
-                    cut_media_ranges("input.mp4", str(output_path), [(0.0, 1.0)])
+                    cut_media_ranges(
+                        "input.mp4",
+                        str(output_path),
+                        [(0.0, 1.0)],
+                        filter_script_option="-filter_complex_script",
+                    )
 
             self.assertEqual(output_path.read_bytes(), b"previous output")
             self.assertEqual(
@@ -256,6 +266,7 @@ class SilenceCutTests(unittest.TestCase):
                     str(output_path),
                     [(0.0, 1.0)],
                     video_codec="h264_nvenc",
+                    filter_script_option="-filter_complex_script",
                 )
 
             self.assertEqual(output_path.read_bytes(), b"x264 output")
@@ -278,7 +289,12 @@ class SilenceCutTests(unittest.TestCase):
                 Path(command[-1]).write_bytes(b"output")
 
             with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=inspect_command):
-                cut_media_ranges("input.mp4", str(output_path), keep_ranges)
+                cut_media_ranges(
+                    "input.mp4",
+                    str(output_path),
+                    keep_ranges,
+                    filter_script_option="-filter_complex_script",
+                )
 
             self.assertEqual(output_path.read_bytes(), b"output")
 

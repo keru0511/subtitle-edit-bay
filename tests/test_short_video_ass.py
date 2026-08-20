@@ -34,6 +34,17 @@ class ShortVideoTimelineTests(unittest.TestCase):
             filter_complex_script_option("ffmpeg version 9.0.1-essentials_build"),
             "-/filter_complex",
         )
+        self.assertEqual(
+            filter_complex_script_option("ffmpeg version N-123456-g89abcdef"),
+            "-/filter_complex",
+        )
+
+    def test_filter_script_option_reports_actionable_unsupported_version(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "FFmpeg 6 以上へ更新"):
+            filter_complex_script_option("ffmpeg version 5.1.6")
+
+        with self.assertRaisesRegex(RuntimeError, "バージョンを判定できません"):
+            filter_complex_script_option("unexpected version output")
 
     def test_crossfade_timeline_is_shared_with_subtitle_remapping(self) -> None:
         short_video = ShortVideo(

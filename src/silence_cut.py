@@ -9,6 +9,10 @@ from pathlib import Path
 
 from .audio_mixer import build_audio_mix_filter
 from .ffmpeg_execution import run_atomic_ffmpeg_export
+from .ffmpeg_filter_script import (
+    LEGACY_FILTER_SCRIPT_OPTION,
+    detect_filter_complex_script_option,
+)
 from .media_probe import probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -216,6 +220,7 @@ def build_silence_cut_command(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    filter_script_option: str = LEGACY_FILTER_SCRIPT_OPTION,
 ) -> list[str]:
     if not keep_ranges:
         raise ValueError("At least one keep range is required.")
@@ -231,7 +236,7 @@ def build_silence_cut_command(
         audio_track=audio_track,
     )
     if filter_script_path:
-        filter_option = "-/filter_complex" if os.name == "nt" else "-filter_complex_script"
+        filter_option = filter_script_option
     else:
         filter_option = "-filter_complex"
     filter_value = filter_script_path or (f"{mix_filter};{concat_filter}" if mix_filter else concat_filter)
@@ -275,6 +280,7 @@ def cut_media_ranges(
     audio_offset_seconds: float = 0.0,
     filter_script_path: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    filter_script_option: str | None = None,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -292,6 +298,11 @@ def cut_media_ranges(
         filter_script_path is not None
         or os.name == "nt"
         or len(filter_graph) > _FILTER_SCRIPT_THRESHOLD
+    )
+    selected_filter_script_option = (
+        filter_script_option or detect_filter_complex_script_option()
+        if use_filter_script
+        else LEGACY_FILTER_SCRIPT_OPTION
     )
     filter_script = None
     created_filter_script = False
@@ -317,6 +328,7 @@ def cut_media_ranges(
                 audio_filter=audio_filter,
                 video_filter=video_filter,
                 filter_script_path=str(filter_script) if use_filter_script else None,
+                filter_script_option=selected_filter_script_option,
                 audio_track=audio_track,
                 audio_mix=audio_mix,
                 audio_offset_seconds=audio_offset_seconds,

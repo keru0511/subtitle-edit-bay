@@ -33,6 +33,9 @@ class SubtitleBulkEditTests(unittest.TestCase):
         self.assertEqual(find_matching_segment_ids(project, BulkEditQuery(text="^alp", regex=True)), ["s1"])
         self.assertEqual(find_matching_segment_ids(project, BulkEditQuery(speaker="B", start=1.0, end=2.0)), ["s2"])
         self.assertEqual(find_matching_segment_ids(project, BulkEditQuery(segment_ids=frozenset({"s1"}))), ["s1"])
+        self.assertEqual(find_matching_segment_ids(project, BulkEditQuery(start=1.0)), ["s2"])
+        self.assertEqual(find_matching_segment_ids(project, BulkEditQuery(end=1.0)), ["s1"])
+        self.assertEqual(find_matching_segment_ids(project, BulkEditQuery(end=0.0)), [])
 
     def test_preview_and_atomic_apply_support_replace_rename_style_and_shift(self) -> None:
         project = self._project()
@@ -54,6 +57,22 @@ class SubtitleBulkEditTests(unittest.TestCase):
         self.assertEqual(updated["speaker"], "Player")
         self.assertEqual(updated["start"], 0.1)
         self.assertTrue(updated["manual_timing"])
+
+    def test_replacement_uses_the_query_literal_and_case_semantics(self) -> None:
+        project = self._project()
+        result = apply_bulk_edit(
+            project,
+            BulkEditQuery(text="alpha", case_sensitive=False),
+            BulkEditAction(text_replace_from="alpha", text_replace_to="ALPHA"),
+        )
+        self.assertEqual(result.project["segments"][0]["text"], "ALPHA")
+
+        regex_result = apply_bulk_edit(
+            project,
+            BulkEditQuery(text=r"a(l)pha", regex=True, case_sensitive=False),
+            BulkEditAction(text_replace_from=r"a(l)pha", text_replace_to=r"A\1PHA"),
+        )
+        self.assertEqual(regex_result.project["segments"][0]["text"], "ALPHA")
 
     def test_invalid_regex_and_cancel_do_not_change_project(self) -> None:
         project = self._project()

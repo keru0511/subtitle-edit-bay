@@ -61,9 +61,9 @@ def find_matching_segment_ids(
             continue
         if query.speaker and str(segment.get("speaker", "")) != query.speaker:
             continue
-        if query.start is not None and float(segment.get("end", 0.0)) < query.start:
+        if query.start is not None and float(segment.get("end", 0.0)) <= query.start:
             continue
-        if query.end is not None and float(segment.get("start", 0.0)) > query.end:
+        if query.end is not None and float(segment.get("start", 0.0)) >= query.end:
             continue
         if query.review_rule_id and query.review_rule_id not in {str(item) for item in segment.get("review_rule_ids", [])}:
             continue
@@ -88,7 +88,7 @@ def preview_bulk_edit(
         if segment_id in excluded:
             continue
         before = by_id[segment_id]
-        after = _apply_to_segment(before, action)
+        after = _apply_to_segment(before, action, query)
         if before != after:
             changes.append({"id": segment_id, "before": deepcopy(before), "after": after})
     return BulkEditPreview(tuple(item["id"] for item in changes), tuple(changes))
@@ -134,11 +134,27 @@ def _matches(text: str, query: BulkEditQuery, pattern: re.Pattern[str]) -> bool:
     return bool(pattern.search(text))
 
 
-def _apply_to_segment(segment: Mapping[str, Any], action: BulkEditAction) -> dict[str, Any]:
+def _apply_to_segment(
+    segment: Mapping[str, Any],
+    action: BulkEditAction,
+    query: BulkEditQuery,
+) -> dict[str, Any]:
     updated = deepcopy(dict(segment))
     if action.text_replace_from is not None:
         try:
-            updated["text"] = re.sub(action.text_replace_from, action.text_replace_to, str(updated.get("text", "")))
+            replacement_query = BulkEditQuery(
+                text=action.text_replace_from,
+                exact=query.exact,
+                case_sensitive=query.case_sensitive,
+                regex=query.regex,
+            )
+            replacement_pattern = _compile_pattern(replacement_query)
+            text = str(updated.get("text", ""))
+            if replacement_pattern is None:
+                raise BulkEditError("置換文字列が空です")
+            if query.exact and not replacement_pattern.fullmatch(text):
+                raise BulkEditError("置換対象がexact queryと一致しません")
+            updated["text"] = replacement_pattern.sub(action.text_replace_to, text)
         except re.error as error:
             raise BulkEditError(f"無効な置換正規表現です: {error}") from error
         updated["manual_text"] = True

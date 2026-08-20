@@ -122,7 +122,7 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
         return path
 
     @staticmethod
-    def _read_rgb_frame(output: Path, *, seek: float = 0.4) -> bytes:
+    def _read_rgb_frame(output: Path, *, seek: float = 0.0) -> bytes:
         process = subprocess.run(
             [
                 "ffmpeg",

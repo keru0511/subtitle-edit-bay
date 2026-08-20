@@ -87,18 +87,27 @@ def generate_highlight_candidates(
 ) -> list[HighlightCandidate]:
     settings = settings or HighlightSettings()
     source_segments = [dict(item) for item in segments]
+    source_audio_levels = [dict(item) for item in audio_levels] if audio_levels is not None else []
     cache_path: Path | None = None
     if cache_directory is not None:
-        cache_path = Path(cache_directory) / f"highlight-{highlight_cache_key(source_segments, audio_levels, settings)}.json"
+        cache_path = Path(cache_directory) / f"highlight-{highlight_cache_key(source_segments, source_audio_levels, settings)}.json"
         if cache_path.is_file():
-            payload = json.loads(cache_path.read_text(encoding="utf-8"))
-            return [_candidate_from_json(item) for item in payload]
+            try:
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, list):
+                    raise ValueError("highlight cache must be an array")
+                return [_candidate_from_json(item) for item in payload]
+            except (OSError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError):
+                try:
+                    cache_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     ordered = sorted(
         (item for item in source_segments if float(item.get("end", 0.0)) > float(item.get("start", 0.0))),
         key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)), str(item.get("id", ""))),
     )
-    signals = build_speech_signals(ordered, audio_levels)
+    signals = build_speech_signals(ordered, source_audio_levels)
     groups = _group_segments(ordered, signals, settings)
     candidates: list[HighlightCandidate] = []
     for index, group in enumerate(groups):
@@ -201,6 +210,8 @@ def _select_diverse(candidates: list[HighlightCandidate], settings: HighlightSet
         return []
     if settings.top_k <= 0:
         return []
+    if settings.top_k == 1:
+        return [max(candidates, key=lambda item: (item.score, -item.start, item.id))]
     max_end = max(item.end for item in candidates)
     bucket_count = max(1, settings.diversity_buckets)
     buckets: dict[int, list[HighlightCandidate]] = {index: [] for index in range(bucket_count)}
@@ -241,15 +252,29 @@ def _write_cache(path: Path, candidates: list[HighlightCandidate]) -> None:
 
 
 def _candidate_from_json(payload: Mapping[str, Any]) -> HighlightCandidate:
+    if not isinstance(payload, Mapping):
+        raise ValueError("highlight cache candidate must be an object")
+    if payload.get("scoring_version") != HIGHLIGHT_SCORING_VERSION:
+        raise ValueError("highlight cache scoring version is incompatible")
+    if not {"id", "start", "end", "score", "category", "reason"}.issubset(payload):
+        raise ValueError("highlight cache candidate is missing fields")
+    start = float(payload["start"])
+    end = float(payload["end"])
+    score = float(payload["score"])
+    if not all(math.isfinite(value) for value in (start, end, score)) or end <= start:
+        raise ValueError("highlight cache candidate has invalid numbers")
+    raw_breakdown = payload.get("score_breakdown", {})
+    if not isinstance(raw_breakdown, Mapping):
+        raise ValueError("highlight cache score_breakdown must be an object")
     return HighlightCandidate(
         id=str(payload["id"]),
-        start=float(payload["start"]),
-        end=float(payload["end"]),
-        score=float(payload["score"]),
+        start=start,
+        end=end,
+        score=score,
         category=str(payload["category"]),
         reason=str(payload["reason"]),
         subtitle_excerpt=str(payload.get("subtitle_excerpt", "")),
         source_segment_ids=tuple(str(item) for item in payload.get("source_segment_ids", [])),
-        score_breakdown={str(key): float(value) for key, value in payload.get("score_breakdown", {}).items()},
+        score_breakdown={str(key): float(value) for key, value in raw_breakdown.items()},
     )
 

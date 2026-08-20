@@ -239,7 +239,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
         self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
         self.assertIn('readonly property int selectedSubtitleFontSize', qml)
-        self.assertIn('property int baseFontSize: root.selectedSubtitleFontSize', overlay_qml)
+        self.assertIn('baseFontSize: root.selectedSubtitleFontSize', qml)
+        self.assertIn('property int baseFontSize: 50', overlay_qml)
         self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', overlay_qml)
 
     def test_caption_overlay_uses_ass_margin_formula(self) -> None:

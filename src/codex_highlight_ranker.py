@@ -44,6 +44,7 @@ def build_ranker_context(
     settings = settings or HighlightRankerSettings()
     payload: list[dict[str, Any]] = []
     for candidate in list(candidates)[: max(0, settings.max_candidates)]:
+        excerpt_limit = max(0, int(settings.max_excerpt_chars))
         payload.append(
             {
                 "id": str(candidate.get("id", "")),
@@ -51,8 +52,8 @@ def build_ranker_context(
                 "end": float(candidate.get("end", 0.0)),
                 "local_score": float(candidate.get("score", 0.0)),
                 "category": str(candidate.get("category", "other")),
-                "reason": str(candidate.get("reason", ""))[: settings.max_excerpt_chars],
-                "subtitle_excerpt": str(candidate.get("subtitle_excerpt", ""))[: settings.max_excerpt_chars],
+                "reason": str(candidate.get("reason", ""))[:excerpt_limit],
+                "subtitle_excerpt": str(candidate.get("subtitle_excerpt", ""))[:excerpt_limit],
             }
         )
     return {"candidates": payload, "candidate_count": len(payload)}
@@ -140,6 +141,7 @@ def _validate_ranking(raw: Any, local: Sequence[Mapping[str, Any]]) -> dict[str,
         raise HighlightRankingError("Codex output must contain rankings")
     known = {str(item.get("id")): item for item in local}
     validated: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
     for item in raw["rankings"]:
         if not isinstance(item, Mapping):
             raise HighlightRankingError("ranking item must be an object")
@@ -149,6 +151,9 @@ def _validate_ranking(raw: Any, local: Sequence[Mapping[str, Any]]) -> dict[str,
         candidate_id = str(item.get("id", ""))
         if candidate_id not in known:
             raise HighlightRankingError(f"unknown candidate id: {candidate_id}")
+        if candidate_id in seen:
+            raise HighlightRankingError(f"duplicate candidate id: {candidate_id}")
+        seen.add(candidate_id)
         score = float(item.get("semantic_score"))
         if not 0.0 <= score <= 1.0:
             raise HighlightRankingError(f"invalid semantic score for {candidate_id}")
@@ -161,8 +166,13 @@ def _validate_ranking(raw: Any, local: Sequence[Mapping[str, Any]]) -> dict[str,
             "semantic_reason": str(item.get("reason", ""))[:500],
             "hook": str(item.get("hook", ""))[:160],
         }
-    if not validated:
-        raise HighlightRankingError("Codex returned no valid rankings")
+    expected = set(known)
+    if seen != expected:
+        missing = sorted(expected - seen)
+        extra = sorted(seen - expected)
+        raise HighlightRankingError(
+            f"Codex ranking ids must match candidates exactly; missing={missing}, extra={extra}"
+        )
     return validated
 
 
@@ -204,13 +214,48 @@ def _preserve_candidate_constraints(
 ) -> list[dict[str, Any]]:
     if not candidates or limit <= 0:
         return []
-    selected: list[dict[str, Any]] = []
+    non_overlapping: list[dict[str, Any]] = []
     for item in candidates:
+        if not _overlaps_selected(item, non_overlapping):
+            non_overlapping.append(item)
+    if len(non_overlapping) <= 1:
+        return non_overlapping[:limit]
+
+    bucket_count = min(5, limit, len(non_overlapping))
+    max_end = max(float(item.get("end", 0.0)) for item in non_overlapping)
+    buckets: dict[int, list[dict[str, Any]]] = {index: [] for index in range(bucket_count)}
+    for item in non_overlapping:
+        start = max(0.0, float(item.get("start", 0.0)))
+        bucket = min(bucket_count - 1, int(start / max(1.0, max_end) * bucket_count))
+        buckets[bucket].append(item)
+
+    selected: list[dict[str, Any]] = []
+    for bucket in range(bucket_count):
+        choices = [item for item in buckets[bucket] if not _overlaps_selected(item, selected)]
+        if choices and len(selected) < limit:
+            selected.append(
+                max(
+                    choices,
+                    key=lambda item: (
+                        float(item.get("score", 0.0)),
+                        -float(item.get("start", 0.0)),
+                        str(item.get("id", "")),
+                    ),
+                )
+            )
+    for item in non_overlapping:
         if len(selected) >= limit:
             break
-        if not _overlaps_selected(item, selected):
+        if item not in selected and not _overlaps_selected(item, selected):
             selected.append(item)
-    return selected
+    return sorted(
+        selected,
+        key=lambda item: (
+            -float(item.get("score", 0.0)),
+            float(item.get("start", 0.0)),
+            str(item.get("id", "")),
+        ),
+    )
 
 
 def _overlaps_selected(candidate: Mapping[str, Any], selected: list[Mapping[str, Any]]) -> bool:

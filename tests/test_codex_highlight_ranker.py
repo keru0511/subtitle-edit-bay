@@ -56,6 +56,30 @@ class CodexHighlightRankerTests(unittest.TestCase):
         self.assertTrue(result.fallback)
         self.assertEqual([item["id"] for item in result.candidates], ["h1", "h2"])
 
+    def test_missing_or_duplicate_ranking_ids_fall_back_to_local_order(self) -> None:
+        for rankings in (
+            [{"id": "h1", "semantic_score": 0.8, "category": "other", "reason": "", "hook": ""}],
+            [
+                {"id": "h1", "semantic_score": 0.8, "category": "other", "reason": "", "hook": ""},
+                {"id": "h1", "semantic_score": 0.7, "category": "other", "reason": "", "hook": ""},
+            ],
+        ):
+            with self.subTest(rankings=rankings):
+                result = rank_highlight_candidates(
+                    self.candidates,
+                    client=FakeRankerClient({"rankings": rankings}),
+                )
+                self.assertTrue(result.fallback)
+                self.assertEqual([item["id"] for item in result.candidates], ["h1", "h2"])
+
+    def test_negative_excerpt_limit_is_clamped_to_empty(self) -> None:
+        context = build_ranker_context(
+            self.candidates,
+            HighlightRankerSettings(max_excerpt_chars=-1),
+        )
+        self.assertEqual(context["candidates"][0]["reason"], "")
+        self.assertEqual(context["candidates"][0]["subtitle_excerpt"], "")
+
     def test_unavailable_client_is_a_safe_fallback(self) -> None:
         result = rank_highlight_candidates(self.candidates)
         self.assertTrue(result.fallback)

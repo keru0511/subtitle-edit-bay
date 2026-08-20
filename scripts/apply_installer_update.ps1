@@ -103,6 +103,23 @@ function Restore-RecoverySnapshot {
     }
 }
 
+function Get-PackageSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $getFileHash = Get-Command "Get-FileHash" -ErrorAction SilentlyContinue
+    if ($getFileHash) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($Path)))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 $oldVersion = "development"
 $recoveryRoot = ""
 try {
@@ -126,7 +143,7 @@ try {
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
         throw "Downloaded installer package is missing."
     }
-    $actualHash = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-PackageSha256 -Path $PackagePath
     if ($actualHash -ne $ExpectedSha256.ToLowerInvariant()) {
         throw "Installer package checksum does not match."
     }

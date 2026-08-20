@@ -115,8 +115,8 @@ class ShortVideoClip:
     segment_id: str = ""
     start: float = 0.0
     end: float = 0.0
-    fit: str = "cover"
-    background_color: str = "000000"
+    fit: str | None = None
+    background_color: str | None = None
 
     @classmethod
     def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideoClip":
@@ -127,10 +127,14 @@ class ShortVideoClip:
         segment_id = str(payload.get("segment_id", ""))
         start = _finite_number(payload.get("start", 0.0), "clip.start")
         end = _finite_number(payload.get("end", start), "clip.end")
-        fit = str(payload.get("fit", "cover")).lower()
-        if fit not in VALID_FIT_MODES:
+        raw_fit = payload.get("fit")
+        fit = str(raw_fit).lower() if raw_fit not in (None, "") else None
+        if fit is not None and fit not in VALID_FIT_MODES:
             raise ShortVideoError(f"clip.fit must be one of {VALID_FIT_MODES}")
-        background_color = str(payload.get("background_color", "000000"))
+        raw_background_color = payload.get("background_color")
+        background_color = (
+            str(raw_background_color) if raw_background_color not in (None, "") else None
+        )
         if start < 0.0:
             start = 0.0
         if end < start:
@@ -144,13 +148,16 @@ class ShortVideoClip:
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload = {
             "segment_id": self.segment_id,
             "start": self.start,
             "end": self.end,
-            "fit": self.fit,
-            "background_color": self.background_color,
         }
+        if self.fit:
+            payload["fit"] = self.fit
+        if self.background_color:
+            payload["background_color"] = self.background_color
+        return payload
 
 
 @dataclass(frozen=True)

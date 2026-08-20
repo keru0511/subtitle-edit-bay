@@ -54,6 +54,21 @@ class ShortVideoSchemaTests(unittest.TestCase):
         clip = ShortVideoClip.from_json({"segment_id": "seg-1", "start": 5.0, "end": 2.0})
         self.assertAlmostEqual(clip.end, 5.0)
 
+    def test_clip_without_fit_or_background_inherits_global_settings(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "global_fit": "contain",
+                "global_background_color": "FF00FF",
+                "clips": [{"segment_id": "inherited", "start": 0.0, "end": 1.0}],
+            }
+        )
+
+        clip = short_video.clips[0]
+        self.assertIsNone(clip.fit)
+        self.assertIsNone(clip.background_color)
+        self.assertNotIn("fit", short_video.to_json()["clips"][0])
+        self.assertNotIn("background_color", short_video.to_json()["clips"][0])
+
     def test_invalid_fit_raises(self) -> None:
         with self.assertRaisesRegex(ShortVideoError, "fit"):
             ShortVideo.from_json({"global_fit": "stretch"})

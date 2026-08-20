@@ -2140,6 +2140,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.preferredHeight: implicitHeight
                             backend: root.appBackend
+                            currentTime: editorPlayer.position / 1000
                         }
                         ListView {
                             id: captionTable

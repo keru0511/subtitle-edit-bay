@@ -136,6 +136,10 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "codexApplyButton"', panel)
         self.assertIn('objectName: "codexDiscardButton"', panel)
         self.assertIn("backend.applyCodexProposal", panel)
+        self.assertIn("selectedOperationState", panel)
+        self.assertIn("operationIdFor", panel)
+        self.assertIn("!panel.codexRunning()", panel)
+        self.assertIn("setCodexCurrentTime", panel)
 
     def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
         qml = read_workflow_qml()

@@ -186,7 +186,7 @@ class BuildShortVideoFilterComplexTests(unittest.TestCase):
         )
         fc = build_short_video_filter_complex(short, has_audio=True, include_bgm=True)
         self.assertIn("[1:a:0]", fc)
-        self.assertIn("aloop=loop=-1:size=0", fc)
+        self.assertIn("aloop=loop=-1:size=2147483647", fc)
         self.assertIn("atrim=0:2", fc)
         self.assertIn("adelay=0:all=1", fc)
         self.assertIn("volume=0.4", fc)

@@ -115,11 +115,16 @@ def apply_dictionary_suggestion(
     if target_scope not in {"global", "game", "project"}:
         raise ValueError("scope must be global, game, or project")
     terms = list(dictionary.terms)
+    used_terms: dict[str, str] = {}
     for term in terms:
-        if suggestion.after == term.term or suggestion.after in term.aliases:
-            raise ValueError(f"dictionary term already exists: {suggestion.after}")
-        if suggestion.after in term.aliases or suggestion.before == term.term:
-            raise ValueError(f"dictionary term conflicts with: {term.term}")
+        for label in (term.term, *term.aliases):
+            used_terms[_normalize_dictionary_key(label)] = term.term
+    for candidate in (suggestion.before, suggestion.after):
+        normalized = _normalize_dictionary_key(candidate)
+        if normalized in used_terms:
+            raise ValueError(f"dictionary term conflicts with: {used_terms[normalized]}")
+    if _normalize_dictionary_key(suggestion.before) == _normalize_dictionary_key(suggestion.after):
+        raise ValueError("dictionary suggestion before and after must differ")
     terms.append(
         DictionaryTerm(
             term=suggestion.after,
@@ -129,7 +134,11 @@ def apply_dictionary_suggestion(
             score=suggestion.confidence,
         )
     )
-    return TranscriptionDictionary(game_title=dictionary.game_title, terms=tuple(terms))
+    return TranscriptionDictionary(
+        game_title=dictionary.game_title,
+        terms=tuple(terms),
+        scope=target_scope,
+    )
 
 
 def _token_replacements(original: str, corrected: str) -> list[tuple[str, str]]:
@@ -151,7 +160,7 @@ def _token_replacements(original: str, corrected: str) -> list[tuple[str, str]]:
 def _ambiguous_non_latin_rewrite(before: str, after: str) -> bool:
     """Reject unrelated long non-Latin phrases even when tokenization yields one token."""
 
-    if max(len(before), len(after)) < 5:
+    if max(len(before), len(after)) < 3:
         return False
     if all(ord(character) < 128 for character in before + after):
         return False
@@ -160,6 +169,10 @@ def _ambiguous_non_latin_rewrite(before: str, after: str) -> bool:
 
 def _normalize_for_compare(value: str) -> str:
     return re.sub(r"[\s、。！？!?.,，．]+", "", value)
+
+
+def _normalize_dictionary_key(value: str) -> str:
+    return " ".join(str(value).strip().casefold().split())
 
 
 def _valid_term_pair(before: str, after: str) -> bool:

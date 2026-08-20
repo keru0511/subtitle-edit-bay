@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.transcription_dictionary import TranscriptionDictionary
+from src.transcription_dictionary import DictionaryTerm, TranscriptionDictionary
 from src.transcription_dictionary_suggestions import (
     apply_dictionary_suggestion,
     extract_dictionary_suggestions,
@@ -40,6 +40,31 @@ class DictionarySuggestionTests(unittest.TestCase):
         self.assertEqual(updated.terms[0].aliases, ("旧語",))
         with self.assertRaises(ValueError):
             apply_dictionary_suggestion(updated, suggestions[0])
+
+    def test_apply_rejects_collisions_with_existing_aliases_and_persists_scope(self) -> None:
+        suggestion = extract_dictionary_suggestions(
+            [{"original_text": "旧語", "corrected_text": "新語", "project_id": "p1"}]
+        )[0]
+        dictionary = TranscriptionDictionary(
+            game_title="Game",
+            terms=(DictionaryTerm(term="正式語", aliases=("旧語",)),),
+        )
+        with self.assertRaises(ValueError):
+            apply_dictionary_suggestion(dictionary, suggestion, scope="project")
+
+        clean = apply_dictionary_suggestion(
+            TranscriptionDictionary(game_title="Game", terms=()),
+            suggestion,
+            scope="project",
+        )
+        self.assertEqual(clean.scope, "project")
+        self.assertEqual(clean.to_json()["scope"], "project")
+
+    def test_short_non_latin_phrase_rewrite_is_not_suggested(self) -> None:
+        suggestions = extract_dictionary_suggestions(
+            [{"original_text": "東京駅", "corrected_text": "大阪駅", "project_id": "p1"}]
+        )
+        self.assertEqual(suggestions, [])
 
 
 if __name__ == "__main__":

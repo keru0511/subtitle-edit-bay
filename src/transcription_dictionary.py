@@ -52,11 +52,13 @@ class DictionaryTerm:
 class TranscriptionDictionary:
     game_title: str = ""
     terms: tuple[DictionaryTerm, ...] = ()
+    scope: str = "game"
 
     def to_json(self) -> dict[str, Any]:
         return {
             "game_title": self.game_title,
             "terms": [term.to_json() for term in self.terms],
+            "scope": self.scope,
         }
 
 
@@ -147,9 +149,13 @@ def transcription_dictionary_from_mapping(payload: Mapping[str, Any]) -> Transcr
     raw_terms = payload.get("terms")
     if not isinstance(raw_terms, list):
         raise TranscriptionDictionaryError("terms must be an array")
+    scope = payload.get("scope", "game")
+    if not isinstance(scope, str) or scope not in {"global", "game", "project"}:
+        raise TranscriptionDictionaryError("scope must be global, game, or project")
     return TranscriptionDictionary(
         game_title=_clean_text(payload.get("game_title", ""), "game_title", max_length=256),
         terms=tuple(normalize_dictionary_term(item, index) for index, item in enumerate(raw_terms)),
+        scope=scope,
     )
 
 

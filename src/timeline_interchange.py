@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import tempfile
 from collections.abc import Mapping
@@ -43,19 +44,16 @@ def _atomic_json(destination: str | os.PathLike[str], payload: Mapping[str, Any]
 
 
 def build_timeline_document(project: Mapping[str, Any], revision: str | int | None = None) -> dict[str, Any]:
-    """Wrap a project in a versioned document while retaining the source project."""
+    """Wrap a project in a versioned document with one canonical payload."""
 
     if not isinstance(project, Mapping):
         raise TimelineInterchangeError("project must be an object")
+    project_payload = copy.deepcopy(dict(project))
+    if revision is not None:
+        project_payload["revision"] = revision
     document: dict[str, Any] = {
         "schema_version": TIMELINE_SCHEMA_VERSION,
-        "revision": project.get("revision") if revision is None else revision,
-        "source": copy.deepcopy(project.get("source", project.get("sources", []))),
-        "clips": copy.deepcopy(project.get("clips", [])),
-        "transitions": copy.deepcopy(project.get("transitions", [])),
-        "subtitles": copy.deepcopy(project.get("subtitles", project.get("segments", []))),
-        "audio": copy.deepcopy(project.get("audio", project.get("audio_tracks", []))),
-        "project": copy.deepcopy(dict(project)),
+        "project": project_payload,
     }
     return document
 
@@ -75,7 +73,19 @@ def import_timeline_json(source: str | os.PathLike[str]) -> dict[str, Any]:
     if not isinstance(document, Mapping) or document.get("schema_version") != TIMELINE_SCHEMA_VERSION:
         raise TimelineInterchangeError("unsupported timeline schema")
     if isinstance(document.get("project"), Mapping):
-        return copy.deepcopy(dict(document["project"]))
+        project = document["project"]
+        legacy_fields = {
+            "revision": project.get("revision"),
+            "source": project.get("source", project.get("sources", [])),
+            "clips": project.get("clips", []),
+            "transitions": project.get("transitions", []),
+            "subtitles": project.get("subtitles", project.get("segments", [])),
+            "audio": project.get("audio", project.get("audio_tracks", [])),
+        }
+        for key, expected in legacy_fields.items():
+            if key in document and document[key] != expected:
+                raise TimelineInterchangeError(f"timeline field conflicts with canonical project: {key}")
+        return copy.deepcopy(dict(project))
     return {
         "revision": document.get("revision"),
         "source": copy.deepcopy(document.get("source", [])),
@@ -86,13 +96,20 @@ def import_timeline_json(source: str | os.PathLike[str]) -> dict[str, Any]:
     }
 
 
-def _timecode(seconds: Any, fps: int) -> str:
+def _edl_seconds(seconds: Any, field: str = "EDL time") -> float:
     try:
         value = float(seconds)
     except (TypeError, ValueError) as exc:
-        raise TimelineInterchangeError("EDL time must be numeric") from exc
+        raise TimelineInterchangeError(f"{field} must be numeric") from exc
+    if not math.isfinite(value):
+        raise TimelineInterchangeError(f"{field} must be finite")
     if value < 0:
-        raise TimelineInterchangeError("EDL time must not be negative")
+        raise TimelineInterchangeError(f"{field} must not be negative")
+    return value
+
+
+def _timecode(seconds: Any, fps: int) -> str:
+    value = _edl_seconds(seconds)
     frame = int(value * fps + 0.5)
     hours, frame = divmod(frame, fps * 3600)
     minutes, frame = divmod(frame, fps * 60)
@@ -135,11 +152,19 @@ def export_edl(
         timeline_end = clip.get("timeline_end", clip.get("end"))
         if source_end is None or timeline_end is None:
             raise TimelineInterchangeError(f"clip {index} is missing an end time")
+        source_start_value = _edl_seconds(source_start, f"clip {index} source start")
+        source_end_value = _edl_seconds(source_end, f"clip {index} source end")
+        timeline_start_value = _edl_seconds(timeline_start, f"clip {index} timeline start")
+        timeline_end_value = _edl_seconds(timeline_end, f"clip {index} timeline end")
+        if source_end_value <= source_start_value:
+            raise TimelineInterchangeError(f"clip {index} source end must be after source start")
+        if timeline_end_value <= timeline_start_value:
+            raise TimelineInterchangeError(f"clip {index} timeline end must be after timeline start")
         source_reference = clip.get("source", clip.get("source_id", "UNKNOWN"))
         source_reference = source_paths.get(str(source_reference), source_reference)
         lines.extend(
             [
-                f"{index:03d}  AX       V     C        {_timecode(source_start, fps)} {_timecode(source_end, fps)} {_timecode(timeline_start, fps)} {_timecode(timeline_end, fps)}",
+                f"{index:03d}  AX       V     C        {_timecode(source_start_value, fps)} {_timecode(source_end_value, fps)} {_timecode(timeline_start_value, fps)} {_timecode(timeline_end_value, fps)}",
                 f"* SOURCE FILE: {source_reference}",
             ]
         )

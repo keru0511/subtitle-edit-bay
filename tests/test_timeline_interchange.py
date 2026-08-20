@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +34,12 @@ class TimelineInterchangeTests(unittest.TestCase):
             destination = Path(temp_dir) / "編集 timeline.json"
             export_timeline_json(_project(), destination)
             self.assertEqual(import_timeline_json(destination), _project())
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(set(payload), {"schema_version", "project"})
+            payload["clips"] = []
+            destination.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(TimelineInterchangeError):
+                import_timeline_json(destination)
             with self.assertRaises(TimelineInterchangeError):
                 export_timeline_json(_project(), destination)
 
@@ -52,3 +59,13 @@ class TimelineInterchangeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(TimelineInterchangeError):
                 export_edl(project | {"clips": [{"start": 0}]}, Path(temp_dir) / "out.edl")
+
+    def test_edl_rejects_non_positive_source_or_timeline_ranges(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for invalid in (
+                {"source_start": 4.0, "source_end": 4.0},
+                {"timeline_start": 3.0, "timeline_end": 2.0},
+            ):
+                clip = _project()["clips"][0] | invalid
+                with self.assertRaises(TimelineInterchangeError):
+                    export_edl(_project() | {"clips": [clip]}, Path(temp_dir) / f"{len(invalid)}.edl")

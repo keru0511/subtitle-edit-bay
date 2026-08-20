@@ -45,6 +45,10 @@ class CodexSessionError(RuntimeError):
     pass
 
 
+class _CodexSessionCancelled(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class CodexSessionSnapshot:
     state: str = "disabled"
@@ -112,15 +116,19 @@ class CodexSessionController:
         on_state: Callable[[CodexSessionSnapshot], None] | None = None,
         on_message: Callable[[str], None] | None = None,
         on_proposal: Callable[[Mapping[str, Any]], None] | None = None,
+        callback_dispatcher: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self.client_factory = client_factory or self._default_client_factory
         self.proposal_parser = proposal_parser or self._default_proposal_parser
         self.on_state = on_state
         self.on_message = on_message
         self.on_proposal = on_proposal
+        self._callback_dispatcher = callback_dispatcher or (lambda callback: callback())
         self._snapshot = CodexSessionSnapshot()
         self._client: CodexClientProtocol | None = None
         self._thread: threading.Thread | None = None
+        self._state_lock = threading.RLock()
+        self._generation = 0
         self._stop_event = threading.Event()
 
     @property
@@ -139,12 +147,19 @@ class CodexSessionController:
         output_schema: Mapping[str, Any] | None = None,
         revision: int = 0,
     ) -> None:
-        if self.running:
+        if self.running or (self._thread is not None and self._thread.is_alive()):
             raise CodexSessionError("Codex turn is already running")
         if not str(prompt).strip():
             raise CodexSessionError("prompt must not be empty")
-        self._stop_event.clear()
-        self._publish(CodexSessionSnapshot(state="starting", revision=revision))
+        with self._state_lock:
+            self._generation += 1
+            generation = self._generation
+            stop_event = threading.Event()
+            self._stop_event = stop_event
+        self._publish(
+            CodexSessionSnapshot(state="starting", revision=revision),
+            generation=generation,
+        )
         self._thread = threading.Thread(
             target=self._run,
             kwargs={
@@ -152,6 +167,8 @@ class CodexSessionController:
                 "context": dict(context),
                 "output_schema": dict(output_schema or CODEX_OUTPUT_SCHEMA),
                 "revision": revision,
+                "generation": generation,
+                "stop_event": stop_event,
             },
             name="codex-edit-session",
             daemon=True,
@@ -159,9 +176,12 @@ class CodexSessionController:
         self._thread.start()
 
     def stop(self) -> None:
-        self._stop_event.set()
-        client = self._client
-        snapshot = self._snapshot
+        with self._state_lock:
+            stop_event = self._stop_event
+            generation = self._generation
+            client = self._client
+            snapshot = self._snapshot
+        stop_event.set()
         if client is not None and snapshot.turn_id:
             try:
                 client.turn_interrupt(snapshot.turn_id)
@@ -172,7 +192,7 @@ class CodexSessionController:
                 client.stop()
             except Exception:
                 pass
-        if self.running:
+        if snapshot.state in {"starting", "authenticating", "running"}:
             self._publish(
                 CodexSessionSnapshot(
                     state="stopped",
@@ -180,7 +200,8 @@ class CodexSessionController:
                     turn_id=snapshot.turn_id,
                     revision=snapshot.revision,
                     message="Codex編集を停止しました",
-                )
+                ),
+                generation=generation,
             )
 
     def apply_to_project(
@@ -207,35 +228,55 @@ class CodexSessionController:
         context: Mapping[str, Any],
         output_schema: Mapping[str, Any],
         revision: int,
+        generation: int,
+        stop_event: threading.Event,
     ) -> None:
+        client: CodexClientProtocol | None = None
         try:
-            self._client = self.client_factory()
-            self._attach_notification_callback(self._client)
-            self._client.start()
-            if self._stop_event.is_set():
+            client = self.client_factory()
+            with self._state_lock:
+                if not self._is_active(generation, stop_event):
+                    return
+                self._client = client
+            self._attach_notification_callback(client, generation, stop_event)
+            client.start()
+            if not self._is_active(generation, stop_event):
                 return
-            self._publish(CodexSessionSnapshot(state="authenticating", revision=revision))
-            account = self._client.account_read()
+            self._publish(
+                CodexSessionSnapshot(state="authenticating", revision=revision),
+                generation=generation,
+            )
+            account = client.account_read()
+            if not self._is_active(generation, stop_event):
+                return
             if not bool(account.get("authenticated", account.get("loggedIn", False))):
                 self._publish(
                     CodexSessionSnapshot(
                         state="unauthenticated",
                         revision=revision,
                         error="Codexへログインしてください",
-                    )
+                    ),
+                    generation=generation,
                 )
                 return
-            thread = self._client.thread_start({"context": dict(context)})
+            thread = client.thread_start({"context": dict(context)})
+            if not self._is_active(generation, stop_event):
+                return
             thread_id = str(thread.get("threadId", thread.get("id", "")))
             if not thread_id:
                 raise CodexSessionError("Codex thread id was not returned")
-            self._publish(CodexSessionSnapshot(state="running", thread_id=thread_id, revision=revision))
-            response = self._client.turn_start(
+            self._publish(
+                CodexSessionSnapshot(state="running", thread_id=thread_id, revision=revision),
+                generation=generation,
+            )
+            response = client.turn_start(
                 thread_id=thread_id,
                 prompt=prompt,
                 output_schema=output_schema,
                 context=context,
             )
+            if not self._is_active(generation, stop_event):
+                return
             raw_proposal = response.get("proposal", response.get("output", response))
             if isinstance(raw_proposal, str):
                 raw_proposal = json.loads(raw_proposal)
@@ -250,34 +291,61 @@ class CodexSessionController:
                     revision=revision,
                     message=self._snapshot.message,
                     proposal=proposal,
-                )
+                ),
+                generation=generation,
             )
             if self.on_proposal is not None:
-                self.on_proposal(proposal)
-        except Exception as error:
-            self._publish(
-                CodexSessionSnapshot(
-                    state="error",
-                    thread_id=self._snapshot.thread_id,
-                    turn_id=self._snapshot.turn_id,
-                    revision=revision,
-                    error=str(error),
+                self._dispatch(
+                    lambda: self.on_proposal(proposal),
+                    generation,
                 )
-            )
+        except _CodexSessionCancelled:
+            return
+        except Exception as error:
+            if self._is_current_generation(generation) and not stop_event.is_set():
+                self._publish(
+                    CodexSessionSnapshot(
+                        state="error",
+                        thread_id=self._snapshot.thread_id,
+                        turn_id=self._snapshot.turn_id,
+                        revision=revision,
+                        error=str(error),
+                    ),
+                    generation=generation,
+                )
         finally:
-            client = self._client
             if client is not None:
                 try:
                     client.stop()
                 except Exception:
                     pass
-                self._client = None
+                with self._state_lock:
+                    if self._client is client:
+                        self._client = None
 
-    def _attach_notification_callback(self, client: CodexClientProtocol) -> None:
+    def _attach_notification_callback(
+        self,
+        client: CodexClientProtocol,
+        generation: int,
+        stop_event: threading.Event,
+    ) -> None:
         if hasattr(client, "notification_callback"):
-            setattr(client, "notification_callback", self._on_notification)
+            setattr(
+                client,
+                "notification_callback",
+                lambda notification: self._on_notification(
+                    generation, stop_event, notification
+                ),
+            )
 
-    def _on_notification(self, notification: Any) -> None:
+    def _on_notification(
+        self,
+        generation: int,
+        stop_event: threading.Event,
+        notification: Any,
+    ) -> None:
+        if not self._is_active(generation, stop_event):
+            return
         method = str(getattr(notification, "method", ""))
         params = getattr(notification, "params", {})
         if not isinstance(params, Mapping):
@@ -291,7 +359,8 @@ class CodexSessionController:
                     revision=self._snapshot.revision,
                     message=self._snapshot.message,
                     proposal=self._snapshot.proposal,
-                )
+                ),
+                generation=generation,
             )
         delta = params.get("delta", params.get("text", ""))
         if delta:
@@ -304,15 +373,38 @@ class CodexSessionController:
                     revision=self._snapshot.revision,
                     message=message,
                     proposal=self._snapshot.proposal,
-                )
+                ),
+                generation=generation,
             )
             if self.on_message is not None:
-                self.on_message(str(delta))
+                self._dispatch(lambda: self.on_message(str(delta)), generation)
 
-    def _publish(self, snapshot: CodexSessionSnapshot) -> None:
+    def _publish(
+        self,
+        snapshot: CodexSessionSnapshot,
+        *,
+        generation: int | None = None,
+    ) -> None:
+        if generation is not None and not self._is_current_generation(generation):
+            return
         self._snapshot = snapshot
         if self.on_state is not None:
-            self.on_state(snapshot)
+            self._dispatch(lambda: self.on_state(snapshot), generation)
+
+    def _dispatch(self, callback: Callable[[], None], generation: int | None) -> None:
+        def guarded_callback() -> None:
+            if generation is not None and not self._is_current_generation(generation):
+                return
+            callback()
+
+        self._callback_dispatcher(guarded_callback)
+
+    def _is_current_generation(self, generation: int) -> bool:
+        with self._state_lock:
+            return generation == self._generation
+
+    def _is_active(self, generation: int, stop_event: threading.Event) -> bool:
+        return self._is_current_generation(generation) and not stop_event.is_set()
 
     @staticmethod
     def _default_client_factory() -> CodexClientProtocol:

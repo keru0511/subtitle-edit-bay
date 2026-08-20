@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -288,6 +288,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexStateChanged = Signal()
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
+    codexCallbackRequested = Signal(object)
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
@@ -350,10 +351,16 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_busy = False
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
         self._codex_proposal: dict[str, Any] | None = None
+        self._codex_current_time: float | None = None
+        self.codexCallbackRequested.connect(
+            self._run_codex_callback,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._codex_session = CodexSessionController(
             on_state=self._on_codex_state,
             on_message=self._on_codex_message,
             on_proposal=self._on_codex_proposal,
+            callback_dispatcher=self._dispatch_codex_callback,
         )
 
     @Property(bool, notify=projectChanged)
@@ -2350,12 +2357,22 @@ class EditBayBackend(LegacyEditBayBackend):
         selected_ids = {
             str(self._project.get("segments", [])[self._selected_segment_index].get("id"))
         } if 0 <= self._selected_segment_index < len(self._project.get("segments", [])) else set()
+        current_time = self._codex_current_time
+        if current_time is None:
+            if 0 <= self._selected_segment_index < len(self._project.get("segments", [])):
+                current_time = float(
+                    self._project["segments"][self._selected_segment_index].get(
+                        "start", range_start
+                    )
+                )
+            else:
+                current_time = range_start
         try:
             context = build_codex_context(
                 self._project,
                 scope,
                 selected_segment_ids=selected_ids,
-                current_time=range_start,
+                current_time=current_time,
                 range_start=range_start,
                 range_end=range_end,
             )
@@ -2370,6 +2387,15 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("Codexへ編集案を依頼しています", "CODEX")
         except (CodexSessionError, ValueError) as error:
             self._set_status(f"Codex編集を開始できません: {error}", "ERROR")
+
+    @Slot(float)
+    def setCodexCurrentTime(self, seconds: float) -> None:
+        try:
+            value = float(seconds)
+        except (TypeError, ValueError):
+            return
+        if math.isfinite(value) and value >= 0.0:
+            self._codex_current_time = value
 
     @Slot()
     def stopCodexEdit(self) -> None:
@@ -2429,6 +2455,14 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_proposal = dict(proposal)
         self.codexProposalChanged.emit()
         self._set_status("Codex編集案を確認できます", "CODEX")
+
+    def _dispatch_codex_callback(self, callback: Callable[[], None]) -> None:
+        self.codexCallbackRequested.emit(callback)
+
+    @Slot(object)
+    def _run_codex_callback(self, callback: object) -> None:
+        if callable(callback):
+            callback()
 
     def _process_started(self) -> None:
         self._running = True

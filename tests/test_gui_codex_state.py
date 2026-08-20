@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import threading
 import unittest
 
 from src.gui_codex_state import (
@@ -53,6 +54,18 @@ class FakeClient:
         return {"interrupted": True}
 
 
+class BlockingAccountClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.account_entered = threading.Event()
+        self.account_release = threading.Event()
+
+    def account_read(self) -> dict[str, object]:
+        self.account_entered.set()
+        self.account_release.wait(2)
+        return {"authenticated": True}
+
+
 class GuiCodexStateTests(unittest.TestCase):
     def test_context_supports_all_scopes_without_media_paths(self) -> None:
         project = {
@@ -97,6 +110,29 @@ class GuiCodexStateTests(unittest.TestCase):
         self.assertIn("提案", controller.snapshot.message)
         self.assertEqual(messages, ["提案"])
         self.assertTrue(any(item.state == "running" for item in snapshots))
+
+    def test_stop_during_blocking_account_read_discards_late_worker_result(self) -> None:
+        client = BlockingAccountClient()
+        snapshots = []
+        proposals = []
+        controller = CodexSessionController(
+            client_factory=lambda: client,
+            proposal_parser=lambda payload: payload,
+            on_state=snapshots.append,
+            on_proposal=proposals.append,
+        )
+        controller.start(prompt="停止する", context={}, revision=3)
+        self.assertTrue(client.account_entered.wait(1))
+
+        controller.stop()
+        client.account_release.set()
+        deadline = time.time() + 2
+        while controller._thread is not None and controller._thread.is_alive() and time.time() < deadline:
+            time.sleep(0.01)
+
+        self.assertEqual(controller.snapshot.state, "stopped")
+        self.assertEqual(proposals, [])
+        self.assertFalse(any(item.state == "proposal_ready" for item in snapshots))
 
 
 if __name__ == "__main__":

@@ -2040,11 +2040,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
-    @unittest.skipIf(
-        os.name == "nt"
-        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
-        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
-    )
     def test_editor_render_e2e_saves_edits_and_burns_subtitles(self) -> None:
         project_path = self._load_project(
             segments=[
@@ -2133,11 +2128,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
-    @unittest.skipIf(
-        os.name == "nt"
-        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
-        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
-    )
     def test_silence_cut_gui_render_e2e_retimes_and_burns_subtitles(self) -> None:
         project_path = self._load_project(
             segments=[
@@ -2221,11 +2211,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
-    )
-    @unittest.skipIf(
-        os.name == "nt"
-        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
-        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
     )
     def test_audio_mixer_gui_settings_are_saved_and_applied_to_rendered_output(self) -> None:
         project_path = self._load_project()
@@ -2446,11 +2431,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
-    @unittest.skipIf(
-        os.name == "nt"
-        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
-        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
-    )
     def test_short_mode_gui_export_e2e_renders_vertical_video_audio_and_subtitles(self) -> None:
         project_path = self._load_project(
             segments=[
@@ -2554,10 +2534,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(start_command.call_args[0][1], "transcribe")
             self.assertNotIn("--overwrite-project", command)
 
-    @unittest.skipIf(
-        os.name == "nt" and not sys.executable.isascii(),
-        "Qt QProcess cannot launch from this non-ASCII virtual-environment path",
-    )
     def test_transcription_gui_process_creates_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
         project_path = output / "game.subtitle-project.json"
@@ -2636,11 +2612,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, edit_button)
         self.assertTrue(self._quick_item(window, "editorPage").isVisible())
 
-    @unittest.skipIf(
-        os.name == "nt"
-        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
-        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
-    )
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()
         helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
@@ -2682,11 +2653,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self._quick_item(window, "saveSettingsButton").property("text"), "設定を保存")
         self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
 
-    @unittest.skipIf(
-        os.name == "nt"
-        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
-        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
-    )
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
         project_path = output / "game.subtitle-project.json"

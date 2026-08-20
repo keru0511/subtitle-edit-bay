@@ -42,6 +42,15 @@ Issue #174は、候補を自動採用する機能ではなく、ローカルsign
 
 字幕本文、動画パス、秘密情報はfeedbackへ保存しない。個人最適化は履歴不足時にbaselineへ戻り、重み上限と学習率で極端な順位変化を防ぐ。
 
+### 効果測定の固定契約
+
+- baseline fixtureは `tests/fixtures/highlight/baseline_segments.json` とし、字幕ID・時刻・話者・カテゴリを固定する。音声signalを使う場合は同じfixtureに対応する `baseline_audio_levels.json` を使い、入力順も固定する。
+- 評価母集団はfixtureの全候補とし、`top_k=5` の候補ID集合をbaselineと比較する。人手評価を行う場合も、同じ候補IDを使い、母集団・期間・除外理由を記録する。
+- 改善判定はbaseline比でTop 5採用率が `+5ポイント以上` 改善し、かつ重複候補率・解析時間がbaselineの `+10%以内` であること。片方だけを満たす場合は改善扱いにしない。
+- 候補IDは入力segment ID、丸め済み開始・終了時刻、`scoring_version` から決定的に生成する。同じ入力の再実行でIDを変えず、アルゴリズム変更時は `scoring_version` を上げて旧cacheと混在させない。
+- feedbackのschema versionを変更する場合はmigrationまたは明示的な読み捨てを実装し、未知versionを黙って解釈しない。
+- 映像signal、Codex再ranking、個人補正のいずれかがbaselineより悪化した場合は、該当signalの重みを0にしてlocal baselineへrollbackする。rollback後も候補生成・追加・却下は継続できることを受け入れ条件とする。
+
 ## Epic完了条件
 
 - [ ] Codexなしで候補生成、確認、preview、追加、却下ができる
@@ -52,4 +61,5 @@ Issue #174は、候補を自動採用する機能ではなく、ローカルsign
 - [ ] 採用・却下履歴のexport/reset/deleteと個人化ON/OFFがある
 - [ ] 映像signalが既定OFFで、失敗時にbaselineを壊さない
 - [ ] 長尺fixtureとopt-in FFmpeg smoke/benchmarkをWindowsで確認する
+- [ ] baseline fixtureを使ったTop 5比較と、改善閾値・rollback結果をCI artifactまたはレビュー記録に残す
 

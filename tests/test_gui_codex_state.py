@@ -134,6 +134,27 @@ class GuiCodexStateTests(unittest.TestCase):
         self.assertEqual(proposals, [])
         self.assertFalse(any(item.state == "proposal_ready" for item in snapshots))
 
+    def test_stop_discards_queued_proposal_callback(self) -> None:
+        callbacks = []
+        proposals = []
+        controller = CodexSessionController(
+            client_factory=FakeClient,
+            proposal_parser=lambda payload: payload,
+            on_proposal=proposals.append,
+            callback_dispatcher=callbacks.append,
+        )
+        controller.start(prompt="停止する", context={})
+        self.assertIsNotNone(controller._thread)
+        controller._thread.join(2)
+
+        self.assertEqual(controller.snapshot.state, "proposal_ready")
+        self.assertTrue(callbacks)
+        controller.stop()
+        for callback in callbacks:
+            callback()
+
+        self.assertEqual(proposals, [])
+
 
 if __name__ == "__main__":
     unittest.main()

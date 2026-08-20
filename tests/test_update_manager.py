@@ -46,7 +46,7 @@ class UpdateManagerTests(unittest.TestCase):
                 destination,
                 progress_callback=lambda downloaded, total, speed: progress.append((downloaded, total, speed)),
             )
-            self.assertEqual(result, destination)
+            self.assertEqual(result, destination.resolve())
             self.assertEqual(destination.read_bytes(), source.read_bytes())
             self.assertFalse(destination.with_name(destination.name + ".partial").exists())
             self.assertEqual(progress[-1][0], source.stat().st_size)

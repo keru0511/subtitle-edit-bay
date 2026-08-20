@@ -56,6 +56,24 @@ class AudioAutoMixTests(unittest.TestCase):
             )
         )
 
+    def test_ducking_envelope_merges_release_overlap_with_next_attack(self) -> None:
+        envelope = build_ducking_envelope(
+            [(1.0, 2.0), (2.1, 3.0)],
+            total_duration=5.0,
+            duck_amount_db=-12.0,
+            attack_seconds=0.05,
+            hold_seconds=0.1,
+            release_seconds=0.25,
+        )
+
+        self.assertTrue(
+            all(
+                point.gain_db <= -12.0
+                for point in envelope
+                if 1.0 <= point.timestamp < 3.0
+            )
+        )
+
     def test_limiter_prediction_and_synthetic_multiple_channels(self) -> None:
         reduction = predict_limiter_reduction({"a": -2.0, "b": -10.0}, {"a": 3.0, "b": 0.0})
         expected_peak_db = 20.0 * math.log10(10.0 ** (1.0 / 20.0) + 10.0 ** (-10.0 / 20.0))

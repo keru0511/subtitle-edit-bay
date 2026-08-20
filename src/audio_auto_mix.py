@@ -83,7 +83,9 @@ def build_ducking_envelope(
         end = max(start, min(float(total_duration), float(raw_end)))
         if end <= start:
             continue
-        if merged_intervals and start <= merged_intervals[-1][1]:
+        if merged_intervals and (
+            start - attack <= merged_intervals[-1][1] + hold + release
+        ):
             previous_start, previous_end = merged_intervals[-1]
             merged_intervals[-1] = (previous_start, max(previous_end, end))
         else:

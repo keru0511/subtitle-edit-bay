@@ -118,6 +118,14 @@ def export_edl(
         raise TimelineInterchangeError("fps must be between 1 and 240")
     clips = project.get("clips", []) or []
     lines = [f"TITLE: {project.get('name', 'Subtitle Edit Bay')}", "FCM: NON-DROP FRAME", ""]
+    source_entries = project.get("source", project.get("sources", [])) or []
+    if isinstance(source_entries, Mapping):
+        source_entries = [source_entries]
+    source_paths = {
+        str(source.get("id")): str(source.get("path"))
+        for source in source_entries
+        if isinstance(source, Mapping) and source.get("id") and source.get("path")
+    }
     for index, clip in enumerate(clips, start=1):
         if not isinstance(clip, Mapping):
             raise TimelineInterchangeError("every clip must be an object")
@@ -127,10 +135,12 @@ def export_edl(
         timeline_end = clip.get("timeline_end", clip.get("end"))
         if source_end is None or timeline_end is None:
             raise TimelineInterchangeError(f"clip {index} is missing an end time")
+        source_reference = clip.get("source", clip.get("source_id", "UNKNOWN"))
+        source_reference = source_paths.get(str(source_reference), source_reference)
         lines.extend(
             [
                 f"{index:03d}  AX       V     C        {_timecode(source_start, fps)} {_timecode(source_end, fps)} {_timecode(timeline_start, fps)} {_timecode(timeline_end, fps)}",
-                f"* SOURCE FILE: {clip.get('source', clip.get('source_id', 'UNKNOWN'))}",
+                f"* SOURCE FILE: {source_reference}",
             ]
         )
     for warning in _clip_warnings(project):

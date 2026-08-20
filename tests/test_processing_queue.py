@@ -43,6 +43,7 @@ class ProcessingQueueTests(unittest.TestCase):
             self.assertEqual(completed.status, "success")
             self.assertEqual(calls, ["transcribe", "render"])
             completed.stages[0].status = "success"
+            completed.stages[1].status = "pending"
             queue.save()
             calls.clear()
             queue.run_item(item.item_id, runner, output_validator=lambda path: True, allow_overwrite=True)
@@ -68,7 +69,7 @@ class ProcessingQueueTests(unittest.TestCase):
             def canceled(item, stage, progress, cancel):
                 raise ProcessingQueueError("canceled")
 
-            stopped = queue.run_item(item.item_id, canceled)
+            stopped = queue.run_item(item.item_id, canceled, allow_overwrite=True)
             self.assertEqual(stopped.status, "canceled")
 
 

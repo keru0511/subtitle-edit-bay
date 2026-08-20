@@ -273,7 +273,7 @@ class EditBayBackend(LegacyEditBayBackend):
     audioMasterMetricsChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
-    logChanged = Signal()
+    applicationLogChanged = Signal()
     updateInfoChanged = Signal()
     updateBusyChanged = Signal()
     updateErrorChanged = Signal()
@@ -2344,12 +2344,9 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         self._log = self._application_logger.text
         self.logChanged.emit()
+        self.applicationLogChanged.emit()
 
-    @Property(str, notify=logChanged)
-    def logText(self) -> str:
-        return self._log
-
-    @Property(str, notify=logChanged)
+    @Property(str, notify=applicationLogChanged)
     def logFilePath(self) -> str:
         return str(self._application_logger.log_path)
 

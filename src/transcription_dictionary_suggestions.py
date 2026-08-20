@@ -139,10 +139,23 @@ def _token_replacements(original: str, corrected: str) -> list[tuple[str, str]]:
     replacements: list[tuple[str, str]] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "replace" and i2 - i1 == 1 and j2 - j1 == 1:
-            replacements.append((before[i1], after[j1]))
+            old_term, new_term = before[i1], after[j1]
+            if _ambiguous_non_latin_rewrite(old_term, new_term):
+                return []
+            replacements.append((old_term, new_term))
         elif tag in {"delete", "insert", "replace"}:
             return []
     return replacements
+
+
+def _ambiguous_non_latin_rewrite(before: str, after: str) -> bool:
+    """Reject unrelated long non-Latin phrases even when tokenization yields one token."""
+
+    if max(len(before), len(after)) < 5:
+        return False
+    if all(ord(character) < 128 for character in before + after):
+        return False
+    return difflib.SequenceMatcher(a=before, b=after, autojunk=False).ratio() < 0.4
 
 
 def _normalize_for_compare(value: str) -> str:

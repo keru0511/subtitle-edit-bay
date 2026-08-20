@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from array import array
 import json
 import os
 import shutil
@@ -64,6 +65,123 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
         ])
         return path
 
+    def _make_pattern_media(self, path: Path, duration: float) -> Path:
+        self._run([
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=size=320x180:rate=15:duration={duration}",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:sample_rate=48000:duration={duration}",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(path),
+        ])
+        return path
+
+    def _make_bgm(self, path: Path, duration: float) -> Path:
+        self._run([
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=660:sample_rate=48000:duration={duration}",
+            "-c:a",
+            "pcm_s16le",
+            str(path),
+        ])
+        return path
+
+    def _make_video_only(self, path: Path, duration: float) -> Path:
+        self._run([
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=size=320x180:rate=15:duration={duration}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ])
+        return path
+
+    @staticmethod
+    def _read_rgb_frame(output: Path, *, seek: float = 0.4) -> bytes:
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(seek),
+                "-i",
+                str(output),
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return process.stdout
+
+    @staticmethod
+    def _pixel(frame: bytes, *, width: int, x: int, y: int) -> tuple[int, int, int]:
+        offset = (y * width + x) * 3
+        return tuple(frame[offset : offset + 3])  # type: ignore[return-value]
+
+    @staticmethod
+    def _mean_abs_difference(left: bytes, right: bytes) -> float:
+        differences = [abs(first - second) for first, second in zip(left, right)]
+        return sum(differences) / len(differences)
+
+    @staticmethod
+    def _audio_peak(output: Path, *, start: float, duration: float) -> int:
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(start),
+                "-i",
+                str(output),
+                "-t",
+                str(duration),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "8000",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        samples = array("h")
+        samples.frombytes(process.stdout)
+        return max((abs(sample) for sample in samples), default=0)
+
     def _assert_video_audio_output(
         self,
         output: Path,
@@ -121,6 +239,99 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(result, output)
             self._assert_video_audio_output(output, width=180, height=320)
+
+    def test_fit_modes_change_real_media_pixels(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = self._make_pattern_media(root / "pattern.mp4", 1.0)
+            frames: dict[str, bytes] = {}
+            for fit in ("cover", "contain", "blur"):
+                output = root / f"{fit}.mp4"
+                project = {
+                    "video": {"path": str(source)},
+                    "short_video": {
+                        "enabled": True,
+                        "output": {"width": 180, "height": 320, "fps": 15},
+                        "global_fit": fit,
+                        "global_background_color": "FF00FF",
+                        "transition": {"type": "cut", "duration": 0.0},
+                        "clips": [
+                            {
+                                "segment_id": f"fit-{fit}",
+                                "start": 0.0,
+                                "end": 0.8,
+                            }
+                        ],
+                    },
+                }
+                result = render_short_video(
+                    root / f"{fit}.subtitle-project.json",
+                    output,
+                    _project=project,
+                )
+                self.assertEqual(result, output)
+                self._assert_video_audio_output(output, width=180, height=320)
+                frames[fit] = self._read_rgb_frame(output)
+
+            contain_corner = self._pixel(frames["contain"], width=180, x=0, y=0)
+            self.assertLess(
+                sum(abs(actual - expected) for actual, expected in zip(contain_corner, (255, 0, 255))),
+                30,
+            )
+            for fit in ("cover", "blur"):
+                corner = self._pixel(frames[fit], width=180, x=0, y=0)
+                self.assertGreater(
+                    sum(abs(actual - expected) for actual, expected in zip(corner, (255, 0, 255))),
+                    60,
+                )
+            self.assertGreater(
+                self._mean_abs_difference(frames["cover"], frames["blur"]),
+                2.0,
+            )
+
+    def test_bgm_start_and_loop_produce_audio_after_silence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = self._make_video_only(root / "silent.mp4", 1.0)
+            bgm = self._make_bgm(root / "bgm.wav", 0.2)
+            output = root / "bgm-short.mp4"
+            project = {
+                "video": {"path": str(source)},
+                "short_video": {
+                    "enabled": True,
+                    "output": {"width": 180, "height": 320, "fps": 15},
+                    "transition": {"type": "cut", "duration": 0.0},
+                    "bgm": {
+                        "path": str(bgm),
+                        "in": 0.0,
+                        "out": 0.2,
+                        "start": 0.3,
+                        "volume": 1.0,
+                    },
+                    "clips": [
+                        {
+                            "segment_id": "bgm",
+                            "start": 0.0,
+                            "end": 0.8,
+                        }
+                    ],
+                },
+            }
+
+            result = render_short_video(
+                root / "bgm.subtitle-project.json",
+                output,
+                _project=project,
+            )
+            self.assertEqual(result, output)
+            self._assert_video_audio_output(output, width=180, height=320)
+
+            before_start = self._audio_peak(output, start=0.05, duration=0.15)
+            after_start = self._audio_peak(output, start=0.35, duration=0.15)
+            after_loop = self._audio_peak(output, start=0.60, duration=0.15)
+            self.assertGreater(after_start, 2_000)
+            self.assertGreater(after_loop, 2_000)
+            self.assertLess(before_start * 5, after_start)
 
     def test_long_silence_cut_filter_script_renders_with_ffmpeg_6(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -222,10 +223,11 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
             subprocess.run(
                 [
                     "ffmpeg", "-y",
-                    "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15:duration=4",
-                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
-                    "-shortest", "-c:v", "libx264", "-preset", "ultrafast",
-                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(video),
+                    "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=15:duration=2",
+                    "-f", "lavfi", "-i", "color=c=blue:size=320x180:rate=15:duration=2",
+                    "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+                    "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p", str(video),
                 ],
                 check=True,
                 capture_output=True,
@@ -267,8 +269,8 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                         volume=0.4,
                     ),
                     clips=[
-                        ShortVideoClip(segment_id="first", start=0.2, end=1.6, fit=fit),
-                        ShortVideoClip(segment_id="second", start=1.4, end=2.8, fit=fit),
+                        ShortVideoClip(segment_id="first", start=0.2, end=1.6),
+                        ShortVideoClip(segment_id="second", start=2.0, end=3.4),
                     ],
                 ).to_json()
                 project_path = save_project(
@@ -307,6 +309,20 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                 self.assertAlmostEqual(float(media["format"]["duration"]), 2.6, delta=0.3)
                 self.assertIn("mp4", media["format"]["format_name"])
 
+                audio_bytes = subprocess.run(
+                    [
+                        "ffmpeg", "-v", "error", "-i", str(output), "-vn",
+                        "-t", "0.5", "-ac", "1", "-ar", "8000", "-f", "s16le", "-",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                samples = struct.unpack(
+                    f"<{len(audio_bytes) // 2}h", audio_bytes[: len(audio_bytes) // 2 * 2]
+                )
+                self.assertTrue(samples)
+                self.assertGreater(max(abs(sample) for sample in samples), 100)
+
                 media_bytes = output.read_bytes()
                 self.assertLess(media_bytes.find(b"moov"), media_bytes.find(b"mdat"))
                 saved_project = json.loads(project_path.read_text(encoding="utf-8"))
@@ -328,6 +344,19 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                 ).stdout
                 self.assertTrue(frame)
                 self.assertGreater(max(frame), 0)
+
+                transition_pixel = subprocess.run(
+                    [
+                        "ffmpeg", "-v", "error", "-ss", "1.3", "-i", str(output),
+                        "-frames:v", "1", "-vf", "crop=1:1:90:160,format=rgb24",
+                        "-f", "rawvideo", "-",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                self.assertEqual(len(transition_pixel), 3)
+                self.assertGreater(transition_pixel[0], 40)
+                self.assertGreater(transition_pixel[2], 40)
 
 
 if __name__ == "__main__":

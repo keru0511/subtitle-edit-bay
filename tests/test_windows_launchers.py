@@ -301,11 +301,11 @@ class WindowsLauncherTests(unittest.TestCase):
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n", update_result)
             self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "old launcher")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertFalse((install / "src" / "new.py").exists())
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertTrue(update_result["rollback_restored"])
 

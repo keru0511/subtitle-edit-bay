@@ -35,7 +35,9 @@ function Get-RecoveryRelativePath {
         [Parameter(Mandatory = $true)][string]$FullPath
     )
 
-    return $FullPath.Substring($Root.Length).TrimStart([char[]] "/\")
+    $resolvedRoot = (Get-Item -LiteralPath $Root).FullName.TrimEnd([char[]] "/\")
+    $resolvedFullPath = (Get-Item -LiteralPath $FullPath).FullName
+    return $resolvedFullPath.Substring($resolvedRoot.Length).TrimStart([char[]] "/\")
 }
 
 function New-RecoverySnapshot {

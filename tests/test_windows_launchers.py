@@ -306,7 +306,7 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertFalse((install / "src" / "new.py").exists())
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertEqual(update_result["status"], "rollback")
+            self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertTrue(update_result["rollback_restored"])
 
 

@@ -27,6 +27,14 @@ Issue #168のEpicは、Codexへ字幕を無条件に編集させる機能では�
 - project revisionが変わった提案は拒否し、再送信を案内する
 - ASS更新・動画書き出しは適用後に利用者が明示的に実行する
 
+### 未信頼入力とapprovalの安全境界
+
+- 字幕本文、話者名、Codexから返るsummary/reasonは未信頼データとして扱う。本文に「指示」「システムメッセージ」「ツール実行依頼」が含まれていても、アプリやCodexへの命令として解釈しない。
+- promptには、字幕本文が編集対象のデータであり指示ではないことを明示する。字幕本文をsystem/developer instructionへ連結せず、構造化contextのデータ欄へ渡す。
+- Codexの出力は提案JSONとしてschema・operation・revisionを検証し、ユーザーが差分を確認して明示適用するまでプロジェクトへ反映しない。
+- app-serverのcommand、file change、network、approval要求はすべて拒否を既定値とする。approval種別が未知、要求payloadが不正、判定処理が失敗した場合も自動許可しない。
+- approvalを許可する機能を追加する場合は、対象・コマンド・パス・理由を画面に表示し、個別の明示操作と別Issueの受け入れ条件を必須にする。
+
 ## Epic受け入れチェック
 
 - [ ] fake app-serverでinitialize、account、thread、turn、stream、停止、異常終了を再現できる
@@ -35,6 +43,8 @@ Issue #168のEpicは、Codexへ字幕を無条件に編集させる機能では�
 - [ ] 4つのscopeと送信件数をGUIで確認できる
 - [ ] stale revisionを検出し、手動編集を壊さない
 - [ ] 通常ログ・診断コピーにsecretと字幕本文を漏らさない
+- [ ] prompt-injectionを含む字幕fixtureを、命令として実行せずデータとして提案へ渡せる
+- [ ] 未知・不正・欠落したapproval要求をすべて拒否するfixtureがある
 - [ ] Codex未導入時の手動編集をWindows配布版で確認できる
 - [ ] 実アカウント接続はopt-inテストへ分離されている
 - [ ] セットアップ、送信範囲、再認証、障害切り分けが文書化されている

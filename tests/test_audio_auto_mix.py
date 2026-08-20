@@ -39,9 +39,27 @@ class AudioAutoMixTests(unittest.TestCase):
         self.assertIn("attack=", filter_graph)
         self.assertIn("release=", filter_graph)
 
+    def test_ducking_envelope_merges_overlapping_and_adjacent_speech(self) -> None:
+        envelope = build_ducking_envelope(
+            [(1.0, 2.0), (1.5, 3.0), (3.0, 4.0)],
+            total_duration=5.0,
+            duck_amount_db=-12.0,
+            attack_seconds=0.05,
+            hold_seconds=0.0,
+            release_seconds=0.25,
+        )
+        self.assertTrue(
+            all(
+                point.gain_db <= -12.0
+                for point in envelope
+                if 1.0 <= point.timestamp < 4.0
+            )
+        )
+
     def test_limiter_prediction_and_synthetic_multiple_channels(self) -> None:
         reduction = predict_limiter_reduction({"a": -2.0, "b": -10.0}, {"a": 3.0, "b": 0.0})
-        self.assertAlmostEqual(reduction, 2.0)
+        expected_peak_db = 20.0 * math.log10(10.0 ** (1.0 / 20.0) + 10.0 ** (-10.0 / 20.0))
+        self.assertAlmostEqual(reduction, expected_peak_db + 1.0)
         suggestions = suggest_channel_gains({"a": [0.1] * 50, "b": [0.11] * 50})
         self.assertEqual(len(suggestions), 2)
 

@@ -77,11 +77,19 @@ def build_ducking_envelope(
     release = max(0.0, float(release_seconds))
     hold = max(0.0, float(hold_seconds))
     points = [DuckingPoint(0.0, 0.0)]
-    for start, end in sorted(speech_intervals):
-        start = max(0.0, min(float(total_duration), start))
-        end = max(start, min(float(total_duration), end))
+    merged_intervals: list[tuple[float, float]] = []
+    for raw_start, raw_end in sorted(speech_intervals):
+        start = max(0.0, min(float(total_duration), float(raw_start)))
+        end = max(start, min(float(total_duration), float(raw_end)))
         if end <= start:
             continue
+        if merged_intervals and start <= merged_intervals[-1][1]:
+            previous_start, previous_end = merged_intervals[-1]
+            merged_intervals[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged_intervals.append((start, end))
+
+    for start, end in merged_intervals:
         points.extend(
             [
                 DuckingPoint(max(0.0, start - attack), 0.0),
@@ -120,10 +128,12 @@ def predict_limiter_reduction(
     *,
     ceiling_db: float = -1.0,
 ) -> float:
-    combined_peak = max(
-        (float(peak_levels_db.get(channel_id, -120.0)) + float(gains.get(channel_id, 0.0)) for channel_id in peak_levels_db),
-        default=-120.0,
-    )
+    combined_amplitude = 0.0
+    for channel_id, peak_db in peak_levels_db.items():
+        effective_db = float(peak_db) + float(gains.get(channel_id, 0.0))
+        if math.isfinite(effective_db):
+            combined_amplitude += 10.0 ** (effective_db / 20.0)
+    combined_peak = 20.0 * math.log10(combined_amplitude) if combined_amplitude > 0.0 else -120.0
     return max(0.0, combined_peak - float(ceiling_db))
 
 

@@ -2449,6 +2449,27 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.shortVideoClips[0]["start"], 1.5)
         self.assertEqual(self.app.shortVideoClips[0]["end"], 2.5)
 
+    def test_short_mode_visual_clip_updates_do_not_require_trim_metadata(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "trim-segment",
+                    "start": 1.0,
+                    "end": 3.0,
+                    "text": "trim me",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ]
+        )
+        self.app.initializeShortVideoClips()
+        self.app._project["short_video"]["clips"][0]["segment_id"] = "missing-segment"
+
+        self.assertTrue(self.app.updateShortVideoClip(0, {"fit": "blur"}))
+        self.assertEqual(self.app.shortVideoClips[0]["fit"], "blur")
+        self.assertFalse(self.app.updateShortVideoClip(0, {"start": float("nan")}))
+        self.assertFalse(self.app.updateShortVideoClip(0, {"end": float("inf")}))
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",

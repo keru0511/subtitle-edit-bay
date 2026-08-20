@@ -255,7 +255,7 @@ class WindowsLauncherTests(unittest.TestCase):
             fake_script = base / "fake-installer.ps1"
             fake_script.write_text(
                 "$root = (Get-Location).Path\n"
-                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9`n')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
                 "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), 'new launcher')\n"
                 "[IO.File]::WriteAllText((Join-Path $root 'src\\new.py'), 'new file')\n"
                 "exit 1\n",

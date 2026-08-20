@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Rectangle {
     id: panel
     property var backend
+    property var proposalData: backend && backend.codexProposal ? backend.codexProposal : ({"summary": "", "operations": []})
     property bool expanded: false
     implicitHeight: expanded ? 300 : 42
     radius: 9
@@ -116,7 +117,7 @@ Rectangle {
                     onClicked: backend.stopCodexEdit()
                 }
                 Item { Layout.fillWidth: true }
-                Text { text: backend ? backend.codexProposal.summary || "" : ""; color: "#B8D7A8"; elide: Text.ElideRight }
+                Text { text: panel.proposalData.summary || ""; color: "#B8D7A8"; elide: Text.ElideRight }
             }
 
             Text {
@@ -135,7 +136,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-                model: backend && backend.codexProposal.operations ? backend.codexProposal.operations : []
+                model: panel.proposalData.operations || []
                 delegate: Rectangle {
                     required property var modelData
                     property string operationId: String(modelData.id || "")
@@ -159,13 +160,13 @@ Rectangle {
                 Button {
                     objectName: "codexApplyButton"
                     text: "選択した変更を適用"
-                    enabled: backend && backend.codexProposal.operations && backend.codexProposal.operations.length > 0
+                    enabled: backend && panel.proposalData.operations && panel.proposalData.operations.length > 0
                     onClicked: backend.applyCodexProposal(panel.selectedOperationIds())
                 }
                 Button {
                     objectName: "codexDiscardButton"
                     text: "破棄"
-                    enabled: backend && backend.codexProposal.operations && backend.codexProposal.operations.length > 0
+                    enabled: backend && panel.proposalData.operations && panel.proposalData.operations.length > 0
                     onClicked: backend.discardCodexProposal()
                 }
             }

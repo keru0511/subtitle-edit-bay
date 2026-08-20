@@ -125,7 +125,7 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_codex_edit_panel_exposes_prompt_scope_diff_and_apply_actions(self) -> None:
         qml = read_workflow_qml()
-        panel = (ROOT / "src" / "ui" / "components" / "CodexEditPanel.qml").read_text(encoding="utf-8")
+        panel = read_component_qml("CodexEditPanel.qml")
 
         self.assertIn('objectName: "codexEditPanel"', qml)
         self.assertIn('objectName: "codexPromptInput"', panel)

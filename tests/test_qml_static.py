@@ -123,6 +123,18 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("copyApplicationInfoToClipboard", qml)
         self.assertIn('objectName: "copyApplicationInfoButton"', qml)
 
+    def test_application_log_panel_exposes_copy_and_error_actions(self) -> None:
+        qml = read_workflow_qml()
+        panel = (ROOT / "src" / "ui" / "components" / "ApplicationLogPanel.qml").read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "applicationLogPanel"', qml)
+        self.assertIn('objectName: "applicationLogToggleButton"', panel)
+        self.assertIn('objectName: "copyLogsButton"', panel)
+        self.assertIn('objectName: "copyErrorLogsButton"', panel)
+        self.assertIn('objectName: "openLogsButton"', panel)
+        self.assertIn("selectByMouse: true", panel)
+        self.assertIn("backend.copyErrorLogsToClipboard()", panel)
+
     def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
         qml = read_workflow_qml()
 

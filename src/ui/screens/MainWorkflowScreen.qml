@@ -3,6 +3,7 @@ import QtQuick
 import QtQml.Models
 import QtQuick.Controls
 import QtQuick.Dialogs
+import "../components"
 import QtQuick.Layouts
 import QtMultimedia
 
@@ -1173,19 +1174,12 @@ ApplicationWindow {
                 }
             }
 
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 118; radius: 12; color: root.panel; border.color: root.border
-                RowLayout { anchors.fill: parent; anchors.margins: 12; spacing: 12
-                    ColumnLayout { Layout.preferredWidth: 180
-                        PanelTitle { text: root.appBackend.stage }
-                        Text { text: Math.round(root.appBackend.progress * 100) + "%"; color: root.acid; font.family: "Bahnschrift"; font.pixelSize: 25; font.weight: Font.Bold }
-                        Text { objectName: "workflowStatusText"; Layout.fillWidth: true; text: root.appBackend.status; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; wrapMode: Text.Wrap }
-                    }
-                    ProgressBar { Layout.preferredWidth: 160; from: 0; to: 1; value: root.appBackend.progress }
-                    ScrollView { Layout.fillWidth: true; Layout.fillHeight: true
-                        TextArea { readOnly: true; text: root.appBackend.logText || "処理ログ"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; wrapMode: TextEdit.WrapAnywhere; background: Rectangle { color: "transparent" } }
-                    }
-                }
+            ApplicationLogPanel {
+                id: applicationLogPanel
+                objectName: "applicationLogPanel"
+                Layout.fillWidth: true
+                Layout.preferredHeight: implicitHeight
+                backend: root.appBackend
             }
         }
 

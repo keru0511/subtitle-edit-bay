@@ -28,7 +28,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QDesktopServices, QFontDatabase
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
@@ -50,6 +50,7 @@ from .audio_preview_cache import (
     cached_audio_preview_paths,
     prepare_audio_preview_cache,
 )
+from .application_logging import ApplicationLogger
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
@@ -291,6 +292,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=workspace_root)
+        self._application_logger = ApplicationLogger(
+            self.workspace_root,
+            application_info=self._application_info,
+        )
+        self._log = self._application_logger.text
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
         self._segment_starts: list[float] = []
@@ -2102,8 +2108,13 @@ class EditBayBackend(LegacyEditBayBackend):
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         self._active_job = job
         self.activeJobChanged.emit()
-        self._log = f"> {subprocess.list2cmdline(command)}\n"
-        self.logChanged.emit()
+        self._application_logger.clear_memory()
+        self._record_log(
+            f"> {subprocess.list2cmdline(command)}",
+            component="gui",
+            job=job,
+            stage="STARTING",
+        )
         self._progress = 0.02
         self.progressChanged.emit()
         self._elapsed_seconds = 0
@@ -2310,6 +2321,87 @@ class EditBayBackend(LegacyEditBayBackend):
         else:
             self._set_status("編集済み字幕を動画へ焼き付けています", "ENCODE")
 
+    def _record_log(
+        self,
+        message: object,
+        *,
+        severity: str = "INFO",
+        component: str = "gui",
+        job: str = "",
+        stage: str = "",
+        process_id: int | None = None,
+        exit_code: int | None = None,
+    ) -> None:
+        self._application_logger.append(
+            message,
+            severity=severity,
+            component=component,
+            job=job,
+            stage=stage,
+            process_id=process_id,
+            exit_code=exit_code,
+        )
+        self._log = self._application_logger.text
+        self.logChanged.emit()
+
+    @Property(str, notify=logChanged)
+    def logFilePath(self) -> str:
+        return str(self._application_logger.log_path)
+
+    @Slot()
+    def copyLogsToClipboard(self) -> None:
+        self.clipboard().setText(
+            self._application_logger.diagnostic_text(
+                status=self.status,
+                stage=self.stage,
+                runtime={"python": sys.version.split()[0], "platform": sys.platform},
+            )
+        )
+
+    @Slot()
+    def copyErrorLogsToClipboard(self) -> None:
+        self.clipboard().setText(
+            self._application_logger.diagnostic_text(
+                status=self.status,
+                stage=self.stage,
+                runtime={"python": sys.version.split()[0], "platform": sys.platform},
+            )
+        )
+
+    @Slot()
+    def openLogFolder(self) -> None:
+        if not QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self._application_logger.log_directory))
+        ):
+            self._set_status("ログ保存先を開けませんでした", "ERROR")
+
+    def _read_process_output(self) -> None:
+        data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        if not data:
+            return
+        normalized = data.replace("\r", "\n")
+        self._record_log(
+            normalized,
+            component=self._active_job or "process",
+            job=self._active_job,
+            stage=self.stage,
+            process_id=int(self.process.processId()) or None,
+        )
+        self._update_stage(normalized)
+
+    def _process_error(self, error: QProcess.ProcessError) -> None:
+        message = self.process.errorString() or str(error)
+        self._record_log(
+            message,
+            severity="ERROR",
+            component=self._active_job or "qprocess",
+            job=self._active_job,
+            stage="ERROR",
+            process_id=int(self.process.processId()) or None,
+        )
+        if not self._running and self.process.state() == QProcess.ProcessState.NotRunning:
+            self._set_status(message, "ERROR")
+
     def _update_stage(self, output: str) -> None:
         markers = [
             ("Resolving alignment", "ALIGN", "動画と話者音声を同期しています", 0.08),
@@ -2332,6 +2424,14 @@ class EditBayBackend(LegacyEditBayBackend):
         self._running = False
         self.runningChanged.emit()
         completed_job = self._active_job
+        self._record_log(
+            f"Process finished with exit code {exit_code}",
+            severity="INFO" if exit_code == 0 else "ERROR",
+            component=completed_job or "process",
+            job=completed_job,
+            stage="COMPLETE" if exit_code == 0 else "ERROR",
+            exit_code=exit_code,
+        )
         self._active_job = ""
         self.activeJobChanged.emit()
         if self._cancel_requested:

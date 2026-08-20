@@ -295,6 +295,8 @@ class EditBayBackend(LegacyEditBayBackend):
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
     codexCallbackRequested = Signal(object)
+    highlightCandidatesChanged = Signal()
+    highlightAnalysisChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
@@ -344,6 +346,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self._audio_master_level = 0.0
         self._audio_limiter_reduction_db = 0.0
         self._audio_master_mixer.metricsChanged.connect(self._update_audio_master_metrics)
+        self._highlight_candidates: list[dict[str, Any]] = []
+        self._highlight_rejected: list[dict[str, Any]] = []
+        self._highlight_status = "idle"
+        self._highlight_progress = 0.0
+        self._highlight_cancel = threading.Event()
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
         self._audio_preview_pending_levels: dict[str, float] = {}
@@ -500,6 +507,18 @@ class EditBayBackend(LegacyEditBayBackend):
             "transition": deepcopy(section.get("transition", {})),
             "bgm": deepcopy(section.get("bgm", {})),
         }
+
+    @Property("QVariantList", notify=highlightCandidatesChanged)
+    def highlightCandidates(self) -> list[dict[str, Any]]:
+        return deepcopy(self._highlight_candidates)
+
+    @Property(str, notify=highlightAnalysisChanged)
+    def highlightAnalysisState(self) -> str:
+        return self._highlight_status
+
+    @Property(float, notify=highlightAnalysisChanged)
+    def highlightAnalysisProgress(self) -> float:
+        return self._highlight_progress
 
     @Property(QObject, constant=True)
     def subtitleModel(self) -> QObject:
@@ -839,6 +858,118 @@ class EditBayBackend(LegacyEditBayBackend):
         self.projectDataChanged.emit()
         self.shortVideoChanged.emit()
         return True
+
+    @Slot(result=bool)
+    def startHighlightAnalysis(self) -> bool:
+        if self._project is None or self._running:
+            return False
+        if self._highlight_status == "running":
+            return False
+        self._highlight_cancel.clear()
+        self._highlight_status = "running"
+        self._highlight_progress = 0.0
+        self.highlightAnalysisChanged.emit()
+        segments = deepcopy(self._project.get("segments", []))
+        duration = self.projectDuration
+        cache_directory = (
+            Path(self._project_path).parent / ".highlight-cache"
+            if self._project_path
+            else None
+        )
+
+        def worker() -> None:
+            try:
+                from .highlight_candidates import generate_highlight_candidates
+
+                candidates = generate_highlight_candidates(
+                    segments,
+                    duration_seconds=duration,
+                    cancel_check=self._highlight_cancel.is_set,
+                    progress_callback=self._update_highlight_progress,
+                    cache_directory=cache_directory,
+                )
+                self._highlight_candidates = [item.to_json() for item in candidates]
+                self._highlight_status = "completed"
+                self._highlight_progress = 1.0
+                self.highlightCandidatesChanged.emit()
+                self.highlightAnalysisChanged.emit()
+            except Exception as error:
+                self._highlight_status = "cancelled" if self._highlight_cancel.is_set() else "error"
+                self._set_status(f"見どころ候補の解析に失敗しました: {error}", "ERROR")
+                self.highlightAnalysisChanged.emit()
+
+        threading.Thread(target=worker, name="highlight-analysis", daemon=True).start()
+        return True
+
+    @Slot(result=bool)
+    def cancelHighlightAnalysis(self) -> bool:
+        if self._highlight_status != "running":
+            return False
+        self._highlight_cancel.set()
+        self._highlight_status = "cancelling"
+        self.highlightAnalysisChanged.emit()
+        return True
+
+    @Slot(result=bool)
+    def retryHighlightAnalysis(self) -> bool:
+        self._highlight_candidates = []
+        self.highlightCandidatesChanged.emit()
+        return self.startHighlightAnalysis()
+
+    @Slot(int, result=bool)
+    def addHighlightCandidate(self, index: int) -> bool:
+        if self._project is None or self._running or not 0 <= index < len(self._highlight_candidates):
+            return False
+        candidate = self._highlight_candidates[index]
+        source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
+        if not source_ids:
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        candidate_start = float(candidate.get("start", 0.0))
+        candidate_end = float(candidate.get("end", candidate_start))
+        if any(
+            str(clip.get("segment_id", "")) in source_ids
+            and min(float(clip.get("end", 0.0)), candidate_end)
+            > max(float(clip.get("start", 0.0)), candidate_start)
+            for clip in clips
+        ):
+            self._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
+            return False
+        section["enabled"] = True
+        clips.append(
+            {
+                "segment_id": source_ids[0],
+                "start": candidate_start,
+                "end": candidate_end,
+                "highlight_candidate_id": str(candidate.get("id", "")),
+            }
+        )
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def rejectHighlightCandidate(self, index: int) -> bool:
+        if not 0 <= index < len(self._highlight_candidates):
+            return False
+        self._highlight_rejected.append(self._highlight_candidates.pop(index))
+        self.highlightCandidatesChanged.emit()
+        return True
+
+    @Slot(result=bool)
+    def undoHighlightRejection(self) -> bool:
+        if not self._highlight_rejected:
+            return False
+        self._highlight_candidates.append(self._highlight_rejected.pop())
+        self.highlightCandidatesChanged.emit()
+        return True
+
+    def _update_highlight_progress(self, value: float) -> None:
+        self._highlight_progress = max(0.0, min(1.0, float(value)))
+        self.highlightAnalysisChanged.emit()
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:

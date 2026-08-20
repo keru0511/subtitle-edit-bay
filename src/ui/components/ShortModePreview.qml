@@ -35,6 +35,11 @@ Rectangle {
     readonly property string subtitleOutlineColor: String(appSettings.subtitle_outline_color || "#000000")
     readonly property int subtitleOutlineThickness: Number(appSettings.subtitle_outline_thickness || 3)
 
+    function previewAt(seconds) {
+        previewPlayer.position = Math.max(0, Number(seconds)) * 1000
+        previewPlayer.play()
+    }
+
     Layout.fillHeight: true
     Layout.preferredWidth: parent ? parent.height * 9 / 16 : 540
     Layout.maximumWidth: 540

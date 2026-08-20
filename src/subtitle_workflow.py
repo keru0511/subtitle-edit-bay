@@ -68,6 +68,7 @@ from .silence_cut import (
     retime_segments_for_keep_ranges,
 )
 from .short_video import render_short_video
+from .short_video_ass import build_short_video_ass
 from .subtitle_project import (
     DEFAULT_WAVEFORM_SAMPLE_RATE,
     build_waveform,
@@ -740,6 +741,7 @@ def render_project_short_video(
     output = Path(output_path) if output_path else derive_short_render_path(project_path)
     if audio_codec == "copy":
         audio_codec = "aac"
+    ass_path = build_short_video_ass(project_path, _project=project)
     result = render_short_video(
         project_path,
         output,
@@ -748,6 +750,7 @@ def render_project_short_video(
         nvenc_preset=nvenc_preset,
         nvenc_cq=nvenc_cq,
         x264_crf=x264_crf,
+        ass_path=ass_path,
         progress_callback=progress_callback,
         _project=project,
     )
@@ -756,6 +759,7 @@ def render_project_short_video(
         "short_video_codec": video_codec,
         "short_audio_codec": audio_codec,
         "short_last_output": str(result.resolve()),
+        "short_last_ass": str(ass_path.resolve()),
     }
     save_project(project_path, project)
     log_progress(f"Short render complete: {result}")

@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from .color_config import normalize_rgb_color
 from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .media_probe import probe_media_duration, probe_media_stream_types
 from .short_video_schema import ShortVideo, ShortVideoBgm, ShortVideoClip, ShortVideoError
+from .short_video_timeline import build_short_video_timeline
 from .subtitle_project import derive_short_render_path, load_project
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -158,6 +160,7 @@ def build_short_video_filter_complex(
     clips = short_video.clips
     if not clips:
         raise ShortVideoError("short_video.clips must contain at least one clip")
+    timeline = build_short_video_timeline(short_video)
 
     width = short_video.output.width
     height = short_video.output.height
@@ -179,13 +182,11 @@ def build_short_video_filter_complex(
 
     v_out = "sv0"
     a_out = "sa0" if has_audio else ""
-    total_duration = clips[0].end - clips[0].start
+    total_duration = timeline.total_duration
     clip_count = len(clips)
-    full_duration = sum(clip.end - clip.start for clip in clips)
 
     if clip_count > 1:
-        transition_duration = max(0.0, transition.duration)
-        if transition.type == "cut" or transition_duration <= 0:
+        if all(entry.overlap <= 0.0 for entry in timeline.clips[1:]):
             v_inputs = "".join(f"[sv{i}]" for i in range(clip_count))
             stream_filters.append(f"{v_inputs}concat=n={clip_count}:v=1:a=0[v_concat]")
             v_out = "v_concat"
@@ -193,28 +194,27 @@ def build_short_video_filter_complex(
                 a_inputs = "".join(f"[sa{i}]" for i in range(clip_count))
                 stream_filters.append(f"{a_inputs}concat=n={clip_count}:v=0:a=1[a_concat]")
                 a_out = "a_concat"
-            total_duration = full_duration
         else:
             for index in range(1, clip_count):
-                current_duration = clips[index].end - clips[index].start
-                td = min(transition_duration, total_duration, current_duration)
-                if td <= 0:
-                    # Clip too short for a crossfade; fall back to a cut join.
-                    remaining = clip_count - index + 1
-                    v_inputs = f"[{v_out}]" + "".join(f"[sv{i}]" for i in range(index, clip_count))
-                    stream_filters.append(f"{v_inputs}concat=n={remaining}:v=1:a=0[v_concat]")
-                    v_out = "v_concat"
-                    if has_audio:
-                        a_inputs = f"[{a_out}]" + "".join(f"[sa{i}]" for i in range(index, clip_count))
-                        stream_filters.append(f"{a_inputs}concat=n={remaining}:v=0:a=1[a_concat]")
-                        a_out = "a_concat"
-                    total_duration += sum(
-                        clip.end - clip.start for clip in clips[index:]
+                timeline_clip = timeline.clips[index]
+                td = timeline_clip.overlap
+                is_last = index == clip_count - 1
+                if td <= 0.0:
+                    new_v = f"vc{index}"
+                    stream_filters.append(
+                        f"[{v_out}][sv{index}]concat=n=2:v=1:a=0[{new_v}]"
                     )
-                    break
-                offset = total_duration - td
+                    v_out = new_v
+                    if has_audio:
+                        new_a = "aout" if is_last else f"ac{index}"
+                        stream_filters.append(
+                            f"[{a_out}][sa{index}]concat=n=2:v=0:a=1[{new_a}]"
+                        )
+                        a_out = new_a
+                    continue
+                offset = timeline_clip.output_start
                 new_v = f"vx{index}"
-                new_a = "aout" if index == clip_count - 1 else f"ax{index}"
+                new_a = "aout" if is_last else f"ax{index}"
                 stream_filters.append(
                     f"[{v_out}][sv{index}]"
                     f"xfade=transition={DEFAULT_XFADE_TRANSITION}:"
@@ -230,7 +230,6 @@ def build_short_video_filter_complex(
                         f"c2={DEFAULT_ACROSSFADE_CURVE}"
                         f"[{new_a}]"
                     )
-                total_duration = offset + current_duration
                 v_out = new_v
                 a_out = new_a
 
@@ -283,7 +282,7 @@ def build_short_video_command(
 ) -> list[str]:
     """Build the full FFmpeg command for the short video render."""
     if filter_script_path:
-        filter_option = "-/filter_complex" if os.name == "nt" else "-filter_complex_script"
+        filter_option = "-filter_complex_script"
         filter_value = filter_script_path
     else:
         filter_option = "-filter_complex"
@@ -339,15 +338,7 @@ def _clamp_clip_times(clips: list[ShortVideoClip], video_duration: float) -> lis
         if end <= start:
             continue
         if start != clip.start or end != clip.end:
-            clamped.append(
-                ShortVideoClip(
-                    segment_id=clip.segment_id,
-                    start=start,
-                    end=end,
-                    fit=clip.fit,
-                    background_color=clip.background_color,
-                )
-            )
+            clamped.append(replace(clip, start=start, end=end))
         else:
             clamped.append(clip)
     return clamped
@@ -388,16 +379,7 @@ def render_short_video(
     if not clamped_clips:
         raise ShortVideoError("All clips are outside the video duration")
 
-    short_video = ShortVideo(
-        enabled=short_video.enabled,
-        output=short_video.output,
-        global_fit=short_video.global_fit,
-        global_background_color=short_video.global_background_color,
-        subtitle_scale_percent=short_video.subtitle_scale_percent,
-        transition=short_video.transition,
-        bgm=short_video.bgm,
-        clips=clamped_clips,
-    )
+    short_video = replace(short_video, clips=clamped_clips)
 
     try:
         has_audio = "audio" in probe_media_stream_types(video_path)

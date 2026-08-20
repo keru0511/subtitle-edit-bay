@@ -41,7 +41,10 @@ class SubtitleReviewTests(unittest.TestCase):
         queue.reconcile(same)
         self.assertEqual(queue.issues[issue.issue_id].status, "ignored")
 
-        changed_segments = [{**self.segments[0], "text": "修正後"}, self.segments[1]]
+        changed_segments = [
+            {**self.segments[0], "text": self.segments[0]["text"] + " 追記された修正内容"},
+            self.segments[1],
+        ]
         changed = generate_review_queue(changed_segments, project_revision=3)
         queue.reconcile(changed)
         replacement = next(

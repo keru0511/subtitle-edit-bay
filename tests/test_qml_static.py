@@ -155,8 +155,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("backend.copyErrorLogsToClipboard()", panel)
 
     def test_highlight_candidate_list_exposes_analysis_preview_add_and_reject(self) -> None:
-        short_qml = (ROOT / "src" / "ui" / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
-        candidate_qml = (ROOT / "src" / "ui" / "components" / "HighlightCandidateList.qml").read_text(encoding="utf-8")
+        short_qml = (UI_ROOT / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
+        candidate_qml = read_component_qml("HighlightCandidateList.qml")
 
         self.assertIn('objectName: "highlightCandidateList"', short_qml)
         self.assertIn('objectName: "highlightAnalyzeButton"', candidate_qml)

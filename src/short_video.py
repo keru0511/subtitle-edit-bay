@@ -139,7 +139,10 @@ def _build_bgm_filter(bgm: ShortVideoBgm, total_duration: float) -> str | None:
     else:
         parts.append("asetpts=PTS-STARTPTS,")
     parts.append(
-        f"aloop=loop=-1:size=0,"
+        # FFmpeg 6 treats size=0 as an unset loop length and stops at EOF.
+        # Use a large explicit sample count; the following atrim bounds the
+        # generated stream to the active short-video duration.
+        f"aloop=loop=-1:size=2147483647,"
         f"atrim=0:{_format_filter_time(active_duration)},"
         f"adelay={start_ms}:all=1,"
         f"volume={_format_filter_time(volume)},"

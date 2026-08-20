@@ -5,6 +5,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtMultimedia
+import "../components"
 
 ApplicationWindow {
     id: root
@@ -2132,6 +2133,13 @@ ApplicationWindow {
                             PanelTitle { text: "字幕一覧" }
                             Item { Layout.fillWidth: true }
                             Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
+                        }
+                        CodexEditPanel {
+                            id: codexEditPanel
+                            objectName: "codexEditPanel"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: implicitHeight
+                            backend: root.appBackend
                         }
                         ListView {
                             id: captionTable

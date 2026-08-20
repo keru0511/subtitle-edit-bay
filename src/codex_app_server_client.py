@@ -12,9 +12,15 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 DEFAULT_CODEX_COMMAND = ("codex", "app-server", "--listen", "stdio://")
-_SECRET_PATTERN = re.compile(
-    r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization)"
-    r"(\s*[:=]\s*)([^\s,;]+)"
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
+    re.compile(
+        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
+        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;&}\]]+)"
+    ),
+)
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(?i)^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)$"
 )
 
 
@@ -29,8 +35,8 @@ class CodexRequestTimeout(CodexAppServerError):
 class CodexRpcError(CodexAppServerError):
     def __init__(self, code: int, message: str, data: Any = None) -> None:
         self.code = int(code)
-        self.data = data
-        super().__init__(message)
+        self.data = _redact_payload(data)
+        super().__init__(_redact_log(message))
 
 
 @dataclass(frozen=True)
@@ -41,10 +47,26 @@ class CodexNotification:
 
 def _redact_log(value: object) -> str:
     text = str(value)
-    return _SECRET_PATTERN.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
-        text,
-    )
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
+    return text
+
+
+def _redact_payload(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): "[REDACTED]"
+            if _SENSITIVE_KEY_PATTERN.fullmatch(str(key))
+            else _redact_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_payload(item) for item in value)
+    if isinstance(value, str):
+        return _redact_log(value)
+    return value
 
 
 class CodexAppServerClient:
@@ -306,7 +328,7 @@ class CodexAppServerClient:
                     CodexRpcError(
                         int(error.get("code", -32000)),
                         _redact_log(error.get("message", "app-server request failed")),
-                        error.get("data"),
+                        _redact_payload(error.get("data")),
                     )
                 )
             else:
@@ -331,7 +353,11 @@ class CodexAppServerClient:
             )
         notification = CodexNotification(
             method=method,
-            params=message.get("params") if isinstance(message.get("params"), dict) else {},
+            params=(
+                _redact_payload(message.get("params"))
+                if isinstance(message.get("params"), dict)
+                else {}
+            ),
         )
         with self._state_lock:
             self._notifications.append(notification)

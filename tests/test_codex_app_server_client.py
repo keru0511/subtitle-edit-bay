@@ -7,7 +7,10 @@ from pathlib import Path
 
 from src.codex_app_server_client import (
     CodexAppServerClient,
+    CodexRpcError,
     CodexRequestTimeout,
+    _redact_log,
+    _redact_payload,
 )
 
 
@@ -77,6 +80,33 @@ class CodexAppServerClientTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, "could not start"):
                 client.start()
+
+    def test_redacts_bearer_json_url_and_structured_rpc_credentials(self) -> None:
+        value = (
+            'Bearer bearer-secret {"access_token":"json-secret"} '
+            "https://example.test/callback?token=url-secret&next=ok"
+        )
+
+        redacted = _redact_log(value)
+        self.assertNotIn("bearer-secret", redacted)
+        self.assertNotIn("json-secret", redacted)
+        self.assertNotIn("url-secret", redacted)
+
+        payload = _redact_payload(
+            {
+                "access_token": "nested-secret",
+                "context": {"password": "nested-password"},
+                "items": [{"authorization": "nested-bearer"}],
+            }
+        )
+        self.assertEqual(payload["access_token"], "[REDACTED]")
+        self.assertEqual(payload["context"]["password"], "[REDACTED]")
+        self.assertEqual(payload["items"][0]["authorization"], "[REDACTED]")
+        self.assertNotIn("nested-secret", repr(payload))
+
+        error = CodexRpcError(400, "token=message-secret", {"token": "data-secret"})
+        self.assertNotIn("message-secret", str(error))
+        self.assertEqual(error.data["token"], "[REDACTED]")
 
 
 if __name__ == "__main__":

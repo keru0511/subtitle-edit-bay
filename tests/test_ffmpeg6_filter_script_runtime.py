@@ -156,6 +156,16 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
         return sum(differences) / len(differences)
 
     @staticmethod
+    def _row_variation(frame: bytes, *, width: int, y: int = 0) -> float:
+        row = frame[y * width * 3 : (y + 1) * width * 3]
+        first_pixel = tuple(row[:3])
+        differences = [
+            sum(abs(channel - reference) for channel, reference in zip(pixel, first_pixel))
+            for pixel in (row[offset : offset + 3] for offset in range(0, len(row), 3))
+        ]
+        return sum(differences) / len(differences)
+
+    @staticmethod
     def _audio_peak(output: Path, *, start: float, duration: float) -> int:
         process = subprocess.run(
             [
@@ -275,11 +285,7 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
                 self._assert_video_audio_output(output, width=180, height=320)
                 frames[fit] = self._read_rgb_frame(output)
 
-            for fit in ("cover", "blur"):
-                self.assertGreater(
-                    self._mean_abs_difference(frames["contain"], frames[fit]),
-                    2.0,
-                )
+            self.assertLess(self._row_variation(frames["contain"], width=180), 8.0)
             self.assertGreater(
                 self._mean_abs_difference(frames["cover"], frames["blur"]),
                 2.0,

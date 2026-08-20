@@ -407,8 +407,9 @@ ffmpeg -y -i video.mp4 -i bgm.mp3 \
   output_short.mp4
 ```
 
-- `filter_complex` が長くなる場合は一時ファイル化し、  
-  Windows では `-/filter_complex`、それ以外では `-filter_complex_script` を使う（`src/silence_cut.py` と同じ対処）。
+- `filter_complex` が長くなる場合は一時ファイル化し、FFmpeg 6 では
+  `-filter_complex_script`、FFmpeg 7 以降では `-/filter_complex` を使う。
+  判定不能またはサポート外の場合は、FFmpeg の更新とセットアップ再検証を案内する。
 - `run_atomic_ffmpeg_export` を使い、NVENC 失敗時は libx264 にフォールバックする。
 
 ## 12. UI 設計の詳細
@@ -607,7 +608,7 @@ AGENTS.md により、PR タイトル・コミットメッセージは日本語�
 | リスク | 対策 |
 |-------|------|
 | `xfade` / `acrossfade` が古い FFmpeg で使えない | CI FFmpeg バージョンを確認。使えない場合はテストをスキップし、ユーザーに FFmpeg 更新を促すメッセージを出す |
-| `filter_complex` が長くなる | 一時ファイル化。Windows では `-/filter_complex` を使う |
+| `filter_complex` が長くなる | 一時ファイル化し、FFmpeg のメジャーバージョンに対応するファイル入力オプションを使う |
 | BGM の `aloop` サンプル数計算がずれる | `ffprobe` の `sample_rate` を使い整数サンプルで計算。境界値テストを書く |
 | クリップのトリミング・並べ替えで字幕がずれる | `src/silence_cut.py` の `retime_segments_for_keep_ranges` を流用し、クリップ区間ごとに `output_cursor` を加算 |
 | 縦長 UI で既存レイアウトが崩れる | `ShortModeScreen` を `MainWorkflowScreen` 上のモードオーバレイとして実装し、既存 `mainWorkspace` には影響しない |

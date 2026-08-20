@@ -80,7 +80,7 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "stream=codec_name,pix_fmt,profile",
+                "stream=codec_name,pix_fmt,profile,width,height",
                 "-of",
                 "json",
                 str(path),
@@ -159,19 +159,28 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
             self._assert_faststart_moov_before_mdat(output)
 
-    def test_cut_media_ranges_preserves_faststart_moov_position(self) -> None:
+    def test_long_cut_media_ranges_preserves_video_audio_and_resolution(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
             self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            video = self._make_video(root / "input.mp4")
+            video = self._make_video(root / "input.mp4", duration=6.4)
             output = root / "cut.mp4"
+            keep_ranges = [
+                (index * 0.1, index * 0.1 + 0.08)
+                for index in range(64)
+            ]
 
-            cut_media_ranges(str(video), str(output), [(0.0, 1.0)])
+            cut_media_ranges(str(video), str(output), keep_ranges)
 
             self.assertTrue(output.is_file())
             self.assertGreater(output.stat().st_size, 0)
+            self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
+            stream = self._probe_video_stream(output)
+            self.assertEqual(stream["width"], 320)
+            self.assertEqual(stream["height"], 180)
+            self.assertEqual(stream["pix_fmt"], "yuv420p")
             self._assert_faststart_moov_before_mdat(output)
 
     def test_burn_subtitles_converts_10bit_and_444_inputs_to_yuv420p(self) -> None:

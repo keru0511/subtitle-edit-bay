@@ -21,7 +21,6 @@ from PySide6.QtCore import (
     QModelIndex,
     QObject,
     QProcess,
-    QProcessEnvironment,
     QStandardPaths,
     QTimer,
     Qt,
@@ -2111,12 +2110,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._cancel_requested = False
         self.elapsedChanged.emit()
         self._set_status(status, "STARTING")
-        environment = QProcessEnvironment.systemEnvironment()
-        environment.insert("PYTHONUTF8", "1")
-        environment.insert("PYTHONUNBUFFERED", "1")
-        self.process.setProcessEnvironment(environment)
-        self.process.setWorkingDirectory(str(self.workspace_root))
-        self.process.start(command[0], command[1:])
+        self._start_process(command)
 
     def _has_audio_source(self, audio_files: list[str], audio_tracks: list[dict[str, Any]] | None = None) -> bool:
         if audio_files:

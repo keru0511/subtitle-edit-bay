@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from PySide6.QtCore import Property, QProcess, QProcessEnvironment, QTimer, QUrl, Signal, Slot
+
+from src.qprocess_launcher import prepare_qprocess_launch
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
@@ -703,12 +705,25 @@ class EditBayBackend(QApplication):
         self.elapsedChanged.emit()
         self._set_status("パイプラインを起動しています", "STARTING")
 
+        self._start_process(command)
+
+    def _start_process(self, command: list[str]) -> None:
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUTF8", "1")
         environment.insert("PYTHONUNBUFFERED", "1")
         self.process.setProcessEnvironment(environment)
-        self.process.setWorkingDirectory(str(self.workspace_root))
-        self.process.start(command[0], command[1:])
+
+        try:
+            launch = prepare_qprocess_launch(command, self.workspace_root)
+        except OSError as exc:
+            self._log += f"QProcess launch preparation failed: {exc}\n"
+            self.logChanged.emit()
+            self.process.setWorkingDirectory(str(self.workspace_root))
+            self.process.start(command[0], command[1:])
+            return
+
+        self.process.setWorkingDirectory(launch.working_directory)
+        self.process.start(launch.program, list(launch.arguments))
 
     @Slot()
     def cancelProcessing(self) -> None:

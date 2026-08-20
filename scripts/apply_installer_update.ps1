@@ -16,7 +16,8 @@ function Write-UpdateResult {
     $parent = Split-Path -Parent $ResultPath
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
     $temporary = "$ResultPath.$([Guid]::NewGuid().ToString('N')).tmp"
-    $Result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8
+    $json = $Result | ConvertTo-Json -Depth 8
+    [IO.File]::WriteAllText($temporary, $json, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temporary -Destination $ResultPath -Force
 }
 

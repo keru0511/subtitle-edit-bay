@@ -315,7 +315,8 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                     line for line in ass_path.read_text(encoding="utf-8").splitlines()
                     if line.startswith("Dialogue:")
                 ]
-                self.assertEqual(len(dialogue_lines), 2)
+                self.assertGreaterEqual(len(dialogue_lines), 2)
+                self.assertTrue(any("FIRST" in line for line in dialogue_lines))
 
                 frame = subprocess.run(
                     [

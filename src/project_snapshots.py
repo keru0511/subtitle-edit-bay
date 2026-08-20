@@ -43,6 +43,36 @@ def sanitize_project(value: Any, key: str | None = None) -> Any:
     return copy.deepcopy(value)
 
 
+def _is_media_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return normalized in _MEDIA_KEYS or normalized.endswith("_path")
+
+
+def _merge_media_references(target: Any, current: Any) -> Any:
+    """Restore current media references without copying other live fields."""
+    if isinstance(current, Mapping):
+        result = copy.deepcopy(dict(target)) if isinstance(target, Mapping) else {}
+        for raw_key, current_value in current.items():
+            key = str(raw_key)
+            if _is_media_key(key):
+                result[key] = copy.deepcopy(current_value)
+            elif isinstance(current_value, (Mapping, list, tuple)):
+                result[key] = _merge_media_references(result.get(key), current_value)
+        return result
+    if isinstance(current, (list, tuple)):
+        target_items = list(target) if isinstance(target, (list, tuple)) else []
+        result = copy.deepcopy(target_items)
+        for index, current_value in enumerate(current):
+            existing = result[index] if index < len(result) else None
+            merged = _merge_media_references(existing, current_value)
+            if index < len(result):
+                result[index] = merged
+            else:
+                result.append(merged)
+        return result
+    return copy.deepcopy(target)
+
+
 def project_checksum(project: Mapping[str, Any]) -> str:
     encoded = json.dumps(project, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -219,6 +249,7 @@ class SnapshotStore:
     ) -> dict[str, Any]:
         target_project = copy.deepcopy(self.get(snapshot_id).project)
         if current_project is not None:
+            target_project = _merge_media_references(target_project, current_project)
             self.create(current_project, current_revision, "pre-restore")
         if destination is not None:
             path = Path(destination)

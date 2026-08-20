@@ -39,6 +39,28 @@ class ProjectSnapshotTests(unittest.TestCase):
             self.assertFalse(store.validate(snapshot.snapshot_id))
             self.assertEqual(store.list(), [])
 
+    def test_restore_relinks_current_media_references_without_storing_them(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = SnapshotStore(root / "snapshots")
+            current = _project()
+            snapshot = store.create(current, 3, "before-edit")
+            destination = root / "restored.subtitle-project.json"
+
+            restored = store.restore(
+                snapshot.snapshot_id,
+                current_project=current,
+                current_revision=4,
+                destination=destination,
+                overwrite=True,
+            )
+
+            self.assertEqual(restored["source"]["path"], current["source"]["path"])
+            self.assertEqual(restored["settings"]["video_path"], current["settings"]["video_path"])
+            written = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(written["source"]["path"], current["source"]["path"])
+            self.assertEqual(written["settings"]["video_path"], current["settings"]["video_path"])
+
     def test_restore_creates_pre_restore_snapshot_and_diff(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SnapshotStore(Path(temp_dir) / "snapshots")

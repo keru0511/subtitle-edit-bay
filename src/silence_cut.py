@@ -217,10 +217,10 @@ def build_silence_cut_command(
     audio_filter: str | None = None,
     video_filter: str | None = None,
     filter_script_path: str | None = None,
-    filter_script_option: str = LEGACY_FILTER_SCRIPT_OPTION,
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    filter_script_option: str = LEGACY_FILTER_SCRIPT_OPTION,
 ) -> list[str]:
     if not keep_ranges:
         raise ValueError("At least one keep range is required.")
@@ -279,8 +279,8 @@ def cut_media_ranges(
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
     filter_script_path: str | None = None,
-    filter_script_option: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    filter_script_option: str | None = None,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)

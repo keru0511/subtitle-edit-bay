@@ -10,6 +10,10 @@ from functools import lru_cache
 LEGACY_FILTER_SCRIPT_OPTION = "-filter_complex_script"
 MODERN_FILTER_SCRIPT_OPTION = "-/filter_complex"
 MINIMUM_SUPPORTED_FFMPEG_MAJOR = 6
+_NIGHTLY_VERSION_RE = re.compile(
+    r"^ffmpeg version\s+[nN]-\d+(?:-|\s|$)",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
 
 
 class FFmpegFilterScriptCompatibilityError(RuntimeError):
@@ -18,7 +22,7 @@ class FFmpegFilterScriptCompatibilityError(RuntimeError):
 
 def _ffmpeg_major_version(version_output: str) -> int | None:
     match = re.search(
-        r"^ffmpeg version\s+[nN]?(\d+)(?:\.|\s|$)",
+        r"^ffmpeg version\s+[nN]?(\d+)(?:\.|-|\s|$)",
         version_output,
         flags=re.IGNORECASE | re.MULTILINE,
     )
@@ -34,6 +38,8 @@ def _compatibility_error(detail: str) -> FFmpegFilterScriptCompatibilityError:
 def filter_complex_script_option(version_output: str) -> str:
     """Select the filter script option supported by an FFmpeg version."""
 
+    if _NIGHTLY_VERSION_RE.search(version_output):
+        return MODERN_FILTER_SCRIPT_OPTION
     major_version = _ffmpeg_major_version(version_output)
     if major_version is None:
         raise _compatibility_error("FFmpeg のバージョンを判定できませんでした。")

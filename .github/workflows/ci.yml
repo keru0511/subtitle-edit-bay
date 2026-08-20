@@ -137,6 +137,53 @@ jobs:
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
+  ffmpeg6-compat:
+    name: FFmpeg 6 compatibility
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+      RUN_FFMPEG6_COMPAT: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install FFmpeg 6.1.1
+        shell: pwsh
+        run: |
+          $installed = $false
+          $version = ""
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+              choco install ffmpeg --version=6.1.1 --yes --no-progress --allow-downgrade --force
+              if ($LASTEXITCODE -eq 0 -and (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+                  $version = (& ffmpeg -version | Select-Object -First 1)
+                  if ($version -match '^ffmpeg version 6\.') {
+                      $installed = $true
+                      break
+                  }
+              }
+              if ($attempt -lt 3) {
+                  Start-Sleep -Seconds (10 * $attempt)
+              }
+          }
+          if (-not $installed) {
+              throw "FFmpeg 6.1.1 installation failed after 3 attempts. Last version: $version"
+          }
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Run FFmpeg 6 compatibility tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_ffmpeg6_filter_script_runtime.py" -v
+
   windows-installer-smoke:
     name: Windows installer smoke
     runs-on: windows-latest

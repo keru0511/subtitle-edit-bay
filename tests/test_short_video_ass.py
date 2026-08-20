@@ -34,6 +34,10 @@ class ShortVideoTimelineTests(unittest.TestCase):
             filter_complex_script_option("ffmpeg version 9.0.1-essentials_build"),
             "-/filter_complex",
         )
+        self.assertEqual(
+            filter_complex_script_option("ffmpeg version N-123456-g89abcdef"),
+            "-/filter_complex",
+        )
 
     def test_filter_script_option_reports_actionable_unsupported_version(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "FFmpeg 6 以上へ更新"):

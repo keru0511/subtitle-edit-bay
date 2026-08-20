@@ -77,6 +77,7 @@ Source: "{#SourceRoot}\src\*"; DestDir: "{app}\src"; Excludes: "__pycache__\*,*\
 Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_colors.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\apply_installer_update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\installer\launch.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\setup.bat"; DestDir: "{app}"; Flags: ignoreversion

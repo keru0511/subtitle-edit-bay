@@ -1017,7 +1017,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         modal: true
         title: "更新の確認"
-        visible: root.appBackend.updateAvailable && !root.appBackend.updateBusy
+        visible: root.appBackend.updateAvailable && (!root.appBackend.updateBusy || root.appBackend.updateDownloadActive)
         standardButtons: Dialog.NoButton
         width: 500
         height: 320
@@ -1036,8 +1036,25 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
+            Text {
+                visible: root.appBackend.updatePackageSize > 0
+                text: "パッケージサイズ: " + root.appBackend.updatePackageSize + " bytes"
+                color: root.textMuted
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 11
+                Layout.fillWidth: true
+            }
+            ProgressBar {
+                objectName: "updateDownloadProgressBar"
+                visible: root.appBackend.updateDownloadActive
+                from: 0
+                to: root.appBackend.updateDownloadTotal > 0 ? root.appBackend.updateDownloadTotal : 1
+                value: root.appBackend.updateDownloadBytes
+                Layout.fillWidth: true
+            }
             RowLayout {
-                Button { objectName: "applyUpdateButton"; text: "更新"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
+                Button { objectName: "applyUpdateButton"; text: root.appBackend.updatePackageReady ? "再起動して更新" : "アップデート"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
+                Button { objectName: "cancelUpdateDownloadButton"; text: "ダウンロードをキャンセル"; visible: root.appBackend.updateDownloadActive; enabled: true; onClicked: root.appBackend.cancelUpdateDownload() }
                 Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.restartApplication() }
                 Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
             }

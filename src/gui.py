@@ -72,7 +72,7 @@ from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
-from . import updater
+from . import update_manager, updater
 
 
 def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
@@ -276,6 +276,10 @@ class EditBayBackend(LegacyEditBayBackend):
     updateBusyChanged = Signal()
     updateErrorChanged = Signal()
     updateCheckFinished = Signal(object, str)
+    updateDownloadProgressEvent = Signal(int, int, float)
+    updateDownloadFinished = Signal(str, str)
+    updateDownloadProgressChanged = Signal()
+    updatePackageReadyChanged = Signal()
     shortVideoChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
@@ -337,7 +341,17 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_info: updater.UpdateInfo | None = None
         self._update_error = ""
         self._update_busy = False
+        self._update_package_path: Path | None = None
+        self._update_package_sha256 = ""
+        self._update_package_ready = False
+        self._update_download_bytes = 0
+        self._update_download_total = 0
+        self._update_download_speed = 0.0
+        self._update_download_active = False
+        self._update_download_cancel = threading.Event()
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
+        self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
+        self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
 
     @Property(bool, notify=projectChanged)
     def projectLoaded(self) -> bool:
@@ -382,6 +396,30 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(str, notify=updateErrorChanged)
     def updateError(self) -> str:
         return self._update_error
+
+    @Property(int, notify=updateDownloadProgressChanged)
+    def updateDownloadBytes(self) -> int:
+        return self._update_download_bytes
+
+    @Property(int, notify=updateDownloadProgressChanged)
+    def updateDownloadTotal(self) -> int:
+        return self._update_download_total
+
+    @Property(float, notify=updateDownloadProgressChanged)
+    def updateDownloadSpeed(self) -> float:
+        return self._update_download_speed
+
+    @Property(bool, notify=updateDownloadProgressChanged)
+    def updateDownloadActive(self) -> bool:
+        return self._update_download_active
+
+    @Property(bool, notify=updatePackageReadyChanged)
+    def updatePackageReady(self) -> bool:
+        return self._update_package_ready
+
+    @Property(int, notify=updateInfoChanged)
+    def updatePackageSize(self) -> int:
+        return int(self._update_info.package_size) if self._update_info else 0
 
     @Property("QVariantList", notify=segmentsChanged)
     def subtitleSegments(self) -> list[dict[str, Any]]:
@@ -2224,8 +2262,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_info = info
         self._update_error = error
         self._update_busy = False
+        self._update_package_path = None
+        self._update_package_sha256 = ""
+        self._update_package_ready = False
         self.updateInfoChanged.emit()
         self.updateErrorChanged.emit()
+        self.updatePackageReadyChanged.emit()
         self.updateBusyChanged.emit()
         if error:
             self._set_status(error, "ERROR")
@@ -2239,10 +2281,136 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._running and self._active_job == "update":
             self._set_status("更新中は更新画面を閉じられません", "UPDATE")
             return
+        if self._update_download_active:
+            self._set_status("ダウンロード中は更新画面を閉じられません", "UPDATE")
+            return
         self._update_info = None
         self._update_error = ""
+        self._update_package_path = None
+        self._update_package_sha256 = ""
+        self._update_package_ready = False
         self.updateInfoChanged.emit()
         self.updateErrorChanged.emit()
+        self.updatePackageReadyChanged.emit()
+
+    @Slot()
+    def downloadUpdate(self) -> None:
+        if self._update_busy or self._update_download_active:
+            return
+        if not self._update_info or not self._update_info.available:
+            self._set_status("更新可能なバージョンがありません", "CHECK")
+            return
+        if getattr(self._update_info, "package_type", "archive") != "installer":
+            self._set_status("この配布形態は従来の更新方法を使用します", "UPDATE")
+            return
+        self._update_busy = True
+        self._update_download_active = True
+        self._update_download_cancel = threading.Event()
+        self._update_download_bytes = 0
+        self._update_download_total = int(self._update_info.package_size or 0)
+        self._update_download_speed = 0.0
+        self._update_error = ""
+        self.updateBusyChanged.emit()
+        self.updateErrorChanged.emit()
+        self.updateDownloadProgressChanged.emit()
+        self._set_status("更新パッケージをダウンロードしています", "UPDATE")
+        threading.Thread(target=self._download_update_worker, daemon=True).start()
+
+    def _download_update_worker(self) -> None:
+        info = self._update_info
+        if info is None:
+            self.updateDownloadFinished.emit("", "更新情報がありません")
+            return
+        try:
+            expected_sha256 = update_manager.resolve_expected_sha256(info)
+            destination = update_manager.update_download_directory(self.workspace_root) / (
+                f"SubtitleEditBay-{info.latest_version.lstrip('v')}.exe"
+            )
+            package_path = update_manager.download_package(
+                info,
+                destination,
+                cancel_event=self._update_download_cancel,
+                progress_callback=lambda downloaded, total, speed: self.updateDownloadProgressEvent.emit(downloaded, total, speed),
+            )
+            self._update_package_sha256 = expected_sha256
+            self.updateDownloadFinished.emit(str(package_path), "")
+        except update_manager.UpdateDownloadCancelled as error:
+            self.updateDownloadFinished.emit("", str(error))
+        except update_manager.UpdatePackageError as error:
+            self.updateDownloadFinished.emit("", str(error))
+        except Exception as error:
+            self.updateDownloadFinished.emit("", f"更新パッケージの取得に失敗しました: {error}")
+
+    def _on_update_download_progress(self, downloaded: int, total: int, speed: float) -> None:
+        self._update_download_bytes = downloaded
+        self._update_download_total = total
+        self._update_download_speed = speed
+        self.updateDownloadProgressChanged.emit()
+
+    def _on_update_download_finished(self, package_path: str, error: str) -> None:
+        self._update_download_active = False
+        self._update_busy = False
+        if error:
+            self._update_error = error
+            self._update_package_path = None
+            self._update_package_ready = False
+            self._set_status(error, "ERROR" if "キャンセル" not in error else "CANCELLED")
+        else:
+            self._update_error = ""
+            self._update_package_path = Path(package_path)
+            self._update_package_ready = True
+            self._set_status("更新パッケージを検証しました。再起動して更新できます", "READY")
+        self.updateBusyChanged.emit()
+        self.updateErrorChanged.emit()
+        self.updateDownloadProgressChanged.emit()
+        self.updatePackageReadyChanged.emit()
+
+    @Slot()
+    def cancelUpdateDownload(self) -> None:
+        if self._update_download_active:
+            self._update_download_cancel.set()
+            self._set_status("更新パッケージのダウンロードをキャンセルしています", "UPDATE")
+
+    @Slot()
+    def applyDownloadedUpdate(self) -> None:
+        if not self._update_package_ready or not self._update_package_path or not self._update_info:
+            self._set_status("検証済みの更新パッケージがありません", "CHECK")
+            return
+        if self._running:
+            self._set_status("処理中は更新を開始できません", "BUSY")
+            return
+        if self._project_dirty:
+            self._set_status("未保存の変更があります。更新前に保存してください", "CHECK")
+            return
+        if self._project is not None and not self.saveProject():
+            self._set_status("プロジェクトを保存できませんでした", "ERROR")
+            return
+        self.saveSettings(self._settings)
+        try:
+            expected_sha256 = self._update_package_sha256 or update_manager.resolve_expected_sha256(self._update_info)
+            result_path = update_manager.update_download_directory(self.workspace_root) / "last-update-result.json"
+            command = update_manager.build_installer_helper_command(
+                self.workspace_root,
+                self._update_package_path,
+                expected_version=self._update_info.latest_version,
+                expected_sha256=expected_sha256,
+                result_path=result_path,
+            )
+            popen_kwargs: dict[str, Any] = {
+                "cwd": str(self.workspace_root),
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "start_new_session": True,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.Popen(command, **popen_kwargs)
+        except (OSError, update_manager.UpdatePackageError) as error:
+            self._set_status(f"更新helperを起動できませんでした: {error}", "ERROR")
+            return
+        self._set_status("GUIを終了して更新を適用します", "UPDATE")
+        self.quit()
 
     @Slot()
     def applyUpdate(self) -> None:
@@ -2254,6 +2422,12 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         if not self._update_info or not self._update_info.available:
             self._set_status("更新可能なバージョンがありません", "CHECK")
+            return
+        if getattr(self._update_info, "package_type", "archive") == "installer":
+            if self._update_package_ready:
+                self.applyDownloadedUpdate()
+            else:
+                self.downloadUpdate()
             return
         if self._project is not None and not self.saveProject():
             self._set_status("プロジェクトを保存できませんでした", "ERROR")

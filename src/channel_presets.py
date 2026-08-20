@@ -171,14 +171,26 @@ def _match_channels(current: Any, incoming: dict[str, Any]) -> tuple[dict[str, A
         return incoming, []
     current_channels = current.get("channels", []) if isinstance(current.get("channels", []), list) else []
     indexes = {_channel_key(item): item for item in current_channels if isinstance(item, Mapping)}
+    incoming_indexes = {
+        _channel_key(item): item
+        for item in incoming["channels"]
+        if isinstance(item, Mapping)
+    }
     warnings: list[str] = []
     matched: list[dict[str, Any]] = []
+    for channel in current_channels:
+        if not isinstance(channel, Mapping):
+            matched.append(channel)
+            continue
+        key = _channel_key(channel)
+        if key in incoming_indexes:
+            matched.append({**dict(channel), **dict(incoming_indexes[key])})
+        else:
+            matched.append(dict(channel))
     for channel in incoming["channels"]:
         key = _channel_key(channel)
         if key not in indexes:
             warnings.append(f"未一致channel: {key}")
-            continue
-        matched.append({**dict(indexes[key]), **dict(channel)})
     return {**incoming, "channels": matched}, warnings
 
 
@@ -194,6 +206,14 @@ def _preserve_manual_short_overrides(current: Any, incoming: dict[str, Any]) -> 
         for item in current["clips"]
         if isinstance(item, Mapping) and item.get("manual_override")
     }
+    incoming_ids = {str(item.get("segment_id")) for item in incoming["clips"] if isinstance(item, Mapping)}
     clips = [manual_by_id.get(str(item.get("segment_id")), item) for item in incoming["clips"]]
+    clips.extend(
+        item
+        for item in current["clips"]
+        if isinstance(item, Mapping)
+        and item.get("manual_override")
+        and str(item.get("segment_id")) not in incoming_ids
+    )
     return {**incoming, "clips": clips}
 

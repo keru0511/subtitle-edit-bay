@@ -16,8 +16,13 @@ class ChannelPresetTests(unittest.TestCase):
     def test_roundtrip_diff_partial_apply_and_secret_path_exclusion(self) -> None:
         current = {
             "subtitle": {"font_size": 50},
-            "audio": {"channels": [{"track_key": "a", "gain": 0}]},
-            "short": {"clips": [{"segment_id": "s1", "start": 0, "manual_override": True}]},
+            "audio": {"channels": [{"track_key": "a", "gain": 0}, {"track_key": "manual", "gain": 4}]},
+            "short": {
+                "clips": [
+                    {"segment_id": "s1", "start": 0, "manual_override": True},
+                    {"segment_id": "manual-only", "start": 4, "manual_override": True},
+                ]
+            },
             "export": {"video_path": "C:/private/video.mp4", "codec": "h264"},
             "api_token": "secret",
         }
@@ -33,6 +38,21 @@ class ChannelPresetTests(unittest.TestCase):
         self.assertEqual(result.settings["subtitle"]["font_size"], 70)
         self.assertTrue(result.warnings)
         self.assertNotIn("short", result.changed_categories)
+        self.assertEqual(
+            {channel["track_key"] for channel in result.settings["audio"]["channels"]},
+            {"a", "manual"},
+        )
+
+        short_preset = create_channel_preset(
+            "short-only",
+            {"short": {"clips": [{"segment_id": "s1", "start": 1}]}},
+            categories={"short"},
+        )
+        short_result = apply_channel_preset(current, short_preset)
+        self.assertEqual(
+            {clip["segment_id"] for clip in short_result.settings["short"]["clips"]},
+            {"s1", "manual-only"},
+        )
 
     def test_store_rename_delete_and_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

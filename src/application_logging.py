@@ -14,11 +14,11 @@ DEFAULT_FILE_BYTES = 5 * 1024 * 1024
 DEFAULT_RETENTION_DAYS = 14
 
 _SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
     re.compile(
-        r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization)"
+        r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
         r"(\s*[:=]\s*)([^\s,;]+)"
     ),
-    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
 )
 _WINDOWS_PATH_PATTERN = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"']+")
 _UNIX_PATH_PATTERN = re.compile(r"(?<![\w])/(?:[^\s\"']+/)+[^\s\"']+")

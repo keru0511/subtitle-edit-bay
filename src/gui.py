@@ -2426,6 +2426,16 @@ class EditBayBackend(LegacyEditBayBackend):
         self._running = False
         self.runningChanged.emit()
         completed_job = self._active_job
+        failure_detail = ""
+        if exit_code != 0 and completed_job != "update":
+            failure_detail = next(
+                (
+                    line.strip()
+                    for line in reversed(self._log.splitlines())
+                    if line.strip() and not line.lstrip().startswith(">")
+                ),
+                "",
+            )
         self._record_log(
             f"Process finished with exit code {exit_code}",
             severity="INFO" if exit_code == 0 else "ERROR",
@@ -2456,18 +2466,10 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
-            if completed_job == "update":
+        if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:
-                detail = next(
-                    (
-                        line.strip()
-                        for line in reversed(self._log.splitlines())
-                        if line.strip() and not line.lstrip().startswith(">")
-                    ),
-                    "",
-                )
-                suffix = f": {detail}" if detail else ""
+                suffix = f": {failure_detail}" if failure_detail else ""
                 self._set_status(
                     f"処理が終了しました（終了コード {exit_code}）{suffix}",
                     "ERROR",

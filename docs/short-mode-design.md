@@ -622,3 +622,26 @@ AGENTS.md により、PR タイトル・コミットメッセージは日本語�
 - テンプレートプリセット（YouTube Shorts / TikTok / Instagram Reels）
 - `short-video-generator` 向け Timeline JSON エクスポートとの連携
 - 縦長プレビューで boxblur fit のリアルタイム再現（MVP では `fillMode` で近似）
+
+## 17. 実装状態
+
+2026-08時点のユーザー向けショートモードは、既存の字幕プロジェクトからクリップを選び、9:16プレビューを確認してFFmpegで書き出すところまで実装済みです。
+
+### 実装済み
+
+- MainWorkflowScreenからShortModeScreenを開く
+- クリップの追加、削除、並べ替え、開始・終了トリミング
+- `cover`、`contain`、`blur` のfitと背景色
+- クリップ間のcut / crossfade
+- BGMのIN / OUT / START / volumeとループ
+- 縦長ASS生成、字幕リマップ、字幕スケール、話者色
+- FFmpegスクリプト入力とNVENCからlibx264へのフォールバック
+
+### 未実装・制約
+
+- 複数動画または複数字幕プロジェクトを1本のshort timelineへ混在させること
+- 字幕や音声から見どころ候補を自動抽出すること
+- SNS別テンプレート、サムネイル生成、候補の個人最適化
+- `blur` のリアルタイムプレビュー。プレビューはVideoOutputの近似で、完成動画のboxblurと完全一致しない
+
+実装状態はコードと受け入れ条件の差分を基準に更新し、未対応の項目を利用ガイドで対応済みと表記しない。

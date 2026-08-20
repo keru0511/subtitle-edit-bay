@@ -145,7 +145,7 @@ class CodexEditProposalTests(unittest.TestCase):
         merged_project = apply_edit_proposal(project, merge).project
         self.assertEqual(
             [item["word"] for item in merged_project["segments"][0]["words"]],
-            ["最初", "次"],
+            ["最初", "次", "です"],
         )
 
     def test_base_revision_and_operation_requirements_are_strict(self) -> None:

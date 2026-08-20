@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import math
 from typing import Any, Iterable, Mapping
 
 from .subtitle_project import SubtitleProjectError, normalize_segment, validate_project
@@ -102,10 +103,27 @@ class EditOperation:
             _reject_unknown(segment, SEGMENT_FIELDS, f"operations[{index}].segment")
         split_at = payload.get("split_at")
         if split_at is not None:
+            if isinstance(split_at, bool):
+                raise EditProposalError(f"operations[{index}].split_at must be a number")
             try:
                 split_at = float(split_at)
             except (TypeError, ValueError) as error:
                 raise EditProposalError(f"operations[{index}].split_at must be a number") from error
+            if not math.isfinite(split_at):
+                raise EditProposalError(f"operations[{index}].split_at must be finite")
+        if operation_type in {"update_segment", "delete_segment", "split_segment"} and not segment_id:
+            raise EditProposalError(f"operations[{index}].segment_id is required for {operation_type}")
+        if operation_type == "update_segment" and not changes:
+            raise EditProposalError(f"operations[{index}].changes is required for update_segment")
+        if operation_type == "add_segment" and segment is None:
+            raise EditProposalError(f"operations[{index}].segment is required for add_segment")
+        if operation_type == "split_segment" and split_at is None:
+            raise EditProposalError(f"operations[{index}].split_at is required for split_segment")
+        if operation_type == "merge_segments":
+            if len(raw_segment_ids) < 2 or len(set(raw_segment_ids)) != len(raw_segment_ids):
+                raise EditProposalError(
+                    f"operations[{index}].segment_ids must contain at least two unique ids"
+                )
         return cls(
             operation_id=operation_id,
             type=operation_type,
@@ -170,11 +188,8 @@ class CodexEditProposal:
         if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
             raise EditProposalError("proposal.warnings must be an array of strings")
         base_revision = payload.get("base_revision")
-        if base_revision is not None:
-            try:
-                base_revision = int(base_revision)
-            except (TypeError, ValueError) as error:
-                raise EditProposalError("proposal.base_revision must be an integer") from error
+        if base_revision is not None and type(base_revision) is not int:
+            raise EditProposalError("proposal.base_revision must be an integer")
         return cls(
             summary=str(payload.get("summary", "")),
             operations=operations,
@@ -332,6 +347,10 @@ def _apply_split(
         first["text"] = operation.first_text
     if operation.second_text is not None:
         second["text"] = operation.second_text
+    first_words, second_words = _partition_words(original.get("words"), operation.split_at)
+    if "words" in original or first_words or second_words:
+        first["words"] = first_words
+        second["words"] = second_words
     _set_manual_flags(first, {"start": first["start"], "end": first["end"], "text": first["text"]})
     _set_manual_flags(second, {"start": second["start"], "end": second["end"], "text": second["text"]})
     segments[index:index + 1] = [first, second]
@@ -354,6 +373,13 @@ def _apply_merge(
     merged["text"] = str(operation.first_text) if operation.first_text is not None else " ".join(
         str(item.get("text", "")).strip() for item in selected
     ).strip()
+    merged_words = [
+        deepcopy(word)
+        for item in selected
+        for word in (item.get("words", []) if isinstance(item.get("words", []), list) else [])
+    ]
+    if merged_words or any("words" in item for item in selected):
+        merged["words"] = sorted(merged_words, key=_word_sort_key)
     _set_manual_flags(merged, {"start": merged["start"], "end": merged["end"], "text": merged["text"]})
     for index in reversed(ordered):
         segments.pop(index)
@@ -368,6 +394,51 @@ def _find_segment_index(segments: list[dict[str, Any]], segment_id: str) -> int:
         if str(segment.get("id")) == segment_id:
             return index
     raise EditProposalError(f"segment not found: {segment_id}")
+
+
+def _partition_words(
+    words: object,
+    split_at: float,
+) -> tuple[list[Any], list[Any]]:
+    first_words: list[Any] = []
+    second_words: list[Any] = []
+    if not isinstance(words, list):
+        return first_words, second_words
+    for word in words:
+        if not isinstance(word, Mapping):
+            first_words.append(deepcopy(word))
+            continue
+        copied = deepcopy(dict(word))
+        try:
+            word_start = float(copied.get("start", split_at))
+            word_end = float(copied.get("end", word_start))
+        except (TypeError, ValueError):
+            first_words.append(copied)
+            continue
+        midpoint = (word_start + word_end) / 2.0
+        if midpoint < split_at:
+            if "end" in copied:
+                copied["end"] = min(word_end, split_at)
+            first_words.append(copied)
+        else:
+            if "start" in copied:
+                copied["start"] = max(word_start, split_at)
+            second_words.append(copied)
+    return first_words, second_words
+
+
+def _word_sort_key(word: object) -> tuple[float, float]:
+    if not isinstance(word, Mapping):
+        return (float("inf"), float("inf"))
+    try:
+        start = float(word.get("start", float("inf")))
+    except (TypeError, ValueError):
+        start = float("inf")
+    try:
+        end = float(word.get("end", start))
+    except (TypeError, ValueError):
+        end = start
+    return (start, end)
 
 
 def _set_manual_flags(segment: dict[str, Any], changes: Mapping[str, Any]) -> None:

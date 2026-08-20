@@ -110,6 +110,69 @@ class CodexEditProposalTests(unittest.TestCase):
         self.assertEqual(entry["kind"], "codex_proposal")
         self.assertEqual(entry["after"]["segments"][0]["text"], "after")
 
+    def test_split_partitions_words_and_merge_restores_sorted_words(self) -> None:
+        project = _project()
+        project["segments"][0]["words"] = [
+            {"word": "最初", "start": 0.1, "end": 0.4},
+        ]
+        project["segments"][1]["words"] = [
+            {"word": "次", "start": 1.2, "end": 1.4},
+            {"word": "です", "start": 1.6, "end": 1.9},
+        ]
+        split = CodexEditProposal.from_json(
+            {
+                "summary": "単語を分割",
+                "warnings": [],
+                "operations": [
+                    {"type": "split_segment", "segment_id": "s2", "split_at": 1.5}
+                ],
+            }
+        )
+        split_result = apply_edit_proposal(project, split)
+        split_segments = split_result.project["segments"][1:]
+        self.assertEqual([item["word"] for item in split_segments[0]["words"]], ["次"])
+        self.assertEqual([item["word"] for item in split_segments[1]["words"]], ["です"])
+
+        merge = CodexEditProposal.from_json(
+            {
+                "summary": "単語を統合",
+                "warnings": [],
+                "operations": [
+                    {"type": "merge_segments", "segment_ids": ["s1", "s2"]}
+                ],
+            }
+        )
+        merged_project = apply_edit_proposal(project, merge).project
+        self.assertEqual(
+            [item["word"] for item in merged_project["segments"][0]["words"]],
+            ["最初", "次"],
+        )
+
+    def test_base_revision_and_operation_requirements_are_strict(self) -> None:
+        for revision in (True, 1.0, "1"):
+            with self.subTest(revision=revision):
+                with self.assertRaisesRegex(EditProposalError, "base_revision"):
+                    CodexEditProposal.from_json(
+                        {
+                            "summary": "strict",
+                            "base_revision": revision,
+                            "warnings": [],
+                            "operations": [{"type": "delete_segment", "segment_id": "s1"}],
+                        }
+                    )
+        for operation in (
+            {"type": "update_segment", "segment_id": "s1"},
+            {"type": "delete_segment"},
+            {"type": "add_segment"},
+            {"type": "split_segment", "segment_id": "s1"},
+            {"type": "merge_segments", "segment_ids": ["s1"]},
+        ):
+            with self.subTest(operation=operation):
+                with self.assertRaises(EditProposalError):
+                    CodexEditProposal.from_json(
+                        {"summary": "required", "warnings": [], "operations": [operation]}
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

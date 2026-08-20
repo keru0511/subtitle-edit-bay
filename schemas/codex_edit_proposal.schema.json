@@ -60,7 +60,29 @@
           "first_text": {"type": "string"},
           "second_text": {"type": "string"},
           "reason": {"type": "string"}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"type": {"const": "update_segment"}}},
+            "then": {"required": ["segment_id", "changes"], "properties": {"changes": {"minProperties": 1}}}
+          },
+          {
+            "if": {"properties": {"type": {"const": "delete_segment"}}},
+            "then": {"required": ["segment_id"]}
+          },
+          {
+            "if": {"properties": {"type": {"const": "add_segment"}}},
+            "then": {"required": ["segment"]}
+          },
+          {
+            "if": {"properties": {"type": {"const": "split_segment"}}},
+            "then": {"required": ["segment_id", "split_at"]}
+          },
+          {
+            "if": {"properties": {"type": {"const": "merge_segments"}}},
+            "then": {"required": ["segment_ids"], "properties": {"segment_ids": {"minItems": 2, "uniqueItems": true}}}
+          }
+        ]
       }
     }
   }

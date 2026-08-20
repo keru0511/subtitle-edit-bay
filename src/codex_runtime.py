@@ -9,6 +9,30 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 
+CODEX_MIN_VERSION = (0, 1, 0)
+CODEX_MAX_VERSION = (1, 0, 0)
+_CODEX_VERSION_PATTERN = re.compile(
+    r"(?i)\bcodex(?:[-_ ]cli)?\b[^0-9]*v?(\d+)\.(\d+)(?:\.(\d+))?"
+)
+_CODEX_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
+    re.compile(
+        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
+        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;&}\]]+)"
+    ),
+)
+_CODEX_WINDOWS_PATH_PATTERN = re.compile(
+    r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
+)
+_CODEX_WINDOWS_PATH_TOKEN_PATTERN = re.compile(
+    r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"']+"
+)
+_CODEX_UNIX_PATH_PATTERN = re.compile(
+    r"(?<![\w])/(?:[^\r\n\"'<>|?*]+/)*[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
+)
+_CODEX_UNIX_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])/(?:[^\s\"']+/)+[^\s\"']+")
+
+
 @dataclass(frozen=True)
 class CodexRuntimeInfo:
     available: bool
@@ -75,11 +99,13 @@ def detect_codex(
         except (OSError, subprocess.TimeoutExpired) as error:
             continue
         version = (completed.stdout or completed.stderr or "").strip().splitlines()
-        if completed.returncode == 0:
+        version_line = version[0] if version else ""
+        parsed_version = _parse_codex_version(version_line)
+        if completed.returncode == 0 and parsed_version is not None and _is_supported_codex_version(parsed_version):
             return CodexRuntimeInfo(
                 available=True,
                 executable=candidate,
-                version=version[0] if version else "unknown",
+                version=version_line,
                 distribution=classify_distribution(root),
             )
     return CodexRuntimeInfo(
@@ -91,14 +117,24 @@ def detect_codex(
 
 def redact_codex_diagnostic(value: object) -> str:
     text = str(value)
-    text = re.sub(
-        r"(?i)(api[_-]?key|token|password|secret|authorization)(\s*[:=]\s*)([^\s,;]+)",
-        r"\1\2[REDACTED]",
-        text,
-    )
-    text = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
-    text = re.sub(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"']+", "<local-path>", text)
+    for pattern in _CODEX_SECRET_PATTERNS:
+        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
+    text = _CODEX_WINDOWS_PATH_PATTERN.sub("<local-path>", text)
+    text = _CODEX_WINDOWS_PATH_TOKEN_PATTERN.sub("<local-path>", text)
+    text = _CODEX_UNIX_PATH_PATTERN.sub("<local-path>", text)
+    text = _CODEX_UNIX_PATH_TOKEN_PATTERN.sub("<local-path>", text)
     return text
+
+
+def _parse_codex_version(value: str) -> tuple[int, int, int] | None:
+    match = _CODEX_VERSION_PATTERN.search(value)
+    if match is None:
+        return None
+    return tuple(int(group or 0) for group in match.groups())  # type: ignore[return-value]
+
+
+def _is_supported_codex_version(version: tuple[int, int, int]) -> bool:
+    return CODEX_MIN_VERSION <= version < CODEX_MAX_VERSION
 
 
 def build_codex_diagnostic(info: CodexRuntimeInfo) -> dict[str, str | bool]:

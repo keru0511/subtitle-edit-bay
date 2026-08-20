@@ -16,6 +16,8 @@ Codex CLIを導入した環境では、アプリ起動後に次の優先順位�
 
 検出後は `codex app-server --listen stdio://` をローカル子processとして起動します。MVPはstdioだけを使用し、待受ポートやWebSocket接続を開きません。対応バージョン、未導入、未認証、接続失敗はGUIで区別して表示します。
 
+対応バージョンは `0.1.0 <= version < 1.0.0` です。`--version` が成功しても、出力にCodexの識別子がなく、semverを解析できず、またはこの範囲外の場合は採用しません。
+
 Installer版、ZIP版、Git checkout版は診断情報で区別されます。Codexが未導入でも通常の手動字幕編集は利用できます。
 
 ## 使い方

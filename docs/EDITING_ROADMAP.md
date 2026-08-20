@@ -72,18 +72,25 @@ Codexは編集を直接確定せず、対象範囲、変更理由、期待する
 - 字幕レビュー、辞書、一括編集、音声、キュー、プリセット、書き出しのCIが成功している
 - SRT/VTT/CSVとタイムラインJSONのround-trip fixtureが壊れていない
 - 既存プロジェクトの読み込みと、明示的な上書き確認が固定されている
+- 判定対象はCIの `windows-tests` と `ffmpeg6-compat`。対象テストは `test_subtitle_*`、`test_transcription_*`、`test_audio_*`、`test_processing_queue.py`、`test_channel_presets.py`、`test_subtitle_export.py` とし、変更PRでは該当テスト名を説明に記載する
+- 必須fixture/artifactは、既存プロジェクトJSON、字幕のSRT/VTT/CSV、タイムラインJSON、処理キューJSON、および各fixtureから再生成した出力のfingerprint。CIログにround-trip結果と上書きキャンセル結果を残し、差分があればゲートを失敗させる
 
 ### Gate B: 支援機能
 
 - Codex連携とハイライト候補が、機能無効・タイムアウト・キャンセル時も編集を壊さない
 - 外部へ送るデータ範囲とログの秘匿方針がテストと文書に反映されている
 - 候補の採用、却下、修正がユーザー操作で完結し、理由を追跡できる
+- 判定対象は `windows-tests` のCodex・ハイライト関連テスト。固定fixtureは字幕本文、候補ID、ランキング応答、フィードバックJSON、キャンセル/タイムアウト結果とし、ログartifactには本文・絶対パス・認証情報が含まれないことを確認する
+- 外部Codexを使うテストは実サービスを呼ばず、固定RPC応答または機能無効経路を使用する。機能無効、承認拒否、タイムアウト、キャンセルの各結果をCIログに残し、編集データのrevisionが変わらないことをartifactとして保存する
 
 ### Gate C: 配布と復旧
 
 - 投稿パッケージ、スナップショット、複数素材のfixtureが成功している
 - Windowsのクリーン環境で起動、更新、更新失敗からの復旧を確認できる
 - 更新前後のバージョン、checksum、ログ、ロールバック結果を追跡できる
+- 判定対象は `release.yml` の `test`、`build`、`publish` と `ci.yml` の `windows-installer-smoke`。配布artifactは `SubtitleEditBay-Setup.exe` と同名の `.sha256`、検証fixtureは投稿パッケージJSON、スナップショット、複数素材プロジェクトとする
+- ロールバックは「エラーを記録した」だけでは合格にしない。旧版のインストーラーまたは旧版ディレクトリの完全なsnapshotを更新開始前に保持し、更新途中の失敗を注入した後に、旧版の `VERSION`、主要ファイル、checksumが実際に復元され、旧版アプリが起動することを `windows-installer-smoke` または同等のWindows固定テストで確認する
+- 更新前後のバージョン、入力/出力checksum、snapshotの場所、復元結果を1つのCIログartifactにまとめ、復元できなかった場合はGate Cを失敗させる
 
 ## 計測
 

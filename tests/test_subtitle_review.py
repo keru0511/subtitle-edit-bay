@@ -20,7 +20,11 @@ class SubtitleReviewTests(unittest.TestCase):
         self.assertTrue(all(item.reasons and item.severity in {"high", "medium", "low"} for item in issues))
 
     def test_queue_state_and_stale_detection_are_separate_from_generation(self) -> None:
-        issue = generate_review_queue(self.segments, project_revision=1)[0]
+        issue = next(
+            item
+            for item in generate_review_queue(self.segments, project_revision=1)
+            if item.segment_ids == ("s1",)
+        )
         queue = SubtitleReviewQueue([issue])
         queue.update_status(issue.issue_id, "ignored")
         stale = queue.mark_stale([{**self.segments[0], "text": "修正後"}, self.segments[1]])

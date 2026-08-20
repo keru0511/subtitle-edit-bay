@@ -61,7 +61,7 @@ class ShortVideoSchemaTests(unittest.TestCase):
         self.assertIsNone(restored.clips[0].fit)
         self.assertIsNone(restored.clips[0].background_color)
 
-    def test_legacy_default_clip_values_are_migrated_to_inheritance(self) -> None:
+    def test_legacy_clip_values_preserve_existing_rendering_by_default(self) -> None:
         legacy_payload = {
             "enabled": True,
             "global_fit": "contain",
@@ -79,9 +79,32 @@ class ShortVideoSchemaTests(unittest.TestCase):
 
         short_video = ShortVideo.from_json(legacy_payload)
 
+        self.assertEqual(short_video.clips[0].fit, "cover")
+        self.assertEqual(short_video.clips[0].background_color, "000000")
+        self.assertEqual(short_video.to_json()["schema_version"], 2)
+
+    def test_legacy_inheritance_migration_requires_explicit_opt_in(self) -> None:
+        legacy_payload = {
+            "global_fit": "contain",
+            "global_background_color": "FF0000",
+            "clips": [
+                {
+                    "segment_id": "legacy",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "fit": "cover",
+                    "background_color": "000000",
+                }
+            ],
+        }
+
+        short_video = ShortVideo.from_json(
+            legacy_payload,
+            migrate_legacy_defaults=True,
+        )
+
         self.assertIsNone(short_video.clips[0].fit)
         self.assertIsNone(short_video.clips[0].background_color)
-        self.assertEqual(short_video.to_json()["schema_version"], 2)
 
     def test_schema_version_two_preserves_explicit_default_overrides(self) -> None:
         short_video = ShortVideo.from_json(

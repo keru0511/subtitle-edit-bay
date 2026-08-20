@@ -173,7 +173,20 @@ class ShortVideo:
     clips: list[ShortVideoClip] = field(default_factory=list)
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideo":
+    def from_json(
+        cls,
+        payload: dict[str, Any] | None,
+        *,
+        migrate_legacy_defaults: bool = False,
+    ) -> "ShortVideo":
+        """Load a project without guessing legacy override intent.
+
+        Legacy serializers wrote the default ``cover``/``000000`` values to
+        every clip, so those values cannot distinguish inheritance from an
+        intentional override. The safe default is to preserve the legacy
+        rendering. A caller that has shown an explicit migration confirmation
+        may opt into converting those legacy values to inherited fields.
+        """
         if payload is None:
             return cls()
         if not isinstance(payload, dict):
@@ -206,10 +219,9 @@ class ShortVideo:
             if isinstance(raw_clip, dict):
                 clip_payload = raw_clip
                 # The pre-schema-version serializer wrote default values for every
-                # clip, so those values represented inheritance rather than an
-                # explicit override. New serializers include schema_version=2 and
-                # therefore preserve an explicit default override.
-                if schema_version < SHORT_VIDEO_SCHEMA_VERSION:
+                # clip. Their meaning is ambiguous, so preserve them unless a
+                # caller explicitly opted into the lossy inheritance migration.
+                if schema_version < SHORT_VIDEO_SCHEMA_VERSION and migrate_legacy_defaults:
                     clip_payload = dict(raw_clip)
                     if clip_payload.get("fit") == "cover":
                         clip_payload.pop("fit", None)

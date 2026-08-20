@@ -61,6 +61,49 @@ class ShortVideoSchemaTests(unittest.TestCase):
         self.assertIsNone(restored.clips[0].fit)
         self.assertIsNone(restored.clips[0].background_color)
 
+    def test_legacy_default_clip_values_are_migrated_to_inheritance(self) -> None:
+        legacy_payload = {
+            "enabled": True,
+            "global_fit": "contain",
+            "global_background_color": "FF0000",
+            "clips": [
+                {
+                    "segment_id": "legacy",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "fit": "cover",
+                    "background_color": "000000",
+                }
+            ],
+        }
+
+        short_video = ShortVideo.from_json(legacy_payload)
+
+        self.assertIsNone(short_video.clips[0].fit)
+        self.assertIsNone(short_video.clips[0].background_color)
+        self.assertEqual(short_video.to_json()["schema_version"], 2)
+
+    def test_schema_version_two_preserves_explicit_default_overrides(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "schema_version": 2,
+                "global_fit": "contain",
+                "global_background_color": "FF0000",
+                "clips": [
+                    {
+                        "segment_id": "explicit",
+                        "start": 0.0,
+                        "end": 1.0,
+                        "fit": "cover",
+                        "background_color": "000000",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(short_video.clips[0].fit, "cover")
+        self.assertEqual(short_video.clips[0].background_color, "000000")
+
     def test_bgm_uses_in_out_keys(self) -> None:
         bgm = ShortVideoBgm.from_json({"in": 10.0, "out": 20.0, "volume": 0.8})
         self.assertAlmostEqual(bgm.in_point, 10.0)

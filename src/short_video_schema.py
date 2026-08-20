@@ -7,6 +7,7 @@ from typing import Any
 DEFAULT_SHORT_WIDTH = 1080
 DEFAULT_SHORT_HEIGHT = 1920
 DEFAULT_SHORT_FPS = 30
+SHORT_VIDEO_SCHEMA_VERSION = 2
 VALID_FIT_MODES = ("cover", "contain", "blur")
 VALID_TRANSITION_TYPES = ("crossfade", "fade", "cut")
 
@@ -178,6 +179,14 @@ class ShortVideo:
         if not isinstance(payload, dict):
             raise ShortVideoError("short_video must be an object")
         enabled = bool(payload.get("enabled", False))
+        try:
+            schema_version = int(payload.get("schema_version", 1))
+        except (TypeError, ValueError) as error:
+            raise ShortVideoError("short_video.schema_version must be an integer") from error
+        if schema_version > SHORT_VIDEO_SCHEMA_VERSION:
+            raise ShortVideoError(
+                f"unsupported short_video schema_version: {payload.get('schema_version')!r}"
+            )
         output = ShortVideoOutput.from_json(payload.get("output"))
         global_fit = str(payload.get("global_fit", "cover")).lower()
         if global_fit not in VALID_FIT_MODES:
@@ -195,7 +204,18 @@ class ShortVideo:
         clips = []
         for index, raw_clip in enumerate(payload.get("clips", [])):
             if isinstance(raw_clip, dict):
-                clips.append(ShortVideoClip.from_json(raw_clip))
+                clip_payload = raw_clip
+                # The pre-schema-version serializer wrote default values for every
+                # clip, so those values represented inheritance rather than an
+                # explicit override. New serializers include schema_version=2 and
+                # therefore preserve an explicit default override.
+                if schema_version < SHORT_VIDEO_SCHEMA_VERSION:
+                    clip_payload = dict(raw_clip)
+                    if clip_payload.get("fit") == "cover":
+                        clip_payload.pop("fit", None)
+                    if clip_payload.get("background_color", "").lower() == "000000":
+                        clip_payload.pop("background_color", None)
+                clips.append(ShortVideoClip.from_json(clip_payload))
             else:
                 raise ShortVideoError(f"short_video.clips[{index}] must be an object")
         return cls(
@@ -211,6 +231,7 @@ class ShortVideo:
 
     def to_json(self) -> dict[str, Any]:
         return {
+            "schema_version": SHORT_VIDEO_SCHEMA_VERSION,
             "enabled": self.enabled,
             "output": self.output.to_json(),
             "global_fit": self.global_fit,

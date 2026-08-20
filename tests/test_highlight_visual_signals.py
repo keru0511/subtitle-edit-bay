@@ -56,6 +56,43 @@ class HighlightVisualSignalTests(unittest.TestCase):
         self.assertEqual(result.signals[0], VisualSignal(12.0, 0.8))
         self.assertEqual(progress, [1.0])
 
+    def test_cancel_and_global_budget_fallback_to_empty_signals(self) -> None:
+        cancelled = extract_visual_signals(
+            "video.mkv",
+            [(0, 2)],
+            settings=VisualSignalSettings(enabled=True),
+            runner=lambda *args, **kwargs: subprocess.CompletedProcess(
+                args[0], 0, stdout="", stderr="pts_time:1.0 lavfi.scene_score=0.9"
+            ),
+            cancel_check=lambda: True,
+        )
+        self.assertTrue(cancelled.fallback)
+        self.assertEqual(cancelled.signals, ())
+
+        exhausted = extract_visual_signals(
+            "video.mkv",
+            [(0, 2)],
+            settings=VisualSignalSettings(enabled=True, max_runtime_seconds=0.0),
+            runner=lambda *args, **kwargs: None,
+        )
+        self.assertTrue(exhausted.fallback)
+        self.assertEqual(exhausted.signals, ())
+
+        timeouts = []
+
+        def budget_runner(command, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        budgeted = extract_visual_signals(
+            "video.mkv",
+            [(0, 2), (2, 4)],
+            settings=VisualSignalSettings(enabled=True, timeout_seconds=20.0, max_runtime_seconds=1.0),
+            runner=budget_runner,
+        )
+        self.assertLessEqual(timeouts[0], 1.0)
+        self.assertFalse(budgeted.fallback)  # both fake windows completed within the budget
+
     def test_failure_cancels_to_baseline_and_visual_weight_is_bounded(self) -> None:
         result = extract_visual_signals(
             "video.mkv",

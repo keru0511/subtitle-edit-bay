@@ -111,14 +111,17 @@ def extract_visual_signals(
     try:
         for index, (start, end) in enumerate(selected_windows):
             if cancel_check and cancel_check():
-                return VisualSignalResult(tuple(signals), fallback=True, error="cancelled", elapsed_seconds=time.monotonic() - started)
-            if time.monotonic() - started >= settings.max_runtime_seconds:
-                return VisualSignalResult(tuple(signals), fallback=True, error="visual signal budget exceeded", elapsed_seconds=time.monotonic() - started)
+                return VisualSignalResult((), fallback=True, error="cancelled", elapsed_seconds=time.monotonic() - started)
+            elapsed = time.monotonic() - started
+            remaining = settings.max_runtime_seconds - elapsed
+            if remaining <= 0.0:
+                return VisualSignalResult((), fallback=True, error="visual signal budget exceeded", elapsed_seconds=elapsed)
+            window_timeout = max(0.01, min(float(settings.timeout_seconds), remaining))
             completed = runner(
                 build_scene_change_command(video_path, start=start, end=end, settings=settings),
                 capture_output=True,
                 text=True,
-                timeout=max(0.1, settings.timeout_seconds),
+                timeout=window_timeout,
                 check=False,
                 shell=False,
             )

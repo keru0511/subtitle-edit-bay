@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from src.short_video_ass import build_short_video_ass, remap_short_video_segments
+from src.short_video import filter_complex_script_option
 from src.short_video_schema import (
     ShortVideo,
     ShortVideoClip,
@@ -20,6 +21,20 @@ from src.subtitle_workflow import render_project_short_video
 
 
 class ShortVideoTimelineTests(unittest.TestCase):
+    def test_filter_script_option_supports_ffmpeg_6_through_9(self) -> None:
+        self.assertEqual(
+            filter_complex_script_option("ffmpeg version 6.0-full_build"),
+            "-filter_complex_script",
+        )
+        self.assertEqual(
+            filter_complex_script_option("ffmpeg version 7.1.3-full_build"),
+            "-/filter_complex",
+        )
+        self.assertEqual(
+            filter_complex_script_option("ffmpeg version 9.0.1-essentials_build"),
+            "-/filter_complex",
+        )
+
     def test_crossfade_timeline_is_shared_with_subtitle_remapping(self) -> None:
         short_video = ShortVideo(
             enabled=True,

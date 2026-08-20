@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,34 @@ DEFAULT_XFADE_TRANSITION = "fade"
 DEFAULT_ACROSSFADE_CURVE = "tri"
 DEFAULT_BOXBLUR_RADIUS = 40
 DEFAULT_FILTER_SCRIPT_THRESHOLD = 8192
+LEGACY_FILTER_SCRIPT_OPTION = "-filter_complex_script"
+MODERN_FILTER_SCRIPT_OPTION = "-/filter_complex"
+
+
+def filter_complex_script_option(version_output: str) -> str:
+    first_line = version_output.splitlines()[0] if version_output.splitlines() else ""
+    tokens = first_line.split()
+    try:
+        version_index = tokens.index("version")
+        major_text = tokens[version_index + 1].lstrip("nN").split(".", 1)[0]
+        major_version = int(major_text)
+    except (ValueError, IndexError):
+        return LEGACY_FILTER_SCRIPT_OPTION
+    return MODERN_FILTER_SCRIPT_OPTION if major_version >= 7 else LEGACY_FILTER_SCRIPT_OPTION
+
+
+@lru_cache(maxsize=1)
+def _detected_filter_complex_script_option() -> str:
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return LEGACY_FILTER_SCRIPT_OPTION
+    return filter_complex_script_option(result.stdout or result.stderr)
 
 
 def _log_progress(message: str) -> None:
@@ -279,10 +308,11 @@ def build_short_video_command(
     nvenc_cq: int = DEFAULT_NVENC_CQ,
     x264_crf: int = DEFAULT_X264_CRF,
     filter_script_path: str | None = None,
+    filter_script_option: str = LEGACY_FILTER_SCRIPT_OPTION,
 ) -> list[str]:
     """Build the full FFmpeg command for the short video render."""
     if filter_script_path:
-        filter_option = "-filter_complex_script"
+        filter_option = filter_script_option
         filter_value = filter_script_path
     else:
         filter_option = "-filter_complex"
@@ -399,6 +429,11 @@ def render_short_video(
 
     use_filter_script = os.name == "nt" or len(filter_complex) > DEFAULT_FILTER_SCRIPT_THRESHOLD
     filter_script: Path | None = None
+    filter_script_option = (
+        _detected_filter_complex_script_option()
+        if use_filter_script
+        else LEGACY_FILTER_SCRIPT_OPTION
+    )
 
     def progress(message: str) -> None:
         if progress_callback is not None:
@@ -428,6 +463,7 @@ def render_short_video(
                 nvenc_cq=nvenc_cq,
                 x264_crf=x264_crf,
                 filter_script_path=str(filter_script) if filter_script else None,
+                filter_script_option=filter_script_option,
             )
 
         result = run_atomic_ffmpeg_export(

@@ -2499,6 +2499,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         export_button = self._quick_item(window, "shortModeExportButton")
         self.assertTrue(export_button.property("enabled"))
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
         self._click(window, export_button)
 
         for _ in range(600):

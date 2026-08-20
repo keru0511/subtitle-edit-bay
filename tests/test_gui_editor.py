@@ -1908,6 +1908,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
             capture_output=True,
         )
 
+    def _generate_short_mode_test_video(self, path: Path) -> None:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=black:size=320x180:rate=15:duration=3",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3",
+                "-shortest", "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", str(path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
     def _generate_black_test_video_with_audio(self, video: Path, audio: Path) -> None:
         subprocess.run(
             [
@@ -2428,6 +2441,100 @@ class GuiEditorRegressionTests(unittest.TestCase):
         back_button = self._quick_item(window, "shortModeBackButton")
         self._click(window, back_button)
         self.assertFalse(short_page.property("visible"))
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    @unittest.skipIf(
+        os.name == "nt"
+        and (not sys.executable.isascii() or not str(Path.cwd()).isascii()),
+        "Qt QProcess cannot launch from this non-ASCII Python or workspace path",
+    )
+    def test_short_mode_gui_export_e2e_renders_vertical_video_audio_and_subtitles(self) -> None:
+        project_path = self._load_project(
+            segments=[
+                {
+                    "id": "short-first",
+                    "start": 0.2,
+                    "end": 1.0,
+                    "text": "FIRST SHORT",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                },
+                {
+                    "id": "short-second",
+                    "start": 1.5,
+                    "end": 2.3,
+                    "text": "SECOND SHORT",
+                    "speaker": "Speaker_Bob",
+                    "words": [],
+                },
+            ]
+        )
+        self.assertIsNotNone(self.app._project)
+        project = self.app._project
+        assert project is not None
+        video = Path(str(project["video"]["path"]))
+        self._generate_short_mode_test_video(video)
+        project["video"]["duration_seconds"] = 3.0
+        project["short_video"] = {
+            "enabled": True,
+            "output": {"width": 180, "height": 320, "fps": 15},
+            "global_fit": "contain",
+            "global_background_color": "000000",
+            "subtitle_scale_percent": 100,
+            "transition": {"type": "cut", "duration": 0.0},
+            "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
+            "clips": [
+                {"segment_id": "short-first", "start": 0.2, "end": 1.0, "fit": "contain"},
+                {"segment_id": "short-second", "start": 1.5, "end": 2.3, "fit": "contain"},
+            ],
+        }
+        self.app._mark_project_dirty()
+        self.app.shortVideoChanged.emit()
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self.app.processEvents()
+        export_button = self._quick_item(window, "shortModeExportButton")
+        self.assertTrue(export_button.property("enabled"))
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+        self._click(window, export_button)
+
+        for _ in range(600):
+            self.app.processEvents()
+            QTest.qWait(50)
+            if not self.app.running and self.app.stage in {"COMPLETE", "ERROR"}:
+                break
+        self.assertEqual(self.app.stage, "COMPLETE", self.app._log)
+
+        saved_project = load_project(project_path)
+        output = Path(saved_project["render_settings"]["short_last_output"])
+        self.assertTrue(output.is_file())
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries",
+                "format=duration:stream=codec_type,width,height,pix_fmt",
+                "-of", "json", str(output),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        media = json.loads(probe.stdout)
+        video_stream = next(item for item in media["streams"] if item["codec_type"] == "video")
+        self.assertEqual((video_stream["width"], video_stream["height"]), (180, 320))
+        self.assertEqual(video_stream["pix_fmt"], "yuv420p")
+        self.assertTrue(any(item["codec_type"] == "audio" for item in media["streams"]))
+        self.assertAlmostEqual(float(media["format"]["duration"]), 1.6, delta=0.25)
+
+        first_subtitle_frame = self._extract_gray_frame(output, 0.4)
+        second_subtitle_frame = self._extract_gray_frame(output, 1.2)
+        self.assertTrue(first_subtitle_frame)
+        self.assertTrue(second_subtitle_frame)
+        self.assertGreater(max(first_subtitle_frame), 100)
+        self.assertGreater(max(second_subtitle_frame), 100)
 
 
     def test_transcribe_without_existing_project_starts_transcription(self) -> None:

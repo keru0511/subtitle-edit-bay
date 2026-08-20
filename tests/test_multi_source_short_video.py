@@ -53,11 +53,20 @@ class MultiSourceShortVideoTests(unittest.TestCase):
         self.assertEqual(project["sources"][1]["source_id"], second_id)
         plan = normalization_plan(project, target_fps=30, target_width=1280, target_height=720)
         self.assertTrue(all(item["target_size"] == [1280, 720] for item in plan["sources"]))
+        self.assertTrue(all("aresample" not in ",".join(item["video_filters"]) for item in plan["sources"]))
+        self.assertTrue(all("aresample=48000" in item["audio_filters"] for item in plan["sources"]))
         project = add_clip(project, first_id, 0, 4, timeline_start=0, timeline_end=4)
         script = build_concat_filter_script(project, output_path="C:/出力/short.mp4")
         self.assertIn("INPUT 0", script)
         self.assertIn("INPUT 1", script)
         self.assertIn("format=yuv420p", script)
+
+    def test_normalization_rejects_non_finite_or_invalid_dimensions(self):
+        project = ensure_multi_source_project(_single_project())
+        with self.assertRaises(MultiSourceError):
+            normalization_plan(project, target_fps=float("nan"))
+        with self.assertRaises(MultiSourceError):
+            normalization_plan(project, target_width=0)
 
     def test_candidates_preserve_source_diversity_and_speaker_styles_are_scoped(self):
         candidates = merge_source_candidates(

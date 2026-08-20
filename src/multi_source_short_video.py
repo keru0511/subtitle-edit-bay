@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -22,9 +23,18 @@ def _number(value: Any, field: str, *, positive: bool = False) -> float:
         result = float(value)
     except (TypeError, ValueError) as exc:
         raise MultiSourceError(f"{field} must be numeric") from exc
-    if result < 0 or (positive and result == 0):
+    if not math.isfinite(result):
+        raise MultiSourceError(f"{field} must be finite")
+    if result < 0 or (positive and result <= 0):
         raise MultiSourceError(f"{field} must be {'positive' if positive else 'non-negative'}")
     return result
+
+
+def _positive_int(value: Any, field: str) -> int:
+    number = _number(value, field, positive=True)
+    if not number.is_integer():
+        raise MultiSourceError(f"{field} must be an integer")
+    return int(number)
 
 
 def _identity(path: str, metadata: Mapping[str, Any]) -> str:
@@ -185,15 +195,44 @@ def normalization_plan(
 ) -> dict[str, Any]:
     result = ensure_multi_source_project(project)
     sources = result["sources"]
-    target_fps = target_fps or max(float(source.get("fps", 30)) for source in sources)
-    target_width = target_width or max(int(source.get("width", 1920)) for source in sources)
-    target_height = target_height or max(int(source.get("height", 1080)) for source in sources)
+    target_fps = (
+        max(_number(source.get("fps") if source.get("fps") is not None else 30, "source fps", positive=True) for source in sources)
+        if target_fps is None
+        else _number(target_fps, "target_fps", positive=True)
+    )
+    target_width = (
+        max(_positive_int(source.get("width") if source.get("width") is not None else 1920, "source width") for source in sources)
+        if target_width is None
+        else _positive_int(target_width, "target_width")
+    )
+    target_height = (
+        max(_positive_int(source.get("height") if source.get("height") is not None else 1080, "source height") for source in sources)
+        if target_height is None
+        else _positive_int(target_height, "target_height")
+    )
     plan = []
     for source in sources:
-        filters = [f"fps={target_fps:g}", f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease", "setsar=1", "format=yuv420p"]
-        if source.get("audio_sample_rate", 48000) != 48000:
-            filters.append("aresample=48000")
-        plan.append({"source_id": source["source_id"], "filters": filters, "target_fps": target_fps, "target_size": [target_width, target_height]})
+        video_filters = [
+            f"fps={target_fps:g}",
+            f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease",
+            "setsar=1",
+            "format=yuv420p",
+        ]
+        _positive_int(
+            source.get("audio_sample_rate") if source.get("audio_sample_rate") is not None else 48000,
+            "audio_sample_rate",
+        )
+        audio_filters = ["aresample=48000"]
+        plan.append(
+            {
+                "source_id": source["source_id"],
+                "filters": video_filters,
+                "video_filters": video_filters,
+                "audio_filters": audio_filters,
+                "target_fps": target_fps,
+                "target_size": [target_width, target_height],
+            }
+        )
     return {"fps": target_fps, "width": target_width, "height": target_height, "audio_sample_rate": 48000, "sources": plan}
 
 
@@ -233,10 +272,10 @@ def build_concat_filter_script(project: Mapping[str, Any], *, output_path: str |
         path = source.get("path", "")
         if not path:
             raise MultiSourceError(f"source path is empty: {source['source_id']}")
-        filters = next(item["filters"] for item in plan["sources"] if item["source_id"] == source["source_id"])
+        source_plan = next(item for item in plan["sources"] if item["source_id"] == source["source_id"])
         lines.append(f"INPUT {index}: {path}")
-        lines.append(f"[in{index}:v]{','.join(filters)}[v{index}]")
-        lines.append(f"[in{index}:a]aresample={plan['audio_sample_rate']}[a{index}]")
+        lines.append(f"[in{index}:v]{','.join(source_plan['video_filters'])}[v{index}]")
+        lines.append(f"[in{index}:a]{','.join(source_plan['audio_filters'])}[a{index}]")
     for index, clip in enumerate(result.get("clips", [])):
         if not isinstance(clip, Mapping) or clip.get("source_id") not in sources:
             raise MultiSourceError("clip references an unknown source")

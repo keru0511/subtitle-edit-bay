@@ -55,7 +55,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     STARTUPINFOW startup = {0};
     PROCESS_INFORMATION process = {0};
     startup.cb = sizeof(startup);
-    if (!CreateProcessW(NULL, command, NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT, NULL, module_path, &startup, &process)) {
+    startup.dwFlags |= STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_HIDE;
+    if (!CreateProcessW(
+            NULL,
+            command,
+            NULL,
+            NULL,
+            FALSE,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+            NULL,
+            module_path,
+            &startup,
+            &process)) {
         show_error(L"起動スクリプトを実行できませんでした。初回セットアップを確認してください。");
         return (int)GetLastError();
     }

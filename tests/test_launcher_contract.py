@@ -12,6 +12,9 @@ def test_native_launcher_resolves_module_directory_and_hides_console():
     assert "GetCurrentDirectory" not in source
     assert "scripts\\launch.ps1" in source
     assert "CreateProcessW" in source
+    assert "CREATE_NO_WINDOW" in source
+    assert "STARTF_USESHOWWINDOW" in source
+    assert "SW_HIDE" in source
     assert "/SUBSYSTEM:WINDOWS" in (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8")
 
 

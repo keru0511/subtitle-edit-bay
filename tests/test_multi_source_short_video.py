@@ -68,6 +68,26 @@ class MultiSourceShortVideoTests(unittest.TestCase):
         with self.assertRaises(MultiSourceError):
             normalization_plan(project, target_width=0)
 
+    def test_normalization_pads_mixed_aspect_ratios_to_common_size(self):
+        project = ensure_multi_source_project(
+            {
+                "sources": [
+                    {"path": "wide.mkv", "width": 1920, "height": 1080},
+                    {"path": "four-by-three.mkv", "width": 1440, "height": 1080},
+                ]
+            }
+        )
+
+        plan = normalization_plan(project, target_width=1920, target_height=1080)
+        for source_plan in plan["sources"]:
+            video_filters = ",".join(source_plan["video_filters"])
+            self.assertIn("scale=1920:1080:force_original_aspect_ratio=decrease", video_filters)
+            self.assertIn("pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black", video_filters)
+            self.assertNotIn("aresample", video_filters)
+
+        script = build_concat_filter_script(project)
+        self.assertEqual(script.count("pad=1920:1080"), 2)
+
     def test_candidates_preserve_source_diversity_and_speaker_styles_are_scoped(self):
         candidates = merge_source_candidates(
             [

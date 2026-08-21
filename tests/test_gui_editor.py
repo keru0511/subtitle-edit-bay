@@ -1555,6 +1555,34 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
         self.assertFalse(window.property("settingsExpanded"))
 
+    def test_qml_workflow_layout_fits_supported_window_sizes(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        stepper = self._quick_item(window, "workflowStepper")
+        action_bar = self._quick_item(window, "contextActionBar")
+        video_panel = self._quick_item(window, "mainVideoPanel")
+        log_panel = self._quick_item(window, "applicationLogPanel")
+        central_column = stepper.parentItem()
+
+        for width, height in ((1220, 760), (1520, 940)):
+            window.resize(width, height)
+            self.app.processEvents()
+
+            self.assertGreaterEqual(window.width(), width)
+            self.assertGreaterEqual(window.height(), height)
+            for item in (stepper, action_bar, video_panel, log_panel):
+                self.assertGreater(item.width(), 0)
+                self.assertGreater(item.height(), 0)
+                self.assertGreaterEqual(item.x(), -1)
+                self.assertLessEqual(item.x() + item.width(), central_column.width() + 1)
+                self.assertGreaterEqual(item.y(), -1)
+                self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
+
+            self.assertLessEqual(stepper.y() + stepper.height(), action_bar.y() + 1)
+            self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
+            self.assertGreaterEqual(video_panel.height(), 300)
+            self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
         self.app._settings.update(
             {

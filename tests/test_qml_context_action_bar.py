@@ -44,6 +44,8 @@ class ContextActionBarQmlTests(unittest.TestCase):
         self.assertIn("visible: actionBar.projectLoaded", action_bar)
         self.assertIn('actionBar.activeJob === "transcribe"', action_bar)
         self.assertIn('actionBar.activeJob === "render"', action_bar)
+        self.assertIn('implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 148 : 116', action_bar)
+        self.assertIn("Layout.preferredHeight: 28", action_bar)
         self.assertIn("transcriptionBlockReason()", workflow)
         self.assertIn("onSaveOrStopRequested", workflow)
 
@@ -61,6 +63,7 @@ class ContextActionBarQmlTests(unittest.TestCase):
         self.assertIn("height: 940", workflow)
         self.assertIn("minimumWidth: 1220", workflow)
         self.assertIn("minimumHeight: 760", workflow)
+        self.assertIn('objectName: "mainVideoPanel"', workflow)
 
 
 if __name__ == "__main__":

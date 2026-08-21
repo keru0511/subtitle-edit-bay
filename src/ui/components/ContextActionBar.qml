@@ -24,16 +24,18 @@ Rectangle {
     signal saveOrStopRequested()
     signal outputFolderRequested()
 
-    implicitHeight: 178
-    Layout.minimumHeight: 178
+    // The project state shows two action rows; keep the bar compact enough for
+    // the supported 1220x760 window while leaving the initial state shorter.
+    implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 148 : 116
+    Layout.minimumHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 148 : 116
     radius: 12
     color: "#121715"
     border.color: "#2A3530"
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 7
+        anchors.margins: 6
+        spacing: 3
 
         RowLayout {
             Layout.fillWidth: true
@@ -66,13 +68,13 @@ Rectangle {
             Layout.fillWidth: true
             columns: 2
             columnSpacing: 6
-            rowSpacing: 6
+            rowSpacing: 4
 
             Button {
                 id: dictionaryButton
                 objectName: "transcriptionDictionaryOpenButton"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: 28
                 visible: !actionBar.projectLoaded
                 enabled: !actionBar.running
                 text: "文字起こし辞書を設定"
@@ -85,7 +87,7 @@ Rectangle {
                 id: transcribeButton
                 objectName: "transcribeButton"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: 28
                 visible: !actionBar.projectLoaded || actionBar.activeJob === "transcribe"
                 enabled: actionBar.canStartTranscription
                 text: actionBar.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
@@ -98,7 +100,7 @@ Rectangle {
                 id: editButton
                 objectName: "editSubtitlesButton"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded
                 enabled: actionBar.projectLoaded && !actionBar.running
                 text: "字幕を編集する"
@@ -111,7 +113,7 @@ Rectangle {
                 id: mixerButton
                 objectName: "audioMixerOpenButton"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded
                 enabled: actionBar.projectLoaded && !actionBar.running
                 text: "音量を調整する"
@@ -124,7 +126,7 @@ Rectangle {
                 id: shortButton
                 objectName: "shortModeOpenButton"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded && actionBar.subtitleAvailable
                 enabled: actionBar.projectLoaded && !actionBar.running
                 text: "ショート動画を作成"
@@ -137,7 +139,7 @@ Rectangle {
                 id: renderButton
                 objectName: "renderVideoButton"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded || actionBar.activeJob === "render"
                 enabled: actionBar.projectLoaded && !actionBar.running
                 text: actionBar.activeJob === "render" ? "字幕を焼き付け中..." : "字幕を焼き付けて動画を書き出す"

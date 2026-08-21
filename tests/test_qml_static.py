@@ -282,7 +282,7 @@ class QmlStaticTests(unittest.TestCase):
         qml = read_workflow_qml()
         mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]
 
-        self.assertIn('objectName: "audioMixerOpenButton"', qml)
+        self.assertIn('objectName: "audioMixerOpenButton"', read_component_qml("ContextActionBar.qml"))
         self.assertIn('objectName: "mixerPage"', qml)
         self.assertIn('objectName: "mixerChannelList"', qml)
         self.assertIn('objectName: "mixerChannelFader"', qml)

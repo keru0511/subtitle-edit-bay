@@ -91,6 +91,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._stage = "READY"
         app._progress = 0.0
         app._log = ""
+        app._application_logger.clear_memory()
+        app._last_process_diagnostic = None
+        app._pending_process_error = ""
         app._elapsed_seconds = 0
         app._cancel_requested = False
         app._update_info = None
@@ -1321,6 +1324,115 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
 
+    def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
+        output = self.root / "output"
+        transcript_directory = output / "transcripts"
+        transcript_directory.mkdir(parents=True)
+        (transcript_directory / "speaker.whisperx.log").write_text(
+            "WhisperX traceback: CUDA out of memory\n",
+            encoding="utf-8",
+        )
+        self.app._source_selection = SourceSelection(output_dir=str(output))
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        _, window = self._load_qml()
+
+        with (
+            patch("src.gui.runtime_diagnostic_info", return_value={"pytorch": "2.8.0+cu128"}),
+            patch.object(
+                self.app.process,
+                "readAllStandardOutput",
+                return_value=b"final ffmpeg stderr: encoder failed\n",
+            ),
+            patch.object(self.app.process, "processId", return_value=42),
+        ):
+            self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
+
+        self.app.saveSettings(self.app.settings)
+        self.app.processEvents()
+        self.assertEqual(self.app.stage, "SAVED")
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertTrue(self._quick_item(window, "copyErrorLogsButton").isVisible())
+
+        self.app.copyErrorLogsToClipboard()
+        error_diagnostic = self.app.clipboard().text()
+        self.assertIn("job: transcribe", error_diagnostic)
+        self.assertIn("工程: ERROR", error_diagnostic)
+        self.assertIn("結果: 異常終了 (failed)", error_diagnostic)
+        self.assertIn("終了コード: 7", error_diagnostic)
+        self.assertIn("final ffmpeg stderr: encoder failed", error_diagnostic)
+        self.assertIn("WhisperX traceback: CUDA out of memory", error_diagnostic)
+        self.assertNotIn("工程: SAVED", error_diagnostic)
+
+        with patch("src.gui.runtime_diagnostic_info", return_value={}):
+            self.app.copyLogsToClipboard()
+        current_diagnostic = self.app.clipboard().text()
+        self.assertIn("工程: SAVED", current_diagnostic)
+        self.assertIn("status: GUI設定を保存しました", current_diagnostic)
+
+    def test_cancelled_process_has_a_distinct_diagnostic_result(self) -> None:
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = True
+        _, window = self._load_qml()
+
+        with (
+            patch("src.gui.runtime_diagnostic_info", return_value={}),
+            patch.object(self.app.process, "readAllStandardOutput", return_value=b""),
+        ):
+            self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+
+        self.app.processEvents()
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertTrue(self._quick_item(window, "copyErrorLogsButton").isVisible())
+        self.app.copyErrorLogsToClipboard()
+        diagnostic = self.app.clipboard().text()
+        self.assertIn("工程: CANCELLED", diagnostic)
+        self.assertIn("status: 処理を停止しました", diagnostic)
+        self.assertIn("結果: キャンセル (cancelled)", diagnostic)
+        self.assertIn("終了コード: 1", diagnostic)
+
+    def test_failed_process_start_captures_qprocess_error(self) -> None:
+        self.app._active_job = "transcribe"
+        self.app._running = False
+
+        with (
+            patch("src.gui.runtime_diagnostic_info", return_value={}),
+            patch.object(self.app.process, "readAllStandardOutput", return_value=b"launcher stderr\n"),
+            patch.object(self.app.process, "errorString", return_value="プロセスを開始できません"),
+            patch.object(
+                self.app.process,
+                "state",
+                return_value=QProcess.ProcessState.NotRunning,
+            ),
+            patch.object(self.app.process, "processId", return_value=0),
+        ):
+            self.app._process_error(QProcess.ProcessError.FailedToStart)
+
+        self.app.copyErrorLogsToClipboard()
+        diagnostic = self.app.clipboard().text()
+        self.assertIn("job: transcribe", diagnostic)
+        self.assertIn("結果: 異常終了 (failed)", diagnostic)
+        self.assertIn("QProcessエラー: プロセスを開始できません", diagnostic)
+        self.assertIn("launcher stderr", diagnostic)
+        self.assertEqual(self.app.activeJob, "")
+
+    def test_starting_a_new_process_discards_the_previous_error_snapshot(self) -> None:
+        self.app._active_job = "render"
+        self.app._running = True
+        with (
+            patch("src.gui.runtime_diagnostic_info", return_value={}),
+            patch.object(self.app.process, "readAllStandardOutput", return_value=b"failed\n"),
+        ):
+            self.app._process_finished(9, QProcess.ExitStatus.NormalExit)
+        self.assertIsNotNone(self.app._last_process_diagnostic)
+
+        with patch.object(self.app, "_start_process"):
+            self.app._start_command(["python", "worker.py"], "render", "開始しています")
+
+        self.assertIsNone(self.app._last_process_diagnostic)
+        self.assertFalse(self.app.hasLastProcessDiagnostic)
+
     def test_cancel_fallback_does_not_kill_replacement_process(self) -> None:
         with (
             patch.object(self.app.process, "processId", return_value=222),
@@ -1553,6 +1665,30 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 30)
 
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
+        self.assertFalse(window.property("settingsExpanded"))
+
+    def test_qml_settings_popup_closes_on_escape_and_screen_navigation(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "advancedSettingsPanel")
+        toggle = self._quick_item(window, "settingsToggleButton")
+
+        self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        QTest.qWait(50)
+        self.app.processEvents()
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(window.property("settingsExpanded"))
+
+        self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        QTest.qWait(50)
+        self.app.processEvents()
+
+        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+        self.assertFalse(panel.isVisible())
         self.assertFalse(window.property("settingsExpanded"))
 
     def test_qml_workflow_layout_fits_supported_window_sizes(self) -> None:

@@ -48,6 +48,7 @@ class ContextActionBarQmlTests(unittest.TestCase):
         self.assertIn("Layout.preferredHeight: 28", action_bar)
         self.assertIn("transcriptionBlockReason()", workflow)
         self.assertIn("onSaveOrStopRequested", workflow)
+        self.assertGreaterEqual(workflow.count("root.closeSettingsPopup()"), 4)
 
     def test_detail_settings_are_popup_based_and_keep_standard_sizes(self) -> None:
         workflow = read_ui_file("screens/MainWorkflowScreen.qml")
@@ -58,6 +59,7 @@ class ContextActionBarQmlTests(unittest.TestCase):
         self.assertIn('objectName: "settingsPopupCloseButton"', workflow)
         self.assertIn('objectName: "settingsToggleButton"', read_ui_file("components/ContextActionBar.qml"))
         self.assertIn("closePolicy: Popup.CloseOnEscape", workflow)
+        self.assertIn("modal: false\n            focus: true", workflow)
         self.assertNotIn("Popup.CloseOnEscape | Popup.CloseOnPressOutside", workflow)
         self.assertIn("width: 1520", workflow)
         self.assertIn("height: 940", workflow)

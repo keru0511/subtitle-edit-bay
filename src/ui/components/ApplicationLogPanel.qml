@@ -49,8 +49,8 @@ Rectangle {
             }
             Button {
                 objectName: "copyErrorLogsButton"
-                text: "エラーをコピー"
-                visible: backend && backend.stage === "ERROR"
+                text: "診断をコピー"
+                visible: backend && backend.hasLastProcessDiagnostic
                 onClicked: backend.copyErrorLogsToClipboard()
             }
             Button {

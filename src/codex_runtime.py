@@ -50,10 +50,13 @@ class CodexRuntimeInfo:
 
 def classify_distribution(workspace_root: str | Path) -> str:
     root = Path(workspace_root)
-    if (root / "SubtitleEditBay.exe").is_file() or (root / "installer").is_dir() and not (root / ".git").exists():
-        return "installer"
     if (root / ".git").exists():
         return "git"
+    if any(
+        (root / executable_name).is_file()
+        for executable_name in ("SubtitleEditBayLauncher.exe", "SubtitleEditBay.exe")
+    ):
+        return "installer"
     return "zip"
 
 

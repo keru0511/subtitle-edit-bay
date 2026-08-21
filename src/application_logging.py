@@ -4,6 +4,7 @@ import json
 import os
 import re
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -28,6 +29,21 @@ _UNIX_PATH_PATTERN = re.compile(
     r"(?<![\w])/(?:[^\r\n\"'<>|?*]+/)*[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
 )
 _UNIX_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])/(?:[^\s\"']+/)+[^\s\"']+")
+
+
+@dataclass(frozen=True)
+class ProcessDiagnosticSnapshot:
+    occurred_at: str
+    job: str
+    component: str
+    stage: str
+    status: str
+    outcome: str
+    exit_code: int | None
+    process_error: str = ""
+    log_text: str = ""
+    related_log_tail: str = ""
+    runtime: Mapping[str, object] | None = None
 
 
 def redact_text(value: object, *, paths: bool = False) -> str:
@@ -136,25 +152,69 @@ class ApplicationLogger:
         stage: str = "",
         exit_code: int | None = None,
         runtime: Mapping[str, object] | None = None,
+        snapshot: ProcessDiagnosticSnapshot | None = None,
     ) -> str:
+        occurred_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        job = ""
+        component = ""
+        outcome = ""
+        process_error = ""
+        log_text = self.text
+        related_log_tail = ""
+        if snapshot is not None:
+            occurred_at = snapshot.occurred_at
+            job = snapshot.job
+            component = snapshot.component
+            status = snapshot.status
+            stage = snapshot.stage
+            outcome = snapshot.outcome
+            exit_code = snapshot.exit_code
+            process_error = snapshot.process_error
+            log_text = snapshot.log_text
+            related_log_tail = snapshot.related_log_tail
+            runtime = snapshot.runtime
+
         info_lines = [
             "Subtitle Edit Bay 診断情報",
-            f"発生日時: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+            f"発生日時: {occurred_at}",
             f"version: {redact_text(self.application_info.get('version', 'unknown'))}",
             f"配布形態: {redact_text(self.application_info.get('distribution', 'unknown'))}",
-            f"工程: {redact_text(stage)}",
-            f"status: {redact_text(status)}",
-            f"終了コード: {exit_code if exit_code is not None else 'なし'}",
         ]
+        if job:
+            info_lines.append(f"job: {redact_text(job)}")
+        if component:
+            info_lines.append(f"component: {redact_text(component)}")
+        info_lines.extend(
+            [
+                f"工程: {redact_text(stage)}",
+                f"status: {redact_text(status)}",
+            ]
+        )
+        if outcome:
+            outcome_labels = {
+                "cancelled": "キャンセル (cancelled)",
+                "failed": "異常終了 (failed)",
+            }
+            info_lines.append(f"結果: {outcome_labels.get(outcome, redact_text(outcome))}")
+        info_lines.append(f"終了コード: {exit_code if exit_code is not None else 'なし'}")
+        if process_error:
+            info_lines.append(f"QProcessエラー: {redact_text(process_error, paths=True)}")
         for key, value in (runtime or {}).items():
             info_lines.append(f"{redact_text(key)}: {redact_text(value, paths=True)}")
         info_lines.extend(
             [
                 "完全ログ: <local-path>",
                 "直近の処理ログ:",
-                redact_text(self.text, paths=True).rstrip(),
+                redact_text(log_text, paths=True).rstrip(),
             ]
         )
+        if related_log_tail:
+            info_lines.extend(
+                [
+                    "関連ログ末尾:",
+                    redact_text(related_log_tail, paths=True).rstrip(),
+                ]
+            )
         return "\n".join(info_lines).rstrip() + "\n"
 
     def _ensure_directory(self) -> None:

@@ -309,7 +309,13 @@ ApplicationWindow {
         return 1
     }
 
+    function closeSettingsPopup() {
+        if (advancedSettingsPopup.opened)
+            advancedSettingsPopup.close()
+    }
+
     function openEditorScreen() {
+        root.closeSettingsPopup()
         if (!root.mixerMode) {
             root.editorPositionCache = mainPlayer.position
             mainPlayer.pause()
@@ -327,6 +333,7 @@ ApplicationWindow {
     }
 
     function openMixerScreen() {
+        root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.editorMode = false
@@ -345,6 +352,7 @@ ApplicationWindow {
     function openDictionaryScreen() {
         if (root.appBackend.running)
             return
+        root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
@@ -362,6 +370,7 @@ ApplicationWindow {
     function openShortModeScreen() {
         if (root.appBackend.running)
             return
+        root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
@@ -1000,6 +1009,7 @@ ApplicationWindow {
             width: Math.min(360, root.width - 24)
             height: Math.min(620, root.height - 120)
             modal: false
+            focus: true
             // The toggle button is outside this non-modal popup. Let the toggle
             // handler own the close action so an outside press cannot close the
             // popup before the same press reopens it through onSettingsRequested.

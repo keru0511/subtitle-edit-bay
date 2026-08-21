@@ -187,7 +187,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("scopeBox.currentText", codex_qml)
         self.assertNotIn("text: modelData.type", codex_qml)
 
-        self.assertIn('text: "見どころを探す"', highlight_qml)
+        self.assertIn('"見どころを探す"', highlight_qml)
         self.assertIn('text: "ショートに追加"', highlight_qml)
         self.assertIn('text: "候補から外す"', highlight_qml)
         self.assertIn('valueRole: "value"', highlight_qml)

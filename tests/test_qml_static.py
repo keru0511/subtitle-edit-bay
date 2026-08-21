@@ -205,7 +205,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("userFacingStatusLabel", workflow_qml)
         self.assertIn('text: "プレビューを更新"', workflow_qml)
         self.assertIn('text: "素材を再指定"', workflow_qml)
-        self.assertIn('text: "音声のずれを自動調整"', workflow_qml)
+        self.assertIn('"音声のずれを自動調整"', workflow_qml)
         self.assertIn('text: "字幕の音量バランス"', workflow_qml)
         self.assertNotIn('root.appBackend.stage + " · " + root.appBackend.status', workflow_qml)
         self.assertNotIn('text: "実行ファイル: "', workflow_qml)

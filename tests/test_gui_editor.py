@@ -1587,6 +1587,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         log_toggle = self._quick_item(window, "applicationLogToggleButton")
         self._click(window, log_toggle)
+        QTest.qWait(100)
         self.app.processEvents()
 
         self.assertTrue(log_panel.property("expanded"))
@@ -1597,8 +1598,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
         self._click(window, log_toggle)
+        QTest.qWait(100)
         self.app.processEvents()
         self.app._set_status("GUI layout error", "ERROR")
+        QTest.qWait(100)
         self.app.processEvents()
 
         self.assertTrue(log_panel.property("expanded"))

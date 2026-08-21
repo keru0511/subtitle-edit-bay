@@ -29,6 +29,7 @@ class ContextActionBarQmlTests(unittest.TestCase):
 
         for object_name in (
             "transcriptionDictionaryOpenButton",
+            "createEmptyProjectButton",
             "transcribeButton",
             "editSubtitlesButton",
             "audioMixerOpenButton",
@@ -44,7 +45,10 @@ class ContextActionBarQmlTests(unittest.TestCase):
         self.assertIn("visible: actionBar.projectLoaded", action_bar)
         self.assertIn('actionBar.activeJob === "transcribe"', action_bar)
         self.assertIn('actionBar.activeJob === "render"', action_bar)
-        self.assertIn('implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 148 : 116', action_bar)
+        self.assertIn('implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 220 : 148', action_bar)
+        self.assertIn("canCreateProject", action_bar)
+        self.assertIn("audioMixerAvailable", action_bar)
+        self.assertIn("mixerBlockReason", action_bar)
         self.assertIn("Layout.preferredHeight: 28", action_bar)
         self.assertIn("transcriptionBlockReason()", workflow)
         self.assertIn("onSaveOrStopRequested", workflow)

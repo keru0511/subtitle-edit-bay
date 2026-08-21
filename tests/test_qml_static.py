@@ -431,11 +431,12 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_transcription_block_reason_survives_loaded_video_only_project(self) -> None:
         qml = read_workflow_qml()
+        action_bar = read_component_qml("ContextActionBar.qml")
         self.assertIn(
             'if (root.appBackend.speakers.length === 0 && root.appBackend.audioTracks.length <= 1)',
             qml,
         )
-        self.assertIn('objectName: "workflowBlockReason"', qml)
+        self.assertIn('objectName: "workflowBlockReason"', action_bar)
 
 
 if __name__ == "__main__":

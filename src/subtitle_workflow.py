@@ -570,15 +570,19 @@ def render_project_video(
         for channel in active_audio_mix_channels(audio_mix):
             if channel.get("kind") == "external" and not Path(str(channel.get("path", ""))).is_file():
                 raise SystemExit(f"Mixer audio source was not found: {channel.get('path', '')}")
+    has_audio_stream = True
     if not use_audio_mix:
         try:
+            probed_audio_streams = probe_audio_streams(video_path)
+            has_audio_stream = bool(probed_audio_streams)
             actual_video_track_selectors = {
-                entry["selector"] for entry in video_track_entries(probe_audio_streams(video_path))
+                entry["selector"] for entry in video_track_entries(probed_audio_streams)
             }
             has_known_video_tracks = True
         except (OSError, subprocess.CalledProcessError, ValueError):
             has_known_video_tracks = False
             actual_video_track_selectors = set()
+            has_audio_stream = True
         has_real_video_track = any(
             isinstance(channel, dict)
             and channel.get("kind") == "video"
@@ -717,6 +721,7 @@ def render_project_video(
             audio_track=output_audio_track,
             audio_mix=audio_mix if use_audio_mix else None,
             audio_offset_seconds=offset_seconds,
+            include_audio=has_audio_stream,
             progress_callback=log_progress,
         )
     project["render_settings"] = {

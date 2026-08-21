@@ -64,6 +64,7 @@ def build_ffmpeg_command(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    include_audio: bool = True,
 ) -> list[str]:
     command = ["ffmpeg", "-y", "-i", video]
     if audio_mix is not None:
@@ -74,8 +75,10 @@ def build_ffmpeg_command(
         )
         command.extend(input_args)
         command.extend(["-filter_complex", mix_filter, "-map", "0:v:0", "-map", "[mixed_audio]"])
-    else:
+    elif include_audio:
         command.extend(["-map", "0:v:0", "-map", audio_track])
+    else:
+        command.extend(["-map", "0:v:0"])
     if subtitle:
         command.extend(["-vf", build_ass_filter(subtitle)])
     command.extend(["-c:v", video_codec])
@@ -85,13 +88,16 @@ def build_ffmpeg_command(
         command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE, "-shortest"])
         if audio_codec == "copy":
             audio_codec = "aac"
-    elif audio_filter:
+    elif include_audio and audio_filter:
         command.extend(["-af", audio_filter, "-ar", DEFAULT_FILTERED_AUDIO_RATE])
+    has_audio_output = audio_mix is not None or include_audio
     if Path(output).suffix.lower() in {".mp4", ".m4v", ".mov"}:
         if audio_codec == "copy":
             audio_codec = "aac"
         command.extend(["-movflags", "+faststart"])
-    command.extend(["-c:a", audio_codec, output])
+    if has_audio_output:
+        command.extend(["-c:a", audio_codec])
+    command.append(output)
     return command
 
 
@@ -108,6 +114,7 @@ def run_ffmpeg_burn(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
+    include_audio: bool = True,
     progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
     subtitle_for_filter = None
@@ -129,6 +136,7 @@ def run_ffmpeg_burn(
             audio_track=audio_track,
             audio_mix=audio_mix,
             audio_offset_seconds=audio_offset_seconds,
+            include_audio=include_audio,
         )
 
     try:

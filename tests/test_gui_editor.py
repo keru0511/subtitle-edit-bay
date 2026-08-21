@@ -2975,6 +2975,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._mark_project_dirty()
         self.assertTrue(self.app.saveProject())
         preserved = deepcopy(load_project(project_path))
+        custom_project_path = project_path.with_name("custom-edit.subtitle-project.json")
+        save_project(custom_project_path, preserved)
         generated = create_project(
             video_path=project_path.parent / "game.mkv",
             output_dir=project_path.parent / "export",
@@ -2994,19 +2996,22 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         for mode in ("merge", "replace"):
             with self.subTest(mode=mode):
+                save_project(project_path, preserved)
                 self.app._project = deepcopy(generated)
                 self.app._project_path = str(project_path)
                 self.app._transcription_merge_mode = mode
                 self.app._transcription_preserved_project = deepcopy(preserved)
-                self.app._transcription_preserved_project_path = str(project_path)
+                self.app._transcription_preserved_project_path = str(custom_project_path)
 
                 self.assertTrue(self.app._merge_preserved_transcription_segments())
-                saved = load_project(project_path)
+                saved = load_project(custom_project_path)
+                self.assertEqual(Path(self.app.projectPath), custom_project_path.resolve())
                 self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
                 self.assertEqual(saved["short_video"], preserved["short_video"])
                 self.assertEqual(saved["transcription"], {"engine": "new-engine"})
                 expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
                 self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
+                self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
 
     def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
         project_path = self._load_project()

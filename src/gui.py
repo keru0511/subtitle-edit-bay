@@ -2000,9 +2000,11 @@ class EditBayBackend(LegacyEditBayBackend):
             if key in generated:
                 preserved[key] = deepcopy(generated[key])
         self._project = preserved
+        preserved_project_path = self._transcription_preserved_project_path or self._project_path
+        self._project_path = preserved_project_path
         self._apply_project_subtitle_settings(self._project)
         self._selected_segment_index = 0 if self._project["segments"] else -1
-        save_project(self._project_path, self._project)
+        save_project(preserved_project_path, self._project)
         self._project_dirty = False
         self._sync_subtitle_model()
         self.projectChanged.emit()

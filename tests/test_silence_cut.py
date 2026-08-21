@@ -25,6 +25,11 @@ class SilenceCutTests(unittest.TestCase):
         self.assertEqual(command[:2], ["ffmpeg", "-i"])
         self.assertIn("silencedetect=noise=-30dB:d=0.6", command)
 
+    def test_build_silencedetect_command_can_select_video_audio_track(self) -> None:
+        command = build_silencedetect_command("input.mp4", audio_track="0:a:1")
+
+        self.assertEqual(command[command.index("-map") + 1], "0:a:1")
+
     def test_parse_silencedetect_output_extracts_ranges(self) -> None:
         log_text = """
 [silencedetect @ 0000] silence_start: 1.25

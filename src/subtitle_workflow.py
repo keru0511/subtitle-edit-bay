@@ -614,24 +614,60 @@ def render_project_video(
 
     cut_output: Path | None = None
     if cut_no_speech:
-        speech_ranges: list[tuple[float, float]] = []
         source_paths = [
             str(source.get("path", ""))
             for source in project.get("audio_sources", [])
             if Path(str(source.get("path", ""))).is_file()
         ]
-        for source_path in source_paths:
+        detection_sources: list[tuple[str, str | None]] = [(path, None) for path in source_paths]
+        if not detection_sources:
+            try:
+                probed_audio_streams = probe_audio_streams(video_path)
+            except (OSError, subprocess.CalledProcessError, ValueError):
+                probed_audio_streams = []
+            available_video_tracks = {
+                entry["selector"] for entry in video_track_entries(probed_audio_streams)
+            }
+            selected_video_track = next(
+                (
+                    str(channel.get("selector"))
+                    for channel in active_audio_mix_channels(audio_mix)
+                    if channel.get("kind") == "video"
+                    and str(channel.get("selector", "")) in available_video_tracks
+                ),
+                "",
+            )
+            if not selected_video_track:
+                candidate = str(output_audio_track or "")
+                selected_video_track = (
+                    candidate
+                    if candidate in available_video_tracks
+                    else next(iter(available_video_tracks), "")
+                )
+            if selected_video_track:
+                detection_sources = [(video_path, selected_video_track)]
+
+        if not detection_sources:
+            log_progress("No audio source is available for silence detection; disabling silence cut")
+            cut_no_speech = False
+
+    if cut_no_speech:
+        speech_ranges: list[tuple[float, float]] = []
+        for source_path, _audio_track in detection_sources:
             log_progress(f"Detecting speech in {Path(source_path).name}")
 
-        def detect_source(source_path: str) -> list[tuple[float, float]]:
-            return detect_speech_ranges(
-                source_path,
-                noise=normalize_db_threshold(speech_threshold_db),
-                duration=DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
-            )
+        def detect_source(source: tuple[str, str | None]) -> list[tuple[float, float]]:
+            source_path, audio_track = source
+            options: dict[str, Any] = {
+                "noise": normalize_db_threshold(speech_threshold_db),
+                "duration": DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
+            }
+            if audio_track:
+                options["audio_track"] = audio_track
+            return detect_speech_ranges(source_path, **options)
 
-        with ThreadPoolExecutor(max_workers=max(1, min(4, len(source_paths)))) as executor:
-            for source_ranges in executor.map(detect_source, source_paths):
+        with ThreadPoolExecutor(max_workers=max(1, min(4, len(detection_sources)))) as executor:
+            for source_ranges in executor.map(detect_source, detection_sources):
                 speech_ranges.extend(source_ranges)
         duration = float(project.get("video", {}).get("duration_seconds", 0.0)) or probe_media_duration(video_path)
         no_speech_ranges, keep_ranges = build_no_speech_plan(
@@ -830,6 +866,7 @@ def main() -> None:
     transcribe.add_argument("--audio-file", action="append")
     transcribe.add_argument("--video-audio-track")
     transcribe.add_argument("--output-dir", required=True)
+    transcribe.add_argument("--project-path", help="Explicit editable project output path.")
     transcribe.add_argument("--reference-audio")
     transcribe.add_argument("--reference-track")
     transcribe.add_argument("--alignment-offset-adjustment", type=float, default=None)
@@ -896,6 +933,7 @@ def main() -> None:
             video_path=args.video,
             audio_files=args.audio_file or [],
             output_dir=args.output_dir,
+            project_path=args.project_path,
             reference_audio=args.reference_audio,
             reference_track=args.reference_track,
             video_audio_track=args.video_audio_track,

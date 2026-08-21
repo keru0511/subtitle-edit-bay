@@ -89,6 +89,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._running = False
         app._status = "保存済み"
         app._stage = "READY"
+        app._transcription_generated_project_path = ""
         app._progress = 0.0
         app._log = ""
         app._application_logger.clear_memory()
@@ -208,6 +209,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def _load_project(self, **kwargs: object) -> Path:
         path, _, _ = self._make_project(**kwargs)
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
         self._prime_audio_preview_cache()
         self.app.autosave_timer.stop()
@@ -301,6 +303,39 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with patch("src.gui.probe_media_duration", return_value=30.0):
             self.assertFalse(self.app.createEmptyProject())
         self.assertEqual(load_project(project_path)["segments"][0]["text"], "keep")
+
+    def test_video_only_empty_project_disables_mixer_before_normal_render(self) -> None:
+        video = self.root / "video-only.mkv"
+        video.write_bytes(b"video")
+        output = self.root / "export"
+        output.mkdir()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+            self.app.setOutputDirectory(str(output))
+        self.app._audio_tracks = [{"selector": "", "label": "音声トラックなし"}]
+        self.app._speakers = []
+
+        with patch("src.gui.probe_media_duration", return_value=1.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        self.assertEqual(self.app.audioMixerChannels, [])
+        self.assertFalse(self.app.audioMixerAvailable)
+        _, window = self._load_qml()
+        mixer_button = self._quick_item(window, "audioMixerOpenButton")
+        self.assertFalse(mixer_button.property("enabled"))
+        self.assertEqual(mixer_button.property("text"), "音声トラックなし")
+
+        self.app.updateAudioMixChannel(0, {"volume_percent": 150})
+        self.assertFalse(self.app._project["audio_mix"]["customized"])
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "saveProject", return_value=True),
+            patch.object(self.app, "_start_command") as start_command,
+        ):
+            self.app.renderVideo(self.app.settings)
+
+        self.assertEqual(start_command.call_args.args[1], "render")
 
     def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
         choices = build_font_choices(["Yu Gothic", "@Yu Gothic", " arial ", "Arial", ""])
@@ -3018,6 +3053,39 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._transcription_preserved_segments = []
             self.app._transcription_preserved_project = None
             self.app._transcription_preserved_project_path = ""
+
+    def test_followup_transcription_uses_private_project_path_without_overwriting_default(self) -> None:
+        video, audio, output = self._set_ready_sources()
+        default_path = output / "game.subtitle-project.json"
+        custom_path = output / "custom-edit.subtitle-project.json"
+        preserved = create_project(
+            video_path=video,
+            output_dir=output,
+            audio_sources=[{"path": str(audio.resolve()), "file_name": audio.name}],
+            speakers=[{"name": "alice", "style": "Speaker_alice", "path": str(audio.resolve())}],
+            segments=[{"id": "keep", "start": 0.0, "end": 1.0, "text": "keep", "speaker": "alice"}],
+            duration_seconds=2.0,
+        )
+        sentinel = deepcopy(preserved)
+        sentinel["segments"][0]["text"] = "default sentinel"
+        save_project(custom_path, preserved)
+        save_project(default_path, sentinel)
+        self.app._project = deepcopy(preserved)
+        self.app._project_path = str(custom_path)
+        self.app._source_selection = SourceSelection(
+            video=str(video.resolve()),
+            output_dir=str(output.resolve()),
+            audio_files=(str(audio.resolve()),),
+        )
+
+        with patch.object(self.app, "startTranscription") as start_transcription:
+            self.app.transcribeProject(self.app.settings, "merge")
+
+        generated_path = Path(start_transcription.call_args.args[2])
+        self.assertNotEqual(generated_path.resolve(), default_path.resolve())
+        self.assertEqual(generated_path.parent.resolve(), output.resolve())
+        self.assertTrue(str(generated_path).startswith(str(output / ".game.subtitle-project.")))
+        self.assertEqual(load_project(default_path)["segments"], sentinel["segments"])
 
     def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
         project_path = self._load_project()

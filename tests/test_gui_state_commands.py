@@ -57,6 +57,20 @@ class GuiStateCommandTests(unittest.TestCase):
         self.assertIn("--video-audio-track", command)
         self.assertNotIn("--audio-file", command)
 
+    def test_transcribe_command_supports_a_separate_project_output_path(self) -> None:
+        command = build_gui_transcribe_command(
+            "runtime.json",
+            video="video.mkv",
+            audio_files=("alice.flac",),
+            output_dir="out",
+            project_path="out/.game.transcribing.subtitle-project.json",
+        )
+
+        self.assertEqual(
+            command[command.index("--project-path") + 1],
+            "out/.game.transcribing.subtitle-project.json",
+        )
+
     def test_legacy_runtime_command_helper_stays_available(self) -> None:
         command = build_legacy_gui_command(
             "runtime.json",

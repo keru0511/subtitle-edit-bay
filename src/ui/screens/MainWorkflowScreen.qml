@@ -2310,3 +2310,4 @@ ApplicationWindow {
         mainPlayer.stop()
     }
 }
+

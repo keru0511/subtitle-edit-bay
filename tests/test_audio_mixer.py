@@ -130,6 +130,13 @@ class AudioMixerTests(unittest.TestCase):
         self.assertTrue(audio_mix["channels"][0]["enabled"])
         self.assertFalse(audio_mix["channels"][1]["enabled"])
 
+    def test_reconcile_does_not_invent_video_channel_for_video_only_project(self) -> None:
+        project = {"audio_sources": [], "render_settings": {}}
+
+        audio_mix = reconcile_audio_mix(project, video_tracks=[])
+
+        self.assertEqual(audio_mix["channels"], [])
+
     def test_reconcile_without_video_tracks_and_no_explicit_video_track_list_prefers_external(self) -> None:
         project = self._project()
         del project["render_settings"]

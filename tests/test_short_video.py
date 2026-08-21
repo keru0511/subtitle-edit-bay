@@ -154,6 +154,22 @@ class BuildShortVideoFilterComplexTests(unittest.TestCase):
         fc = build_short_video_filter_complex(short)
         self.assertIn("force_original_aspect_ratio=decrease", fc)
 
+    def test_global_fit_is_used_when_clip_fit_is_missing(self) -> None:
+        for fit in ("cover", "contain", "blur"):
+            with self.subTest(fit=fit):
+                short = ShortVideo(
+                    enabled=True,
+                    global_fit=fit,
+                    clips=[ShortVideoClip(start=0.0, end=2.0)],
+                )
+                fc = build_short_video_filter_complex(short)
+                if fit == "cover":
+                    self.assertIn("force_original_aspect_ratio=increase", fc)
+                elif fit == "contain":
+                    self.assertIn("force_original_aspect_ratio=decrease", fc)
+                else:
+                    self.assertIn("boxblur=40:40", fc)
+
     def test_global_background_used_when_clip_missing(self) -> None:
         short = ShortVideo(
             enabled=True,
@@ -162,6 +178,24 @@ class BuildShortVideoFilterComplexTests(unittest.TestCase):
         )
         fc = build_short_video_filter_complex(short)
         self.assertIn("pad=1080:1920:(ow-iw)/2:(oh-ih)/2:00FF00", fc)
+
+    def test_clip_background_overrides_global_background(self) -> None:
+        short = ShortVideo(
+            enabled=True,
+            global_fit="contain",
+            global_background_color="00FF00",
+            clips=[
+                ShortVideoClip(
+                    start=0.0,
+                    end=2.0,
+                    fit="contain",
+                    background_color="0000FF",
+                )
+            ],
+        )
+        fc = build_short_video_filter_complex(short)
+        self.assertIn("pad=1080:1920:(ow-iw)/2:(oh-ih)/2:0000FF", fc)
+        self.assertNotIn("pad=1080:1920:(ow-iw)/2:(oh-ih)/2:00FF00", fc)
 
     def test_ass_path_colons_escaped(self) -> None:
         short = ShortVideo(
@@ -186,7 +220,7 @@ class BuildShortVideoFilterComplexTests(unittest.TestCase):
         )
         fc = build_short_video_filter_complex(short, has_audio=True, include_bgm=True)
         self.assertIn("[1:a:0]", fc)
-        self.assertIn("aloop=loop=-1:size=0", fc)
+        self.assertIn("aloop=loop=-1:size=2147483647", fc)
         self.assertIn("atrim=0:2", fc)
         self.assertIn("adelay=0:all=1", fc)
         self.assertIn("volume=0.4", fc)

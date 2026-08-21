@@ -7,6 +7,7 @@ from typing import Any
 DEFAULT_SHORT_WIDTH = 1080
 DEFAULT_SHORT_HEIGHT = 1920
 DEFAULT_SHORT_FPS = 30
+SHORT_VIDEO_SCHEMA_VERSION = 2
 VALID_FIT_MODES = ("cover", "contain", "blur")
 VALID_TRANSITION_TYPES = ("crossfade", "fade", "cut")
 
@@ -115,8 +116,8 @@ class ShortVideoClip:
     segment_id: str = ""
     start: float = 0.0
     end: float = 0.0
-    fit: str = "cover"
-    background_color: str = "000000"
+    fit: str | None = None
+    background_color: str | None = None
 
     @classmethod
     def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideoClip":
@@ -127,10 +128,14 @@ class ShortVideoClip:
         segment_id = str(payload.get("segment_id", ""))
         start = _finite_number(payload.get("start", 0.0), "clip.start")
         end = _finite_number(payload.get("end", start), "clip.end")
-        fit = str(payload.get("fit", "cover")).lower()
-        if fit not in VALID_FIT_MODES:
+        raw_fit = payload.get("fit")
+        fit = str(raw_fit).lower() if raw_fit not in (None, "") else None
+        if fit is not None and fit not in VALID_FIT_MODES:
             raise ShortVideoError(f"clip.fit must be one of {VALID_FIT_MODES}")
-        background_color = str(payload.get("background_color", "000000"))
+        raw_background_color = payload.get("background_color")
+        background_color = (
+            str(raw_background_color) if raw_background_color not in (None, "") else None
+        )
         if start < 0.0:
             start = 0.0
         if end < start:
@@ -144,13 +149,16 @@ class ShortVideoClip:
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload = {
             "segment_id": self.segment_id,
             "start": self.start,
             "end": self.end,
-            "fit": self.fit,
-            "background_color": self.background_color,
         }
+        if self.fit:
+            payload["fit"] = self.fit
+        if self.background_color:
+            payload["background_color"] = self.background_color
+        return payload
 
 
 @dataclass(frozen=True)
@@ -165,12 +173,33 @@ class ShortVideo:
     clips: list[ShortVideoClip] = field(default_factory=list)
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideo":
+    def from_json(
+        cls,
+        payload: dict[str, Any] | None,
+        *,
+        migrate_legacy_defaults: bool = False,
+    ) -> "ShortVideo":
+        """Load a project without guessing legacy override intent.
+
+        Legacy serializers wrote the default ``cover``/``000000`` values to
+        every clip, so those values cannot distinguish inheritance from an
+        intentional override. The safe default is to preserve the legacy
+        rendering. A caller that has shown an explicit migration confirmation
+        may opt into converting those legacy values to inherited fields.
+        """
         if payload is None:
             return cls()
         if not isinstance(payload, dict):
             raise ShortVideoError("short_video must be an object")
         enabled = bool(payload.get("enabled", False))
+        try:
+            schema_version = int(payload.get("schema_version", 1))
+        except (TypeError, ValueError) as error:
+            raise ShortVideoError("short_video.schema_version must be an integer") from error
+        if schema_version > SHORT_VIDEO_SCHEMA_VERSION:
+            raise ShortVideoError(
+                f"unsupported short_video schema_version: {payload.get('schema_version')!r}"
+            )
         output = ShortVideoOutput.from_json(payload.get("output"))
         global_fit = str(payload.get("global_fit", "cover")).lower()
         if global_fit not in VALID_FIT_MODES:
@@ -188,7 +217,17 @@ class ShortVideo:
         clips = []
         for index, raw_clip in enumerate(payload.get("clips", [])):
             if isinstance(raw_clip, dict):
-                clips.append(ShortVideoClip.from_json(raw_clip))
+                clip_payload = raw_clip
+                # The pre-schema-version serializer wrote default values for every
+                # clip. Their meaning is ambiguous, so preserve them unless a
+                # caller explicitly opted into the lossy inheritance migration.
+                if schema_version < SHORT_VIDEO_SCHEMA_VERSION and migrate_legacy_defaults:
+                    clip_payload = dict(raw_clip)
+                    if clip_payload.get("fit") == "cover":
+                        clip_payload.pop("fit", None)
+                    if clip_payload.get("background_color", "").lower() == "000000":
+                        clip_payload.pop("background_color", None)
+                clips.append(ShortVideoClip.from_json(clip_payload))
             else:
                 raise ShortVideoError(f"short_video.clips[{index}] must be an object")
         return cls(
@@ -204,6 +243,7 @@ class ShortVideo:
 
     def to_json(self) -> dict[str, Any]:
         return {
+            "schema_version": SHORT_VIDEO_SCHEMA_VERSION,
             "enabled": self.enabled,
             "output": self.output.to_json(),
             "global_fit": self.global_fit,

@@ -4,6 +4,8 @@
 
 現在の推奨運用は、Craigで話者ごとに分離した音声を動画へ同期する `craig_pipeline` です。
 
+字幕プロジェクトから、クリップ選択・字幕付きの9:16ショート動画を書き出すショートモードにも対応しています。
+
 ## Windows版を使う（推奨）
 
 プログラミング環境の準備は不要です。[最新リリース](https://github.com/keru0511/subtitle-edit-bay/releases/latest)を開き、Assetsから `SubtitleEditBay-Setup.exe` をダウンロードして実行してください。
@@ -17,6 +19,7 @@
 ## ドキュメント
 
 - [利用ガイド](docs/USAGE.md): セットアップ、入力配置、実行、再実行、出力確認
+- [ショートモード利用ガイド](docs/USAGE.md#ショートモード): クリップ、fit、BGM、クロスフェード、書き出し
 - [設定ガイド](docs/CONFIGURATION.md): GPU、字幕タイミング、色、話者分離、codec
 - [トラブルシューティング](docs/TROUBLESHOOTING.md): よくあるエラーと切り分け
 - [リリースガイド](docs/RELEASING.md): バージョンタグ、GitHub Releases、公開後確認

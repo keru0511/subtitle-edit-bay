@@ -1195,7 +1195,7 @@ ApplicationWindow {
                 objectName: "mainVideoPanel"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: 300
+                Layout.minimumHeight: applicationLogPanel.expanded && root.height <= 800 ? 140 : 300
                 radius: 12
                 color: "#080A09"
                 border.color: root.border
@@ -1238,6 +1238,7 @@ ApplicationWindow {
                 objectName: "applicationLogPanel"
                 Layout.fillWidth: true
                 Layout.preferredHeight: implicitHeight
+                Layout.minimumHeight: implicitHeight
                 backend: root.appBackend
             }
         }

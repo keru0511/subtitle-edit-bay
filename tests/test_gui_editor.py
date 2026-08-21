@@ -1583,6 +1583,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
 
+        window.resize(1220, 760)
+        self.app.processEvents()
+        log_toggle = self._quick_item(window, "applicationLogToggleButton")
+        self._click(window, log_toggle)
+        self.app.processEvents()
+
+        self.assertTrue(log_panel.property("expanded"))
+        self.assertGreaterEqual(log_panel.height(), 280)
+        self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
+        self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+        self._click(window, log_toggle)
+        self.app.processEvents()
+        self.app._set_status("GUI layout error", "ERROR")
+        self.app.processEvents()
+
+        self.assertTrue(log_panel.property("expanded"))
+        self.assertGreaterEqual(log_panel.height(), 280)
+        self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
         self.app._settings.update(
             {

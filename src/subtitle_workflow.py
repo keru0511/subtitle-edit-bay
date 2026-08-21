@@ -313,9 +313,19 @@ def log_progress(message: str) -> None:
     print(f"[subtitle_workflow] {message}", flush=True)
 
 
-def emit_progress_event(job: str, step: str, *, phase: str = "progress", progress: float = 0.0) -> None:
+def emit_progress_event(
+    job: str,
+    step: str,
+    *,
+    phase: str = "progress",
+    progress: float = 0.0,
+    duration: float | None = None,
+) -> None:
     """Emit a stable, path-free progress protocol line for the GUI."""
-    print(progress_event_line(job, step, phase=phase, progress=progress), flush=True)
+    print(
+        progress_event_line(job, step, phase=phase, progress=progress, duration=duration),
+        flush=True,
+    )
 
 
 def _project_speakers(
@@ -684,6 +694,12 @@ def render_project_video(
                 progress_callback=log_progress,
             )
             emit_progress_event("render", "audio", phase="complete", progress=1.0)
+            emit_progress_event(
+                "render",
+                "encode",
+                phase="metadata",
+                duration=sum(max(0.0, end - start) for start, end in keep_ranges),
+            )
             emit_progress_event("render", "encode", phase="start")
             log_progress(f"Rendering edited subtitles to {output.name}")
             run_ffmpeg_burn(
@@ -701,6 +717,9 @@ def render_project_video(
             cut_ass.unlink(missing_ok=True)
     else:
         emit_progress_event("render", "audio", phase="complete", progress=1.0)
+        output_duration = float(project.get("video", {}).get("duration_seconds", 0.0))
+        if output_duration > 0.0:
+            emit_progress_event("render", "encode", phase="metadata", duration=output_duration)
         emit_progress_event("render", "encode", phase="start")
         log_progress(f"Rendering edited subtitles to {output.name}")
         burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec

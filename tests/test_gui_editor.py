@@ -1357,6 +1357,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertEqual(self.app.progressState, "error")
 
     def test_processing_progress_uses_tracker_value_and_short_output_duration(self) -> None:
+        self.app._processing_machine_event_seen = False
+        self.app._progress = 0.0
+        self.app._processing_progress.start("transcribe")
+        self.app._update_stage("[subtitle_workflow] Building waveform for 1-alice.flac")
+        self.assertEqual(self.app.progress, 0.0)
+
         self.app._processing_progress.start("transcribe")
         self.app._update_stage(
             'PROGRESS_EVENT {"job":"transcribe","step":"alignment","phase":"start","progress":0.5}'
@@ -1384,6 +1390,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._ffmpeg_duration_seconds, 30.0)
         encode_step = next(step for step in self.app.progressSteps if step["id"] == "encode")
         self.assertAlmostEqual(encode_step["progress"], 0.5)
+
+    def test_processing_progress_ignores_legacy_encode_marker_and_refreshes_cut_duration(self) -> None:
+        self.app._processing_machine_event_seen = False
+        self.app._ffmpeg_duration_seconds = 0.0
+        self.app._ffmpeg_duration_from_event = False
+        self.app._processing_progress.start("render")
+        self.app._update_stage(
+            "\n".join(
+                (
+                    'PROGRESS_EVENT {"job":"render","step":"prepare","phase":"complete","progress":1.0}',
+                    'PROGRESS_EVENT {"job":"render","step":"subtitle","phase":"complete","progress":1.0}',
+                    'PROGRESS_EVENT {"job":"render","step":"audio","phase":"complete","progress":1.0}',
+                )
+            )
+        )
+        before_encode = self.app.progress
+        self.app._update_stage("[subtitle_workflow] Rendering edited subtitles to output.mp4")
+        self.assertEqual(self.app.progress, before_encode)
+
+        self.app._update_stage(
+            "\n".join(
+                (
+                    'PROGRESS_EVENT {"job":"render","step":"encode","phase":"start","progress":0.0}',
+                    "Duration: 01:00:00.00, start: 0.000000, bitrate: 100 kb/s",
+                )
+            )
+        )
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 3600.0)
+        self.app._update_stage(
+            'PROGRESS_EVENT {"job":"render","step":"encode","phase":"start","progress":0.0}'
+        )
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 0.0)
+        self.app._update_stage("Duration: 00:20:00.00, start: 0.000000, bitrate: 100 kb/s")
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 1200.0)
 
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
         output = self.root / "output"

@@ -318,6 +318,8 @@ class EditBayBackend(LegacyEditBayBackend):
         super().__init__(argv, workspace_root=workspace_root)
         self._processing_progress = ProcessingProgress()
         self._ffmpeg_duration_seconds = 0.0
+        self._ffmpeg_duration_from_event = False
+        self._processing_machine_event_seen = False
         self._application_logger = ApplicationLogger(
             self.workspace_root,
             application_info=self._application_info,
@@ -2442,6 +2444,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._progress = self._processing_progress.value if self._processing_progress.steps else 0.02
         self.progressChanged.emit()
         self._ffmpeg_duration_seconds = 0.0
+        self._ffmpeg_duration_from_event = False
+        self._processing_machine_event_seen = False
         self._elapsed_seconds = 0
         self._cancel_requested = False
         self.elapsedChanged.emit()
@@ -3075,7 +3079,15 @@ class EditBayBackend(LegacyEditBayBackend):
                 target_duration = 0.0
             if target_duration > 0.0:
                 self._ffmpeg_duration_seconds = target_duration
+                self._ffmpeg_duration_from_event = True
+            if (
+                event.get("step") == "encode"
+                and event.get("phase") == "start"
+                and not self._ffmpeg_duration_from_event
+            ):
+                self._ffmpeg_duration_seconds = 0.0
             if self._processing_progress.update(event):
+                self._processing_machine_event_seen = True
                 self._progress = self._processing_progress.value
                 self.progressChanged.emit()
                 self.progressDetailsChanged.emit()
@@ -3120,7 +3132,11 @@ class EditBayBackend(LegacyEditBayBackend):
         for marker, step, stage, status, progress in markers:
             if marker in output:
                 tracker_updated = False
-                if self._processing_progress.job:
+                if (
+                    self._processing_progress.job
+                    and not self._processing_machine_event_seen
+                    and step != "waveform"
+                ):
                     tracker_updated = self._processing_progress.update(
                         {
                             "job": self._processing_progress.job,
@@ -3129,11 +3145,13 @@ class EditBayBackend(LegacyEditBayBackend):
                             "progress": progress,
                         }
                     )
-                self._progress = (
-                    self._processing_progress.value
-                    if tracker_updated
-                    else max(self._progress, progress)
-                )
+                if tracker_updated:
+                    self._progress = self._processing_progress.value
+                elif (
+                    not self._processing_machine_event_seen
+                    and (step != "waveform" or not self._processing_progress.steps)
+                ):
+                    self._progress = max(self._progress, progress)
                 self.progressChanged.emit()
                 self.progressDetailsChanged.emit()
                 self._set_status(status, stage)

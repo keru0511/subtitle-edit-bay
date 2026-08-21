@@ -2224,6 +2224,25 @@ ApplicationWindow {
                 }
             }
                 }
+
+                Rectangle {
+                    objectName: "editorEmptyState"
+                    anchors.centerIn: parent
+                    width: 360
+                    height: 112
+                    visible: root.appBackend.segmentCount === 0
+                    z: 10
+                    radius: 10
+                    color: "#17201B"
+                    border.color: root.border
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 8
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "字幕がありません"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 16; font.weight: Font.Bold }
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "上部の「+ 字幕追加」から手動で追加できます"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 11 }
+                    }
+                }
+
                 Connections {
                     target: root.appBackend
                     function onSegmentsChanged() {

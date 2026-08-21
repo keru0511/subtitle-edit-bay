@@ -127,9 +127,10 @@ class Issue241WorkflowTests(unittest.TestCase):
     def test_workflow_qml_exposes_independent_empty_project_actions(self) -> None:
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "screens" / "MainWorkflowScreen.qml"
         qml = qml_path.read_text(encoding="utf-8")
+        action_bar = (qml_path.parent.parent / "components" / "ContextActionBar.qml").read_text(encoding="utf-8")
 
-        self.assertIn('objectName: "createEmptyProjectButton"', qml)
-        self.assertIn("root.appBackend.createEmptyProject()", qml)
+        self.assertIn('objectName: "createEmptyProjectButton"', action_bar)
+        self.assertIn("onCreateProjectRequested: root.appBackend.createEmptyProject()", qml)
         self.assertIn('visible: root.appBackend.projectLoaded', qml)
         self.assertIn('"動画を書き出す"', qml)
         self.assertIn('objectName: "editorEmptyState"', qml)

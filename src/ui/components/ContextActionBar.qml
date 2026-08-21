@@ -30,8 +30,8 @@ Rectangle {
 
     // The project state shows two action rows; keep the bar compact enough for
     // the supported 1220x760 window while leaving the initial state shorter.
-    implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 184 : 148
-    Layout.minimumHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 184 : 148
+    implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 220 : 148
+    Layout.minimumHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 220 : 148
     radius: 12
     color: "#121715"
     border.color: "#2A3530"
@@ -121,7 +121,7 @@ Rectangle {
                 visible: actionBar.projectLoaded
                 enabled: actionBar.projectLoaded && !actionBar.running
                 text: "字幕を編集する"
-                onClicked: actionBar.editorRequested()
+                onClicked: { actionBar.editorRequested() }
                 contentItem: Text { text: editButton.text; color: editButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: 8; color: editButton.enabled ? "#C8FF3D" : "#252C28" }
             }
@@ -133,7 +133,7 @@ Rectangle {
                 Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded
                 enabled: actionBar.projectLoaded && !actionBar.running && actionBar.audioMixerAvailable
-                text: actionBar.audioMixerAvailable ? "音量を調整する" : "音量を調整する（音声なし）"
+                text: actionBar.audioMixerAvailable ? "音量を調整する" : "音声トラックなし"
                 onClicked: actionBar.mixerRequested()
                 contentItem: Text { text: mixerButton.text; color: mixerButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: 8; color: mixerButton.enabled ? "#C8FF3D" : "#252C28" }

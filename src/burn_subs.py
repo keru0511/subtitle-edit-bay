@@ -53,7 +53,7 @@ def build_ass_filter(subtitle: str) -> str:
 
 def build_ffmpeg_command(
     video: str,
-    subtitle: str,
+    subtitle: str | None,
     output: str,
     video_codec: str = DEFAULT_VIDEO_CODEC,
     audio_codec: str = DEFAULT_AUDIO_CODEC,
@@ -76,7 +76,9 @@ def build_ffmpeg_command(
         command.extend(["-filter_complex", mix_filter, "-map", "0:v:0", "-map", "[mixed_audio]"])
     else:
         command.extend(["-map", "0:v:0", "-map", audio_track])
-    command.extend(["-vf", build_ass_filter(subtitle), "-c:v", video_codec])
+    if subtitle:
+        command.extend(["-vf", build_ass_filter(subtitle)])
+    command.extend(["-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
     command.extend(["-pix_fmt", "yuv420p"])
     if audio_mix is not None:
@@ -95,7 +97,7 @@ def build_ffmpeg_command(
 
 def run_ffmpeg_burn(
     video: str,
-    subtitle: str,
+    subtitle: str | None,
     output: str,
     video_codec: str = DEFAULT_VIDEO_CODEC,
     audio_codec: str = DEFAULT_AUDIO_CODEC,
@@ -108,7 +110,10 @@ def run_ffmpeg_burn(
     audio_offset_seconds: float = 0.0,
     progress_callback: Callable[[str], None] | None = None,
 ) -> Path:
-    subtitle_for_filter, cleanup_path = _as_escaped_ass_input(subtitle)
+    subtitle_for_filter = None
+    cleanup_path = None
+    if subtitle:
+        subtitle_for_filter, cleanup_path = _as_escaped_ass_input(subtitle)
 
     def command_builder(selected_codec: str, command_output: str) -> list[str]:
         return build_ffmpeg_command(

@@ -253,8 +253,8 @@ ApplicationWindow {
             return "GPU処理を利用できません。処理方法をCPUに変更するか、アプリの実行環境を修復してください"
         if (!root.appBackend.sourceSelection.video)
             return "素材設定で動画を指定してください"
-        if (root.appBackend.speakers.length === 0)
-            return "素材設定で1つ以上の話者音声を指定してください"
+        if (root.appBackend.speakers.length === 0 && root.appBackend.audioTracks.length <= 1)
+            return "話者音声または動画内音声が必要です"
         if (!root.appBackend.sourceSelection.output_dir)
             return "素材設定で出力先フォルダを指定してください"
         if (root.appBackend.projectLoaded)
@@ -1176,15 +1176,21 @@ ApplicationWindow {
                 projectLoaded: root.appBackend.projectLoaded
                 running: root.appBackend.running
                 activeJob: root.appBackend.activeJob
-                canStartTranscription: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda) && !root.appBackend.projectLoaded
+                canCreateProject: Boolean(root.appBackend.sourceSelection.video) && Boolean(root.appBackend.sourceSelection.output_dir)
+                canStartTranscription: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && (root.appBackend.speakers.length > 0 || root.appBackend.audioTracks.length > 1) && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda)
                 blockReason: root.transcriptionBlockReason()
+                audioMixerAvailable: root.appBackend.audioMixerAvailable
+                mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
                 subtitleAvailable: root.appBackend.subtitleSegments.length > 0
                 outputFolderAvailable: Boolean(root.appBackend.sourceSelection.output_dir)
                 settingsExpanded: root.settingsExpanded
                 onSettingsRequested: root.toggleSettingsPopup()
                 onDictionaryRequested: root.openDictionaryScreen()
+                onCreateProjectRequested: root.appBackend.createEmptyProject()
                 onStartTranscriptionRequested: {
-                    if (root.appBackend.transcriptionProjectExists())
+                    if (root.appBackend.projectLoaded)
+                        transcriptionMergeDialog.open()
+                    else if (root.appBackend.transcriptionProjectExists())
                         overwriteProjectDialog.open()
                     else
                         root.appBackend.startTranscription(root.currentSettings(), false)
@@ -1278,6 +1284,35 @@ ApplicationWindow {
       }
 
       onAccepted: root.appBackend.startTranscription(root.currentSettings(), true)
+  }
+
+  Dialog {
+      id: transcriptionMergeDialog
+      objectName: "transcriptionMergeDialog"
+      anchors.centerIn: Overlay.overlay
+      modal: true
+      title: "既存字幕の取り込み方法"
+      standardButtons: Dialog.NoButton
+
+      contentItem: ColumnLayout {
+          width: 440
+          spacing: 10
+          Text {
+              Layout.fillWidth: true
+              text: "既存の字幕があります。文字起こし結果の取り込み方法を選択してください。既存字幕は確認なしに削除されません。"
+              color: root.textPrimary
+              font.family: "Yu Gothic UI"
+              font.pixelSize: 12
+              wrapMode: Text.Wrap
+          }
+          RowLayout {
+              Layout.fillWidth: true
+              Item { Layout.fillWidth: true }
+              Button { objectName: "transcriptionMergeCancelButton"; text: "キャンセル"; onClicked: transcriptionMergeDialog.close() }
+              Button { objectName: "transcriptionMergeAppendButton"; text: "追加・統合"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.transcribeProject(root.currentSettings(), "merge") } }
+              Button { objectName: "transcriptionMergeReplaceButton"; text: "置き換え"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.transcribeProject(root.currentSettings(), "replace") } }
+          }
+      }
   }
 
   Popup {

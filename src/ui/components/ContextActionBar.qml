@@ -10,12 +10,16 @@ Rectangle {
     property bool running: false
     property string activeJob: ""
     property bool canStartTranscription: false
+    property bool canCreateProject: false
+    property bool audioMixerAvailable: true
     property string blockReason: ""
+    property string mixerBlockReason: ""
     property bool settingsExpanded: false
     property bool outputFolderAvailable: false
 
     signal settingsRequested()
     signal dictionaryRequested()
+    signal createProjectRequested()
     signal startTranscriptionRequested()
     signal editorRequested()
     signal mixerRequested()
@@ -26,8 +30,8 @@ Rectangle {
 
     // The project state shows two action rows; keep the bar compact enough for
     // the supported 1220x760 window while leaving the initial state shorter.
-    implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 148 : 116
-    Layout.minimumHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 148 : 116
+    implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 184 : 148
+    Layout.minimumHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 184 : 148
     radius: 12
     color: "#121715"
     border.color: "#2A3530"
@@ -84,13 +88,26 @@ Rectangle {
             }
 
             Button {
+                id: createProjectButton
+                objectName: "createEmptyProjectButton"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                visible: !actionBar.projectLoaded
+                enabled: actionBar.canCreateProject && !actionBar.running
+                text: "空の編集プロジェクトを作成"
+                onClicked: actionBar.createProjectRequested()
+                contentItem: Text { text: createProjectButton.text; color: createProjectButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: 8; color: createProjectButton.enabled ? "#C8FF3D" : "#252C28" }
+            }
+
+            Button {
                 id: transcribeButton
                 objectName: "transcribeButton"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
-                visible: !actionBar.projectLoaded || actionBar.activeJob === "transcribe"
+                visible: !actionBar.running || actionBar.activeJob === "transcribe"
                 enabled: actionBar.canStartTranscription
-                text: actionBar.activeJob === "transcribe" ? "文字起こし中..." : "文字起こしを開始"
+                text: actionBar.activeJob === "transcribe" ? "文字起こし中..." : (actionBar.projectLoaded ? "文字起こしを追加 / 更新" : "文字起こしを開始")
                 onClicked: actionBar.startTranscriptionRequested()
                 contentItem: Text { text: transcribeButton.text; color: transcribeButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: 8; color: transcribeButton.enabled ? "#C8FF3D" : "#252C28" }
@@ -115,8 +132,8 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded
-                enabled: actionBar.projectLoaded && !actionBar.running
-                text: "音量を調整する"
+                enabled: actionBar.projectLoaded && !actionBar.running && actionBar.audioMixerAvailable
+                text: actionBar.audioMixerAvailable ? "音量を調整する" : "音量を調整する（音声なし）"
                 onClicked: actionBar.mixerRequested()
                 contentItem: Text { text: mixerButton.text; color: mixerButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: 8; color: mixerButton.enabled ? "#C8FF3D" : "#252C28" }
@@ -127,7 +144,7 @@ Rectangle {
                 objectName: "shortModeOpenButton"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
-                visible: actionBar.projectLoaded && actionBar.subtitleAvailable
+                visible: actionBar.projectLoaded
                 enabled: actionBar.projectLoaded && !actionBar.running
                 text: "ショート動画を作成"
                 onClicked: actionBar.shortModeRequested()
@@ -142,7 +159,7 @@ Rectangle {
                 Layout.preferredHeight: 28
                 visible: actionBar.projectLoaded || actionBar.activeJob === "render"
                 enabled: actionBar.projectLoaded && !actionBar.running
-                text: actionBar.activeJob === "render" ? "字幕を焼き付け中..." : "字幕を焼き付けて動画を書き出す"
+                text: actionBar.activeJob === "render" ? (actionBar.subtitleAvailable ? "字幕を焼き付け中..." : "動画を書き出し中...") : (actionBar.subtitleAvailable ? "字幕を焼き付けて動画を書き出す" : "動画を書き出す")
                 onClicked: actionBar.renderRequested()
                 contentItem: Text { text: renderButton.text; color: renderButton.enabled ? "#F4F1E8" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: 8; color: renderButton.enabled ? "#19201D" : "#252C28"; border.color: renderButton.enabled ? "#2A3530" : "#252C28" }
@@ -154,7 +171,7 @@ Rectangle {
             Text {
                 objectName: "workflowBlockReason"
                 Layout.fillWidth: true
-                text: actionBar.blockReason
+                text: actionBar.blockReason.length > 0 ? actionBar.blockReason : actionBar.mixerBlockReason
                 visible: text.length > 0
                 color: "#FFB547"
                 font.family: "Yu Gothic UI"

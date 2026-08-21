@@ -556,7 +556,11 @@ def render_project_video(
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
-    ass_path = build_project_ass(project_path, _project=project)
+    has_subtitles = any(
+        isinstance(segment, dict) and str(segment.get("text", "")).strip()
+        for segment in project.get("segments", [])
+    )
+    ass_path = build_project_ass(project_path, _project=project) if has_subtitles else None
     output = Path(output_path) if output_path else derive_render_path(project_path)
     loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
     audio_mix = project.get("audio_mix", {})
@@ -636,20 +640,53 @@ def render_project_video(
         )
         if not keep_ranges:
             raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
-        cut_ass = Path(project_path).with_name(f".{Path(project_path).stem}.cut.ass")
-        transcript = project_to_transcript(project, project_is_validated=True)
-        cut_transcript = {"segments": retime_segments_for_keep_ranges(transcript["segments"], keep_ranges)}
-        try:
-            build_ass_from_data(
-                cut_transcript,
-                str(cut_ass),
-                **_ass_build_options(project),
-            )
-            cut_output = output.with_name(f"{output.stem}.silence-cut{output.suffix or '.mp4'}")
-            log_progress(f"Cutting {len(no_speech_ranges)} silent ranges to {cut_output.name}")
+        if has_subtitles:
+            cut_ass = Path(project_path).with_name(f".{Path(project_path).stem}.cut.ass")
+            transcript = project_to_transcript(project, project_is_validated=True)
+            cut_transcript = {"segments": retime_segments_for_keep_ranges(transcript["segments"], keep_ranges)}
+            try:
+                build_ass_from_data(
+                    cut_transcript,
+                    str(cut_ass),
+                    **_ass_build_options(project),
+                )
+                cut_output = output.with_name(f"{output.stem}.silence-cut{output.suffix or '.mp4'}")
+                log_progress(f"Cutting {len(no_speech_ranges)} silent ranges to {cut_output.name}")
+                cut_media_ranges(
+                    video_path,
+                    str(cut_output),
+                    keep_ranges,
+                    video_codec=video_codec,
+                    audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+                    nvenc_preset=nvenc_preset,
+                    nvenc_cq=nvenc_cq,
+                    x264_crf=x264_crf,
+                    audio_filter=loudnorm_filter,
+                    audio_track=output_audio_track,
+                    audio_mix=audio_mix if use_audio_mix else None,
+                    audio_offset_seconds=offset_seconds,
+                    progress_callback=log_progress,
+                )
+                log_progress(f"Rendering edited subtitles to {output.name}")
+                run_ffmpeg_burn(
+                    str(cut_output),
+                    str(cut_ass),
+                    str(output),
+                    video_codec=video_codec,
+                    audio_codec="copy",
+                    nvenc_preset=nvenc_preset,
+                    nvenc_cq=nvenc_cq,
+                    x264_crf=x264_crf,
+                    progress_callback=log_progress,
+                )
+            finally:
+                cut_ass.unlink(missing_ok=True)
+        else:
+            cut_output = output
+            log_progress(f"Cutting {len(no_speech_ranges)} silent ranges to {output.name}")
             cut_media_ranges(
                 video_path,
-                str(cut_output),
+                str(output),
                 keep_ranges,
                 video_codec=video_codec,
                 audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
@@ -662,20 +699,6 @@ def render_project_video(
                 audio_offset_seconds=offset_seconds,
                 progress_callback=log_progress,
             )
-            log_progress(f"Rendering edited subtitles to {output.name}")
-            run_ffmpeg_burn(
-                str(cut_output),
-                str(cut_ass),
-                str(output),
-                video_codec=video_codec,
-                audio_codec="copy",
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                progress_callback=log_progress,
-            )
-        finally:
-            cut_ass.unlink(missing_ok=True)
     else:
         log_progress(f"Rendering edited subtitles to {output.name}")
         burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec
@@ -683,7 +706,7 @@ def render_project_video(
             burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC
         run_ffmpeg_burn(
             video_path,
-            str(ass_path),
+            str(ass_path) if ass_path is not None else None,
             str(output),
             video_codec=video_codec,
             audio_codec=burn_audio_codec,
@@ -741,7 +764,11 @@ def render_project_short_video(
     output = Path(output_path) if output_path else derive_short_render_path(project_path)
     if audio_codec == "copy":
         audio_codec = "aac"
-    ass_path = build_short_video_ass(project_path, _project=project)
+    has_subtitles = any(
+        isinstance(segment, dict) and str(segment.get("text", "")).strip()
+        for segment in project.get("segments", [])
+    )
+    ass_path = build_short_video_ass(project_path, _project=project) if has_subtitles else None
     result = render_short_video(
         project_path,
         output,

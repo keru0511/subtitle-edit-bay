@@ -275,6 +275,33 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.app.processEvents()
 
+    def test_empty_project_can_be_opened_and_manually_edited(self) -> None:
+        video, _audio, output = self._set_ready_sources()
+        with patch("src.gui.probe_media_duration", return_value=30.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        self.assertEqual(self.app.subtitleSegments, [])
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.assertTrue(self._quick_item(window, "editorEmptyState").isVisible())
+        self._click(window, self._quick_item(window, "addCaptionButton"))
+        self.assertEqual(self.app.segmentCount, 1)
+
+    def test_empty_project_creation_never_overwrites_existing_project(self) -> None:
+        _video, _audio, output = self._set_ready_sources()
+        project_path = output / "game.subtitle-project.json"
+        sentinel = create_project(
+            video_path=self.app.sourceSelection["video"],
+            output_dir=output,
+            segments=[{"start": 0, "end": 1, "text": "keep", "speaker": "Oz"}],
+        )
+        save_project(project_path, sentinel)
+
+        with patch("src.gui.probe_media_duration", return_value=30.0):
+            self.assertFalse(self.app.createEmptyProject())
+        self.assertEqual(load_project(project_path)["segments"][0]["text"], "keep")
+
     def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
         choices = build_font_choices(["Yu Gothic", "@Yu Gothic", " arial ", "Arial", ""])
 

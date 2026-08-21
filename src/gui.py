@@ -69,10 +69,12 @@ from .gui_state import (
     build_gui_short_video_command,
     build_gui_transcribe_command,
 )
+from .media_probe import probe_media_duration
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     SubtitleProjectError,
     assign_project_layout_rows,
+    create_project,
     derive_project_path,
     load_project,
     normalize_segment,
@@ -330,6 +332,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_revision = -1
         self._autosave_path = ""
         self._autosave_pending = False
+        self._transcription_merge_mode = ""
+        self._transcription_preserved_segments: list[dict[str, Any]] = []
         self._ignored_autosaves: set[tuple[int, str]] = set()
         self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
         cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
@@ -1208,6 +1212,14 @@ class EditBayBackend(LegacyEditBayBackend):
             for channel in self._project.get("audio_mix", {}).get("channels", [])
         ]
 
+    @Property(bool, notify=projectDataChanged)
+    def audioMixerAvailable(self) -> bool:
+        return any(
+            bool(channel.get("enabled")) and bool(channel.get("preview_url"))
+            for channel in self.audioMixerChannels
+            if isinstance(channel, dict)
+        )
+
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
         if self._project is None:
@@ -1708,6 +1720,53 @@ class EditBayBackend(LegacyEditBayBackend):
         path = self._default_project_path()
         return path is not None and path.is_file()
 
+    @Slot(result=bool)
+    def createEmptyProject(self) -> bool:
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            return False
+        selection = self._source_selection
+        if not Path(selection.video).is_file() or not selection.output_dir:
+            self._set_status("動画と出力先フォルダを指定してください", "CHECK")
+            return False
+        project_path = self._default_project_path()
+        if project_path is None:
+            self._set_status("編集プロジェクトの保存先を決定できません", "ERROR")
+            return False
+        if project_path.is_file():
+            self._set_status(
+                "既存プロジェクトは上書きしません。プロジェクトを開くか、別の出力先を指定してください",
+                "CHECK",
+            )
+            return False
+
+        try:
+            duration_seconds = probe_media_duration(selection.video)
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            duration_seconds = 0.0
+        project = create_project(
+            video_path=selection.video,
+            output_dir=selection.output_dir,
+            segments=[],
+            audio_sources=deepcopy(self._speakers),
+            speakers=deepcopy(self._speakers),
+            duration_seconds=duration_seconds,
+            transcription={"status": "not_started"},
+        )
+        reconcile_audio_mix(
+            project,
+            self._mixer_video_tracks() or self._fallback_video_tracks(),
+        )
+        try:
+            save_project(project_path, project)
+        except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+            self._set_status(f"空の編集プロジェクトを保存できません: {error}", "ERROR")
+            return False
+        loaded = self._load_project_path(project_path, update_sources=False)
+        if loaded:
+            self._set_status("空の編集プロジェクトを作成しました。字幕を手動追加できます", "EDIT")
+        return loaded
+
     def _clear_project(self) -> None:
         if self._project_dirty:
             self.saveProject()
@@ -1853,6 +1912,52 @@ class EditBayBackend(LegacyEditBayBackend):
                 return
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
+
+    @Slot("QVariantMap", str)
+    def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+        selected_mode = str(mode or "").strip().lower()
+        if selected_mode not in {"replace", "merge"}:
+            self._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
+            return
+        if self._project is None:
+            self.startTranscription(settings, False)
+            return
+        if not self.saveProject():
+            return
+        self._transcription_merge_mode = selected_mode
+        self._transcription_preserved_segments = (
+            deepcopy(self._project.get("segments", []))
+            if selected_mode == "merge"
+            else []
+        )
+        self.startTranscription(settings, True)
+
+    def _merge_preserved_transcription_segments(self) -> None:
+        if self._project is None or self._transcription_merge_mode != "merge":
+            return
+        preserved = deepcopy(self._transcription_preserved_segments)
+        if not preserved:
+            return
+        generated = deepcopy(self._project.get("segments", []))
+        used_ids = {str(item.get("id", "")) for item in preserved}
+        merged = list(preserved)
+        for segment in generated:
+            segment_id = str(segment.get("id", ""))
+            if segment_id in used_ids:
+                segment["id"] = f"transcribed-{uuid4().hex[:12]}"
+            used_ids.add(str(segment["id"]))
+            merged.append(segment)
+        self._project["segments"] = assign_project_layout_rows(
+            sorted(merged, key=lambda item: (item["start"], item["end"], item["id"])),
+        )
+        self._selected_segment_index = 0 if self._project["segments"] else -1
+        save_project(self._project_path, self._project)
+        self._project_dirty = False
+        self._sync_subtitle_model()
+        self.projectChanged.emit()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self.selectionChanged.emit()
 
     def _apply_project_subtitle_settings(self, project: dict[str, Any]) -> None:
         subtitle = project.get("subtitle_settings", {})
@@ -3070,8 +3175,19 @@ class EditBayBackend(LegacyEditBayBackend):
             self.progressChanged.emit()
             if completed_job == "transcribe":
                 loaded = self._try_load_default_project()
+                merged = False
+                if loaded and self._transcription_merge_mode == "merge":
+                    try:
+                        self._merge_preserved_transcription_segments()
+                        merged = bool(self._transcription_preserved_segments)
+                    except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+                        self._set_status(f"文字起こし結果の統合に失敗しました: {error}", "ERROR")
+                self._transcription_merge_mode = ""
+                self._transcription_preserved_segments = []
                 self._set_status(
-                    "文字起こし完了。字幕を確認して動画へ焼き付けられます"
+                    "文字起こし結果を既存字幕へ追加しました。内容を確認してください"
+                    if merged
+                    else "文字起こし完了。字幕を確認して動画へ焼き付けられます"
                     if loaded
                     else "文字起こしが完了しました。編集プロジェクトを開いてください",
                     "EDIT" if loaded else "CHECK",
@@ -3083,6 +3199,9 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
+            if completed_job == "transcribe":
+                self._transcription_merge_mode = ""
+                self._transcription_preserved_segments = []
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:

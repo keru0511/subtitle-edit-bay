@@ -104,6 +104,8 @@ class QmlStaticTests(unittest.TestCase):
             qml.index('objectName: "processingProgressOverlay"'),
             qml.index('objectName: "applicationLogPanel"'),
         )
+        self.assertIn('objectName: "processingProgressModeOverlay"', qml)
+        self.assertIn("root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode", qml)
 
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
         qml = read_workflow_qml()

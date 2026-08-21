@@ -1894,11 +1894,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._processing_progress.start("render")
         self.app.progressDetailsChanged.emit()
         _, window = self._load_qml()
+        window.resize(1220, 760)
+        self.app.processEvents()
         progress_panel = self._quick_item(window, "processingProgressOverlay")
         log_panel = self._quick_item(window, "applicationLogPanel")
+        central_column = self._quick_item(window, "workflowStepper").parentItem()
+        layout_items = [
+            self._quick_item(window, name)
+            for name in (
+                "workflowStepper",
+                "contextActionBar",
+                "mainVideoPanel",
+                "processingProgressOverlay",
+                "applicationLogPanel",
+            )
+        ]
 
         self.assertTrue(progress_panel.isVisible())
         self.assertGreater(progress_panel.height(), 0)
+        for item in layout_items:
+            self.assertGreater(item.width(), 0)
+            self.assertGreater(item.height(), 0)
+            self.assertGreaterEqual(item.y(), -1)
+            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
         self.assertLessEqual(progress_panel.y() + progress_panel.height(), log_panel.y() + 1)
         self.assertGreaterEqual(log_panel.y(), progress_panel.y() + progress_panel.height())
 
@@ -1908,7 +1926,30 @@ class GuiEditorRegressionTests(unittest.TestCase):
         central_column = self._quick_item(window, "workflowStepper").parentItem()
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreater(log_panel.height(), 0)
+        for item in layout_items:
+            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+    def test_short_mode_keeps_progress_controls_visible_during_export(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        self.app._processing_progress.start("render_short")
+        self.app._running = True
+        self.app.progressDetailsChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.activeJobChanged.emit()
+        self.app.processEvents()
+
+        short_page = self._quick_item(window, "shortModePage")
+        mode_overlay = self._quick_item(window, "processingProgressModeOverlay")
+        mode_panel = self._quick_item(window, "processingProgressModePanel")
+        self.assertTrue(short_page.isVisible())
+        self.assertTrue(mode_overlay.isVisible())
+        self.assertTrue(mode_panel.isVisible())
+        stop_button = self._quick_visual_item(mode_panel, "processingProgressStopButton")
+        self.assertTrue(stop_button.isVisible())
 
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
         self.app._settings.update(

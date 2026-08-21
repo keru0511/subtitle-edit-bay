@@ -1205,7 +1205,9 @@ ApplicationWindow {
                 objectName: "mainVideoPanel"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: applicationLogPanel.expanded && root.height <= 800 ? 140 : 300
+                Layout.minimumHeight: root.appBackend.progressVisible
+                    ? (root.height <= 800 ? 170 : 300)
+                    : (applicationLogPanel.expanded && root.height <= 800 ? 140 : 300)
                 radius: 12
                 color: "#080A09"
                 border.color: root.border
@@ -2251,6 +2253,38 @@ ApplicationWindow {
             active: root.shortMode
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
+        }
+    }
+
+    Rectangle {
+        id: processingProgressModeOverlay
+        objectName: "processingProgressModeOverlay"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 12
+        anchors.rightMargin: 12
+        anchors.bottomMargin: 12
+        z: 700
+        color: "transparent"
+        visible: root.appBackend
+            && root.appBackend.progressVisible
+            && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode)
+        height: modeProgressPanel.implicitHeight
+
+        ProcessingProgressPanel {
+            id: modeProgressPanel
+            objectName: "processingProgressModePanel"
+            anchors.fill: parent
+            backend: root.appBackend
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            warningColor: root.amber
+            errorColor: root.danger
         }
     }
 

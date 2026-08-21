@@ -19,6 +19,7 @@
 ## ドキュメント
 
 - [利用ガイド](docs/USAGE.md): セットアップ、入力配置、実行、再実行、出力確認
+- [処理進捗ガイド](docs/PROCESS_PROGRESS.md): 工程シーケンス、全体進捗、停止・エラー表示
 - [ショートモード利用ガイド](docs/USAGE.md#ショートモード): クリップ、fit、BGM、クロスフェード、書き出し
 - [設定ガイド](docs/CONFIGURATION.md): GPU、字幕タイミング、色、話者分離、codec
 - [Codexチャット](docs/CODEX_CHAT.md): ログイン、チャット、モデル選択、再接続

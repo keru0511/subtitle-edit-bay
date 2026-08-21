@@ -85,6 +85,7 @@ from .subtitle_project import (
     normalize_segment,
     save_project,
 )
+from .processing_progress import ProcessingProgress, parse_ffmpeg_timestamp, parse_progress_events
 from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
@@ -308,6 +309,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexCallbackRequested = Signal(object)
     highlightCandidatesChanged = Signal()
     highlightAnalysisChanged = Signal()
+    progressDetailsChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
@@ -322,6 +324,10 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=workspace_root)
+        self._processing_progress = ProcessingProgress()
+        self._ffmpeg_duration_seconds = 0.0
+        self._ffmpeg_duration_from_event = False
+        self._processing_machine_event_seen = False
         self._application_logger = ApplicationLogger(
             self.workspace_root,
             application_info=self._application_info,
@@ -1544,6 +1550,33 @@ class EditBayBackend(LegacyEditBayBackend):
     def activeJob(self) -> str:
         return self._active_job
 
+    @Property("QVariantList", notify=progressDetailsChanged)
+    def progressSteps(self) -> list[dict[str, Any]]:
+        return self._processing_progress.as_list()
+
+    @Property(int, notify=progressDetailsChanged)
+    def progressPercent(self) -> int:
+        return int(round(self._processing_progress.value * 100))
+
+    @Property(str, notify=progressDetailsChanged)
+    def progressCurrentStep(self) -> str:
+        return self._processing_progress.current_step
+
+    @Property(str, notify=progressDetailsChanged)
+    def progressCurrentStepDisplay(self) -> str:
+        for step in self._processing_progress.as_list():
+            if step["id"] == self._processing_progress.current_step:
+                return str(step["label"])
+        return ""
+
+    @Property(str, notify=progressDetailsChanged)
+    def progressState(self) -> str:
+        return self._processing_progress.status
+
+    @Property(bool, notify=progressDetailsChanged)
+    def progressVisible(self) -> bool:
+        return bool(self._processing_progress.steps)
+
     @Property(str, notify=assPathChanged)
     def assPath(self) -> str:
         return self._ass_path
@@ -2449,6 +2482,13 @@ class EditBayBackend(LegacyEditBayBackend):
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         self._active_job = job
         self.activeJobChanged.emit()
+        skip_steps: set[str] = set()
+        if job == "render" and self._project is not None:
+            segments = self._project.get("segments", ())
+            if not isinstance(segments, (list, tuple)) or not segments:
+                skip_steps.add("subtitle")
+        self._processing_progress.start(job, skip_steps=skip_steps)
+        self.progressDetailsChanged.emit()
         if self._last_process_diagnostic is not None:
             self._last_process_diagnostic = None
             self.lastProcessDiagnosticChanged.emit()
@@ -2460,8 +2500,11 @@ class EditBayBackend(LegacyEditBayBackend):
             job=job,
             stage="STARTING",
         )
-        self._progress = 0.02
+        self._progress = self._processing_progress.value if self._processing_progress.steps else 0.02
         self.progressChanged.emit()
+        self._ffmpeg_duration_seconds = 0.0
+        self._ffmpeg_duration_from_event = False
+        self._processing_machine_event_seen = False
         self._elapsed_seconds = 0
         self._cancel_requested = False
         self.elapsedChanged.emit()
@@ -3108,6 +3151,24 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         self._update_stage(normalized)
 
+    def _finish_processing_progress(self, outcome: str) -> None:
+        if not self._processing_progress.steps and self._active_job:
+            self._processing_progress.start(self._active_job)
+        if not self._processing_progress.steps:
+            # Trackerless jobs (currently the self-update process) retain the
+            # legacy scalar progress path.  A successful process still needs
+            # to reach 100% when its QProcess exits cleanly.
+            self._processing_progress.finish(outcome)
+            if outcome == "completed":
+                self._progress = 1.0
+                self.progressChanged.emit()
+            self.progressDetailsChanged.emit()
+            return
+        self._processing_progress.finish(outcome)
+        self._progress = self._processing_progress.value
+        self.progressChanged.emit()
+        self.progressDetailsChanged.emit()
+
     def _process_error(self, error: QProcess.ProcessError) -> None:
         message = self.process.errorString() or str(error)
         self._pending_process_error = message
@@ -3128,24 +3189,93 @@ class EditBayBackend(LegacyEditBayBackend):
                 outcome="failed",
                 exit_code=None,
             )
+            self._finish_processing_progress("error")
             self._active_job = ""
             self.activeJobChanged.emit()
 
     def _update_stage(self, output: str) -> None:
-        markers = [
-            ("Resolving alignment", "ALIGN", "動画と話者音声を同期しています", 0.08),
-            ("Starting WhisperX", "WHISPERX", "文字起こししています", 0.22),
-            ("Refining merged", "LAYOUT", "編集用字幕を組み立てています", 0.64),
-            ("Building waveform", "WAVEFORM", "タイムライン波形を作成しています", 0.78),
-            ("Project ready", "PROJECT", "編集プロジェクトを保存しています", 0.92),
-            ("ASS preview ready", "ASS", "ASS字幕を生成しています", 0.3),
-            ("Rendering edited", "ENCODE", "字幕を動画へ焼き付けています", 0.45),
-            ("Render complete", "ENCODE", "動画を書き出しました", 0.96),
-        ]
-        for marker, stage, status, progress in markers:
-            if marker in output:
-                self._progress = max(self._progress, progress)
+        for event in parse_progress_events(output):
+            try:
+                target_duration = float(event.get("duration", 0.0))
+            except (TypeError, ValueError):
+                target_duration = 0.0
+            if target_duration > 0.0:
+                self._ffmpeg_duration_seconds = target_duration
+                self._ffmpeg_duration_from_event = True
+            if (
+                event.get("step") == "encode"
+                and event.get("phase") == "start"
+                and not self._ffmpeg_duration_from_event
+            ):
+                self._ffmpeg_duration_seconds = 0.0
+            if self._processing_progress.update(event):
+                self._processing_machine_event_seen = True
+                self._progress = self._processing_progress.value
                 self.progressChanged.emit()
+                self.progressDetailsChanged.emit()
+        for line in output.splitlines():
+            if "Duration:" in line and self._ffmpeg_duration_seconds <= 0.0:
+                duration = parse_ffmpeg_timestamp(line)
+                if duration and duration > 0.0:
+                    self._ffmpeg_duration_seconds = duration
+            if self._processing_progress.current_step != "encode":
+                continue
+            if "time=" not in line:
+                continue
+            timestamp = parse_ffmpeg_timestamp(line)
+            if timestamp is None or self._ffmpeg_duration_seconds <= 0.0:
+                continue
+            encode_progress = min(1.0, timestamp / self._ffmpeg_duration_seconds)
+            if self._processing_progress.update(
+                {
+                    "job": self._processing_progress.job,
+                    "step": "encode",
+                    "phase": "progress",
+                    "progress": encode_progress,
+                }
+            ):
+                self._progress = self._processing_progress.value
+                self.progressChanged.emit()
+                self.progressDetailsChanged.emit()
+        markers = [
+            ("Resolving alignment", "alignment", "ALIGN", "動画と話者音声を同期しています", 0.08),
+            ("Starting WhisperX", "transcription", "WHISPERX", "文字起こししています", 0.22),
+            ("CPU postprocess", "refine", "LAYOUT", "字幕を統合・整形しています", 0.58),
+            ("Refining merged", "refine", "LAYOUT", "編集用字幕を組み立てています", 0.64),
+            ("Building waveform", "waveform", "WAVEFORM", "タイムライン波形を作成しています", 0.78),
+            ("Project ready", "project", "PROJECT", "編集プロジェクトを保存しています", 0.92),
+            ("ASS preview ready", "subtitle", "ASS", "ASS字幕を生成しています", 0.3),
+            ("Rendering edited", "encode", "ENCODE", "字幕を動画へ焼き付けています", 0.45),
+            ("Rendering edited subtitles", "encode", "ENCODE", "字幕を動画へ焼き付けています", 0.45),
+            ("Rendering short video", "encode", "ENCODE", "ショート動画をエンコードしています", 0.45),
+            ("Render complete", "finalize", "ENCODE", "動画を書き出しました", 0.96),
+            ("Short render complete", "finalize", "ENCODE", "ショート動画を書き出しました", 0.96),
+        ]
+        for marker, step, stage, status, progress in markers:
+            if marker in output:
+                tracker_updated = False
+                if (
+                    self._processing_progress.job
+                    and not self._processing_machine_event_seen
+                    and step != "waveform"
+                ):
+                    tracker_updated = self._processing_progress.update(
+                        {
+                            "job": self._processing_progress.job,
+                            "step": step,
+                            "phase": "progress",
+                            "progress": progress,
+                        }
+                    )
+                if tracker_updated:
+                    self._progress = self._processing_progress.value
+                elif (
+                    not self._processing_machine_event_seen
+                    and (step != "waveform" or not self._processing_progress.steps)
+                ):
+                    self._progress = max(self._progress, progress)
+                self.progressChanged.emit()
+                self.progressDetailsChanged.emit()
                 self._set_status(status, stage)
 
     def _process_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
@@ -3178,10 +3308,10 @@ class EditBayBackend(LegacyEditBayBackend):
             exit_code=exit_code,
         )
         if self._cancel_requested:
+            self._finish_processing_progress("cancelled")
             self._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
-            self._progress = 1.0
-            self.progressChanged.emit()
+            self._finish_processing_progress("completed")
             if completed_job == "transcribe":
                 loaded = self._try_load_default_project()
                 self._set_status(
@@ -3197,6 +3327,7 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
+            self._finish_processing_progress("error")
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:

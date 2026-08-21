@@ -111,6 +111,41 @@ class ShortVideoTimelineTests(unittest.TestCase):
         self.assertIn("0:00:00.20,0:00:00.80", dialogue)
         self.assertIn("VISIBLE", dialogue)
 
+    def test_build_ass_uses_the_documented_scale_boundaries(self) -> None:
+        for scale_percent, expected_font_size in ((0, 3), (1, 3), (150, 60), (900, 360)):
+            with self.subTest(scale_percent=scale_percent):
+                short_video = ShortVideo(
+                    enabled=True,
+                    output=ShortVideoOutput(width=180, height=320, fps=15),
+                    subtitle_scale_percent=scale_percent,
+                    transition=ShortVideoTransition(type="cut", duration=0.0),
+                    clips=[ShortVideoClip(segment_id="visible", start=1.0, end=2.0)],
+                )
+                project = {
+                    "segments": [
+                        {
+                            "id": "visible",
+                            "start": 1.2,
+                            "end": 1.8,
+                            "text": "VISIBLE",
+                            "speaker": "Oz",
+                            "words": [],
+                        }
+                    ],
+                    "speakers": [],
+                    "subtitle_settings": {"font_size": 40},
+                    "short_video": short_video.to_json(),
+                }
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    output = build_short_video_ass(
+                        Path(temp_dir) / "game.subtitle-project.json",
+                        _project=project,
+                    )
+                    ass_text = output.read_text(encoding="utf-8")
+
+                self.assertIn(f",{expected_font_size},", ass_text)
+
 
 class ShortVideoRenderE2ETests(unittest.TestCase):
     @unittest.skipUnless(

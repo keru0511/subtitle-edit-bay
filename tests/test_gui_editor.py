@@ -2371,6 +2371,25 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, back_button)
         self.assertFalse(short_page.property("visible"))
 
+    def test_short_mode_transition_duration_uses_internal_values(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        transition_combo = self._quick_item(window, "shortModeTransitionCombo")
+        duration_slider = self._quick_item(window, "shortModeTransitionDurationSlider")
+        for transition_type, duration in (("crossfade", 0.4), ("fade", 0.8), ("cut", 1.2)):
+            self.assertTrue(self.app.setShortVideoTransition(transition_type, 0.0))
+            self.app.processEvents()
+            self.assertEqual(transition_combo.property("currentValue"), transition_type)
+
+            duration_slider.setProperty("value", duration)
+            self.app.processEvents()
+
+            transition = self.app.shortVideoSettings["transition"]
+            self.assertEqual(transition["type"], transition_type)
+            self.assertAlmostEqual(float(transition["duration"]), duration)
+
     def test_short_mode_clip_list_and_preview(self) -> None:
         segments = [
             {

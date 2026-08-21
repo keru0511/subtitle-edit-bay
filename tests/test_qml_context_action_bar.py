@@ -52,6 +52,8 @@ class ContextActionBarQmlTests(unittest.TestCase):
 
         self.assertIn('objectName: "advancedSettingsPopup"', workflow)
         self.assertIn('objectName: "advancedSettingsPanel"', workflow)
+        self.assertIn('objectName: "settingsPopupSaveButton"', workflow)
+        self.assertIn('objectName: "settingsPopupCloseButton"', workflow)
         self.assertIn('objectName: "settingsToggleButton"', read_ui_file("components/ContextActionBar.qml"))
         self.assertIn("width: 1520", workflow)
         self.assertIn("height: 940", workflow)

@@ -16,12 +16,15 @@ ApplicationWindow {
     property real editorPixelsPerSecond: 64
     property int snapMilliseconds: 100
     readonly property int defaultSubtitleFontSize: 50
+    property int subtitleFontSizePercent: 100
+    property string subtitleOutlineColor: "#000000"
+    property int subtitleOutlineThickness: 3
     readonly property int selectedSubtitleFontSize: Math.max(
         3,
-        Math.round(root.defaultSubtitleFontSize * fontSizeSpin.value / 100)
+        Math.round(root.defaultSubtitleFontSize * root.subtitleFontSizePercent / 100)
     )
-    readonly property string selectedSubtitleOutlineColor: outlineColorButton.colorValue
-    readonly property int selectedSubtitleOutlineThickness: outlineThicknessSpin.value
+    readonly property string selectedSubtitleOutlineColor: root.subtitleOutlineColor
+    readonly property int selectedSubtitleOutlineThickness: root.subtitleOutlineThickness
     property var projectSpeakerCache: root.appBackend.projectSpeakers
     property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
     property real editorPositionCache: 0
@@ -213,9 +216,12 @@ ApplicationWindow {
     function syncSettings() {
         var value = root.appBackend.settings
         qualitySpin.value = Number(coalesceSetting(value.nvenc_cq, 18))
-        fontSizeSpin.value = Math.round(Number(coalesceSetting(value.subtitle_font_size, root.defaultSubtitleFontSize)) / root.defaultSubtitleFontSize * 100)
-        outlineColorButton.colorValue = String(coalesceSetting(value.subtitle_outline_color, "#000000"))
-        outlineThicknessSpin.value = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
+        root.subtitleFontSizePercent = Math.round(Number(coalesceSetting(value.subtitle_font_size, root.defaultSubtitleFontSize)) / root.defaultSubtitleFontSize * 100)
+        fontSizeSpin.value = root.subtitleFontSizePercent
+        root.subtitleOutlineColor = String(coalesceSetting(value.subtitle_outline_color, "#000000"))
+        outlineColorButton.colorValue = root.subtitleOutlineColor
+        root.subtitleOutlineThickness = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
+        outlineThicknessSpin.value = root.subtitleOutlineThickness
         volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
         gapField.text = Number(coalesceSetting(value.subtitle_max_gap_seconds, 0.1)).toFixed(2)
         paddingField.text = Number(coalesceSetting(value.subtitle_end_padding_seconds, 0.08)).toFixed(2)
@@ -991,7 +997,7 @@ ApplicationWindow {
             y: 84
             width: Math.min(360, root.width - 24)
             height: Math.min(620, root.height - 120)
-            modal: true
+            modal: false
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
             onOpened: root.settingsExpanded = true
             onClosed: root.settingsExpanded = false
@@ -1000,6 +1006,8 @@ ApplicationWindow {
                 anchors.fill: parent
                 clip: true
                 ColumnLayout { width: Math.max(0, advancedSettingsPopup.width - 34); x: 16; spacing: 10
+                        SmallButton { objectName: "settingsPopupSaveButton"; Layout.fillWidth: true; text: "設定を保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveSettings(root.currentSettings()) }
+                        SmallButton { objectName: "settingsPopupCloseButton"; Layout.fillWidth: true; text: "閉じる"; onClicked: advancedSettingsPopup.close() }
                         Item { Layout.preferredHeight: 2 }
                         PanelTitle { text: "文字起こしエンジン" }
                         RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
@@ -1007,7 +1015,7 @@ ApplicationWindow {
                         RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                         PanelTitle { text: "字幕" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100 } Text { text: "%"; color: root.textMuted } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100; onValueChanged: root.subtitleFontSizePercent = value } Text { text: "%"; color: root.textMuted } }
                         RowLayout {
                             Layout.fillWidth: true
                             Text { text: "縁取り色"; color: root.textPrimary; Layout.fillWidth: true }
@@ -1015,6 +1023,7 @@ ApplicationWindow {
                                 id: outlineColorButton
                                 objectName: "outlineColorButton"
                                 property string colorValue: "#000000"
+                                onColorValueChanged: root.subtitleOutlineColor = colorValue
                                 Layout.preferredWidth: 112
                                 Layout.preferredHeight: 32
                                 onClicked: root.openOutlineColorPicker()
@@ -1026,7 +1035,7 @@ ApplicationWindow {
                                 background: Rectangle { radius: 6; color: root.raised; border.color: root.border }
                             }
                         }
-                        RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3 } Text { text: "px"; color: root.textMuted } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3; onValueChanged: root.subtitleOutlineThickness = value } Text { text: "px"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "字幕の音量バランス"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
                         RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }

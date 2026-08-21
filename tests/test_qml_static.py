@@ -358,7 +358,8 @@ class QmlStaticTests(unittest.TestCase):
         overlay_qml = read_component_qml("SubtitleOverlay.qml")
 
         self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
-        self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
+        self.assertIn("root.defaultSubtitleFontSize * root.subtitleFontSizePercent / 100", qml)
+        self.assertIn("onValueChanged: root.subtitleFontSizePercent = value", qml)
         self.assertIn('readonly property int selectedSubtitleFontSize', qml)
         self.assertIn('baseFontSize: root.selectedSubtitleFontSize', qml)
         self.assertIn('property int baseFontSize: 50', overlay_qml)
@@ -398,6 +399,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "outlineColorDialog"', qml)
         self.assertIn('objectName: "outlineColorButton"', qml)
         self.assertIn('objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3', qml)
+        self.assertIn("onValueChanged: root.subtitleOutlineThickness = value", qml)
         self.assertIn('"subtitle_outline_color": root.selectedSubtitleOutlineColor', qml)
         self.assertIn('"subtitle_outline_thickness": root.selectedSubtitleOutlineThickness', qml)
         self.assertIn('outlineThickness: root.selectedSubtitleOutlineThickness', qml)

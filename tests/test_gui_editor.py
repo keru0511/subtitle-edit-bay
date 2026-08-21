@@ -1534,17 +1534,20 @@ class GuiEditorRegressionTests(unittest.TestCase):
         font_size = self._quick_item(window, "fontSizeSpin")
         self.assertEqual(font_size.property("to"), 900)
         font_size.setProperty("value", 900)
+        self.assertEqual(window.property("subtitleFontSizePercent"), 900)
+        self.assertEqual(window.property("selectedSubtitleFontSize"), 450)
         self._quick_item(window, "outlineColorButton").setProperty("colorValue", "#456789")
         self._quick_item(window, "outlineThicknessSpin").setProperty("value", 9)
         self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
-        self._click(window, self._quick_item(window, "saveSettingsButton"))
+        self.assertEqual(window.currentSettings().toVariant()["subtitle_font_size"], 450)
+        self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
         self.assertEqual(self.app.settings["subtitle_font_size"], 450)
         self.assertEqual(self.app.settings["subtitle_outline_color"], "#456789")
         self.assertEqual(self.app.settings["subtitle_outline_thickness"], 9)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 30)
 
-        self._click(window, toggle)
-        self.assertFalse(panel.isVisible())
+        self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
+        self.assertFalse(window.property("settingsExpanded"))
 
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
         self.app._settings.update(

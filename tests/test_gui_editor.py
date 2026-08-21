@@ -1631,7 +1631,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
 
-    def test_qml_settings_round_trip_and_expanded_layout_fit(self) -> None:
+    def test_qml_settings_round_trip_and_expanded_popup_fit(self) -> None:
         _, window = self._load_qml()
         self._load_project()
         panel = self._quick_item(window, "advancedSettingsPanel")
@@ -1641,23 +1641,109 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, toggle)
         self.assertTrue(panel.isVisible())
         actions = self._quick_item(window, "workflowActions")
-        self.assertLessEqual(panel.y() + panel.height(), actions.y() + 1)
         self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
+
+        self._click(window, toggle)
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(window.property("settingsExpanded"))
+        self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
 
         font_size = self._quick_item(window, "fontSizeSpin")
         self.assertEqual(font_size.property("to"), 900)
         font_size.setProperty("value", 900)
+        self.assertEqual(window.property("subtitleFontSizePercent"), 900)
+        self.assertEqual(window.property("selectedSubtitleFontSize"), 450)
         self._quick_item(window, "outlineColorButton").setProperty("colorValue", "#456789")
         self._quick_item(window, "outlineThicknessSpin").setProperty("value", 9)
         self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
-        self._click(window, self._quick_item(window, "saveSettingsButton"))
+        self.assertEqual(window.currentSettings().toVariant()["subtitle_font_size"], 450)
+        self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
         self.assertEqual(self.app.settings["subtitle_font_size"], 450)
         self.assertEqual(self.app.settings["subtitle_outline_color"], "#456789")
         self.assertEqual(self.app.settings["subtitle_outline_thickness"], 9)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 30)
 
+        self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
+        self.assertFalse(window.property("settingsExpanded"))
+
+    def test_qml_settings_popup_closes_on_escape_and_screen_navigation(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "advancedSettingsPanel")
+        toggle = self._quick_item(window, "settingsToggleButton")
+
         self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        QTest.qWait(50)
+        self.app.processEvents()
         self.assertFalse(panel.isVisible())
+        self.assertFalse(window.property("settingsExpanded"))
+
+        self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        QTest.qWait(50)
+        self.app.processEvents()
+
+        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(window.property("settingsExpanded"))
+
+    def test_qml_workflow_layout_fits_supported_window_sizes(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        stepper = self._quick_item(window, "workflowStepper")
+        action_bar = self._quick_item(window, "contextActionBar")
+        video_panel = self._quick_item(window, "mainVideoPanel")
+        log_panel = self._quick_item(window, "applicationLogPanel")
+        central_column = stepper.parentItem()
+
+        for width, height in ((1220, 760), (1520, 940)):
+            window.resize(width, height)
+            self.app.processEvents()
+
+            self.assertGreaterEqual(window.width(), width)
+            self.assertGreaterEqual(window.height(), height)
+            for item in (stepper, action_bar, video_panel, log_panel):
+                self.assertGreater(item.width(), 0)
+                self.assertGreater(item.height(), 0)
+                self.assertGreaterEqual(item.x(), -1)
+                self.assertLessEqual(item.x() + item.width(), central_column.width() + 1)
+                self.assertGreaterEqual(item.y(), -1)
+                self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
+
+            self.assertLessEqual(stepper.y() + stepper.height(), action_bar.y() + 1)
+            self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
+            self.assertGreaterEqual(video_panel.height(), 300)
+            self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+
+        window.resize(1220, 760)
+        self.app.processEvents()
+        log_toggle = self._quick_item(window, "applicationLogToggleButton")
+        self._click(window, log_toggle)
+        QTest.qWait(100)
+        self.app.processEvents()
+
+        self.assertTrue(log_panel.property("expanded"))
+        self.assertGreaterEqual(log_panel.height(), 280)
+        self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
+        self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+        self._click(window, log_toggle)
+        QTest.qWait(100)
+        self.app.processEvents()
+        self.app._set_status("GUI layout error", "ERROR")
+        QTest.qWait(100)
+        self.app.processEvents()
+
+        self.assertTrue(log_panel.property("expanded"))
+        self.assertGreaterEqual(log_panel.height(), 280)
+        self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
         self.app._settings.update(

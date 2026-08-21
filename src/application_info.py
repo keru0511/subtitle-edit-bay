@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from .codex_runtime import classify_distribution
+
 
 VERSION_FILE_NAME = "VERSION"
 DEVELOPMENT_VERSION = "development"
@@ -29,6 +31,7 @@ def resolve_application_info(project_root: Path | None = None) -> dict[str, str]
         root = root.resolve()
     return {
         "version": resolve_application_version(root),
+        "distribution": classify_distribution(root),
         "executablePath": str(Path(sys.executable).resolve()),
         "applicationPath": str(root),
     }
@@ -39,6 +42,7 @@ def build_application_info_payload(project_root: Path | None = None) -> str:
     return "\n".join(
         [
             f"Version: {payload['version']}",
+            f"Distribution: {payload['distribution']}",
             f"Executable: {payload['executablePath']}",
             f"Application path: {payload['applicationPath']}",
         ]

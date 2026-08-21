@@ -69,6 +69,10 @@ class CodexRuntimeTests(unittest.TestCase):
             (root / "SubtitleEditBay.exe").write_bytes(b"launcher")
             self.assertEqual(classify_distribution(root), "installer")
 
+            (root / "SubtitleEditBay.exe").unlink()
+            (root / "SubtitleEditBayLauncher.exe").write_bytes(b"launcher")
+            self.assertEqual(classify_distribution(root), "installer")
+
     def test_diagnostic_redacts_secret_and_local_path(self) -> None:
         redacted = redact_codex_diagnostic(
             "token=secret C:\\Users\\name\\project.json Bearer private"

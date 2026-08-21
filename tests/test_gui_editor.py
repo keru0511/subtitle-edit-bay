@@ -76,6 +76,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._redo_stack.clear()
         app._selected_segment_index = -1
         app._active_job = ""
+        app._processing_progress.start("")
+        app._ffmpeg_duration_seconds = 0.0
+        app._ffmpeg_duration_from_event = False
+        app._processing_machine_event_seen = False
         app._ass_path = ""
         app._loading_project_sources = False
         app._relinking_project_sources = False
@@ -1883,6 +1887,27 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreaterEqual(log_panel.height(), 280)
         self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+    def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
+        self._load_project()
+        self.app._processing_progress.start("render")
+        self.app.progressDetailsChanged.emit()
+        _, window = self._load_qml()
+        progress_panel = self._quick_item(window, "processingProgressOverlay")
+        log_panel = self._quick_item(window, "applicationLogPanel")
+
+        self.assertTrue(progress_panel.isVisible())
+        self.assertGreater(progress_panel.height(), 0)
+        self.assertLessEqual(progress_panel.y() + progress_panel.height(), log_panel.y() + 1)
+        self.assertGreaterEqual(log_panel.y(), progress_panel.y() + progress_panel.height())
+
+        self._click(window, self._quick_item(window, "applicationLogToggleButton"))
+        QTest.qWait(100)
+        self.app.processEvents()
+        central_column = self._quick_item(window, "workflowStepper").parentItem()
+        self.assertTrue(log_panel.property("expanded"))
+        self.assertGreater(log_panel.height(), 0)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:

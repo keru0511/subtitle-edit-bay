@@ -98,8 +98,12 @@ class QmlStaticTests(unittest.TestCase):
     def test_processing_progress_overlay_leaves_application_log_visible(self) -> None:
         qml = read_workflow_qml()
 
-        self.assertIn("anchors.bottom: applicationLogPanel.top", qml)
-        self.assertIn("anchors.bottomMargin: 12", qml)
+        self.assertIn("Layout.preferredHeight: visible ? progressPanel.implicitHeight : 0", qml)
+        self.assertIn("Layout.minimumHeight: visible ? progressPanel.implicitHeight : 0", qml)
+        self.assertLess(
+            qml.index('objectName: "processingProgressOverlay"'),
+            qml.index('objectName: "applicationLogPanel"'),
+        )
 
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
         qml = read_workflow_qml()

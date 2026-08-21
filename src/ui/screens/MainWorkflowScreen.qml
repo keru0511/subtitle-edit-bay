@@ -1243,12 +1243,43 @@ ApplicationWindow {
                 }
             }
 
+            Rectangle {
+                id: processingProgressOverlay
+                objectName: "processingProgressOverlay"
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? progressPanel.implicitHeight : 0
+                Layout.minimumHeight: visible ? progressPanel.implicitHeight : 0
+                implicitHeight: progressPanel.implicitHeight
+                z: 700
+                color: "transparent"
+                visible: root.appBackend && root.appBackend.progressVisible
+
+                ProcessingProgressPanel {
+                    id: progressPanel
+                    objectName: "processingProgressPanel"
+                    anchors.fill: parent
+                    backend: root.appBackend
+                    panelColor: root.panel
+                    raisedColor: root.raised
+                    borderColor: root.border
+                    textColor: root.textPrimary
+                    mutedColor: root.textMuted
+                    accentColor: root.acid
+                    warningColor: root.amber
+                    errorColor: root.danger
+                }
+            }
+
             ApplicationLogPanel {
                 id: applicationLogPanel
                 objectName: "applicationLogPanel"
                 Layout.fillWidth: true
+                Layout.fillHeight: root.appBackend.progressVisible
                 Layout.preferredHeight: implicitHeight
-                Layout.minimumHeight: implicitHeight
+                // The progress panel reserves 126px in this column.  At the
+                // 1220x760 minimum window, allow an expanded log to shrink
+                // to its collapsed minimum so its header remains reachable.
+                Layout.minimumHeight: root.appBackend.progressVisible ? 118 : implicitHeight
                 backend: root.appBackend
             }
         }
@@ -2220,38 +2251,6 @@ ApplicationWindow {
             active: root.shortMode
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
-        }
-    }
-
-    Rectangle {
-        id: processingProgressOverlay
-        objectName: "processingProgressOverlay"
-        anchors.left: parent.left
-        anchors.right: parent.right
-        // Keep the progress panel above the expandable log panel so completed
-        // processing never hides the diagnostics the user may need to read.
-        anchors.bottom: applicationLogPanel.top
-        anchors.leftMargin: 12
-        anchors.rightMargin: 12
-        anchors.bottomMargin: 12
-        z: 700
-        color: "transparent"
-        visible: root.appBackend && root.appBackend.progressVisible
-        height: progressPanel.implicitHeight
-
-        ProcessingProgressPanel {
-            id: progressPanel
-            objectName: "processingProgressPanel"
-            anchors.fill: parent
-            backend: root.appBackend
-            panelColor: root.panel
-            raisedColor: root.raised
-            borderColor: root.border
-            textColor: root.textPrimary
-            mutedColor: root.textMuted
-            accentColor: root.acid
-            warningColor: root.amber
-            errorColor: root.danger
         }
     }
 

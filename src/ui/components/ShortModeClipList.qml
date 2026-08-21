@@ -40,12 +40,26 @@ ColumnLayout {
         Layout.fillWidth: true
         spacing: 8
         ComboBox {
+            id: clipSourceCombo
+            objectName: "shortModeClipSourceCombo"
+            Layout.preferredWidth: 126
+            model: [
+                { "label": "字幕セグメント", "value": "segment" },
+                { "label": "時間範囲を直接指定", "value": "range" }
+            ]
+            textRole: "label"
+            valueRole: "value"
+            currentIndex: clipListRoot.appBackend
+                && clipListRoot.appBackend.subtitleSegments.length > 0 ? 0 : 1
+        }
+        ComboBox {
             id: segmentCombo
             objectName: "shortModeSegmentCombo"
             Layout.fillWidth: true
             model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitleSegments : []
             textRole: "preview_text"
             valueRole: "id"
+            enabled: clipSourceCombo.currentValue === "segment"
         }
         Text { text: "範囲"; color: "#8E9B94"; font.pixelSize: 10 }
         TimeField {
@@ -53,6 +67,7 @@ ColumnLayout {
             objectName: "shortModeRangeStartField"
             Layout.preferredWidth: 76
             text: "0.000"
+            enabled: clipSourceCombo.currentValue === "range"
         }
         Text { text: "-"; color: "#8E9B94"; font.pixelSize: 10 }
         TimeField {
@@ -62,25 +77,28 @@ ColumnLayout {
             text: clipListRoot.appBackend && clipListRoot.appBackend.projectDuration > 0
                   ? Math.min(5, clipListRoot.appBackend.projectDuration).toFixed(3)
                   : "1.000"
+            enabled: clipSourceCombo.currentValue === "range"
         }
         Button {
             id: addButton
             objectName: "shortModeAddClipButton"
             text: "ショートに追加"
             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && (
-                (segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "")
-                || (Number(rangeStartField.text) >= 0
+                (clipSourceCombo.currentValue === "segment"
+                    && segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "")
+                || (clipSourceCombo.currentValue === "range"
+                    && Number(rangeStartField.text) >= 0
                     && Number(rangeEndField.text) > Number(rangeStartField.text)
                     && (clipListRoot.appBackend.projectDuration <= 0
                         || Number(rangeEndField.text) <= clipListRoot.appBackend.projectDuration))
             )
             onClicked: {
                 if (clipListRoot.appBackend) {
-                    if (segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "") {
-                        clipListRoot.appBackend.addShortVideoClip(segmentCombo.currentValue)
-                    } else {
+                    if (clipSourceCombo.currentValue === "range") {
                         clipListRoot.appBackend.addShortVideoClipByRange(
                             Number(rangeStartField.text), Number(rangeEndField.text))
+                    } else if (segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "") {
+                        clipListRoot.appBackend.addShortVideoClip(segmentCombo.currentValue)
                     }
                 }
             }

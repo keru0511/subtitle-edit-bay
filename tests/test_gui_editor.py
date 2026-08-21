@@ -2771,6 +2771,53 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.assertFalse(self.app.addShortVideoClipByRange(2.0, 4.0))
 
+    def test_short_mode_gui_adds_direct_range_clip_when_segments_exist(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "subtitle-segment",
+                    "start": 1.0,
+                    "end": 3.0,
+                    "text": "字幕の範囲",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ]
+        )
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        source_combo = self._quick_item(window, "shortModeClipSourceCombo")
+        source_combo.setProperty("currentIndex", 1)
+        start_field = self._quick_item(window, "shortModeRangeStartField")
+        end_field = self._quick_item(window, "shortModeRangeEndField")
+        start_field.setProperty("text", "0.250")
+        end_field.setProperty("text", "0.750")
+        self.app.processEvents()
+
+        add_button = self._quick_item(window, "shortModeAddClipButton")
+        self.assertTrue(add_button.property("enabled"))
+        self._click(window, add_button)
+
+        clip = self.app.shortVideoClips[-1]
+        self.assertEqual(clip["segment_id"], "")
+        self.assertEqual((clip["start"], clip["end"]), (0.25, 0.75))
+
+    def test_video_only_project_explains_disabled_transcription(self) -> None:
+        self._load_project(segments=[])
+        self.app._project["speakers"] = []
+        self.app._project["audio_sources"] = []
+        self.app._speakers = []
+        self.app._audio_tracks = []
+        self.app.speakersChanged.emit()
+        self.app.audioTracksChanged.emit()
+
+        _, window = self._load_qml()
+        transcribe_button = self._quick_item(window, "transcribeButton")
+        reason = self._quick_item(window, "workflowBlockReason")
+        self.assertFalse(transcribe_button.isEnabled())
+        self.assertIn("話者音声または動画内音声が必要", reason.property("text"))
+
     def test_empty_short_mode_gui_adds_range_clip_and_enables_export(self) -> None:
         _video, _audio, _output = self._set_ready_sources()
         with patch("src.gui.probe_media_duration", return_value=3.0):

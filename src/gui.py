@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -28,7 +28,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QDesktopServices, QFontDatabase
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
@@ -50,6 +50,15 @@ from .audio_preview_cache import (
     cached_audio_preview_paths,
     prepare_audio_preview_cache,
 )
+from .gui_codex_state import (
+    CODEX_OUTPUT_SCHEMA,
+    CODEX_SCOPES,
+    CodexSessionController,
+    CodexSessionError,
+    CodexSessionSnapshot,
+    build_codex_context,
+)
+from .application_logging import ApplicationLogger
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
@@ -72,7 +81,7 @@ from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
-from . import updater
+from . import update_manager, updater
 
 
 def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
@@ -272,11 +281,22 @@ class EditBayBackend(LegacyEditBayBackend):
     audioMasterMetricsChanged = Signal()
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
+    applicationLogChanged = Signal()
     updateInfoChanged = Signal()
     updateBusyChanged = Signal()
     updateErrorChanged = Signal()
     updateCheckFinished = Signal(object, str)
+    updateDownloadProgressEvent = Signal(int, int, float)
+    updateDownloadFinished = Signal(str, str)
+    updateDownloadProgressChanged = Signal()
+    updatePackageReadyChanged = Signal()
     shortVideoChanged = Signal()
+    codexStateChanged = Signal()
+    codexMessageChanged = Signal()
+    codexProposalChanged = Signal()
+    codexCallbackRequested = Signal(object)
+    highlightCandidatesChanged = Signal()
+    highlightAnalysisChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
@@ -291,6 +311,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=workspace_root)
+        self._application_logger = ApplicationLogger(
+            self.workspace_root,
+            application_info=self._application_info,
+        )
+        self._log = self._application_logger.text
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
         self._segment_starts: list[float] = []
@@ -321,6 +346,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._audio_master_level = 0.0
         self._audio_limiter_reduction_db = 0.0
         self._audio_master_mixer.metricsChanged.connect(self._update_audio_master_metrics)
+        self._highlight_candidates: list[dict[str, Any]] = []
+        self._highlight_rejected: list[dict[str, Any]] = []
+        self._highlight_status = "idle"
+        self._highlight_progress = 0.0
+        self._highlight_cancel = threading.Event()
+        self._highlight_generation = 0
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
         self._audio_preview_pending_levels: dict[str, float] = {}
@@ -337,7 +368,29 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_info: updater.UpdateInfo | None = None
         self._update_error = ""
         self._update_busy = False
+        self._update_package_path: Path | None = None
+        self._update_package_sha256 = ""
+        self._update_package_ready = False
+        self._update_download_bytes = 0
+        self._update_download_total = 0
+        self._update_download_speed = 0.0
+        self._update_download_active = False
+        self._update_download_cancel = threading.Event()
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
+        self._codex_proposal: dict[str, Any] | None = None
+        self._codex_current_time: float | None = None
+        self.codexCallbackRequested.connect(
+            self._run_codex_callback,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._codex_session = CodexSessionController(
+            on_state=self._on_codex_state,
+            on_message=self._on_codex_message,
+            on_proposal=self._on_codex_proposal,
+            callback_dispatcher=self._dispatch_codex_callback,
+        )
+        self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
+        self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
 
     @Property(bool, notify=projectChanged)
     def projectLoaded(self) -> bool:
@@ -371,6 +424,26 @@ class EditBayBackend(LegacyEditBayBackend):
     def updateDownloadUrl(self) -> str:
         return self._update_info.download_url if self._update_info else ""
 
+    @Property(str, notify=codexStateChanged)
+    def codexState(self) -> str:
+        return self._codex_session.snapshot.state
+
+    @Property(str, notify=codexMessageChanged)
+    def codexMessage(self) -> str:
+        return self._codex_session.snapshot.message
+
+    @Property(str, notify=codexStateChanged)
+    def codexError(self) -> str:
+        return self._codex_session.snapshot.error
+
+    @Property("QVariantMap", notify=codexProposalChanged)
+    def codexProposal(self) -> dict[str, Any]:
+        return dict(self._codex_proposal or {})
+
+    @Property("QStringList", constant=True)
+    def codexScopes(self) -> list[str]:
+        return list(CODEX_SCOPES)
+
     @Property(bool, notify=updateInfoChanged)
     def updateAvailable(self) -> bool:
         return self._update_info.available if self._update_info else False
@@ -382,6 +455,30 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(str, notify=updateErrorChanged)
     def updateError(self) -> str:
         return self._update_error
+
+    @Property(int, notify=updateDownloadProgressChanged)
+    def updateDownloadBytes(self) -> int:
+        return self._update_download_bytes
+
+    @Property(int, notify=updateDownloadProgressChanged)
+    def updateDownloadTotal(self) -> int:
+        return self._update_download_total
+
+    @Property(float, notify=updateDownloadProgressChanged)
+    def updateDownloadSpeed(self) -> float:
+        return self._update_download_speed
+
+    @Property(bool, notify=updateDownloadProgressChanged)
+    def updateDownloadActive(self) -> bool:
+        return self._update_download_active
+
+    @Property(bool, notify=updatePackageReadyChanged)
+    def updatePackageReady(self) -> bool:
+        return self._update_package_ready
+
+    @Property(int, notify=updateInfoChanged)
+    def updatePackageSize(self) -> int:
+        return int(self._update_info.package_size) if self._update_info else 0
 
     @Property("QVariantList", notify=segmentsChanged)
     def subtitleSegments(self) -> list[dict[str, Any]]:
@@ -411,6 +508,18 @@ class EditBayBackend(LegacyEditBayBackend):
             "transition": deepcopy(section.get("transition", {})),
             "bgm": deepcopy(section.get("bgm", {})),
         }
+
+    @Property("QVariantList", notify=highlightCandidatesChanged)
+    def highlightCandidates(self) -> list[dict[str, Any]]:
+        return deepcopy(self._highlight_candidates)
+
+    @Property(str, notify=highlightAnalysisChanged)
+    def highlightAnalysisState(self) -> str:
+        return self._highlight_status
+
+    @Property(float, notify=highlightAnalysisChanged)
+    def highlightAnalysisProgress(self) -> float:
+        return self._highlight_progress
 
     @Property(QObject, constant=True)
     def subtitleModel(self) -> QObject:
@@ -601,15 +710,51 @@ class EditBayBackend(LegacyEditBayBackend):
     def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
         if self._project is None or self._running:
             return False
+        if not isinstance(fields, dict) or not fields:
+            return False
         section = self._short_video_section()
         clips = list(section.get("clips", []))
         if not 0 <= index < len(clips):
             return False
         clip = dict(clips[index])
-        if "start" in fields:
-            clip["start"] = max(0.0, float(fields["start"]))
-        if "end" in fields:
-            clip["end"] = max(clip.get("start", 0.0), float(fields["end"]))
+        trim_requested = "start" in fields or "end" in fields
+        if not trim_requested and not any(
+            key in fields for key in ("fit", "background_color")
+        ):
+            return False
+
+        if trim_requested:
+            segment = self._find_segment_by_id(str(clip.get("segment_id", "")))
+            if segment is None:
+                return False
+            try:
+                segment_start = float(segment.get("start", 0.0))
+                segment_end = float(segment.get("end", segment_start))
+                start = float(fields.get("start", clip.get("start", segment_start)))
+                end = float(fields.get("end", clip.get("end", segment_end)))
+                if not all(
+                    math.isfinite(value)
+                    for value in (segment_start, segment_end, start, end)
+                ):
+                    return False
+            except (TypeError, ValueError):
+                return False
+            video_duration = self.projectDuration
+            upper_bound = (
+                min(segment_end, video_duration)
+                if video_duration > 0.0
+                else segment_end
+            )
+            lower_bound = max(0.0, segment_start)
+            if (
+                upper_bound <= lower_bound
+                or start < lower_bound
+                or end > upper_bound
+                or start >= end
+            ):
+                return False
+            clip["start"] = start
+            clip["end"] = end
         if "fit" in fields:
             fit = str(fields["fit"]).lower()
             if fit not in VALID_FIT_MODES:
@@ -714,6 +859,140 @@ class EditBayBackend(LegacyEditBayBackend):
         self.projectDataChanged.emit()
         self.shortVideoChanged.emit()
         return True
+
+    @Slot(result=bool)
+    def startHighlightAnalysis(self) -> bool:
+        if self._project is None or self._running:
+            return False
+        if self._highlight_status in {"running", "cancelling"}:
+            return False
+        self._highlight_generation += 1
+        generation = self._highlight_generation
+        cancel_event = threading.Event()
+        self._highlight_cancel = cancel_event
+        self._highlight_rejected = []
+        self._highlight_status = "running"
+        self._highlight_progress = 0.0
+        self.highlightAnalysisChanged.emit()
+        segments = deepcopy(self._project.get("segments", []))
+        duration = self.projectDuration
+        cache_directory = (
+            Path(self._project_path).parent / ".highlight-cache"
+            if self._project_path
+            else None
+        )
+
+        def worker() -> None:
+            try:
+                from .highlight_candidates import generate_highlight_candidates
+
+                candidates = generate_highlight_candidates(
+                    segments,
+                    duration_seconds=duration,
+                    cancel_check=cancel_event.is_set,
+                    progress_callback=lambda value: self._update_highlight_progress(
+                        generation, value
+                    ),
+                    cache_directory=cache_directory,
+                )
+                if not self._is_current_highlight_run(generation):
+                    return
+                if cancel_event.is_set():
+                    self._highlight_status = "cancelled"
+                    self.highlightAnalysisChanged.emit()
+                    return
+                self._highlight_candidates = [item.to_json() for item in candidates]
+                self._highlight_status = "completed"
+                self._highlight_progress = 1.0
+                self.highlightCandidatesChanged.emit()
+                self.highlightAnalysisChanged.emit()
+            except Exception as error:
+                if not self._is_current_highlight_run(generation):
+                    return
+                self._highlight_status = "cancelled" if cancel_event.is_set() else "error"
+                if not cancel_event.is_set():
+                    self._set_status(f"見どころ候補の解析に失敗しました: {error}", "ERROR")
+                self.highlightAnalysisChanged.emit()
+
+        threading.Thread(target=worker, name="highlight-analysis", daemon=True).start()
+        return True
+
+    @Slot(result=bool)
+    def cancelHighlightAnalysis(self) -> bool:
+        if self._highlight_status != "running":
+            return False
+        self._highlight_cancel.set()
+        self._highlight_status = "cancelling"
+        self.highlightAnalysisChanged.emit()
+        return True
+
+    @Slot(result=bool)
+    def retryHighlightAnalysis(self) -> bool:
+        if self._highlight_status in {"running", "cancelling"}:
+            return False
+        self._highlight_candidates = []
+        self.highlightCandidatesChanged.emit()
+        return self.startHighlightAnalysis()
+
+    @Slot(int, result=bool)
+    def addHighlightCandidate(self, index: int) -> bool:
+        if self._project is None or self._running or not 0 <= index < len(self._highlight_candidates):
+            return False
+        candidate = self._highlight_candidates[index]
+        source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
+        if not source_ids:
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        candidate_start = float(candidate.get("start", 0.0))
+        candidate_end = float(candidate.get("end", candidate_start))
+        if any(
+            str(clip.get("segment_id", "")) in source_ids
+            and min(float(clip.get("end", 0.0)), candidate_end)
+            > max(float(clip.get("start", 0.0)), candidate_start)
+            for clip in clips
+        ):
+            self._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
+            return False
+        section["enabled"] = True
+        clips.append(
+            {
+                "segment_id": source_ids[0],
+                "start": candidate_start,
+                "end": candidate_end,
+                "highlight_candidate_id": str(candidate.get("id", "")),
+            }
+        )
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def rejectHighlightCandidate(self, index: int) -> bool:
+        if not 0 <= index < len(self._highlight_candidates):
+            return False
+        self._highlight_rejected.append(self._highlight_candidates.pop(index))
+        self.highlightCandidatesChanged.emit()
+        return True
+
+    @Slot(result=bool)
+    def undoHighlightRejection(self) -> bool:
+        if not self._highlight_rejected:
+            return False
+        self._highlight_candidates.append(self._highlight_rejected.pop())
+        self.highlightCandidatesChanged.emit()
+        return True
+
+    def _is_current_highlight_run(self, generation: int) -> bool:
+        return generation == self._highlight_generation
+
+    def _update_highlight_progress(self, generation: int, value: float) -> None:
+        if not self._is_current_highlight_run(generation):
+            return
+        self._highlight_progress = max(0.0, min(1.0, float(value)))
+        self.highlightAnalysisChanged.emit()
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:
@@ -2102,8 +2381,13 @@ class EditBayBackend(LegacyEditBayBackend):
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         self._active_job = job
         self.activeJobChanged.emit()
-        self._log = f"> {subprocess.list2cmdline(command)}\n"
-        self.logChanged.emit()
+        self._application_logger.clear_memory()
+        self._record_log(
+            f"> {subprocess.list2cmdline(command)}",
+            component="gui",
+            job=job,
+            stage="STARTING",
+        )
         self._progress = 0.02
         self.progressChanged.emit()
         self._elapsed_seconds = 0
@@ -2224,8 +2508,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_info = info
         self._update_error = error
         self._update_busy = False
+        self._update_package_path = None
+        self._update_package_sha256 = ""
+        self._update_package_ready = False
         self.updateInfoChanged.emit()
         self.updateErrorChanged.emit()
+        self.updatePackageReadyChanged.emit()
         self.updateBusyChanged.emit()
         if error:
             self._set_status(error, "ERROR")
@@ -2239,10 +2527,136 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._running and self._active_job == "update":
             self._set_status("更新中は更新画面を閉じられません", "UPDATE")
             return
+        if self._update_download_active:
+            self._set_status("ダウンロード中は更新画面を閉じられません", "UPDATE")
+            return
         self._update_info = None
         self._update_error = ""
+        self._update_package_path = None
+        self._update_package_sha256 = ""
+        self._update_package_ready = False
         self.updateInfoChanged.emit()
         self.updateErrorChanged.emit()
+        self.updatePackageReadyChanged.emit()
+
+    @Slot()
+    def downloadUpdate(self) -> None:
+        if self._update_busy or self._update_download_active:
+            return
+        if not self._update_info or not self._update_info.available:
+            self._set_status("更新可能なバージョンがありません", "CHECK")
+            return
+        if getattr(self._update_info, "package_type", "archive") != "installer":
+            self._set_status("この配布形態は従来の更新方法を使用します", "UPDATE")
+            return
+        self._update_busy = True
+        self._update_download_active = True
+        self._update_download_cancel = threading.Event()
+        self._update_download_bytes = 0
+        self._update_download_total = int(self._update_info.package_size or 0)
+        self._update_download_speed = 0.0
+        self._update_error = ""
+        self.updateBusyChanged.emit()
+        self.updateErrorChanged.emit()
+        self.updateDownloadProgressChanged.emit()
+        self._set_status("更新パッケージをダウンロードしています", "UPDATE")
+        threading.Thread(target=self._download_update_worker, daemon=True).start()
+
+    def _download_update_worker(self) -> None:
+        info = self._update_info
+        if info is None:
+            self.updateDownloadFinished.emit("", "更新情報がありません")
+            return
+        try:
+            expected_sha256 = update_manager.resolve_expected_sha256(info)
+            destination = update_manager.update_download_directory(self.workspace_root) / (
+                f"SubtitleEditBay-{info.latest_version.lstrip('v')}.exe"
+            )
+            package_path = update_manager.download_package(
+                info,
+                destination,
+                cancel_event=self._update_download_cancel,
+                progress_callback=lambda downloaded, total, speed: self.updateDownloadProgressEvent.emit(downloaded, total, speed),
+            )
+            self._update_package_sha256 = expected_sha256
+            self.updateDownloadFinished.emit(str(package_path), "")
+        except update_manager.UpdateDownloadCancelled as error:
+            self.updateDownloadFinished.emit("", str(error))
+        except update_manager.UpdatePackageError as error:
+            self.updateDownloadFinished.emit("", str(error))
+        except Exception as error:
+            self.updateDownloadFinished.emit("", f"更新パッケージの取得に失敗しました: {error}")
+
+    def _on_update_download_progress(self, downloaded: int, total: int, speed: float) -> None:
+        self._update_download_bytes = downloaded
+        self._update_download_total = total
+        self._update_download_speed = speed
+        self.updateDownloadProgressChanged.emit()
+
+    def _on_update_download_finished(self, package_path: str, error: str) -> None:
+        self._update_download_active = False
+        self._update_busy = False
+        if error:
+            self._update_error = error
+            self._update_package_path = None
+            self._update_package_ready = False
+            self._set_status(error, "ERROR" if "キャンセル" not in error else "CANCELLED")
+        else:
+            self._update_error = ""
+            self._update_package_path = Path(package_path)
+            self._update_package_ready = True
+            self._set_status("更新パッケージを検証しました。再起動して更新できます", "READY")
+        self.updateBusyChanged.emit()
+        self.updateErrorChanged.emit()
+        self.updateDownloadProgressChanged.emit()
+        self.updatePackageReadyChanged.emit()
+
+    @Slot()
+    def cancelUpdateDownload(self) -> None:
+        if self._update_download_active:
+            self._update_download_cancel.set()
+            self._set_status("更新パッケージのダウンロードをキャンセルしています", "UPDATE")
+
+    @Slot()
+    def applyDownloadedUpdate(self) -> None:
+        if not self._update_package_ready or not self._update_package_path or not self._update_info:
+            self._set_status("検証済みの更新パッケージがありません", "CHECK")
+            return
+        if self._running:
+            self._set_status("処理中は更新を開始できません", "BUSY")
+            return
+        if self._project_dirty:
+            self._set_status("未保存の変更があります。更新前に保存してください", "CHECK")
+            return
+        if self._project is not None and not self.saveProject():
+            self._set_status("プロジェクトを保存できませんでした", "ERROR")
+            return
+        self.saveSettings(self._settings)
+        try:
+            expected_sha256 = self._update_package_sha256 or update_manager.resolve_expected_sha256(self._update_info)
+            result_path = update_manager.update_download_directory(self.workspace_root) / "last-update-result.json"
+            command = update_manager.build_installer_helper_command(
+                self.workspace_root,
+                self._update_package_path,
+                expected_version=self._update_info.latest_version,
+                expected_sha256=expected_sha256,
+                result_path=result_path,
+            )
+            popen_kwargs: dict[str, Any] = {
+                "cwd": str(self.workspace_root),
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "start_new_session": True,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.Popen(command, **popen_kwargs)
+        except (OSError, update_manager.UpdatePackageError) as error:
+            self._set_status(f"更新helperを起動できませんでした: {error}", "ERROR")
+            return
+        self._set_status("GUIを終了して更新を適用します", "UPDATE")
+        self.quit()
 
     @Slot()
     def applyUpdate(self) -> None:
@@ -2254,6 +2668,12 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         if not self._update_info or not self._update_info.available:
             self._set_status("更新可能なバージョンがありません", "CHECK")
+            return
+        if getattr(self._update_info, "package_type", "archive") == "installer":
+            if self._update_package_ready:
+                self.applyDownloadedUpdate()
+            else:
+                self.downloadUpdate()
             return
         if self._project is not None and not self.saveProject():
             self._set_status("プロジェクトを保存できませんでした", "ERROR")
@@ -2297,6 +2717,129 @@ class EditBayBackend(LegacyEditBayBackend):
         mode = "GPU" if self._dependencies.nvenc else "CPU"
         self._start_command(command, "render_short", f"{mode}を自動選択してショート動画を書き出しています")
 
+    @Slot(str, str, float, float)
+    def startCodexEdit(
+        self,
+        prompt: str,
+        scope: str,
+        range_start: float = 0.0,
+        range_end: float = 0.0,
+    ) -> None:
+        if self._project is None:
+            self._set_status("先に編集プロジェクトを開いてください", "CHECK")
+            return
+        if self._codex_session.running:
+            return
+        selected_ids = {
+            str(self._project.get("segments", [])[self._selected_segment_index].get("id"))
+        } if 0 <= self._selected_segment_index < len(self._project.get("segments", [])) else set()
+        current_time = self._codex_current_time
+        if current_time is None:
+            if 0 <= self._selected_segment_index < len(self._project.get("segments", [])):
+                current_time = float(
+                    self._project["segments"][self._selected_segment_index].get(
+                        "start", range_start
+                    )
+                )
+            else:
+                current_time = range_start
+        try:
+            context = build_codex_context(
+                self._project,
+                scope,
+                selected_segment_ids=selected_ids,
+                current_time=current_time,
+                range_start=range_start,
+                range_end=range_end,
+            )
+            self._codex_proposal = None
+            self.codexProposalChanged.emit()
+            self._codex_session.start(
+                prompt=prompt,
+                context=context,
+                output_schema=CODEX_OUTPUT_SCHEMA,
+                revision=self._project_revision,
+            )
+            self._set_status("Codexへ編集案を依頼しています", "CODEX")
+        except (CodexSessionError, ValueError) as error:
+            self._set_status(f"Codex編集を開始できません: {error}", "ERROR")
+
+    @Slot(float)
+    def setCodexCurrentTime(self, seconds: float) -> None:
+        try:
+            value = float(seconds)
+        except (TypeError, ValueError):
+            return
+        if math.isfinite(value) and value >= 0.0:
+            self._codex_current_time = value
+
+    @Slot()
+    def stopCodexEdit(self) -> None:
+        self._codex_session.stop()
+        self._set_status("Codex編集を停止しました", "CODEX")
+
+    @Slot("QVariantList")
+    def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
+        if self._project is None or not self._codex_proposal:
+            self._set_status("適用するCodex編集案がありません", "CHECK")
+            return
+        before = deepcopy(self._project.get("segments", []))
+        try:
+            result = self._codex_session.apply_to_project(
+                self._project,
+                self._codex_proposal,
+                selected_operation_ids={str(item) for item in (selected_operation_ids or [])} or None,
+                current_revision=self._project_revision,
+            )
+        except (CodexSessionError, ValueError, TypeError) as error:
+            self._set_status(f"Codex編集案を適用できません: {error}", "ERROR")
+            return
+        self._project = result.project
+        after = deepcopy(self._project.get("segments", []))
+        self._record_history(before, after)
+        self._sync_subtitle_model()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self._mark_project_dirty()
+        if result.changed_segment_ids:
+            first_id = result.changed_segment_ids[0]
+            self._selected_segment_index = next(
+                (index for index, item in enumerate(after) if str(item.get("id")) == first_id),
+                -1,
+            )
+            self.selectionChanged.emit()
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
+        self._set_status("Codex編集案を適用しました。内容を確認して保存してください", "EDIT")
+
+    @Slot()
+    def discardCodexProposal(self) -> None:
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
+        self._set_status("Codex編集案を破棄しました", "EDIT")
+
+    def _on_codex_state(self, _snapshot: CodexSessionSnapshot) -> None:
+        self.codexStateChanged.emit()
+        self.codexMessageChanged.emit()
+        if self._codex_session.snapshot.error:
+            self._set_status(self._codex_session.snapshot.error, "ERROR")
+
+    def _on_codex_message(self, _message: str) -> None:
+        self.codexMessageChanged.emit()
+
+    def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
+        self._codex_proposal = dict(proposal)
+        self.codexProposalChanged.emit()
+        self._set_status("Codex編集案を確認できます", "CODEX")
+
+    def _dispatch_codex_callback(self, callback: Callable[[], None]) -> None:
+        self.codexCallbackRequested.emit(callback)
+
+    @Slot(object)
+    def _run_codex_callback(self, callback: object) -> None:
+        if callable(callback):
+            callback()
+
     def _process_started(self) -> None:
         self._running = True
         self.runningChanged.emit()
@@ -2309,6 +2852,88 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("ショート動画を書き出しています", "ENCODE")
         else:
             self._set_status("編集済み字幕を動画へ焼き付けています", "ENCODE")
+
+    def _record_log(
+        self,
+        message: object,
+        *,
+        severity: str = "INFO",
+        component: str = "gui",
+        job: str = "",
+        stage: str = "",
+        process_id: int | None = None,
+        exit_code: int | None = None,
+    ) -> None:
+        self._application_logger.append(
+            message,
+            severity=severity,
+            component=component,
+            job=job,
+            stage=stage,
+            process_id=process_id,
+            exit_code=exit_code,
+        )
+        self._log = self._application_logger.text
+        self.logChanged.emit()
+        self.applicationLogChanged.emit()
+
+    @Property(str, notify=applicationLogChanged)
+    def logFilePath(self) -> str:
+        return str(self._application_logger.log_path)
+
+    @Slot()
+    def copyLogsToClipboard(self) -> None:
+        self.clipboard().setText(
+            self._application_logger.diagnostic_text(
+                status=self.status,
+                stage=self.stage,
+                runtime={"python": sys.version.split()[0], "platform": sys.platform},
+            )
+        )
+
+    @Slot()
+    def copyErrorLogsToClipboard(self) -> None:
+        self.clipboard().setText(
+            self._application_logger.diagnostic_text(
+                status=self.status,
+                stage=self.stage,
+                runtime={"python": sys.version.split()[0], "platform": sys.platform},
+            )
+        )
+
+    @Slot()
+    def openLogFolder(self) -> None:
+        if not QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self._application_logger.log_directory))
+        ):
+            self._set_status("ログ保存先を開けませんでした", "ERROR")
+
+    def _read_process_output(self) -> None:
+        data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        if not data:
+            return
+        normalized = data.replace("\r", "\n")
+        self._record_log(
+            normalized,
+            component=self._active_job or "process",
+            job=self._active_job,
+            stage=self.stage,
+            process_id=int(self.process.processId()) or None,
+        )
+        self._update_stage(normalized)
+
+    def _process_error(self, error: QProcess.ProcessError) -> None:
+        message = self.process.errorString() or str(error)
+        self._record_log(
+            message,
+            severity="ERROR",
+            component=self._active_job or "qprocess",
+            job=self._active_job,
+            stage="ERROR",
+            process_id=int(self.process.processId()) or None,
+        )
+        if not self._running and self.process.state() == QProcess.ProcessState.NotRunning:
+            self._set_status(message, "ERROR")
 
     def _update_stage(self, output: str) -> None:
         markers = [
@@ -2332,6 +2957,24 @@ class EditBayBackend(LegacyEditBayBackend):
         self._running = False
         self.runningChanged.emit()
         completed_job = self._active_job
+        failure_detail = ""
+        if exit_code != 0 and completed_job != "update":
+            failure_detail = next(
+                (
+                    line.strip()
+                    for line in reversed(self._log.splitlines())
+                    if line.strip() and not line.lstrip().startswith(">")
+                ),
+                "",
+            )
+        self._record_log(
+            f"Process finished with exit code {exit_code}",
+            severity="INFO" if exit_code == 0 else "ERROR",
+            component=completed_job or "process",
+            job=completed_job,
+            stage="COMPLETE" if exit_code == 0 else "ERROR",
+            exit_code=exit_code,
+        )
         self._active_job = ""
         self.activeJobChanged.emit()
         if self._cancel_requested:
@@ -2357,15 +3000,7 @@ class EditBayBackend(LegacyEditBayBackend):
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:
-                detail = next(
-                    (
-                        line.strip()
-                        for line in reversed(self._log.splitlines())
-                        if line.strip() and not line.lstrip().startswith(">")
-                    ),
-                    "",
-                )
-                suffix = f": {detail}" if detail else ""
+                suffix = f": {failure_detail}" if failure_detail else ""
                 self._set_status(
                     f"処理が終了しました（終了コード {exit_code}）{suffix}",
                     "ERROR",

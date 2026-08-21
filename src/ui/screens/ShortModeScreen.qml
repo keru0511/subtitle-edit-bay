@@ -113,6 +113,15 @@ Item {
                 Layout.fillHeight: true
                 spacing: 14
 
+                HighlightCandidateList {
+                    id: highlightCandidates
+                    objectName: "highlightCandidateList"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 250
+                    appBackend: shortRoot.appBackend
+                    onPreviewRequested: function (seconds) { shortPreview.previewAt(seconds) }
+                }
+
                 ShortModeClipList {
                     id: clipList
                     objectName: "shortModeClipList"

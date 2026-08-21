@@ -14,6 +14,31 @@ Rectangle {
     property var appBackend: null
     property var clipData: null
     property string fallbackBackgroundColor: "#000000"
+    readonly property var shortSettings: appBackend ? appBackend.shortVideoSettings : ({})
+    readonly property var appSettings: appBackend ? appBackend.settings : ({})
+
+    function normalizedSubtitleScalePercent() {
+        var configuredScale = shortSettings ? shortSettings.subtitle_scale_percent : undefined
+        if (configuredScale === undefined || configuredScale === null || configuredScale === "")
+            return 150
+        var numericScale = Number(configuredScale)
+        return isFinite(numericScale) ? Math.max(0, numericScale) : 150
+    }
+
+    readonly property int subtitleBaseFontSize: Math.max(
+        3,
+        Math.round(
+            Number(appSettings.subtitle_font_size || 50)
+            * previewRoot.normalizedSubtitleScalePercent() / 100
+        )
+    )
+    readonly property string subtitleOutlineColor: String(appSettings.subtitle_outline_color || "#000000")
+    readonly property int subtitleOutlineThickness: Number(appSettings.subtitle_outline_thickness || 3)
+
+    function previewAt(seconds) {
+        previewPlayer.position = Math.max(0, Number(seconds)) * 1000
+        previewPlayer.play()
+    }
 
     Layout.fillHeight: true
     Layout.preferredWidth: parent ? parent.height * 9 / 16 : 540
@@ -62,6 +87,19 @@ Rectangle {
             if (previewRoot.clipData.fit === "contain") return VideoOutput.PreserveAspectFit
             return VideoOutput.PreserveAspectCrop
         }
+    }
+
+    SubtitleOverlay {
+        id: subtitleOverlay
+        anchors.fill: previewVideo
+        appBackend: previewRoot.appBackend
+        player: previewPlayer
+        captionObjectPrefix: "shortSubtitleOverlayCaption"
+        baseFontSize: previewRoot.subtitleBaseFontSize
+        defaultSubtitleFontSize: 50
+        outlineColor: previewRoot.subtitleOutlineColor
+        outlineThickness: previewRoot.subtitleOutlineThickness
+        speakerColors: previewRoot.appBackend ? previewRoot.appBackend.projectSpeakers : []
     }
 
     Text {

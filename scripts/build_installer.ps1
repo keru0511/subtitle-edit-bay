@@ -69,6 +69,16 @@ $outputDirectory = Split-Path -Parent $resolvedOutputPath
 $outputBaseFilename = [IO.Path]::GetFileNameWithoutExtension($resolvedOutputPath)
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 
+$launcherBuildScript = Join-Path $projectRoot "scripts\build_launcher.ps1"
+if (Test-Path -LiteralPath $launcherBuildScript -PathType Leaf) {
+    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcherBuildScript `
+        -OutputPath (Join-Path $projectRoot "dist\SubtitleEditBayLauncher.exe") `
+        -AllowMissingCompiler
+    if ($LASTEXITCODE -ne 0) {
+        throw "Launcher build failed with exit code $LASTEXITCODE."
+    }
+}
+
 $versionCore = ($Version -split '[-+]')[0]
 $versionParts = $versionCore.Split('.')
 $versionInfoVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2]).0"

@@ -31,6 +31,11 @@ class UpdateInfo:
     download_url: str
     tag_name: str
     available: bool
+    package_size: int = 0
+    sha256: str = ""
+    checksum_url: str = ""
+    manifest_url: str = ""
+    package_type: str = "archive"
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -83,6 +88,48 @@ def fetch_latest_release(
     body = str(data.get("body", "") or "")
     encoded_tag = urllib.parse.quote(tag, safe="")
     download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{encoded_tag}.zip"
+    package_size = 0
+    checksum_url = ""
+    manifest_url = ""
+    package_type = "archive"
+    assets = data.get("assets", [])
+    if isinstance(assets, list):
+        installer_asset = next(
+            (
+                asset
+                for asset in assets
+                if isinstance(asset, dict)
+                and str(asset.get("name", "")).lower() == "subtitleeditbay-setup.exe"
+            ),
+            None,
+        )
+        if installer_asset:
+            download_url = str(installer_asset.get("browser_download_url", ""))
+            package_size = int(installer_asset.get("size", 0) or 0)
+            package_type = "installer"
+            installer_name = str(installer_asset.get("name", "SubtitleEditBay-Setup.exe"))
+            checksum_asset = next(
+                (
+                    asset
+                    for asset in assets
+                    if isinstance(asset, dict)
+                    and str(asset.get("name", "")).lower() == f"{installer_name}.sha256".lower()
+                ),
+                None,
+            )
+            manifest_asset = next(
+                (
+                    asset
+                    for asset in assets
+                    if isinstance(asset, dict)
+                    and str(asset.get("name", "")).lower() == f"{installer_name}.manifest.json".lower()
+                ),
+                None,
+            )
+            if checksum_asset:
+                checksum_url = str(checksum_asset.get("browser_download_url", ""))
+            if manifest_asset:
+                manifest_url = str(manifest_asset.get("browser_download_url", ""))
 
     return UpdateInfo(
         current_version=current,
@@ -91,6 +138,10 @@ def fetch_latest_release(
         download_url=download_url,
         tag_name=tag,
         available=is_newer_version(current, latest),
+        package_size=package_size,
+        checksum_url=checksum_url,
+        manifest_url=manifest_url,
+        package_type=package_type,
     )
 
 

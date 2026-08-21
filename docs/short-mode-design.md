@@ -622,3 +622,40 @@ AGENTS.md により、PR タイトル・コミットメッセージは日本語�
 - テンプレートプリセット（YouTube Shorts / TikTok / Instagram Reels）
 - `short-video-generator` 向け Timeline JSON エクスポートとの連携
 - 縦長プレビューで boxblur fit のリアルタイム再現（MVP では `fillMode` で近似）
+
+## 17. 実装状態
+
+2026-08時点のユーザー向けショートモードは、既存の字幕プロジェクトからクリップを選び、9:16プレビューを確認してFFmpegで書き出すところまで実装済みです。
+
+### 実装済み
+
+- MainWorkflowScreenからShortModeScreenを開く
+- クリップの追加、削除、並べ替え、開始・終了トリミング
+- `cover`、`contain`、`blur` のfitと背景色
+- クリップ間のcut / crossfade
+- BGMのIN / OUT / START / volumeとループ
+- 縦長ASS生成、字幕リマップ、字幕スケール、話者色
+- FFmpegスクリプト入力とNVENCからlibx264へのフォールバック
+
+### 未実装・制約
+
+- 複数動画または複数字幕プロジェクトを1本のshort timelineへ混在させること
+- 字幕や音声から見どころ候補を自動抽出すること
+- SNS別テンプレート、サムネイル生成、候補の個人最適化
+- `blur` のリアルタイムプレビュー。プレビューはVideoOutputの近似で、完成動画のboxblurと完全一致しない
+
+実装状態はコードと受け入れ条件の差分を基準に更新し、未対応の項目を利用ガイドで対応済みと表記しない。
+
+### 17.1 受け入れ条件とPR・テストの対応
+
+この設計書の「実装済み」は、対象PRがマージされ、対応するCIジョブが成功した場合だけ成立する。オープンなPRの変更をリリース済み機能として扱わない。
+
+| 受け入れ条件 | 実装PR | 固定するテスト / CIゲート |
+|---|---|---|
+| 旧形式のクリップ設定を読み込み、fitと背景色のグローバル継承を壊さない | #195 | `tests/test_short_video_schema.py`、`tests/test_short_video.py` |
+| 字幕スケールの未設定・0・1・150・900%がプレビューとASS出力で同じ境界になる | #196 | `tests/test_short_video_ass.py`、`tests/test_qml_static.py` |
+| 時間変更だけを素材区間・動画長で検証し、fit / 背景色変更を独立して保存できる | #197 | `tests/test_gui_editor.py`、GUI/QML CI |
+| BGM、グローバルfit、クロスフェード、yuv420p、faststartを実メディアで確認する | #198 | `RUN_FFMPEG_SMOKE=1` の `tests/test_short_video_ass.py` |
+| 出力置換の失敗注入時に、既存の完成動画を保持し、途中ファイルだけを残さない | #198 / 実装側の該当PR | 旧出力のハッシュ比較を含む原子置換失敗注入テスト |
+
+原子置換の失敗注入テストがCIに存在しない間は、最後の条件を満たしたとは判定しない。実装状況の表はこの対応表とCI結果を更新元とし、PRが未マージの場合は「計画中」または「検証待ち」と記載する。

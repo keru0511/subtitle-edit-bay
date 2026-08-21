@@ -42,6 +42,91 @@ class ShortVideoSchemaTests(unittest.TestCase):
         restored = ShortVideo.from_json(short_video.to_json())
         self.assertEqual(restored.to_json(), short_video.to_json())
 
+    def test_clip_inheritance_remains_distinguishable_after_round_trip(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "global_fit": "contain",
+                "global_background_color": "FF0000",
+                "clips": [{"segment_id": "inherited", "start": 0.0, "end": 1.0}],
+            }
+        )
+
+        self.assertIsNone(short_video.clips[0].fit)
+        self.assertIsNone(short_video.clips[0].background_color)
+        serialized = short_video.to_json()
+        self.assertNotIn("fit", serialized["clips"][0])
+        self.assertNotIn("background_color", serialized["clips"][0])
+
+        restored = ShortVideo.from_json(serialized)
+        self.assertIsNone(restored.clips[0].fit)
+        self.assertIsNone(restored.clips[0].background_color)
+
+    def test_legacy_clip_values_preserve_existing_rendering_by_default(self) -> None:
+        legacy_payload = {
+            "enabled": True,
+            "global_fit": "contain",
+            "global_background_color": "FF0000",
+            "clips": [
+                {
+                    "segment_id": "legacy",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "fit": "cover",
+                    "background_color": "000000",
+                }
+            ],
+        }
+
+        short_video = ShortVideo.from_json(legacy_payload)
+
+        self.assertEqual(short_video.clips[0].fit, "cover")
+        self.assertEqual(short_video.clips[0].background_color, "000000")
+        self.assertEqual(short_video.to_json()["schema_version"], 2)
+
+    def test_legacy_inheritance_migration_requires_explicit_opt_in(self) -> None:
+        legacy_payload = {
+            "global_fit": "contain",
+            "global_background_color": "FF0000",
+            "clips": [
+                {
+                    "segment_id": "legacy",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "fit": "cover",
+                    "background_color": "000000",
+                }
+            ],
+        }
+
+        short_video = ShortVideo.from_json(
+            legacy_payload,
+            migrate_legacy_defaults=True,
+        )
+
+        self.assertIsNone(short_video.clips[0].fit)
+        self.assertIsNone(short_video.clips[0].background_color)
+
+    def test_schema_version_two_preserves_explicit_default_overrides(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "schema_version": 2,
+                "global_fit": "contain",
+                "global_background_color": "FF0000",
+                "clips": [
+                    {
+                        "segment_id": "explicit",
+                        "start": 0.0,
+                        "end": 1.0,
+                        "fit": "cover",
+                        "background_color": "000000",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(short_video.clips[0].fit, "cover")
+        self.assertEqual(short_video.clips[0].background_color, "000000")
+
     def test_bgm_uses_in_out_keys(self) -> None:
         bgm = ShortVideoBgm.from_json({"in": 10.0, "out": 20.0, "volume": 0.8})
         self.assertAlmostEqual(bgm.in_point, 10.0)
@@ -53,6 +138,21 @@ class ShortVideoSchemaTests(unittest.TestCase):
     def test_clip_end_below_start_normalizes(self) -> None:
         clip = ShortVideoClip.from_json({"segment_id": "seg-1", "start": 5.0, "end": 2.0})
         self.assertAlmostEqual(clip.end, 5.0)
+
+    def test_clip_without_fit_or_background_inherits_global_settings(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "global_fit": "contain",
+                "global_background_color": "FF00FF",
+                "clips": [{"segment_id": "inherited", "start": 0.0, "end": 1.0}],
+            }
+        )
+
+        clip = short_video.clips[0]
+        self.assertIsNone(clip.fit)
+        self.assertIsNone(clip.background_color)
+        self.assertNotIn("fit", short_video.to_json()["clips"][0])
+        self.assertNotIn("background_color", short_video.to_json()["clips"][0])
 
     def test_invalid_fit_raises(self) -> None:
         with self.assertRaisesRegex(ShortVideoError, "fit"):

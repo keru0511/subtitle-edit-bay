@@ -1616,7 +1616,10 @@ ApplicationWindow {
                             objectName: "mixerClearAudioPreviewCacheButton"
                             text: "プレビューを作り直す"
                             enabled: !root.appBackend.running
-                            onClicked: root.appBackend.clearAudioPreviewCache()
+                            onClicked: {
+                                root.appBackend.clearAudioPreviewCache()
+                                root.appBackend.prepareAudioMixerPreview()
+                            }
                         }
                         SmallButton { objectName: "mixerResetButton"; text: "全チャンネルをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
                         SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }

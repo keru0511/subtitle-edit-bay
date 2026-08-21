@@ -54,6 +54,13 @@ class TranscriptionContextPanelQmlTests(unittest.TestCase):
     def test_panel_exposes_source_label_and_refresh_signal(self) -> None:
         self.assertIn("signal webDictionaryRefreshRequested(string url, string snippet)", self.qml)
         self.assertIn("panelRoot.sourceLabel(model.source)", self.qml)
+        self.assertIn('if (source === "manual") return "手動追加"', self.qml)
+        self.assertIn('if (source === "title") return "ゲームタイトル"', self.qml)
+        self.assertIn('if (source === "notes") return "補足メモ"', self.qml)
+        self.assertIn('return "Webページ"', self.qml)
+        self.assertIn('return "参考情報"', self.qml)
+        self.assertIn('placeholderText: "辞書ファイルの場所（任意）"', self.qml)
+        self.assertNotIn('placeholderText: "辞書ファイルを選択（任意）"', self.qml)
 
 
 if __name__ == "__main__":

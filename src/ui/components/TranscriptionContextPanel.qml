@@ -24,7 +24,12 @@ Rectangle {
     }
 
     function sourceLabel(value) {
-        return String(value || "").toLowerCase() === "manual" ? "手動追加" : "Web候補"
+        var source = String(value || "").toLowerCase()
+        if (source === "manual") return "手動追加"
+        if (source === "title") return "ゲームタイトル"
+        if (source === "notes") return "補足メモ"
+        if (source.indexOf("snippet:") === 0 || source.indexOf("http://") === 0 || source.indexOf("https://") === 0) return "Webページ"
+        return "参考情報"
     }
 
     function _toStringList(value) {
@@ -281,7 +286,7 @@ Rectangle {
             objectName: "transcriptionDictionaryPathField"
             Layout.fillWidth: true
             enabled: !panelRoot.running
-            placeholderText: "辞書ファイルを選択（任意）"
+            placeholderText: "辞書ファイルの場所（任意）"
             color: panelRoot.textPrimaryColor
             selectionColor: panelRoot.accentColor
             selectedTextColor: "#10140F"

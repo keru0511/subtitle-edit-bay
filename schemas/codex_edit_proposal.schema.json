@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://subtitle-edit-bay.local/schemas/codex-edit-proposal.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "operations", "warnings"],
+  "properties": {
+    "summary": {"type": "string"},
+    "base_revision": {"type": "integer", "minimum": 0},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"enum": ["update_segment", "add_segment", "delete_segment", "split_segment", "merge_segments"]},
+          "segment_id": {"type": "string"},
+          "segment_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+          "changes": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "text": {"type": "string"},
+              "start": {"type": "number"},
+              "end": {"type": "number"},
+              "speaker": {"type": "string"},
+              "emphasis": {"type": "string"},
+              "position": {"type": "string"},
+              "subtitle_font_scale": {"type": "number"},
+              "subtitle_font_family": {"type": "string"},
+              "subtitle_line_count": {"type": "string"},
+              "max_width": {"type": "integer"}
+            }
+          },
+          "segment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "start", "end", "text", "speaker"],
+            "properties": {
+              "id": {"type": "string"},
+              "start": {"type": "number"},
+              "end": {"type": "number"},
+              "text": {"type": "string"},
+              "speaker": {"type": "string"},
+              "emphasis": {"type": "string"},
+              "position": {"type": "string"},
+              "subtitle_font_scale": {"type": "number"},
+              "subtitle_font_family": {"type": "string"},
+              "subtitle_line_count": {"type": "string"},
+              "max_width": {"type": "integer"},
+              "words": {"type": "array"}
+            }
+          },
+          "split_at": {"type": "number"},
+          "new_segment_id": {"type": "string"},
+          "first_text": {"type": "string"},
+          "second_text": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"type": {"const": "update_segment"}}},
+            "then": {"required": ["segment_id", "changes"], "properties": {"changes": {"minProperties": 1}}}
+          },
+          {
+            "if": {"properties": {"type": {"const": "delete_segment"}}},
+            "then": {"required": ["segment_id"]}
+          },
+          {
+            "if": {"properties": {"type": {"const": "add_segment"}}},
+            "then": {"required": ["segment"]}
+          },
+          {
+            "if": {"properties": {"type": {"const": "split_segment"}}},
+            "then": {"required": ["segment_id", "split_at"]}
+          },
+          {
+            "if": {"properties": {"type": {"const": "merge_segments"}}},
+            "then": {"required": ["segment_ids"], "properties": {"segment_ids": {"minItems": 2, "uniqueItems": true}}}
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1519,7 +1519,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
 
-    def test_qml_settings_round_trip_and_expanded_layout_fit(self) -> None:
+    def test_qml_settings_round_trip_and_expanded_popup_fit(self) -> None:
         _, window = self._load_qml()
         self._load_project()
         panel = self._quick_item(window, "advancedSettingsPanel")
@@ -1529,7 +1529,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, toggle)
         self.assertTrue(panel.isVisible())
         actions = self._quick_item(window, "workflowActions")
-        self.assertLessEqual(panel.y() + panel.height(), actions.y() + 1)
+        popup = self._quick_item(window, "advancedSettingsPopup")
+        self.assertTrue(popup.property("opened"))
+        self.assertLessEqual(popup.property("x") + popup.property("width"), window.width() + 1)
+        self.assertLessEqual(popup.property("y") + popup.property("height"), window.height() + 1)
         self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
 
         font_size = self._quick_item(window, "fontSizeSpin")

@@ -5,7 +5,6 @@ Rectangle {
     id: sidebar
 
     objectName: "codexChatSidebarContainer"
-    property string contentObjectName: "codexChatPanel"
     radius: 12
     color: "#121715"
     border.color: "#2A3530"
@@ -30,7 +29,7 @@ Rectangle {
             font.pixelSize: 10
         }
         Rectangle {
-            objectName: sidebar.contentObjectName
+            objectName: "codexChatPanel"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 180

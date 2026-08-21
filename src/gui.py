@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -49,6 +49,14 @@ from .audio_preview_cache import (
     clear_audio_preview_cache,
     cached_audio_preview_paths,
     prepare_audio_preview_cache,
+)
+from .gui_codex_state import (
+    CODEX_OUTPUT_SCHEMA,
+    CODEX_SCOPES,
+    CodexSessionController,
+    CodexSessionError,
+    CodexSessionSnapshot,
+    build_codex_context,
 )
 from .application_logging import ApplicationLogger
 from .realtime_audio_mixer import RealtimeAudioMixer
@@ -283,6 +291,10 @@ class EditBayBackend(LegacyEditBayBackend):
     updateDownloadProgressChanged = Signal()
     updatePackageReadyChanged = Signal()
     shortVideoChanged = Signal()
+    codexStateChanged = Signal()
+    codexMessageChanged = Signal()
+    codexProposalChanged = Signal()
+    codexCallbackRequested = Signal(object)
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         self._project: dict[str, Any] | None = None
@@ -357,6 +369,18 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_download_active = False
         self._update_download_cancel = threading.Event()
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
+        self._codex_proposal: dict[str, Any] | None = None
+        self._codex_current_time: float | None = None
+        self.codexCallbackRequested.connect(
+            self._run_codex_callback,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._codex_session = CodexSessionController(
+            on_state=self._on_codex_state,
+            on_message=self._on_codex_message,
+            on_proposal=self._on_codex_proposal,
+            callback_dispatcher=self._dispatch_codex_callback,
+        )
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
 
@@ -391,6 +415,26 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(str, notify=updateInfoChanged)
     def updateDownloadUrl(self) -> str:
         return self._update_info.download_url if self._update_info else ""
+
+    @Property(str, notify=codexStateChanged)
+    def codexState(self) -> str:
+        return self._codex_session.snapshot.state
+
+    @Property(str, notify=codexMessageChanged)
+    def codexMessage(self) -> str:
+        return self._codex_session.snapshot.message
+
+    @Property(str, notify=codexStateChanged)
+    def codexError(self) -> str:
+        return self._codex_session.snapshot.error
+
+    @Property("QVariantMap", notify=codexProposalChanged)
+    def codexProposal(self) -> dict[str, Any]:
+        return dict(self._codex_proposal or {})
+
+    @Property("QStringList", constant=True)
+    def codexScopes(self) -> list[str]:
+        return list(CODEX_SCOPES)
 
     @Property(bool, notify=updateInfoChanged)
     def updateAvailable(self) -> bool:
@@ -2518,6 +2562,129 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         mode = "GPU" if self._dependencies.nvenc else "CPU"
         self._start_command(command, "render_short", f"{mode}を自動選択してショート動画を書き出しています")
+
+    @Slot(str, str, float, float)
+    def startCodexEdit(
+        self,
+        prompt: str,
+        scope: str,
+        range_start: float = 0.0,
+        range_end: float = 0.0,
+    ) -> None:
+        if self._project is None:
+            self._set_status("先に編集プロジェクトを開いてください", "CHECK")
+            return
+        if self._codex_session.running:
+            return
+        selected_ids = {
+            str(self._project.get("segments", [])[self._selected_segment_index].get("id"))
+        } if 0 <= self._selected_segment_index < len(self._project.get("segments", [])) else set()
+        current_time = self._codex_current_time
+        if current_time is None:
+            if 0 <= self._selected_segment_index < len(self._project.get("segments", [])):
+                current_time = float(
+                    self._project["segments"][self._selected_segment_index].get(
+                        "start", range_start
+                    )
+                )
+            else:
+                current_time = range_start
+        try:
+            context = build_codex_context(
+                self._project,
+                scope,
+                selected_segment_ids=selected_ids,
+                current_time=current_time,
+                range_start=range_start,
+                range_end=range_end,
+            )
+            self._codex_proposal = None
+            self.codexProposalChanged.emit()
+            self._codex_session.start(
+                prompt=prompt,
+                context=context,
+                output_schema=CODEX_OUTPUT_SCHEMA,
+                revision=self._project_revision,
+            )
+            self._set_status("Codexへ編集案を依頼しています", "CODEX")
+        except (CodexSessionError, ValueError) as error:
+            self._set_status(f"Codex編集を開始できません: {error}", "ERROR")
+
+    @Slot(float)
+    def setCodexCurrentTime(self, seconds: float) -> None:
+        try:
+            value = float(seconds)
+        except (TypeError, ValueError):
+            return
+        if math.isfinite(value) and value >= 0.0:
+            self._codex_current_time = value
+
+    @Slot()
+    def stopCodexEdit(self) -> None:
+        self._codex_session.stop()
+        self._set_status("Codex編集を停止しました", "CODEX")
+
+    @Slot("QVariantList")
+    def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
+        if self._project is None or not self._codex_proposal:
+            self._set_status("適用するCodex編集案がありません", "CHECK")
+            return
+        before = deepcopy(self._project.get("segments", []))
+        try:
+            result = self._codex_session.apply_to_project(
+                self._project,
+                self._codex_proposal,
+                selected_operation_ids={str(item) for item in (selected_operation_ids or [])} or None,
+                current_revision=self._project_revision,
+            )
+        except (CodexSessionError, ValueError, TypeError) as error:
+            self._set_status(f"Codex編集案を適用できません: {error}", "ERROR")
+            return
+        self._project = result.project
+        after = deepcopy(self._project.get("segments", []))
+        self._record_history(before, after)
+        self._sync_subtitle_model()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self._mark_project_dirty()
+        if result.changed_segment_ids:
+            first_id = result.changed_segment_ids[0]
+            self._selected_segment_index = next(
+                (index for index, item in enumerate(after) if str(item.get("id")) == first_id),
+                -1,
+            )
+            self.selectionChanged.emit()
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
+        self._set_status("Codex編集案を適用しました。内容を確認して保存してください", "EDIT")
+
+    @Slot()
+    def discardCodexProposal(self) -> None:
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
+        self._set_status("Codex編集案を破棄しました", "EDIT")
+
+    def _on_codex_state(self, _snapshot: CodexSessionSnapshot) -> None:
+        self.codexStateChanged.emit()
+        self.codexMessageChanged.emit()
+        if self._codex_session.snapshot.error:
+            self._set_status(self._codex_session.snapshot.error, "ERROR")
+
+    def _on_codex_message(self, _message: str) -> None:
+        self.codexMessageChanged.emit()
+
+    def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
+        self._codex_proposal = dict(proposal)
+        self.codexProposalChanged.emit()
+        self._set_status("Codex編集案を確認できます", "CODEX")
+
+    def _dispatch_codex_callback(self, callback: Callable[[], None]) -> None:
+        self.codexCallbackRequested.emit(callback)
+
+    @Slot(object)
+    def _run_codex_callback(self, callback: object) -> None:
+        if callable(callback):
+            callback()
 
     def _process_started(self) -> None:
         self._running = True

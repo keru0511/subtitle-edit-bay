@@ -293,5 +293,13 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("updateProjectSpeakerColor(root.colorTargetIndex", qml)
 
 
+    def test_short_clip_list_exposes_trim_fields(self) -> None:
+        qml = read_component_qml("ShortModeClipList.qml")
+        self.assertIn('objectName: "shortModeStartTimeField" + index', qml)
+        self.assertIn('objectName: "shortModeEndTimeField" + index', qml)
+        self.assertIn("updateShortVideoClip", qml)
+        self.assertIn("TimeField", qml)
+
+
 if __name__ == "__main__":
     unittest.main()

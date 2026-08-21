@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -19,13 +20,23 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn(r".local\ffmpeg_path.txt", launcher)
 
     def test_setup_uses_module_pip_and_winget_fallbacks(self) -> None:
+        launcher = (ROOT / "setup.bat").read_text(encoding="utf-8")
         setup = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
 
+        self.assertIn(r"Sysnative\WindowsPowerShell\v1.0\powershell.exe", launcher)
+        self.assertIn(r"System32\WindowsPowerShell\v1.0\powershell.exe", launcher)
+        self.assertIn('"%POWERSHELL_EXE%"', launcher)
         self.assertIn('"Python.Python.3.10"', setup)
         self.assertIn('"Gyan.FFmpeg"', setup)
         self.assertIn("-m pip install", setup)
         self.assertIn("check_runtime_dependencies", setup)
         self.assertIn('Get-Command "nvidia-smi.exe"', setup)
+        self.assertIn('"Sysnative\\nvidia-smi.exe"', setup)
+        self.assertIn('"System32\\nvidia-smi.exe"', setup)
+        self.assertIn("PowerShell architecture:", setup)
+        self.assertIn("PyTorch CUDA runtime:", setup)
+        self.assertIn("PyTorch CUDA available:", setup)
+        self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
         self.assertIn("https://download.pytorch.org/whl/cu128", setup)
         self.assertIn('$whisperXVersion = "3.8.6"', setup)
         self.assertIn('$torchVersion = "2.8.0"', setup)
@@ -34,6 +45,50 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_setup_gpu_probe_resolves_32_and_64_bit_system_paths(self) -> None:
+        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
+        setup_script = ROOT / "scripts" / "setup.ps1"
+
+        for parent_architecture, system_directory in (
+            ("32-bit", "Sysnative"),
+            ("64-bit", "System32"),
+        ):
+            with self.subTest(parent_architecture=parent_architecture), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                windows_root = root / "Windows"
+                candidate = windows_root / system_directory / "nvidia-smi.exe"
+                candidate.parent.mkdir(parents=True)
+                candidate.write_bytes(b"probe")
+                environment = os.environ.copy()
+                environment["PATH"] = ""
+                environment["ProgramFiles"] = str(root / "Program Files")
+
+                result = subprocess.run(
+                    [
+                        powershell,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(setup_script),
+                        "-ProbeNvidiaOnly",
+                        "-NvidiaSmiSearchRoot",
+                        str(windows_root),
+                    ],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(Path(result.stdout.strip()), candidate.resolve())
 
     def test_update_supports_git_and_zip_distributions(self) -> None:
         launcher = (ROOT / "update.bat").read_text(encoding="utf-8")

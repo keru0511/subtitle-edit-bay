@@ -3,6 +3,7 @@ import QtQuick
 import QtQml.Models
 import QtQuick.Controls
 import QtQuick.Dialogs
+import "../components"
 import QtQuick.Layouts
 import QtMultimedia
 import "../components"
@@ -418,143 +419,6 @@ ApplicationWindow {
             radius: 6
             color: "#101512"
             border.color: timeControl.activeFocus ? root.acid : root.border
-        }
-    }
-
-    component SubtitleOverlay: Item {
-        id: overlayRoot
-        property MediaPlayer player
-        property string captionObjectPrefix: "subtitleOverlayCaption"
-        property int baseFontSize: root.selectedSubtitleFontSize
-        property var activeSegments: []
-        property string activeSignature: ""
-        property int rowMarginBase: 34
-        property int rowMarginStepBase: 156
-
-        function previewPixelSize(fontScale) {
-            var normalizedScale = Math.max(0.1, Number(fontScale) || 1)
-            var outputFontSize = Math.max(3, Math.round(overlayRoot.baseFontSize * normalizedScale))
-            return Math.max(1, Math.round(22 * outputFontSize / root.defaultSubtitleFontSize))
-        }
-
-        function maxSubtitleFontScale() {
-            var maxScale = 1
-            var allSegments = root.appBackend.subtitleSegments
-            for (var index = 0; index < allSegments.length; index++) {
-                var candidate = Number(allSegments[index].subtitle_font_scale)
-                if (candidate > 0) {
-                    maxScale = Math.max(maxScale, Math.max(0.1, candidate))
-                }
-            }
-            return maxScale
-        }
-
-        function maxSubtitlePixelSize() {
-            return Math.max(
-                3,
-                Math.round(overlayRoot.baseFontSize * overlayRoot.maxSubtitleFontScale())
-            )
-        }
-
-        function maxLayoutRow() {
-            var maxRow = 0
-            var allSegments = root.appBackend.subtitleSegments
-            for (var index = 0; index < allSegments.length; index++)
-                maxRow = Math.max(maxRow, Number(allSegments[index].layout_row || 0))
-            return maxRow
-        }
-
-        function previewRowMarginStep() {
-            var scale = Math.max(
-                1,
-                overlayRoot.baseFontSize / root.defaultSubtitleFontSize * overlayRoot.maxSubtitleFontScale(),
-            )
-            var scaledStep = Math.max(1, Math.round(overlayRoot.rowMarginStepBase * scale))
-            var maxRow = overlayRoot.maxLayoutRow()
-            if (maxRow <= 0)
-                return scaledStep
-            var available = Math.max(1, overlayRoot.height - overlayRoot.rowMarginBase - overlayRoot.maxSubtitlePixelSize())
-            return Math.max(1, Math.min(scaledStep, Math.floor(available / maxRow)))
-        }
-
-        function outlineOffsets(thickness) {
-            var outputThickness = Math.max(0, Math.min(20, Math.round(Number(thickness) || 0)))
-            if (outputThickness === 0)
-                return []
-            var previewThickness = Math.max(
-                1,
-                Math.round(22 * outputThickness / root.defaultSubtitleFontSize)
-            )
-            var offsets = []
-            for (var radius = 1; radius <= previewThickness; radius++) {
-                offsets.push({"x": -radius, "y": 0}, {"x": radius, "y": 0})
-                offsets.push({"x": 0, "y": -radius}, {"x": 0, "y": radius})
-                offsets.push({"x": -radius, "y": -radius}, {"x": radius, "y": -radius})
-                offsets.push({"x": -radius, "y": radius}, {"x": radius, "y": radius})
-            }
-            return offsets
-        }
-
-        function refreshActiveSegments() {
-            var candidates = root.appBackend.activeSubtitleSegments(
-                overlayRoot.player ? overlayRoot.player.position / 1000 : 0
-            )
-            var signature = JSON.stringify(candidates)
-            if (signature !== overlayRoot.activeSignature) {
-                overlayRoot.activeSignature = signature
-                overlayRoot.activeSegments = candidates
-            }
-        }
-
-        onPlayerChanged: overlayRoot.refreshActiveSegments()
-        Connections {
-            target: overlayRoot.player
-            function onPositionChanged() { overlayRoot.refreshActiveSegments() }
-        }
-        Connections {
-            target: root.appBackend
-            function onSegmentsChanged() { overlayRoot.refreshActiveSegments() }
-        }
-        Repeater {
-            model: overlayRoot.activeSegments
-            delegate: Text {
-                id: overlayCaption
-                required property int index
-                required property var modelData
-                property var segmentData: modelData || ({})
-                objectName: overlayRoot.captionObjectPrefix + "-" + index
-                width: Math.min(implicitWidth + 30, parent.width - 30)
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: overlayRoot.rowMarginBase + Number(segmentData.layout_row || 0) * overlayRoot.previewRowMarginStep()
-                text: root.subtitlePreviewText(segmentData)
-                color: root.speakerColor(segmentData.speaker || "")
-                font.family: segmentData.subtitle_font_family || "Yu Gothic UI"
-                font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)
-                font.weight: Font.Bold
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                style: Text.Normal
-                Repeater {
-                    model: overlayRoot.outlineOffsets(root.selectedSubtitleOutlineThickness)
-                    delegate: Text {
-                        required property var modelData
-                        x: modelData.x
-                        y: modelData.y
-                        width: overlayCaption.width
-                        height: overlayCaption.height
-                        text: overlayCaption.text
-                        color: root.selectedSubtitleOutlineColor
-                        font.family: overlayCaption.font.family
-                        font.pixelSize: overlayCaption.font.pixelSize
-                        font.weight: overlayCaption.font.weight
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        wrapMode: Text.Wrap
-                        z: -1
-                    }
-                }
-            }
         }
     }
 
@@ -1018,7 +882,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         modal: true
         title: "更新の確認"
-        visible: root.appBackend.updateAvailable && !root.appBackend.updateBusy
+        visible: root.appBackend.updateAvailable && (!root.appBackend.updateBusy || root.appBackend.updateDownloadActive)
         standardButtons: Dialog.NoButton
         width: 500
         height: 320
@@ -1037,8 +901,25 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
+            Text {
+                visible: root.appBackend.updatePackageSize > 0
+                text: "パッケージサイズ: " + root.appBackend.updatePackageSize + " bytes"
+                color: root.textMuted
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 11
+                Layout.fillWidth: true
+            }
+            ProgressBar {
+                objectName: "updateDownloadProgressBar"
+                visible: root.appBackend.updateDownloadActive
+                from: 0
+                to: root.appBackend.updateDownloadTotal > 0 ? root.appBackend.updateDownloadTotal : 1
+                value: root.appBackend.updateDownloadBytes
+                Layout.fillWidth: true
+            }
             RowLayout {
-                Button { objectName: "applyUpdateButton"; text: "更新"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
+                Button { objectName: "applyUpdateButton"; text: root.appBackend.updatePackageReady ? "再起動して更新" : "アップデート"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
+                Button { objectName: "cancelUpdateDownloadButton"; text: "ダウンロードをキャンセル"; visible: root.appBackend.updateDownloadActive; enabled: true; onClicked: root.appBackend.cancelUpdateDownload() }
                 Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.restartApplication() }
                 Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
             }
@@ -1161,7 +1042,18 @@ ApplicationWindow {
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
-                SubtitleOverlay { anchors.fill: mainVideo; player: mainPlayer; captionObjectPrefix: "mainSubtitleOverlayCaption" }
+                SubtitleOverlay {
+                    anchors.fill: mainVideo
+                    appBackend: root.appBackend
+                    player: mainPlayer
+                    captionObjectPrefix: "mainSubtitleOverlayCaption"
+                    baseFontSize: root.selectedSubtitleFontSize
+                    defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                    outlineColor: root.selectedSubtitleOutlineColor
+                    outlineThickness: root.selectedSubtitleOutlineThickness
+                    speakerColors: root.projectSpeakerCache
+                    subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                }
                 ColumnLayout {
                     anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                     anchors.margins: 12; spacing: 2
@@ -1174,19 +1066,12 @@ ApplicationWindow {
                 }
             }
 
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 118; radius: 12; color: root.panel; border.color: root.border
-                RowLayout { anchors.fill: parent; anchors.margins: 12; spacing: 12
-                    ColumnLayout { Layout.preferredWidth: 180
-                        PanelTitle { text: root.appBackend.stage }
-                        Text { text: Math.round(root.appBackend.progress * 100) + "%"; color: root.acid; font.family: "Bahnschrift"; font.pixelSize: 25; font.weight: Font.Bold }
-                        Text { objectName: "workflowStatusText"; Layout.fillWidth: true; text: root.appBackend.status; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; wrapMode: Text.Wrap }
-                    }
-                    ProgressBar { Layout.preferredWidth: 160; from: 0; to: 1; value: root.appBackend.progress }
-                    ScrollView { Layout.fillWidth: true; Layout.fillHeight: true
-                        TextArea { readOnly: true; text: root.appBackend.logText || "処理ログ"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; wrapMode: TextEdit.WrapAnywhere; background: Rectangle { color: "transparent" } }
-                    }
-                }
+            ApplicationLogPanel {
+                id: applicationLogPanel
+                objectName: "applicationLogPanel"
+                Layout.fillWidth: true
+                Layout.preferredHeight: implicitHeight
+                backend: root.appBackend
             }
         }
 
@@ -2061,7 +1946,19 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; radius: 10; color: "#060806"; border.color: root.border; clip: true
                         VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
-                        SubtitleOverlay { id: editorOverlay; anchors.fill: editorVideo; player: editorPlayer; captionObjectPrefix: "editorSubtitleOverlayCaption" }
+                        SubtitleOverlay {
+                            id: editorOverlay
+                            anchors.fill: editorVideo
+                            appBackend: root.appBackend
+                            player: editorPlayer
+                            captionObjectPrefix: "editorSubtitleOverlayCaption"
+                            baseFontSize: root.selectedSubtitleFontSize
+                            defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                            outlineColor: root.selectedSubtitleOutlineColor
+                            outlineThickness: root.selectedSubtitleOutlineThickness
+                            speakerColors: root.projectSpeakerCache
+                            subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                        }
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
                             Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: editorPlayer.position = value }
                             RowLayout { Layout.fillWidth: true

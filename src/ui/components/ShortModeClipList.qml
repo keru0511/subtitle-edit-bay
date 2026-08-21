@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "."
 
 ColumnLayout {
     id: clipListRoot
@@ -72,7 +73,7 @@ ColumnLayout {
             id: clipItem
             objectName: "shortModeClipItem" + index
             width: clipListView.width
-            height: 76
+            height: 124
             color: clipListRoot.selectedIndex === index ? "#2A3530" : "#121715"
             border.color: clipListRoot.selectedIndex === index ? "#C8FF3D" : "#2A3530"
             radius: 8
@@ -104,6 +105,47 @@ ColumnLayout {
                         color: "#8E9B94"
                         font.family: "Cascadia Mono"
                         font.pixelSize: 10
+                    }
+                    RowLayout {
+                        spacing: 4
+                        Text { text: "開始"; color: "#8E9B94"; font.pixelSize: 10 }
+                        TimeField {
+                            id: startTimeField
+                            objectName: "shortModeStartTimeField" + index
+                            Layout.preferredWidth: 82
+                            text: Number(modelData.start).toFixed(3)
+                            onEditingFinished: {
+                                var accepted = clipListRoot.appBackend
+                                    && clipListRoot.appBackend.updateShortVideoClip(index, {"start": Number(text)})
+                                if (!accepted) text = Number(modelData.start).toFixed(3)
+                                focus = false
+                            }
+                            Binding {
+                                target: startTimeField
+                                property: "text"
+                                value: Number(modelData.start).toFixed(3)
+                                when: !startTimeField.activeFocus
+                            }
+                        }
+                        Text { text: "終了"; color: "#8E9B94"; font.pixelSize: 10 }
+                        TimeField {
+                            id: endTimeField
+                            objectName: "shortModeEndTimeField" + index
+                            Layout.preferredWidth: 82
+                            text: Number(modelData.end).toFixed(3)
+                            onEditingFinished: {
+                                var accepted = clipListRoot.appBackend
+                                    && clipListRoot.appBackend.updateShortVideoClip(index, {"end": Number(text)})
+                                if (!accepted) text = Number(modelData.end).toFixed(3)
+                                focus = false
+                            }
+                            Binding {
+                                target: endTimeField
+                                property: "text"
+                                value: Number(modelData.end).toFixed(3)
+                                when: !endTimeField.activeFocus
+                            }
+                        }
                     }
                 }
 

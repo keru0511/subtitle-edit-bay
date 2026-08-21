@@ -48,6 +48,7 @@ class TranscriptionDictionaryTests(unittest.TestCase):
         dictionary = transcription_dictionary_from_mapping(
             {
                 "game_title": "Splatoon 3",
+                "scope": "game",
                 "terms": [
                     {"term": "ナワバリバトル", "aliases": ["ナワバリ", "バトル"]},
                     {"term": "スプラシューター", "aliases": ["スシ", "ナワバリ"], "enabled": True},
@@ -88,6 +89,7 @@ class TranscriptionDictionaryTests(unittest.TestCase):
         dictionary = transcription_dictionary_from_mapping(
             {
                 "game_title": "Splatoon 3",
+                "scope": "game",
                 "terms": [
                     {
                         "term": "スプラシューター",
@@ -105,6 +107,7 @@ class TranscriptionDictionaryTests(unittest.TestCase):
             dictionary.to_json(),
             {
                 "game_title": "Splatoon 3",
+                "scope": "game",
                 "terms": [
                     {
                         "term": "スプラシューター",

@@ -83,11 +83,12 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
         qml = read_workflow_qml()
+        overlay_qml = read_component_qml("SubtitleOverlay.qml")
 
         self.assertIn('objectName: "captionFontCombo"', qml)
         self.assertIn("model: root.appBackend.fontChoices", qml)
         self.assertIn('"subtitle_font_family": currentValue', qml)
-        self.assertIn('font.family: segmentData.subtitle_font_family || "Yu Gothic UI"', qml)
+        self.assertIn('font.family: segmentData.subtitle_font_family || "Yu Gothic UI"', overlay_qml)
 
     def test_caption_editor_supports_manual_breaks_and_live_formatted_preview(self) -> None:
         qml = read_workflow_qml()
@@ -97,7 +98,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("text: captionRow.editorText", qml)
         self.assertIn("root.updateSubtitleDraft(captionRow.index, text)", qml)
         self.assertIn("root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)", qml)
-        self.assertIn("text: root.subtitlePreviewText(segmentData)", qml)
+        self.assertIn("subtitleTextResolver: function(segmentData)", qml)
         self.assertNotIn('onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"text": text})', qml)
 
     def test_timeline_delegate_and_position_handlers_are_safe_during_refresh(self) -> None:
@@ -140,6 +141,18 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("operationIdFor", panel)
         self.assertIn("!panel.codexRunning()", panel)
         self.assertIn("setCodexCurrentTime", panel)
+
+    def test_application_log_panel_exposes_copy_and_error_actions(self) -> None:
+        qml = read_workflow_qml()
+        panel = read_component_qml("ApplicationLogPanel.qml")
+
+        self.assertIn('objectName: "applicationLogPanel"', qml)
+        self.assertIn('objectName: "applicationLogToggleButton"', panel)
+        self.assertIn('objectName: "copyLogsButton"', panel)
+        self.assertIn('objectName: "copyErrorLogsButton"', panel)
+        self.assertIn('objectName: "openLogsButton"', panel)
+        self.assertIn("selectByMouse: true", panel)
+        self.assertIn("backend.copyErrorLogsToClipboard()", panel)
 
     def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
         qml = read_workflow_qml()
@@ -251,16 +264,18 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_main_font_size_control_supports_nine_hundred_percent(self) -> None:
         qml = read_workflow_qml()
+        overlay_qml = read_component_qml("SubtitleOverlay.qml")
 
         self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
         self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
         self.assertIn('readonly property int selectedSubtitleFontSize', qml)
-        self.assertIn('property int baseFontSize: root.selectedSubtitleFontSize', qml)
-        self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', qml)
+        self.assertIn('baseFontSize: root.selectedSubtitleFontSize', qml)
+        self.assertIn('property int baseFontSize: 50', overlay_qml)
+        self.assertIn('font.pixelSize: overlayRoot.previewPixelSize(segmentData.subtitle_font_scale)', overlay_qml)
 
     def test_caption_overlay_uses_ass_margin_formula(self) -> None:
         qml = read_workflow_qml()
-        overlay_qml = qml.split("component SubtitleOverlay", 1)[1].split("component SubtitleTimeline", 1)[0]
+        overlay_qml = read_component_qml("SubtitleOverlay.qml")
 
         self.assertIn("function maxSubtitleFontScale()", overlay_qml)
         self.assertIn("function maxSubtitlePixelSize()", overlay_qml)
@@ -272,7 +287,19 @@ class QmlStaticTests(unittest.TestCase):
             "anchors.bottomMargin: overlayRoot.rowMarginBase + Number(segmentData.layout_row || 0) * overlayRoot.previewRowMarginStep()",
             overlay_qml,
         )
-        self.assertIn("root.defaultSubtitleFontSize", overlay_qml)
+        self.assertIn("defaultSubtitleFontSize", overlay_qml)
+
+    def test_short_preview_uses_shared_subtitle_overlay(self) -> None:
+        overlay_qml = read_component_qml("SubtitleOverlay.qml")
+        preview_qml = read_component_qml("ShortModePreview.qml")
+        workflow_qml = read_workflow_qml()
+        self.assertIn("property var subtitleTextResolver", overlay_qml)
+        self.assertIn("activeSubtitleSegments", overlay_qml)
+        self.assertIn("shortSubtitleOverlayCaption", preview_qml)
+        self.assertIn("subtitle_scale_percent", preview_qml)
+        self.assertIn("normalizedSubtitleScalePercent", preview_qml)
+        self.assertNotIn("subtitle_scale_percent || 150", preview_qml)
+        self.assertIn("SubtitleOverlay", workflow_qml)
 
     def test_global_subtitle_outline_controls_are_wired_to_preview(self) -> None:
         qml = read_workflow_qml()
@@ -282,8 +309,9 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3', qml)
         self.assertIn('"subtitle_outline_color": root.selectedSubtitleOutlineColor', qml)
         self.assertIn('"subtitle_outline_thickness": root.selectedSubtitleOutlineThickness', qml)
-        self.assertIn('model: overlayRoot.outlineOffsets(root.selectedSubtitleOutlineThickness)', qml)
-        self.assertIn('color: root.selectedSubtitleOutlineColor', qml)
+        self.assertIn('outlineThickness: root.selectedSubtitleOutlineThickness', qml)
+        self.assertIn('model: overlayRoot.outlineOffsets(overlayRoot.outlineThickness)', read_component_qml("SubtitleOverlay.qml"))
+        self.assertIn('outlineColor: root.selectedSubtitleOutlineColor', qml)
 
     def test_speaker_color_picker_is_wired_per_speaker(self) -> None:
         qml = read_workflow_qml()
@@ -293,6 +321,14 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "projectSpeakerColorList"', qml)
         self.assertIn("updateSpeakerColor(root.colorTargetIndex", qml)
         self.assertIn("updateProjectSpeakerColor(root.colorTargetIndex", qml)
+
+
+    def test_short_clip_list_exposes_trim_fields(self) -> None:
+        qml = read_component_qml("ShortModeClipList.qml")
+        self.assertIn('objectName: "shortModeStartTimeField" + index', qml)
+        self.assertIn('objectName: "shortModeEndTimeField" + index', qml)
+        self.assertIn("updateShortVideoClip", qml)
+        self.assertIn("TimeField", qml)
 
 
 if __name__ == "__main__":

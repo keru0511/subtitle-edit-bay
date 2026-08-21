@@ -2228,8 +2228,12 @@ ApplicationWindow {
         objectName: "processingProgressOverlay"
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 12
+        // Keep the progress panel above the expandable log panel so completed
+        // processing never hides the diagnostics the user may need to read.
+        anchors.bottom: applicationLogPanel.top
+        anchors.leftMargin: 12
+        anchors.rightMargin: 12
+        anchors.bottomMargin: 12
         z: 700
         color: "transparent"
         visible: root.appBackend && root.appBackend.progressVisible

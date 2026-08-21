@@ -95,6 +95,12 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('font.family: "Cascadia Mono"', read_component_qml("CompactSpinBox.qml"))
         self.assertIn("DoubleValidator", read_component_qml("TimeField.qml"))
 
+    def test_processing_progress_overlay_leaves_application_log_visible(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn("anchors.bottom: applicationLogPanel.top", qml)
+        self.assertIn("anchors.bottomMargin: 12", qml)
+
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
         qml = read_workflow_qml()
         overlay_qml = read_component_qml("SubtitleOverlay.qml")

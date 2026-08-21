@@ -3041,6 +3041,14 @@ class EditBayBackend(LegacyEditBayBackend):
         if not self._processing_progress.steps and self._active_job:
             self._processing_progress.start(self._active_job)
         if not self._processing_progress.steps:
+            # Trackerless jobs (currently the self-update process) retain the
+            # legacy scalar progress path.  A successful process still needs
+            # to reach 100% when its QProcess exits cleanly.
+            self._processing_progress.finish(outcome)
+            if outcome == "completed":
+                self._progress = 1.0
+                self.progressChanged.emit()
+            self.progressDetailsChanged.emit()
             return
         self._processing_progress.finish(outcome)
         self._progress = self._processing_progress.value

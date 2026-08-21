@@ -92,7 +92,27 @@ class ProcessingProgressTests(unittest.TestCase):
         self.assertEqual(tracker.as_list()[1]["displayStatus"], "実行中")
         for step in tracker.as_list():
             tracker.update({"job": "render", "step": step["id"], "phase": "complete", "progress": 1.0})
+        self.assertLess(tracker.value, 1.0)
+        tracker.finish("completed")
         self.assertEqual(tracker.value, 1.0)
+
+    def test_final_machine_event_waits_for_process_outcome(self) -> None:
+        for outcome, state in (("error", "error"), ("cancelled", "cancelled")):
+            with self.subTest(outcome=outcome):
+                tracker = ProcessingProgress()
+                tracker.start("render")
+                for step in ("prepare", "subtitle", "audio", "encode", "finalize"):
+                    tracker.update(
+                        {"job": "render", "step": step, "phase": "complete", "progress": 1.0}
+                    )
+
+                self.assertLess(tracker.value, 1.0)
+                self.assertEqual(tracker.current_step, "finalize")
+                self.assertEqual(tracker.as_list()[-1]["state"], "running")
+
+                tracker.finish(outcome)
+                self.assertLess(tracker.value, 1.0)
+                self.assertEqual(tracker.as_list()[-1]["state"], state)
 
 
 if __name__ == "__main__":

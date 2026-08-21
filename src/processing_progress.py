@@ -17,6 +17,9 @@ STEP_DISPLAY_STATUS = {
 _FFMPEG_TIMESTAMP_PATTERN = re.compile(
     r"(?:Duration|time)\s*[:=]\s*(?P<hours>\d+):(?P<minutes>\d{2}):(?P<seconds>\d{2}(?:\.\d+)?)"
 )
+# A machine event only describes worker progress.  The owning QProcess must
+# exit successfully before the UI is allowed to show 100%.
+_MACHINE_PROGRESS_CAP = 0.99
 
 
 @dataclass(frozen=True)
@@ -154,17 +157,30 @@ class ProcessingProgress:
                 updated.append(replace(step, state="completed", progress=1.0))
             elif step_index == index:
                 if phase in {"complete", "completed"}:
-                    updated.append(replace(step, state="completed", progress=1.0))
+                    # Keep the final step active until the parent process
+                    # exits.  This leaves a meaningful target for a later
+                    # error/cancel event instead of displaying all checkmarks.
+                    if index == len(self.steps) - 1:
+                        updated.append(replace(step, state="running", progress=1.0))
+                    else:
+                        updated.append(replace(step, state="completed", progress=1.0))
                 else:
                     updated.append(replace(step, state="running", progress=step_progress))
             else:
                 updated.append(step)
         self.steps = tuple(updated)
-        self.current_step = "" if phase in {"complete", "completed"} else step_id
+        terminal_pending = (
+            phase in {"complete", "completed"} and index == len(self.steps) - 1
+        )
+        self.current_step = (
+            step_id
+            if terminal_pending
+            else ("" if phase in {"complete", "completed"} else step_id)
+        )
         calculated = sum(step.weight * step.progress for step in self.steps)
         if self._weight_total > 0.0:
             calculated /= self._weight_total
-        self.value = max(self.value, min(1.0, calculated))
+        self.value = max(self.value, min(_MACHINE_PROGRESS_CAP, calculated))
         return True
 
     def finish(self, outcome: str) -> None:

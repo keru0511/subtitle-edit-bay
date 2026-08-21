@@ -1324,6 +1324,45 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
 
+    def test_final_progress_event_does_not_mask_process_error_or_cancel(self) -> None:
+        final_events = "\n".join(
+            f'PROGRESS_EVENT {{"job":"render","step":"{step}","phase":"complete","progress":1.0}}'
+            for step in ("prepare", "subtitle", "audio", "encode", "finalize")
+        )
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = False
+        self.app._processing_progress.start("render")
+        self.app._update_stage(final_events)
+        self.assertLess(self.app.progressPercent, 100)
+        self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.progressState, "error")
+        self.assertLess(self.app.progressPercent, 100)
+        self.assertEqual(self.app.progressSteps[-1]["state"], "error")
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = True
+        self.app._processing_progress.start("render")
+        self.app._update_stage(final_events)
+        self.assertLess(self.app.progressPercent, 100)
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.progressState, "cancelled")
+        self.assertLess(self.app.progressPercent, 100)
+        self.assertEqual(self.app.progressSteps[-1]["state"], "cancelled")
+
+    def test_trackerless_update_reaches_complete_progress_on_success(self) -> None:
+        self.app._active_job = "update"
+        self.app._running = True
+        self.app._progress = 0.02
+        self.app._processing_progress.start("update")
+
+        self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app.progress, 1.0)
+        self.assertEqual(self.app.progressState, "completed")
+
     def test_processing_progress_gui_exposes_job_sequence_and_terminal_states(self) -> None:
         for job, step in (("transcribe", "alignment"), ("render", "encode"), ("render_short", "clips")):
             with self.subTest(job=job), patch.object(self.app, "_start_process"):

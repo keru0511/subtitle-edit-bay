@@ -59,6 +59,13 @@ from .gui_codex_state import (
     CodexSessionSnapshot,
     build_codex_context,
 )
+from .codex_app_server_client import CodexAppServerClient
+from .codex_runtime import detect_codex
+from .gui_codex_chat_state import (
+    CodexChatController,
+    CodexChatError,
+    CodexChatSnapshot,
+)
 from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
@@ -298,6 +305,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexStateChanged = Signal()
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
+    codexChatChanged = Signal()
     codexCallbackRequested = Signal(object)
     highlightCandidatesChanged = Signal()
     highlightAnalysisChanged = Signal()
@@ -400,6 +408,17 @@ class EditBayBackend(LegacyEditBayBackend):
             on_proposal=self._on_codex_proposal,
             callback_dispatcher=self._dispatch_codex_callback,
         )
+        self._last_codex_login_url = ""
+        self._codex_chat = CodexChatController(
+            client_factory=self._create_codex_chat_client,
+            workspace_root=self.workspace_root,
+            preferred_model=str(self._settings.get("codex_model", "")),
+            on_state=self._on_codex_chat_state,
+            on_selected_model=self._persist_codex_model,
+            callback_dispatcher=self._dispatch_codex_callback,
+        )
+        self.aboutToQuit.connect(self._codex_chat.shutdown)
+        self._codex_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
 
@@ -458,6 +477,46 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property("QStringList", constant=True)
     def codexScopes(self) -> list[str]:
         return list(CODEX_SCOPES)
+
+    @Property(str, notify=codexChatChanged)
+    def codexConnectionState(self) -> str:
+        return self._codex_chat.snapshot.connection_state
+
+    @Property(str, notify=codexChatChanged)
+    def codexAuthState(self) -> str:
+        return self._codex_chat.snapshot.auth_state
+
+    @Property(str, notify=codexChatChanged)
+    def codexAuthLabel(self) -> str:
+        return self._codex_chat.snapshot.auth_label
+
+    @Property(str, notify=codexChatChanged)
+    def codexLoginUrl(self) -> str:
+        return self._codex_chat.snapshot.login_url
+
+    @Property(str, notify=codexChatChanged)
+    def codexChatState(self) -> str:
+        return self._codex_chat.snapshot.chat_state
+
+    @Property(str, notify=codexChatChanged)
+    def codexChatError(self) -> str:
+        return self._codex_chat.snapshot.error
+
+    @Property("QVariantList", notify=codexChatChanged)
+    def codexModels(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._codex_chat.snapshot.models]
+
+    @Property(str, notify=codexChatChanged)
+    def codexSelectedModel(self) -> str:
+        return self._codex_chat.snapshot.selected_model
+
+    @Property(str, notify=codexChatChanged)
+    def codexModelError(self) -> str:
+        return self._codex_chat.snapshot.model_error
+
+    @Property("QVariantList", notify=codexChatChanged)
+    def codexChatMessages(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._codex_chat.snapshot.messages]
 
     @Property(bool, notify=updateInfoChanged)
     def updateAvailable(self) -> bool:
@@ -2773,6 +2832,50 @@ class EditBayBackend(LegacyEditBayBackend):
         mode = "GPU" if self._dependencies.nvenc else "CPU"
         self._start_command(command, "render_short", f"{mode}を自動選択してショート動画を書き出しています")
 
+    @Slot()
+    def reconnectCodexChat(self) -> None:
+        self._codex_chat.reconnect()
+
+    @Slot()
+    def startCodexLogin(self) -> None:
+        self._codex_chat.login()
+
+    @Slot()
+    def reloginCodex(self) -> None:
+        self._codex_chat.login(relogin=True)
+
+    @Slot()
+    def logoutCodex(self) -> None:
+        self._codex_chat.logout()
+
+    @Slot()
+    def openCodexLoginPage(self) -> None:
+        login_url = self._codex_chat.snapshot.login_url
+        if login_url:
+            QDesktopServices.openUrl(QUrl(login_url))
+
+    @Slot(str)
+    def selectCodexModel(self, model: str) -> None:
+        self._codex_chat.select_model(model)
+
+    @Slot(str)
+    def sendCodexChatMessage(self, message: str) -> None:
+        self._codex_chat.send_message(message)
+
+    @Slot()
+    def stopCodexChat(self) -> None:
+        self._codex_chat.interrupt()
+
+    @Slot()
+    def startNewCodexChat(self) -> None:
+        self._codex_chat.new_chat()
+
+    def _create_codex_chat_client(self) -> CodexAppServerClient:
+        runtime = detect_codex(self.workspace_root)
+        if not runtime.available:
+            raise CodexChatError(runtime.error)
+        return CodexAppServerClient(runtime.command, cwd=self.workspace_root)
+
     @Slot(str, str, float, float)
     def startCodexEdit(
         self,
@@ -2887,6 +2990,17 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_proposal = dict(proposal)
         self.codexProposalChanged.emit()
         self._set_status("Codex編集案を確認できます", "CODEX")
+
+    def _on_codex_chat_state(self, snapshot: CodexChatSnapshot) -> None:
+        self.codexChatChanged.emit()
+        if snapshot.login_url and snapshot.login_url != self._last_codex_login_url:
+            self._last_codex_login_url = snapshot.login_url
+            QDesktopServices.openUrl(QUrl(snapshot.login_url))
+
+    def _persist_codex_model(self, model: str) -> None:
+        if self._settings.get("codex_model") == model:
+            return
+        self._save_settings({"codex_model": model}, announce=False)
 
     def _dispatch_codex_callback(self, callback: Callable[[], None]) -> None:
         self.codexCallbackRequested.emit(callback)

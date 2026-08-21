@@ -32,6 +32,7 @@ from src.audio_preview_cache import (
 )
 from src import updater
 from src.gui import EditBayBackend, build_font_choices
+from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -48,13 +49,16 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._workspace = tempfile.TemporaryDirectory()
         cls._workspace_root = Path(cls._workspace.name)
-        cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
+        with patch("src.gui.CodexChatController.connect") as connect:
+            cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
+            cls._codex_chat_connect_calls = connect.call_count
         cls._base_settings = deepcopy(cls.app.settings)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.app.autosave_timer.stop()
         cls.app.elapsed_timer.stop()
+        cls.app._codex_chat.shutdown()
         cls.app._shutdown_executor()
         cls._workspace.cleanup()
 
@@ -1842,7 +1846,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         action_bar = self._quick_item(window, "contextActionBar")
         video_panel = self._quick_item(window, "mainVideoPanel")
         log_panel = self._quick_item(window, "applicationLogPanel")
+        codex_sidebar = self._quick_item(window, "codexChatSidebarContainer")
+        codex_chat = self._quick_item(window, "codexChatPanel")
         central_column = stepper.parentItem()
+        self.assertEqual(len(window.findChildren(QQuickItem, "codexChatPanel")), 1)
 
         for width, height in ((1220, 760), (1520, 940)):
             window.resize(width, height)
@@ -1862,6 +1869,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
             self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+            self.assertTrue(codex_sidebar.isVisible())
+            self.assertTrue(codex_chat.isVisible())
+            self.assertGreater(codex_sidebar.width(), 0)
+            self.assertGreater(codex_sidebar.height(), 0)
+            self.assertGreater(codex_chat.width(), 0)
+            self.assertGreater(codex_chat.height(), 0)
+            self.assertLessEqual(codex_chat.width(), codex_sidebar.width() + 1)
+            self.assertLessEqual(codex_chat.height(), codex_sidebar.height() + 1)
 
         window.resize(1220, 760)
         self.app.processEvents()
@@ -2153,6 +2168,66 @@ class GuiEditorRegressionTests(unittest.TestCase):
         render_command, render_job, _ = start.call_args.args
         self.assertEqual(render_job, "render")
         self.assertIn("render", render_command)
+
+    def test_codex_chat_error_does_not_replace_workflow_status(self) -> None:
+        self.app._status = "ショート動画を書き出しています"
+        self.app._stage = "ENCODE"
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(
+                connection_state="error",
+                auth_state="error",
+                chat_state="disconnected",
+                error="Codexへ接続できません",
+            )
+        )
+
+        self.assertEqual(self.app.status, "ショート動画を書き出しています")
+        self.assertEqual(self.app.stage, "ENCODE")
+
+    def test_codex_model_persistence_does_not_replace_workflow_status(self) -> None:
+        self.app._settings["codex_model"] = ""
+        self.app._status = "文字起こしを実行しています"
+        self.app._stage = "TRANSCRIBE"
+
+        self.app._persist_codex_model("gpt-default")
+
+        self.assertEqual(self.app.status, "文字起こしを実行しています")
+        self.assertEqual(self.app.stage, "TRANSCRIBE")
+        payload = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["shared"]["codex_model"], "gpt-default")
+
+    def test_codex_chat_connects_during_backend_startup(self) -> None:
+        self.assertEqual(self._codex_chat_connect_calls, 1)
+
+    def test_codex_chat_stays_collapsed_until_authenticated(self) -> None:
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "codexChatPanel")
+        toggle = self._quick_item(window, "codexChatToggleButton")
+        original_snapshot = self.app._codex_chat._snapshot
+        try:
+            self.assertFalse(panel.property("expanded"))
+            self.assertFalse(toggle.isEnabled())
+
+            authenticated = CodexChatSnapshot(
+                connection_state="ready",
+                auth_state="authenticated",
+                auth_label="ChatGPT",
+                models=({"id": "gpt-default", "label": "GPT Default"},),
+                selected_model="gpt-default",
+            )
+            self.app._codex_chat._snapshot = authenticated
+            self.app._on_codex_chat_state(authenticated)
+            self.app.processEvents()
+
+            self.assertFalse(panel.property("expanded"))
+            self.assertTrue(toggle.isEnabled())
+            self._click(window, toggle)
+            self.assertTrue(panel.property("expanded"))
+        finally:
+            self.app._codex_chat._snapshot = original_snapshot
+            self.app._on_codex_chat_state(original_snapshot)
+            self.app.processEvents()
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()

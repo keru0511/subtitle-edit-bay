@@ -13,11 +13,15 @@ class FakeRankerClient:
     def __init__(self, output: object) -> None:
         self.output = output
         self.context = None
+        self.thread_params = None
+        self.turn_params = None
 
     def thread_start(self, params=None):
+        self.thread_params = dict(params or {})
         return {"threadId": "thread-highlight"}
 
     def turn_start(self, **kwargs):
+        self.turn_params = dict(kwargs)
         self.context = kwargs["context"]
         return {"output": self.output}
 
@@ -47,6 +51,21 @@ class CodexHighlightRankerTests(unittest.TestCase):
         self.assertEqual(result.candidates[0]["id"], "h2")
         self.assertEqual(result.candidates[0]["semantic_category"], "gameplay")
         self.assertEqual(client.context["candidate_count"], 2)
+        self.assertEqual(
+            client.thread_params,
+            {
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+            },
+        )
+        self.assertEqual(client.turn_params["approval_policy"], "never")
+        self.assertEqual(
+            client.turn_params["sandbox_policy"],
+            {
+                "type": "readOnly",
+                "networkAccess": False,
+            },
+        )
 
     def test_unknown_id_or_invalid_output_falls_back_to_local_order(self) -> None:
         client = FakeRankerClient(

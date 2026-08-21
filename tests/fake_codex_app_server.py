@@ -33,9 +33,13 @@ def main() -> None:
         elif method == "account/read":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"authenticated": False}})
         elif method == "account/login/start":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"loginId": "login-1", "url": "https://example.invalid/login"}})
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"loginId": "login-1", "url": "https://example.invalid/login", "receivedType": request.get("params", {}).get("type")}})
         elif method == "account/login/cancel":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"cancelled": True}})
+        elif method == "account/logout":
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {}})
+        elif method == "model/list":
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"data": [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}]}})
         elif method == "thread/start":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": "thread-1"}})
         elif method == "thread/resume":
@@ -45,11 +49,13 @@ def main() -> None:
             sys.stdout.flush()
             _send({"jsonrpc": "2.0", "method": "turn/started", "params": {"turnId": "turn-1"}})
             _send({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"delta": "提案"}})
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"turnId": "turn-1", "status": "completed"}})
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"turnId": "turn-1", "status": "completed", "receivedInput": request.get("params", {}).get("input"), "receivedModel": request.get("params", {}).get("model")}})
         elif method == "turn/interrupt":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"interrupted": True}})
         elif method == "test/timeout":
             continue
+        elif method == "test/exit":
+            return
         elif method == "test/approval":
             _send({"jsonrpc": "2.0", "id": 900, "method": "command/approval/request", "params": {"command": "del all"}})
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"approvalRequestSent": True}})

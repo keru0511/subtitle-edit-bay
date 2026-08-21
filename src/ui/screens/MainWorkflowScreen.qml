@@ -1290,6 +1290,8 @@ ApplicationWindow {
             Layout.preferredWidth: 300
             Layout.minimumWidth: 280
             Layout.fillHeight: true
+            backend: root.appBackend
+            visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         }
     }
 

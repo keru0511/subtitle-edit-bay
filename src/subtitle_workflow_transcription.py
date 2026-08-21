@@ -37,6 +37,7 @@ from .craig_pipeline import (
 from .craig_transcription_execution import CraigTranscriptionHint
 from .merge_transcripts import refine_segments
 from .process_utils import hidden_subprocess_kwargs
+from .processing_progress import progress_event_line
 from .silence_cut import probe_media_duration
 from .subtitle_project import (
     DEFAULT_WAVEFORM_SAMPLE_RATE,
@@ -55,6 +56,15 @@ DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284",
 
 def log_progress(message: str) -> None:
     print(f"[subtitle_workflow] {message}", flush=True)
+
+
+def emit_progress_event(
+    step: str,
+    *,
+    phase: str = "progress",
+    progress: float = 0.0,
+) -> None:
+    print(progress_event_line("transcribe", step, phase=phase, progress=progress), flush=True)
 
 
 def _context_has_active_hint_inputs(context: TranscriptionContext) -> bool:
@@ -305,6 +315,8 @@ def transcribe_to_project_with_context(
     colors = dict(track_color_map or {})
     style_map = build_speaker_style_map(resolved_audio)
     speakers = _project_speakers(resolved_audio, style_map, colors)
+    emit_progress_event("prepare", phase="complete", progress=1.0)
+    emit_progress_event("alignment", phase="start")
     log_progress(f"Resolving alignment from {reference_path.name}")
     matched_track, offset_seconds, score = resolve_alignment(
         video_path,
@@ -313,10 +325,12 @@ def transcribe_to_project_with_context(
         alignment_sample_rate,
     )
     offset_seconds += alignment_offset_adjustment
+    emit_progress_event("alignment", phase="complete", progress=1.0)
     log_progress(f"Alignment ready at {offset_seconds:+.3f}s on {matched_track}")
 
     transcript_dir = output / "transcripts"
     with ThreadPoolExecutor(max_workers=1) as waveform_executor:
+        emit_progress_event("transcription", phase="start")
         waveform_future = waveform_executor.submit(
             _build_waveforms,
             resolved_audio,
@@ -340,6 +354,8 @@ def transcribe_to_project_with_context(
             subtitle_font_size=subtitle_font_size,
             subtitle_volume_scale_percent=subtitle_volume_scale_percent,
         )
+        emit_progress_event("transcription", phase="complete", progress=1.0)
+        emit_progress_event("refine", phase="start")
         log_progress("Refining merged subtitle segments")
         refined, filtered = refine_segments(
             transcription.segments,
@@ -347,8 +363,12 @@ def transcribe_to_project_with_context(
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
         )
+        emit_progress_event("refine", phase="complete", progress=1.0)
+        emit_progress_event("waveform", phase="start")
         waveforms = waveform_future.result()
+        emit_progress_event("waveform", phase="complete", progress=1.0)
 
+    emit_progress_event("project", phase="start")
     transcript_map = transcription.transcript_map
     merged_path = write_json(str(output / f"{Path(video_path).stem}.craig.merged.json"), {"segments": refined})
     filtered_path = write_json(str(output / f"{Path(video_path).stem}.craig.filtered.json"), {"segments": filtered})
@@ -397,5 +417,6 @@ def transcribe_to_project_with_context(
         video_tracks = None
     reconcile_audio_mix(project, video_tracks)
     save_project(editable_project_path, project)
+    emit_progress_event("project", phase="complete", progress=1.0)
     log_progress(f"Project ready: {editable_project_path}")
     return editable_project_path

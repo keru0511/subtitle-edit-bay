@@ -72,7 +72,10 @@ class ContextActionBarQmlTests(unittest.TestCase):
         self.assertIn("minimumHeight: 760", workflow)
         self.assertIn('objectName: "mainVideoPanel"', workflow)
         self.assertIn("applicationLogPanel.expanded && root.height <= 800 ? 140 : 300", workflow)
-        self.assertIn("Layout.minimumHeight: implicitHeight", workflow)
+        self.assertIn(
+            "Layout.minimumHeight: root.appBackend.progressVisible ? 118 : implicitHeight",
+            workflow,
+        )
 
 
 if __name__ == "__main__":

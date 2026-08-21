@@ -32,6 +32,7 @@ from src.audio_preview_cache import (
 )
 from src import updater
 from src.gui import EditBayBackend, build_font_choices
+from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -48,13 +49,16 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._workspace = tempfile.TemporaryDirectory()
         cls._workspace_root = Path(cls._workspace.name)
-        cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
+        with patch("src.gui.CodexChatController.connect") as connect:
+            cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
+            cls._codex_chat_connect_calls = connect.call_count
         cls._base_settings = deepcopy(cls.app.settings)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.app.autosave_timer.stop()
         cls.app.elapsed_timer.stop()
+        cls.app._codex_chat.shutdown()
         cls.app._shutdown_executor()
         cls._workspace.cleanup()
 
@@ -76,6 +80,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._redo_stack.clear()
         app._selected_segment_index = -1
         app._active_job = ""
+        app._processing_progress.start("")
+        app._ffmpeg_duration_seconds = 0.0
+        app._ffmpeg_duration_from_event = False
+        app._processing_machine_event_seen = False
         app._ass_path = ""
         app._loading_project_sources = False
         app._relinking_project_sources = False
@@ -1431,6 +1439,146 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
 
+    def test_final_progress_event_does_not_mask_process_error_or_cancel(self) -> None:
+        final_events = "\n".join(
+            f'PROGRESS_EVENT {{"job":"render","step":"{step}","phase":"complete","progress":1.0}}'
+            for step in ("prepare", "subtitle", "audio", "encode", "finalize")
+        )
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = False
+        self.app._processing_progress.start("render")
+        self.app._update_stage(final_events)
+        self.assertLess(self.app.progressPercent, 100)
+        self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.progressState, "error")
+        self.assertLess(self.app.progressPercent, 100)
+        self.assertEqual(self.app.progressSteps[-1]["state"], "error")
+
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = True
+        self.app._processing_progress.start("render")
+        self.app._update_stage(final_events)
+        self.assertLess(self.app.progressPercent, 100)
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+        self.assertEqual(self.app.progressState, "cancelled")
+        self.assertLess(self.app.progressPercent, 100)
+        self.assertEqual(self.app.progressSteps[-1]["state"], "cancelled")
+
+    def test_trackerless_update_reaches_complete_progress_on_success(self) -> None:
+        self.app._active_job = "update"
+        self.app._running = True
+        self.app._progress = 0.02
+        self.app._processing_progress.start("update")
+
+        self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app.progress, 1.0)
+        self.assertEqual(self.app.progressState, "completed")
+
+    def test_processing_progress_gui_exposes_job_sequence_and_terminal_states(self) -> None:
+        for job, step in (("transcribe", "alignment"), ("render", "encode"), ("render_short", "clips")):
+            with self.subTest(job=job), patch.object(self.app, "_start_process"):
+                self.app._start_command(["worker"], job, "処理を開始しています")
+                self.assertTrue(self.app.progressVisible)
+                self.assertEqual(self.app.activeJob, job)
+                self.app._update_stage(
+                    f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
+                )
+                self.assertEqual(self.app.progressCurrentStep, step)
+                self.assertGreaterEqual(self.app.progressPercent, 0)
+                self.app._finish_processing_progress("completed")
+                self.assertEqual(self.app.progressPercent, 100)
+
+                self.app._processing_progress.start(job)
+                self.app._update_stage(
+                    f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
+                )
+                before = self.app.progressPercent
+                self.app._finish_processing_progress("cancelled")
+                self.assertEqual(self.app.progressPercent, before)
+                self.assertEqual(self.app.progressState, "cancelled")
+
+                self.app._processing_progress.start(job)
+                self.app._update_stage(
+                    f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
+                )
+                before = self.app.progressPercent
+                self.app._finish_processing_progress("error")
+                self.assertEqual(self.app.progressPercent, before)
+                self.assertEqual(self.app.progressState, "error")
+
+    def test_processing_progress_uses_tracker_value_and_short_output_duration(self) -> None:
+        self.app._processing_machine_event_seen = False
+        self.app._progress = 0.0
+        self.app._processing_progress.start("transcribe")
+        self.app._update_stage("[subtitle_workflow] Building waveform for 1-alice.flac")
+        self.assertEqual(self.app.progress, 0.0)
+
+        self.app._processing_progress.start("transcribe")
+        self.app._update_stage(
+            'PROGRESS_EVENT {"job":"transcribe","step":"alignment","phase":"start","progress":0.5}'
+        )
+        self.assertEqual(self.app.progress, self.app._processing_progress.value)
+        self.assertEqual(self.app.progressPercent, round(self.app.progress * 100))
+
+        self.app._update_stage("[subtitle_workflow] Refining merged subtitle segments")
+        self.assertEqual(self.app.progress, self.app._processing_progress.value)
+        self.assertEqual(self.app.progressPercent, round(self.app.progress * 100))
+
+        self.app._processing_progress.start("render_short")
+        self.app._update_stage(
+            'PROGRESS_EVENT {"job":"render_short","step":"encode","phase":"start","progress":0.0}'
+        )
+        self.app._update_stage(
+            '\n'.join(
+                (
+                    'PROGRESS_EVENT {"job":"render_short","step":"encode","phase":"metadata","progress":0.0,"duration":30.0}',
+                    "Duration: 02:00:00.00, start: 0.000000, bitrate: 100 kb/s",
+                    "frame=10 time=00:00:15.00 speed=1x",
+                )
+            )
+        )
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 30.0)
+        encode_step = next(step for step in self.app.progressSteps if step["id"] == "encode")
+        self.assertAlmostEqual(encode_step["progress"], 0.5)
+
+    def test_processing_progress_ignores_legacy_encode_marker_and_refreshes_cut_duration(self) -> None:
+        self.app._processing_machine_event_seen = False
+        self.app._ffmpeg_duration_seconds = 0.0
+        self.app._ffmpeg_duration_from_event = False
+        self.app._processing_progress.start("render")
+        self.app._update_stage(
+            "\n".join(
+                (
+                    'PROGRESS_EVENT {"job":"render","step":"prepare","phase":"complete","progress":1.0}',
+                    'PROGRESS_EVENT {"job":"render","step":"subtitle","phase":"complete","progress":1.0}',
+                    'PROGRESS_EVENT {"job":"render","step":"audio","phase":"complete","progress":1.0}',
+                )
+            )
+        )
+        before_encode = self.app.progress
+        self.app._update_stage("[subtitle_workflow] Rendering edited subtitles to output.mp4")
+        self.assertEqual(self.app.progress, before_encode)
+
+        self.app._update_stage(
+            "\n".join(
+                (
+                    'PROGRESS_EVENT {"job":"render","step":"encode","phase":"start","progress":0.0}',
+                    "Duration: 01:00:00.00, start: 0.000000, bitrate: 100 kb/s",
+                )
+            )
+        )
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 3600.0)
+        self.app._update_stage(
+            'PROGRESS_EVENT {"job":"render","step":"encode","phase":"start","progress":0.0}'
+        )
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 0.0)
+        self.app._update_stage("Duration: 00:20:00.00, start: 0.000000, bitrate: 100 kb/s")
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 1200.0)
+
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
         output = self.root / "output"
         transcript_directory = output / "transcripts"
@@ -1817,7 +1965,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         action_bar = self._quick_item(window, "contextActionBar")
         video_panel = self._quick_item(window, "mainVideoPanel")
         log_panel = self._quick_item(window, "applicationLogPanel")
+        codex_sidebar = self._quick_item(window, "codexChatSidebarContainer")
+        codex_chat = self._quick_item(window, "codexChatPanel")
         central_column = stepper.parentItem()
+        self.assertEqual(len(window.findChildren(QQuickItem, "codexChatPanel")), 1)
 
         for width, height in ((1220, 760), (1520, 940)):
             window.resize(width, height)
@@ -1855,6 +2006,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
             self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+            self.assertTrue(codex_sidebar.isVisible())
+            self.assertTrue(codex_chat.isVisible())
+            self.assertGreater(codex_sidebar.width(), 0)
+            self.assertGreater(codex_sidebar.height(), 0)
+            self.assertGreater(codex_chat.width(), 0)
+            self.assertGreater(codex_chat.height(), 0)
+            self.assertLessEqual(codex_chat.width(), codex_sidebar.width() + 1)
+            self.assertLessEqual(codex_chat.height(), codex_sidebar.height() + 1)
 
         window.resize(1220, 760)
         self.app.processEvents()
@@ -1881,6 +2040,68 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(log_panel.height(), 280)
         self.assertGreaterEqual(video_panel.height(), 140)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+    def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
+        self._load_project()
+        self.app._processing_progress.start("render")
+        self.app.progressDetailsChanged.emit()
+        _, window = self._load_qml()
+        window.resize(1220, 760)
+        self.app.processEvents()
+        progress_panel = self._quick_item(window, "processingProgressOverlay")
+        log_panel = self._quick_item(window, "applicationLogPanel")
+        central_column = self._quick_item(window, "workflowStepper").parentItem()
+        layout_items = [
+            self._quick_item(window, name)
+            for name in (
+                "workflowStepper",
+                "contextActionBar",
+                "mainVideoPanel",
+                "processingProgressOverlay",
+                "applicationLogPanel",
+            )
+        ]
+
+        self.assertTrue(progress_panel.isVisible())
+        self.assertGreater(progress_panel.height(), 0)
+        for item in layout_items:
+            self.assertGreater(item.width(), 0)
+            self.assertGreater(item.height(), 0)
+            self.assertGreaterEqual(item.y(), -1)
+            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
+        self.assertLessEqual(progress_panel.y() + progress_panel.height(), log_panel.y() + 1)
+        self.assertGreaterEqual(log_panel.y(), progress_panel.y() + progress_panel.height())
+
+        self._click(window, self._quick_item(window, "applicationLogToggleButton"))
+        QTest.qWait(100)
+        self.app.processEvents()
+        central_column = self._quick_item(window, "workflowStepper").parentItem()
+        self.assertTrue(log_panel.property("expanded"))
+        self.assertGreater(log_panel.height(), 0)
+        for item in layout_items:
+            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
+        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+    def test_short_mode_keeps_progress_controls_visible_during_export(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        self.app._processing_progress.start("render_short")
+        self.app._running = True
+        self.app.progressDetailsChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.activeJobChanged.emit()
+        self.app.processEvents()
+
+        short_page = self._quick_item(window, "shortModePage")
+        mode_overlay = self._quick_item(window, "processingProgressModeOverlay")
+        mode_panel = self._quick_item(window, "processingProgressModePanel")
+        self.assertTrue(short_page.isVisible())
+        self.assertTrue(mode_overlay.isVisible())
+        self.assertTrue(mode_panel.isVisible())
+        stop_button = self._quick_visual_item(mode_panel, "processingProgressStopButton")
+        self.assertTrue(stop_button.isVisible())
 
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
         self.app._settings.update(
@@ -2084,6 +2305,66 @@ class GuiEditorRegressionTests(unittest.TestCase):
         render_command, render_job, _ = start.call_args.args
         self.assertEqual(render_job, "render")
         self.assertIn("render", render_command)
+
+    def test_codex_chat_error_does_not_replace_workflow_status(self) -> None:
+        self.app._status = "ショート動画を書き出しています"
+        self.app._stage = "ENCODE"
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(
+                connection_state="error",
+                auth_state="error",
+                chat_state="disconnected",
+                error="Codexへ接続できません",
+            )
+        )
+
+        self.assertEqual(self.app.status, "ショート動画を書き出しています")
+        self.assertEqual(self.app.stage, "ENCODE")
+
+    def test_codex_model_persistence_does_not_replace_workflow_status(self) -> None:
+        self.app._settings["codex_model"] = ""
+        self.app._status = "文字起こしを実行しています"
+        self.app._stage = "TRANSCRIBE"
+
+        self.app._persist_codex_model("gpt-default")
+
+        self.assertEqual(self.app.status, "文字起こしを実行しています")
+        self.assertEqual(self.app.stage, "TRANSCRIBE")
+        payload = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["shared"]["codex_model"], "gpt-default")
+
+    def test_codex_chat_connects_during_backend_startup(self) -> None:
+        self.assertEqual(self._codex_chat_connect_calls, 1)
+
+    def test_codex_chat_stays_collapsed_until_authenticated(self) -> None:
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "codexChatPanel")
+        toggle = self._quick_item(window, "codexChatToggleButton")
+        original_snapshot = self.app._codex_chat._snapshot
+        try:
+            self.assertFalse(panel.property("expanded"))
+            self.assertFalse(toggle.isEnabled())
+
+            authenticated = CodexChatSnapshot(
+                connection_state="ready",
+                auth_state="authenticated",
+                auth_label="ChatGPT",
+                models=({"id": "gpt-default", "label": "GPT Default"},),
+                selected_model="gpt-default",
+            )
+            self.app._codex_chat._snapshot = authenticated
+            self.app._on_codex_chat_state(authenticated)
+            self.app.processEvents()
+
+            self.assertFalse(panel.property("expanded"))
+            self.assertTrue(toggle.isEnabled())
+            self._click(window, toggle)
+            self.assertTrue(panel.property("expanded"))
+        finally:
+            self.app._codex_chat._snapshot = original_snapshot
+            self.app._on_codex_chat_state(original_snapshot)
+            self.app.processEvents()
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()

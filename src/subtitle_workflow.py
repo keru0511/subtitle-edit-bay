@@ -50,6 +50,7 @@ from .craig_pipeline import (
 )
 from .merge_transcripts import refine_segments
 from .pipeline import build_ass_from_data
+from .processing_progress import progress_event_line
 from .render_ass import parse_track_color_args
 from .runtime_config import load_command_runtime_config, resolve_list_option
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
@@ -312,6 +313,21 @@ def log_progress(message: str) -> None:
     print(f"[subtitle_workflow] {message}", flush=True)
 
 
+def emit_progress_event(
+    job: str,
+    step: str,
+    *,
+    phase: str = "progress",
+    progress: float = 0.0,
+    duration: float | None = None,
+) -> None:
+    """Emit a stable, path-free progress protocol line for the GUI."""
+    print(
+        progress_event_line(job, step, phase=phase, progress=progress, duration=duration),
+        flush=True,
+    )
+
+
 def _project_speakers(
     audio_files: list[Path],
     style_map: dict[str, str],
@@ -413,6 +429,8 @@ def transcribe_to_project(
         style_map=inputs.style_map,
         speakers=speakers,
     )
+    emit_progress_event("transcribe", "prepare", phase="complete", progress=1.0)
+    emit_progress_event("transcribe", "alignment", phase="start")
     log_progress(f"Resolving alignment from {inputs.reference_path.name}")
     alignment = run_subtitle_alignment_stage(
         inputs.video_path,
@@ -426,10 +444,12 @@ def transcribe_to_project(
         score=alignment.score,
         reference_audio=alignment.reference_audio,
     )
+    emit_progress_event("transcribe", "alignment", phase="complete", progress=1.0)
     log_progress(f"Alignment ready at {alignment.offset_seconds:+.3f}s on {alignment.matched_track}")
 
     transcript_dir = inputs.output_dir / "transcripts"
     with ThreadPoolExecutor(max_workers=1) as waveform_executor:
+        emit_progress_event("transcribe", "transcription", phase="start")
         waveform_future = waveform_executor.submit(
             _build_waveforms,
             inputs.audio_files,
@@ -452,6 +472,8 @@ def transcribe_to_project(
             subtitle_font_size=subtitle_font_size,
             subtitle_volume_scale_percent=subtitle_volume_scale_percent,
         )
+        emit_progress_event("transcribe", "transcription", phase="complete", progress=1.0)
+        emit_progress_event("transcribe", "refine", phase="start")
         log_progress("Refining merged subtitle segments")
         refine_result = run_subtitle_refine_stage(
             transcription_result.segments,
@@ -459,8 +481,12 @@ def transcribe_to_project(
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
         )
+        emit_progress_event("transcribe", "refine", phase="complete", progress=1.0)
+        emit_progress_event("transcribe", "waveform", phase="start")
         waveforms = waveform_future.result()
+        emit_progress_event("transcribe", "waveform", phase="complete", progress=1.0)
 
+    emit_progress_event("transcribe", "project", phase="start")
     try:
         duration_seconds = probe_media_duration(video_path)
     except (OSError, subprocess.CalledProcessError, ValueError):
@@ -486,6 +512,7 @@ def transcribe_to_project(
         duration_seconds=duration_seconds,
         render_settings=render_settings,
     )
+    emit_progress_event("transcribe", "project", phase="complete", progress=1.0)
     return project_result.project_path
 
 
@@ -556,11 +583,15 @@ def render_project_video(
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
+    emit_progress_event("render", "prepare", phase="complete", progress=1.0)
+    emit_progress_event("render", "subtitle", phase="start")
     has_subtitles = any(
         isinstance(segment, dict) and str(segment.get("text", "")).strip()
         for segment in project.get("segments", [])
     )
     ass_path = build_project_ass(project_path, _project=project) if has_subtitles else None
+    emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
+    emit_progress_event("render", "audio", phase="start")
     output = Path(output_path) if output_path else derive_render_path(project_path)
     loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
     audio_mix = project.get("audio_mix", {})
@@ -707,6 +738,14 @@ def render_project_video(
                     audio_offset_seconds=offset_seconds,
                     progress_callback=log_progress,
                 )
+                emit_progress_event("render", "audio", phase="complete", progress=1.0)
+                emit_progress_event(
+                    "render",
+                    "encode",
+                    phase="metadata",
+                    duration=sum(max(0.0, end - start) for start, end in keep_ranges),
+                )
+                emit_progress_event("render", "encode", phase="start")
                 log_progress(f"Rendering edited subtitles to {output.name}")
                 run_ffmpeg_burn(
                     str(cut_output),
@@ -723,6 +762,14 @@ def render_project_video(
                 cut_ass.unlink(missing_ok=True)
         else:
             cut_output = output
+            emit_progress_event("render", "audio", phase="complete", progress=1.0)
+            emit_progress_event(
+                "render",
+                "encode",
+                phase="metadata",
+                duration=sum(max(0.0, end - start) for start, end in keep_ranges),
+            )
+            emit_progress_event("render", "encode", phase="start")
             log_progress(f"Cutting {len(no_speech_ranges)} silent ranges to {output.name}")
             cut_media_ranges(
                 video_path,
@@ -740,6 +787,11 @@ def render_project_video(
                 progress_callback=log_progress,
             )
     else:
+        emit_progress_event("render", "audio", phase="complete", progress=1.0)
+        output_duration = float(project.get("video", {}).get("duration_seconds", 0.0))
+        if output_duration > 0.0:
+            emit_progress_event("render", "encode", phase="metadata", duration=output_duration)
+        emit_progress_event("render", "encode", phase="start")
         log_progress(f"Rendering edited subtitles to {output.name}")
         burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec
         if _is_mp4_output(output) and burn_audio_codec == "copy":
@@ -760,6 +812,8 @@ def render_project_video(
             include_audio=has_audio_stream,
             progress_callback=log_progress,
         )
+    emit_progress_event("render", "encode", phase="complete", progress=1.0)
+    emit_progress_event("render", "finalize", phase="start")
     project["render_settings"] = {
         **project.get("render_settings", {}),
         "video_codec": video_codec,
@@ -777,6 +831,7 @@ def render_project_video(
     if cut_output is not None:
         project["render_settings"]["last_cut_output"] = str(cut_output.resolve())
     save_project(project_path, project)
+    emit_progress_event("render", "finalize", phase="complete", progress=1.0)
     log_progress(f"Render complete: {output}")
     return output
 
@@ -793,6 +848,7 @@ def render_project_short_video(
     progress_callback: Callable[[str], None] | None = None,
     **_kwargs: Any,
 ) -> Path:
+    emit_progress_event("render_short", "prepare", phase="complete", progress=1.0)
     project = load_project(project_path)
     short_video = project.get("short_video", {})
     if not short_video.get("enabled") or not short_video.get("clips"):
@@ -822,6 +878,8 @@ def render_project_short_video(
         progress_callback=progress_callback,
         _project=project,
     )
+    emit_progress_event("render_short", "encode", phase="complete", progress=1.0)
+    emit_progress_event("render_short", "finalize", phase="start")
     render_settings = {
         **project.get("render_settings", {}),
         "short_video_codec": video_codec,
@@ -834,6 +892,7 @@ def render_project_short_video(
         render_settings.pop("short_last_ass", None)
     project["render_settings"] = render_settings
     save_project(project_path, project)
+    emit_progress_event("render_short", "finalize", phase="complete", progress=1.0)
     log_progress(f"Short render complete: {result}")
     return result
 

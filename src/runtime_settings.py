@@ -164,6 +164,7 @@ PERSISTED_RENDER_SETTING_KEYS = (
 )
 
 GUI_SHARED_SETTING_KEYS = (
+    "codex_model",
     "model",
     "device",
     "compute_type",

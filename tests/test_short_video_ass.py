@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import shutil
 import struct
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from src.short_video_ass import build_short_video_ass, remap_short_video_segments
 from src.short_video import filter_complex_script_option
+from src.processing_progress import parse_progress_events
 from src.short_video_schema import (
     ShortVideo,
     ShortVideoBgm,
@@ -24,6 +28,52 @@ from src.subtitle_workflow import render_project_short_video
 
 
 class ShortVideoTimelineTests(unittest.TestCase):
+    def test_short_render_events_follow_processing_boundaries_and_use_output_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "source.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[],
+                duration_seconds=7200.0,
+            )
+            project["short_video"] = ShortVideo(
+                enabled=True,
+                transition=ShortVideoTransition(type="cut", duration=0.0),
+                clips=[ShortVideoClip(segment_id="clip", start=100.0, end=110.0)],
+            ).to_json()
+            project_path = save_project(root / "source.subtitle-project.json", project)
+            output = root / "source.short.mp4"
+            captured = io.StringIO()
+
+            with (
+                patch("src.short_video.probe_media_duration", return_value=7200.0),
+                patch("src.short_video.probe_media_stream_types", return_value={"video", "audio"}),
+                patch("src.short_video.build_short_video_filter_complex", return_value="[v]format=yuv420p[v_final]"),
+                patch("src.short_video.run_atomic_ffmpeg_export", return_value=output),
+                redirect_stdout(captured),
+            ):
+                from src.short_video import render_short_video
+
+                render_short_video(project_path, output, video_codec="libx264", audio_codec="aac")
+
+            events = parse_progress_events(captured.getvalue())
+            event_keys = [(event["step"], event["phase"]) for event in events]
+            self.assertEqual(
+                event_keys,
+                [
+                    ("clips", "start"),
+                    ("clips", "complete"),
+                    ("transition_audio", "start"),
+                    ("transition_audio", "complete"),
+                    ("encode", "metadata"),
+                    ("encode", "start"),
+                ],
+            )
+            self.assertEqual(events[4]["duration"], 10.0)
+
     def test_filter_script_option_supports_ffmpeg_6_through_9(self) -> None:
         self.assertEqual(
             filter_complex_script_option("ffmpeg version 6.0-full_build"),

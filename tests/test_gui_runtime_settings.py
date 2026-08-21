@@ -15,6 +15,7 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
     def test_gui_runtime_config_updates_selects_only_typed_gui_keys(self) -> None:
         shared, craig = gui_runtime_config_updates(
             {
+                "codex_model": "gpt-fast",
                 "model": "tiny",
                 "device": "cpu",
                 "video_codec": "libx264",
@@ -25,7 +26,10 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(shared, {"model": "tiny", "device": "cpu"})
+        self.assertEqual(
+            shared,
+            {"codex_model": "gpt-fast", "model": "tiny", "device": "cpu"},
+        )
         self.assertEqual(
             craig,
             {
@@ -54,6 +58,7 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
             },
         }
         settings = {
+            "codex_model": "gpt-fast",
             "model": "tiny",
             "device": "cpu",
             "compute_type": "int8",
@@ -68,6 +73,7 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
         resolved = build_gui_runtime_config(base_config, settings, speakers)
 
         self.assertEqual(resolved["shared"]["model"], "tiny")
+        self.assertEqual(resolved["shared"]["codex_model"], "gpt-fast")
         self.assertEqual(resolved["shared"]["device"], "cpu")
         self.assertEqual(resolved["shared"]["compute_type"], "int8")
         self.assertEqual(resolved["craig_pipeline"]["video_codec"], "libx264")

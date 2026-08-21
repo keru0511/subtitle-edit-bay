@@ -18,6 +18,9 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "SmallButton.qml",
     COMPONENTS_ROOT / "CompactSpinBox.qml",
     COMPONENTS_ROOT / "TimeField.qml",
+    COMPONENTS_ROOT / "ProcessingProgressPanel.qml",
+    COMPONENTS_ROOT / "CodexChatPanel.qml",
+    COMPONENTS_ROOT / "CodexSidebarContainer.qml",
 )
 
 
@@ -78,8 +81,33 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("SpinBox {", read_component_qml("CompactSpinBox.qml"))
         self.assertIn("TextField {", read_component_qml("TimeField.qml"))
         self.assertIn('font.family: "Yu Gothic UI"', read_component_qml("PanelTitle.qml"))
+
+    def test_processing_progress_panel_exposes_steps_percent_and_stop(self) -> None:
+        qml = read_workflow_qml()
+        panel = read_component_qml("ProcessingProgressPanel.qml")
+
+        self.assertIn('objectName: "processingProgressPanel"', qml)
+        self.assertIn('objectName: "processingProgressBar"', panel)
+        self.assertIn('objectName: "processingProgressPercent"', panel)
+        self.assertIn('objectName: "processingProgressStepList"', panel)
+        self.assertIn('objectName: "processingProgressStopButton"', panel)
+        self.assertIn("backend.progressSteps", panel)
+        self.assertIn("backend.progressCurrentStepDisplay", panel)
+        self.assertIn("backend.cancelProcessing()", panel)
         self.assertIn('font.family: "Cascadia Mono"', read_component_qml("CompactSpinBox.qml"))
         self.assertIn("DoubleValidator", read_component_qml("TimeField.qml"))
+
+    def test_processing_progress_overlay_leaves_application_log_visible(self) -> None:
+        qml = read_workflow_qml()
+
+        self.assertIn("Layout.preferredHeight: visible ? progressPanel.implicitHeight : 0", qml)
+        self.assertIn("Layout.minimumHeight: visible ? progressPanel.implicitHeight : 0", qml)
+        self.assertLess(
+            qml.index('objectName: "processingProgressOverlay"'),
+            qml.index('objectName: "applicationLogPanel"'),
+        )
+        self.assertIn('objectName: "processingProgressModeOverlay"', qml)
+        self.assertIn("root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode", qml)
 
     def test_caption_font_selector_is_wired_to_backend(self) -> None:
         qml = read_workflow_qml()
@@ -140,6 +168,44 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("operationIdFor", panel)
         self.assertIn("!panel.codexRunning()", panel)
         self.assertIn("setCodexCurrentTime", panel)
+
+    def test_codex_chat_exposes_login_toggle_models_stream_and_errors(self) -> None:
+        qml = read_workflow_qml()
+        panel = read_component_qml("CodexChatPanel.qml")
+        sidebar = read_component_qml("CodexSidebarContainer.qml")
+
+        self.assertEqual(
+            (qml + panel + sidebar).count('objectName: "codexChatPanel"'),
+            1,
+        )
+        self.assertIn("CodexChatPanel {", sidebar)
+        self.assertIn("backend: sidebar.backend", sidebar)
+        self.assertIn("expanded: false", sidebar)
+        self.assertNotIn("expanded: true", sidebar)
+        self.assertNotIn("Codexチャット領域", sidebar)
+        self.assertIn(
+            "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode",
+            qml,
+        )
+        self.assertIn('objectName: "codexConnectButton"', panel)
+        self.assertIn('objectName: "codexChatToggleButton"', panel)
+        self.assertIn('objectName: "codexModelCombo"', panel)
+        self.assertIn('objectName: "codexChatMessageList"', panel)
+        self.assertIn('objectName: "codexChatSendButton"', panel)
+        self.assertIn('objectName: "codexChatStopButton"', panel)
+        self.assertIn('objectName: "codexLocalReadNotice"', panel)
+        self.assertIn("ローカルファイルを読み取る場合があります", panel)
+        message_text = panel.split("id: messageText", 1)[1].split("}", 1)[0]
+        self.assertIn("textFormat: Text.PlainText", message_text)
+        self.assertIn("textFormat: TextEdit.PlainText", panel)
+        self.assertIn("backend.startCodexLogin()", panel)
+        self.assertIn("backend.reloginCodex()", panel)
+        self.assertIn("backend.logoutCodex()", panel)
+        self.assertIn("backend.selectCodexModel(currentValue)", panel)
+        self.assertIn("backend.sendCodexChatMessage(message)", panel)
+        self.assertIn('"streaming": "応答を受信中"', panel)
+        self.assertIn('"send_failed": "送信失敗"', panel)
+        self.assertIn('enabled: panel.authenticated()', panel)
 
     def test_application_log_panel_exposes_copy_and_error_actions(self) -> None:
         qml = read_workflow_qml()

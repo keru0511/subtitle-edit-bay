@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.codex_app_server_client import (
+    MAX_RETAINED_NOTIFICATIONS,
     CodexAppServerClient,
     CodexRpcError,
     CodexRequestTimeout,
     _redact_log,
     _redact_payload,
 )
+
+
+CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
 
 
 class CodexAppServerClientTests(unittest.TestCase):
@@ -35,7 +41,9 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertFalse(client.account_read()["authenticated"])
             login = client.account_login_start()
             self.assertEqual(login["loginId"], "login-1")
+            self.assertEqual(login["receivedType"], "chatgpt")
             self.assertTrue(client.account_login_cancel("login-1")["cancelled"])
+            self.assertEqual(client.model_list()["data"][0]["id"], "gpt-test")
             thread = client.thread_start({"cwd": "<safe-context>"})
             self.assertEqual(thread["threadId"], "thread-1")
             self.assertEqual(client.thread_resume("thread-1")["threadId"], "thread-1")
@@ -43,8 +51,12 @@ class CodexAppServerClientTests(unittest.TestCase):
                 thread_id="thread-1",
                 prompt="字幕を簡潔にする",
                 output_schema={"type": "object"},
+                model="gpt-test",
             )
             self.assertEqual(turn["status"], "completed")
+            self.assertEqual(turn["receivedInput"], [{"type": "text", "text": "字幕を簡潔にする"}])
+            self.assertEqual(turn["receivedModel"], "gpt-test")
+            self.assertEqual(client.account_logout(), {})
             self.assertTrue(any(item.method == "item/agentMessage/delta" for item in notifications))
             self.assertNotIn("字幕を簡潔にする", " ".join(logs))
         finally:
@@ -71,6 +83,130 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertTrue(any(item.method == "command/approval/request" for item in client.notifications))
         finally:
             client.stop()
+
+    def test_unexpected_exit_releases_process_and_notifies_disconnect(self) -> None:
+        disconnected = threading.Event()
+        client = self._client([], [])
+        client.disconnect_callback = lambda _error: disconnected.set()
+        try:
+            client.start()
+            with self.assertRaisesRegex(RuntimeError, "exited unexpectedly"):
+                client.request("test/exit")
+            self.assertTrue(disconnected.wait(1))
+            self.assertFalse(client.is_running)
+            self.assertIsNone(client._process)
+            self.assertIsNone(client._reader_thread)
+        finally:
+            client.stop()
+
+    def test_unsupported_server_request_is_rejected_instead_of_hanging(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "_send") as send:
+            client._handle_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 901,
+                    "method": "item/tool/requestUserInput",
+                    "params": {"questions": []},
+                }
+            )
+
+        response = send.call_args.args[0]
+        self.assertEqual(response["id"], 901)
+        self.assertEqual(response["error"]["code"], -32601)
+        self.assertIn("not supported", response["error"]["message"])
+        self.assertTrue(
+            any(item.method == "item/tool/requestUserInput" for item in client.notifications)
+        )
+
+    def test_retained_notifications_are_bounded_for_persistent_clients(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        for index in range(MAX_RETAINED_NOTIFICATIONS + 5):
+            client._handle_message(
+                {
+                    "jsonrpc": "2.0",
+                    "method": f"test/notification/{index}",
+                    "params": {},
+                }
+            )
+
+        notifications = client.notifications
+        self.assertEqual(len(notifications), MAX_RETAINED_NOTIFICATIONS)
+        self.assertEqual(notifications[0].method, "test/notification/5")
+
+    def test_turn_start_payload_matches_pinned_v2_sandbox_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        sandbox_policy = {"type": "readOnly", "networkAccess": False}
+        with patch.object(client, "request", return_value={}) as request:
+            client.turn_start(
+                thread_id="thread-1",
+                prompt="contract check",
+                cwd="C:/workspace",
+                approval_policy="never",
+                sandbox_policy=sandbox_policy,
+                context={"segment": "字幕"},
+            )
+
+        method, params = request.call_args.args
+        self.assertEqual(method, "turn/start")
+        self.assertNotIn("context", params, CODEX_APP_SERVER_SCHEMA_COMMIT)
+        self.assertEqual(
+            set(params),
+            {"threadId", "input", "cwd", "approvalPolicy", "sandboxPolicy"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertEqual(params["input"][0], {"type": "text", "text": "contract check"})
+        self.assertEqual(params["input"][1]["type"], "text")
+        self.assertIn('"segment":"字幕"', params["input"][1]["text"])
+        self.assertEqual(
+            params["sandboxPolicy"],
+            sandbox_policy,
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertEqual(
+            set(params["sandboxPolicy"]),
+            {"type", "networkAccess"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+
+    def test_thread_resume_payload_matches_pinned_v2_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "request", return_value={}) as request:
+            client.thread_resume(
+                "thread-1",
+                model="gpt-test",
+                cwd="C:/workspace",
+                approval_policy="never",
+                sandbox="read-only",
+            )
+
+        method, params = request.call_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(
+            params,
+            {
+                "threadId": "thread-1",
+                "model": "gpt-test",
+                "cwd": "C:/workspace",
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+            },
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertNotIn("serviceName", params, CODEX_APP_SERVER_SCHEMA_COMMIT)
+
+    def test_turn_interrupt_payload_matches_pinned_v2_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "request", return_value={}) as request:
+            client.turn_interrupt("turn-1", thread_id="thread-1")
+
+        method, params = request.call_args.args
+        self.assertEqual(method, "turn/interrupt")
+        self.assertEqual(
+            params,
+            {"threadId": "thread-1", "turnId": "turn-1"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
 
     def test_start_failure_is_reported_without_opening_a_socket(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

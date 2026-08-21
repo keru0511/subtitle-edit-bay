@@ -633,6 +633,9 @@ class EditBayBackend(QApplication):
 
     @Slot("QVariantMap")
     def saveSettings(self, settings: dict[str, Any]) -> None:
+        self._save_settings(settings, announce=True)
+
+    def _save_settings(self, settings: dict[str, Any], *, announce: bool) -> None:
         persistent_settings = dict(settings)
         incoming_context = persistent_settings.pop("transcription_context", None)
         if incoming_context is not None:
@@ -662,7 +665,8 @@ class EditBayBackend(QApplication):
         write_gui_runtime_config(self.gui_config_path, payload)
         self._config = payload
         self.settingsChanged.emit()
-        self._set_status("GUI設定を保存しました", "SAVED")
+        if announce:
+            self._set_status("GUI設定を保存しました", "SAVED")
 
     @Slot("QVariantMap")
     def startProcessing(self, settings: dict[str, Any]) -> None:

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from src.codex_app_server_client import (
+    MAX_RETAINED_NOTIFICATIONS,
     CodexAppServerClient,
     CodexRpcError,
     CodexRequestTimeout,
@@ -82,6 +84,21 @@ class CodexAppServerClientTests(unittest.TestCase):
         finally:
             client.stop()
 
+    def test_unexpected_exit_releases_process_and_notifies_disconnect(self) -> None:
+        disconnected = threading.Event()
+        client = self._client([], [])
+        client.disconnect_callback = lambda _error: disconnected.set()
+        try:
+            client.start()
+            with self.assertRaisesRegex(RuntimeError, "exited unexpectedly"):
+                client.request("test/exit")
+            self.assertTrue(disconnected.wait(1))
+            self.assertFalse(client.is_running)
+            self.assertIsNone(client._process)
+            self.assertIsNone(client._reader_thread)
+        finally:
+            client.stop()
+
     def test_unsupported_server_request_is_rejected_instead_of_hanging(self) -> None:
         client = CodexAppServerClient(["codex"])
         with patch.object(client, "_send") as send:
@@ -101,6 +118,21 @@ class CodexAppServerClientTests(unittest.TestCase):
         self.assertTrue(
             any(item.method == "item/tool/requestUserInput" for item in client.notifications)
         )
+
+    def test_retained_notifications_are_bounded_for_persistent_clients(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        for index in range(MAX_RETAINED_NOTIFICATIONS + 5):
+            client._handle_message(
+                {
+                    "jsonrpc": "2.0",
+                    "method": f"test/notification/{index}",
+                    "params": {},
+                }
+            )
+
+        notifications = client.notifications
+        self.assertEqual(len(notifications), MAX_RETAINED_NOTIFICATIONS)
+        self.assertEqual(notifications[0].method, "test/notification/5")
 
     def test_turn_start_payload_matches_pinned_v2_sandbox_contract(self) -> None:
         client = CodexAppServerClient(["codex"])
@@ -162,6 +194,19 @@ class CodexAppServerClientTests(unittest.TestCase):
             CODEX_APP_SERVER_SCHEMA_COMMIT,
         )
         self.assertNotIn("serviceName", params, CODEX_APP_SERVER_SCHEMA_COMMIT)
+
+    def test_turn_interrupt_payload_matches_pinned_v2_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "request", return_value={}) as request:
+            client.turn_interrupt("turn-1", thread_id="thread-1")
+
+        method, params = request.call_args.args
+        self.assertEqual(method, "turn/interrupt")
+        self.assertEqual(
+            params,
+            {"threadId": "thread-1", "turnId": "turn-1"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
 
     def test_start_failure_is_reported_without_opening_a_socket(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

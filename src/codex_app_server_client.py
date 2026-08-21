@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import threading
+from collections import deque
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 DEFAULT_CODEX_COMMAND = ("codex", "app-server", "--listen", "stdio://")
+MAX_RETAINED_NOTIFICATIONS = 512
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
     re.compile(
@@ -105,7 +107,9 @@ class CodexAppServerClient:
         self._next_request_id = 1
         self._initialized = False
         self._stopping = False
-        self._notifications: list[CodexNotification] = []
+        self._notifications: deque[CodexNotification] = deque(
+            maxlen=MAX_RETAINED_NOTIFICATIONS
+        )
 
     @property
     def is_running(self) -> bool:
@@ -343,11 +347,11 @@ class CodexAppServerClient:
             params,
         )
 
-    def turn_interrupt(self, turn_id: str, *, thread_id: str = "") -> dict[str, Any]:
-        params = {"turnId": turn_id}
-        if thread_id:
-            params["threadId"] = thread_id
-        return self.request("turn/interrupt", params)
+    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, Any]:
+        return self.request(
+            "turn/interrupt",
+            {"threadId": thread_id, "turnId": turn_id},
+        )
 
     def _reserve_request(self) -> int:
         with self._state_lock:
@@ -390,6 +394,7 @@ class CodexAppServerClient:
                 self._initialized = False
                 error = CodexAppServerError("app-server exited unexpectedly")
                 self._fail_pending(error)
+                self.stop()
                 if self.disconnect_callback is not None:
                     try:
                         self.disconnect_callback(error)

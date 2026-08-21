@@ -38,7 +38,7 @@ class CodexClientProtocol(Protocol):
     def thread_start(self, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
     def thread_resume(self, thread_id: str, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
     def turn_start(self, **kwargs: Any) -> Mapping[str, Any]: ...
-    def turn_interrupt(self, turn_id: str) -> Mapping[str, Any]: ...
+    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> Mapping[str, Any]: ...
 
 
 class CodexSessionError(RuntimeError):
@@ -185,7 +185,7 @@ class CodexSessionController:
         stop_event.set()
         if client is not None and snapshot.turn_id:
             try:
-                client.turn_interrupt(snapshot.turn_id)
+                client.turn_interrupt(snapshot.turn_id, thread_id=snapshot.thread_id)
             except Exception:
                 pass
         if client is not None:

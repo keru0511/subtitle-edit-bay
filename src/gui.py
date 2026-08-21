@@ -2957,7 +2957,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def _persist_codex_model(self, model: str) -> None:
         if self._settings.get("codex_model") == model:
             return
-        self.saveSettings({"codex_model": model})
+        self._save_settings({"codex_model": model}, announce=False)
 
     def _dispatch_codex_callback(self, callback: Callable[[], None]) -> None:
         self.codexCallbackRequested.emit(callback)

@@ -7,6 +7,7 @@ import unittest
 from src.gui_codex_state import (
     CODEX_SCOPES,
     CodexSessionController,
+    CodexSessionSnapshot,
     build_codex_context,
 )
 
@@ -21,6 +22,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.notification_callback = None
         self.started = False
+        self.interrupted = None
 
     def start(self) -> dict[str, object]:
         self.started = True
@@ -50,7 +52,8 @@ class FakeClient:
             ],
         }
 
-    def turn_interrupt(self, turn_id: str) -> dict[str, object]:
+    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, object]:
+        self.interrupted = (thread_id, turn_id)
         return {"interrupted": True}
 
 
@@ -133,6 +136,21 @@ class GuiCodexStateTests(unittest.TestCase):
         self.assertEqual(controller.snapshot.state, "stopped")
         self.assertEqual(proposals, [])
         self.assertFalse(any(item.state == "proposal_ready" for item in snapshots))
+
+    def test_stop_interrupts_active_turn_with_thread_and_turn_ids(self) -> None:
+        client = FakeClient()
+        controller = CodexSessionController(client_factory=lambda: client)
+        controller._client = client
+        controller._snapshot = CodexSessionSnapshot(
+            state="running",
+            thread_id="thread-1",
+            turn_id="turn-1",
+        )
+
+        controller.stop()
+
+        self.assertEqual(client.interrupted, ("thread-1", "turn-1"))
+        self.assertEqual(controller.snapshot.state, "stopped")
 
     def test_stop_discards_queued_proposal_callback(self) -> None:
         callbacks = []

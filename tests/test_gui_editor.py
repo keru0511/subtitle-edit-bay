@@ -1979,6 +1979,18 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.status, "ショート動画を書き出しています")
         self.assertEqual(self.app.stage, "ENCODE")
 
+    def test_codex_model_persistence_does_not_replace_workflow_status(self) -> None:
+        self.app._settings["codex_model"] = ""
+        self.app._status = "文字起こしを実行しています"
+        self.app._stage = "TRANSCRIBE"
+
+        self.app._persist_codex_model("gpt-default")
+
+        self.assertEqual(self.app.status, "文字起こしを実行しています")
+        self.assertEqual(self.app.stage, "TRANSCRIBE")
+        payload = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["shared"]["codex_model"], "gpt-default")
+
     def test_codex_chat_connects_during_backend_startup(self) -> None:
         self.assertEqual(self._codex_chat_connect_calls, 1)
 

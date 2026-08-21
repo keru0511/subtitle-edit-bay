@@ -54,6 +54,8 @@ def main() -> None:
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"interrupted": True}})
         elif method == "test/timeout":
             continue
+        elif method == "test/exit":
+            return
         elif method == "test/approval":
             _send({"jsonrpc": "2.0", "id": 900, "method": "command/approval/request", "params": {"command": "del all"}})
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"approvalRequestSent": True}})

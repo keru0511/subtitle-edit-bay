@@ -127,7 +127,7 @@ class FakeChatClient:
             )
         return {"turn": {"id": "turn-1", "status": "inProgress"}}
 
-    def turn_interrupt(self, turn_id: str, *, thread_id: str = "") -> dict[str, object]:
+    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, object]:
         self.interrupted = (thread_id, turn_id)
         return {}
 

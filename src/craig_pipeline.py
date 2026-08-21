@@ -20,6 +20,7 @@ from .craig_transcription_execution import (
 )
 from .merge_transcripts import is_short_reaction, max_width_for_speaker, refine_segments
 from .pipeline import build_ass_from_transcript
+from .process_utils import hidden_subprocess_kwargs
 from .render_ass import parse_track_color_args
 from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
@@ -525,7 +526,7 @@ def decode_audio_samples(input_path: str, sample_rate: int = DEFAULT_ALIGNMENT_S
     if stream_selector:
         command.extend(["-map", stream_selector])
     command.extend(["-vn", "-ac", "1", "-ar", str(sample_rate), "-f", "f32le", "-"])
-    result = subprocess.run(command, capture_output=True, check=True)
+    result = subprocess.run(command, capture_output=True, check=True, **hidden_subprocess_kwargs())
     return np.frombuffer(result.stdout, dtype=np.float32)
 
 

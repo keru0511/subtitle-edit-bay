@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from .process_utils import hidden_subprocess_kwargs
+
 
 def probe_audio_streams(input_path: str) -> list[dict[str, object]]:
     command = [
@@ -22,7 +24,15 @@ def probe_audio_streams(input_path: str) -> list[dict[str, object]]:
         "json",
         input_path,
     ]
-    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        **hidden_subprocess_kwargs(),
+    )
     payload = json.loads(result.stdout or "{}")
     return payload.get("streams", [])
 
@@ -148,6 +158,7 @@ def run_command_with_utf8_log(command: list[str], log_path: str) -> None:
             errors="replace",
             bufsize=1,
             env=environment,
+            **hidden_subprocess_kwargs(),
         )
     except OSError as error:
         path.write_text(f"Failed to start process: {error}\n", encoding="utf-8")

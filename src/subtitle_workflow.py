@@ -781,13 +781,17 @@ def render_project_short_video(
         progress_callback=progress_callback,
         _project=project,
     )
-    project["render_settings"] = {
+    render_settings = {
         **project.get("render_settings", {}),
         "short_video_codec": video_codec,
         "short_audio_codec": audio_codec,
         "short_last_output": str(result.resolve()),
-        "short_last_ass": str(ass_path.resolve()),
     }
+    if ass_path is not None:
+        render_settings["short_last_ass"] = str(ass_path.resolve())
+    else:
+        render_settings.pop("short_last_ass", None)
+    project["render_settings"] = render_settings
     save_project(project_path, project)
     log_progress(f"Short render complete: {result}")
     return result

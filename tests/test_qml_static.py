@@ -421,6 +421,9 @@ class QmlStaticTests(unittest.TestCase):
         qml = read_component_qml("ShortModeClipList.qml")
         self.assertIn('objectName: "shortModeStartTimeField" + index', qml)
         self.assertIn('objectName: "shortModeEndTimeField" + index', qml)
+        self.assertIn('objectName: "shortModeRangeStartField"', qml)
+        self.assertIn('objectName: "shortModeRangeEndField"', qml)
+        self.assertIn("addShortVideoClipByRange", qml)
         self.assertIn("updateShortVideoClip", qml)
         self.assertIn("TimeField", qml)
 

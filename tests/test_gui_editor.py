@@ -2714,6 +2714,46 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.updateShortVideoClip(0, {"start": float("nan")}))
         self.assertFalse(self.app.updateShortVideoClip(0, {"end": float("inf")}))
 
+    def test_empty_short_mode_adds_and_trims_direct_range_clip(self) -> None:
+        _video, _audio, _output = self._set_ready_sources()
+        with patch("src.gui.probe_media_duration", return_value=3.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        self.assertEqual(self.app.subtitleSegments, [])
+        self.assertTrue(self.app.addShortVideoClipByRange(0.25, 1.5))
+        self.assertEqual(self.app.shortVideoClips[0]["segment_id"], "")
+        self.assertTrue(self.app.updateShortVideoClip(0, {"start": 0.5, "end": 1.25}))
+        self.assertEqual(
+            (self.app.shortVideoClips[0]["start"], self.app.shortVideoClips[0]["end"]),
+            (0.5, 1.25),
+        )
+        self.assertFalse(self.app.addShortVideoClipByRange(2.0, 4.0))
+
+    def test_empty_short_mode_gui_adds_range_clip_and_enables_export(self) -> None:
+        _video, _audio, _output = self._set_ready_sources()
+        with patch("src.gui.probe_media_duration", return_value=3.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        start_field = self._quick_item(window, "shortModeRangeStartField")
+        end_field = self._quick_item(window, "shortModeRangeEndField")
+        start_field.setProperty("text", "0.250")
+        end_field.setProperty("text", "1.500")
+        self.app.processEvents()
+        add_button = self._quick_item(window, "shortModeAddClipButton")
+        self.assertTrue(add_button.property("enabled"))
+        self._click(window, add_button)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "saveProject", return_value=True),
+            patch.object(self.app, "_start_command") as start_command,
+        ):
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        self.assertEqual(start_command.call_args.args[1], "render_short")
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
@@ -2898,6 +2938,102 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(edit_button.isEnabled())
         self._click(window, edit_button)
         self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+
+    def test_followup_transcription_preserves_project_settings_for_merge_and_replace(self) -> None:
+        project_path = self._load_project()
+        project = self.app._project
+        assert project is not None
+        project["audio_mix"] = {
+            "version": 1,
+            "customized": True,
+            "channels": [
+                {
+                    "id": "video:0:a:0",
+                    "kind": "video",
+                    "label": "game",
+                    "selector": "0:a:0",
+                    "enabled": True,
+                    "muted": False,
+                    "solo": False,
+                    "volume_percent": 42.0,
+                }
+            ],
+        }
+        project["short_video"] = {
+            "schema_version": 2,
+            "enabled": True,
+            "output": {"width": 720, "height": 1280, "fps": 30},
+            "global_fit": "contain",
+            "global_background_color": "112233",
+            "subtitle_scale_percent": 80.0,
+            "transition": {"type": "cut", "duration": 0.0},
+            "bgm": {"path": "custom-bgm.wav", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.4},
+            "clips": [{"segment_id": "segment-a", "start": 1.0, "end": 2.0, "fit": "blur"}],
+        }
+        self.app._mark_project_dirty()
+        self.assertTrue(self.app.saveProject())
+        preserved = deepcopy(load_project(project_path))
+        generated = create_project(
+            video_path=project_path.parent / "game.mkv",
+            output_dir=project_path.parent / "export",
+            segments=[
+                {
+                    "id": "transcribed-new",
+                    "start": 5.0,
+                    "end": 6.0,
+                    "text": "new transcript",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ],
+            duration_seconds=30.0,
+            transcription={"engine": "new-engine"},
+        )
+
+        for mode in ("merge", "replace"):
+            with self.subTest(mode=mode):
+                self.app._project = deepcopy(generated)
+                self.app._project_path = str(project_path)
+                self.app._transcription_merge_mode = mode
+                self.app._transcription_preserved_project = deepcopy(preserved)
+                self.app._transcription_preserved_project_path = str(project_path)
+
+                self.assertTrue(self.app._merge_preserved_transcription_segments())
+                saved = load_project(project_path)
+                self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                self.assertEqual(saved["short_video"], preserved["short_video"])
+                self.assertEqual(saved["transcription"], {"engine": "new-engine"})
+                expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
+                self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
+
+    def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
+        project_path = self._load_project()
+        preserved = deepcopy(self.app._project)
+        assert preserved is not None
+        generated = deepcopy(preserved)
+        generated["segments"] = []
+        self.app._project = generated
+        self.app._project_path = str(project_path)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._transcription_merge_mode = "merge"
+        self.app._transcription_preserved_project = preserved
+        self.app._transcription_preserved_project_path = str(project_path)
+
+        with (
+            patch.object(self.app, "_read_process_output"),
+            patch.object(self.app, "_try_load_default_project", return_value=True),
+            patch.object(
+                self.app,
+                "_merge_preserved_transcription_segments",
+                side_effect=ValueError("merge failed"),
+            ),
+        ):
+            self.app._process_finished(0, None)
+
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("統合に失敗しました", self.app.status)
+        self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
 
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()

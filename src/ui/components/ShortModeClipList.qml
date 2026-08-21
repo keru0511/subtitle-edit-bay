@@ -47,14 +47,41 @@ ColumnLayout {
             textRole: "preview_text"
             valueRole: "id"
         }
+        Text { text: "範囲"; color: "#8E9B94"; font.pixelSize: 10 }
+        TimeField {
+            id: rangeStartField
+            objectName: "shortModeRangeStartField"
+            Layout.preferredWidth: 76
+            text: "0.000"
+        }
+        Text { text: "-"; color: "#8E9B94"; font.pixelSize: 10 }
+        TimeField {
+            id: rangeEndField
+            objectName: "shortModeRangeEndField"
+            Layout.preferredWidth: 76
+            text: clipListRoot.appBackend && clipListRoot.appBackend.projectDuration > 0
+                  ? Math.min(5, clipListRoot.appBackend.projectDuration).toFixed(3)
+                  : "1.000"
+        }
         Button {
             id: addButton
             objectName: "shortModeAddClipButton"
             text: "ショートに追加"
-            enabled: segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== ""
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && (
+                (segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "")
+                || (Number(rangeStartField.text) >= 0
+                    && Number(rangeEndField.text) > Number(rangeStartField.text)
+                    && (clipListRoot.appBackend.projectDuration <= 0
+                        || Number(rangeEndField.text) <= clipListRoot.appBackend.projectDuration))
+            )
             onClicked: {
                 if (clipListRoot.appBackend) {
-                    clipListRoot.appBackend.addShortVideoClip(segmentCombo.currentValue)
+                    if (segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "") {
+                        clipListRoot.appBackend.addShortVideoClip(segmentCombo.currentValue)
+                    } else {
+                        clipListRoot.appBackend.addShortVideoClipByRange(
+                            Number(rangeStartField.text), Number(rangeEndField.text))
+                    }
                 }
             }
             contentItem: Text {

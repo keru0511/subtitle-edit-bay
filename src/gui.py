@@ -334,6 +334,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_pending = False
         self._transcription_merge_mode = ""
         self._transcription_preserved_segments: list[dict[str, Any]] = []
+        self._transcription_preserved_project: dict[str, Any] | None = None
+        self._transcription_preserved_project_path = ""
         self._ignored_autosaves: set[tuple[int, str]] = set()
         self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
         cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
@@ -680,6 +682,30 @@ class EditBayBackend(LegacyEditBayBackend):
         self.shortVideoChanged.emit()
         return True
 
+    @Slot(float, float, result=bool)
+    def addShortVideoClipByRange(self, start: float, end: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            start = float(start)
+            end = float(end)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(start) or not math.isfinite(end):
+            return False
+        duration = max(0.0, float(self.projectDuration))
+        if start < 0.0 or start >= end or (duration > 0.0 and end > duration):
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        clips.append({"segment_id": "", "start": round(start, 3), "end": round(end, 3)})
+        section["enabled"] = True
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
         if self._project is None or self._running:
@@ -738,11 +764,18 @@ class EditBayBackend(LegacyEditBayBackend):
 
         if trim_requested:
             segment = self._find_segment_by_id(str(clip.get("segment_id", "")))
-            if segment is None:
+            range_clip = not str(clip.get("segment_id", "")).strip()
+            if segment is None and not range_clip:
                 return False
             try:
-                segment_start = float(segment.get("start", 0.0))
-                segment_end = float(segment.get("end", segment_start))
+                if segment is None:
+                    segment_start = 0.0
+                    segment_end = float(self.projectDuration)
+                    if segment_end <= 0.0:
+                        segment_end = max(float(clip.get("end", 0.0)), 0.0)
+                else:
+                    segment_start = float(segment.get("start", 0.0))
+                    segment_end = float(segment.get("end", segment_start))
                 start = float(fields.get("start", clip.get("start", segment_start)))
                 end = float(fields.get("end", clip.get("end", segment_end)))
                 if not all(
@@ -1920,11 +1953,17 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
             return
         if self._project is None:
+            self._transcription_merge_mode = ""
+            self._transcription_preserved_segments = []
+            self._transcription_preserved_project = None
+            self._transcription_preserved_project_path = ""
             self.startTranscription(settings, False)
             return
         if not self.saveProject():
             return
         self._transcription_merge_mode = selected_mode
+        self._transcription_preserved_project = deepcopy(self._project)
+        self._transcription_preserved_project_path = self._project_path
         self._transcription_preserved_segments = (
             deepcopy(self._project.get("segments", []))
             if selected_mode == "merge"
@@ -1932,24 +1971,60 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         self.startTranscription(settings, True)
 
-    def _merge_preserved_transcription_segments(self) -> None:
-        if self._project is None or self._transcription_merge_mode != "merge":
-            return
-        preserved = deepcopy(self._transcription_preserved_segments)
-        if not preserved:
-            return
-        generated = deepcopy(self._project.get("segments", []))
-        used_ids = {str(item.get("id", "")) for item in preserved}
-        merged = list(preserved)
-        for segment in generated:
-            segment_id = str(segment.get("id", ""))
-            if segment_id in used_ids:
-                segment["id"] = f"transcribed-{uuid4().hex[:12]}"
-            used_ids.add(str(segment["id"]))
-            merged.append(segment)
-        self._project["segments"] = assign_project_layout_rows(
-            sorted(merged, key=lambda item: (item["start"], item["end"], item["id"])),
+    def _merge_preserved_transcription_segments(self) -> bool:
+        if self._project is None or self._transcription_preserved_project is None:
+            return False
+        generated = deepcopy(self._project)
+        preserved = deepcopy(self._transcription_preserved_project)
+        generated_segments = deepcopy(generated.get("segments", []))
+        if self._transcription_merge_mode == "merge":
+            preserved_segments = deepcopy(preserved.get("segments", []))
+            used_ids = {str(item.get("id", "")) for item in preserved_segments}
+            merged = list(preserved_segments)
+            for segment in generated_segments:
+                segment_id = str(segment.get("id", ""))
+                if not segment_id or segment_id in used_ids:
+                    segment["id"] = f"transcribed-{uuid4().hex[:12]}"
+                used_ids.add(str(segment["id"]))
+                merged.append(segment)
+            segments = merged
+        elif self._transcription_merge_mode == "replace":
+            segments = generated_segments
+        else:
+            return False
+
+        preserved["segments"] = assign_project_layout_rows(
+            sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
         )
+        for key in ("transcription", "transcription_context", "waveforms"):
+            if key in generated:
+                preserved[key] = deepcopy(generated[key])
+        self._project = preserved
+        self._apply_project_subtitle_settings(self._project)
+        self._selected_segment_index = 0 if self._project["segments"] else -1
+        save_project(self._project_path, self._project)
+        self._project_dirty = False
+        self._sync_subtitle_model()
+        self.projectChanged.emit()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self.selectionChanged.emit()
+        return True
+
+    def _restore_preserved_transcription_project(self) -> None:
+        if self._transcription_preserved_project is None:
+            return
+        self._project = deepcopy(self._transcription_preserved_project)
+        self._project_path = self._transcription_preserved_project_path
+        self._apply_project_subtitle_settings(self._project)
+        save_project(self._project_path, self._project)
+        self._project_dirty = False
+        self._selected_segment_index = 0 if self._project.get("segments") else -1
+        self._sync_subtitle_model()
+        self.projectChanged.emit()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self.selectionChanged.emit()
         self._selected_segment_index = 0 if self._project["segments"] else -1
         save_project(self._project_path, self._project)
         self._project_dirty = False
@@ -3176,22 +3251,38 @@ class EditBayBackend(LegacyEditBayBackend):
             if completed_job == "transcribe":
                 loaded = self._try_load_default_project()
                 merged = False
-                if loaded and self._transcription_merge_mode == "merge":
+                integration_error = ""
+                if loaded and self._transcription_merge_mode in {"merge", "replace"}:
                     try:
-                        self._merge_preserved_transcription_segments()
-                        merged = bool(self._transcription_preserved_segments)
+                        applied = self._merge_preserved_transcription_segments()
+                        merged = applied and self._transcription_merge_mode == "merge"
                     except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
-                        self._set_status(f"文字起こし結果の統合に失敗しました: {error}", "ERROR")
+                        integration_error = (
+                            "文字起こし結果の統合に失敗しました: "
+                            f"{error}"
+                        )
+                        try:
+                            self._restore_preserved_transcription_project()
+                        except (OSError, SubtitleProjectError, TypeError, ValueError) as restore_error:
+                            integration_error += (
+                                "（元プロジェクトの復元にも失敗しました: "
+                                f"{restore_error}）"
+                            )
                 self._transcription_merge_mode = ""
                 self._transcription_preserved_segments = []
-                self._set_status(
-                    "文字起こし結果を既存字幕へ追加しました。内容を確認してください"
-                    if merged
-                    else "文字起こし完了。字幕を確認して動画へ焼き付けられます"
-                    if loaded
-                    else "文字起こしが完了しました。編集プロジェクトを開いてください",
-                    "EDIT" if loaded else "CHECK",
-                )
+                self._transcription_preserved_project = None
+                self._transcription_preserved_project_path = ""
+                if integration_error:
+                    self._set_status(integration_error, "ERROR")
+                else:
+                    self._set_status(
+                        "文字起こし結果を既存字幕へ追加しました。内容を確認してください"
+                        if merged
+                        else "文字起こし完了。字幕を確認して動画へ焼き付けられます"
+                        if loaded
+                        else "文字起こしが完了しました。編集プロジェクトを開いてください",
+                        "EDIT" if loaded else "CHECK",
+                    )
             elif completed_job == "update":
                 self._set_status("更新が完了しました。アプリを再起動してください", "UPDATE")
             elif completed_job == "render_short":
@@ -3202,6 +3293,8 @@ class EditBayBackend(LegacyEditBayBackend):
             if completed_job == "transcribe":
                 self._transcription_merge_mode = ""
                 self._transcription_preserved_segments = []
+                self._transcription_preserved_project = None
+                self._transcription_preserved_project_path = ""
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:

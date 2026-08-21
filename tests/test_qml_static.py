@@ -260,10 +260,11 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_transcription_dictionary_opens_as_dedicated_screen(self) -> None:
         qml = read_workflow_qml()
+        action_bar = read_component_qml("ContextActionBar.qml")
         wrapper = read_workflow_wrapper_qml()
 
-        self.assertIn('objectName: "transcriptionDictionaryOpenButton"', read_component_qml("ContextActionBar.qml"))
-        self.assertIn("onClicked: root.openDictionaryScreen()", qml)
+        self.assertIn('objectName: "transcriptionDictionaryOpenButton"', action_bar)
+        self.assertIn("onDictionaryRequested: root.openDictionaryScreen()", qml)
         self.assertIn("property bool dictionaryMode: false", qml)
         self.assertIn("!root.editorMode && !root.mixerMode && !root.dictionaryMode", qml)
         self.assertIn('objectName: "transcriptionDictionaryPage"', wrapper)

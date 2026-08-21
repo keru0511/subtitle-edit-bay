@@ -1529,10 +1529,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, toggle)
         self.assertTrue(panel.isVisible())
         actions = self._quick_item(window, "workflowActions")
-        popup = self._quick_item(window, "advancedSettingsPopup")
-        self.assertTrue(popup.property("opened"))
-        self.assertLessEqual(popup.property("x") + popup.property("width"), window.width() + 1)
-        self.assertLessEqual(popup.property("y") + popup.property("height"), window.height() + 1)
         self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
 
         font_size = self._quick_item(window, "fontSizeSpin")

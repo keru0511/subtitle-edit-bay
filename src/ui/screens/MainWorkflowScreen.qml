@@ -6,7 +6,6 @@ import QtQuick.Dialogs
 import "../components"
 import QtQuick.Layouts
 import QtMultimedia
-import "../components"
 
 ApplicationWindow {
     id: root

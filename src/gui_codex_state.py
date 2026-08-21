@@ -262,7 +262,12 @@ class CodexSessionController:
                     stop_event=stop_event,
                 )
                 return
-            thread = client.thread_start()
+            thread = client.thread_start(
+                {
+                    "approvalPolicy": "never",
+                    "sandbox": "read-only",
+                }
+            )
             if not self._is_active(generation, stop_event):
                 return
             thread_id = str(thread.get("threadId", thread.get("id", "")))
@@ -278,6 +283,11 @@ class CodexSessionController:
                 prompt=prompt,
                 output_schema=output_schema,
                 context=context,
+                approval_policy="never",
+                sandbox_policy={
+                    "type": "readOnly",
+                    "networkAccess": False,
+                },
             )
             if not self._is_active(generation, stop_event):
                 return

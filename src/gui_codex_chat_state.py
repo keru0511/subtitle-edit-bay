@@ -484,7 +484,7 @@ class CodexChatController:
             with self._lock:
                 self._stop_requested = False
             message = f"Codexへメッセージを送信できません: {_safe_error(error)}"
-            self._set_active_assistant_status("error")
+            self._finish_active_assistant("error")
             self._update(chat_state="send_failed", error=message)
 
     def _interrupt_worker(self, thread_id: str, turn_id: str) -> None:
@@ -501,7 +501,7 @@ class CodexChatController:
         except Exception as error:
             if self._shutdown or self.snapshot.chat_state != "stopping":
                 return
-            self._set_active_assistant_status("error")
+            self._finish_active_assistant("error")
             self._update(
                 chat_state="send_failed",
                 error=f"Codexの応答を停止できません: {_safe_error(error)}",
@@ -527,7 +527,7 @@ class CodexChatController:
             return True
 
     def _complete_pending_stop(self, thread_id: str) -> None:
-        self._set_active_assistant_status("interrupted")
+        self._finish_active_assistant("interrupted")
         self._update(
             chat_state="idle",
             thread_id=thread_id,
@@ -587,7 +587,7 @@ class CodexChatController:
             detail = payload.get("message") if isinstance(payload, Mapping) else payload
             with self._lock:
                 self._stop_requested = False
-            self._set_active_assistant_status("error")
+            self._finish_active_assistant("error")
             self._update(chat_state="send_failed", error=f"Codexの応答でエラーが発生しました: {_safe_error(detail)}")
             return
         if method == "turn/completed":
@@ -598,14 +598,16 @@ class CodexChatController:
             if status == "failed":
                 error_payload = turn.get("error", {}) if isinstance(turn, Mapping) else {}
                 detail = error_payload.get("message") if isinstance(error_payload, Mapping) else error_payload
-                self._set_active_assistant_status("error")
+                self._finish_active_assistant("error")
                 self._update(
                     chat_state="send_failed",
                     turn_id="",
                     error=f"Codexの応答に失敗しました: {_safe_error(detail or '原因を確認できません')}",
                 )
             else:
-                self._set_active_assistant_status("interrupted" if status == "interrupted" else "completed")
+                self._finish_active_assistant(
+                    "interrupted" if status == "interrupted" else "completed"
+                )
                 self._update(chat_state="idle", turn_id="", error="")
 
     def _refresh_from_notification(self) -> None:
@@ -615,11 +617,16 @@ class CodexChatController:
             self._update(auth_state="error", error=f"Codexの認証状態を確認できません: {_safe_error(error)}")
 
     def _on_disconnect(self, _error: Exception) -> None:
+        current = self.snapshot
         with self._lock:
             self._client = None
             self._thread_needs_resume = bool(self._snapshot.thread_id)
             self._stop_requested = False
-        self._set_active_assistant_status("error")
+        if current.chat_state in {"sending", "streaming", "stopping"}:
+            self._finish_active_assistant("error")
+        else:
+            with self._lock:
+                self._active_assistant_id = ""
         self._update(
             connection_state="disconnected",
             auth_state="unknown",
@@ -653,6 +660,11 @@ class CodexChatController:
                 item["status"] = status
                 self._update(messages=tuple(messages))
                 return
+
+    def _finish_active_assistant(self, status: str) -> None:
+        self._set_active_assistant_status(status)
+        with self._lock:
+            self._active_assistant_id = ""
 
     def _update(self, **changes: Any) -> None:
         with self._lock:

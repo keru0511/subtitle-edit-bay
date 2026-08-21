@@ -378,6 +378,28 @@ class CodexChatControllerTests(unittest.TestCase):
             client.turn_release.set()
             controller.shutdown()
 
+    def test_idle_disconnect_preserves_the_completed_assistant_message(self) -> None:
+        client = FakeChatClient()
+        client.authenticated = True
+        controller = CodexChatController(
+            client_factory=lambda: client,
+            workspace_root=Path.cwd(),
+            preferred_model="gpt-default",
+        )
+        try:
+            controller.connect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            controller.send_message("完了後に切断")
+            wait_for(lambda: controller.snapshot.chat_state == "idle")
+            self.assertEqual(controller.snapshot.messages[-1]["status"], "completed")
+
+            client.disconnect()
+
+            self.assertEqual(controller.snapshot.connection_state, "disconnected")
+            self.assertEqual(controller.snapshot.messages[-1]["status"], "completed")
+        finally:
+            controller.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

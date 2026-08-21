@@ -1994,6 +1994,35 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_codex_chat_connects_during_backend_startup(self) -> None:
         self.assertEqual(self._codex_chat_connect_calls, 1)
 
+    def test_codex_chat_stays_collapsed_until_authenticated(self) -> None:
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "codexChatPanel")
+        toggle = self._quick_item(window, "codexChatToggleButton")
+        original_snapshot = self.app._codex_chat._snapshot
+        try:
+            self.assertFalse(panel.property("expanded"))
+            self.assertFalse(toggle.isEnabled())
+
+            authenticated = CodexChatSnapshot(
+                connection_state="ready",
+                auth_state="authenticated",
+                auth_label="ChatGPT",
+                models=({"id": "gpt-default", "label": "GPT Default"},),
+                selected_model="gpt-default",
+            )
+            self.app._codex_chat._snapshot = authenticated
+            self.app._on_codex_chat_state(authenticated)
+            self.app.processEvents()
+
+            self.assertFalse(panel.property("expanded"))
+            self.assertTrue(toggle.isEnabled())
+            self._click(window, toggle)
+            self.assertTrue(panel.property("expanded"))
+        finally:
+            self.app._codex_chat._snapshot = original_snapshot
+            self.app._on_codex_chat_state(original_snapshot)
+            self.app.processEvents()
+
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()
         _, window = self._load_qml()

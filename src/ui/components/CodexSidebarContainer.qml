@@ -36,7 +36,7 @@ Rectangle {
             Layout.fillHeight: true
             Layout.minimumHeight: 180
             backend: sidebar.backend
-            expanded: true
+            expanded: false
             panelColor: "#080A09"
         }
     }

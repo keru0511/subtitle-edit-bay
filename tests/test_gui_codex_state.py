@@ -23,6 +23,8 @@ class FakeClient:
         self.notification_callback = None
         self.started = False
         self.interrupted = None
+        self.thread_params = None
+        self.turn_params = None
 
     def start(self) -> dict[str, object]:
         self.started = True
@@ -35,12 +37,14 @@ class FakeClient:
         return {"authenticated": True}
 
     def thread_start(self, params=None) -> dict[str, object]:
+        self.thread_params = dict(params or {})
         return {"threadId": "thread-1"}
 
     def thread_resume(self, thread_id, params=None) -> dict[str, object]:
         return {"threadId": thread_id}
 
     def turn_start(self, **kwargs) -> dict[str, object]:
+        self.turn_params = dict(kwargs)
         if self.notification_callback:
             self.notification_callback(FakeNotification("turn/started", {"turnId": "turn-1"}))
             self.notification_callback(FakeNotification("item/agentMessage/delta", {"delta": "提案"}))
@@ -94,10 +98,11 @@ class GuiCodexStateTests(unittest.TestCase):
             self.assertGreaterEqual(context["segment_count"], 1)
 
     def test_fake_client_streams_proposal_and_preserves_revision(self) -> None:
+        client = FakeClient()
         snapshots = []
         messages = []
         controller = CodexSessionController(
-            client_factory=FakeClient,
+            client_factory=lambda: client,
             proposal_parser=lambda payload: payload,
             on_state=snapshots.append,
             on_message=messages.append,
@@ -113,6 +118,21 @@ class GuiCodexStateTests(unittest.TestCase):
         self.assertIn("提案", controller.snapshot.message)
         self.assertEqual(messages, ["提案"])
         self.assertTrue(any(item.state == "running" for item in snapshots))
+        self.assertEqual(
+            client.thread_params,
+            {
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+            },
+        )
+        self.assertEqual(client.turn_params["approval_policy"], "never")
+        self.assertEqual(
+            client.turn_params["sandbox_policy"],
+            {
+                "type": "readOnly",
+                "networkAccess": False,
+            },
+        )
 
     def test_stop_during_blocking_account_read_discards_late_worker_result(self) -> None:
         client = BlockingAccountClient()

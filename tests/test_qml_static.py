@@ -154,6 +154,8 @@ class QmlStaticTests(unittest.TestCase):
         )
         self.assertIn("CodexChatPanel {", sidebar)
         self.assertIn("backend: sidebar.backend", sidebar)
+        self.assertIn("expanded: false", sidebar)
+        self.assertNotIn("expanded: true", sidebar)
         self.assertNotIn("Codexチャット領域", sidebar)
         self.assertIn(
             "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode",

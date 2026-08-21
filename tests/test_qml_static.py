@@ -154,6 +154,22 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("selectByMouse: true", panel)
         self.assertIn("backend.copyErrorLogsToClipboard()", panel)
 
+    def test_highlight_candidate_list_exposes_analysis_preview_add_and_reject(self) -> None:
+        short_qml = (UI_ROOT / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
+        candidate_qml = read_component_qml("HighlightCandidateList.qml")
+
+        self.assertIn('objectName: "highlightCandidateList"', short_qml)
+        self.assertIn('objectName: "highlightAnalyzeButton"', candidate_qml)
+        self.assertIn('objectName: "highlightCancelButton"', candidate_qml)
+        self.assertIn('objectName: "highlightSortCombo"', candidate_qml)
+        self.assertIn('objectName: "highlightPreviewButton"', candidate_qml)
+        self.assertIn('objectName: "highlightAddButton"', candidate_qml)
+        self.assertIn('objectName: "highlightRejectButton"', candidate_qml)
+        self.assertIn('"cancelling"', candidate_qml)
+        self.assertIn("appBackend.addHighlightCandidate", candidate_qml)
+        self.assertIn("appBackend.rejectHighlightCandidate", candidate_qml)
+        self.assertIn("shortPreview.previewAt(seconds)", short_qml)
+
     def test_editor_playback_follows_caption_list_and_timeline(self) -> None:
         qml = read_workflow_qml()
 

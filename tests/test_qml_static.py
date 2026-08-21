@@ -124,6 +124,24 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("copyApplicationInfoToClipboard", qml)
         self.assertIn('objectName: "copyApplicationInfoButton"', qml)
 
+    def test_codex_edit_panel_exposes_prompt_scope_diff_and_apply_actions(self) -> None:
+        qml = read_workflow_qml()
+        panel = read_component_qml("CodexEditPanel.qml")
+
+        self.assertIn('objectName: "codexEditPanel"', qml)
+        self.assertIn('objectName: "codexPromptInput"', panel)
+        self.assertIn('objectName: "codexScopeCombo"', panel)
+        self.assertIn('objectName: "codexSendButton"', panel)
+        self.assertIn('objectName: "codexStopButton"', panel)
+        self.assertIn('objectName: "codexProposalList"', panel)
+        self.assertIn('objectName: "codexApplyButton"', panel)
+        self.assertIn('objectName: "codexDiscardButton"', panel)
+        self.assertIn("backend.applyCodexProposal", panel)
+        self.assertIn("selectedOperationState", panel)
+        self.assertIn("operationIdFor", panel)
+        self.assertIn("!panel.codexRunning()", panel)
+        self.assertIn("setCodexCurrentTime", panel)
+
     def test_application_log_panel_exposes_copy_and_error_actions(self) -> None:
         qml = read_workflow_qml()
         panel = read_component_qml("ApplicationLogPanel.qml")

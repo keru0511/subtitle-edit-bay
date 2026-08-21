@@ -2030,6 +2030,14 @@ ApplicationWindow {
                             Item { Layout.fillWidth: true }
                             Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                         }
+                        CodexEditPanel {
+                            id: codexEditPanel
+                            objectName: "codexEditPanel"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: implicitHeight
+                            backend: root.appBackend
+                            currentTime: editorPlayer.position / 1000
+                        }
                         ListView {
                             id: captionTable
                             objectName: "captionTable"

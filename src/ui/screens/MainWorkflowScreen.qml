@@ -2236,6 +2236,23 @@ ApplicationWindow {
         }
     }
 
+    CodexChatPanel {
+        id: codexChatPanel
+        objectName: "codexChatPanel"
+        backend: root.appBackend
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        z: 800
+        panelColor: root.panel
+        raisedColor: root.raised
+        borderColor: root.border
+        textColor: root.textPrimary
+        mutedColor: root.textMuted
+        accentColor: root.acid
+        errorColor: root.danger
+    }
+
     Rectangle {
         anchors.fill: parent
         anchors.margins: 22

@@ -18,6 +18,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "SmallButton.qml",
     COMPONENTS_ROOT / "CompactSpinBox.qml",
     COMPONENTS_ROOT / "TimeField.qml",
+    COMPONENTS_ROOT / "CodexChatPanel.qml",
 )
 
 
@@ -140,6 +141,26 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("operationIdFor", panel)
         self.assertIn("!panel.codexRunning()", panel)
         self.assertIn("setCodexCurrentTime", panel)
+
+    def test_codex_chat_exposes_login_toggle_models_stream_and_errors(self) -> None:
+        qml = read_workflow_qml()
+        panel = read_component_qml("CodexChatPanel.qml")
+
+        self.assertIn('objectName: "codexChatPanel"', qml)
+        self.assertIn('objectName: "codexConnectButton"', panel)
+        self.assertIn('objectName: "codexChatToggleButton"', panel)
+        self.assertIn('objectName: "codexModelCombo"', panel)
+        self.assertIn('objectName: "codexChatMessageList"', panel)
+        self.assertIn('objectName: "codexChatSendButton"', panel)
+        self.assertIn('objectName: "codexChatStopButton"', panel)
+        self.assertIn("backend.startCodexLogin()", panel)
+        self.assertIn("backend.reloginCodex()", panel)
+        self.assertIn("backend.logoutCodex()", panel)
+        self.assertIn("backend.selectCodexModel(currentValue)", panel)
+        self.assertIn("backend.sendCodexChatMessage(message)", panel)
+        self.assertIn('"streaming": "応答を受信中"', panel)
+        self.assertIn('"send_failed": "送信失敗"', panel)
+        self.assertIn('enabled: panel.authenticated()', panel)
 
     def test_application_log_panel_exposes_copy_and_error_actions(self) -> None:
         qml = read_workflow_qml()

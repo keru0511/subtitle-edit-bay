@@ -85,6 +85,7 @@ class CodexAppServerClient:
         environment: Mapping[str, str] | None = None,
         request_timeout: float = 30.0,
         notification_callback: Callable[[CodexNotification], None] | None = None,
+        disconnect_callback: Callable[[Exception], None] | None = None,
         log_callback: Callable[[str], None] | None = None,
     ) -> None:
         if not command:
@@ -94,6 +95,7 @@ class CodexAppServerClient:
         self.environment = dict(environment or {})
         self.request_timeout = max(0.1, float(request_timeout))
         self.notification_callback = notification_callback
+        self.disconnect_callback = disconnect_callback
         self.log_callback = log_callback
         self._process: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
@@ -232,14 +234,42 @@ class CodexAppServerClient:
             raise CodexAppServerError("app-server is not running")
         self._send({"jsonrpc": "2.0", "method": method, "params": dict(params or {})})
 
-    def account_read(self) -> dict[str, Any]:
-        return self.request("account/read")
+    def account_read(self, *, refresh_token: bool = False) -> dict[str, Any]:
+        return self.request("account/read", {"refreshToken": bool(refresh_token)})
 
-    def account_login_start(self, *, intent: str = "login") -> dict[str, Any]:
-        return self.request("account/login/start", {"intent": intent})
+    def account_login_start(
+        self,
+        *,
+        login_type: str = "chatgpt",
+        use_hosted_login_success_page: bool = True,
+        app_brand: str = "chatgpt",
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"type": login_type}
+        if login_type == "chatgpt":
+            params.update(
+                {
+                    "useHostedLoginSuccessPage": bool(use_hosted_login_success_page),
+                    "appBrand": app_brand,
+                }
+            )
+        return self.request("account/login/start", params)
 
     def account_login_cancel(self, login_id: str) -> dict[str, Any]:
         return self.request("account/login/cancel", {"loginId": login_id})
+
+    def account_logout(self) -> dict[str, Any]:
+        return self.request("account/logout")
+
+    def model_list(
+        self,
+        *,
+        limit: int = 100,
+        include_hidden: bool = False,
+    ) -> dict[str, Any]:
+        return self.request(
+            "model/list",
+            {"limit": max(1, int(limit)), "includeHidden": bool(include_hidden)},
+        )
 
     def thread_start(self, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return self.request("thread/start", params)
@@ -252,21 +282,30 @@ class CodexAppServerClient:
         *,
         thread_id: str,
         prompt: str,
-        output_schema: Mapping[str, Any],
+        output_schema: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": prompt}],
+        }
+        if output_schema is not None:
+            params["outputSchema"] = dict(output_schema)
+        if context:
+            params["context"] = dict(context)
+        if model:
+            params["model"] = model
         return self.request(
             "turn/start",
-            {
-                "threadId": thread_id,
-                "input": prompt,
-                "outputSchema": dict(output_schema),
-                "context": dict(context or {}),
-            },
+            params,
         )
 
-    def turn_interrupt(self, turn_id: str) -> dict[str, Any]:
-        return self.request("turn/interrupt", {"turnId": turn_id})
+    def turn_interrupt(self, turn_id: str, *, thread_id: str = "") -> dict[str, Any]:
+        params = {"turnId": turn_id}
+        if thread_id:
+            params["threadId"] = thread_id
+        return self.request("turn/interrupt", params)
 
     def _reserve_request(self) -> int:
         with self._state_lock:
@@ -307,7 +346,16 @@ class CodexAppServerClient:
         finally:
             if not self._stopping:
                 self._initialized = False
-                self._fail_pending(CodexAppServerError("app-server exited unexpectedly"))
+                error = CodexAppServerError("app-server exited unexpectedly")
+                self._fail_pending(error)
+                if self.disconnect_callback is not None:
+                    try:
+                        self.disconnect_callback(error)
+                    except Exception as callback_error:
+                        self._log(
+                            f"disconnect callback failed: {_redact_log(callback_error)}",
+                            error=True,
+                        )
 
     def _handle_message(self, message: Mapping[str, Any]) -> None:
         message_id = message.get("id")

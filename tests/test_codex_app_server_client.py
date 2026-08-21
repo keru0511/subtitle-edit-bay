@@ -35,7 +35,9 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertFalse(client.account_read()["authenticated"])
             login = client.account_login_start()
             self.assertEqual(login["loginId"], "login-1")
+            self.assertEqual(login["receivedType"], "chatgpt")
             self.assertTrue(client.account_login_cancel("login-1")["cancelled"])
+            self.assertEqual(client.model_list()["data"][0]["id"], "gpt-test")
             thread = client.thread_start({"cwd": "<safe-context>"})
             self.assertEqual(thread["threadId"], "thread-1")
             self.assertEqual(client.thread_resume("thread-1")["threadId"], "thread-1")
@@ -43,8 +45,12 @@ class CodexAppServerClientTests(unittest.TestCase):
                 thread_id="thread-1",
                 prompt="字幕を簡潔にする",
                 output_schema={"type": "object"},
+                model="gpt-test",
             )
             self.assertEqual(turn["status"], "completed")
+            self.assertEqual(turn["receivedInput"], [{"type": "text", "text": "字幕を簡潔にする"}])
+            self.assertEqual(turn["receivedModel"], "gpt-test")
+            self.assertEqual(client.account_logout(), {})
             self.assertTrue(any(item.method == "item/agentMessage/delta" for item in notifications))
             self.assertNotIn("字幕を簡潔にする", " ".join(logs))
         finally:

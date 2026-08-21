@@ -149,6 +149,7 @@ class EditBayBackend(QApplication):
         shared = payload.get("shared", {})
         craig = payload.get("craig_pipeline", {})
         return {
+            "codex_model": shared.get("codex_model", ""),
             "model": shared.get("model", "large-v3"),
             "device": shared.get("device", "cuda"),
             "compute_type": shared.get("compute_type", "float16"),

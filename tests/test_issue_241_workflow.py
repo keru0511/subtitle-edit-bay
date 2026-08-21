@@ -131,7 +131,7 @@ class Issue241WorkflowTests(unittest.TestCase):
 
         self.assertIn('objectName: "createEmptyProjectButton"', action_bar)
         self.assertIn("onCreateProjectRequested: root.appBackend.createEmptyProject()", qml)
-        self.assertIn('visible: root.appBackend.projectLoaded', qml)
+        self.assertIn('projectLoaded: root.appBackend.projectLoaded', qml)
         self.assertIn('"動画を書き出す"', qml)
         self.assertIn('objectName: "editorEmptyState"', qml)
         self.assertIn('objectName: "transcriptionMergeDialog"', qml)

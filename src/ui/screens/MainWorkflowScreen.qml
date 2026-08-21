@@ -1005,9 +1005,9 @@ ApplicationWindow {
             // Keep the popup clear of the action bar's right-aligned toggle,
             // including at the 1220px minimum window width.
             x: Math.max(12, root.width - width - 430)
-            y: 84
+            y: contextActionBar.y + contextActionBar.height + 10
             width: Math.min(360, root.width - 24)
-            height: Math.min(620, root.height - 120)
+            height: Math.min(620, Math.max(240, root.height - y - 12))
             modal: false
             focus: true
             // The toggle button is outside this non-modal popup. Let the toggle
@@ -1171,6 +1171,7 @@ ApplicationWindow {
                 }
             }
             ContextActionBar {
+                id: contextActionBar
                 objectName: "contextActionBar"
                 Layout.fillWidth: true
                 projectLoaded: root.appBackend.projectLoaded

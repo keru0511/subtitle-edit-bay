@@ -152,6 +152,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "copyErrorLogsButton"', panel)
         self.assertIn('objectName: "openLogsButton"', panel)
         self.assertIn("selectByMouse: true", panel)
+        self.assertIn("backend.hasLastProcessDiagnostic", panel)
         self.assertIn("backend.copyErrorLogsToClipboard()", panel)
 
     def test_highlight_candidate_list_exposes_analysis_preview_add_and_reject(self) -> None:

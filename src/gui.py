@@ -284,6 +284,7 @@ class EditBayBackend(LegacyEditBayBackend):
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
     applicationLogChanged = Signal()
+    lastProcessDiagnosticChanged = Signal()
     updateInfoChanged = Signal()
     updateBusyChanged = Signal()
     updateErrorChanged = Signal()
@@ -411,6 +412,10 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(bool, notify=projectChanged)
     def projectDirty(self) -> bool:
         return self._project_dirty
+
+    @Property(bool, notify=lastProcessDiagnosticChanged)
+    def hasLastProcessDiagnostic(self) -> bool:
+        return self._last_process_diagnostic is not None
 
     @Property(str, notify=updateInfoChanged)
     def updateCurrentVersion(self) -> str:
@@ -2385,7 +2390,9 @@ class EditBayBackend(LegacyEditBayBackend):
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         self._active_job = job
         self.activeJobChanged.emit()
-        self._last_process_diagnostic = None
+        if self._last_process_diagnostic is not None:
+            self._last_process_diagnostic = None
+            self.lastProcessDiagnosticChanged.emit()
         self._pending_process_error = ""
         self._application_logger.clear_memory()
         self._record_log(
@@ -2937,6 +2944,7 @@ class EditBayBackend(LegacyEditBayBackend):
             related_log_tail=self._related_process_log_tail(),
             runtime=runtime_diagnostic_info(),
         )
+        self.lastProcessDiagnosticChanged.emit()
 
     @Slot()
     def copyLogsToClipboard(self) -> None:

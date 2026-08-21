@@ -1335,6 +1335,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._source_selection = SourceSelection(output_dir=str(output))
         self.app._active_job = "transcribe"
         self.app._running = True
+        _, window = self._load_qml()
 
         with (
             patch("src.gui.runtime_diagnostic_info", return_value={"pytorch": "2.8.0+cu128"}),
@@ -1348,7 +1349,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
 
         self.app.saveSettings(self.app.settings)
+        self.app.processEvents()
         self.assertEqual(self.app.stage, "SAVED")
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertTrue(self._quick_item(window, "copyErrorLogsButton").isVisible())
 
         self.app.copyErrorLogsToClipboard()
         error_diagnostic = self.app.clipboard().text()
@@ -1370,6 +1374,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._active_job = "render"
         self.app._running = True
         self.app._cancel_requested = True
+        _, window = self._load_qml()
 
         with (
             patch("src.gui.runtime_diagnostic_info", return_value={}),
@@ -1377,6 +1382,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         ):
             self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
 
+        self.app.processEvents()
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertTrue(self._quick_item(window, "copyErrorLogsButton").isVisible())
         self.app.copyErrorLogsToClipboard()
         diagnostic = self.app.clipboard().text()
         self.assertIn("工程: CANCELLED", diagnostic)
@@ -1423,6 +1431,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._start_command(["python", "worker.py"], "render", "開始しています")
 
         self.assertIsNone(self.app._last_process_diagnostic)
+        self.assertFalse(self.app.hasLastProcessDiagnostic)
 
     def test_cancel_fallback_does_not_kill_replacement_process(self) -> None:
         with (

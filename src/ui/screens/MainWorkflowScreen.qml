@@ -1257,6 +1257,8 @@ ApplicationWindow {
             Layout.preferredWidth: 300
             Layout.minimumWidth: 280
             Layout.fillHeight: true
+            backend: root.appBackend
+            visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         }
     }
 
@@ -2221,24 +2223,6 @@ ApplicationWindow {
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
         }
-    }
-
-    CodexChatPanel {
-        id: codexChatPanel
-        objectName: "codexChatPanel"
-        backend: root.appBackend
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: 12
-        z: 800
-        panelColor: root.panel
-        raisedColor: root.raised
-        borderColor: root.border
-        textColor: root.textPrimary
-        mutedColor: root.textMuted
-        accentColor: root.acid
-        errorColor: root.danger
     }
 
     Rectangle {

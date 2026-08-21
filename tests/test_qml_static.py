@@ -19,6 +19,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "CompactSpinBox.qml",
     COMPONENTS_ROOT / "TimeField.qml",
     COMPONENTS_ROOT / "CodexChatPanel.qml",
+    COMPONENTS_ROOT / "CodexSidebarContainer.qml",
 )
 
 
@@ -145,8 +146,15 @@ class QmlStaticTests(unittest.TestCase):
     def test_codex_chat_exposes_login_toggle_models_stream_and_errors(self) -> None:
         qml = read_workflow_qml()
         panel = read_component_qml("CodexChatPanel.qml")
+        sidebar = read_component_qml("CodexSidebarContainer.qml")
 
-        self.assertIn('objectName: "codexChatPanel"', qml)
+        self.assertEqual(
+            (qml + panel + sidebar).count('objectName: "codexChatPanel"'),
+            1,
+        )
+        self.assertIn("CodexChatPanel {", sidebar)
+        self.assertIn("backend: sidebar.backend", sidebar)
+        self.assertNotIn("Codexチャット領域", sidebar)
         self.assertIn(
             "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode",
             qml,

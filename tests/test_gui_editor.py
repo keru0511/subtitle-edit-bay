@@ -1702,7 +1702,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         action_bar = self._quick_item(window, "contextActionBar")
         video_panel = self._quick_item(window, "mainVideoPanel")
         log_panel = self._quick_item(window, "applicationLogPanel")
+        codex_sidebar = self._quick_item(window, "codexChatSidebarContainer")
+        codex_chat = self._quick_item(window, "codexChatPanel")
         central_column = stepper.parentItem()
+        self.assertEqual(len(window.findChildren(QQuickItem, "codexChatPanel")), 1)
 
         for width, height in ((1220, 760), (1520, 940)):
             window.resize(width, height)
@@ -1722,6 +1725,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
             self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+            self.assertTrue(codex_sidebar.isVisible())
+            self.assertTrue(codex_chat.isVisible())
+            self.assertGreater(codex_sidebar.width(), 0)
+            self.assertGreater(codex_sidebar.height(), 0)
+            self.assertGreater(codex_chat.width(), 0)
+            self.assertGreater(codex_chat.height(), 0)
+            self.assertLessEqual(codex_chat.width(), codex_sidebar.width() + 1)
+            self.assertLessEqual(codex_chat.height(), codex_sidebar.height() + 1)
 
         window.resize(1220, 760)
         self.app.processEvents()

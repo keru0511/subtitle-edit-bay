@@ -11,7 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.project_snapshots import SnapshotError, project_checksum, sanitize_project
+from src.project_snapshots import (
+    SnapshotError,
+    _merge_media_references,
+    project_checksum,
+    sanitize_project,
+)
 
 
 class RecoveryError(ValueError):
@@ -95,6 +100,6 @@ class RecoveryJournal:
         payload = self.candidate(current_revision)
         if payload is None:
             return None
-        restored = copy.deepcopy(payload["project"])
+        restored = _merge_media_references(payload["project"], current_project)
         self.clear()
         return restored

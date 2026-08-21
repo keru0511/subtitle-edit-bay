@@ -111,7 +111,11 @@ class ProjectSnapshotTests(unittest.TestCase):
             journal.record(_project(), 5)
             self.assertIsNone(journal.candidate(5))
             self.assertEqual(journal.candidate(4)["revision"], 5)
-            self.assertEqual(journal.restore_if_newer({"title": "old"}, 4)["title"], "字幕")
+            restored = journal.restore_if_newer(_project(), 4)
+            self.assertEqual(restored["title"], "字幕")
+            self.assertEqual(restored["source"]["path"], _project()["source"]["path"])
+            self.assertEqual(restored["settings"]["video_path"], _project()["settings"]["video_path"])
+            self.assertNotIn("api_key", restored)
             self.assertIsNone(journal.pending())
             with self.assertRaises(RecoveryError):
                 journal.path.write_text("{}", encoding="utf-8")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from src.audio_mixer import (
     active_audio_mix_channels,
@@ -8,6 +10,7 @@ from src.audio_mixer import (
     reconcile_audio_mix,
     reset_audio_mix,
 )
+from src.subtitle_project import load_project, save_project
 
 
 class AudioMixerTests(unittest.TestCase):
@@ -129,6 +132,32 @@ class AudioMixerTests(unittest.TestCase):
         )
         self.assertTrue(audio_mix["channels"][0]["enabled"])
         self.assertFalse(audio_mix["channels"][1]["enabled"])
+
+    def test_reconcile_preserves_external_controls_without_video_tracks_after_reload(self) -> None:
+        project = self._project()
+        reconcile_audio_mix(project, video_tracks=[])
+        first, second = project["audio_mix"]["channels"]
+        first.update({"enabled": True, "muted": True, "solo": False, "volume_percent": 42})
+        second.update({"enabled": True, "muted": False, "solo": True, "volume_percent": 157})
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_path = Path(temp_dir) / "video-only.subtitle-project.json"
+            save_project(project_path, project)
+            reloaded = load_project(project_path)
+            reconciled = reconcile_audio_mix(reloaded, video_tracks=[])
+
+        self.assertEqual(
+            [
+                (
+                    channel["volume_percent"],
+                    channel["muted"],
+                    channel["solo"],
+                    channel["enabled"],
+                )
+                for channel in reconciled["channels"]
+            ],
+            [(42.0, True, False, True), (157.0, False, True, True)],
+        )
 
     def test_reconcile_does_not_invent_video_channel_for_video_only_project(self) -> None:
         project = {"audio_sources": [], "render_settings": {}}

@@ -674,6 +674,46 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.audioMixerPreviewGains[video_id], 2.0)
         self.app.autosave_timer.stop()
 
+    def test_video_only_external_mixer_settings_survive_channel_updates_and_reload(self) -> None:
+        project_path, _video, audio = self._make_project()
+        second_audio = self.root / "2-bob.flac"
+        second_audio.write_bytes(b"audio")
+        project = load_project(project_path)
+        project["audio_sources"] = [
+            {"path": str(audio), "track_key": "craig:Alice", "file_name": audio.name},
+            {"path": str(second_audio), "track_key": "craig:Bob", "file_name": second_audio.name},
+        ]
+        save_project(project_path, project)
+
+        self.app._audio_tracks = [{"selector": "", "label": "音声トラックなし"}]
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        self.assertEqual([channel["kind"] for channel in self.app.audioMixerChannels], ["external", "external"])
+
+        self.app.updateAudioMixChannel(
+            0,
+            {"enabled": True, "muted": True, "solo": False, "volume_percent": 42},
+        )
+        self.app.updateAudioMixChannel(
+            1,
+            {"enabled": True, "muted": False, "solo": True, "volume_percent": 157},
+        )
+        self.assertTrue(self.app.saveProject())
+
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        channels = self.app.audioMixerChannels
+        self.assertEqual(
+            [
+                (
+                    channel["volume_percent"],
+                    channel["muted"],
+                    channel["solo"],
+                    channel["enabled"],
+                )
+                for channel in channels
+            ],
+            [(42.0, True, False, True), (157.0, False, True, True)],
+        )
+
     def test_audio_master_transport_and_metrics_are_exposed_to_qml(self) -> None:
         self._load_project()
         metrics_changed = QSignalSpy(self.app.audioMasterMetricsChanged)

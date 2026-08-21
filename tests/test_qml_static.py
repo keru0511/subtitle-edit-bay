@@ -147,6 +147,10 @@ class QmlStaticTests(unittest.TestCase):
         panel = read_component_qml("CodexChatPanel.qml")
 
         self.assertIn('objectName: "codexChatPanel"', qml)
+        self.assertIn(
+            "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode",
+            qml,
+        )
         self.assertIn('objectName: "codexConnectButton"', panel)
         self.assertIn('objectName: "codexChatToggleButton"', panel)
         self.assertIn('objectName: "codexModelCombo"', panel)

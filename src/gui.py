@@ -398,7 +398,6 @@ class EditBayBackend(LegacyEditBayBackend):
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self._last_codex_login_url = ""
-        self._last_codex_chat_error = ""
         self._codex_chat = CodexChatController(
             client_factory=self._create_codex_chat_client,
             preferred_model=str(self._settings.get("codex_model", "")),
@@ -407,7 +406,6 @@ class EditBayBackend(LegacyEditBayBackend):
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self.aboutToQuit.connect(self._codex_chat.shutdown)
-        QTimer.singleShot(0, self._codex_chat.connect)
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
 
@@ -2940,11 +2938,6 @@ class EditBayBackend(LegacyEditBayBackend):
         if snapshot.login_url and snapshot.login_url != self._last_codex_login_url:
             self._last_codex_login_url = snapshot.login_url
             QDesktopServices.openUrl(QUrl(snapshot.login_url))
-        if snapshot.error and snapshot.error != self._last_codex_chat_error:
-            self._last_codex_chat_error = snapshot.error
-            self._set_status(snapshot.error, "ERROR")
-        elif not snapshot.error:
-            self._last_codex_chat_error = ""
 
     def _persist_codex_model(self, model: str) -> None:
         if self._settings.get("codex_model") == model:

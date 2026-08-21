@@ -2240,6 +2240,7 @@ ApplicationWindow {
         id: codexChatPanel
         objectName: "codexChatPanel"
         backend: root.appBackend
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 12

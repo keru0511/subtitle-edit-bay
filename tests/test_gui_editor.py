@@ -32,6 +32,7 @@ from src.audio_preview_cache import (
 )
 from src import updater
 from src.gui import EditBayBackend, build_font_choices
+from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -1749,6 +1750,22 @@ class GuiEditorRegressionTests(unittest.TestCase):
         render_command, render_job, _ = start.call_args.args
         self.assertEqual(render_job, "render")
         self.assertIn("render", render_command)
+
+    def test_codex_chat_error_does_not_replace_workflow_status(self) -> None:
+        self.app._status = "ショート動画を書き出しています"
+        self.app._stage = "ENCODE"
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(
+                connection_state="error",
+                auth_state="error",
+                chat_state="disconnected",
+                error="Codexへ接続できません",
+            )
+        )
+
+        self.assertEqual(self.app.status, "ショート動画を書き出しています")
+        self.assertEqual(self.app.stage, "ENCODE")
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()

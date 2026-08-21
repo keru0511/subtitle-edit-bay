@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from .codex_runtime import redact_codex_diagnostic
@@ -19,6 +20,11 @@ class CodexChatClientProtocol(Protocol):
     def account_logout(self) -> Mapping[str, Any]: ...
     def model_list(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def thread_start(self, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
+    def thread_resume(
+        self,
+        thread_id: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]: ...
     def turn_start(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def turn_interrupt(self, turn_id: str, *, thread_id: str = "") -> Mapping[str, Any]: ...
 
@@ -103,12 +109,14 @@ class CodexChatController:
         self,
         *,
         client_factory: Callable[[], CodexChatClientProtocol],
+        workspace_root: str | Path,
         preferred_model: str = "",
         on_state: Callable[[CodexChatSnapshot], None] | None = None,
         on_selected_model: Callable[[str], None] | None = None,
         callback_dispatcher: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self.client_factory = client_factory
+        self._workspace_root = str(Path(workspace_root).resolve())
         self.on_state = on_state
         self.on_selected_model = on_selected_model
         self._callback_dispatcher = callback_dispatcher or (lambda callback: callback())
@@ -120,6 +128,7 @@ class CodexChatController:
         self._shutdown = False
         self._message_sequence = 0
         self._active_assistant_id = ""
+        self._thread_needs_resume = False
 
     @property
     def snapshot(self) -> CodexChatSnapshot:
@@ -201,6 +210,8 @@ class CodexChatController:
             self._update(error="応答中は新しいチャットを開始できません")
             return
         self._active_assistant_id = ""
+        with self._lock:
+            self._thread_needs_resume = False
         self._update(thread_id="", turn_id="", messages=(), chat_state="idle", error="")
 
     def shutdown(self) -> None:
@@ -230,6 +241,7 @@ class CodexChatController:
                 if force:
                     old_client = self._client
                     self._client = None
+                    self._thread_needs_resume = bool(self._snapshot.thread_id)
                 elif self._client is not None:
                     return
             if old_client is not None:
@@ -263,6 +275,16 @@ class CodexChatController:
             client = self._require_client()
             if relogin:
                 client.account_logout()
+                self._active_assistant_id = ""
+                with self._lock:
+                    self._thread_needs_resume = False
+                self._update(
+                    auth_label="",
+                    chat_state="idle",
+                    thread_id="",
+                    turn_id="",
+                    messages=(),
+                )
             result = client.account_login_start(
                 login_type="chatgpt",
                 use_hosted_login_success_page=True,
@@ -289,6 +311,8 @@ class CodexChatController:
             client = self._require_client()
             client.account_logout()
             self._active_assistant_id = ""
+            with self._lock:
+                self._thread_needs_resume = False
             self._update(
                 auth_state="unauthenticated",
                 auth_label="",
@@ -310,13 +334,20 @@ class CodexChatController:
         account = client.account_read(refresh_token=False)
         authenticated, auth_label = _account_status(account)
         if not authenticated:
+            self._active_assistant_id = ""
+            with self._lock:
+                self._thread_needs_resume = False
             self._update(
                 connection_state="ready",
                 auth_state="unauthenticated",
                 auth_label="",
+                chat_state="idle",
                 models=(),
                 login_url="",
                 login_id="",
+                thread_id="",
+                turn_id="",
+                messages=(),
                 error="",
             )
             return
@@ -355,26 +386,52 @@ class CodexChatController:
             client = self._require_client()
             snapshot = self.snapshot
             thread_id = snapshot.thread_id
+            with self._lock:
+                thread_needs_resume = self._thread_needs_resume
+            thread_options = {
+                "model": model,
+                "cwd": self._workspace_root,
+                "approvalPolicy": "never",
+                "sandbox": "readOnly",
+                "serviceName": "subtitle_edit_bay",
+            }
+            if thread_id and thread_needs_resume:
+                thread_result = client.thread_resume(thread_id, thread_options)
+                thread = thread_result.get("thread", thread_result)
+                resumed_thread_id = str(
+                    thread.get("id", "") if isinstance(thread, Mapping) else ""
+                ) or str(thread_result.get("threadId", ""))
+                if not resumed_thread_id:
+                    raise CodexChatError("Codexチャットを再開できませんでした")
+                thread_id = resumed_thread_id
+                with self._lock:
+                    self._thread_needs_resume = False
+                self._update(thread_id=thread_id)
             if not thread_id:
-                thread_result = client.thread_start(
-                    {
-                        "model": model,
-                        "approvalPolicy": "never",
-                        "sandbox": "readOnly",
-                        "serviceName": "subtitle_edit_bay",
-                    }
-                )
+                thread_result = client.thread_start(thread_options)
                 thread = thread_result.get("thread", thread_result)
                 thread_id = str(
                     thread.get("id", "") if isinstance(thread, Mapping) else ""
                 ) or str(thread_result.get("threadId", ""))
                 if not thread_id:
                     raise CodexChatError("Codexチャットを開始できませんでした")
+                with self._lock:
+                    self._thread_needs_resume = False
                 self._update(thread_id=thread_id)
             response = client.turn_start(
                 thread_id=thread_id,
                 prompt=prompt,
                 model=model,
+                cwd=self._workspace_root,
+                approval_policy="never",
+                sandbox_policy={
+                    "type": "readOnly",
+                    "access": {
+                        "type": "restricted",
+                        "includePlatformDefaults": True,
+                        "readableRoots": [self._workspace_root],
+                    },
+                },
             )
             turn = response.get("turn", response)
             turn_id = str(turn.get("id", "") if isinstance(turn, Mapping) else "") or str(
@@ -474,6 +531,7 @@ class CodexChatController:
     def _on_disconnect(self, _error: Exception) -> None:
         with self._lock:
             self._client = None
+            self._thread_needs_resume = bool(self._snapshot.thread_id)
         self._set_active_assistant_status("error")
         self._update(
             connection_state="disconnected",

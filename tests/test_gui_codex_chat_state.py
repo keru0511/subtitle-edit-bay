@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from pathlib import Path
 
 from src.gui_codex_chat_state import CodexChatController
 
@@ -19,6 +20,8 @@ class FakeChatClient:
         self.authenticated = False
         self.started = False
         self.thread_params: dict[str, object] = {}
+        self.thread_start_count = 0
+        self.resumed_threads: list[tuple[str, dict[str, object]]] = []
         self.turn_params: dict[str, object] = {}
         self.interrupted: tuple[str, str] | None = None
 
@@ -69,8 +72,13 @@ class FakeChatClient:
         }
 
     def thread_start(self, params=None) -> dict[str, object]:
+        self.thread_start_count += 1
         self.thread_params = dict(params or {})
-        return {"thread": {"id": "thread-1"}}
+        return {"thread": {"id": f"thread-{self.thread_start_count}"}}
+
+    def thread_resume(self, thread_id: str, params=None) -> dict[str, object]:
+        self.resumed_threads.append((thread_id, dict(params or {})))
+        return {"thread": {"id": thread_id}}
 
     def turn_start(self, **kwargs) -> dict[str, object]:
         self.turn_params = dict(kwargs)
@@ -131,6 +139,7 @@ class CodexChatControllerTests(unittest.TestCase):
         selected_models: list[str] = []
         controller = CodexChatController(
             client_factory=lambda: client,
+            workspace_root=Path.cwd(),
             preferred_model="removed-model",
             on_selected_model=selected_models.append,
         )
@@ -166,6 +175,7 @@ class CodexChatControllerTests(unittest.TestCase):
         client.authenticated = True
         controller = CodexChatController(
             client_factory=lambda: client,
+            workspace_root=Path.cwd(),
             preferred_model="gpt-fast",
         )
         try:
@@ -177,8 +187,22 @@ class CodexChatControllerTests(unittest.TestCase):
             self.assertEqual(client.thread_params["model"], "gpt-fast")
             self.assertEqual(client.thread_params["approvalPolicy"], "never")
             self.assertEqual(client.thread_params["sandbox"], "readOnly")
+            self.assertEqual(client.thread_params["cwd"], str(Path.cwd().resolve()))
             self.assertEqual(client.turn_params["model"], "gpt-fast")
             self.assertEqual(client.turn_params["prompt"], "こんにちは")
+            self.assertEqual(client.turn_params["approval_policy"], "never")
+            self.assertEqual(client.turn_params["cwd"], str(Path.cwd().resolve()))
+            self.assertEqual(
+                client.turn_params["sandbox_policy"],
+                {
+                    "type": "readOnly",
+                    "access": {
+                        "type": "restricted",
+                        "includePlatformDefaults": True,
+                        "readableRoots": [str(Path.cwd().resolve())],
+                    },
+                },
+            )
             self.assertEqual(controller.snapshot.messages[0]["role"], "user")
             self.assertEqual(controller.snapshot.messages[1]["text"], "返答")
             self.assertEqual(controller.snapshot.messages[1]["status"], "completed")
@@ -192,6 +216,7 @@ class CodexChatControllerTests(unittest.TestCase):
         client.authenticated = True
         controller = CodexChatController(
             client_factory=lambda: client,
+            workspace_root=Path.cwd(),
             preferred_model="gpt-default",
         )
         try:
@@ -205,6 +230,67 @@ class CodexChatControllerTests(unittest.TestCase):
             self.assertEqual(controller.snapshot.connection_state, "disconnected")
             self.assertEqual(controller.snapshot.chat_state, "disconnected")
             self.assertIn("再接続", controller.snapshot.error)
+        finally:
+            controller.shutdown()
+
+    def test_relogin_clears_the_previous_accounts_thread_and_messages(self) -> None:
+        client = FakeChatClient()
+        client.authenticated = True
+        controller = CodexChatController(
+            client_factory=lambda: client,
+            workspace_root=Path.cwd(),
+            preferred_model="gpt-default",
+        )
+        try:
+            controller.connect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            controller.send_message("Account Aの会話")
+            wait_for(lambda: controller.snapshot.chat_state == "idle")
+            self.assertEqual(controller.snapshot.thread_id, "thread-1")
+
+            controller.login(relogin=True)
+            wait_for(lambda: controller.snapshot.auth_state == "login_pending")
+            self.assertEqual(controller.snapshot.thread_id, "")
+            self.assertEqual(controller.snapshot.messages, ())
+
+            client.complete_login()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            controller.send_message("Account Bの会話")
+            wait_for(lambda: controller.snapshot.chat_state == "idle")
+            self.assertEqual(controller.snapshot.thread_id, "thread-2")
+            self.assertEqual(client.thread_start_count, 2)
+            self.assertEqual(len(controller.snapshot.messages), 2)
+        finally:
+            controller.shutdown()
+
+    def test_reconnect_resumes_thread_before_starting_the_next_turn(self) -> None:
+        first_client = FakeChatClient()
+        first_client.authenticated = True
+        second_client = FakeChatClient()
+        second_client.authenticated = True
+        clients = iter((first_client, second_client))
+        controller = CodexChatController(
+            client_factory=lambda: next(clients),
+            workspace_root=Path.cwd(),
+            preferred_model="gpt-default",
+        )
+        try:
+            controller.connect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            controller.send_message("最初の送信")
+            wait_for(lambda: controller.snapshot.chat_state == "idle")
+            self.assertEqual(controller.snapshot.thread_id, "thread-1")
+
+            first_client.disconnect()
+            self.assertEqual(controller.snapshot.connection_state, "disconnected")
+            controller.reconnect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            controller.send_message("再接続後の送信")
+            wait_for(lambda: controller.snapshot.chat_state == "idle")
+
+            self.assertEqual(second_client.resumed_threads[0][0], "thread-1")
+            self.assertEqual(second_client.turn_params["thread_id"], "thread-1")
+            self.assertEqual(second_client.thread_start_count, 0)
         finally:
             controller.shutdown()
 

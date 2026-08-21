@@ -405,12 +405,14 @@ class EditBayBackend(LegacyEditBayBackend):
         self._last_codex_login_url = ""
         self._codex_chat = CodexChatController(
             client_factory=self._create_codex_chat_client,
+            workspace_root=self.workspace_root,
             preferred_model=str(self._settings.get("codex_model", "")),
             on_state=self._on_codex_chat_state,
             on_selected_model=self._persist_codex_model,
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self.aboutToQuit.connect(self._codex_chat.shutdown)
+        self._codex_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
 

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.codex_app_server_client import (
     CodexAppServerClient,
@@ -77,6 +78,26 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertTrue(any(item.method == "command/approval/request" for item in client.notifications))
         finally:
             client.stop()
+
+    def test_unsupported_server_request_is_rejected_instead_of_hanging(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "_send") as send:
+            client._handle_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 901,
+                    "method": "item/tool/requestUserInput",
+                    "params": {"questions": []},
+                }
+            )
+
+        response = send.call_args.args[0]
+        self.assertEqual(response["id"], 901)
+        self.assertEqual(response["error"]["code"], -32601)
+        self.assertIn("not supported", response["error"]["message"])
+        self.assertTrue(
+            any(item.method == "item/tool/requestUserInput" for item in client.notifications)
+        )
 
     def test_start_failure_is_reported_without_opening_a_socket(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

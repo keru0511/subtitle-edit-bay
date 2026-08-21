@@ -29,6 +29,8 @@ Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp
 - ChatGPTのtokenやAPIキーはアプリで受け取らず、Codex CLIの管理する認証フローを使用する
 - 認証URL、token、会話本文を `.gui/runtime_config.json` や通常ログへ書き込まない
 - App Serverとはstdioで接続し、チャットthreadは `approvalPolicy=never`、`sandbox=readOnly` で開始する
+- 各turnの読み取り範囲はアプリのworkspaceルート配下とOSの最小限のplatform defaultに制限し、ユーザーディレクトリ全体を読み取れる状態にしない
 - コマンド実行やファイル変更のapproval要求を自動承認しない
+- 入力要求、MCP elicitationなど未対応のserver requestは明示的に拒否し、応答待ちで停止させない
 
 このパネルはログイン、通常チャット、モデル選択だけを担当します。現在の字幕や再生位置をチャットへ自動添付する操作バーは #239、文字起こしを前提としない機能別ワークフローは #241 の範囲です。字幕への編集提案、差分確認、明示適用は既存の `Codexで編集` パネルが別の責務として扱います。

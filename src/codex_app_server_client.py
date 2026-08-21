@@ -285,6 +285,9 @@ class CodexAppServerClient:
         output_schema: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
         model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox_policy: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "threadId": thread_id,
@@ -296,6 +299,12 @@ class CodexAppServerClient:
             params["context"] = dict(context)
         if model:
             params["model"] = model
+        if cwd is not None:
+            params["cwd"] = str(cwd)
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox_policy is not None:
+            params["sandboxPolicy"] = dict(sandbox_policy)
         return self.request(
             "turn/start",
             params,
@@ -388,14 +397,19 @@ class CodexAppServerClient:
         if not method:
             self._log("ignored app-server message without method", error=True)
             return
-        if message_id is not None and self._is_approval_request(method):
+        if message_id is not None:
+            approval_request = self._is_approval_request(method)
             self._send(
                 {
                     "jsonrpc": "2.0",
                     "id": message_id,
                     "error": {
-                        "code": -32001,
-                        "message": "approval is required and is not auto-approved",
+                        "code": -32001 if approval_request else -32601,
+                        "message": (
+                            "approval is required and is not auto-approved"
+                            if approval_request
+                            else "server request is not supported by this client"
+                        ),
                     },
                 }
             )

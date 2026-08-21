@@ -50,7 +50,9 @@ class SubtitleWorkflowCutTests(unittest.TestCase):
             ):
                 render_project_video(project_path, cut_no_speech=True, audio_normalize=False)
 
-            self.assertEqual(detected, [(str(video), "0:a:0")])
+            self.assertEqual(len(detected), 1)
+            self.assertTrue(Path(detected[0][0]).samefile(video))
+            self.assertEqual(detected[0][1], "0:a:0")
 
     def test_cut_render_uses_project_timeline_and_subtitle_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

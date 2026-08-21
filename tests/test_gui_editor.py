@@ -89,6 +89,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._running = False
         app._status = "保存済み"
         app._stage = "READY"
+        app._transcription_merge_mode = ""
+        app._transcription_preserved_segments = []
+        app._transcription_preserved_project = None
+        app._transcription_preserved_project_path = ""
         app._transcription_generated_project_path = ""
         app._progress = 0.0
         app._log = ""
@@ -209,7 +213,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def _load_project(self, **kwargs: object) -> Path:
         path, _, _ = self._make_project(**kwargs)
-        self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
+        if not any(str(item.get("selector", "")).strip() for item in self.app._audio_tracks):
+            self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
         self._prime_audio_preview_cache()
         self.app.autosave_timer.stop()
@@ -3084,7 +3089,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         generated_path = Path(start_transcription.call_args.args[2])
         self.assertNotEqual(generated_path.resolve(), default_path.resolve())
         self.assertEqual(generated_path.parent.resolve(), output.resolve())
-        self.assertTrue(str(generated_path).startswith(str(output / ".game.subtitle-project.")))
+        self.assertTrue(generated_path.name.startswith(".game.subtitle-project."))
         self.assertEqual(load_project(default_path)["segments"], sentinel["segments"])
 
     def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:

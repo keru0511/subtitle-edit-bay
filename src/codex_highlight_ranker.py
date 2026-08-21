@@ -73,7 +73,12 @@ def rank_highlight_candidates(
     if client is None:
         return HighlightRankingResult(tuple(local), True, "Codex client is unavailable", cache_key)
     try:
-        thread = client.thread_start({"purpose": "highlight-ranking", "revision": revision})
+        thread = client.thread_start(
+            {
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+            }
+        )
         thread_id = str(thread.get("threadId", thread.get("id", "")))
         if not thread_id:
             raise HighlightRankingError("Codex thread id is missing")
@@ -82,6 +87,11 @@ def rank_highlight_candidates(
             prompt="候補の意味的な見どころ度を評価し、候補IDごとに返してください",
             output_schema=RANKING_OUTPUT_SCHEMA,
             context=context,
+            approval_policy="never",
+            sandbox_policy={
+                "type": "readOnly",
+                "networkAccess": False,
+            },
         )
         raw = response.get("output", response.get("ranking", response))
         if isinstance(raw, str):

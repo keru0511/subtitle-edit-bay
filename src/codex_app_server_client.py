@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import threading
+from collections import deque
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 DEFAULT_CODEX_COMMAND = ("codex", "app-server", "--listen", "stdio://")
+MAX_RETAINED_NOTIFICATIONS = 512
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
     re.compile(
@@ -85,6 +87,7 @@ class CodexAppServerClient:
         environment: Mapping[str, str] | None = None,
         request_timeout: float = 30.0,
         notification_callback: Callable[[CodexNotification], None] | None = None,
+        disconnect_callback: Callable[[Exception], None] | None = None,
         log_callback: Callable[[str], None] | None = None,
     ) -> None:
         if not command:
@@ -94,6 +97,7 @@ class CodexAppServerClient:
         self.environment = dict(environment or {})
         self.request_timeout = max(0.1, float(request_timeout))
         self.notification_callback = notification_callback
+        self.disconnect_callback = disconnect_callback
         self.log_callback = log_callback
         self._process: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
@@ -103,7 +107,9 @@ class CodexAppServerClient:
         self._next_request_id = 1
         self._initialized = False
         self._stopping = False
-        self._notifications: list[CodexNotification] = []
+        self._notifications: deque[CodexNotification] = deque(
+            maxlen=MAX_RETAINED_NOTIFICATIONS
+        )
 
     @property
     def is_running(self) -> bool:
@@ -176,6 +182,7 @@ class CodexAppServerClient:
         process = self._process
         if process is None:
             return
+        reader_thread = self._reader_thread
         self._stopping = True
         self._initialized = False
         self._fail_pending(CodexAppServerError("app-server stopped"))
@@ -193,6 +200,10 @@ class CodexAppServerClient:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=1.0)
+        if reader_thread is not None and reader_thread is not threading.current_thread():
+            reader_thread.join(timeout=1.0)
+        if process.stdout is not None:
+            process.stdout.close()
         self._process = None
         self._reader_thread = None
 
@@ -232,41 +243,115 @@ class CodexAppServerClient:
             raise CodexAppServerError("app-server is not running")
         self._send({"jsonrpc": "2.0", "method": method, "params": dict(params or {})})
 
-    def account_read(self) -> dict[str, Any]:
-        return self.request("account/read")
+    def account_read(self, *, refresh_token: bool = False) -> dict[str, Any]:
+        return self.request("account/read", {"refreshToken": bool(refresh_token)})
 
-    def account_login_start(self, *, intent: str = "login") -> dict[str, Any]:
-        return self.request("account/login/start", {"intent": intent})
+    def account_login_start(
+        self,
+        *,
+        login_type: str = "chatgpt",
+        use_hosted_login_success_page: bool = True,
+        app_brand: str = "chatgpt",
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"type": login_type}
+        if login_type == "chatgpt":
+            params.update(
+                {
+                    "useHostedLoginSuccessPage": bool(use_hosted_login_success_page),
+                    "appBrand": app_brand,
+                }
+            )
+        return self.request("account/login/start", params)
 
     def account_login_cancel(self, login_id: str) -> dict[str, Any]:
         return self.request("account/login/cancel", {"loginId": login_id})
 
+    def account_logout(self) -> dict[str, Any]:
+        return self.request("account/logout")
+
+    def model_list(
+        self,
+        *,
+        limit: int = 100,
+        include_hidden: bool = False,
+    ) -> dict[str, Any]:
+        return self.request(
+            "model/list",
+            {"limit": max(1, int(limit)), "includeHidden": bool(include_hidden)},
+        )
+
     def thread_start(self, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return self.request("thread/start", params)
 
-    def thread_resume(self, thread_id: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return self.request("thread/resume", {"threadId": thread_id, **dict(params or {})})
+    def thread_resume(
+        self,
+        thread_id: str,
+        *,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"threadId": thread_id}
+        if model:
+            params["model"] = model
+        if cwd is not None:
+            params["cwd"] = str(cwd)
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox:
+            params["sandbox"] = sandbox
+        return self.request("thread/resume", params)
 
     def turn_start(
         self,
         *,
         thread_id: str,
         prompt: str,
-        output_schema: Mapping[str, Any],
+        output_schema: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox_policy: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": prompt}],
+        }
+        if output_schema is not None:
+            params["outputSchema"] = dict(output_schema)
+        if context:
+            params["input"].append(
+                {
+                    "type": "text",
+                    "text": "参照コンテキスト(JSON):\n"
+                    + json.dumps(
+                        dict(context),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                }
+            )
+        if model:
+            params["model"] = model
+        if cwd is not None:
+            params["cwd"] = str(cwd)
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox_policy is not None:
+            params["sandboxPolicy"] = dict(sandbox_policy)
         return self.request(
             "turn/start",
-            {
-                "threadId": thread_id,
-                "input": prompt,
-                "outputSchema": dict(output_schema),
-                "context": dict(context or {}),
-            },
+            params,
         )
 
-    def turn_interrupt(self, turn_id: str) -> dict[str, Any]:
-        return self.request("turn/interrupt", {"turnId": turn_id})
+    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, Any]:
+        return self.request(
+            "turn/interrupt",
+            {"threadId": thread_id, "turnId": turn_id},
+        )
 
     def _reserve_request(self) -> int:
         with self._state_lock:
@@ -307,7 +392,17 @@ class CodexAppServerClient:
         finally:
             if not self._stopping:
                 self._initialized = False
-                self._fail_pending(CodexAppServerError("app-server exited unexpectedly"))
+                error = CodexAppServerError("app-server exited unexpectedly")
+                self._fail_pending(error)
+                self.stop()
+                if self.disconnect_callback is not None:
+                    try:
+                        self.disconnect_callback(error)
+                    except Exception as callback_error:
+                        self._log(
+                            f"disconnect callback failed: {_redact_log(callback_error)}",
+                            error=True,
+                        )
 
     def _handle_message(self, message: Mapping[str, Any]) -> None:
         message_id = message.get("id")
@@ -340,14 +435,19 @@ class CodexAppServerClient:
         if not method:
             self._log("ignored app-server message without method", error=True)
             return
-        if message_id is not None and self._is_approval_request(method):
+        if message_id is not None:
+            approval_request = self._is_approval_request(method)
             self._send(
                 {
                     "jsonrpc": "2.0",
                     "id": message_id,
                     "error": {
-                        "code": -32001,
-                        "message": "approval is required and is not auto-approved",
+                        "code": -32001 if approval_request else -32601,
+                        "message": (
+                            "approval is required and is not auto-approved"
+                            if approval_request
+                            else "server request is not supported by this client"
+                        ),
                     },
                 }
             )

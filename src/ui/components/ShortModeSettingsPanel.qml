@@ -9,13 +9,31 @@ ColumnLayout {
     spacing: 10
 
     property var appBackend: null
+    property var fitOptions: [
+        { "label": "画面いっぱい", "value": "cover" },
+        { "label": "全体を表示", "value": "contain" },
+        { "label": "ぼかし背景", "value": "blur" }
+    ]
+    property var transitionOptions: [
+        { "label": "クロスフェード", "value": "crossfade" },
+        { "label": "フェード", "value": "fade" },
+        { "label": "カット", "value": "cut" }
+    ]
+
+    function indexForValue(options, value) {
+        for (var index = 0; index < options.length; index += 1) {
+            if (options[index].value === value)
+                return index
+        }
+        return 0
+    }
 
     function refresh() {
         if (!settingsRoot.appBackend) return
         var s = settingsRoot.appBackend.shortVideoSettings
-        fitCombo.currentIndex = fitCombo.model.indexOf(s.global_fit)
+        fitCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.fitOptions, s.global_fit)
         bgColorField.text = s.global_background_color
-        transitionCombo.currentIndex = transitionCombo.model.indexOf(s.transition.type)
+        transitionCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.transitionOptions, s.transition.type)
         transitionDuration.value = s.transition.duration
         scaleSpin.value = s.subtitle_scale_percent
 
@@ -39,7 +57,7 @@ ColumnLayout {
     }
 
     Text {
-        text: "グローバル設定"
+        text: "ショート全体の設定"
         color: "#E8EFEA"
         font.family: "Yu Gothic UI"
         font.pixelSize: 14
@@ -52,10 +70,12 @@ ColumnLayout {
         ComboBox {
             id: fitCombo
             objectName: "shortModeGlobalFitCombo"
-            model: ["cover", "contain", "blur"]
+            model: settingsRoot.fitOptions
+            textRole: "label"
+            valueRole: "value"
             onActivated: {
                 if (settingsRoot.appBackend) {
-                    settingsRoot.appBackend.setShortVideoGlobalFit(fitCombo.currentText)
+                    settingsRoot.appBackend.setShortVideoGlobalFit(fitCombo.currentValue)
                 }
             }
         }
@@ -108,10 +128,12 @@ ColumnLayout {
         ComboBox {
             id: transitionCombo
             objectName: "shortModeTransitionCombo"
-            model: ["crossfade", "fade", "cut"]
+            model: settingsRoot.transitionOptions
+            textRole: "label"
+            valueRole: "value"
             onActivated: {
                 if (settingsRoot.appBackend) {
-                    settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentText, transitionDuration.value)
+                    settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, transitionDuration.value)
                 }
             }
         }
@@ -164,7 +186,7 @@ ColumnLayout {
         contentItem: Text {
             id: bgmFileLabel
             objectName: "shortModeBgmFileLabel"
-            text: "BGM ファイルを選択"
+            text: "BGMを選択"
             color: "#F4F1E8"
             elide: Text.ElideMiddle
             verticalAlignment: Text.AlignVCenter
@@ -182,10 +204,10 @@ ColumnLayout {
         columnSpacing: 10
         rowSpacing: 6
 
-        Text { text: "IN"; color: "#F4F1E8" }
-        Text { text: "OUT"; color: "#F4F1E8" }
-        Text { text: "START"; color: "#F4F1E8" }
-        Text { text: ""; color: "#F4F1E8" }
+        Text { text: "開始位置"; color: "#F4F1E8" }
+        Text { text: "終了位置"; color: "#F4F1E8" }
+        Text { text: "動画内の開始"; color: "#F4F1E8" }
+        Text { text: "音量"; color: "#F4F1E8" }
 
         TimeField {
             id: bgmIn
@@ -210,7 +232,6 @@ ColumnLayout {
         }
         ColumnLayout {
             spacing: 2
-            Text { text: "VOLUME"; color: "#F4F1E8"; font.pixelSize: 9 }
             Slider {
                 id: bgmVolumeSlider
                 objectName: "shortModeBgmVolumeSlider"

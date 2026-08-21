@@ -141,6 +141,75 @@ ApplicationWindow {
         return value === undefined || value === null ? fallback : value
     }
 
+    function userFacingStateLabel(value) {
+        var text = String(value || "")
+        if (text.length === 0)
+            return ""
+        var labels = {
+            "starting": "準備中",
+            "authenticating": "接続中",
+            "running": "処理中",
+            "cancelling": "キャンセル中",
+            "cancelled": "キャンセル済み",
+            "idle": "待機中",
+            "ready": "準備完了",
+            "complete": "完了",
+            "completed": "完了",
+            "success": "完了",
+            "error": "エラー",
+            "disabled": "利用できません"
+        }
+        var key = text.toLowerCase()
+        if (labels[key] !== undefined)
+            return labels[key]
+        return /[\u3040-\u30ff\u3400-\u9fff]/.test(text) ? text : "処理状況を確認中"
+    }
+
+    function userFacingStatusLabel(stage, status) {
+        var stageLabels = {
+            "READY": "準備完了",
+            "STARTING": "準備中",
+            "CHECK": "確認中",
+            "BUSY": "処理中",
+            "TRANSCRIBE": "文字起こし中",
+            "COMPLETE": "完了",
+            "ERROR": "エラー",
+            "UPDATE": "更新中",
+            "RENDER": "書き出し中"
+        }
+        var stageLabel = stageLabels[String(stage || "").toUpperCase()] || ""
+        var statusLabel = root.userFacingStateLabel(status)
+        if (!stageLabel)
+            return statusLabel
+        if (!statusLabel || statusLabel === stageLabel || statusLabel === "処理状況を確認中")
+            return stageLabel
+        return stageLabel + " · " + statusLabel
+    }
+
+    function alignmentStatusLabel(value) {
+        var labels = {
+            "未解析": "未解析",
+            "running": "調整中",
+            "success": "調整完了",
+            "completed": "調整完了",
+            "error": "調整に失敗しました"
+        }
+        var text = String(value || "")
+        var key = text.toLowerCase()
+        if (labels[key] !== undefined)
+            return labels[key]
+        return /^[\u3040-\u30ff\u3400-\u9fff]/.test(text) ? text : "結果を確認中"
+    }
+
+    function formatBytes(value) {
+        var bytes = Number(value || 0)
+        if (!isFinite(bytes) || bytes <= 0)
+            return "0 KB"
+        if (bytes < 1024 * 1024)
+            return (bytes / 1024).toFixed(1) + " KB"
+        return (bytes / (1024 * 1024)).toFixed(1) + " MB"
+    }
+
     function syncSettings() {
         var value = root.appBackend.settings
         qualitySpin.value = Number(coalesceSetting(value.nvenc_cq, 18))
@@ -850,24 +919,8 @@ ApplicationWindow {
                     font.pixelSize: 10
                     elide: Text.ElideRight
                 }
-                Text {
-                    Layout.preferredWidth: 330
-                    text: "実行ファイル: " + root.appBackend.applicationInfo.executablePath
-                    color: root.textMuted
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 8
-                    elide: Text.ElideMiddle
-                }
-                Text {
-                    Layout.preferredWidth: 330
-                    text: "配置場所: " + root.appBackend.applicationInfo.applicationPath
-                    color: root.textMuted
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 8
-                    elide: Text.ElideMiddle
-                }
             }
-            SmallButton { objectName: "copyApplicationInfoButton"; text: "診断情報をコピー"; enabled: !root.appBackend.running; onClicked: root.appBackend.copyApplicationInfoToClipboard() }
+            SmallButton { objectName: "copyApplicationInfoButton"; text: "トラブルシューティング情報をコピー"; enabled: !root.appBackend.running; onClicked: root.appBackend.copyApplicationInfoToClipboard() }
             SmallButton { objectName: "checkForUpdatesButton"; text: "更新確認"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: root.appBackend.checkForUpdates() }
             SmallButton { objectName: "projectOpenButton"; text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
             SmallButton { objectName: "sourceSetupButton"; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
@@ -902,7 +955,7 @@ ApplicationWindow {
             }
             Text {
                 visible: root.appBackend.updatePackageSize > 0
-                text: "パッケージサイズ: " + root.appBackend.updatePackageSize + " bytes"
+                text: "ダウンロードサイズ: " + root.formatBytes(root.appBackend.updatePackageSize)
                 color: root.textMuted
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 11
@@ -987,12 +1040,12 @@ ApplicationWindow {
                 RowLayout { Layout.fillWidth: true
                     TimeField { id: manualOffsetField; Layout.fillWidth: true; text: "0.000"; validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 } }
                     SmallButton {
-                        text: root.appBackend.alignmentBusy ? "解析中" : "同期解析"
+                        text: root.appBackend.alignmentBusy ? "調整中" : "音声のずれを自動調整"
                         enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
                         onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
                     }
                 }
-                Text { Layout.fillWidth: true; text: root.appBackend.alignmentResult.status + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "s" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
+                Text { Layout.fillWidth: true; text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status) + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
             }
         }
 
@@ -1114,7 +1167,7 @@ ApplicationWindow {
                             }
                         }
                         RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3 } Text { text: "px"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "音量サイズ比率"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "字幕の音量バランス"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
                         RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
                         RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
                         RowLayout { Layout.fillWidth: true; Text { text: "最短表示時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
@@ -1307,7 +1360,7 @@ ApplicationWindow {
             RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
             PanelTitle { text: "出力先フォルダ" }
             RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "再リンク"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "素材を再指定"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
         }
     }
 
@@ -1554,14 +1607,14 @@ ApplicationWindow {
                         Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                         Text {
                             objectName: "mixerAudioPreviewCacheSummary"
-                            text: "Cache: " + root.appBackend.audioPreviewCacheSummary
+                            text: root.appBackend.audioPreviewPreparing ? "プレビューを準備中" : "プレビュー準備済み"
                             color: root.textMuted
                             font.family: "Cascadia Mono"
                             font.pixelSize: 9
                         }
                         SmallButton {
                             objectName: "mixerClearAudioPreviewCacheButton"
-                            text: "キャッシュを削除"
+                            text: "プレビューを作り直す"
                             enabled: !root.appBackend.running
                             onClicked: root.appBackend.clearAudioPreviewCache()
                         }
@@ -1641,7 +1694,7 @@ ApplicationWindow {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                PanelTitle { text: "SEQUENCE" }
+                                PanelTitle { text: "プレビュー" }
                                 Text { text: root.appBackend.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                                 Item { Layout.fillWidth: true }
                                 Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
@@ -1676,10 +1729,10 @@ ApplicationWindow {
                             spacing: 10
                             RowLayout {
                                 Layout.fillWidth: true
-                                PanelTitle { text: "INPUT CHANNELS" }
-                                Text { text: root.appBackend.audioMixerChannels.length + " CH"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 10 }
+                                PanelTitle { text: "音声トラック" }
+                                Text { text: root.appBackend.audioMixerChannels.length + "トラック"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
                                 Item { Layout.fillWidth: true }
-                                Text { text: "フェーダー: −60〜+6 dB  /  M: ミュート  /  S: ソロ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Text { text: "音量: −60〜+6 dB / ミュート / ソロ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                             }
                             ListView {
                                 id: mixerChannelList
@@ -1715,16 +1768,16 @@ ApplicationWindow {
                                         spacing: 7
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            Text { text: "CH " + String(mixerStrip.index + 1).padStart(2, "0"); color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 10; font.weight: Font.Bold }
+                                            Text { text: "トラック " + String(mixerStrip.index + 1).padStart(2, "0"); color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold }
                                             Item { Layout.fillWidth: true }
                                             Rectangle {
                                                 Layout.preferredWidth: 62; Layout.preferredHeight: 20; radius: 4
                                                 color: mixerStrip.modelData.kind === "external" ? "#253225" : "#272C30"
-                                                Text { anchors.centerIn: parent; text: mixerStrip.modelData.kind === "external" ? "FILE" : "VIDEO"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; font.weight: Font.Bold }
+                                                Text { anchors.centerIn: parent; text: mixerStrip.modelData.kind === "external" ? "外部音声" : "動画音声"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8; font.weight: Font.Bold }
                                             }
                                         }
                                         Text { Layout.fillWidth: true; text: mixerStrip.modelData.label; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle }
-                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.kind === "external" ? "同期オフセット適用" : mixerStrip.modelData.selector; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.kind === "external" ? "外部音声を使用" : "動画音声を使用"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
                                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
 
                                         Item {
@@ -1847,7 +1900,7 @@ ApplicationWindow {
                                         CheckBox {
                                             objectName: "mixerChannelEnabledCheck"
                                             Layout.alignment: Qt.AlignHCenter
-                                            text: "INPUT ON"
+                                            text: "使用する"
                                             checked: Boolean(mixerStrip.modelData.enabled)
                                             enabled: !root.appBackend.running
                                             onToggled: mixerContent.updateMixerChannel(mixerStrip.index, {"enabled": checked})
@@ -1859,11 +1912,11 @@ ApplicationWindow {
                             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: "INPUT ON・ミュート・ソロ・フェーダーを出力プレビューへ即時反映します。同期後に1本のマスターバスへ合成し、−1.5 dBFSリミッターを適用します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                                Text { text: "MASTER"; color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 9; font.weight: Font.Bold }
+                                Text { Layout.fillWidth: true; text: "使用するトラック、ミュート、ソロ、音量をプレビューへ反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { text: "全体の音量"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.weight: Font.Bold }
                                 Rectangle { objectName: "mixerMasterMeter"; Layout.preferredWidth: 120; Layout.preferredHeight: 9; radius: 4; color: "#070908"; border.color: root.border; Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 2; width: Math.max(0, (parent.width - 4) * Number(root.appBackend.audioMasterLevel || 0)); radius: 2; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.acid; Behavior on width { NumberAnimation { duration: 45 } } } }
-                                Text { objectName: "mixerLimiterReduction"; text: "GR " + Number(root.appBackend.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; Layout.preferredWidth: 72 }
-                                Text { text: "OUTPUT: AAC / 48 kHz"; color: root.acid; font.family: "Cascadia Mono"; font.pixelSize: 9 }
+                                Text { objectName: "mixerLimiterReduction"; text: "自動調整 " + Number(root.appBackend.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; Layout.preferredWidth: 100 }
+                                Text { text: "音声出力: AAC / 48 kHz"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                             }
                         }
                     }
@@ -1916,14 +1969,14 @@ ApplicationWindow {
                 Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
                 Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.appBackend.stage + " · " + root.appBackend.status; color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
+                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
                 SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
                 SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
                 SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(editorPlayer.position / 1000) }
                 SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
                 SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
-                SmallButton { objectName: "buildAssButton"; text: "ASSを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
                 Button {
                     id: editorRenderButton
                     objectName: "editorRenderButton"

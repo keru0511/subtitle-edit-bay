@@ -60,6 +60,29 @@ Rectangle {
         return backend && ["starting", "authenticating", "running"].indexOf(backend.codexState) >= 0
     }
 
+    function stateLabel(value) {
+        var labels = {
+            "disabled": "利用できません",
+            "starting": "準備中",
+            "authenticating": "接続中",
+            "running": "編集中",
+            "error": "エラー",
+            "idle": "待機中"
+        }
+        return labels[String(value || "")] || "状態を確認中"
+    }
+
+    function operationLabel(value) {
+        var labels = {
+            "update_segment": "字幕を更新",
+            "add_segment": "字幕を追加",
+            "delete_segment": "字幕を削除",
+            "split_segment": "字幕を分割",
+            "merge_segments": "字幕を結合"
+        }
+        return labels[String(value || "")] || "字幕を編集"
+    }
+
     onProposalDataChanged: syncSelectionState()
     Component.onCompleted: syncSelectionState()
 
@@ -79,9 +102,9 @@ Rectangle {
             }
             Text {
                 Layout.fillWidth: true
-                text: backend ? backend.codexState : "disabled"
+                text: panel.stateLabel(backend ? backend.codexState : "disabled")
                 color: backend && backend.codexState === "error" ? "#F1A39A" : "#AEBEB3"
-                font.family: "Cascadia Mono"
+                font.family: "Yu Gothic UI"
                 font.pixelSize: 9
                 horizontalAlignment: Text.AlignRight
             }
@@ -104,7 +127,14 @@ Rectangle {
                     id: scopeBox
                     objectName: "codexScopeCombo"
                     Layout.preferredWidth: 105
-                    model: backend ? backend.codexScopes : ["selected", "current", "time_range", "all"]
+                    model: [
+                        { "label": "選択中の字幕", "value": "selected" },
+                        { "label": "再生位置の字幕", "value": "current" },
+                        { "label": "時間範囲", "value": "time_range" },
+                        { "label": "すべての字幕", "value": "all" }
+                    ]
+                    textRole: "label"
+                    valueRole: "value"
                 }
                 TextField {
                     id: rangeStartInput
@@ -137,13 +167,13 @@ Rectangle {
                 Layout.fillWidth: true
                 Button {
                     objectName: "codexSendButton"
-                    text: backend && backend.codexState === "error" ? "再試行" : "送信"
+                    text: backend && backend.codexState === "error" ? "もう一度作成" : "提案を作成"
                     enabled: backend && !panel.codexRunning() && promptInput.text.trim().length > 0
                     onClicked: {
                         backend.setCodexCurrentTime(panel.currentTime)
                         backend.startCodexEdit(
                             promptInput.text,
-                            scopeBox.currentText,
+                            scopeBox.currentValue,
                             Number(rangeStartInput.text || 0),
                             Number(rangeEndInput.text || 0)
                         )
@@ -192,8 +222,8 @@ Rectangle {
                             checked: panel.isOperationSelected(operationId)
                             onToggled: panel.setOperationSelected(operationId, checked)
                         }
-                        Text { text: modelData.type || "operation"; color: "#E8EFEA"; font.pixelSize: 9 }
-                        Text { Layout.fillWidth: true; text: modelData.reason || modelData.segment_id || ""; color: "#AEBEB3"; elide: Text.ElideRight; font.pixelSize: 9 }
+                        Text { text: panel.operationLabel(modelData.type); color: "#E8EFEA"; font.pixelSize: 9 }
+                        Text { Layout.fillWidth: true; text: modelData.reason || "字幕の変更を提案"; color: "#AEBEB3"; elide: Text.ElideRight; font.pixelSize: 9 }
                     }
                 }
             }

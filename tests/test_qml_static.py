@@ -291,10 +291,11 @@ class QmlStaticTests(unittest.TestCase):
 
     def test_transcription_dictionary_opens_as_dedicated_screen(self) -> None:
         qml = read_workflow_qml()
+        action_bar = read_component_qml("ContextActionBar.qml")
         wrapper = read_workflow_wrapper_qml()
 
-        self.assertIn('objectName: "transcriptionDictionaryOpenButton"', qml)
-        self.assertIn("onClicked: root.openDictionaryScreen()", qml)
+        self.assertIn('objectName: "transcriptionDictionaryOpenButton"', action_bar)
+        self.assertIn("onDictionaryRequested: root.openDictionaryScreen()", qml)
         self.assertIn("property bool dictionaryMode: false", qml)
         self.assertIn("!root.editorMode && !root.mixerMode && !root.dictionaryMode", qml)
         self.assertIn('objectName: "transcriptionDictionaryPage"', wrapper)
@@ -313,7 +314,7 @@ class QmlStaticTests(unittest.TestCase):
         qml = read_workflow_qml()
         mixer_block = qml.split("id: mixerContentComponent", 1)[1].split("id: editorPage", 1)[0]
 
-        self.assertIn('objectName: "audioMixerOpenButton"', qml)
+        self.assertIn('objectName: "audioMixerOpenButton"', read_component_qml("ContextActionBar.qml"))
         self.assertIn('objectName: "mixerPage"', qml)
         self.assertIn('objectName: "mixerChannelList"', qml)
         self.assertIn('objectName: "mixerChannelFader"', qml)
@@ -388,7 +389,8 @@ class QmlStaticTests(unittest.TestCase):
         overlay_qml = read_component_qml("SubtitleOverlay.qml")
 
         self.assertIn('objectName: "fontSizeSpin"; from: 10; to: 900; value: 100', qml)
-        self.assertIn("root.defaultSubtitleFontSize * fontSizeSpin.value / 100", qml)
+        self.assertIn("root.defaultSubtitleFontSize * root.subtitleFontSizePercent / 100", qml)
+        self.assertIn("onValueChanged: root.subtitleFontSizePercent = value", qml)
         self.assertIn('readonly property int selectedSubtitleFontSize', qml)
         self.assertIn('baseFontSize: root.selectedSubtitleFontSize', qml)
         self.assertIn('property int baseFontSize: 50', overlay_qml)
@@ -428,6 +430,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "outlineColorDialog"', qml)
         self.assertIn('objectName: "outlineColorButton"', qml)
         self.assertIn('objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3', qml)
+        self.assertIn("onValueChanged: root.subtitleOutlineThickness = value", qml)
         self.assertIn('"subtitle_outline_color": root.selectedSubtitleOutlineColor', qml)
         self.assertIn('"subtitle_outline_thickness": root.selectedSubtitleOutlineThickness', qml)
         self.assertIn('outlineThickness: root.selectedSubtitleOutlineThickness', qml)

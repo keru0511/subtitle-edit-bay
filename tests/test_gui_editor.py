@@ -2805,6 +2805,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_video_only_project_explains_disabled_transcription(self) -> None:
         self._load_project(segments=[])
+        self._set_ready_sources()
         self.app._project["speakers"] = []
         self.app._project["audio_sources"] = []
         self.app._speakers = []

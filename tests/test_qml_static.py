@@ -18,6 +18,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "SmallButton.qml",
     COMPONENTS_ROOT / "CompactSpinBox.qml",
     COMPONENTS_ROOT / "TimeField.qml",
+    COMPONENTS_ROOT / "ProcessingProgressPanel.qml",
 )
 
 
@@ -78,6 +79,19 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("SpinBox {", read_component_qml("CompactSpinBox.qml"))
         self.assertIn("TextField {", read_component_qml("TimeField.qml"))
         self.assertIn('font.family: "Yu Gothic UI"', read_component_qml("PanelTitle.qml"))
+
+    def test_processing_progress_panel_exposes_steps_percent_and_stop(self) -> None:
+        qml = read_workflow_qml()
+        panel = read_component_qml("ProcessingProgressPanel.qml")
+
+        self.assertIn('objectName: "processingProgressPanel"', qml)
+        self.assertIn('objectName: "processingProgressBar"', panel)
+        self.assertIn('objectName: "processingProgressPercent"', panel)
+        self.assertIn('objectName: "processingProgressStepList"', panel)
+        self.assertIn('objectName: "processingProgressStopButton"', panel)
+        self.assertIn("backend.progressSteps", panel)
+        self.assertIn("backend.progressCurrentStepDisplay", panel)
+        self.assertIn("backend.cancelProcessing()", panel)
         self.assertIn('font.family: "Cascadia Mono"', read_component_qml("CompactSpinBox.qml"))
         self.assertIn("DoubleValidator", read_component_qml("TimeField.qml"))
 

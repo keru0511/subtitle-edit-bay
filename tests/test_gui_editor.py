@@ -1324,6 +1324,38 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
 
+    def test_processing_progress_gui_exposes_job_sequence_and_terminal_states(self) -> None:
+        for job, step in (("transcribe", "alignment"), ("render", "encode"), ("render_short", "clips")):
+            with self.subTest(job=job), patch.object(self.app, "_start_process"):
+                self.app._start_command(["worker"], job, "処理を開始しています")
+                self.assertTrue(self.app.progressVisible)
+                self.assertEqual(self.app.activeJob, job)
+                self.app._update_stage(
+                    f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
+                )
+                self.assertEqual(self.app.progressCurrentStep, step)
+                self.assertGreaterEqual(self.app.progressPercent, 0)
+                self.app._finish_processing_progress("completed")
+                self.assertEqual(self.app.progressPercent, 100)
+
+                self.app._processing_progress.start(job)
+                self.app._update_stage(
+                    f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
+                )
+                before = self.app.progressPercent
+                self.app._finish_processing_progress("cancelled")
+                self.assertEqual(self.app.progressPercent, before)
+                self.assertEqual(self.app.progressState, "cancelled")
+
+                self.app._processing_progress.start(job)
+                self.app._update_stage(
+                    f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
+                )
+                before = self.app.progressPercent
+                self.app._finish_processing_progress("error")
+                self.assertEqual(self.app.progressPercent, before)
+                self.assertEqual(self.app.progressState, "error")
+
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
         output = self.root / "output"
         transcript_directory = output / "transcripts"

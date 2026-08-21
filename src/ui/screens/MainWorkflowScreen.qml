@@ -2237,6 +2237,34 @@ ApplicationWindow {
     }
 
     Rectangle {
+        id: processingProgressOverlay
+        objectName: "processingProgressOverlay"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 12
+        z: 700
+        color: "transparent"
+        visible: root.appBackend && root.appBackend.progressVisible
+        height: progressPanel.implicitHeight
+
+        ProcessingProgressPanel {
+            id: progressPanel
+            objectName: "processingProgressPanel"
+            anchors.fill: parent
+            backend: root.appBackend
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            warningColor: root.amber
+            errorColor: root.danger
+        }
+    }
+
+    Rectangle {
         anchors.fill: parent
         anchors.margins: 22
         z: 999

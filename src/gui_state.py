@@ -17,6 +17,7 @@ def build_gui_transcribe_command(
     video_audio_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
     overwrite_project: bool = False,
+    project_path: str | None = None,
 ) -> list[str]:
     if not video or not output_dir or (not audio_files and not video_audio_track):
         raise ValueError("video, either audio_files/video_audio_track, and output_dir are required")
@@ -26,6 +27,8 @@ def build_gui_transcribe_command(
     if video_audio_track:
         command.extend(["--video-audio-track", video_audio_track])
     command.extend(["--output-dir", output_dir])
+    if project_path:
+        command.extend(["--project-path", project_path])
     if reference_audio:
         command.extend(["--reference-audio", reference_audio])
     if reference_track:
@@ -54,6 +57,7 @@ def build_gui_command(
     reference_track: str | None = None,
     alignment_offset_adjustment: float = 0.0,
     overwrite_project: bool = False,
+    project_path: str | None = None,
 ) -> list[str]:
     """Build the GUI transcription command using the editable workflow path."""
     return build_gui_transcribe_command(
@@ -65,6 +69,7 @@ def build_gui_command(
         reference_track=reference_track,
         alignment_offset_adjustment=alignment_offset_adjustment,
         overwrite_project=overwrite_project,
+        project_path=project_path,
     )
 
 

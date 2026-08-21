@@ -251,6 +251,7 @@ def transcribe_to_project_with_context(
     video_path: str,
     audio_files: list[str],
     output_dir: str,
+    project_path: str | None = None,
     reference_audio: str | None = None,
     reference_track: str | None = None,
     video_audio_track: str | None = None,
@@ -300,10 +301,14 @@ def transcribe_to_project_with_context(
     if reference_path is None:
         reference_path = resolved_audio[0]
 
-    project_path = derive_project_path(video_path, output)
-    if project_path.exists() and not overwrite_project:
+    editable_project_path = (
+        Path(project_path).expanduser().resolve()
+        if project_path
+        else derive_project_path(video_path, output)
+    )
+    if editable_project_path.exists() and not overwrite_project:
         raise SystemExit(
-            f"Editable project already exists: {project_path}. "
+            f"Editable project already exists: {editable_project_path}. "
             "Move it or pass --overwrite-project to replace it explicitly."
         )
 
@@ -411,7 +416,7 @@ def transcribe_to_project_with_context(
     except (OSError, subprocess.SubprocessError, ValueError):
         video_tracks = None
     reconcile_audio_mix(project, video_tracks)
-    save_project(project_path, project)
+    save_project(editable_project_path, project)
     emit_progress_event("project", phase="complete", progress=1.0)
-    log_progress(f"Project ready: {project_path}")
-    return project_path
+    log_progress(f"Project ready: {editable_project_path}")
+    return editable_project_path

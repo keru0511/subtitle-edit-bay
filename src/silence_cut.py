@@ -28,17 +28,27 @@ PIX_FMT = "yuv420p"
 _FILTER_SCRIPT_THRESHOLD = 8192
 
 
-def build_silencedetect_command(input_path: str, noise: str = "-35dB", duration: float = 0.4) -> list[str]:
-    return [
+def build_silencedetect_command(
+    input_path: str,
+    noise: str = "-35dB",
+    duration: float = 0.4,
+    audio_track: str | None = None,
+) -> list[str]:
+    command = [
         "ffmpeg",
         "-i",
         input_path,
+    ]
+    if audio_track:
+        command.extend(["-map", audio_track])
+    command.extend([
         "-af",
         f"silencedetect=noise={noise}:d={duration}",
         "-f",
         "null",
         "-",
-    ]
+    ])
+    return command
 
 
 def parse_silencedetect_output(log_text: str, media_duration: float | None = None) -> list[tuple[float, float]]:
@@ -351,8 +361,14 @@ def detect_silence(
     noise: str = "-35dB",
     duration: float = 0.4,
     media_duration: float | None = None,
+    audio_track: str | None = None,
 ) -> list[tuple[float, float]]:
-    command = build_silencedetect_command(input_path, noise=noise, duration=duration)
+    command = build_silencedetect_command(
+        input_path,
+        noise=noise,
+        duration=duration,
+        audio_track=audio_track,
+    )
     result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     return parse_silencedetect_output(
         (result.stderr or "") + "\n" + (result.stdout or ""),
@@ -360,13 +376,19 @@ def detect_silence(
     )
 
 
-def detect_speech_ranges(input_path: str, noise: str = "-40dB", duration: float = 0.1) -> list[tuple[float, float]]:
+def detect_speech_ranges(
+    input_path: str,
+    noise: str = "-40dB",
+    duration: float = 0.1,
+    audio_track: str | None = None,
+) -> list[tuple[float, float]]:
     media_duration = probe_media_duration(input_path)
     silence_ranges = detect_silence(
         input_path,
         noise=noise,
         duration=duration,
         media_duration=media_duration,
+        audio_track=audio_track,
     )
     return invert_ranges(media_duration, silence_ranges)
 

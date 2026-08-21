@@ -487,8 +487,22 @@ class QmlStaticTests(unittest.TestCase):
         qml = read_component_qml("ShortModeClipList.qml")
         self.assertIn('objectName: "shortModeStartTimeField" + index', qml)
         self.assertIn('objectName: "shortModeEndTimeField" + index', qml)
+        self.assertIn('objectName: "shortModeRangeStartField"', qml)
+        self.assertIn('objectName: "shortModeRangeEndField"', qml)
+        self.assertIn('objectName: "shortModeClipSourceCombo"', qml)
+        self.assertIn('clipSourceCombo.currentValue === "range"', qml)
+        self.assertIn("addShortVideoClipByRange", qml)
         self.assertIn("updateShortVideoClip", qml)
         self.assertIn("TimeField", qml)
+
+    def test_transcription_block_reason_survives_loaded_video_only_project(self) -> None:
+        qml = read_workflow_qml()
+        action_bar = read_component_qml("ContextActionBar.qml")
+        self.assertIn(
+            'if (root.appBackend.speakers.length === 0 && root.appBackend.audioTracks.length <= 1)',
+            qml,
+        )
+        self.assertIn('objectName: "workflowBlockReason"', action_bar)
 
 
 if __name__ == "__main__":

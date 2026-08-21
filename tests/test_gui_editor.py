@@ -97,6 +97,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._running = False
         app._status = "保存済み"
         app._stage = "READY"
+        app._transcription_merge_mode = ""
+        app._transcription_preserved_segments = []
+        app._transcription_preserved_project = None
+        app._transcription_preserved_project_path = ""
+        app._transcription_generated_project_path = ""
         app._progress = 0.0
         app._log = ""
         app._application_logger.clear_memory()
@@ -216,6 +221,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def _load_project(self, **kwargs: object) -> Path:
         path, _, _ = self._make_project(**kwargs)
+        if not any(str(item.get("selector", "")).strip() for item in self.app._audio_tracks):
+            self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
         self._prime_audio_preview_cache()
         self.app.autosave_timer.stop()
@@ -282,6 +289,66 @@ class GuiEditorRegressionTests(unittest.TestCase):
             pos=QPoint(round(center.x()), round(center.y())),
         )
         self.app.processEvents()
+
+    def test_empty_project_can_be_opened_and_manually_edited(self) -> None:
+        video, _audio, output = self._set_ready_sources()
+        with patch("src.gui.probe_media_duration", return_value=30.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        self.assertEqual(self.app.subtitleSegments, [])
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.assertTrue(self._quick_item(window, "editorEmptyState").isVisible())
+        self._click(window, self._quick_item(window, "addCaptionButton"))
+        self.assertEqual(self.app.segmentCount, 1)
+
+    def test_empty_project_creation_never_overwrites_existing_project(self) -> None:
+        _video, _audio, output = self._set_ready_sources()
+        project_path = output / "game.subtitle-project.json"
+        sentinel = create_project(
+            video_path=self.app.sourceSelection["video"],
+            output_dir=output,
+            segments=[{"start": 0, "end": 1, "text": "keep", "speaker": "Oz"}],
+        )
+        save_project(project_path, sentinel)
+
+        with patch("src.gui.probe_media_duration", return_value=30.0):
+            self.assertFalse(self.app.createEmptyProject())
+        self.assertEqual(load_project(project_path)["segments"][0]["text"], "keep")
+
+    def test_video_only_empty_project_disables_mixer_before_normal_render(self) -> None:
+        video = self.root / "video-only.mkv"
+        video.write_bytes(b"video")
+        output = self.root / "export"
+        output.mkdir()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+            self.app.setOutputDirectory(str(output))
+        self.app._audio_tracks = [{"selector": "", "label": "音声トラックなし"}]
+        self.app._speakers = []
+
+        with patch("src.gui.probe_media_duration", return_value=1.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        self.assertEqual(self.app.audioMixerChannels, [])
+        self.assertFalse(self.app.audioMixerAvailable)
+        _, window = self._load_qml()
+        mixer_button = self._quick_item(window, "audioMixerOpenButton")
+        self.assertFalse(mixer_button.property("enabled"))
+        self.assertEqual(mixer_button.property("text"), "音声トラックなし")
+
+        self.app.updateAudioMixChannel(0, {"volume_percent": 150})
+        self.assertFalse(self.app._project["audio_mix"]["customized"])
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "saveProject", return_value=True),
+            patch.object(self.app, "_start_command") as start_command,
+        ):
+            self.app.renderVideo(self.app.settings)
+
+        self.assertEqual(start_command.call_args.args[1], "render")
 
     def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
         choices = build_font_choices(["Yu Gothic", "@Yu Gothic", " arial ", "Arial", ""])
@@ -614,6 +681,46 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.updateAudioMixChannel(1, {"enabled": False})
         self.assertEqual(self.app.audioMixerPreviewGains[video_id], 2.0)
         self.app.autosave_timer.stop()
+
+    def test_video_only_external_mixer_settings_survive_channel_updates_and_reload(self) -> None:
+        project_path, _video, audio = self._make_project()
+        second_audio = self.root / "2-bob.flac"
+        second_audio.write_bytes(b"audio")
+        project = load_project(project_path)
+        project["audio_sources"] = [
+            {"path": str(audio), "track_key": "craig:Alice", "file_name": audio.name},
+            {"path": str(second_audio), "track_key": "craig:Bob", "file_name": second_audio.name},
+        ]
+        save_project(project_path, project)
+
+        self.app._audio_tracks = [{"selector": "", "label": "音声トラックなし"}]
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        self.assertEqual([channel["kind"] for channel in self.app.audioMixerChannels], ["external", "external"])
+
+        self.app.updateAudioMixChannel(
+            0,
+            {"enabled": True, "muted": True, "solo": False, "volume_percent": 42},
+        )
+        self.app.updateAudioMixChannel(
+            1,
+            {"enabled": True, "muted": False, "solo": True, "volume_percent": 157},
+        )
+        self.assertTrue(self.app.saveProject())
+
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        channels = self.app.audioMixerChannels
+        self.assertEqual(
+            [
+                (
+                    channel["volume_percent"],
+                    channel["muted"],
+                    channel["solo"],
+                    channel["enabled"],
+                )
+                for channel in channels
+            ],
+            [(42.0, True, False, True), (157.0, False, True, True)],
+        )
 
     def test_audio_master_transport_and_metrics_are_exposed_to_qml(self) -> None:
         self._load_project()
@@ -1543,6 +1650,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_failed_process_start_captures_qprocess_error(self) -> None:
         self.app._active_job = "transcribe"
         self.app._running = False
+        generated_path = self.root / ".failed-transcription.subtitle-project.json"
+        generated_path.write_text("temporary", encoding="utf-8")
+        self.app._transcription_merge_mode = "merge"
+        self.app._transcription_preserved_project = {"segments": []}
+        self.app._transcription_preserved_project_path = str(self.root / "preserved.subtitle-project.json")
+        self.app._transcription_generated_project_path = str(generated_path)
 
         with (
             patch("src.gui.runtime_diagnostic_info", return_value={}),
@@ -1564,6 +1677,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("QProcessエラー: プロセスを開始できません", diagnostic)
         self.assertIn("launcher stderr", diagnostic)
         self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self.app._transcription_merge_mode, "")
+        self.assertIsNone(self.app._transcription_preserved_project)
+        self.assertEqual(self.app._transcription_preserved_project_path, "")
+        self.assertFalse(generated_path.exists())
 
     def test_starting_a_new_process_discards_the_previous_error_snapshot(self) -> None:
         self.app._active_job = "render"
@@ -1698,7 +1815,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         path, _, _ = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
         self.app.processEvents()
-        self.assertFalse(transcribe.isVisible())
+        self.assertTrue(transcribe.isVisible())
+        self.assertIn("追加 / 更新", transcribe.property("text"))
+        self.assertFalse(transcribe.isEnabled())
         self.assertTrue(edit.isVisible())
         self.assertTrue(render.isVisible())
         self.assertIn("焼き付け", render.property("text"))
@@ -1866,6 +1985,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
 
             self.assertLessEqual(stepper.y() + stepper.height(), action_bar.y() + 1)
+            self.assertGreaterEqual(stepper.height(), 68)
+            visual_items = []
+            pending_items = list(stepper.childItems())
+            while pending_items:
+                visual_item = pending_items.pop()
+                visual_items.append(visual_item)
+                pending_items.extend(visual_item.childItems())
+            for step_index, step_text in enumerate(("素材", "文字起こし", "字幕・音量編集", "書き出し"), 1):
+                step_number = next(
+                    item for item in visual_items if str(item.property("text")) == str(step_index)
+                )
+                step_label = next(
+                    item for item in visual_items if str(item.property("text")) == step_text
+                )
+                self.assertTrue(step_number.isVisible())
+                self.assertGreater(step_number.height(), 0)
+                self.assertTrue(step_label.isVisible())
+                self.assertGreater(step_label.height(), 0)
             self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
             self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
@@ -2968,6 +3105,94 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.updateShortVideoClip(0, {"start": float("nan")}))
         self.assertFalse(self.app.updateShortVideoClip(0, {"end": float("inf")}))
 
+    def test_empty_short_mode_adds_and_trims_direct_range_clip(self) -> None:
+        _video, _audio, _output = self._set_ready_sources()
+        with patch("src.gui.probe_media_duration", return_value=3.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        self.assertEqual(self.app.subtitleSegments, [])
+        self.assertTrue(self.app.addShortVideoClipByRange(0.25, 1.5))
+        self.assertEqual(self.app.shortVideoClips[0]["segment_id"], "")
+        self.assertTrue(self.app.updateShortVideoClip(0, {"start": 0.5, "end": 1.25}))
+        self.assertEqual(
+            (self.app.shortVideoClips[0]["start"], self.app.shortVideoClips[0]["end"]),
+            (0.5, 1.25),
+        )
+        self.assertFalse(self.app.addShortVideoClipByRange(2.0, 4.0))
+
+    def test_short_mode_gui_adds_direct_range_clip_when_segments_exist(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "subtitle-segment",
+                    "start": 1.0,
+                    "end": 3.0,
+                    "text": "字幕の範囲",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ]
+        )
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        source_combo = self._quick_item(window, "shortModeClipSourceCombo")
+        source_combo.setProperty("currentIndex", 1)
+        start_field = self._quick_item(window, "shortModeRangeStartField")
+        end_field = self._quick_item(window, "shortModeRangeEndField")
+        start_field.setProperty("text", "0.250")
+        end_field.setProperty("text", "0.750")
+        self.app.processEvents()
+
+        add_button = self._quick_item(window, "shortModeAddClipButton")
+        self.assertTrue(add_button.property("enabled"))
+        self._click(window, add_button)
+
+        clip = self.app.shortVideoClips[-1]
+        self.assertEqual(clip["segment_id"], "")
+        self.assertEqual((clip["start"], clip["end"]), (0.25, 0.75))
+
+    def test_video_only_project_explains_disabled_transcription(self) -> None:
+        self._load_project(segments=[])
+        self._set_ready_sources()
+        self.app._project["speakers"] = []
+        self.app._project["audio_sources"] = []
+        self.app._speakers = []
+        self.app._audio_tracks = []
+        self.app.speakersChanged.emit()
+        self.app.audioTracksChanged.emit()
+
+        _, window = self._load_qml()
+        transcribe_button = self._quick_item(window, "transcribeButton")
+        reason = self._quick_item(window, "workflowBlockReason")
+        self.assertFalse(transcribe_button.isEnabled())
+        self.assertIn("話者音声または動画内音声が必要", reason.property("text"))
+
+    def test_empty_short_mode_gui_adds_range_clip_and_enables_export(self) -> None:
+        _video, _audio, _output = self._set_ready_sources()
+        with patch("src.gui.probe_media_duration", return_value=3.0):
+            self.assertTrue(self.app.createEmptyProject())
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        start_field = self._quick_item(window, "shortModeRangeStartField")
+        end_field = self._quick_item(window, "shortModeRangeEndField")
+        start_field.setProperty("text", "0.250")
+        end_field.setProperty("text", "1.500")
+        self.app.processEvents()
+        add_button = self._quick_item(window, "shortModeAddClipButton")
+        self.assertTrue(add_button.property("enabled"))
+        self._click(window, add_button)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "saveProject", return_value=True),
+            patch.object(self.app, "_start_command") as start_command,
+        ):
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        self.assertEqual(start_command.call_args.args[1], "render_short")
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
@@ -3153,6 +3378,146 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, edit_button)
         self.assertTrue(self._quick_item(window, "editorPage").isVisible())
 
+    def test_followup_transcription_preserves_project_settings_for_merge_and_replace(self) -> None:
+        project_path = self._load_project()
+        project = self.app._project
+        assert project is not None
+        project["audio_mix"] = {
+            "version": 1,
+            "customized": True,
+            "channels": [
+                {
+                    "id": "video:0:a:0",
+                    "kind": "video",
+                    "label": "game",
+                    "selector": "0:a:0",
+                    "enabled": True,
+                    "muted": False,
+                    "solo": False,
+                    "volume_percent": 42.0,
+                }
+            ],
+        }
+        project["short_video"] = {
+            "schema_version": 2,
+            "enabled": True,
+            "output": {"width": 720, "height": 1280, "fps": 30},
+            "global_fit": "contain",
+            "global_background_color": "112233",
+            "subtitle_scale_percent": 80.0,
+            "transition": {"type": "cut", "duration": 0.0},
+            "bgm": {"path": "custom-bgm.wav", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.4},
+            "clips": [{"segment_id": "segment-a", "start": 1.0, "end": 2.0, "fit": "blur"}],
+        }
+        self.app._mark_project_dirty()
+        self.assertTrue(self.app.saveProject())
+        preserved = deepcopy(load_project(project_path))
+        custom_project_path = project_path.with_name("custom-edit.subtitle-project.json")
+        save_project(custom_project_path, preserved)
+        generated = create_project(
+            video_path=project_path.parent / "game.mkv",
+            output_dir=project_path.parent / "export",
+            segments=[
+                {
+                    "id": "transcribed-new",
+                    "start": 5.0,
+                    "end": 6.0,
+                    "text": "new transcript",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ],
+            duration_seconds=30.0,
+            transcription={"engine": "new-engine"},
+        )
+
+        try:
+            for mode in ("merge", "replace"):
+                with self.subTest(mode=mode):
+                    save_project(project_path, preserved)
+                    self.app._project = deepcopy(generated)
+                    self.app._project_path = str(project_path)
+                    self.app._transcription_merge_mode = mode
+                    self.app._transcription_preserved_project = deepcopy(preserved)
+                    self.app._transcription_preserved_project_path = str(custom_project_path)
+
+                    self.assertTrue(self.app._merge_preserved_transcription_segments())
+                    saved = load_project(custom_project_path)
+                    self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
+                    self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                    self.assertEqual(saved["short_video"], preserved["short_video"])
+                    self.assertEqual(saved["transcription"], {"engine": "new-engine"})
+                    expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
+                    self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
+                    self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
+        finally:
+            self.app._transcription_merge_mode = ""
+            self.app._transcription_preserved_segments = []
+            self.app._transcription_preserved_project = None
+            self.app._transcription_preserved_project_path = ""
+
+    def test_followup_transcription_uses_private_project_path_without_overwriting_default(self) -> None:
+        video, audio, output = self._set_ready_sources()
+        default_path = output / "game.subtitle-project.json"
+        custom_path = output / "custom-edit.subtitle-project.json"
+        preserved = create_project(
+            video_path=video,
+            output_dir=output,
+            audio_sources=[{"path": str(audio.resolve()), "file_name": audio.name}],
+            speakers=[{"name": "alice", "style": "Speaker_alice", "path": str(audio.resolve())}],
+            segments=[{"id": "keep", "start": 0.0, "end": 1.0, "text": "keep", "speaker": "alice"}],
+            duration_seconds=2.0,
+        )
+        sentinel = deepcopy(preserved)
+        sentinel["segments"][0]["text"] = "default sentinel"
+        save_project(custom_path, preserved)
+        save_project(default_path, sentinel)
+        self.app._project = deepcopy(preserved)
+        self.app._project_path = str(custom_path)
+        self.app._source_selection = SourceSelection(
+            video=str(video.resolve()),
+            output_dir=str(output.resolve()),
+            audio_files=(str(audio.resolve()),),
+        )
+
+        with patch.object(self.app, "startTranscription") as start_transcription:
+            self.app.transcribeProject(self.app.settings, "merge")
+
+        generated_path = Path(start_transcription.call_args.args[2])
+        self.assertNotEqual(generated_path.resolve(), default_path.resolve())
+        self.assertEqual(generated_path.parent.resolve(), output.resolve())
+        self.assertTrue(generated_path.name.startswith(".game.subtitle-project."))
+        self.assertEqual(load_project(default_path)["segments"], sentinel["segments"])
+
+    def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
+        project_path = self._load_project()
+        preserved = deepcopy(self.app._project)
+        assert preserved is not None
+        generated = deepcopy(preserved)
+        generated["segments"] = []
+        self.app._project = generated
+        self.app._project_path = str(project_path)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._transcription_merge_mode = "merge"
+        self.app._transcription_preserved_project = preserved
+        self.app._transcription_preserved_project_path = str(project_path)
+
+        with (
+            patch.object(self.app, "_read_process_output"),
+            patch.object(self.app, "_try_load_default_project", return_value=True),
+            patch.object(
+                self.app,
+                "_merge_preserved_transcription_segments",
+                side_effect=ValueError("merge failed"),
+            ),
+        ):
+            self.app._process_finished(0, None)
+
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("統合に失敗しました", self.app.status)
+        self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
+
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()
         helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
@@ -3193,6 +3558,64 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.activeJob, "")
         self.assertEqual(self._quick_item(window, "saveSettingsButton").property("text"), "設定を保存")
         self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
+
+    def test_cancelled_followup_transcription_cannot_merge_into_next_project(self) -> None:
+        project_a_path = self._load_project()
+        project_a = deepcopy(self.app._project)
+        assert project_a is not None
+        generated_a_path = self.root / ".project-a.transcribing.subtitle-project.json"
+        save_project(generated_a_path, project_a)
+        self.app._transcription_merge_mode = "merge"
+        self.app._transcription_preserved_project = deepcopy(project_a)
+        self.app._transcription_preserved_project_path = str(project_a_path)
+        self.app._transcription_generated_project_path = str(generated_a_path)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._cancel_requested = True
+
+        with patch.object(self.app, "_read_process_output"):
+            self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app._transcription_merge_mode, "")
+        self.assertIsNone(self.app._transcription_preserved_project)
+        self.assertEqual(self.app._transcription_preserved_project_path, "")
+        self.assertFalse(generated_a_path.exists())
+
+        project_b_root = self.root / "project-b"
+        project_b_root.mkdir()
+        project_b_video = project_b_root / "project-b.mkv"
+        project_b_video.write_bytes(b"video")
+        project_b_path = project_b_root / "project-b.subtitle-project.json"
+        project_b = create_project(
+            video_path=project_b_video,
+            output_dir=project_b_root,
+            segments=[
+                {
+                    "id": "project-b-segment",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "project B",
+                    "speaker": "Speaker_B",
+                }
+            ],
+            duration_seconds=1.0,
+        )
+        save_project(project_b_path, project_b)
+        self.app._source_selection = SourceSelection(
+            video=str(project_b_video.resolve()),
+            output_dir=str(project_b_root.resolve()),
+        )
+        self.app._clear_project()
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._cancel_requested = False
+
+        with patch.object(self.app, "_read_process_output"):
+            self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+        self.assertTrue(Path(self.app.projectPath).samefile(project_b_path))
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "project B")
+        self.assertEqual(load_project(project_a_path)["segments"], project_a["segments"])
 
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()

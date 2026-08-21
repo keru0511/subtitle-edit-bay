@@ -9,6 +9,51 @@ from src.subtitle_workflow import render_project_video
 
 
 class SubtitleWorkflowCutTests(unittest.TestCase):
+    def test_cut_no_speech_uses_video_audio_for_empty_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "video-with-audio.mkv"
+            video.write_bytes(b"video")
+            project_path = root / "video-with-audio.subtitle-project.json"
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[],
+                duration_seconds=3.0,
+                audio_mix={
+                    "customized": False,
+                    "channels": [
+                        {
+                            "id": "video:0:a:0",
+                            "kind": "video",
+                            "selector": "0:a:0",
+                            "enabled": True,
+                            "muted": False,
+                            "solo": False,
+                            "volume_percent": 100.0,
+                        }
+                    ],
+                },
+            )
+            save_project(project_path, project)
+            detected: list[tuple[str, str | None]] = []
+
+            def fake_detect(path: str, **kwargs: object) -> list[tuple[float, float]]:
+                detected.append((path, kwargs.get("audio_track")))
+                return [(0.0, 1.0)]
+
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[{"codec_name": "aac", "channels": 2}]),
+                patch("src.subtitle_workflow.detect_speech_ranges", side_effect=fake_detect),
+                patch("src.subtitle_workflow.build_no_speech_plan", return_value=([(1.0, 2.0)], [(0.0, 1.0)])),
+                patch("src.subtitle_workflow.cut_media_ranges"),
+            ):
+                render_project_video(project_path, cut_no_speech=True, audio_normalize=False)
+
+            self.assertEqual(len(detected), 1)
+            self.assertTrue(Path(detected[0][0]).samefile(video))
+            self.assertEqual(detected[0][1], "0:a:0")
+
     def test_cut_render_uses_project_timeline_and_subtitle_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

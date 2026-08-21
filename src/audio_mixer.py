@@ -76,12 +76,22 @@ def reconcile_audio_mix(
         if isinstance(channel, dict) and channel.get("id")
     }
     existing_video = [channel for channel in existing_channels if isinstance(channel, dict) and channel.get("kind") == "video"]
-    preserve_external = video_tracks is None or bool(existing_video)
+    existing_external = [
+        channel
+        for channel in existing_channels
+        if isinstance(channel, dict) and channel.get("kind") == "external"
+    ]
+    supplied_tracks = None if video_tracks is None else list(video_tracks)
+    preserve_external = (
+        supplied_tracks is None
+        or bool(existing_video)
+        or (not supplied_tracks and bool(existing_external))
+    )
 
     preferred_selector = str(
         project.get("render_settings", {}).get("output_audio_track") or DEFAULT_AUDIO_TRACK
     )
-    if video_tracks is None:
+    if supplied_tracks is None:
         track_entries = [
             {"selector": str(channel.get("selector", "")), "label": str(channel.get("label", ""))}
             for channel in existing_video
@@ -90,7 +100,6 @@ def reconcile_audio_mix(
         if not track_entries and not project.get("audio_sources"):
             track_entries = [{"selector": preferred_selector, "label": preferred_selector}]
     else:
-        supplied_tracks = list(video_tracks)
         track_entries = [
             {"selector": str(track.get("selector", "")), "label": str(track.get("label", ""))}
             for track in supplied_tracks

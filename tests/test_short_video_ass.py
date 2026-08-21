@@ -23,7 +23,7 @@ from src.short_video_schema import (
     ShortVideoTransition,
 )
 from src.short_video_timeline import build_short_video_timeline
-from src.subtitle_project import create_project, save_project
+from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_short_video
 
 
@@ -289,6 +289,64 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                 ).stdout
                 self.assertTrue(frame)
                 self.assertGreater(max(frame), 100)
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_project_renders_direct_range_without_subtitles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "source.mkv"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi", "-i", "color=c=black:size=320x180:rate=15:duration=2",
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+                    "-shortest", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(video),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                segments=[],
+                duration_seconds=2.0,
+            )
+            project["short_video"] = ShortVideo(
+                enabled=True,
+                output=ShortVideoOutput(width=180, height=320, fps=15),
+                transition=ShortVideoTransition(type="cut", duration=0.0),
+                clips=[ShortVideoClip(segment_id="", start=0.25, end=1.25)],
+            ).to_json()
+            project_path = save_project(root / "source.subtitle-project.json", project)
+
+            output = render_project_short_video(
+                project_path,
+                video_codec="libx264",
+                audio_codec="aac",
+                x264_crf=30,
+            )
+
+            self.assertTrue(output.is_file())
+            saved = load_project(project_path)
+            self.assertNotIn("short_last_ass", saved["render_settings"])
+            probe = subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-show_entries",
+                    "stream=codec_type,width,height,pix_fmt", "-of", "json", str(output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            streams = json.loads(probe.stdout)["streams"]
+            video_stream = next(item for item in streams if item["codec_type"] == "video")
+            self.assertEqual((video_stream["width"], video_stream["height"]), (180, 320))
+            self.assertEqual(video_stream["pix_fmt"], "yuv420p")
+            self.assertTrue(any(item["codec_type"] == "audio" for item in streams))
 
     @unittest.skipUnless(
         os.environ.get("RUN_FFMPEG_SMOKE") == "1"

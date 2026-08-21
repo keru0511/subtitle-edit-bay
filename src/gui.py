@@ -76,10 +76,12 @@ from .gui_state import (
     build_gui_short_video_command,
     build_gui_transcribe_command,
 )
+from .media_probe import probe_media_duration
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     SubtitleProjectError,
     assign_project_layout_rows,
+    create_project,
     derive_project_path,
     load_project,
     normalize_segment,
@@ -344,6 +346,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_revision = -1
         self._autosave_path = ""
         self._autosave_pending = False
+        self._transcription_merge_mode = ""
+        self._transcription_preserved_segments: list[dict[str, Any]] = []
+        self._transcription_preserved_project: dict[str, Any] | None = None
+        self._transcription_preserved_project_path = ""
+        self._transcription_generated_project_path = ""
         self._ignored_autosaves: set[tuple[int, str]] = set()
         self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
         cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
@@ -741,6 +748,30 @@ class EditBayBackend(LegacyEditBayBackend):
         self.shortVideoChanged.emit()
         return True
 
+    @Slot(float, float, result=bool)
+    def addShortVideoClipByRange(self, start: float, end: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            start = float(start)
+            end = float(end)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(start) or not math.isfinite(end):
+            return False
+        duration = max(0.0, float(self.projectDuration))
+        if start < 0.0 or start >= end or (duration > 0.0 and end > duration):
+            return False
+        section = self._short_video_section()
+        clips = list(section.get("clips", []))
+        clips.append({"segment_id": "", "start": round(start, 3), "end": round(end, 3)})
+        section["enabled"] = True
+        section["clips"] = clips
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
         if self._project is None or self._running:
@@ -799,11 +830,18 @@ class EditBayBackend(LegacyEditBayBackend):
 
         if trim_requested:
             segment = self._find_segment_by_id(str(clip.get("segment_id", "")))
-            if segment is None:
+            range_clip = not str(clip.get("segment_id", "")).strip()
+            if segment is None and not range_clip:
                 return False
             try:
-                segment_start = float(segment.get("start", 0.0))
-                segment_end = float(segment.get("end", segment_start))
+                if segment is None:
+                    segment_start = 0.0
+                    segment_end = float(self.projectDuration)
+                    if segment_end <= 0.0:
+                        segment_end = max(float(clip.get("end", 0.0)), 0.0)
+                else:
+                    segment_start = float(segment.get("start", 0.0))
+                    segment_end = float(segment.get("end", segment_start))
                 start = float(fields.get("start", clip.get("start", segment_start)))
                 end = float(fields.get("end", clip.get("end", segment_end)))
                 if not all(
@@ -1272,6 +1310,10 @@ class EditBayBackend(LegacyEditBayBackend):
             self._audio_mixer_channel_view(channel)
             for channel in self._project.get("audio_mix", {}).get("channels", [])
         ]
+
+    @Property(bool, notify=projectDataChanged)
+    def audioMixerAvailable(self) -> bool:
+        return bool(self.audioMixerChannels)
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
@@ -1778,7 +1820,7 @@ class EditBayBackend(LegacyEditBayBackend):
             )
 
         self._project_path = str(derive_project_path(selected_video, selected_output))
-        reconcile_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
+        reconcile_audio_mix(self._project, self._mixer_video_tracks())
 
         if self._project != old_project:
             self._mark_project_dirty()
@@ -1800,9 +1842,57 @@ class EditBayBackend(LegacyEditBayBackend):
         path = self._default_project_path()
         return path is not None and path.is_file()
 
+    @Slot(result=bool)
+    def createEmptyProject(self) -> bool:
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            return False
+        selection = self._source_selection
+        if not Path(selection.video).is_file() or not selection.output_dir:
+            self._set_status("動画と出力先フォルダを指定してください", "CHECK")
+            return False
+        project_path = self._default_project_path()
+        if project_path is None:
+            self._set_status("編集プロジェクトの保存先を決定できません", "ERROR")
+            return False
+        if project_path.is_file():
+            self._set_status(
+                "既存プロジェクトは上書きしません。プロジェクトを開くか、別の出力先を指定してください",
+                "CHECK",
+            )
+            return False
+
+        try:
+            duration_seconds = probe_media_duration(selection.video)
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            duration_seconds = 0.0
+        project = create_project(
+            video_path=selection.video,
+            output_dir=selection.output_dir,
+            segments=[],
+            audio_sources=deepcopy(self._speakers),
+            speakers=deepcopy(self._speakers),
+            duration_seconds=duration_seconds,
+            transcription={"status": "not_started"},
+        )
+        reconcile_audio_mix(
+            project,
+            self._mixer_video_tracks(),
+        )
+        try:
+            save_project(project_path, project)
+        except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+            self._set_status(f"空の編集プロジェクトを保存できません: {error}", "ERROR")
+            return False
+        loaded = self._load_project_path(project_path, update_sources=False)
+        if loaded:
+            self._set_status("空の編集プロジェクトを作成しました。字幕を手動追加できます", "EDIT")
+        return loaded
+
     def _clear_project(self) -> None:
         if self._project_dirty:
             self.saveProject()
+        self._reset_transcription_integration_state()
         self._project = None
         self._project_path = ""
         self._project_dirty = False
@@ -1880,13 +1970,13 @@ class EditBayBackend(LegacyEditBayBackend):
         if path:
             self.loadProject(path)
 
-    def _mixer_video_tracks(self) -> list[dict[str, str]] | None:
+    def _mixer_video_tracks(self) -> list[dict[str, str]]:
         tracks = [
             {"selector": str(item.get("selector", "")), "label": str(item.get("label", ""))}
             for item in self._audio_tracks
             if str(item.get("selector", "")).strip()
         ]
-        return tracks or None
+        return tracks
 
     def _fallback_video_tracks(self) -> list[dict[str, str]]:
         return [{"selector": DEFAULT_AUDIO_TRACK, "label": "既定の動画音声"}]
@@ -1895,10 +1985,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
         if self._project is None or self._running:
             return
-        audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
+        audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks())
         channels = audio_mix["channels"]
         if not 0 <= index < len(channels):
-            self._set_status("音量ミキサーのチャンネルが見つかりません", "CHECK")
+            self._set_status("動画内または外部の音声トラックがありません", "CHECK")
             return
         channel = channels[index]
         enabled_before = bool(channel.get("enabled"))
@@ -1926,7 +2016,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def resetAudioMixer(self) -> None:
         if self._project is None or self._running:
             return
-        reset_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
+        audio_mix = reset_audio_mix(self._project, self._mixer_video_tracks())
+        if not audio_mix["channels"]:
+            self._set_status("動画内または外部の音声トラックがありません", "CHECK")
+            return
         self.projectDataChanged.emit()
         self._notify_audio_mixer_preview(structure_changed=True)
         self._mark_project_dirty()
@@ -1945,6 +2038,116 @@ class EditBayBackend(LegacyEditBayBackend):
                 return
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
+
+    @Slot("QVariantMap", str)
+    def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+        selected_mode = str(mode or "").strip().lower()
+        if selected_mode not in {"replace", "merge"}:
+            self._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
+            return
+        if self._project is None:
+            self._reset_transcription_integration_state()
+            self.startTranscription(settings, False)
+            return
+        if not self.saveProject():
+            return
+        self._transcription_merge_mode = selected_mode
+        self._transcription_preserved_project = deepcopy(self._project)
+        self._transcription_preserved_project_path = self._project_path
+        self._transcription_preserved_segments = (
+            deepcopy(self._project.get("segments", []))
+            if selected_mode == "merge"
+            else []
+        )
+        default_project_path = self._default_project_path()
+        if default_project_path is None:
+            self._reset_transcription_integration_state()
+            self._set_status("文字起こし結果の保存先を決定できません", "ERROR")
+            return
+        generated_project_path = default_project_path.with_name(
+            f".{default_project_path.stem}.{uuid4().hex}.subtitle-project.json"
+        )
+        self.startTranscription(settings, True, str(generated_project_path))
+
+    def _merge_preserved_transcription_segments(self) -> bool:
+        if self._project is None or self._transcription_preserved_project is None:
+            return False
+        generated = deepcopy(self._project)
+        preserved = deepcopy(self._transcription_preserved_project)
+        generated_segments = deepcopy(generated.get("segments", []))
+        if self._transcription_merge_mode == "merge":
+            preserved_segments = deepcopy(preserved.get("segments", []))
+            used_ids = {str(item.get("id", "")) for item in preserved_segments}
+            merged = list(preserved_segments)
+            for segment in generated_segments:
+                segment_id = str(segment.get("id", ""))
+                if not segment_id or segment_id in used_ids:
+                    segment["id"] = f"transcribed-{uuid4().hex[:12]}"
+                used_ids.add(str(segment["id"]))
+                merged.append(segment)
+            segments = merged
+        elif self._transcription_merge_mode == "replace":
+            segments = generated_segments
+        else:
+            return False
+
+        preserved["segments"] = assign_project_layout_rows(
+            sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
+        )
+        for key in ("transcription", "transcription_context", "waveforms"):
+            if key in generated:
+                preserved[key] = deepcopy(generated[key])
+        self._project = preserved
+        preserved_project_path = self._transcription_preserved_project_path or self._project_path
+        self._project_path = preserved_project_path
+        self._apply_project_subtitle_settings(self._project)
+        self._selected_segment_index = 0 if self._project["segments"] else -1
+        save_project(preserved_project_path, self._project)
+        self._project_dirty = False
+        self._sync_subtitle_model()
+        self.projectChanged.emit()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self.selectionChanged.emit()
+        return True
+
+    def _restore_preserved_transcription_project(self) -> None:
+        if self._transcription_preserved_project is None:
+            return
+        self._project = deepcopy(self._transcription_preserved_project)
+        self._project_path = self._transcription_preserved_project_path
+        self._apply_project_subtitle_settings(self._project)
+        save_project(self._project_path, self._project)
+        self._project_dirty = False
+        self._selected_segment_index = 0 if self._project.get("segments") else -1
+        self._sync_subtitle_model()
+        self.projectChanged.emit()
+        self.projectDataChanged.emit()
+        self.segmentsChanged.emit()
+        self.selectionChanged.emit()
+
+    def _cleanup_transcription_project_artifact(self) -> None:
+        if not self._transcription_generated_project_path:
+            return
+        try:
+            Path(self._transcription_generated_project_path).unlink(missing_ok=True)
+        except OSError as error:
+            self._record_log(
+                f"一時文字起こしプロジェクトを削除できません: {error}",
+                severity="WARNING",
+                component="gui",
+                job="transcribe",
+                stage="CLEANUP",
+            )
+        finally:
+            self._transcription_generated_project_path = ""
+
+    def _reset_transcription_integration_state(self) -> None:
+        self._cleanup_transcription_project_artifact()
+        self._transcription_merge_mode = ""
+        self._transcription_preserved_segments = []
+        self._transcription_preserved_project = None
+        self._transcription_preserved_project_path = ""
 
     def _apply_project_subtitle_settings(self, project: dict[str, Any]) -> None:
         subtitle = project.get("subtitle_settings", {})
@@ -2038,7 +2241,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 )
             finally:
                 self._loading_project_sources = False
-        reconcile_audio_mix(self._project, self._mixer_video_tracks() or self._fallback_video_tracks())
+        reconcile_audio_mix(self._project, self._mixer_video_tracks())
         self._sync_subtitle_model()
         self.projectChanged.emit()
         self.projectDataChanged.emit()
@@ -2529,18 +2732,31 @@ class EditBayBackend(LegacyEditBayBackend):
         return ""
 
     @Slot("QVariantMap", bool)
-    def startTranscription(self, settings: dict[str, Any], overwrite_project: bool = False) -> None:
+    def startTranscription(
+        self,
+        settings: dict[str, Any],
+        overwrite_project: bool = False,
+        project_path: str | None = None,
+    ) -> None:
         if self._running:
             return
+        if project_path is None:
+            self._reset_transcription_integration_state()
+
+        def reject_start(message: str, stage: str) -> None:
+            self._set_status(message, stage)
+            if project_path is not None:
+                self._reset_transcription_integration_state()
+
         audio_tracks = list(self._audio_tracks)
         if not self._dependencies.ready:
             self.refreshDependencies()
         if not self._dependencies.ready:
             missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
+            reject_start(f"実行できません。インストールが必要です: {missing}", "SETUP")
             return
         if str(settings.get("device") or self._settings.get("device")) == "cuda" and not self._dependencies.cuda:
-            self._set_status(
+            reject_start(
                 "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください",
                 "SETUP",
             )
@@ -2549,13 +2765,16 @@ class EditBayBackend(LegacyEditBayBackend):
         audio_files = [speaker["path"] for speaker in self._speakers]
         video_audio_track = ""
         if not Path(selection.video).is_file():
-            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
+            reject_start("動画・話者音声・出力先を指定してください", "CHECK")
             return
         if not audio_files and not self._has_audio_source(audio_files, audio_tracks):
-            self._set_status("動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。", "CHECK")
+            reject_start(
+                "動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。",
+                "CHECK",
+            )
             return
         if not selection.output_dir:
-            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
+            reject_start("動画・話者音声・出力先を指定してください", "CHECK")
             return
         if not audio_files:
             video_audio_track = str(settings.get("reference_track") or self._default_video_audio_track(audio_tracks))
@@ -2565,6 +2784,9 @@ class EditBayBackend(LegacyEditBayBackend):
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
         self.saveSettings(settings)
+        self._transcription_generated_project_path = (
+            str(Path(project_path).resolve()) if project_path else ""
+        )
         command = build_gui_transcribe_command(
             self.gui_config_path,
             video=selection.video,
@@ -2575,6 +2797,7 @@ class EditBayBackend(LegacyEditBayBackend):
             video_audio_track=video_audio_track,
             alignment_offset_adjustment=adjustment,
             overwrite_project=overwrite_project,
+            project_path=project_path,
         )
         self._start_command(command, "transcribe", "文字起こしを開始しています")
 
@@ -3189,6 +3412,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 outcome="failed",
                 exit_code=None,
             )
+            if failed_job == "transcribe":
+                self._reset_transcription_integration_state()
             self._finish_processing_progress("error")
             self._active_job = ""
             self.activeJobChanged.emit()
@@ -3308,18 +3533,55 @@ class EditBayBackend(LegacyEditBayBackend):
             exit_code=exit_code,
         )
         if self._cancel_requested:
+            if completed_job == "transcribe":
+                self._reset_transcription_integration_state()
             self._finish_processing_progress("cancelled")
             self._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
             self._finish_processing_progress("completed")
             if completed_job == "transcribe":
-                loaded = self._try_load_default_project()
-                self._set_status(
-                    "文字起こし完了。字幕を確認して動画へ焼き付けられます"
-                    if loaded
-                    else "文字起こしが完了しました。編集プロジェクトを開いてください",
-                    "EDIT" if loaded else "CHECK",
+                generated_project_path = (
+                    Path(self._transcription_generated_project_path)
+                    if self._transcription_generated_project_path
+                    else None
                 )
+                loaded = (
+                    self._load_project_path(generated_project_path, update_sources=False)
+                    if generated_project_path is not None and generated_project_path.is_file()
+                    else self._try_load_default_project()
+                )
+                merged = False
+                integration_error = ""
+                if loaded and self._transcription_merge_mode in {"merge", "replace"}:
+                    try:
+                        applied = self._merge_preserved_transcription_segments()
+                        merged = applied and self._transcription_merge_mode == "merge"
+                    except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+                        integration_error = (
+                            "文字起こし結果の統合に失敗しました: "
+                            f"{error}"
+                        )
+                        try:
+                            self._restore_preserved_transcription_project()
+                        except (OSError, SubtitleProjectError, TypeError, ValueError) as restore_error:
+                            integration_error += (
+                                "（元プロジェクトの復元にも失敗しました: "
+                                f"{restore_error}）"
+                            )
+                if self._transcription_generated_project_path and not loaded:
+                    integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
+                self._reset_transcription_integration_state()
+                if integration_error:
+                    self._set_status(integration_error, "ERROR")
+                else:
+                    self._set_status(
+                        "文字起こし結果を既存字幕へ追加しました。内容を確認してください"
+                        if merged
+                        else "文字起こし完了。字幕を確認して動画へ焼き付けられます"
+                        if loaded
+                        else "文字起こしが完了しました。編集プロジェクトを開いてください",
+                        "EDIT" if loaded else "CHECK",
+                    )
             elif completed_job == "update":
                 self._set_status("更新が完了しました。アプリを再起動してください", "UPDATE")
             elif completed_job == "render_short":
@@ -3327,6 +3589,8 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
+            if completed_job == "transcribe":
+                self._reset_transcription_integration_state()
             self._finish_processing_progress("error")
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")

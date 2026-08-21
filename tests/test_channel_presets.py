@@ -13,6 +13,28 @@ from src.channel_presets import (
 
 
 class ChannelPresetTests(unittest.TestCase):
+    def test_absolute_media_paths_are_excluded_on_every_platform(self) -> None:
+        preset = create_channel_preset(
+            "paths",
+            {
+                "export": {
+                    "windows_path": "C:/private/video.mp4",
+                    "windows_backslash_path": r"C:\private\video.mp4",
+                    "unc_path": r"\\server\share\video.mp4",
+                    "posix_path": "/private/video.mp4",
+                    "relative_path": "assets/video.mp4",
+                }
+            },
+            categories={"export"},
+        )
+
+        export = preset.categories["export"]
+        self.assertNotIn("windows_path", export)
+        self.assertNotIn("windows_backslash_path", export)
+        self.assertNotIn("unc_path", export)
+        self.assertNotIn("posix_path", export)
+        self.assertEqual(export["relative_path"], "assets/video.mp4")
+
     def test_roundtrip_diff_partial_apply_and_secret_path_exclusion(self) -> None:
         current = {
             "subtitle": {"font_size": 50},

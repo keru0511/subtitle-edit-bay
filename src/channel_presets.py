@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable, Mapping
 
 
@@ -162,7 +162,7 @@ def _is_secret_or_media_path(key: str, value: Any) -> bool:
     if any(term in lowered for term in ("token", "password", "secret", "api_key", "authorization")):
         return True
     if "path" in lowered and isinstance(value, str):
-        return Path(value).is_absolute() or ":\\" in value or value.startswith("/")
+        return PureWindowsPath(value).is_absolute() or PurePosixPath(value).is_absolute()
     return False
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +13,7 @@ from src.short_video_ass import build_short_video_ass, remap_short_video_segment
 from src.short_video import filter_complex_script_option
 from src.short_video_schema import (
     ShortVideo,
+    ShortVideoBgm,
     ShortVideoClip,
     ShortVideoOutput,
     ShortVideoTransition,
@@ -236,6 +239,159 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                 ).stdout
                 self.assertTrue(frame)
                 self.assertGreater(max(frame), 100)
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_FFMPEG_SMOKE") == "1"
+        and shutil.which("ffmpeg")
+        and shutil.which("ffprobe"),
+        "RUN_FFMPEG_SMOKE=1 with ffmpeg and ffprobe required",
+    )
+    def test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace(
+        self,
+    ) -> None:
+        """Exercise the Windows FFmpeg filter-script path with real media."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "日本語ワークスペース"
+            workspace.mkdir()
+            video = workspace / "入力動画.mkv"
+            bgm = workspace / "背景音.wav"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=15:duration=2",
+                    "-f", "lavfi", "-i", "color=c=blue:size=320x180:rate=15:duration=2",
+                    "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+                    "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p", str(video),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-f", "lavfi",
+                    "-i", "sine=frequency=660:sample_rate=48000:duration=1.5",
+                    "-c:a", "pcm_s16le", str(bgm),
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+            segments = [
+                {"id": "first", "start": 0.2, "end": 1.6, "text": "FIRST", "speaker": "A", "words": []},
+                {"id": "second", "start": 1.4, "end": 2.8, "text": "SECOND", "speaker": "B", "words": []},
+            ]
+            for fit in ("cover", "contain", "blur"):
+                project = create_project(
+                    video_path=video,
+                    output_dir=workspace,
+                    segments=segments,
+                    duration_seconds=4.0,
+                    subtitle_settings={"font_size": 40},
+                )
+                project["short_video"] = ShortVideo(
+                    enabled=True,
+                    output=ShortVideoOutput(width=180, height=320, fps=15),
+                    global_fit=fit,
+                    global_background_color="112233",
+                    subtitle_scale_percent=80,
+                    transition=ShortVideoTransition(type="crossfade", duration=0.2),
+                    bgm=ShortVideoBgm(
+                        path=str(bgm),
+                        in_point=0.2,
+                        out_point=0.9,
+                        start=0.1,
+                        volume=0.4,
+                    ),
+                    clips=[
+                        ShortVideoClip(segment_id="first", start=0.2, end=1.6),
+                        ShortVideoClip(segment_id="second", start=2.0, end=3.4),
+                    ],
+                ).to_json()
+                project_path = save_project(
+                    workspace / f"{fit}.subtitle-project.json", project
+                )
+                output = render_project_short_video(
+                    project_path,
+                    workspace / f"{fit}.mp4",
+                    video_codec="libx264",
+                    audio_codec="aac",
+                    x264_crf=30,
+                )
+
+                probe = subprocess.run(
+                    [
+                        "ffprobe", "-v", "error", "-show_entries",
+                        "format=duration,format_name:stream=codec_type,width,height,r_frame_rate,pix_fmt",
+                        "-of", "json", str(output),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                media = json.loads(probe.stdout)
+                video_stream = next(
+                    item for item in media["streams"] if item["codec_type"] == "video"
+                )
+                self.assertEqual(
+                    (video_stream["width"], video_stream["height"]), (180, 320)
+                )
+                self.assertEqual(video_stream["r_frame_rate"], "15/1")
+                self.assertEqual(video_stream["pix_fmt"], "yuv420p")
+                self.assertTrue(
+                    any(item["codec_type"] == "audio" for item in media["streams"])
+                )
+                self.assertAlmostEqual(float(media["format"]["duration"]), 2.6, delta=0.3)
+                self.assertIn("mp4", media["format"]["format_name"])
+
+                audio_bytes = subprocess.run(
+                    [
+                        "ffmpeg", "-v", "error", "-i", str(output), "-vn",
+                        "-t", "0.5", "-ac", "1", "-ar", "8000", "-f", "s16le", "-",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                samples = struct.unpack(
+                    f"<{len(audio_bytes) // 2}h", audio_bytes[: len(audio_bytes) // 2 * 2]
+                )
+                self.assertTrue(samples)
+                self.assertGreater(max(abs(sample) for sample in samples), 100)
+
+                media_bytes = output.read_bytes()
+                self.assertLess(media_bytes.find(b"moov"), media_bytes.find(b"mdat"))
+                saved_project = json.loads(project_path.read_text(encoding="utf-8"))
+                ass_path = Path(saved_project["render_settings"]["short_last_ass"])
+                dialogue_lines = [
+                    line for line in ass_path.read_text(encoding="utf-8").splitlines()
+                    if line.startswith("Dialogue:")
+                ]
+                self.assertGreaterEqual(len(dialogue_lines), 2)
+                self.assertTrue(any("FIRST" in line for line in dialogue_lines))
+
+                frame = subprocess.run(
+                    [
+                        "ffmpeg", "-v", "error", "-ss", "0.7", "-i", str(output),
+                        "-frames:v", "1", "-vf", "format=gray", "-f", "rawvideo", "-",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                self.assertTrue(frame)
+                self.assertGreater(max(frame), 0)
+
+                transition_pixel = subprocess.run(
+                    [
+                        "ffmpeg", "-v", "error", "-ss", "1.3", "-i", str(output),
+                        "-frames:v", "1", "-vf", "crop=1:1:90:160,format=rgb24",
+                        "-f", "rawvideo", "-",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                self.assertEqual(len(transition_pixel), 3)
+                self.assertGreater(transition_pixel[0], 40)
+                self.assertGreater(transition_pixel[2], 40)
 
 
 if __name__ == "__main__":

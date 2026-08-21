@@ -221,7 +221,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('"label": "画面いっぱい"', settings_qml)
         self.assertIn('"label": "全体を表示"', settings_qml)
         self.assertIn('"label": "ぼかし背景"', settings_qml)
-        self.assertIn('"label": "動画内の開始"', settings_qml)
+        self.assertIn('text: "動画内の開始"', settings_qml)
         self.assertNotIn('model: ["cover", "contain", "blur"]', settings_qml)
         self.assertNotIn('model: ["crossfade", "fade", "cut"]', settings_qml)
 

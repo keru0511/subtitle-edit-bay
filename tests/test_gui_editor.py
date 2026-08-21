@@ -1801,7 +1801,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)
         cache_summary = self._quick_item(window, "mixerAudioPreviewCacheSummary")
         cache_clear = self._quick_item(window, "mixerClearAudioPreviewCacheButton")
-        self.assertIn("/", cache_summary.property("text"))
+        self.assertIn("プレビュー", cache_summary.property("text"))
         self.assertGreater(cache_clear.width(), 0)
 
         mixer_items = [

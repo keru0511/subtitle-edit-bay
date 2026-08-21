@@ -179,7 +179,7 @@ class QmlStaticTests(unittest.TestCase):
         settings_qml = read_component_qml("ShortModeSettingsPanel.qml")
         clips_qml = read_component_qml("ShortModeClipList.qml")
 
-        self.assertIn('text: "提案を作成"', codex_qml)
+        self.assertIn('"提案を作成"', codex_qml)
         self.assertIn('textRole: "label"', codex_qml)
         self.assertIn('valueRole: "value"', codex_qml)
         self.assertIn("panel.operationLabel(modelData.type)", codex_qml)

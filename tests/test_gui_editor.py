@@ -1531,6 +1531,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         actions = self._quick_item(window, "workflowActions")
         self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
 
+        self._click(window, toggle)
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(window.property("settingsExpanded"))
+        self._click(window, toggle)
+        self.assertTrue(panel.isVisible())
+
         font_size = self._quick_item(window, "fontSizeSpin")
         self.assertEqual(font_size.property("to"), 900)
         font_size.setProperty("value", 900)

@@ -993,12 +993,17 @@ ApplicationWindow {
         Popup {
             id: advancedSettingsPopup
             objectName: "advancedSettingsPopup"
-            x: Math.max(12, root.width - width - 330)
+            // Keep the popup clear of the action bar's right-aligned toggle,
+            // including at the 1220px minimum window width.
+            x: Math.max(12, root.width - width - 430)
             y: 84
             width: Math.min(360, root.width - 24)
             height: Math.min(620, root.height - 120)
             modal: false
-            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            // The toggle button is outside this non-modal popup. Let the toggle
+            // handler own the close action so an outside press cannot close the
+            // popup before the same press reopens it through onSettingsRequested.
+            closePolicy: Popup.CloseOnEscape
             onOpened: root.settingsExpanded = true
             onClosed: root.settingsExpanded = false
             contentItem: ScrollView {

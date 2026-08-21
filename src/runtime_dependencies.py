@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -45,6 +46,54 @@ def check_runtime_dependencies(*, probe_nvenc: bool = False) -> RuntimeDependenc
         cuda=_torch_cuda_available(),
         nvenc=probe_nvenc and _ffmpeg_nvenc_available(ffmpeg_path),
     )
+
+
+def runtime_diagnostic_info() -> dict[str, object]:
+    info: dict[str, object] = {
+        "python": sys.version.split()[0],
+        "platform": sys.platform,
+        "ffmpeg": _ffmpeg_version(shutil.which("ffmpeg")),
+        "pytorch": "not installed",
+        "pytorch_cuda_build": "none",
+        "cuda_available": False,
+    }
+    if importlib.util.find_spec("torch") is None:
+        return info
+    try:
+        import torch
+    except (ImportError, OSError):
+        return info
+
+    info["pytorch"] = str(torch.__version__)
+    info["pytorch_cuda_build"] = str(torch.version.cuda or "none")
+    cuda_available = bool(torch.cuda.is_available())
+    info["cuda_available"] = cuda_available
+    if cuda_available:
+        try:
+            info["cuda_device"] = str(torch.cuda.get_device_name(0))
+        except (OSError, RuntimeError):
+            pass
+    return info
+
+
+def _ffmpeg_version(ffmpeg_path: str | None) -> str:
+    if not ffmpeg_path:
+        return "not found"
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unavailable"
+    lines = (result.stdout or result.stderr or "").strip().splitlines()
+    return lines[0] if result.returncode == 0 and lines else "unavailable"
 
 
 def _ffmpeg_nvenc_available(ffmpeg_path: str | None) -> bool:

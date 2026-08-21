@@ -177,6 +177,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "copyApplicationInfoButton"', panel)
         self.assertIn('objectName: "openLogsButton"', panel)
         self.assertIn("selectByMouse: true", panel)
+        self.assertIn("backend.hasLastProcessDiagnostic", panel)
         self.assertIn("backend.copyErrorLogsToClipboard()", panel)
         self.assertIn("backend.copyApplicationInfoToClipboard()", panel)
         self.assertIn('text: "ログフォルダを開く"', panel)

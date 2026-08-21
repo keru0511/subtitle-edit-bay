@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.application_logging import ApplicationLogger, redact_text
+from src.application_logging import ApplicationLogger, ProcessDiagnosticSnapshot, redact_text
 
 
 class ApplicationLoggingTests(unittest.TestCase):
@@ -81,6 +81,41 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertNotIn("hidden", diagnostic)
             self.assertNotIn("C:\\private", diagnostic)
             self.assertNotIn(str(Path(temp_dir)), diagnostic)
+
+    def test_diagnostic_snapshot_preserves_process_result_and_related_log(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logger = ApplicationLogger(
+                temp_dir,
+                log_directory=Path(temp_dir) / "logs",
+                application_info={"version": "v1.2.3", "distribution": "installer"},
+            )
+            logger.append("newer GUI status")
+            snapshot = ProcessDiagnosticSnapshot(
+                occurred_at="2026-08-21T22:19:34+09:00",
+                job="transcribe",
+                component="transcribe",
+                stage="ERROR",
+                status="処理が終了しました（終了コード 7）",
+                outcome="failed",
+                exit_code=7,
+                process_error="process crashed",
+                log_text=r"WhisperX failed token=private C:\private\audio.wav",
+                related_log_tail="CUDA out of memory",
+                runtime={"pytorch": "2.8.0+cu128", "cuda_available": True},
+            )
+
+            diagnostic = logger.diagnostic_text(snapshot=snapshot)
+
+            self.assertIn("2026-08-21T22:19:34+09:00", diagnostic)
+            self.assertIn("配布形態: installer", diagnostic)
+            self.assertIn("job: transcribe", diagnostic)
+            self.assertIn("結果: 異常終了 (failed)", diagnostic)
+            self.assertIn("終了コード: 7", diagnostic)
+            self.assertIn("QProcessエラー: process crashed", diagnostic)
+            self.assertIn("CUDA out of memory", diagnostic)
+            self.assertNotIn("newer GUI status", diagnostic)
+            self.assertNotIn("private", diagnostic)
+            self.assertNotIn(r"C:\private", diagnostic)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@ import json
 import subprocess
 from typing import Any
 
+from .process_utils import hidden_subprocess_kwargs
+
 
 def probe_media_duration(input_path: str) -> float:
     """Return the non-negative container duration reported by ffprobe."""
@@ -24,6 +26,7 @@ def probe_media_duration(input_path: str) -> float:
         encoding="utf-8",
         errors="replace",
         check=True,
+        **hidden_subprocess_kwargs(),
     )
     return max(0.0, float((result.stdout or "0").strip()))
 
@@ -47,6 +50,7 @@ def probe_media_stream_types(input_path: str) -> set[str]:
         encoding="utf-8",
         errors="replace",
         check=True,
+        **hidden_subprocess_kwargs(),
     )
 
     payload: dict[str, Any] = json.loads(result.stdout or "{}")

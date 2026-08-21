@@ -11,6 +11,7 @@ import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from uuid import uuid4
@@ -65,7 +66,7 @@ from .gui_codex_chat_state import (
     CodexChatError,
     CodexChatSnapshot,
 )
-from .application_logging import ApplicationLogger
+from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
@@ -88,6 +89,7 @@ from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
+from .runtime_dependencies import runtime_diagnostic_info
 from . import update_manager, updater
 
 
@@ -289,6 +291,7 @@ class EditBayBackend(LegacyEditBayBackend):
     audioPreviewCacheCompleted = Signal(int, object)
     autosaveCompleted = Signal(int, str, str)
     applicationLogChanged = Signal()
+    lastProcessDiagnosticChanged = Signal()
     updateInfoChanged = Signal()
     updateBusyChanged = Signal()
     updateErrorChanged = Signal()
@@ -323,6 +326,8 @@ class EditBayBackend(LegacyEditBayBackend):
             self.workspace_root,
             application_info=self._application_info,
         )
+        self._last_process_diagnostic: ProcessDiagnosticSnapshot | None = None
+        self._pending_process_error = ""
         self._log = self._application_logger.text
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
@@ -424,6 +429,10 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(bool, notify=projectChanged)
     def projectDirty(self) -> bool:
         return self._project_dirty
+
+    @Property(bool, notify=lastProcessDiagnosticChanged)
+    def hasLastProcessDiagnostic(self) -> bool:
+        return self._last_process_diagnostic is not None
 
     @Property(str, notify=updateInfoChanged)
     def updateCurrentVersion(self) -> str:
@@ -2438,6 +2447,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         self._active_job = job
         self.activeJobChanged.emit()
+        if self._last_process_diagnostic is not None:
+            self._last_process_diagnostic = None
+            self.lastProcessDiagnosticChanged.emit()
+        self._pending_process_error = ""
         self._application_logger.clear_memory()
         self._record_log(
             f"> {subprocess.list2cmdline(command)}",
@@ -2993,23 +3006,82 @@ class EditBayBackend(LegacyEditBayBackend):
     def logFilePath(self) -> str:
         return str(self._application_logger.log_path)
 
+    def _related_process_log_tail(self) -> str:
+        output_directory = str(self._source_selection.output_dir or "").strip()
+        if not output_directory:
+            return ""
+        transcript_directory = Path(output_directory) / "transcripts"
+        if not transcript_directory.is_dir():
+            return ""
+        try:
+            candidates = sorted(
+                transcript_directory.glob("*.whisperx.log"),
+                key=lambda path: path.stat().st_mtime_ns,
+                reverse=True,
+            )[:3]
+        except OSError:
+            return ""
+
+        sections: list[str] = []
+        for path in candidates:
+            try:
+                with path.open("rb") as handle:
+                    handle.seek(0, os.SEEK_END)
+                    size = handle.tell()
+                    handle.seek(max(0, size - 8_000), os.SEEK_SET)
+                    tail = handle.read().decode("utf-8", errors="replace").strip()
+            except OSError:
+                continue
+            if tail:
+                sections.append(f"WhisperX log ({path.name}):\n{tail}")
+        return "\n\n".join(sections)
+
+    def _capture_process_diagnostic(
+        self,
+        *,
+        job: str,
+        outcome: str,
+        exit_code: int | None,
+    ) -> None:
+        self._last_process_diagnostic = ProcessDiagnosticSnapshot(
+            occurred_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            job=job,
+            component=job or "process",
+            stage=self.stage,
+            status=self.status,
+            outcome=outcome,
+            exit_code=exit_code,
+            process_error=self._pending_process_error,
+            log_text=self._application_logger.text,
+            related_log_tail=self._related_process_log_tail(),
+            runtime=runtime_diagnostic_info(),
+        )
+        self.lastProcessDiagnosticChanged.emit()
+
     @Slot()
     def copyLogsToClipboard(self) -> None:
         self.clipboard().setText(
             self._application_logger.diagnostic_text(
                 status=self.status,
                 stage=self.stage,
-                runtime={"python": sys.version.split()[0], "platform": sys.platform},
+                runtime=runtime_diagnostic_info(),
             )
         )
 
     @Slot()
     def copyErrorLogsToClipboard(self) -> None:
+        if self._last_process_diagnostic is not None:
+            self.clipboard().setText(
+                self._application_logger.diagnostic_text(
+                    snapshot=self._last_process_diagnostic,
+                )
+            )
+            return
         self.clipboard().setText(
             self._application_logger.diagnostic_text(
                 status=self.status,
                 stage=self.stage,
-                runtime={"python": sys.version.split()[0], "platform": sys.platform},
+                runtime=runtime_diagnostic_info(),
             )
         )
 
@@ -3036,6 +3108,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     def _process_error(self, error: QProcess.ProcessError) -> None:
         message = self.process.errorString() or str(error)
+        self._pending_process_error = message
         self._record_log(
             message,
             severity="ERROR",
@@ -3045,7 +3118,16 @@ class EditBayBackend(LegacyEditBayBackend):
             process_id=int(self.process.processId()) or None,
         )
         if not self._running and self.process.state() == QProcess.ProcessState.NotRunning:
+            self._read_process_output()
             self._set_status(message, "ERROR")
+            failed_job = self._active_job
+            self._capture_process_diagnostic(
+                job=failed_job,
+                outcome="failed",
+                exit_code=None,
+            )
+            self._active_job = ""
+            self.activeJobChanged.emit()
 
     def _update_stage(self, output: str) -> None:
         markers = [
@@ -3065,6 +3147,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 self._set_status(status, stage)
 
     def _process_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        self._read_process_output()
         self.elapsed_timer.stop()
         self._running = False
         self.runningChanged.emit()
@@ -3079,16 +3162,19 @@ class EditBayBackend(LegacyEditBayBackend):
                 ),
                 "",
             )
+        finish_stage = (
+            "CANCELLED"
+            if self._cancel_requested
+            else "COMPLETE" if exit_code == 0 else "ERROR"
+        )
         self._record_log(
             f"Process finished with exit code {exit_code}",
-            severity="INFO" if exit_code == 0 else "ERROR",
+            severity="INFO" if exit_code == 0 or self._cancel_requested else "ERROR",
             component=completed_job or "process",
             job=completed_job,
-            stage="COMPLETE" if exit_code == 0 else "ERROR",
+            stage=finish_stage,
             exit_code=exit_code,
         )
-        self._active_job = ""
-        self.activeJobChanged.emit()
         if self._cancel_requested:
             self._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
@@ -3117,6 +3203,14 @@ class EditBayBackend(LegacyEditBayBackend):
                     f"処理が終了しました（終了コード {exit_code}）{suffix}",
                     "ERROR",
                 )
+        if self._cancel_requested or exit_code != 0:
+            self._capture_process_diagnostic(
+                job=completed_job,
+                outcome="cancelled" if self._cancel_requested else "failed",
+                exit_code=exit_code,
+            )
+        self._active_job = ""
+        self.activeJobChanged.emit()
 
 
 def main() -> None:

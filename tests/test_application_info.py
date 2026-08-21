@@ -40,11 +40,20 @@ class ApplicationInfoTests(unittest.TestCase):
             payload = build_application_info_payload(root)
 
             self.assertEqual(info["version"], "v1.3.0")
+            self.assertEqual(info["distribution"], "zip")
             self.assertEqual(info["applicationPath"], str(root))
             self.assertEqual(info["executablePath"], str(Path(sys.executable).resolve()))
             self.assertIn("Version: v1.3.0", payload)
+            self.assertIn("Distribution: zip", payload)
             self.assertIn("Executable:", payload)
             self.assertIn("Application path:", payload)
+
+    def test_installed_launcher_is_classified_as_installer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "SubtitleEditBayLauncher.exe").write_bytes(b"launcher")
+
+            self.assertEqual(resolve_application_info(root)["distribution"], "installer")
 
 
 if __name__ == "__main__":

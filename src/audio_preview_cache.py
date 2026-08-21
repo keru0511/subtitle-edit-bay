@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
-import os
 from pathlib import Path
 import subprocess
 import time
 from typing import Any, Iterable
 from uuid import uuid4
+
+from .process_utils import hidden_subprocess_kwargs
 
 
 AUDIO_PREVIEW_CACHE_VERSION = 2
@@ -275,9 +276,6 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
             ]
         )
 
-    run_options: dict[str, Any] = {}
-    if os.name == "nt":
-        run_options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         subprocess.run(
             command,
@@ -286,7 +284,7 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
             encoding="utf-8",
             errors="replace",
             check=True,
-            **run_options,
+            **hidden_subprocess_kwargs(),
         )
         for temporary_path, entry in zip(temporary_paths, unique_entries):
             if not _valid_cache_file(temporary_path):

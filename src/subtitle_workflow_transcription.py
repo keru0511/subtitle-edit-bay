@@ -36,6 +36,7 @@ from .craig_pipeline import (
 )
 from .craig_transcription_execution import CraigTranscriptionHint
 from .merge_transcripts import refine_segments
+from .process_utils import hidden_subprocess_kwargs
 from .silence_cut import probe_media_duration
 from .subtitle_project import (
     DEFAULT_WAVEFORM_SAMPLE_RATE,
@@ -132,7 +133,11 @@ def _extract_video_audio_track(video_path: str, selector: str, transcript_dir: P
     fingerprint = _audio_cache_fingerprint(video_path, selector)
     output = transcript_dir / f"{Path(video_path).stem}.{safe_selector}.{fingerprint}.wav"
     if not output.exists():
-        subprocess.run(build_extract_audio_command(video_path, str(output), selector), check=True)
+        subprocess.run(
+            build_extract_audio_command(video_path, str(output), selector),
+            check=True,
+            **hidden_subprocess_kwargs(),
+        )
     return output
 
 

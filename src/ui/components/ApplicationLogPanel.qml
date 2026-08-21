@@ -54,8 +54,13 @@ Rectangle {
                 onClicked: backend.copyErrorLogsToClipboard()
             }
             Button {
+                objectName: "copyApplicationInfoButton"
+                text: "アプリ情報をコピー"
+                onClicked: backend.copyApplicationInfoToClipboard()
+            }
+            Button {
                 objectName: "openLogsButton"
-                text: "保存先"
+                text: "ログフォルダを開く"
                 onClicked: backend.openLogFolder()
             }
         }

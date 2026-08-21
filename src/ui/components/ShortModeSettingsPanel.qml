@@ -139,10 +139,11 @@ ColumnLayout {
         }
         Slider {
             id: transitionDuration
+            objectName: "shortModeTransitionDurationSlider"
             from: 0; to: 2.0; stepSize: 0.1
             onValueChanged: {
                 if (settingsRoot.appBackend) {
-                    settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentText, value)
+                    settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
             }
         }

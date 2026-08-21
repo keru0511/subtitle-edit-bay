@@ -121,8 +121,7 @@ class QmlStaticTests(unittest.TestCase):
         qml = read_workflow_qml()
 
         self.assertIn("applicationInfo.version", qml)
-        self.assertIn("copyApplicationInfoToClipboard", qml)
-        self.assertIn('objectName: "copyApplicationInfoButton"', qml)
+        self.assertNotIn('objectName: "copyApplicationInfoButton"', qml)
 
     def test_codex_edit_panel_exposes_prompt_scope_diff_and_apply_actions(self) -> None:
         qml = read_workflow_qml()
@@ -150,9 +149,12 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "applicationLogToggleButton"', panel)
         self.assertIn('objectName: "copyLogsButton"', panel)
         self.assertIn('objectName: "copyErrorLogsButton"', panel)
+        self.assertIn('objectName: "copyApplicationInfoButton"', panel)
         self.assertIn('objectName: "openLogsButton"', panel)
         self.assertIn("selectByMouse: true", panel)
         self.assertIn("backend.copyErrorLogsToClipboard()", panel)
+        self.assertIn("backend.copyApplicationInfoToClipboard()", panel)
+        self.assertIn('text: "ログフォルダを開く"', panel)
 
     def test_highlight_candidate_list_exposes_analysis_preview_add_and_reject(self) -> None:
         short_qml = (UI_ROOT / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
@@ -210,14 +212,23 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn('root.appBackend.stage + " · " + root.appBackend.status', workflow_qml)
         self.assertNotIn('text: "実行ファイル: "', workflow_qml)
         self.assertNotIn('text: "配置場所: "', workflow_qml)
+        self.assertNotIn('text: "トラブルシューティング情報をコピー"', workflow_qml)
+        self.assertIn('return "GPU処理を利用できません。処理方法をCPUに変更するか、アプリの実行環境を修復してください"', workflow_qml)
+        self.assertNotIn("CUDA版PyTorch", workflow_qml)
+        self.assertNotIn("setup.bat", workflow_qml)
         self.assertNotIn('text: "Cache: "', workflow_qml)
         self.assertNotIn('text: "SEQUENCE"', workflow_qml)
         self.assertNotIn('text: "INPUT CHANNELS"', workflow_qml)
         self.assertNotIn('text: "INPUT ON"', workflow_qml)
+        self.assertIn('text: "すべての音声トラックをリセット"', workflow_qml)
+        self.assertNotIn('text: "全チャンネルをリセット"', workflow_qml)
         self.assertNotIn('text: "ASSを更新"', workflow_qml)
         self.assertNotIn('stage + " · " + screenRoot.appBackend.status', wrapper_qml)
 
         self.assertIn('text: "ショート全体の設定"', settings_qml)
+        self.assertIn('objectName: "shortModeTransitionDurationSlider"', settings_qml)
+        self.assertIn("setShortVideoTransition(transitionCombo.currentValue, value)", settings_qml)
+        self.assertNotIn("setShortVideoTransition(transitionCombo.currentText, value)", settings_qml)
         self.assertIn('"label": "画面いっぱい"', settings_qml)
         self.assertIn('"label": "全体を表示"', settings_qml)
         self.assertIn('"label": "ぼかし背景"', settings_qml)

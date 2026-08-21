@@ -237,7 +237,7 @@ ApplicationWindow {
         if (!root.appBackend.dependencyStatus.ready)
             return "実行ツールが不足しています: " + root.appBackend.dependencyStatus.missing.join(", ")
         if (deviceCombo.currentText === "cuda" && !root.appBackend.dependencyStatus.cuda)
-            return "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください"
+            return "GPU処理を利用できません。処理方法をCPUに変更するか、アプリの実行環境を修復してください"
         if (!root.appBackend.sourceSelection.video)
             return "素材設定で動画を指定してください"
         if (root.appBackend.speakers.length === 0)
@@ -920,7 +920,6 @@ ApplicationWindow {
                     elide: Text.ElideRight
                 }
             }
-            SmallButton { objectName: "copyApplicationInfoButton"; text: "トラブルシューティング情報をコピー"; enabled: !root.appBackend.running; onClicked: root.appBackend.copyApplicationInfoToClipboard() }
             SmallButton { objectName: "checkForUpdatesButton"; text: "更新確認"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: root.appBackend.checkForUpdates() }
             SmallButton { objectName: "projectOpenButton"; text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
             SmallButton { objectName: "sourceSetupButton"; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
@@ -1621,7 +1620,7 @@ ApplicationWindow {
                                 root.appBackend.prepareAudioMixerPreview()
                             }
                         }
-                        SmallButton { objectName: "mixerResetButton"; text: "全チャンネルをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
+                        SmallButton { objectName: "mixerResetButton"; text: "すべての音声トラックをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
                         SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
                         SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
                         Button {

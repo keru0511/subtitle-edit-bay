@@ -75,6 +75,18 @@ class ProcessingProgressTests(unittest.TestCase):
                 self.assertEqual(tracker.value, before)
                 self.assertEqual(tracker.as_list()[3]["state"], state)
 
+    def test_cancel_and_error_mark_the_next_step_before_any_step_event(self) -> None:
+        for outcome, state in (("cancelled", "cancelled"), ("error", "error")):
+            with self.subTest(outcome=outcome):
+                tracker = ProcessingProgress()
+                tracker.start("render_short")
+
+                tracker.finish(outcome)
+
+                self.assertEqual(tracker.value, 0.0)
+                self.assertEqual(tracker.current_step, "prepare")
+                self.assertEqual(tracker.as_list()[0]["state"], state)
+
     def test_unknown_events_are_ignored(self) -> None:
         tracker = ProcessingProgress()
         tracker.start("render")

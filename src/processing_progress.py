@@ -192,11 +192,16 @@ class ProcessingProgress:
             self.value = 1.0
             self.current_step = ""
             return
-        if self.current_step:
+        terminal_step = self.current_step or next(
+            (step.id for step in self.steps if step.state == "pending"),
+            "",
+        )
+        if terminal_step:
             terminal_state = "cancelled" if outcome == "cancelled" else "error"
+            self.current_step = terminal_step
             self.steps = tuple(
                 replace(step, state=terminal_state)
-                if step.id == self.current_step
+                if step.id == terminal_step
                 else step
                 for step in self.steps
             )

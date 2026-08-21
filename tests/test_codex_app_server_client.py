@@ -112,10 +112,20 @@ class CodexAppServerClientTests(unittest.TestCase):
                 cwd="C:/workspace",
                 approval_policy="never",
                 sandbox_policy=sandbox_policy,
+                context={"segment": "字幕"},
             )
 
         method, params = request.call_args.args
         self.assertEqual(method, "turn/start")
+        self.assertNotIn("context", params, CODEX_APP_SERVER_SCHEMA_COMMIT)
+        self.assertEqual(
+            set(params),
+            {"threadId", "input", "cwd", "approvalPolicy", "sandboxPolicy"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertEqual(params["input"][0], {"type": "text", "text": "contract check"})
+        self.assertEqual(params["input"][1]["type"], "text")
+        self.assertIn('"segment":"字幕"', params["input"][1]["text"])
         self.assertEqual(
             params["sandboxPolicy"],
             sandbox_policy,
@@ -126,6 +136,32 @@ class CodexAppServerClientTests(unittest.TestCase):
             {"type", "networkAccess"},
             CODEX_APP_SERVER_SCHEMA_COMMIT,
         )
+
+    def test_thread_resume_payload_matches_pinned_v2_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "request", return_value={}) as request:
+            client.thread_resume(
+                "thread-1",
+                model="gpt-test",
+                cwd="C:/workspace",
+                approval_policy="never",
+                sandbox="read-only",
+            )
+
+        method, params = request.call_args.args
+        self.assertEqual(method, "thread/resume")
+        self.assertEqual(
+            params,
+            {
+                "threadId": "thread-1",
+                "model": "gpt-test",
+                "cwd": "C:/workspace",
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+            },
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertNotIn("serviceName", params, CODEX_APP_SERVER_SCHEMA_COMMIT)
 
     def test_start_failure_is_reported_without_opening_a_socket(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -178,6 +178,7 @@ class CodexAppServerClient:
         process = self._process
         if process is None:
             return
+        reader_thread = self._reader_thread
         self._stopping = True
         self._initialized = False
         self._fail_pending(CodexAppServerError("app-server stopped"))
@@ -195,6 +196,10 @@ class CodexAppServerClient:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=1.0)
+        if reader_thread is not None and reader_thread is not threading.current_thread():
+            reader_thread.join(timeout=1.0)
+        if process.stdout is not None:
+            process.stdout.close()
         self._process = None
         self._reader_thread = None
 
@@ -274,8 +279,25 @@ class CodexAppServerClient:
     def thread_start(self, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return self.request("thread/start", params)
 
-    def thread_resume(self, thread_id: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return self.request("thread/resume", {"threadId": thread_id, **dict(params or {})})
+    def thread_resume(
+        self,
+        thread_id: str,
+        *,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"threadId": thread_id}
+        if model:
+            params["model"] = model
+        if cwd is not None:
+            params["cwd"] = str(cwd)
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox:
+            params["sandbox"] = sandbox
+        return self.request("thread/resume", params)
 
     def turn_start(
         self,
@@ -296,7 +318,18 @@ class CodexAppServerClient:
         if output_schema is not None:
             params["outputSchema"] = dict(output_schema)
         if context:
-            params["context"] = dict(context)
+            params["input"].append(
+                {
+                    "type": "text",
+                    "text": "参照コンテキスト(JSON):\n"
+                    + json.dumps(
+                        dict(context),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                }
+            )
         if model:
             params["model"] = model
         if cwd is not None:

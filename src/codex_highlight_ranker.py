@@ -73,7 +73,7 @@ def rank_highlight_candidates(
     if client is None:
         return HighlightRankingResult(tuple(local), True, "Codex client is unavailable", cache_key)
     try:
-        thread = client.thread_start({"purpose": "highlight-ranking", "revision": revision})
+        thread = client.thread_start()
         thread_id = str(thread.get("threadId", thread.get("id", "")))
         if not thread_id:
             raise HighlightRankingError("Codex thread id is missing")

@@ -159,6 +159,9 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "codexChatStopButton"', panel)
         self.assertIn('objectName: "codexLocalReadNotice"', panel)
         self.assertIn("ローカルファイルを読み取る場合があります", panel)
+        message_text = panel.split("id: messageText", 1)[1].split("}", 1)[0]
+        self.assertIn("textFormat: Text.PlainText", message_text)
+        self.assertIn("textFormat: TextEdit.PlainText", panel)
         self.assertIn("backend.startCodexLogin()", panel)
         self.assertIn("backend.reloginCodex()", panel)
         self.assertIn("backend.logoutCodex()", panel)

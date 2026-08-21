@@ -262,7 +262,7 @@ class CodexSessionController:
                     stop_event=stop_event,
                 )
                 return
-            thread = client.thread_start({"context": dict(context)})
+            thread = client.thread_start()
             if not self._is_active(generation, stop_event):
                 return
             thread_id = str(thread.get("threadId", thread.get("id", "")))

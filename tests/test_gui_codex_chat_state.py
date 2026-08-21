@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -79,8 +80,25 @@ class FakeChatClient:
         self.thread_params = dict(params or {})
         return {"thread": {"id": f"thread-{self.thread_start_count}"}}
 
-    def thread_resume(self, thread_id: str, params=None) -> dict[str, object]:
-        self.resumed_threads.append((thread_id, dict(params or {})))
+    def thread_resume(
+        self,
+        thread_id: str,
+        *,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
+    ) -> dict[str, object]:
+        params = {}
+        if model:
+            params["model"] = model
+        if cwd is not None:
+            params["cwd"] = str(cwd)
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
+        if sandbox:
+            params["sandbox"] = sandbox
+        self.resumed_threads.append((thread_id, params))
         return {"thread": {"id": thread_id}}
 
     def turn_start(self, **kwargs) -> dict[str, object]:
@@ -126,6 +144,19 @@ class FakeChatClient:
     def disconnect(self) -> None:
         if self.disconnect_callback:
             self.disconnect_callback(RuntimeError("closed"))
+
+
+class BlockingTurnStartClient(FakeChatClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.turn_entered = threading.Event()
+        self.turn_release = threading.Event()
+
+    def turn_start(self, **kwargs) -> dict[str, object]:
+        self.turn_params = dict(kwargs)
+        self.turn_entered.set()
+        self.turn_release.wait(2)
+        return {"turn": {"id": "turn-blocked", "status": "inProgress"}}
 
 
 def wait_for(predicate, timeout: float = 2.0) -> None:
@@ -294,10 +325,57 @@ class CodexChatControllerTests(unittest.TestCase):
             wait_for(lambda: controller.snapshot.chat_state == "idle")
 
             self.assertEqual(second_client.resumed_threads[0][0], "thread-1")
-            self.assertEqual(second_client.resumed_threads[0][1]["sandbox"], "read-only")
+            self.assertEqual(
+                second_client.resumed_threads[0][1],
+                {
+                    "model": "gpt-default",
+                    "cwd": str(Path.cwd().resolve()),
+                    "approvalPolicy": "never",
+                    "sandbox": "read-only",
+                },
+                CODEX_APP_SERVER_SCHEMA_COMMIT,
+            )
+            self.assertNotIn(
+                "serviceName",
+                second_client.resumed_threads[0][1],
+                CODEX_APP_SERVER_SCHEMA_COMMIT,
+            )
             self.assertEqual(second_client.turn_params["thread_id"], "thread-1")
             self.assertEqual(second_client.thread_start_count, 0)
         finally:
+            controller.shutdown()
+
+    def test_stop_while_turn_start_is_pending_interrupts_after_id_arrives(self) -> None:
+        client = BlockingTurnStartClient()
+        client.authenticated = True
+        controller = CodexChatController(
+            client_factory=lambda: client,
+            workspace_root=Path.cwd(),
+            preferred_model="gpt-default",
+        )
+        try:
+            controller.connect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            controller.send_message("送信直後に停止")
+            self.assertTrue(client.turn_entered.wait(2))
+            self.assertEqual(controller.snapshot.turn_id, "")
+
+            controller.interrupt()
+            self.assertEqual(controller.snapshot.chat_state, "stopping")
+            client.turn_release.set()
+
+            wait_for(lambda: client.interrupted == ("thread-1", "turn-blocked"))
+            self.assertEqual(controller.snapshot.chat_state, "stopping")
+            client.notification_callback(
+                FakeNotification(
+                    "turn/completed",
+                    {"turn": {"id": "turn-blocked", "status": "interrupted"}},
+                )
+            )
+            wait_for(lambda: controller.snapshot.chat_state == "idle")
+            self.assertEqual(controller.snapshot.messages[-1]["status"], "interrupted")
+        finally:
+            client.turn_release.set()
             controller.shutdown()
 
 

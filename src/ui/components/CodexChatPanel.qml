@@ -90,6 +90,7 @@ Rectangle {
 
             Text {
                 text: "Codexチャット"
+                textFormat: Text.PlainText
                 color: panel.textColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 12
@@ -98,6 +99,7 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 text: panel.authStateLabel()
+                textFormat: Text.PlainText
                 color: backend && ["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0
                     ? panel.errorColor : panel.mutedColor
                 font.family: "Yu Gothic UI"
@@ -140,7 +142,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "モデル"; color: panel.mutedColor; font.pixelSize: 9 }
+                Text { text: "モデル"; textFormat: Text.PlainText; color: panel.mutedColor; font.pixelSize: 9 }
                 ComboBox {
                     id: modelCombo
                     objectName: "codexModelCombo"
@@ -165,6 +167,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text: panel.chatStateLabel()
+                    textFormat: Text.PlainText
                     color: backend && backend.codexChatState === "send_failed" ? panel.errorColor : panel.mutedColor
                     font.pixelSize: 9
                 }
@@ -209,6 +212,7 @@ Rectangle {
                         anchors.margins: 8
                         text: String(messageDelegate.modelData.text || "")
                             + (messageDelegate.modelData.status === "streaming" ? " ▍" : "")
+                        textFormat: Text.PlainText
                         color: panel.textColor
                         font.family: "Yu Gothic UI"
                         font.pixelSize: 10
@@ -223,6 +227,7 @@ Rectangle {
                 Layout.fillWidth: true
                 visible: backend && (backend.codexModelError || backend.codexChatError)
                 text: backend ? (backend.codexModelError || backend.codexChatError) : ""
+                textFormat: Text.PlainText
                 color: panel.errorColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 9
@@ -233,6 +238,7 @@ Rectangle {
                 objectName: "codexLocalReadNotice"
                 Layout.fillWidth: true
                 text: "書き込みは禁止されていますが、Codexはローカルファイルを読み取る場合があります。"
+                textFormat: Text.PlainText
                 color: panel.mutedColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 9
@@ -247,6 +253,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 62
                     placeholderText: "Codexへのメッセージ"
+                    textFormat: TextEdit.PlainText
                     wrapMode: TextEdit.Wrap
                     selectByMouse: true
                     enabled: panel.authenticated() && !panel.busy()

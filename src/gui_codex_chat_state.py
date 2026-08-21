@@ -23,7 +23,11 @@ class CodexChatClientProtocol(Protocol):
     def thread_resume(
         self,
         thread_id: str,
-        params: Mapping[str, Any] | None = None,
+        *,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
     ) -> Mapping[str, Any]: ...
     def turn_start(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def turn_interrupt(self, turn_id: str, *, thread_id: str = "") -> Mapping[str, Any]: ...
@@ -125,10 +129,15 @@ class CodexChatController:
         self._client: CodexChatClientProtocol | None = None
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="codex-chat")
+        self._interrupt_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="codex-chat-stop",
+        )
         self._shutdown = False
         self._message_sequence = 0
         self._active_assistant_id = ""
         self._thread_needs_resume = False
+        self._stop_requested = False
 
     @property
     def snapshot(self) -> CodexChatSnapshot:
@@ -183,6 +192,8 @@ class CodexChatController:
                 error="利用可能なCodexモデルを選択してください",
             )
             return
+        with self._lock:
+            self._stop_requested = False
         self._message_sequence += 1
         user_id = f"local-user-{self._message_sequence}"
         self._message_sequence += 1
@@ -200,10 +211,12 @@ class CodexChatController:
 
     def interrupt(self) -> None:
         snapshot = self.snapshot
-        if not snapshot.thread_id or not snapshot.turn_id:
+        if snapshot.chat_state not in {"sending", "streaming"}:
             return
-        self._update(chat_state="stopping")
-        self._submit(self._interrupt_worker, snapshot.thread_id, snapshot.turn_id)
+        with self._lock:
+            self._stop_requested = True
+        self._update(chat_state="stopping", error="")
+        self._schedule_interrupt_if_ready(snapshot.thread_id, snapshot.turn_id)
 
     def new_chat(self) -> None:
         if self.snapshot.chat_state in {"sending", "streaming", "stopping"}:
@@ -212,6 +225,7 @@ class CodexChatController:
         self._active_assistant_id = ""
         with self._lock:
             self._thread_needs_resume = False
+            self._stop_requested = False
         self._update(thread_id="", turn_id="", messages=(), chat_state="idle", error="")
 
     def shutdown(self) -> None:
@@ -219,6 +233,7 @@ class CodexChatController:
             if self._shutdown:
                 return
             self._shutdown = True
+            self._stop_requested = False
             client = self._client
             self._client = None
         if client is not None:
@@ -227,6 +242,7 @@ class CodexChatController:
             except Exception:
                 pass
         self._executor.shutdown(wait=False, cancel_futures=True)
+        self._interrupt_executor.shutdown(wait=False, cancel_futures=True)
 
     def _submit(self, callback: Callable[..., None], *args: Any) -> None:
         with self._lock:
@@ -278,6 +294,7 @@ class CodexChatController:
                 self._active_assistant_id = ""
                 with self._lock:
                     self._thread_needs_resume = False
+                    self._stop_requested = False
                 self._update(
                     auth_label="",
                     chat_state="idle",
@@ -313,6 +330,7 @@ class CodexChatController:
             self._active_assistant_id = ""
             with self._lock:
                 self._thread_needs_resume = False
+                self._stop_requested = False
             self._update(
                 auth_state="unauthenticated",
                 auth_label="",
@@ -337,6 +355,7 @@ class CodexChatController:
             self._active_assistant_id = ""
             with self._lock:
                 self._thread_needs_resume = False
+                self._stop_requested = False
             self._update(
                 connection_state="ready",
                 auth_state="unauthenticated",
@@ -383,12 +402,15 @@ class CodexChatController:
 
     def _send_worker(self, prompt: str, model: str) -> None:
         try:
+            if self._consume_stop_request():
+                self._complete_pending_stop(self.snapshot.thread_id)
+                return
             client = self._require_client()
             snapshot = self.snapshot
             thread_id = snapshot.thread_id
             with self._lock:
                 thread_needs_resume = self._thread_needs_resume
-            thread_options = {
+            thread_start_options = {
                 "model": model,
                 "cwd": self._workspace_root,
                 "approvalPolicy": "never",
@@ -396,7 +418,13 @@ class CodexChatController:
                 "serviceName": "subtitle_edit_bay",
             }
             if thread_id and thread_needs_resume:
-                thread_result = client.thread_resume(thread_id, thread_options)
+                thread_result = client.thread_resume(
+                    thread_id,
+                    model=model,
+                    cwd=self._workspace_root,
+                    approval_policy="never",
+                    sandbox="read-only",
+                )
                 thread = thread_result.get("thread", thread_result)
                 resumed_thread_id = str(
                     thread.get("id", "") if isinstance(thread, Mapping) else ""
@@ -408,7 +436,7 @@ class CodexChatController:
                     self._thread_needs_resume = False
                 self._update(thread_id=thread_id)
             if not thread_id:
-                thread_result = client.thread_start(thread_options)
+                thread_result = client.thread_start(thread_start_options)
                 thread = thread_result.get("thread", thread_result)
                 thread_id = str(
                     thread.get("id", "") if isinstance(thread, Mapping) else ""
@@ -418,6 +446,9 @@ class CodexChatController:
                 with self._lock:
                     self._thread_needs_resume = False
                 self._update(thread_id=thread_id)
+            if self._consume_stop_request():
+                self._complete_pending_stop(thread_id)
+                return
             response = client.turn_start(
                 thread_id=thread_id,
                 prompt=prompt,
@@ -434,26 +465,75 @@ class CodexChatController:
                 response.get("turnId", "")
             )
             current = self.snapshot
+            effective_turn_id = turn_id or current.turn_id
+            if not effective_turn_id and current.chat_state in {
+                "sending",
+                "streaming",
+                "stopping",
+            }:
+                raise CodexChatError("Codex turn IDが返されませんでした")
             changes: dict[str, Any] = {"thread_id": thread_id}
-            if turn_id and current.chat_state in {"sending", "streaming"}:
-                changes["turn_id"] = turn_id
+            if effective_turn_id and current.chat_state in {"sending", "streaming", "stopping"}:
+                changes["turn_id"] = effective_turn_id
             if current.chat_state == "sending":
                 changes["chat_state"] = "streaming"
             self._update(**changes)
+            if self.snapshot.chat_state == "stopping":
+                self._schedule_interrupt_if_ready(thread_id, effective_turn_id)
         except Exception as error:
+            with self._lock:
+                self._stop_requested = False
             message = f"Codexへメッセージを送信できません: {_safe_error(error)}"
             self._set_active_assistant_status("error")
             self._update(chat_state="send_failed", error=message)
 
     def _interrupt_worker(self, thread_id: str, turn_id: str) -> None:
+        current = self.snapshot
+        if (
+            current.chat_state != "stopping"
+            or current.thread_id != thread_id
+            or (current.turn_id and current.turn_id != turn_id)
+        ):
+            return
         try:
             client = self._require_client()
             client.turn_interrupt(turn_id, thread_id=thread_id)
         except Exception as error:
+            if self._shutdown or self.snapshot.chat_state != "stopping":
+                return
+            self._set_active_assistant_status("error")
             self._update(
                 chat_state="send_failed",
                 error=f"Codexの応答を停止できません: {_safe_error(error)}",
             )
+
+    def _schedule_interrupt_if_ready(self, thread_id: str, turn_id: str) -> None:
+        if not thread_id or not turn_id:
+            return
+        with self._lock:
+            if self._shutdown or not self._stop_requested:
+                return
+            self._stop_requested = False
+        try:
+            self._interrupt_executor.submit(self._interrupt_worker, thread_id, turn_id)
+        except RuntimeError:
+            pass
+
+    def _consume_stop_request(self) -> bool:
+        with self._lock:
+            if not self._stop_requested:
+                return False
+            self._stop_requested = False
+            return True
+
+    def _complete_pending_stop(self, thread_id: str) -> None:
+        self._set_active_assistant_status("interrupted")
+        self._update(
+            chat_state="idle",
+            thread_id=thread_id,
+            turn_id="",
+            error="",
+        )
 
     def _require_client(self) -> CodexChatClientProtocol:
         with self._lock:
@@ -483,13 +563,19 @@ class CodexChatController:
             turn_id = str(turn.get("id", "") if isinstance(turn, Mapping) else "") or str(
                 params.get("turnId", "")
             )
-            self._update(turn_id=turn_id or self.snapshot.turn_id, chat_state="streaming")
+            current = self.snapshot
+            chat_state = "stopping" if current.chat_state == "stopping" else "streaming"
+            effective_turn_id = turn_id or current.turn_id
+            self._update(turn_id=effective_turn_id, chat_state=chat_state)
+            if chat_state == "stopping":
+                self._schedule_interrupt_if_ready(current.thread_id, effective_turn_id)
             return
         if method == "item/agentMessage/delta":
             delta = str(params.get("delta") or params.get("text") or "")
             if delta:
                 self._append_active_assistant(delta)
-                self._update(chat_state="streaming")
+                chat_state = "stopping" if self.snapshot.chat_state == "stopping" else "streaming"
+                self._update(chat_state=chat_state)
             return
         if method == "item/completed":
             item = params.get("item")
@@ -499,10 +585,14 @@ class CodexChatController:
         if method == "error":
             payload = params.get("error", params)
             detail = payload.get("message") if isinstance(payload, Mapping) else payload
+            with self._lock:
+                self._stop_requested = False
             self._set_active_assistant_status("error")
             self._update(chat_state="send_failed", error=f"Codexの応答でエラーが発生しました: {_safe_error(detail)}")
             return
         if method == "turn/completed":
+            with self._lock:
+                self._stop_requested = False
             turn = params.get("turn", params)
             status = str(turn.get("status", "completed") if isinstance(turn, Mapping) else "completed")
             if status == "failed":
@@ -528,6 +618,7 @@ class CodexChatController:
         with self._lock:
             self._client = None
             self._thread_needs_resume = bool(self._snapshot.thread_id)
+            self._stop_requested = False
         self._set_active_assistant_status("error")
         self._update(
             connection_state="disconnected",

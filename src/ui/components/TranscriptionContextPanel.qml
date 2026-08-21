@@ -23,6 +23,15 @@ Rectangle {
         return value === undefined || value === null ? "" : String(value)
     }
 
+    function sourceLabel(value) {
+        var source = String(value || "").toLowerCase()
+        if (source === "manual") return "手動追加"
+        if (source === "title") return "ゲームタイトル"
+        if (source === "notes") return "補足メモ"
+        if (source.indexOf("snippet:") === 0 || source.indexOf("http://") === 0 || source.indexOf("https://") === 0) return "Webページ"
+        return "参考情報"
+    }
+
     function _toStringList(value) {
         if (!(value instanceof Array)) {
             return []
@@ -257,7 +266,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 54
             enabled: !panelRoot.running
-            placeholderText: "WebページのHTMLまたはsnippet（URLなしでも可）"
+            placeholderText: "Webページの補足情報を貼り付け（任意）"
             text: ""
             wrapMode: TextEdit.Wrap
             color: panelRoot.textPrimaryColor
@@ -277,7 +286,7 @@ Rectangle {
             objectName: "transcriptionDictionaryPathField"
             Layout.fillWidth: true
             enabled: !panelRoot.running
-            placeholderText: "確認済み辞書JSONのpath（任意）"
+            placeholderText: "辞書ファイルの場所（任意）"
             color: panelRoot.textPrimaryColor
             selectionColor: panelRoot.accentColor
             selectedTextColor: "#10140F"
@@ -304,7 +313,7 @@ Rectangle {
             }
             Text {
                 Layout.fillWidth: true
-                text: "この辞書を確認済みとしてASRへ渡す"
+                text: "この辞書を文字起こしに使用"
                 color: panelRoot.textPrimaryColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 10
@@ -325,7 +334,7 @@ Rectangle {
             }
             Text {
                 Layout.fillWidth: true
-                text: "Web候補辞書を使う（候補は確認後にのみ適用）"
+                text: "Web候補を参考にする（選択した候補を使用）"
                 color: panelRoot.textMutedColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 10
@@ -335,14 +344,14 @@ Rectangle {
                 id: refreshWebDictionaryButton
                 objectName: "transcriptionWebDictionaryRefreshButton"
                 enabled: !panelRoot.running
-                text: "候補を再読込"
+                text: "候補を更新"
                 onClicked: panelRoot.webDictionaryRefreshRequested(webDictionaryUrlField.text, webDictionarySnippetField.text)
             }
         }
 
         Text {
             Layout.fillWidth: true
-            text: "未確認の辞書候補は文字起こしへ渡されません。辞書を変更するとtranscript cacheのfingerprintも変わります。"
+            text: "候補は選択したものだけ文字起こしに使用されます。辞書を変更すると次回の文字起こしに反映されます。"
             color: panelRoot.textMutedColor
             font.family: "Yu Gothic UI"
             font.pixelSize: 9
@@ -351,7 +360,7 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
-            text: "Web候補（チェックがONのみ適用）"
+            text: "Web候補（選択したものを使用）"
             color: panelRoot.textPrimaryColor
             font.family: "Yu Gothic UI"
             font.pixelSize: 10
@@ -376,19 +385,19 @@ Rectangle {
             Button {
                 objectName: "transcriptionWebDictionaryAddButton"
                 enabled: !panelRoot.running
-                text: "追加"
+                text: "候補を追加"
                 onClicked: panelRoot.addManualCandidate()
             }
             Button {
                 objectName: "transcriptionWebDictionarySelectAllButton"
                 enabled: !panelRoot.running
-                text: "全ON"
+                text: "すべて選択"
                 onClicked: panelRoot.setAllCandidates(true)
             }
             Button {
                 objectName: "transcriptionWebDictionaryClearAllButton"
                 enabled: !panelRoot.running
-                text: "全OFF"
+                text: "選択解除"
                 onClicked: panelRoot.setAllCandidates(false)
             }
         }
@@ -419,7 +428,7 @@ Rectangle {
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: model.source + " · score " + model.score
+                        text: panelRoot.sourceLabel(model.source)
                         color: panelRoot.textMutedColor
                         elide: Text.ElideRight
                     }

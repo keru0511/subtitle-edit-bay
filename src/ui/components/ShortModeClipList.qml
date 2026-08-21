@@ -9,6 +9,19 @@ ColumnLayout {
     spacing: 10
 
     property var appBackend: null
+    property var fitOptions: [
+        { "label": "画面いっぱい", "value": "cover" },
+        { "label": "全体を表示", "value": "contain" },
+        { "label": "ぼかし背景", "value": "blur" }
+    ]
+
+    function indexForFit(value) {
+        for (var index = 0; index < clipListRoot.fitOptions.length; index += 1) {
+            if (clipListRoot.fitOptions[index].value === value)
+                return index
+        }
+        return 0
+    }
     property int selectedIndex: 0
     signal selected(int index)
 
@@ -37,7 +50,7 @@ ColumnLayout {
         Button {
             id: addButton
             objectName: "shortModeAddClipButton"
-            text: "追加"
+            text: "ショートに追加"
             enabled: segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== ""
             onClicked: {
                 if (clipListRoot.appBackend) {
@@ -152,11 +165,13 @@ ColumnLayout {
                 ComboBox {
                     id: fitCombo
                     objectName: "shortModeFitCombo" + index
-                    model: ["cover", "contain", "blur"]
-                    currentIndex: modelData.fit === "contain" ? 1 : (modelData.fit === "blur" ? 2 : 0)
+                    model: clipListRoot.fitOptions
+                    textRole: "label"
+                    valueRole: "value"
+                    currentIndex: clipListRoot.indexForFit(modelData.fit)
                     onActivated: {
                         if (clipListRoot.appBackend) {
-                            clipListRoot.appBackend.updateShortVideoClip(index, {"fit": fitCombo.currentText})
+                            clipListRoot.appBackend.updateShortVideoClip(index, {"fit": fitCombo.currentValue})
                         }
                     }
                 }

@@ -43,7 +43,7 @@ MainWorkflowScreen {
                     Text { text: "文字起こし辞書"; color: screenRoot.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 18; font.weight: Font.Bold }
                     Text { text: "ゲーム固有の名称や表記を文字起こしへ反映します"; color: screenRoot.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 }
-                Text { text: screenRoot.appBackend.stage + " · " + screenRoot.appBackend.status; color: screenRoot.appBackend.stage === "ERROR" ? screenRoot.danger : screenRoot.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; Layout.maximumWidth: 360; elide: Text.ElideRight }
+                Text { text: screenRoot.userFacingStatusLabel(screenRoot.appBackend.stage, screenRoot.appBackend.status); color: screenRoot.appBackend.stage === "ERROR" ? screenRoot.danger : screenRoot.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; Layout.maximumWidth: 360; elide: Text.ElideRight }
                 SmallButton { objectName: "transcriptionDictionarySaveButton"; text: "保存"; enabled: !screenRoot.appBackend.running; onClicked: dictionaryPage.saveContext() }
                 SmallButton { objectName: "transcriptionDictionaryBackButton"; text: "メインへ戻る"; enabled: !screenRoot.appBackend.running; onClicked: dictionaryPage.saveAndClose() }
             }

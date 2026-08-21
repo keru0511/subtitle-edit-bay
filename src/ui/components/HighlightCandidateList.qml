@@ -28,15 +28,46 @@ ColumnLayout {
         return filtered
     }
 
+    function categoryLabel(value) {
+        var labels = {
+            "all": "すべて",
+            "conversation": "会話",
+            "emphasis": "盛り上がり"
+        }
+        return labels[String(value || "")] || "その他"
+    }
+
+    function analysisStateLabel(value) {
+        var labels = {
+            "idle": "待機中",
+            "running": "探しています",
+            "cancelling": "キャンセル中",
+            "cancelled": "キャンセル済み",
+            "completed": "完了",
+            "error": "エラー"
+        }
+        return labels[String(value || "")] || "状態を確認中"
+    }
+
     RowLayout {
         Layout.fillWidth: true
         Text { text: "見どころ候補"; color: "#E8EFEA"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold }
         Text { Layout.fillWidth: true; text: appBackend ? Math.round(appBackend.highlightAnalysisProgress * 100) + "%" : ""; color: "#AEBEB3"; font.pixelSize: 9 }
         ComboBox { objectName: "highlightSortCombo"; model: ["おすすめ順", "時間順"]; onActivated: candidateRoot.sortMode = currentIndex }
-        ComboBox { objectName: "highlightCategoryCombo"; model: ["all", "conversation", "emphasis"]; onActivated: candidateRoot.categoryFilter = currentText }
+        ComboBox {
+            objectName: "highlightCategoryCombo"
+            model: [
+                { "label": "すべて", "value": "all" },
+                { "label": "会話", "value": "conversation" },
+                { "label": "盛り上がり", "value": "emphasis" }
+            ]
+            textRole: "label"
+            valueRole: "value"
+            onActivated: candidateRoot.categoryFilter = currentValue
+        }
         Button {
             objectName: "highlightAnalyzeButton"
-            text: appBackend && appBackend.highlightAnalysisState === "running" ? "解析中" : "解析"
+            text: appBackend && appBackend.highlightAnalysisState === "running" ? "探しています..." : "見どころを探す"
             enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0 && !appBackend.running
             onClicked: appBackend.startHighlightAnalysis()
         }
@@ -50,10 +81,10 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: appBackend ? appBackend.highlightAnalysisState : "idle"; color: "#8E9B94"; font.pixelSize: 9 }
+        Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.highlightAnalysisState : "idle"); color: "#8E9B94"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
-        Button { objectName: "highlightRetryButton"; text: "再解析"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
-        Button { objectName: "highlightUndoRejectButton"; text: "却下を戻す"; enabled: appBackend; onClicked: appBackend.undoHighlightRejection() }
+        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
+        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend; onClicked: appBackend.undoHighlightRejection() }
     }
 
     ListView {
@@ -79,13 +110,13 @@ ColumnLayout {
                 spacing: 6
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Text { Layout.fillWidth: true; text: (modelData.start || 0).toFixed(2) + " - " + (modelData.end || 0).toFixed(2) + "  " + modelData.category; color: "#C8FF3D"; font.family: "Cascadia Mono"; font.pixelSize: 9 }
+                    Text { Layout.fillWidth: true; text: (modelData.start || 0).toFixed(2) + " - " + (modelData.end || 0).toFixed(2) + "  " + candidateRoot.categoryLabel(modelData.category); color: "#C8FF3D"; font.family: "Cascadia Mono"; font.pixelSize: 9 }
                     Text { Layout.fillWidth: true; text: modelData.subtitle_excerpt || ""; color: "#E8EFEA"; elide: Text.ElideRight; font.pixelSize: 10 }
-                    Text { Layout.fillWidth: true; text: "score " + Number(modelData.score || 0).toFixed(3) + "  " + (modelData.reason || ""); color: "#8E9B94"; elide: Text.ElideRight; font.pixelSize: 8 }
+                    Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8E9B94"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
                 Button { objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0)) }
-                Button { objectName: "highlightAddButton"; text: "追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }
-                Button { objectName: "highlightRejectButton"; text: "却下"; onClicked: appBackend.rejectHighlightCandidate(modelData.source_index) }
+                Button { objectName: "highlightAddButton"; text: "ショートに追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }
+                Button { objectName: "highlightRejectButton"; text: "候補から外す"; onClicked: appBackend.rejectHighlightCandidate(modelData.source_index) }
             }
         }
     }

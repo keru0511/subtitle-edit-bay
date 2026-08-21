@@ -34,6 +34,9 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn('"Sysnative\\nvidia-smi.exe"', setup)
         self.assertIn('"System32\\nvidia-smi.exe"', setup)
         self.assertIn("PowerShell architecture:", setup)
+        self.assertIn('State = "execution_failed"', setup)
+        self.assertIn("NVIDIA SMI probe failed (exit code", setup)
+        self.assertIn("Update or reinstall the NVIDIA driver", setup)
         self.assertIn("PyTorch CUDA runtime:", setup)
         self.assertIn("PyTorch CUDA available:", setup)
         self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
@@ -47,7 +50,7 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
-    def test_setup_gpu_probe_resolves_32_and_64_bit_system_paths(self) -> None:
+    def test_setup_gpu_probe_searches_sysnative_and_system32_paths(self) -> None:
         powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
         setup_script = ROOT / "scripts" / "setup.ps1"
 
@@ -89,6 +92,127 @@ class WindowsLauncherTests(unittest.TestCase):
 
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(Path(result.stdout.strip()), candidate.resolve())
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_setup_gpu_probe_distinguishes_driver_failure_from_missing_gpu(self) -> None:
+        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
+        setup_script = ROOT / "scripts" / "setup.ps1"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_nvidia_smi = root / "nvidia-smi.cmd"
+            fake_nvidia_smi.write_text(
+                "@echo off\r\n"
+                "echo synthetic NVIDIA driver failure 1>&2\r\n"
+                "exit /b 17\r\n",
+                encoding="ascii",
+            )
+
+            failed = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(setup_script),
+                    "-ProbeNvidiaStatusOnly",
+                    "-NvidiaSmiOverride",
+                    str(fake_nvidia_smi),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+            failure_probe = json.loads(failed.stdout.strip().splitlines()[-1])
+            self.assertEqual(failure_probe["State"], "execution_failed")
+            self.assertEqual(failure_probe["ExitCode"], 17)
+            self.assertIn("synthetic NVIDIA driver failure", failure_probe["Output"])
+
+            environment = os.environ.copy()
+            environment["PATH"] = ""
+            environment["ProgramFiles"] = str(root / "Program Files")
+            missing = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(setup_script),
+                    "-ProbeNvidiaStatusOnly",
+                    "-NvidiaSmiSearchRoot",
+                    str(root / "empty-windows"),
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            self.assertEqual(missing.returncode, 0, missing.stdout + missing.stderr)
+            missing_probe = json.loads(missing.stdout.strip().splitlines()[-1])
+            self.assertEqual(missing_probe["State"], "not_found")
+            self.assertIsNone(missing_probe["ExitCode"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows architecture paths are required")
+    def test_setup_batch_upgrades_32_bit_parent_to_64_bit_powershell(self) -> None:
+        system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        powershell_32 = system_root / "SysWOW64" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        powershell_64 = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        cmd_32 = system_root / "SysWOW64" / "cmd.exe"
+        cmd_64 = system_root / "System32" / "cmd.exe"
+        required = (powershell_32, powershell_64, cmd_32, cmd_64)
+        if not all(path.is_file() for path in required):
+            self.skipTest("Both 32-bit and 64-bit Windows shells are required")
+
+        for powershell, expected_bits in ((powershell_32, "4"), (powershell_64, "8")):
+            architecture = subprocess.run(
+                [
+                    str(powershell),
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "[IntPtr]::Size",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            self.assertEqual(architecture.returncode, 0, architecture.stdout + architecture.stderr)
+            self.assertEqual(architecture.stdout.strip(), expected_bits)
+
+        launcher = ROOT / "setup.bat"
+        for parent in (cmd_32, cmd_64):
+            with self.subTest(parent=parent):
+                result = subprocess.run(
+                    [
+                        str(parent),
+                        "/d",
+                        "/c",
+                        str(launcher),
+                        "--probe-powershell",
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.strip().splitlines()[-1], "64")
 
     def test_update_supports_git_and_zip_distributions(self) -> None:
         launcher = (ROOT / "update.bat").read_text(encoding="utf-8")

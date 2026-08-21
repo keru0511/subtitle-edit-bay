@@ -4,6 +4,10 @@ cd /d "%~dp0"
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "POWERSHELL_EXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%POWERSHELL_EXE%" set "POWERSHELL_EXE=powershell.exe"
+if /I not "%~1"=="--probe-powershell" goto run_setup
+"%POWERSHELL_EXE%" -NoProfile -NonInteractive -Command "[IntPtr]::Size * 8"
+exit /b %ERRORLEVEL%
+:run_setup
 "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup.ps1"
 if errorlevel 1 (
     echo.

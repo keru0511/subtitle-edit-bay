@@ -1,6 +1,8 @@
 param(
     [switch]$ProbeNvidiaOnly,
-    [string]$NvidiaSmiSearchRoot = ""
+    [switch]$ProbeNvidiaStatusOnly,
+    [string]$NvidiaSmiSearchRoot = "",
+    [string]$NvidiaSmiOverride = ""
 )
 
 # Windows PowerShell 5.1 turns text written to stderr by native programs into
@@ -100,14 +102,34 @@ function Find-NvidiaSmi {
     return $null
 }
 
-function Test-NvidiaGpu {
+function Get-NvidiaGpuProbe {
     param([string]$NvidiaSmiPath)
 
     if (-not $NvidiaSmiPath) {
-        return $false
+        return [PSCustomObject]@{
+            State = "not_found"
+            ExitCode = $null
+            Output = ""
+        }
     }
-    & $NvidiaSmiPath -L *> $null
-    return $LASTEXITCODE -eq 0
+
+    try {
+        $outputLines = @(& $NvidiaSmiPath -L 2>&1)
+        $exitCode = if ($null -eq $LASTEXITCODE) { -1 } else { [int]$LASTEXITCODE }
+        $outputText = ($outputLines | ForEach-Object { "$_" }) -join [Environment]::NewLine
+    } catch {
+        return [PSCustomObject]@{
+            State = "execution_failed"
+            ExitCode = -1
+            Output = "$_"
+        }
+    }
+
+    return [PSCustomObject]@{
+        State = if ($exitCode -eq 0) { "available" } else { "execution_failed" }
+        ExitCode = $exitCode
+        Output = $outputText
+    }
 }
 
 if ($ProbeNvidiaOnly) {
@@ -117,6 +139,20 @@ if ($ProbeNvidiaOnly) {
         exit 0
     }
     exit 1
+}
+
+if ($ProbeNvidiaStatusOnly) {
+    $probePath = if ($NvidiaSmiOverride) {
+        $NvidiaSmiOverride
+    } else {
+        Find-NvidiaSmi -WindowsRoot $NvidiaSmiSearchRoot
+    }
+    $probeResult = Get-NvidiaGpuProbe -NvidiaSmiPath $probePath
+    Write-Output ($probeResult | ConvertTo-Json -Compress)
+    if ($probeResult.State -eq "execution_failed") {
+        exit 2
+    }
+    exit 0
 }
 
 Write-Host "Subtitle Edit Bay setup"
@@ -147,18 +183,34 @@ Write-Host "FFmpeg: $ffmpegDirectory"
 
 $shellArchitectureBits = [IntPtr]::Size * 8
 $nvidiaSmiPath = Find-NvidiaSmi
-$nvidiaGpuAvailable = Test-NvidiaGpu -NvidiaSmiPath $nvidiaSmiPath
+$nvidiaGpuProbe = Get-NvidiaGpuProbe -NvidiaSmiPath $nvidiaSmiPath
+$nvidiaGpuAvailable = $nvidiaGpuProbe.State -eq "available"
 Write-Host "PowerShell architecture: $shellArchitectureBits-bit"
 if ($nvidiaSmiPath) {
     Write-Host "NVIDIA SMI: $nvidiaSmiPath"
 }
+if ($nvidiaGpuProbe.State -eq "execution_failed") {
+    Write-Host "NVIDIA SMI probe failed (exit code $($nvidiaGpuProbe.ExitCode))."
+    if ($nvidiaGpuProbe.Output) {
+        Write-Host $nvidiaGpuProbe.Output
+    }
+    throw "NVIDIA tools were found, but the GPU driver check failed. Update or reinstall the NVIDIA driver, restart Windows, then run setup.bat again."
+}
 if ($nvidiaGpuAvailable) {
-    $gpuNames = & $nvidiaSmiPath --query-gpu=name --format=csv,noheader
-    if ($LASTEXITCODE -eq 0 -and $gpuNames) {
-        Write-Host "NVIDIA GPU: $(($gpuNames | ForEach-Object { $_.Trim() }) -join ', ')"
+    $gpuNameLines = @(& $nvidiaSmiPath --query-gpu=name --format=csv,noheader 2>&1)
+    $gpuNameExitCode = $LASTEXITCODE
+    if ($gpuNameExitCode -ne 0) {
+        Write-Host "NVIDIA GPU name query failed (exit code $gpuNameExitCode)."
+        if ($gpuNameLines) {
+            Write-Host (($gpuNameLines | ForEach-Object { "$_" }) -join [Environment]::NewLine)
+        }
+        throw "NVIDIA tools were found, but the GPU driver query failed. Update or reinstall the NVIDIA driver, restart Windows, then run setup.bat again."
+    }
+    if ($gpuNameLines) {
+        Write-Host "NVIDIA GPU: $(($gpuNameLines | ForEach-Object { "$($_)".Trim() }) -join ', ')"
     }
 } else {
-    Write-Host "NVIDIA GPU: unavailable"
+    Write-Host "NVIDIA GPU: not found"
 }
 
 if (-not (Test-Path -LiteralPath ".venv\Scripts\python.exe")) {

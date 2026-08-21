@@ -1356,6 +1356,35 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertEqual(self.app.progressPercent, before)
                 self.assertEqual(self.app.progressState, "error")
 
+    def test_processing_progress_uses_tracker_value_and_short_output_duration(self) -> None:
+        self.app._processing_progress.start("transcribe")
+        self.app._update_stage(
+            'PROGRESS_EVENT {"job":"transcribe","step":"alignment","phase":"start","progress":0.5}'
+        )
+        self.assertEqual(self.app.progress, self.app._processing_progress.value)
+        self.assertEqual(self.app.progressPercent, round(self.app.progress * 100))
+
+        self.app._update_stage("[subtitle_workflow] Refining merged subtitle segments")
+        self.assertEqual(self.app.progress, self.app._processing_progress.value)
+        self.assertEqual(self.app.progressPercent, round(self.app.progress * 100))
+
+        self.app._processing_progress.start("render_short")
+        self.app._update_stage(
+            'PROGRESS_EVENT {"job":"render_short","step":"encode","phase":"start","progress":0.0}'
+        )
+        self.app._update_stage(
+            '\n'.join(
+                (
+                    'PROGRESS_EVENT {"job":"render_short","step":"encode","phase":"metadata","progress":0.0,"duration":30.0}',
+                    "Duration: 02:00:00.00, start: 0.000000, bitrate: 100 kb/s",
+                    "frame=10 time=00:00:15.00 speed=1x",
+                )
+            )
+        )
+        self.assertEqual(self.app._ffmpeg_duration_seconds, 30.0)
+        encode_step = next(step for step in self.app.progressSteps if step["id"] == "encode")
+        self.assertAlmostEqual(encode_step["progress"], 0.5)
+
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
         output = self.root / "output"
         transcript_directory = output / "transcripts"

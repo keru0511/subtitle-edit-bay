@@ -17,6 +17,7 @@ from .ffmpeg_filter_script import (
     filter_complex_script_option,
 )
 from .media_probe import probe_media_duration, probe_media_stream_types
+from .processing_progress import progress_event_line
 from .short_video_schema import ShortVideo, ShortVideoBgm, ShortVideoClip, ShortVideoError
 from .short_video_timeline import build_short_video_timeline
 from .subtitle_project import derive_short_render_path, load_project
@@ -33,6 +34,25 @@ DEFAULT_FILTER_SCRIPT_THRESHOLD = 8192
 
 def _log_progress(message: str) -> None:
     print(f"[short_video] {message}", flush=True)
+
+
+def _emit_progress_event(
+    step: str,
+    *,
+    phase: str = "progress",
+    progress: float = 0.0,
+    duration: float | None = None,
+) -> None:
+    print(
+        progress_event_line(
+            "render_short",
+            step,
+            phase=phase,
+            progress=progress,
+            duration=duration,
+        ),
+        flush=True,
+    )
 
 
 def _format_filter_time(seconds: float) -> str:
@@ -375,6 +395,7 @@ def render_short_video(
     short_video = ShortVideo.from_json(project.get("short_video"))
     if not short_video.clips:
         raise ShortVideoError("short_video.clips is empty; nothing to render")
+    _emit_progress_event("clips", phase="start")
 
     output = Path(output_path) if output_path else derive_short_render_path(project_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -389,6 +410,8 @@ def render_short_video(
         raise ShortVideoError("All clips are outside the video duration")
 
     short_video = replace(short_video, clips=clamped_clips)
+    timeline = build_short_video_timeline(short_video)
+    _emit_progress_event("clips", phase="complete", progress=1.0)
 
     try:
         has_audio = "audio" in probe_media_stream_types(video_path)
@@ -399,12 +422,14 @@ def render_short_video(
     include_bgm = bool(bgm_path) and Path(bgm_path).is_file()
     command_has_audio = has_audio or include_bgm
 
+    _emit_progress_event("transition_audio", phase="start")
     filter_complex = build_short_video_filter_complex(
         short_video,
         has_audio=has_audio,
         include_bgm=include_bgm,
         ass_path=str(ass_path) if ass_path else None,
     )
+    _emit_progress_event("transition_audio", phase="complete", progress=1.0)
 
     use_filter_script = os.name == "nt" or len(filter_complex) > DEFAULT_FILTER_SCRIPT_THRESHOLD
     filter_script: Path | None = None
@@ -445,6 +470,8 @@ def render_short_video(
                 filter_script_option=filter_script_option,
             )
 
+        _emit_progress_event("encode", phase="metadata", duration=timeline.total_duration)
+        _emit_progress_event("encode", phase="start")
         result = run_atomic_ffmpeg_export(
             command_builder,
             output,

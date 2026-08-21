@@ -763,7 +763,6 @@ def render_project_short_video(
     if not short_video.get("enabled") or not short_video.get("clips"):
         raise SystemExit("short_video is not enabled or has no clips")
 
-    emit_progress_event("render_short", "clips", phase="start")
     video_path = str(project.get("video", {}).get("path", ""))
     if not video_path or not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
@@ -771,9 +770,6 @@ def render_project_short_video(
     output = Path(output_path) if output_path else derive_short_render_path(project_path)
     if audio_codec == "copy":
         audio_codec = "aac"
-    emit_progress_event("render_short", "clips", phase="complete", progress=1.0)
-    emit_progress_event("render_short", "transition_audio", phase="complete", progress=1.0)
-    emit_progress_event("render_short", "encode", phase="start")
     ass_path = build_short_video_ass(project_path, _project=project)
     result = render_short_video(
         project_path,

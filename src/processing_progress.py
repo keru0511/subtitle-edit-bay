@@ -69,6 +69,7 @@ def progress_event_line(
     *,
     phase: str = "progress",
     progress: float = 0.0,
+    duration: float | None = None,
 ) -> str:
     payload = {
         "job": str(job),
@@ -76,6 +77,8 @@ def progress_event_line(
         "phase": str(phase),
         "progress": max(0.0, min(1.0, float(progress))),
     }
+    if duration is not None:
+        payload["duration"] = max(0.0, float(duration))
     return PROGRESS_EVENT_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -117,6 +120,7 @@ class ProcessingProgress:
         self.value = 0.0
         self.current_step = ""
         self.steps: tuple[ProgressStep, ...] = ()
+        self._weight_total = 0.0
 
     def start(self, job: str, *, skip_steps: set[str] | None = None) -> None:
         skipped = skip_steps or set()
@@ -130,6 +134,7 @@ class ProcessingProgress:
         self.value = 0.0
         self.current_step = ""
         self.steps = tuple(ProgressStep(*definition) for definition in definitions)
+        self._weight_total = sum(step.weight for step in self.steps)
 
     def update(self, event: Mapping[str, Any]) -> bool:
         if str(event.get("job", "")) != self.job:
@@ -157,6 +162,8 @@ class ProcessingProgress:
         self.steps = tuple(updated)
         self.current_step = "" if phase in {"complete", "completed"} else step_id
         calculated = sum(step.weight * step.progress for step in self.steps)
+        if self._weight_total > 0.0:
+            calculated /= self._weight_total
         self.value = max(self.value, min(1.0, calculated))
         return True
 

@@ -2439,7 +2439,7 @@ class EditBayBackend(LegacyEditBayBackend):
             job=job,
             stage="STARTING",
         )
-        self._progress = 0.02
+        self._progress = self._processing_progress.value if self._processing_progress.steps else 0.02
         self.progressChanged.emit()
         self._ffmpeg_duration_seconds = 0.0
         self._elapsed_seconds = 0
@@ -3039,9 +3039,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if not self._processing_progress.steps:
             return
         self._processing_progress.finish(outcome)
-        self._progress = max(self._progress, self._processing_progress.value)
-        if outcome == "completed":
-            self._progress = 1.0
+        self._progress = self._processing_progress.value
         self.progressChanged.emit()
         self.progressDetailsChanged.emit()
 
@@ -3070,6 +3068,17 @@ class EditBayBackend(LegacyEditBayBackend):
             self.activeJobChanged.emit()
 
     def _update_stage(self, output: str) -> None:
+        for event in parse_progress_events(output):
+            try:
+                target_duration = float(event.get("duration", 0.0))
+            except (TypeError, ValueError):
+                target_duration = 0.0
+            if target_duration > 0.0:
+                self._ffmpeg_duration_seconds = target_duration
+            if self._processing_progress.update(event):
+                self._progress = self._processing_progress.value
+                self.progressChanged.emit()
+                self.progressDetailsChanged.emit()
         for line in output.splitlines():
             if "Duration:" in line and self._ffmpeg_duration_seconds <= 0.0:
                 duration = parse_ffmpeg_timestamp(line)
@@ -3091,12 +3100,7 @@ class EditBayBackend(LegacyEditBayBackend):
                     "progress": encode_progress,
                 }
             ):
-                self._progress = max(self._progress, self._processing_progress.value)
-                self.progressChanged.emit()
-                self.progressDetailsChanged.emit()
-        for event in parse_progress_events(output):
-            if self._processing_progress.update(event):
-                self._progress = max(self._progress, self._processing_progress.value)
+                self._progress = self._processing_progress.value
                 self.progressChanged.emit()
                 self.progressDetailsChanged.emit()
         markers = [
@@ -3115,8 +3119,9 @@ class EditBayBackend(LegacyEditBayBackend):
         ]
         for marker, step, stage, status, progress in markers:
             if marker in output:
+                tracker_updated = False
                 if self._processing_progress.job:
-                    self._processing_progress.update(
+                    tracker_updated = self._processing_progress.update(
                         {
                             "job": self._processing_progress.job,
                             "step": step,
@@ -3124,7 +3129,11 @@ class EditBayBackend(LegacyEditBayBackend):
                             "progress": progress,
                         }
                     )
-                self._progress = max(self._progress, progress)
+                self._progress = (
+                    self._processing_progress.value
+                    if tracker_updated
+                    else max(self._progress, progress)
+                )
                 self.progressChanged.emit()
                 self.progressDetailsChanged.emit()
                 self._set_status(status, stage)

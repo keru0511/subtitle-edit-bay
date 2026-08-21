@@ -21,6 +21,9 @@ class ProcessingProgressTests(unittest.TestCase):
         self.assertNotIn("/", line)
         self.assertNotIn("\\", line)
 
+        timed_line = progress_event_line("render_short", "encode", phase="metadata", duration=30.0)
+        self.assertEqual(parse_progress_events(timed_line)[0]["duration"], 30.0)
+
     def test_ffmpeg_timestamp_parser_supports_duration_and_time(self) -> None:
         self.assertEqual(parse_ffmpeg_timestamp("Duration: 00:02:03.50, start: 0.0"), 123.5)
         self.assertEqual(parse_ffmpeg_timestamp("frame=10 time=00:00:04.25 speed=1x"), 4.25)
@@ -87,6 +90,9 @@ class ProcessingProgressTests(unittest.TestCase):
         self.assertNotIn("subtitle", [step["id"] for step in tracker.as_list()])
         tracker.update({"job": "render", "step": "audio", "phase": "start"})
         self.assertEqual(tracker.as_list()[1]["displayStatus"], "実行中")
+        for step in tracker.as_list():
+            tracker.update({"job": "render", "step": step["id"], "phase": "complete", "progress": 1.0})
+        self.assertEqual(tracker.value, 1.0)
 
 
 if __name__ == "__main__":

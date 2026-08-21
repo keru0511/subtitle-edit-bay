@@ -1502,6 +1502,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_failed_process_start_captures_qprocess_error(self) -> None:
         self.app._active_job = "transcribe"
         self.app._running = False
+        generated_path = self.root / ".failed-transcription.subtitle-project.json"
+        generated_path.write_text("temporary", encoding="utf-8")
+        self.app._transcription_merge_mode = "merge"
+        self.app._transcription_preserved_project = {"segments": []}
+        self.app._transcription_preserved_project_path = str(self.root / "preserved.subtitle-project.json")
+        self.app._transcription_generated_project_path = str(generated_path)
 
         with (
             patch("src.gui.runtime_diagnostic_info", return_value={}),
@@ -1523,6 +1529,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("QProcessエラー: プロセスを開始できません", diagnostic)
         self.assertIn("launcher stderr", diagnostic)
         self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self.app._transcription_merge_mode, "")
+        self.assertIsNone(self.app._transcription_preserved_project)
+        self.assertEqual(self.app._transcription_preserved_project_path, "")
+        self.assertFalse(generated_path.exists())
 
     def test_starting_a_new_process_discards_the_previous_error_snapshot(self) -> None:
         self.app._active_job = "render"
@@ -1824,6 +1834,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
 
             self.assertLessEqual(stepper.y() + stepper.height(), action_bar.y() + 1)
+            self.assertGreaterEqual(stepper.height(), 68)
+            visual_items = []
+            pending_items = list(stepper.childItems())
+            while pending_items:
+                visual_item = pending_items.pop()
+                visual_items.append(visual_item)
+                pending_items.extend(visual_item.childItems())
+            for step_index, step_text in enumerate(("素材", "文字起こし", "字幕・音量編集", "書き出し"), 1):
+                step_number = next(
+                    item for item in visual_items if str(item.property("text")) == str(step_index)
+                )
+                step_label = next(
+                    item for item in visual_items if str(item.property("text")) == step_text
+                )
+                self.assertTrue(step_number.isVisible())
+                self.assertGreater(step_number.height(), 0)
+                self.assertTrue(step_label.isVisible())
+                self.assertGreater(step_label.height(), 0)
             self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
             self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
@@ -3249,6 +3277,64 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.activeJob, "")
         self.assertEqual(self._quick_item(window, "saveSettingsButton").property("text"), "設定を保存")
         self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
+
+    def test_cancelled_followup_transcription_cannot_merge_into_next_project(self) -> None:
+        project_a_path = self._load_project()
+        project_a = deepcopy(self.app._project)
+        assert project_a is not None
+        generated_a_path = self.root / ".project-a.transcribing.subtitle-project.json"
+        save_project(generated_a_path, project_a)
+        self.app._transcription_merge_mode = "merge"
+        self.app._transcription_preserved_project = deepcopy(project_a)
+        self.app._transcription_preserved_project_path = str(project_a_path)
+        self.app._transcription_generated_project_path = str(generated_a_path)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._cancel_requested = True
+
+        with patch.object(self.app, "_read_process_output"):
+            self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app._transcription_merge_mode, "")
+        self.assertIsNone(self.app._transcription_preserved_project)
+        self.assertEqual(self.app._transcription_preserved_project_path, "")
+        self.assertFalse(generated_a_path.exists())
+
+        project_b_root = self.root / "project-b"
+        project_b_root.mkdir()
+        project_b_video = project_b_root / "project-b.mkv"
+        project_b_video.write_bytes(b"video")
+        project_b_path = project_b_root / "project-b.subtitle-project.json"
+        project_b = create_project(
+            video_path=project_b_video,
+            output_dir=project_b_root,
+            segments=[
+                {
+                    "id": "project-b-segment",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "project B",
+                    "speaker": "Speaker_B",
+                }
+            ],
+            duration_seconds=1.0,
+        )
+        save_project(project_b_path, project_b)
+        self.app._source_selection = SourceSelection(
+            video=str(project_b_video.resolve()),
+            output_dir=str(project_b_root.resolve()),
+        )
+        self.app._clear_project()
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._cancel_requested = False
+
+        with patch.object(self.app, "_read_process_output"):
+            self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+        self.assertTrue(Path(self.app.projectPath).samefile(project_b_path))
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "project B")
+        self.assertEqual(load_project(project_a_path)["segments"], project_a["segments"])
 
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()

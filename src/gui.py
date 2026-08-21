@@ -1800,6 +1800,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def _clear_project(self) -> None:
         if self._project_dirty:
             self.saveProject()
+        self._reset_transcription_integration_state()
         self._project = None
         self._project_path = ""
         self._project_dirty = False
@@ -1953,10 +1954,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
             return
         if self._project is None:
-            self._transcription_merge_mode = ""
-            self._transcription_preserved_segments = []
-            self._transcription_preserved_project = None
-            self._transcription_preserved_project_path = ""
+            self._reset_transcription_integration_state()
             self.startTranscription(settings, False)
             return
         if not self.saveProject():
@@ -1971,6 +1969,7 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         default_project_path = self._default_project_path()
         if default_project_path is None:
+            self._reset_transcription_integration_state()
             self._set_status("文字起こし結果の保存先を決定できません", "ERROR")
             return
         generated_project_path = default_project_path.with_name(
@@ -2050,6 +2049,13 @@ class EditBayBackend(LegacyEditBayBackend):
             )
         finally:
             self._transcription_generated_project_path = ""
+
+    def _reset_transcription_integration_state(self) -> None:
+        self._cleanup_transcription_project_artifact()
+        self._transcription_merge_mode = ""
+        self._transcription_preserved_segments = []
+        self._transcription_preserved_project = None
+        self._transcription_preserved_project_path = ""
 
     def _apply_project_subtitle_settings(self, project: dict[str, Any]) -> None:
         subtitle = project.get("subtitle_settings", {})
@@ -2632,15 +2638,23 @@ class EditBayBackend(LegacyEditBayBackend):
     ) -> None:
         if self._running:
             return
+        if project_path is None:
+            self._reset_transcription_integration_state()
+
+        def reject_start(message: str, stage: str) -> None:
+            self._set_status(message, stage)
+            if project_path is not None:
+                self._reset_transcription_integration_state()
+
         audio_tracks = list(self._audio_tracks)
         if not self._dependencies.ready:
             self.refreshDependencies()
         if not self._dependencies.ready:
             missing = ", ".join(self._dependencies.missing())
-            self._set_status(f"実行できません。インストールが必要です: {missing}", "SETUP")
+            reject_start(f"実行できません。インストールが必要です: {missing}", "SETUP")
             return
         if str(settings.get("device") or self._settings.get("device")) == "cuda" and not self._dependencies.cuda:
-            self._set_status(
+            reject_start(
                 "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください",
                 "SETUP",
             )
@@ -2649,13 +2663,16 @@ class EditBayBackend(LegacyEditBayBackend):
         audio_files = [speaker["path"] for speaker in self._speakers]
         video_audio_track = ""
         if not Path(selection.video).is_file():
-            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
+            reject_start("動画・話者音声・出力先を指定してください", "CHECK")
             return
         if not audio_files and not self._has_audio_source(audio_files, audio_tracks):
-            self._set_status("動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。", "CHECK")
+            reject_start(
+                "動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。",
+                "CHECK",
+            )
             return
         if not selection.output_dir:
-            self._set_status("動画・話者音声・出力先を指定してください", "CHECK")
+            reject_start("動画・話者音声・出力先を指定してください", "CHECK")
             return
         if not audio_files:
             video_audio_track = str(settings.get("reference_track") or self._default_video_audio_track(audio_tracks))
@@ -3220,6 +3237,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 outcome="failed",
                 exit_code=None,
             )
+            if failed_job == "transcribe":
+                self._reset_transcription_integration_state()
             self._active_job = ""
             self.activeJobChanged.emit()
 
@@ -3270,6 +3289,8 @@ class EditBayBackend(LegacyEditBayBackend):
             exit_code=exit_code,
         )
         if self._cancel_requested:
+            if completed_job == "transcribe":
+                self._reset_transcription_integration_state()
             self._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
             self._progress = 1.0
@@ -3305,11 +3326,7 @@ class EditBayBackend(LegacyEditBayBackend):
                             )
                 if self._transcription_generated_project_path and not loaded:
                     integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
-                self._cleanup_transcription_project_artifact()
-                self._transcription_merge_mode = ""
-                self._transcription_preserved_segments = []
-                self._transcription_preserved_project = None
-                self._transcription_preserved_project_path = ""
+                self._reset_transcription_integration_state()
                 if integration_error:
                     self._set_status(integration_error, "ERROR")
                 else:
@@ -3329,11 +3346,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 self._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
             if completed_job == "transcribe":
-                self._cleanup_transcription_project_artifact()
-                self._transcription_merge_mode = ""
-                self._transcription_preserved_segments = []
-                self._transcription_preserved_project = None
-                self._transcription_preserved_project_path = ""
+                self._reset_transcription_integration_state()
             if completed_job == "update":
                 self._set_status(f"更新に失敗しました（終了コード {exit_code}）。バックアップから復元されています", "ERROR")
             else:

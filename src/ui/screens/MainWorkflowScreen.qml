@@ -1151,6 +1151,7 @@ ApplicationWindow {
                 objectName: "workflowStepper"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 68
+                Layout.minimumHeight: 68
                 radius: 12; color: root.panel; border.color: root.border
                 RowLayout {
                     anchors.fill: parent

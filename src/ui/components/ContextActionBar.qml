@@ -28,10 +28,9 @@ Rectangle {
     signal saveOrStopRequested()
     signal outputFolderRequested()
 
-    // The project state shows two action rows; keep the bar compact enough for
-    // the supported 1220x760 window while leaving the initial state shorter.
-    implicitHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 220 : 148
-    Layout.minimumHeight: actionBar.projectLoaded || actionBar.activeJob === "render" ? 220 : 148
+    // Keep the action grid compact enough for the supported 1220x760 window.
+    implicitHeight: 148
+    Layout.minimumHeight: 148
     radius: 12
     color: "#121715"
     border.color: "#2A3530"
@@ -70,7 +69,7 @@ Rectangle {
         GridLayout {
             objectName: "workflowActions"
             Layout.fillWidth: true
-            columns: 2
+            columns: 3
             columnSpacing: 6
             rowSpacing: 4
 

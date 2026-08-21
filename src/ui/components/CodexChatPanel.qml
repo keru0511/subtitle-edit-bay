@@ -229,6 +229,16 @@ Rectangle {
                 wrapMode: Text.Wrap
             }
 
+            Text {
+                objectName: "codexLocalReadNotice"
+                Layout.fillWidth: true
+                text: "書き込みは禁止されていますが、Codexはローカルファイルを読み取る場合があります。"
+                color: panel.mutedColor
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 9
+                wrapMode: Text.Wrap
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 TextArea {

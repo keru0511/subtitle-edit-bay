@@ -7,6 +7,9 @@ from pathlib import Path
 from src.gui_codex_chat_state import CodexChatController
 
 
+CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
+
+
 class FakeNotification:
     def __init__(self, method: str, params: dict[str, object]) -> None:
         self.method = method
@@ -170,7 +173,7 @@ class CodexChatControllerTests(unittest.TestCase):
         finally:
             controller.shutdown()
 
-    def test_send_streams_response_and_uses_selected_model(self) -> None:
+    def test_send_payload_matches_pinned_codex_app_server_v2_contract(self) -> None:
         client = FakeChatClient()
         client.authenticated = True
         controller = CodexChatController(
@@ -186,7 +189,12 @@ class CodexChatControllerTests(unittest.TestCase):
 
             self.assertEqual(client.thread_params["model"], "gpt-fast")
             self.assertEqual(client.thread_params["approvalPolicy"], "never")
-            self.assertEqual(client.thread_params["sandbox"], "readOnly")
+            self.assertIn(
+                client.thread_params["sandbox"],
+                {"read-only", "workspace-write", "danger-full-access"},
+                CODEX_APP_SERVER_SCHEMA_COMMIT,
+            )
+            self.assertEqual(client.thread_params["sandbox"], "read-only")
             self.assertEqual(client.thread_params["cwd"], str(Path.cwd().resolve()))
             self.assertEqual(client.turn_params["model"], "gpt-fast")
             self.assertEqual(client.turn_params["prompt"], "こんにちは")
@@ -196,12 +204,9 @@ class CodexChatControllerTests(unittest.TestCase):
                 client.turn_params["sandbox_policy"],
                 {
                     "type": "readOnly",
-                    "access": {
-                        "type": "restricted",
-                        "includePlatformDefaults": True,
-                        "readableRoots": [str(Path.cwd().resolve())],
-                    },
+                    "networkAccess": False,
                 },
+                CODEX_APP_SERVER_SCHEMA_COMMIT,
             )
             self.assertEqual(controller.snapshot.messages[0]["role"], "user")
             self.assertEqual(controller.snapshot.messages[1]["text"], "返答")
@@ -289,6 +294,7 @@ class CodexChatControllerTests(unittest.TestCase):
             wait_for(lambda: controller.snapshot.chat_state == "idle")
 
             self.assertEqual(second_client.resumed_threads[0][0], "thread-1")
+            self.assertEqual(second_client.resumed_threads[0][1]["sandbox"], "read-only")
             self.assertEqual(second_client.turn_params["thread_id"], "thread-1")
             self.assertEqual(second_client.thread_start_count, 0)
         finally:

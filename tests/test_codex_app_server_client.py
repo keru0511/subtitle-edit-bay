@@ -15,6 +15,9 @@ from src.codex_app_server_client import (
 )
 
 
+CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
+
+
 class CodexAppServerClientTests(unittest.TestCase):
     def _client(self, notifications: list[object], logs: list[str]) -> CodexAppServerClient:
         fake_server = Path(__file__).with_name("fake_codex_app_server.py")
@@ -97,6 +100,31 @@ class CodexAppServerClientTests(unittest.TestCase):
         self.assertIn("not supported", response["error"]["message"])
         self.assertTrue(
             any(item.method == "item/tool/requestUserInput" for item in client.notifications)
+        )
+
+    def test_turn_start_payload_matches_pinned_v2_sandbox_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        sandbox_policy = {"type": "readOnly", "networkAccess": False}
+        with patch.object(client, "request", return_value={}) as request:
+            client.turn_start(
+                thread_id="thread-1",
+                prompt="contract check",
+                cwd="C:/workspace",
+                approval_policy="never",
+                sandbox_policy=sandbox_policy,
+            )
+
+        method, params = request.call_args.args
+        self.assertEqual(method, "turn/start")
+        self.assertEqual(
+            params["sandboxPolicy"],
+            sandbox_policy,
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertEqual(
+            set(params["sandboxPolicy"]),
+            {"type", "networkAccess"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
         )
 
     def test_start_failure_is_reported_without_opening_a_socket(self) -> None:

@@ -28,8 +28,9 @@ Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp
 
 - ChatGPTのtokenやAPIキーはアプリで受け取らず、Codex CLIの管理する認証フローを使用する
 - 認証URL、token、会話本文を `.gui/runtime_config.json` や通常ログへ書き込まない
-- App Serverとはstdioで接続し、チャットthreadは `approvalPolicy=never`、`sandbox=readOnly` で開始する
-- 各turnの読み取り範囲はアプリのworkspaceルート配下とOSの最小限のplatform defaultに制限し、ユーザーディレクトリ全体を読み取れる状態にしない
+- App Serverとはstdioで接続し、チャットthreadは `approvalPolicy=never`、`sandbox=read-only` で開始する
+- 各turnは `sandboxPolicy={type: readOnly, networkAccess: false}` で実行し、ファイル書き込みとネットワークアクセスを許可しない
+- 現行stable App Serverのread-only sandboxはローカルファイルの読み取り範囲をworkspaceだけに限定しないため、機密ファイルを含むworkspaceではチャットを使用しない
 - コマンド実行やファイル変更のapproval要求を自動承認しない
 - 入力要求、MCP elicitationなど未対応のserver requestは明示的に拒否し、応答待ちで停止させない
 

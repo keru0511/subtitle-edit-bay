@@ -392,7 +392,7 @@ class CodexChatController:
                 "model": model,
                 "cwd": self._workspace_root,
                 "approvalPolicy": "never",
-                "sandbox": "readOnly",
+                "sandbox": "read-only",
                 "serviceName": "subtitle_edit_bay",
             }
             if thread_id and thread_needs_resume:
@@ -426,11 +426,7 @@ class CodexChatController:
                 approval_policy="never",
                 sandbox_policy={
                     "type": "readOnly",
-                    "access": {
-                        "type": "restricted",
-                        "includePlatformDefaults": True,
-                        "readableRoots": [self._workspace_root],
-                    },
+                    "networkAccess": False,
                 },
             )
             turn = response.get("turn", response)

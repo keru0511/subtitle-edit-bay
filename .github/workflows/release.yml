@@ -133,6 +133,16 @@ jobs:
               -LiteralPath "$installerPath.sha256" `
               -Encoding ascii `
               -NoNewline
+          @{
+              schema_version = 1
+              package_type = "installer"
+              app_version = "${{ steps.release.outputs.version }}"
+              asset_name = "SubtitleEditBay-Setup.exe"
+              sha256 = $hash
+              required_files = @("VERSION", "scripts/launch.ps1", "scripts/apply_installer_update.ps1")
+          } | ConvertTo-Json -Depth 5 | Set-Content `
+              -LiteralPath "$installerPath.manifest.json" `
+              -Encoding utf8
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v6
@@ -141,6 +151,7 @@ jobs:
           path: |
             ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe
             ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe.sha256
+            ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe.manifest.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -182,6 +193,7 @@ jobs:
           assets=(
             "dist/SubtitleEditBay-Setup.exe"
             "dist/SubtitleEditBay-Setup.exe.sha256"
+            "dist/SubtitleEditBay-Setup.exe.manifest.json"
           )
 
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

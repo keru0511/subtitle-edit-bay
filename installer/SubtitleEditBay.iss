@@ -78,6 +78,7 @@ Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_co
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\installer\launch.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\dist\SubtitleEditBayLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceRoot}\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\setup.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\start.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -87,11 +88,11 @@ Source: "{#SourceRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Subtitle Edit Bay"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\launch.ps1"""; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"
+Name: "{group}\Subtitle Edit Bay"; Filename: "{code:LauncherExecutable}"; Parameters: "{code:LauncherParameters}"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"
 Name: "{group}\初回セットアップ・修復"; Filename: "{app}\setup.bat"; WorkingDir: "{app}"; Comment: "依存関係をセットアップまたは修復します"
 Name: "{group}\アップデート"; Filename: "{app}\update.bat"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを更新します"
 Name: "{group}\アンインストール"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Subtitle Edit Bay"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\launch.ps1"""; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"; Tasks: desktopicon
+Name: "{autodesktop}\Subtitle Edit Bay"; Filename: "{code:LauncherExecutable}"; Parameters: "{code:LauncherParameters}"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\setup.bat"; Description: "初回セットアップを実行する（インターネット接続が必要です）"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent shellexec; Tasks: initialsetup
@@ -103,6 +104,22 @@ Type: filesandordirs; Name: "{app}\.venv"
 Type: files; Name: "{app}\VERSION"
 
 [Code]
+function LauncherExecutable(Param: String): String;
+begin
+  if FileExists(ExpandConstant('{app}\SubtitleEditBayLauncher.exe')) then
+    Result := ExpandConstant('{app}\SubtitleEditBayLauncher.exe')
+  else
+    Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+end;
+
+function LauncherParameters(Param: String): String;
+begin
+  if FileExists(ExpandConstant('{app}\SubtitleEditBayLauncher.exe')) then
+    Result := ''
+  else
+    Result := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + ExpandConstant('{app}\scripts\launch.ps1') + '"';
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then

@@ -50,27 +50,7 @@ def run_ffmpeg_command(
     *,
     progress_callback: Callable[[str], None] | None = None,
 ) -> None:
-    """Run FFmpeg and retain its output for diagnostics and fallback decisions."""
-    if progress_callback is None:
-        try:
-            completed = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=True,
-            )
-        except subprocess.CalledProcessError as error:
-            output = error.output if error.output is not None else error.stderr
-            if output:
-                _emit_ffmpeg_output(output)
-            raise
-        if completed.stdout:
-            _emit_ffmpeg_output(completed.stdout)
-        return
-
+    """Run FFmpeg, forwarding logs and retaining a bounded failure tail."""
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -88,7 +68,10 @@ def run_ffmpeg_command(
                 line = raw_line.rstrip()
                 if line:
                     tail.append(line)
-                    progress_callback(line)
+                    if progress_callback is None:
+                        _emit_ffmpeg_output(line)
+                    else:
+                        progress_callback(line)
     finally:
         close = getattr(stdout, "close", None)
         if close is not None:

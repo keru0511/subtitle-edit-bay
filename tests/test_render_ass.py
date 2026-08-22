@@ -51,6 +51,17 @@ from src.transcribe import (
 from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
 
 
+def _fake_process(
+    stdout_lines: list[str] | tuple[str, ...] = (),
+    *,
+    return_code: int = 0,
+) -> mock.MagicMock:
+    process = mock.MagicMock()
+    process.stdout = list(stdout_lines)
+    process.wait.return_value = return_code
+    return process
+
+
 class RenderAssTests(unittest.TestCase):
     def test_temporary_ass_path_cleans_apostrophe_copy_after_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -700,11 +711,11 @@ class RenderAssTests(unittest.TestCase):
             output.write_bytes(b"previous output")
             video.write_bytes(b"")
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 Path(command[-1]).write_bytes(b"")
-                raise subprocess.CalledProcessError(1, command)
+                return _fake_process(["ffmpeg failed\n"], return_code=1)
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 with self.assertRaises(subprocess.CalledProcessError):
                     run_ffmpeg_burn(str(video), str(subtitle), str(output))
 
@@ -724,11 +735,11 @@ class RenderAssTests(unittest.TestCase):
             output.write_bytes(b"previous output")
             video.write_bytes(b"")
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 Path(command[-1]).write_bytes(b"new output")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 result = run_ffmpeg_burn(str(video), str(subtitle), str(output))
 
             self.assertEqual(result, output)
@@ -741,19 +752,20 @@ class RenderAssTests(unittest.TestCase):
             output.parent.mkdir(parents=True, exist_ok=True)
             calls: list[list[str]] = []
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 calls.append(command)
                 if len(calls) == 1:
-                    raise subprocess.CalledProcessError(
-                        1,
-                        command,
-                        output="",
-                        stderr="Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0",
+                    return _fake_process(
+                        [
+                            "Driver does not support the required nvenc API version. "
+                            "Required: 13.1 Found: 13.0\n",
+                        ],
+                        return_code=1,
                     )
                 Path(command[-1]).write_bytes(b"ok")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 result = run_ffmpeg_burn("input.mp4", "out/sample.ass", str(output), video_codec="h264_nvenc", audio_codec="copy")
 
             self.assertEqual(result, output)
@@ -769,16 +781,14 @@ class RenderAssTests(unittest.TestCase):
             output.parent.mkdir(parents=True, exist_ok=True)
             calls: list[list[str]] = []
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 calls.append(command)
-                raise subprocess.CalledProcessError(
-                    1,
-                    command,
-                    output="",
-                    stderr="unexpected media error",
+                return _fake_process(
+                    ["unexpected media error\n"],
+                    return_code=1,
                 )
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run), self.assertRaises(subprocess.CalledProcessError):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen), self.assertRaises(subprocess.CalledProcessError):
                 run_ffmpeg_burn("input.mp4", "out/sample.ass", str(output), video_codec="h264_nvenc", audio_codec="copy")
 
             self.assertEqual(len(calls), 1)

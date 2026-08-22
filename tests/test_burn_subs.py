@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +17,17 @@ from src.burn_subs import (
     temporary_ass_path,
 )
 from src.ffmpeg_execution import run_ffmpeg_command
+
+
+def _fake_process(
+    stdout_lines: list[str] | tuple[str, ...] = (),
+    *,
+    return_code: int = 0,
+) -> mock.MagicMock:
+    process = mock.MagicMock()
+    process.stdout = list(stdout_lines)
+    process.wait.return_value = return_code
+    return process
 
 
 class BurnSubsTests(unittest.TestCase):
@@ -73,9 +87,56 @@ class BurnSubsTests(unittest.TestCase):
         self.assertNotIn("copy", command)
 
     def test_run_ffmpeg_command_without_callback(self) -> None:
-        with mock.patch("src.ffmpeg_execution.subprocess.run") as run:
-            run_ffmpeg_command(["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"])
-            run.assert_called_once_with(["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"], check=True)
+        command = ["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"]
+        with (
+            mock.patch(
+                "src.ffmpeg_execution.subprocess.Popen",
+                return_value=_fake_process(["line1\n", "line2\n"]),
+            ) as popen,
+            mock.patch("src.ffmpeg_execution._emit_ffmpeg_output") as emit,
+        ):
+            run_ffmpeg_command(command)
+            popen.assert_called_once_with(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            self.assertEqual(emit.call_args_list, [mock.call("line1"), mock.call("line2")])
+
+    def test_run_ffmpeg_command_without_callback_captures_stderr(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            "import sys; print('could not find encoder h264_nvenc', file=sys.stderr); sys.exit(1)",
+        ]
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                run_ffmpeg_command(command)
+
+        self.assertIn("could not find encoder h264_nvenc", raised.exception.output)
+
+    def test_run_ffmpeg_command_without_callback_bounds_failure_tail(self) -> None:
+        command = ["ffmpeg", "-i", "in.mp4", "out.mp4"]
+        lines = [f"line-{index}\n" for index in range(120)]
+        with (
+            mock.patch(
+                "src.ffmpeg_execution.subprocess.Popen",
+                return_value=_fake_process(lines, return_code=1),
+            ),
+            mock.patch("src.ffmpeg_execution._emit_ffmpeg_output") as emit,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                run_ffmpeg_command(command)
+
+        self.assertEqual(
+            raised.exception.output.splitlines(),
+            [f"line-{index}" for index in range(40, 120)],
+        )
+        self.assertEqual(emit.call_count, 120)
 
     def test_run_ffmpeg_command_with_callback(self) -> None:
         lines: list[str] = []
@@ -104,11 +165,11 @@ class BurnSubsTests(unittest.TestCase):
             video.write_text("x", encoding="utf-8")
             subtitle.write_text("[Script Info]\n", encoding="utf-8")
 
-            def create_output(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            def create_output(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 Path(command[-1]).write_text("mp4", encoding="utf-8")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=create_output):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=create_output):
                 returned = run_ffmpeg_burn(str(video), str(subtitle), str(output))
             self.assertEqual(returned, output)
             self.assertTrue(output.exists())
@@ -122,7 +183,10 @@ class BurnSubsTests(unittest.TestCase):
             video.write_text("x", encoding="utf-8")
             subtitle.write_text("[Script Info]\n", encoding="utf-8")
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run"):
+            with mock.patch(
+                "src.ffmpeg_execution.subprocess.Popen",
+                return_value=_fake_process(),
+            ):
                 with self.assertRaises(RuntimeError):
                     run_ffmpeg_burn(str(video), str(subtitle), str(output))
 
@@ -138,12 +202,12 @@ class BurnSubsTests(unittest.TestCase):
 
             calls: list[list[str]] = []
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 calls.append(command)
                 Path(command[-1]).write_bytes(b"ok")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 result = run_ffmpeg_burn(str(video), str(subtitle), str(output))
 
             self.assertEqual(result, output)
@@ -163,20 +227,18 @@ class BurnSubsTests(unittest.TestCase):
             subtitle.write_text("dummy", encoding="utf-8")
             calls: list[list[str]] = []
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 calls.append(command)
                 codec = command[command.index("-c:v") + 1]
                 if codec == "h264_nvenc":
-                    raise subprocess.CalledProcessError(
-                        1,
-                        command,
-                        output="",
-                        stderr="could not find encoder h264_nvenc",
+                    return _fake_process(
+                        ["could not find encoder h264_nvenc\n"],
+                        return_code=1,
                     )
                 Path(command[-1]).write_bytes(b"x264 output")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 run_ffmpeg_burn(
                     str(video),
                     str(subtitle),
@@ -199,15 +261,13 @@ class BurnSubsTests(unittest.TestCase):
             video.write_bytes(b"video")
             subtitle.write_text("dummy", encoding="utf-8")
 
-            def fake_run(command: list[str], **_kwargs: object) -> None:
-                raise subprocess.CalledProcessError(
-                    1,
-                    command,
-                    output="",
-                    stderr="unexpected media error",
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
+                return _fake_process(
+                    ["unexpected media error\n"],
+                    return_code=1,
                 )
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 with self.assertRaises(subprocess.CalledProcessError):
                     run_ffmpeg_burn(
                         str(video),

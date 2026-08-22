@@ -81,12 +81,18 @@ def run_ffmpeg_command(
         bufsize=1,
     )
     tail: deque[str] = deque(maxlen=80)
-    if process.stdout is not None:
-        for raw_line in process.stdout:
-            line = raw_line.rstrip()
-            if line:
-                tail.append(line)
-                progress_callback(line)
+    stdout = process.stdout
+    try:
+        if stdout is not None:
+            for raw_line in stdout:
+                line = raw_line.rstrip()
+                if line:
+                    tail.append(line)
+                    progress_callback(line)
+    finally:
+        close = getattr(stdout, "close", None)
+        if close is not None:
+            close()
     return_code = process.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, command, output="\n".join(tail))

@@ -73,9 +73,19 @@ class BurnSubsTests(unittest.TestCase):
         self.assertNotIn("copy", command)
 
     def test_run_ffmpeg_command_without_callback(self) -> None:
+        command = ["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"]
         with mock.patch("src.ffmpeg_execution.subprocess.run") as run:
-            run_ffmpeg_command(["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"])
-            run.assert_called_once_with(["ffmpeg", "-y", "-i", "in.mp4", "out.mp4"], check=True)
+            run.return_value = subprocess.CompletedProcess(command, 0, stdout="", stderr=None)
+            run_ffmpeg_command(command)
+            run.assert_called_once_with(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
 
     def test_run_ffmpeg_command_with_callback(self) -> None:
         lines: list[str] = []
@@ -170,8 +180,8 @@ class BurnSubsTests(unittest.TestCase):
                     raise subprocess.CalledProcessError(
                         1,
                         command,
-                        output="",
-                        stderr="could not find encoder h264_nvenc",
+                        output="could not find encoder h264_nvenc",
+                        stderr=None,
                     )
                 Path(command[-1]).write_bytes(b"x264 output")
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")

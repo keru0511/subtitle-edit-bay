@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import uuid
 from collections import deque
 from collections.abc import Callable
@@ -49,9 +50,25 @@ def run_ffmpeg_command(
     *,
     progress_callback: Callable[[str], None] | None = None,
 ) -> None:
-    """Run FFmpeg, optionally forwarding each log line to a progress callback."""
+    """Run FFmpeg and retain its output for diagnostics and fallback decisions."""
     if progress_callback is None:
-        subprocess.run(command, check=True)
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+        except subprocess.CalledProcessError as error:
+            output = error.output if error.output is not None else error.stderr
+            if output:
+                _emit_ffmpeg_output(output)
+            raise
+        if completed.stdout:
+            _emit_ffmpeg_output(completed.stdout)
         return
 
     process = subprocess.Popen(
@@ -73,6 +90,11 @@ def run_ffmpeg_command(
     return_code = process.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, command, output="\n".join(tail))
+
+
+def _emit_ffmpeg_output(output: str | bytes) -> None:
+    rendered = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+    print(rendered, file=sys.stderr, end="" if rendered.endswith("\n") else "\n", flush=True)
 
 
 def run_atomic_ffmpeg_export(

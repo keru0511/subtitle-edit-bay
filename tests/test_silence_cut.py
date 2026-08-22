@@ -19,6 +19,17 @@ from src.silence_cut import (
 )
 
 
+def _fake_process(
+    stdout_lines: list[str] | tuple[str, ...] = (),
+    *,
+    return_code: int = 0,
+) -> mock.MagicMock:
+    process = mock.MagicMock()
+    process.stdout = list(stdout_lines)
+    process.wait.return_value = return_code
+    return process
+
+
 class SilenceCutTests(unittest.TestCase):
     def test_build_silencedetect_command_uses_requested_thresholds(self) -> None:
         command = build_silencedetect_command("input.mp4", noise="-30dB", duration=0.6)
@@ -195,7 +206,7 @@ class SilenceCutTests(unittest.TestCase):
         keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
         observed: dict[str, int] = {}
 
-        def inspect_command(command: list[str], check: bool, **_kwargs: object) -> None:
+        def inspect_command(command: list[str], **_kwargs: object) -> mock.MagicMock:
             filter_options = [
                 option for option in ("-/filter_complex", "-filter_complex_script") if option in command
             ]
@@ -204,13 +215,12 @@ class SilenceCutTests(unittest.TestCase):
             script_path = Path(command[script_index])
             observed["filter_length"] = len(script_path.read_text(encoding="utf-8"))
             observed["command_length"] = len(" ".join(command))
-            self.assertTrue(check)
             Path(command[-1]).write_bytes(b"output")
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr=None)
+            return _fake_process()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=inspect_command):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=inspect_command):
                 cut_media_ranges(
                     "input.mp4",
                     str(output_path),
@@ -229,8 +239,8 @@ class SilenceCutTests(unittest.TestCase):
             output_path.write_bytes(b"previous output")
 
             with mock.patch(
-                "src.ffmpeg_execution.subprocess.run",
-                side_effect=subprocess.CalledProcessError(1, ["ffmpeg"]),
+                "src.ffmpeg_execution.subprocess.Popen",
+                return_value=_fake_process(return_code=1),
             ):
                 with self.assertRaises(subprocess.CalledProcessError):
                     cut_media_ranges(
@@ -254,19 +264,17 @@ class SilenceCutTests(unittest.TestCase):
             output_path = Path(temp_dir) / "output.mp4"
             calls: list[list[str]] = []
 
-            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 calls.append(command)
                 if len(calls) == 1:
-                    raise subprocess.CalledProcessError(
-                        1,
-                        command,
-                        output="could not find encoder h264_nvenc",
-                        stderr=None,
+                    return _fake_process(
+                        ["could not find encoder h264_nvenc\n"],
+                        return_code=1,
                     )
                 Path(command[-1]).write_bytes(b"x264 output")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=fake_run):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=fake_popen):
                 cut_media_ranges(
                     "input.mp4",
                     str(output_path),
@@ -285,17 +293,16 @@ class SilenceCutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
 
-            def inspect_command(command: list[str], check: bool, **_kwargs: object) -> None:
-                self.assertTrue(check)
+            def inspect_command(command: list[str], **_kwargs: object) -> mock.MagicMock:
                 filter_options = [
                     option for option in ("-/filter_complex", "-filter_complex_script") if option in command
                 ]
                 self.assertEqual(len(filter_options), 1)
                 self.assertLess(len(" ".join(command)), 1000)
                 Path(command[-1]).write_bytes(b"output")
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr=None)
+                return _fake_process()
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=inspect_command):
+            with mock.patch("src.ffmpeg_execution.subprocess.Popen", side_effect=inspect_command):
                 cut_media_ranges(
                     "input.mp4",
                     str(output_path),

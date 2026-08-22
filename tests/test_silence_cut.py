@@ -206,6 +206,7 @@ class SilenceCutTests(unittest.TestCase):
             observed["command_length"] = len(" ".join(command))
             self.assertTrue(check)
             Path(command[-1]).write_bytes(b"output")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr=None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
@@ -292,6 +293,7 @@ class SilenceCutTests(unittest.TestCase):
                 self.assertEqual(len(filter_options), 1)
                 self.assertLess(len(" ".join(command)), 1000)
                 Path(command[-1]).write_bytes(b"output")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr=None)
 
             with mock.patch("src.ffmpeg_execution.subprocess.run", side_effect=inspect_command):
                 cut_media_ranges(

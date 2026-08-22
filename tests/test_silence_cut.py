@@ -195,7 +195,7 @@ class SilenceCutTests(unittest.TestCase):
         keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
         observed: dict[str, int] = {}
 
-        def inspect_command(command: list[str], check: bool) -> None:
+        def inspect_command(command: list[str], check: bool, **_kwargs: object) -> None:
             filter_options = [
                 option for option in ("-/filter_complex", "-filter_complex_script") if option in command
             ]
@@ -259,8 +259,8 @@ class SilenceCutTests(unittest.TestCase):
                     raise subprocess.CalledProcessError(
                         1,
                         command,
-                        output="",
-                        stderr="could not find encoder h264_nvenc",
+                        output="could not find encoder h264_nvenc",
+                        stderr=None,
                     )
                 Path(command[-1]).write_bytes(b"x264 output")
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
@@ -284,7 +284,7 @@ class SilenceCutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
 
-            def inspect_command(command: list[str], check: bool) -> None:
+            def inspect_command(command: list[str], check: bool, **_kwargs: object) -> None:
                 self.assertTrue(check)
                 filter_options = [
                     option for option in ("-/filter_complex", "-filter_complex_script") if option in command

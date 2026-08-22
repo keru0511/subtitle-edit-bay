@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -87,6 +90,18 @@ class BurnSubsTests(unittest.TestCase):
                 check=True,
             )
 
+    def test_run_ffmpeg_command_without_callback_captures_stderr(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            "import sys; print('could not find encoder h264_nvenc', file=sys.stderr); sys.exit(1)",
+        ]
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                run_ffmpeg_command(command)
+
+        self.assertIn("could not find encoder h264_nvenc", raised.exception.output)
+
     def test_run_ffmpeg_command_with_callback(self) -> None:
         lines: list[str] = []
         fake_process = mock.MagicMock()
@@ -132,7 +147,13 @@ class BurnSubsTests(unittest.TestCase):
             video.write_text("x", encoding="utf-8")
             subtitle.write_text("[Script Info]\n", encoding="utf-8")
 
-            with mock.patch("src.ffmpeg_execution.subprocess.run"):
+            with mock.patch("src.ffmpeg_execution.subprocess.run") as run:
+                run.return_value = subprocess.CompletedProcess(
+                    ["ffmpeg"],
+                    0,
+                    stdout="",
+                    stderr=None,
+                )
                 with self.assertRaises(RuntimeError):
                     run_ffmpeg_burn(str(video), str(subtitle), str(output))
 

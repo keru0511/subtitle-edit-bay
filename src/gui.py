@@ -327,6 +327,7 @@ class EditBayBackend(LegacyEditBayBackend):
             component="startup",
             stage="STARTUP",
             preserve_in_memory=True,
+            pin_in_memory=True,
         )
         self._project: dict[str, Any] | None = None
         self._project_path = ""
@@ -3418,6 +3419,7 @@ class EditBayBackend(LegacyEditBayBackend):
         process_id: int | None = None,
         exit_code: int | None = None,
         preserve_in_memory: bool | None = None,
+        pin_in_memory: bool | None = None,
     ) -> None:
         if preserve_in_memory is None:
             preserve_in_memory = component in {
@@ -3428,6 +3430,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 "codex",
                 "gui",
             } or severity.upper() in {"WARNING", "ERROR"}
+        if pin_in_memory is None:
+            pin_in_memory = component == "startup" or stage == "STARTUP"
         self._application_logger.append(
             message,
             severity=severity,
@@ -3437,6 +3441,7 @@ class EditBayBackend(LegacyEditBayBackend):
             process_id=process_id,
             exit_code=exit_code,
             preserve_in_memory=preserve_in_memory,
+            pin_in_memory=pin_in_memory,
         )
         self._log = self._application_logger.text
         self.logChanged.emit()

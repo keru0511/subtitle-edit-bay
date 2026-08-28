@@ -1649,6 +1649,28 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("src.subtitle_workflow", self.app.logText)
         self.assertIn("動画を書き出しています", self.app.logText)
 
+    def test_backend_pins_startup_log_during_preserved_gui_status_flood(self) -> None:
+        original_limit = self.app._application_logger.max_memory_chars
+        try:
+            self.app._application_logger.max_memory_chars = 1_000
+            self.app._record_log(
+                "startup sentinel",
+                component="runtime",
+                stage="STARTUP",
+            )
+            for index in range(80):
+                self.app._record_log(
+                    f"GUI state {index:03d} " + ("x" * 80),
+                    component="gui",
+                    stage="READY",
+                )
+
+            self.assertIn("startup sentinel", self.app.logText)
+            self.assertNotIn("GUI state 000", self.app.logText)
+            self.assertIn("GUI state 079", self.app.logText)
+        finally:
+            self.app._application_logger.max_memory_chars = original_limit
+
     def test_qml_system_log_panel_displays_startup_entries(self) -> None:
         self.app._record_log(
             "起動時システムログを表示",
@@ -1661,6 +1683,38 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("起動時システムログを表示", text_area.property("text"))
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
         self.assertTrue(self._quick_item(window, "applicationLogPanel").property("expanded"))
+
+    def test_qml_system_log_panel_scrolls_to_the_latest_entry(self) -> None:
+        for index in range(250):
+            self.app._record_log(
+                f"system-log-{index:03d} " + ("x" * 80),
+                component="render",
+                preserve_in_memory=False,
+            )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "applicationLogToggleButton"))
+
+        scroll_view = self._quick_item(window, "applicationLogScrollView")
+        scroll_bar = self._quick_item(window, "applicationLogVerticalScrollBar")
+        text_area = self._quick_item(window, "applicationLogTextArea")
+        flickable = scroll_view.property("contentItem")
+        self.assertIsNotNone(flickable)
+        self.assertIn("system-log-249", text_area.property("text"))
+
+        content_height = float(flickable.property("contentHeight"))
+        viewport_height = float(flickable.property("height"))
+        self.assertGreater(content_height, viewport_height)
+        self.assertTrue(scroll_bar.isVisible())
+        self.assertLess(float(scroll_bar.property("size")), 1.0)
+
+        max_content_y = content_height - viewport_height
+        flickable.setProperty("contentY", max_content_y)
+        self.app.processEvents()
+        self.assertAlmostEqual(float(flickable.property("contentY")), max_content_y, delta=1.0)
+        self.assertLessEqual(
+            float(text_area.property("contentHeight")) - float(flickable.property("contentY")),
+            viewport_height + 2.0,
+        )
 
     def test_status_dependency_and_codex_system_logs_are_recorded_and_redacted(self) -> None:
         secret = "do-not-store"
@@ -1690,7 +1744,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with patch("src.gui.detect_codex", return_value=runtime):
             client = self.app._create_codex_chat_client()
         self.assertIsNotNone(client.log_callback)
-        client.log_callback(f"request initialize token={secret}")
+        log_thread = threading.Thread(
+            target=client.log_callback,
+            args=(f"request initialize token={secret}",),
+        )
+        log_thread.start()
+        log_thread.join(timeout=1)
+        self.assertFalse(log_thread.is_alive())
         QTest.qWait(20)
         self.app.processEvents()
 

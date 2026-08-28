@@ -65,19 +65,31 @@ Rectangle {
             }
         }
 
-        TextArea {
-            objectName: "applicationLogTextArea"
+        ScrollView {
+            id: applicationLogScrollView
+            objectName: "applicationLogScrollView"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            readOnly: true
-            selectByMouse: true
-            text: panel.backend ? panel.backend.logText : ""
-            color: "#AEBEB3"
-            font.family: "Cascadia Mono"
-            font.pixelSize: 9
-            wrapMode: TextEdit.WrapAnywhere
-            placeholderText: "起動時を含むシステムログ"
-            background: Rectangle { color: "transparent" }
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical: ScrollBar {
+                objectName: "applicationLogVerticalScrollBar"
+                policy: ScrollBar.AsNeeded
+            }
+
+            TextArea {
+                objectName: "applicationLogTextArea"
+                width: applicationLogScrollView.availableWidth
+                readOnly: true
+                selectByMouse: true
+                text: panel.backend ? panel.backend.logText : ""
+                color: "#AEBEB3"
+                font.family: "Cascadia Mono"
+                font.pixelSize: 9
+                wrapMode: TextEdit.WrapAnywhere
+                placeholderText: "起動時を含むシステムログ"
+                background: Rectangle { color: "transparent" }
+            }
         }
     }
 }

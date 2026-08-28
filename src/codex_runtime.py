@@ -8,18 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from .application_logging import redact_text
+
 
 CODEX_MIN_VERSION = (0, 1, 0)
 CODEX_MAX_VERSION = (1, 0, 0)
 _CODEX_VERSION_PATTERN = re.compile(
     r"(?i)\bcodex(?:[-_ ]cli)?\b[^0-9]*v?(\d+)\.(\d+)(?:\.(\d+))?"
-)
-_CODEX_SECRET_PATTERNS = (
-    re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
-    re.compile(
-        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
-        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;&}\]]+)"
-    ),
 )
 _CODEX_WINDOWS_PATH_PATTERN = re.compile(
     r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
@@ -166,9 +161,7 @@ def _codex_desktop_executables(environment: Mapping[str, str]) -> list[str]:
 
 
 def redact_codex_diagnostic(value: object) -> str:
-    text = str(value)
-    for pattern in _CODEX_SECRET_PATTERNS:
-        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
+    text = redact_text(value)
     text = _CODEX_WINDOWS_PATH_PATTERN.sub("<local-path>", text)
     text = _CODEX_WINDOWS_PATH_TOKEN_PATTERN.sub("<local-path>", text)
     text = _CODEX_UNIX_PATH_PATTERN.sub("<local-path>", text)

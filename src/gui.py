@@ -67,6 +67,7 @@ from .gui_codex_chat_state import (
     CodexChatSnapshot,
 )
 from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
+from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
@@ -314,6 +315,20 @@ class EditBayBackend(LegacyEditBayBackend):
     progressDetailsChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
+        resolved_workspace_root = (
+            workspace_root or Path(__file__).resolve().parent.parent
+        ).resolve()
+        self._application_logger = ApplicationLogger(
+            resolved_workspace_root,
+            application_info=resolve_application_info(resolved_workspace_root),
+        )
+        self._application_logger.append(
+            "アプリケーションの起動を開始しました",
+            component="startup",
+            stage="STARTUP",
+            preserve_in_memory=True,
+            pin_in_memory=True,
+        )
         self._project: dict[str, Any] | None = None
         self._project_path = ""
         self._project_dirty = False
@@ -325,18 +340,17 @@ class EditBayBackend(LegacyEditBayBackend):
         self._loading_project_sources = False
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
-        super().__init__(argv, workspace_root=workspace_root)
+        super().__init__(argv, workspace_root=resolved_workspace_root)
         self._processing_progress = ProcessingProgress()
         self._ffmpeg_duration_seconds = 0.0
         self._ffmpeg_duration_from_event = False
         self._processing_machine_event_seen = False
-        self._application_logger = ApplicationLogger(
-            self.workspace_root,
-            application_info=self._application_info,
-        )
+        self._application_logger.application_info = dict(self._application_info)
         self._last_process_diagnostic: ProcessDiagnosticSnapshot | None = None
         self._pending_process_error = ""
+        self._process_output_tail = ""
         self._log = self._application_logger.text
+        self._record_startup_diagnostics()
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
         self._segment_starts: list[float] = []
@@ -416,6 +430,7 @@ class EditBayBackend(LegacyEditBayBackend):
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self._last_codex_login_url = ""
+        self._last_codex_log_state: tuple[object, ...] | None = None
         self._codex_chat = CodexChatController(
             client_factory=self._create_codex_chat_client,
             workspace_root=self.workspace_root,
@@ -428,6 +443,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
+        self._record_log(
+            "バックエンドの初期化が完了しました",
+            component="startup",
+            stage="READY",
+        )
 
     @Property(bool, notify=projectChanged)
     def projectLoaded(self) -> bool:
@@ -2696,7 +2716,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._last_process_diagnostic = None
             self.lastProcessDiagnosticChanged.emit()
         self._pending_process_error = ""
-        self._application_logger.clear_memory()
+        self._process_output_tail = ""
         self._record_log(
             f"> {subprocess.list2cmdline(command)}",
             component="gui",
@@ -3093,11 +3113,42 @@ class EditBayBackend(LegacyEditBayBackend):
     def startNewCodexChat(self) -> None:
         self._codex_chat.new_chat()
 
+    def _queue_codex_system_log(self, message: object, *, severity: str = "INFO") -> None:
+        safe_message = str(message)
+        self._dispatch_codex_callback(
+            lambda: self._record_log(
+                safe_message,
+                severity=severity,
+                component="codex",
+                stage="CODEX",
+            )
+        )
+
     def _create_codex_chat_client(self) -> CodexAppServerClient:
         runtime = detect_codex(self.workspace_root)
         if not runtime.available:
+            self._queue_codex_system_log(
+                f"Codex CLI検出失敗: {runtime.error}",
+                severity="ERROR",
+            )
             raise CodexChatError(runtime.error)
-        return CodexAppServerClient(runtime.command, cwd=self.workspace_root)
+        self._queue_codex_system_log(
+            "Codex CLI検出成功: "
+            f"version={runtime.version}, distribution={runtime.distribution}, "
+            f"executable={runtime.executable}"
+        )
+
+        def record_app_server(message: str) -> None:
+            self._queue_codex_system_log(
+                message,
+                severity="ERROR" if message.startswith("ERROR:") else "INFO",
+            )
+
+        return CodexAppServerClient(
+            runtime.command,
+            cwd=self.workspace_root,
+            log_callback=record_app_server,
+        )
 
     @Slot(str, str, float, float)
     def startCodexEdit(
@@ -3216,6 +3267,35 @@ class EditBayBackend(LegacyEditBayBackend):
 
     def _on_codex_chat_state(self, snapshot: CodexChatSnapshot) -> None:
         self.codexChatChanged.emit()
+        log_state: tuple[object, ...] = (
+            snapshot.connection_state,
+            snapshot.auth_state,
+            snapshot.chat_state,
+            snapshot.selected_model,
+            len(snapshot.models),
+            snapshot.model_error,
+            snapshot.error,
+        )
+        if log_state != self._last_codex_log_state:
+            self._last_codex_log_state = log_state
+            detail = (
+                "Codex状態: "
+                f"connection={snapshot.connection_state}, "
+                f"auth={snapshot.auth_state}, "
+                f"chat={snapshot.chat_state}, "
+                f"models={len(snapshot.models)}, "
+                f"selected_model={snapshot.selected_model or 'none'}"
+            )
+            if snapshot.model_error:
+                detail += f", model_error={snapshot.model_error}"
+            if snapshot.error:
+                detail += f", error={snapshot.error}"
+            self._record_log(
+                detail,
+                severity="ERROR" if snapshot.error else "INFO",
+                component="codex",
+                stage="CODEX",
+            )
         if snapshot.login_url and snapshot.login_url != self._last_codex_login_url:
             self._last_codex_login_url = snapshot.login_url
             QDesktopServices.openUrl(QUrl(snapshot.login_url))
@@ -3246,6 +3326,88 @@ class EditBayBackend(LegacyEditBayBackend):
         else:
             self._set_status("編集済み字幕を動画へ焼き付けています", "ENCODE")
 
+    def _record_dependency_snapshot(self, *, stage: str) -> None:
+        status = self._dependencies.to_dict()
+        fields = ", ".join(
+            f"{key}={str(status[key]).lower() if isinstance(status[key], bool) else status[key]}"
+            for key in ("ffmpeg", "ffprobe", "whisperx", "cuda", "nvenc", "ready")
+        )
+        missing = ",".join(str(item) for item in status.get("missing", ())) or "none"
+        self._record_log(
+            f"依存関係: {fields}, missing={missing}",
+            severity="INFO" if bool(status.get("ready")) else "WARNING",
+            component="runtime",
+            stage=stage,
+        )
+
+    def _record_startup_diagnostics(self) -> None:
+        info = self._application_info
+        self._record_log(
+            "アプリケーション: "
+            f"version={info.get('version', 'unknown')}, "
+            f"distribution={info.get('distribution', 'unknown')}",
+            component="startup",
+            stage="STARTUP",
+        )
+        self._record_log(
+            "パス: "
+            f"executable={info.get('executablePath', sys.executable)}, "
+            f"workspace={self.workspace_root}, "
+            f"config={self.gui_config_path}, "
+            f"session_log={self._application_logger.log_path}",
+            component="startup",
+            stage="STARTUP",
+        )
+        runtime = runtime_diagnostic_info()
+        self._record_log(
+            "実行環境: " + ", ".join(f"{key}={value}" for key, value in runtime.items()),
+            component="runtime",
+            stage="STARTUP",
+        )
+        self._record_dependency_snapshot(stage="STARTUP")
+        config_source = "user" if self.gui_config_path.is_file() else "default"
+        self._record_log(
+            "設定: "
+            f"source={config_source}, "
+            f"device={self._settings.get('device', 'unknown')}, "
+            f"model={self._settings.get('model', 'unknown')}, "
+            f"compute_type={self._settings.get('compute_type', 'unknown')}, "
+            f"video_codec={self._settings.get('video_codec', 'unknown')}, "
+            f"codex_model={self._settings.get('codex_model') or 'auto'}",
+            component="config",
+            stage="STARTUP",
+        )
+        if self._application_logger.write_error:
+            self._record_log(
+                "セッションログファイルへ書き込めません: "
+                f"{self._application_logger.write_error}",
+                severity="WARNING",
+                component="startup",
+                stage="STARTUP",
+            )
+
+    @Slot()
+    def refreshDependencies(self) -> None:
+        super().refreshDependencies()
+        self._record_dependency_snapshot(stage="DEPENDENCY_CHECK")
+
+    def _set_status(self, status: str, stage: str) -> None:
+        previous = (getattr(self, "_status", ""), getattr(self, "_stage", ""))
+        super()._set_status(status, stage)
+        if not hasattr(self, "_application_logger") or previous == (status, stage):
+            return
+        severity = (
+            "ERROR"
+            if stage == "ERROR"
+            else "WARNING" if stage in {"SETUP", "CHECK", "CANCELLED"} else "INFO"
+        )
+        self._record_log(
+            status,
+            severity=severity,
+            component="gui",
+            stage=stage,
+        )
+
     def _record_log(
         self,
         message: object,
@@ -3256,7 +3418,20 @@ class EditBayBackend(LegacyEditBayBackend):
         stage: str = "",
         process_id: int | None = None,
         exit_code: int | None = None,
+        preserve_in_memory: bool | None = None,
+        pin_in_memory: bool | None = None,
     ) -> None:
+        if preserve_in_memory is None:
+            preserve_in_memory = component in {
+                "startup",
+                "runtime",
+                "config",
+                "qml",
+                "codex",
+                "gui",
+            } or severity.upper() in {"WARNING", "ERROR"}
+        if pin_in_memory is None:
+            pin_in_memory = component == "startup" or stage == "STARTUP"
         self._application_logger.append(
             message,
             severity=severity,
@@ -3265,6 +3440,8 @@ class EditBayBackend(LegacyEditBayBackend):
             stage=stage,
             process_id=process_id,
             exit_code=exit_code,
+            preserve_in_memory=preserve_in_memory,
+            pin_in_memory=pin_in_memory,
         )
         self._log = self._application_logger.text
         self.logChanged.emit()
@@ -3365,6 +3542,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if not data:
             return
         normalized = data.replace("\r", "\n")
+        self._process_output_tail = (self._process_output_tail + normalized)[-50_000:]
         self._record_log(
             normalized,
             component=self._active_job or "process",
@@ -3514,8 +3692,8 @@ class EditBayBackend(LegacyEditBayBackend):
             failure_detail = next(
                 (
                     line.strip()
-                    for line in reversed(self._log.splitlines())
-                    if line.strip() and not line.lstrip().startswith(">")
+                    for line in reversed(self._process_output_tail.splitlines())
+                    if line.strip() and not line.lstrip().startswith("PROGRESS_EVENT ")
                 ),
                 "",
             )
@@ -3617,9 +3795,43 @@ def main() -> None:
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("backend", app)
     qml_path = Path(__file__).resolve().parent / "ui" / "Main.qml"
+    app._record_log(
+        f"QML UIの読み込みを開始します: {qml_path}",
+        component="qml",
+        stage="STARTUP",
+    )
+
+    def record_qml_warnings(warnings: list[object]) -> None:
+        for warning in warnings:
+            app._record_log(
+                warning,
+                severity="WARNING",
+                component="qml",
+                stage="QML",
+            )
+
+    engine.warnings.connect(record_qml_warnings)
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if not engine.rootObjects():
+        app._record_log(
+            f"QML UIを読み込めませんでした: {qml_path}",
+            severity="ERROR",
+            component="qml",
+            stage="ERROR",
+        )
         raise SystemExit(f"Could not load GUI: {qml_path}")
+    app._record_log(
+        "QML UIの読み込みが完了しました",
+        component="qml",
+        stage="READY",
+    )
+    app.aboutToQuit.connect(
+        lambda: app._record_log(
+            "アプリケーションを終了します",
+            component="startup",
+            stage="SHUTDOWN",
+        )
+    )
     raise SystemExit(app.exec())
 
 

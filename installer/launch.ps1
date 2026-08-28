@@ -108,7 +108,7 @@ $env:PYTHONUTF8 = "1"
 $logDirectory = if ($LogDirectoryOverride) {
     [IO.Path]::GetFullPath($LogDirectoryOverride)
 } else {
-    Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"
+    Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs"
 }
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $errorLog = Join-Path $logDirectory "latest-launch-error.log"

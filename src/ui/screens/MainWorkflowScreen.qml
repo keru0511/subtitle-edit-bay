@@ -1007,7 +1007,8 @@ ApplicationWindow {
             x: Math.max(12, root.width - width - 430)
             y: contextActionBar.y + contextActionBar.height + 10
             width: Math.min(360, root.width - 24)
-            height: Math.min(620, Math.max(240, root.height - y - 12))
+            height: Math.max(0, Math.min(620, root.contentItem.height - y - 12))
+            padding: 12
             modal: false
             focus: true
             // The toggle button is outside this non-modal popup. Let the toggle
@@ -1016,14 +1017,32 @@ ApplicationWindow {
             closePolicy: Popup.CloseOnEscape
             onOpened: root.settingsExpanded = true
             onClosed: root.settingsExpanded = false
-            contentItem: ScrollView {
+            contentItem: ColumnLayout {
                 objectName: "advancedSettingsPanel"
-                anchors.fill: parent
-                clip: true
-                ColumnLayout { width: Math.max(0, advancedSettingsPopup.width - 34); x: 16; spacing: 10
-                        SmallButton { objectName: "settingsPopupSaveButton"; Layout.fillWidth: true; text: "設定を保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveSettings(root.currentSettings()) }
-                        SmallButton { objectName: "settingsPopupCloseButton"; Layout.fillWidth: true; text: "閉じる"; onClicked: advancedSettingsPopup.close() }
-                        Item { Layout.preferredHeight: 2 }
+                spacing: 10
+
+                SmallButton { objectName: "settingsPopupSaveButton"; Layout.fillWidth: true; text: "設定を保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveSettings(root.currentSettings()) }
+                SmallButton { objectName: "settingsPopupCloseButton"; Layout.fillWidth: true; text: "閉じる"; onClicked: advancedSettingsPopup.close() }
+
+                ScrollView {
+                    id: advancedSettingsScrollView
+                    objectName: "advancedSettingsScrollView"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    contentWidth: availableWidth
+                    contentHeight: advancedSettingsContent.implicitHeight
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: ScrollBar {
+                        objectName: "advancedSettingsVerticalScrollBar"
+                        policy: ScrollBar.AlwaysOn
+                    }
+
+                    ColumnLayout {
+                        id: advancedSettingsContent
+                        objectName: "advancedSettingsContent"
+                        width: advancedSettingsScrollView.availableWidth
+                        spacing: 10
                         PanelTitle { text: "文字起こしエンジン" }
                         RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
                         RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
@@ -1068,7 +1087,7 @@ ApplicationWindow {
                         Item { Layout.preferredHeight: 6 }
                     }
                 }
-
+            }
         }
 
     RowLayout {

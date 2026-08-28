@@ -30,6 +30,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("-WindowStyle Hidden", definition)
         self.assertIn(r".venv\Scripts\pythonw.exe", launcher)
         self.assertIn("latest-launch-error.log", launcher)
+        self.assertIn(r'Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs"', launcher)
+        self.assertNotIn(r'Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"', launcher)
         self.assertIn("setup.bat", launcher)
         self.assertIn("Test-CudaRepairRequired", launcher)
         self.assertIn("torch.cuda.is_available()", launcher)

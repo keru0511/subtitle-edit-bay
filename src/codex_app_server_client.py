@@ -11,16 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from .application_logging import redact_text
+
 
 DEFAULT_CODEX_COMMAND = ("codex", "app-server", "--listen", "stdio://")
 MAX_RETAINED_NOTIFICATIONS = 512
-_SECRET_PATTERNS = (
-    re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
-    re.compile(
-        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
-        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;&}\]]+)"
-    ),
-)
 _SENSITIVE_KEY_PATTERN = re.compile(
     r"(?i)^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)$"
 )
@@ -48,10 +43,7 @@ class CodexNotification:
 
 
 def _redact_log(value: object) -> str:
-    text = str(value)
-    for pattern in _SECRET_PATTERNS:
-        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
-    return text
+    return redact_text(value)
 
 
 def _redact_payload(value: Any) -> Any:

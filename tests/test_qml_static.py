@@ -217,10 +217,16 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "copyErrorLogsButton"', panel)
         self.assertIn('objectName: "copyApplicationInfoButton"', panel)
         self.assertIn('objectName: "openLogsButton"', panel)
+        self.assertIn('objectName: "applicationLogScrollView"', panel)
+        self.assertIn('objectName: "applicationLogVerticalScrollBar"', panel)
         self.assertIn("selectByMouse: true", panel)
+        self.assertIn("ScrollBar.horizontal.policy: ScrollBar.AlwaysOff", panel)
+        self.assertIn("policy: ScrollBar.AsNeeded", panel)
         self.assertIn("backend.hasLastProcessDiagnostic", panel)
         self.assertIn("backend.copyErrorLogsToClipboard()", panel)
         self.assertIn("backend.copyApplicationInfoToClipboard()", panel)
+        self.assertIn('"システムログ / エラー" : "システムログ"', panel)
+        self.assertIn('placeholderText: "起動時を含むシステムログ"', panel)
         self.assertIn('text: "ログフォルダを開く"', panel)
 
     def test_highlight_candidate_list_exposes_analysis_preview_add_and_reject(self) -> None:

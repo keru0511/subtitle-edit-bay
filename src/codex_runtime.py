@@ -8,18 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from .application_logging import redact_text
+
 
 CODEX_MIN_VERSION = (0, 1, 0)
 CODEX_MAX_VERSION = (1, 0, 0)
 _CODEX_VERSION_PATTERN = re.compile(
     r"(?i)\bcodex(?:[-_ ]cli)?\b[^0-9]*v?(\d+)\.(\d+)(?:\.(\d+))?"
-)
-_CODEX_SECRET_PATTERNS = (
-    re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
-    re.compile(
-        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
-        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;&}\]]+)"
-    ),
 )
 _CODEX_WINDOWS_PATH_PATTERN = re.compile(
     r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
@@ -84,6 +79,7 @@ def detect_codex(
     found = which("codex")
     if found:
         candidates.append(found)
+    candidates.extend(_codex_desktop_executables(env))
     seen: set[str] = set()
     for candidate in candidates:
         if candidate in seen:
@@ -94,6 +90,8 @@ def detect_codex(
                 [candidate, "--version"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
                 shell=False,
@@ -101,8 +99,16 @@ def detect_codex(
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             continue
-        version = (completed.stdout or completed.stderr or "").strip().splitlines()
-        version_line = version[0] if version else ""
+        output_lines = [
+            line.strip()
+            for output in (completed.stdout, completed.stderr)
+            for line in (output or "").splitlines()
+            if line.strip()
+        ]
+        version_line = next(
+            (line for line in output_lines if _parse_codex_version(line) is not None),
+            "",
+        )
         parsed_version = _parse_codex_version(version_line)
         if completed.returncode == 0 and parsed_version is not None and _is_supported_codex_version(parsed_version):
             return CodexRuntimeInfo(
@@ -118,10 +124,44 @@ def detect_codex(
     )
 
 
+def _codex_desktop_executables(environment: Mapping[str, str]) -> list[str]:
+    """Return verified-later Codex Desktop CLI candidates newest first.
+
+    Codex Desktop adds its versioned bin directory to child processes, but it
+    does not add that directory to the persistent Windows user PATH. Apps
+    started from Explorer therefore need this narrow fallback discovery path.
+    Every returned executable still goes through the normal identity and
+    supported-version probe in :func:`detect_codex`.
+    """
+
+    local_app_data = str(environment.get("LOCALAPPDATA", "")).strip()
+    if not local_app_data:
+        return []
+    bin_root = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
+    try:
+        executables = [
+            child / "codex.exe"
+            for child in bin_root.iterdir()
+            if child.is_dir() and (child / "codex.exe").is_file()
+        ]
+    except OSError:
+        return []
+
+    def modified_time(path: Path) -> int:
+        try:
+            return path.stat().st_mtime_ns
+        except OSError:
+            return -1
+
+    executables.sort(
+        key=lambda path: (modified_time(path), str(path).casefold()),
+        reverse=True,
+    )
+    return [str(path) for path in executables]
+
+
 def redact_codex_diagnostic(value: object) -> str:
-    text = str(value)
-    for pattern in _CODEX_SECRET_PATTERNS:
-        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
+    text = redact_text(value)
     text = _CODEX_WINDOWS_PATH_PATTERN.sub("<local-path>", text)
     text = _CODEX_WINDOWS_PATH_TOKEN_PATTERN.sub("<local-path>", text)
     text = _CODEX_UNIX_PATH_PATTERN.sub("<local-path>", text)

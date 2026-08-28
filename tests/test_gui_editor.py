@@ -31,6 +31,7 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_runtime import CodexRuntimeInfo
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_state import SourceSelection
@@ -52,6 +53,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with patch("src.gui.CodexChatController.connect") as connect:
             cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
             cls._codex_chat_connect_calls = connect.call_count
+        cls._startup_log_text = cls.app.logText
         cls._base_settings = deepcopy(cls.app.settings)
 
     @classmethod
@@ -107,6 +109,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._application_logger.clear_memory()
         app._last_process_diagnostic = None
         app._pending_process_error = ""
+        app._process_output_tail = ""
         app._elapsed_seconds = 0
         app._cancel_requested = False
         app._update_info = None
@@ -1454,6 +1457,25 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
 
+    def test_process_failure_detail_uses_worker_output_not_newer_system_status(self) -> None:
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = False
+
+        with (
+            patch.object(
+                self.app.process,
+                "readAllStandardOutput",
+                return_value=b"Starting WhisperX\ninput audio became unavailable\n",
+            ),
+            patch.object(self.app.process, "processId", return_value=42),
+        ):
+            self.app._process_finished(23, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("input audio became unavailable", self.app.status)
+        self.assertNotIn("文字起こししています", self.app.status)
+
     def test_final_progress_event_does_not_mask_process_error_or_cancel(self) -> None:
         final_events = "\n".join(
             f'PROGRESS_EVENT {{"job":"render","step":"{step}","phase":"complete","progress":1.0}}'
@@ -1593,6 +1615,159 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._ffmpeg_duration_seconds, 0.0)
         self.app._update_stage("Duration: 00:20:00.00, start: 0.000000, bitrate: 100 kb/s")
         self.assertEqual(self.app._ffmpeg_duration_seconds, 1200.0)
+
+    def test_startup_system_log_contains_runtime_dependencies_config_and_completion(self) -> None:
+        startup_log = self._startup_log_text
+
+        for marker in (
+            "[startup] アプリケーションの起動を開始しました",
+            "[startup] アプリケーション: version=",
+            "[startup] パス: executable=",
+            "[runtime] 実行環境: python=",
+            "[runtime] 依存関係: ffmpeg=",
+            "[config] 設定: source=",
+            "[startup] バックエンドの初期化が完了しました",
+        ):
+            self.assertIn(marker, startup_log)
+
+    def test_starting_process_preserves_existing_system_log(self) -> None:
+        self.app._record_log(
+            "起動診断を保持",
+            component="startup",
+            stage="STARTUP",
+        )
+
+        with patch.object(self.app, "_start_process") as start:
+            self.app._start_command(
+                [sys.executable, "-m", "src.subtitle_workflow", "render"],
+                "render",
+                "動画を書き出しています",
+            )
+
+        start.assert_called_once()
+        self.assertIn("起動診断を保持", self.app.logText)
+        self.assertIn("src.subtitle_workflow", self.app.logText)
+        self.assertIn("動画を書き出しています", self.app.logText)
+
+    def test_backend_pins_startup_log_during_preserved_gui_status_flood(self) -> None:
+        original_limit = self.app._application_logger.max_memory_chars
+        try:
+            self.app._application_logger.max_memory_chars = 1_000
+            self.app._record_log(
+                "startup sentinel",
+                component="runtime",
+                stage="STARTUP",
+            )
+            for index in range(80):
+                self.app._record_log(
+                    f"GUI state {index:03d} " + ("x" * 80),
+                    component="gui",
+                    stage="READY",
+                )
+
+            self.assertIn("startup sentinel", self.app.logText)
+            self.assertNotIn("GUI state 000", self.app.logText)
+            self.assertIn("GUI state 079", self.app.logText)
+        finally:
+            self.app._application_logger.max_memory_chars = original_limit
+
+    def test_qml_system_log_panel_displays_startup_entries(self) -> None:
+        self.app._record_log(
+            "起動時システムログを表示",
+            component="startup",
+            stage="STARTUP",
+        )
+        _, window = self._load_qml()
+
+        text_area = self._quick_item(window, "applicationLogTextArea")
+        self.assertIn("起動時システムログを表示", text_area.property("text"))
+        self._click(window, self._quick_item(window, "applicationLogToggleButton"))
+        self.assertTrue(self._quick_item(window, "applicationLogPanel").property("expanded"))
+
+    def test_qml_system_log_panel_scrolls_to_the_latest_entry(self) -> None:
+        for index in range(250):
+            self.app._record_log(
+                f"system-log-{index:03d} " + ("x" * 80),
+                component="render",
+                preserve_in_memory=False,
+            )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "applicationLogToggleButton"))
+
+        scroll_view = self._quick_item(window, "applicationLogScrollView")
+        scroll_bar = self._quick_item(window, "applicationLogVerticalScrollBar")
+        text_area = self._quick_item(window, "applicationLogTextArea")
+        flickable = scroll_view.property("contentItem")
+        self.assertIsNotNone(flickable)
+        self.assertIn("system-log-249", text_area.property("text"))
+
+        content_height = float(flickable.property("contentHeight"))
+        viewport_height = float(flickable.property("height"))
+        self.assertGreater(content_height, viewport_height)
+        self.assertTrue(scroll_bar.isVisible())
+        self.assertLess(float(scroll_bar.property("size")), 1.0)
+
+        max_content_y = content_height - viewport_height
+        flickable.setProperty("contentY", max_content_y)
+        self.app.processEvents()
+        self.assertAlmostEqual(float(flickable.property("contentY")), max_content_y, delta=1.0)
+        self.assertLessEqual(
+            float(text_area.property("contentHeight")) - float(flickable.property("contentY")),
+            viewport_height + 2.0,
+        )
+
+    def test_status_dependency_and_codex_system_logs_are_recorded_and_redacted(self) -> None:
+        secret = "do-not-store"
+        self.app._set_status(f"起動診断 token={secret}", "ERROR")
+        self.assertIn("[ERROR] [gui]", self.app.logText)
+        self.assertNotIn(secret, self.app.logText)
+
+        with patch(
+            "src.gui_base.check_runtime_dependencies",
+            return_value=RuntimeDependencyStatus(
+                ffmpeg=True,
+                ffprobe=True,
+                whisperx=True,
+                cuda=True,
+                nvenc=True,
+            ),
+        ):
+            self.app.refreshDependencies()
+        self.assertIn("[runtime] 依存関係:", self.app.logText)
+
+        runtime = CodexRuntimeInfo(
+            available=True,
+            executable="codex",
+            version="codex-cli 0.99.0",
+            distribution="git",
+        )
+        with patch("src.gui.detect_codex", return_value=runtime):
+            client = self.app._create_codex_chat_client()
+        self.assertIsNotNone(client.log_callback)
+        log_thread = threading.Thread(
+            target=client.log_callback,
+            args=(f"request initialize token={secret}",),
+        )
+        log_thread.start()
+        log_thread.join(timeout=1)
+        self.assertFalse(log_thread.is_alive())
+        QTest.qWait(20)
+        self.app.processEvents()
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(
+                connection_state="error",
+                auth_state="error",
+                chat_state="disconnected",
+                login_url="https://example.invalid/private-login",
+                error=f"Codexへ接続できません token={secret}",
+            )
+        )
+        self.assertIn("Codex CLI検出成功", self.app.logText)
+        self.assertIn("request initialize", self.app.logText)
+        self.assertIn("Codex状態: connection=error", self.app.logText)
+        self.assertNotIn(secret, self.app.logText)
+        self.assertNotIn("private-login", self.app.logText)
 
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
         output = self.root / "output"
@@ -1948,6 +2123,44 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
         self.assertFalse(window.property("settingsExpanded"))
+
+    def test_qml_settings_popup_keeps_actions_visible_and_bottom_settings_scrollable(self) -> None:
+        _, window = self._load_qml()
+        toggle = self._quick_item(window, "settingsToggleButton")
+        self._click(window, toggle)
+
+        panel = self._quick_item(window, "advancedSettingsPanel")
+        scroll_view = self._quick_item(window, "advancedSettingsScrollView")
+        scroll_content = self._quick_item(window, "advancedSettingsContent")
+        scroll_bar = self._quick_item(window, "advancedSettingsVerticalScrollBar")
+        save_button = self._quick_item(window, "settingsPopupSaveButton")
+        close_button = self._quick_item(window, "settingsPopupCloseButton")
+        bottom_field = self._quick_item(window, "speechThresholdField")
+        flickable = scroll_view.property("contentItem")
+        self.assertIsNotNone(flickable)
+
+        for width, height in ((1220, 760), (1520, 940)):
+            window.resize(width, height)
+            self.app.processEvents()
+
+            self._assert_quick_item_within(window.contentItem(), panel)
+            self._assert_quick_item_within(panel, save_button)
+            self._assert_quick_item_within(panel, close_button)
+            self.assertGreater(scroll_view.height(), 0)
+            self.assertGreater(scroll_content.property("implicitHeight"), scroll_view.height())
+            self.assertTrue(scroll_bar.isVisible())
+            self.assertLess(float(scroll_bar.property("size")), 1.0)
+
+            max_content_y = max(
+                0.0,
+                float(flickable.property("contentHeight")) - float(flickable.property("height")),
+            )
+            flickable.setProperty("contentY", max_content_y)
+            self.app.processEvents()
+            self._assert_quick_item_within(scroll_view, bottom_field)
+            self._assert_quick_item_within(panel, save_button)
+            self._assert_quick_item_within(panel, close_button)
+            flickable.setProperty("contentY", 0)
 
     def test_qml_settings_popup_closes_on_escape_and_screen_navigation(self) -> None:
         self._load_project()
@@ -3797,7 +4010,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "EDIT")
         self.assertEqual(self.app.progress, 1.0)
         self.assertEqual(self.app.subtitleSegments[0]["text"], "retry completed")
-        self.assertNotIn("input audio became unavailable", self.app._log)
+        self.assertIn("input audio became unavailable", self.app._log)
         self.assertTrue(self._quick_item(window, "editSubtitlesButton").isEnabled())
 
     def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:

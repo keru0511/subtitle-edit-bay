@@ -2,7 +2,7 @@
 
 ## セットアップ
 
-Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp Serverを再利用します。対応するCodex CLIを導入し、`codex --version` を実行できる状態でアプリを起動してください。複数の実行ファイルがある場合は、`CODEX_EXECUTABLE` で使用するファイルを指定できます。
+Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp Serverを再利用します。通常のCLIは `codex --version` を実行できる状態でアプリを起動してください。Windows版Codex Desktopを利用している場合は、Codexが永続的なユーザーPATHへ登録されていなくても、`%LOCALAPPDATA%\OpenAI\Codex\bin` 配下のバージョン別CLIを新しい順に探索します。候補は実行前提にせず、`--version` でCodex CLI本人かつ対応バージョンであることを検証します。複数の実行ファイルがある場合は、`CODEX_EXECUTABLE` で使用するファイルを最優先指定できます。
 
 アプリは `codex app-server --listen stdio://` を子プロセスとして起動します。待受ポートや外部WebSocketは開きません。通信仕様は[OpenAIのCodex App Serverドキュメント](https://developers.openai.com/codex/app-server)に従います。
 

@@ -244,6 +244,12 @@ class CodexAppServerClientTests(unittest.TestCase):
         self.assertNotIn("message-secret", str(error))
         self.assertEqual(error.data["token"], "[REDACTED]")
 
+        extended = _redact_log(
+            'Authorization: Basic Zm9vOmJhcg==\npassword="two words"'
+        )
+        self.assertNotIn("Zm9vOmJhcg==", extended)
+        self.assertNotIn("two words", extended)
+
 
 if __name__ == "__main__":
     unittest.main()

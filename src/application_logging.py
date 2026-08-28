@@ -15,10 +15,18 @@ DEFAULT_FILE_BYTES = 5 * 1024 * 1024
 DEFAULT_RETENTION_DAYS = 14
 
 _SECRET_PATTERNS = (
-    re.compile(r"(?i)(bearer\s+)([^\s,;}\]]+)"),
+    re.compile(r"(?i)(bearer\s+)([^\s,;&}\]]+)"),
     re.compile(
-        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)"
-        r"[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;}\]]+)"
+        r"(?i)([\"']?authorization[\"']?\s*[:=]\s*)"
+        r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\r\n,;&}\]]+)"
+    ),
+    re.compile(
+        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"
+        r"[\"']?\s*[:=]\s*)(?:\"[^\"\r\n]*\"|'[^'\r\n]*')"
+    ),
+    re.compile(
+        r"(?i)([\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"
+        r"[\"']?\s*[:=]\s*)([^\"'\s,;&}\]]+)"
     ),
 )
 _WINDOWS_PATH_PATTERN = re.compile(
@@ -84,7 +92,7 @@ class ApplicationLogger:
         self.max_memory_chars = max(1_000, int(max_memory_chars))
         self.max_file_bytes = max(1_024, int(max_file_bytes))
         self.retention_days = max(1, int(retention_days))
-        self._memory: deque[str] = deque()
+        self._memory: deque[tuple[str, bool, bool]] = deque()
         self._memory_chars = 0
         self._write_error = ""
         stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
@@ -99,7 +107,7 @@ class ApplicationLogger:
 
     @property
     def text(self) -> str:
-        return "".join(self._memory)
+        return "".join(display for display, _preserved, _pinned in self._memory)
 
     def clear_memory(self) -> None:
         self._memory.clear()
@@ -116,6 +124,8 @@ class ApplicationLogger:
         process_id: int | None = None,
         exit_code: int | None = None,
         retryable: bool | None = None,
+        preserve_in_memory: bool = False,
+        pin_in_memory: bool = False,
     ) -> None:
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         safe_message = redact_text(message)
@@ -138,10 +148,34 @@ class ApplicationLogger:
         if job:
             display_prefix += f" [{job}]"
         display = f"{display_prefix} {safe_message}\n"
-        self._memory.append(display)
+        self._memory.append(
+            (display, bool(preserve_in_memory) or bool(pin_in_memory), bool(pin_in_memory))
+        )
         self._memory_chars += len(display)
         while self._memory and self._memory_chars > self.max_memory_chars:
-            self._memory_chars -= len(self._memory.popleft())
+            removable_index = next(
+                (
+                    index
+                    for index, (_entry, preserved, _pinned) in enumerate(self._memory)
+                    if not preserved
+                ),
+                None,
+            )
+            if removable_index is None:
+                removable_index = next(
+                    (
+                        index
+                        for index, (_entry, _preserved, pinned) in enumerate(self._memory)
+                        if not pinned
+                    ),
+                    None,
+                )
+            if removable_index is None:
+                removed, _preserved, _pinned = self._memory.popleft()
+            else:
+                removed, _preserved, _pinned = self._memory[removable_index]
+                del self._memory[removable_index]
+            self._memory_chars -= len(removed)
 
         self._write_record(record)
 

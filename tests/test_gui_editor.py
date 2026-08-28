@@ -1949,6 +1949,44 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
         self.assertFalse(window.property("settingsExpanded"))
 
+    def test_qml_settings_popup_keeps_actions_visible_and_bottom_settings_scrollable(self) -> None:
+        _, window = self._load_qml()
+        toggle = self._quick_item(window, "settingsToggleButton")
+        self._click(window, toggle)
+
+        panel = self._quick_item(window, "advancedSettingsPanel")
+        scroll_view = self._quick_item(window, "advancedSettingsScrollView")
+        scroll_content = self._quick_item(window, "advancedSettingsContent")
+        scroll_bar = self._quick_item(window, "advancedSettingsVerticalScrollBar")
+        save_button = self._quick_item(window, "settingsPopupSaveButton")
+        close_button = self._quick_item(window, "settingsPopupCloseButton")
+        bottom_field = self._quick_item(window, "speechThresholdField")
+        flickable = scroll_view.property("contentItem")
+        self.assertIsNotNone(flickable)
+
+        for width, height in ((1220, 760), (1520, 940)):
+            window.resize(width, height)
+            self.app.processEvents()
+
+            self._assert_quick_item_within(window.contentItem(), panel)
+            self._assert_quick_item_within(panel, save_button)
+            self._assert_quick_item_within(panel, close_button)
+            self.assertGreater(scroll_view.height(), 0)
+            self.assertGreater(scroll_content.property("implicitHeight"), scroll_view.height())
+            self.assertTrue(scroll_bar.isVisible())
+            self.assertLess(float(scroll_bar.property("size")), 1.0)
+
+            max_content_y = max(
+                0.0,
+                float(flickable.property("contentHeight")) - float(flickable.property("height")),
+            )
+            flickable.setProperty("contentY", max_content_y)
+            self.app.processEvents()
+            self._assert_quick_item_within(scroll_view, bottom_field)
+            self._assert_quick_item_within(panel, save_button)
+            self._assert_quick_item_within(panel, close_button)
+            flickable.setProperty("contentY", 0)
+
     def test_qml_settings_popup_closes_on_escape_and_screen_navigation(self) -> None:
         self._load_project()
         _, window = self._load_qml()

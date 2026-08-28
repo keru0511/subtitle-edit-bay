@@ -298,6 +298,7 @@ WhisperXが無音を直前の1文字へ含めた場合は後段で補正しま�
 ## Codex編集が利用できない
 
 - Codex CLIが未導入の場合は、対応するCLIを導入してからアプリを再起動する
+- Windows版Codex DesktopはユーザーPATHにCodexを登録しない場合があるため、最新版ではCodex DesktopのローカルCLIも自動探索する
 - 複数のCodexがある場合は、`CODEX_EXECUTABLE` で使用する実行ファイルを明示する
 - 未認証の場合は、Codexパネルのログイン導線からChatGPTログインを完了する
 - 対応バージョン外、利用上限、接続失敗は表示された状態と処理ログを確認する

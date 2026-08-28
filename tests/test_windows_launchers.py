@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -417,6 +418,77 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("Source version after update", script)
         self.assertIn("$postUpdateVersion", script)
         self.assertIn("Write-InstalledManifest", script)
+
+    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_installer_helper_restarts_with_powershell_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "Subtitle Edit Bay"
+            (install / "scripts").mkdir(parents=True)
+            (install / "src").mkdir()
+            (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
+            (install / "scripts" / "launch.ps1").write_text("old launcher", encoding="utf-8")
+            (install / "src" / "app.py").write_text("old app", encoding="utf-8")
+            restart_marker = base / "restart-marker.txt"
+            escaped_marker = str(restart_marker).replace("'", "''")
+
+            fake_script = base / "fake-installer.ps1"
+            fake_script.write_text(
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
+                f"$launcher = \"[IO.File]::WriteAllText('{escaped_marker}', 'started')\"\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), $launcher)\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_installer = base / "fake-installer.cmd"
+            fake_installer.write_text(
+                '@echo off\r\n'
+                'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-installer.ps1" %*\r\n'
+                'exit /b %ERRORLEVEL%\r\n',
+                encoding="utf-8",
+            )
+            result_path = base / "update-result.json"
+            digest = hashlib.sha256(fake_installer.read_bytes()).hexdigest()
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "scripts" / "apply_installer_update.ps1"),
+                    "-PackagePath",
+                    str(fake_installer),
+                    "-ParentPid",
+                    "-1",
+                    "-InstallRoot",
+                    str(install),
+                    "-RestartExecutable",
+                    str(install / "SubtitleEditBayLauncher.exe"),
+                    "-ExpectedVersion",
+                    "v9.9.9",
+                    "-ExpectedSha256",
+                    digest,
+                    "-ResultPath",
+                    str(result_path),
+                ],
+                cwd=install,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            deadline = time.monotonic() + 5
+            while not restart_marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9", update_result)
+            self.assertTrue(restart_marker.is_file(), update_result)
+            self.assertEqual(update_result["status"], "success", update_result)
+            self.assertEqual(update_result["restart_mode"], "powershell", update_result)
 
     @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
     def test_installer_helper_restores_snapshot_after_partial_failure(self) -> None:

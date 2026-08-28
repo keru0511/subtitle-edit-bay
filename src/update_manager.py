@@ -213,8 +213,6 @@ def build_installer_helper_command(
 ) -> list[str]:
     helper = project_root / "scripts" / "apply_installer_update.ps1"
     restart_executable = project_root / "SubtitleEditBayLauncher.exe"
-    if not restart_executable.is_file():
-        restart_executable = project_root / "SubtitleEditBay.exe"
     if sys.platform == "win32":
         powershell = "powershell.exe"
         return [

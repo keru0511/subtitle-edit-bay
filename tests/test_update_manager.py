@@ -103,6 +103,9 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertIn("Hidden", command)
         self.assertIn("-ParentPid", command)
         self.assertIn("-ExpectedSha256", command)
+        restart_index = command.index("-RestartExecutable")
+        self.assertEqual(Path(command[restart_index + 1]), tmp_path / "SubtitleEditBayLauncher.exe")
+        self.assertNotIn(str(tmp_path / "SubtitleEditBay.exe"), command)
 
     def test_release_asset_metadata_selects_installer_and_checksum(self):
         payload = {

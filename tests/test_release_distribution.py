@@ -31,6 +31,9 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn(r".venv\Scripts\pythonw.exe", launcher)
         self.assertIn("latest-launch-error.log", launcher)
         self.assertIn("setup.bat", launcher)
+        self.assertIn("Test-CudaRepairRequired", launcher)
+        self.assertIn("torch.cuda.is_available()", launcher)
+        self.assertIn("GPU環境の修復", launcher)
 
     def test_build_script_has_stable_release_contract(self) -> None:
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")

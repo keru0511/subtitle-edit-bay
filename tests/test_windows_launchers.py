@@ -51,6 +51,54 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
+        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
+        launch_script = ROOT / "installer" / "launch.ps1"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / ".gui" / "runtime_config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"shared": {"device": "cuda"}}), encoding="utf-8")
+
+            unavailable_python = root / "cuda-unavailable.cmd"
+            unavailable_python.write_text("@exit /b 1\r\n", encoding="ascii")
+            available_python = root / "cuda-available.cmd"
+            available_python.write_text("@exit /b 0\r\n", encoding="ascii")
+
+            def probe(python: Path) -> str:
+                result = subprocess.run(
+                    [
+                        powershell,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(launch_script),
+                        "-ProbeCudaRepairOnly",
+                        "-ProjectRootOverride",
+                        str(root),
+                        "-PythonOverride",
+                        str(python),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result.stdout.strip().splitlines()[-1]
+
+            self.assertEqual(probe(unavailable_python), "true")
+            self.assertEqual(probe(available_python), "false")
+
+            config_path.write_text(json.dumps({"shared": {"device": "cpu"}}), encoding="utf-8")
+            self.assertEqual(probe(unavailable_python), "false")
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
     def test_setup_gpu_probe_searches_sysnative_and_system32_paths(self) -> None:
         powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
         setup_script = ROOT / "scripts" / "setup.ps1"

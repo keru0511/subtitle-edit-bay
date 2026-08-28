@@ -93,7 +93,7 @@ $env:HF_TOKEN = [Net.NetworkCredential]::new("", $secureToken).Password
 
 トークンは子のWhisperXプロセスへ環境変数として継承され、dry-runやコマンド表示には出力されません。
 
-`assets/runtime_config.json` の標準設定はCUDAです。`setup.bat` はNVIDIA GPUへCUDA版PyTorchを導入し、CUDAを利用できない初回環境だけGUI用の `.gui/runtime_config.json` をCPU設定で作成します。GUIは起動時と文字起こし開始前にCUDA利用可否を再検査し、不一致時は開始ボタン付近に修復案内を表示します。
+`assets/runtime_config.json` の標準設定はCUDAです。`setup.bat` はNVIDIA GPUへCUDA版PyTorchを導入し、CUDAを利用できない初回環境だけGUI用の `.gui/runtime_config.json` をCPU設定で作成します。インストール版のランチャーは起動前にもCUDA利用可否を検査し、更新後の環境にCPU版PyTorchが残っている場合はGUIを開く前に修復セットアップを自動で案内します。GUIも文字起こし開始前に再検査します。
 
 ## GUI: Subtitle Edit Bay
 

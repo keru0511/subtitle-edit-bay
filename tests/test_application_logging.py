@@ -57,6 +57,25 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertEqual(records[0]["process_id"], 42)
             self.assertNotIn("do-not-store", logger.log_path.read_text(encoding="utf-8"))
 
+    def test_preserved_system_entries_survive_large_process_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logger = ApplicationLogger(
+                temp_dir,
+                log_directory=Path(temp_dir) / "logs",
+                max_memory_chars=1_000,
+            )
+            logger.append(
+                "startup diagnostics",
+                component="startup",
+                stage="STARTUP",
+                preserve_in_memory=True,
+            )
+            logger.append("process output " + ("x" * 2_000), component="render")
+
+            self.assertIn("startup diagnostics", logger.text)
+            self.assertNotIn("process output", logger.text)
+            self.assertLessEqual(len(logger.text), 1_000)
+
     def test_diagnostic_contains_required_context_without_paths_or_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             logger = ApplicationLogger(

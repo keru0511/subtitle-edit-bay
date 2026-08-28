@@ -84,7 +84,7 @@ class ApplicationLogger:
         self.max_memory_chars = max(1_000, int(max_memory_chars))
         self.max_file_bytes = max(1_024, int(max_file_bytes))
         self.retention_days = max(1, int(retention_days))
-        self._memory: deque[str] = deque()
+        self._memory: deque[tuple[str, bool]] = deque()
         self._memory_chars = 0
         self._write_error = ""
         stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
@@ -99,7 +99,7 @@ class ApplicationLogger:
 
     @property
     def text(self) -> str:
-        return "".join(self._memory)
+        return "".join(display for display, _preserved in self._memory)
 
     def clear_memory(self) -> None:
         self._memory.clear()
@@ -116,6 +116,7 @@ class ApplicationLogger:
         process_id: int | None = None,
         exit_code: int | None = None,
         retryable: bool | None = None,
+        preserve_in_memory: bool = False,
     ) -> None:
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         safe_message = redact_text(message)
@@ -138,10 +139,23 @@ class ApplicationLogger:
         if job:
             display_prefix += f" [{job}]"
         display = f"{display_prefix} {safe_message}\n"
-        self._memory.append(display)
+        self._memory.append((display, bool(preserve_in_memory)))
         self._memory_chars += len(display)
         while self._memory and self._memory_chars > self.max_memory_chars:
-            self._memory_chars -= len(self._memory.popleft())
+            removable_index = next(
+                (
+                    index
+                    for index, (_entry, preserved) in enumerate(self._memory)
+                    if not preserved
+                ),
+                None,
+            )
+            if removable_index is None:
+                removed, _preserved = self._memory.popleft()
+            else:
+                removed, _preserved = self._memory[removable_index]
+                del self._memory[removable_index]
+            self._memory_chars -= len(removed)
 
         self._write_record(record)
 

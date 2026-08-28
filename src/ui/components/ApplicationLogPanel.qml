@@ -21,7 +21,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Text {
-                text: backend && backend.stage === "ERROR" ? "処理ログ / エラー" : "処理ログ"
+                text: panel.backend && panel.backend.stage === "ERROR" ? "システムログ / エラー" : "システムログ"
                 color: "#E8EFEA"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 11
@@ -30,7 +30,7 @@ Rectangle {
             Text {
                 objectName: "workflowStatusText"
                 Layout.fillWidth: true
-                text: backend ? backend.status : ""
+                text: panel.backend ? panel.backend.status : ""
                 color: "#AEBEB3"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 10
@@ -45,23 +45,23 @@ Rectangle {
             Button {
                 objectName: "copyLogsButton"
                 text: "ログをコピー"
-                onClicked: backend.copyLogsToClipboard()
+                onClicked: panel.backend.copyLogsToClipboard()
             }
             Button {
                 objectName: "copyErrorLogsButton"
                 text: "診断をコピー"
-                visible: backend && backend.hasLastProcessDiagnostic
-                onClicked: backend.copyErrorLogsToClipboard()
+                visible: panel.backend && panel.backend.hasLastProcessDiagnostic
+                onClicked: panel.backend.copyErrorLogsToClipboard()
             }
             Button {
                 objectName: "copyApplicationInfoButton"
                 text: "アプリ情報をコピー"
-                onClicked: backend.copyApplicationInfoToClipboard()
+                onClicked: panel.backend.copyApplicationInfoToClipboard()
             }
             Button {
                 objectName: "openLogsButton"
                 text: "ログフォルダを開く"
-                onClicked: backend.openLogFolder()
+                onClicked: panel.backend.openLogFolder()
             }
         }
 
@@ -71,12 +71,12 @@ Rectangle {
             Layout.fillHeight: true
             readOnly: true
             selectByMouse: true
-            text: backend ? backend.logText : ""
+            text: panel.backend ? panel.backend.logText : ""
             color: "#AEBEB3"
             font.family: "Cascadia Mono"
             font.pixelSize: 9
             wrapMode: TextEdit.WrapAnywhere
-            placeholderText: "処理ログ"
+            placeholderText: "起動時を含むシステムログ"
             background: Rectangle { color: "transparent" }
         }
     }

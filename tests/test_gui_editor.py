@@ -31,6 +31,7 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_runtime import CodexRuntimeInfo
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_state import SourceSelection
@@ -52,6 +53,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with patch("src.gui.CodexChatController.connect") as connect:
             cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
             cls._codex_chat_connect_calls = connect.call_count
+        cls._startup_log_text = cls.app.logText
         cls._base_settings = deepcopy(cls.app.settings)
 
     @classmethod
@@ -1593,6 +1595,99 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._ffmpeg_duration_seconds, 0.0)
         self.app._update_stage("Duration: 00:20:00.00, start: 0.000000, bitrate: 100 kb/s")
         self.assertEqual(self.app._ffmpeg_duration_seconds, 1200.0)
+
+    def test_startup_system_log_contains_runtime_dependencies_config_and_completion(self) -> None:
+        startup_log = self._startup_log_text
+
+        for marker in (
+            "[startup] アプリケーションの起動を開始しました",
+            "[startup] アプリケーション: version=",
+            "[startup] パス: executable=",
+            "[runtime] 実行環境: python=",
+            "[runtime] 依存関係: ffmpeg=",
+            "[config] 設定: source=",
+            "[startup] バックエンドの初期化が完了しました",
+        ):
+            self.assertIn(marker, startup_log)
+
+    def test_starting_process_preserves_existing_system_log(self) -> None:
+        self.app._record_log(
+            "起動診断を保持",
+            component="startup",
+            stage="STARTUP",
+        )
+
+        with patch.object(self.app, "_start_process") as start:
+            self.app._start_command(
+                [sys.executable, "-m", "src.subtitle_workflow", "render"],
+                "render",
+                "動画を書き出しています",
+            )
+
+        start.assert_called_once()
+        self.assertIn("起動診断を保持", self.app.logText)
+        self.assertIn("src.subtitle_workflow", self.app.logText)
+        self.assertIn("動画を書き出しています", self.app.logText)
+
+    def test_qml_system_log_panel_displays_startup_entries(self) -> None:
+        self.app._record_log(
+            "起動時システムログを表示",
+            component="startup",
+            stage="STARTUP",
+        )
+        _, window = self._load_qml()
+
+        text_area = self._quick_item(window, "applicationLogTextArea")
+        self.assertIn("起動時システムログを表示", text_area.property("text"))
+        self._click(window, self._quick_item(window, "applicationLogToggleButton"))
+        self.assertTrue(self._quick_item(window, "applicationLogPanel").property("expanded"))
+
+    def test_status_dependency_and_codex_system_logs_are_recorded_and_redacted(self) -> None:
+        secret = "do-not-store"
+        self.app._set_status(f"起動診断 token={secret}", "ERROR")
+        self.assertIn("[ERROR] [gui]", self.app.logText)
+        self.assertNotIn(secret, self.app.logText)
+
+        with patch(
+            "src.gui_base.check_runtime_dependencies",
+            return_value=RuntimeDependencyStatus(
+                ffmpeg=True,
+                ffprobe=True,
+                whisperx=True,
+                cuda=True,
+                nvenc=True,
+            ),
+        ):
+            self.app.refreshDependencies()
+        self.assertIn("[runtime] 依存関係:", self.app.logText)
+
+        runtime = CodexRuntimeInfo(
+            available=True,
+            executable="codex",
+            version="codex-cli 0.99.0",
+            distribution="git",
+        )
+        with patch("src.gui.detect_codex", return_value=runtime):
+            client = self.app._create_codex_chat_client()
+        self.assertIsNotNone(client.log_callback)
+        client.log_callback(f"request initialize token={secret}")
+        QTest.qWait(20)
+        self.app.processEvents()
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(
+                connection_state="error",
+                auth_state="error",
+                chat_state="disconnected",
+                login_url="https://example.invalid/private-login",
+                error=f"Codexへ接続できません token={secret}",
+            )
+        )
+        self.assertIn("Codex CLI検出成功", self.app.logText)
+        self.assertIn("request initialize", self.app.logText)
+        self.assertIn("Codex状態: connection=error", self.app.logText)
+        self.assertNotIn(secret, self.app.logText)
+        self.assertNotIn("private-login", self.app.logText)
 
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
         output = self.root / "output"

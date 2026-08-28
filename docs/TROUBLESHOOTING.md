@@ -145,6 +145,8 @@ GUIを起動する `python` と同じ環境へインストールしてくださ�
 
 WhisperXログに `Torch not compiled with CUDA enabled` と出る場合、NVIDIA GPUではなく `.venv` のPyTorchがCPU版になっています。
 
+インストール版は起動時にこの不一致を検出し、修復セットアップを自動で開きます。セットアップ完了後にアプリをもう一度起動してください。手動で修復する場合は次の手順を実行します。
+
 1. GUIを閉じる
 2. `setup.bat` を再実行する
 3. `Setup verification passed.` と `CUDA: available` を確認する

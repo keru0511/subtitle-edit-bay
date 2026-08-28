@@ -18,6 +18,7 @@ Rectangle {
 
         Text {
             objectName: "codexChatSidebarTitle"
+            Layout.maximumHeight: implicitHeight
             text: "Codex"
             color: "#F4F1E8"
             font.family: "Yu Gothic UI"
@@ -25,12 +26,15 @@ Rectangle {
             font.weight: Font.Bold
         }
         Text {
+            objectName: "codexChatSidebarSubtitle"
+            Layout.maximumHeight: implicitHeight
             text: "チャット領域"
             color: "#8E9B94"
             font.family: "Yu Gothic UI"
             font.pixelSize: 10
         }
         CodexChatPanel {
+            id: chatPanel
             objectName: "codexChatPanel"
             Layout.fillWidth: true
             Layout.fillHeight: expanded
@@ -40,6 +44,11 @@ Rectangle {
             backend: sidebar.backend
             expanded: false
             panelColor: "#080A09"
+        }
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: !chatPanel.expanded
         }
     }
 }

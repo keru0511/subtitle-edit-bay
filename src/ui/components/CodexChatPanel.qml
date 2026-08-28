@@ -98,6 +98,7 @@ Rectangle {
             }
             Text {
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 text: panel.authStateLabel()
                 textFormat: Text.PlainText
                 color: backend && ["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0
@@ -107,9 +108,14 @@ Rectangle {
                 horizontalAlignment: Text.AlignRight
                 elide: Text.ElideRight
             }
-            Button {
+            SmallButton {
                 id: connectionButton
                 objectName: "codexConnectButton"
+                Layout.preferredWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
+                Layout.minimumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
+                Layout.maximumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
+                Layout.preferredHeight: 30
+                Layout.maximumHeight: 30
                 visible: !panel.authenticated()
                 text: backend && backend.codexAuthState === "login_pending"
                     ? "ブラウザを開く"
@@ -126,8 +132,13 @@ Rectangle {
                         backend.startCodexLogin()
                 }
             }
-            Button {
+            SmallButton {
                 objectName: "codexChatToggleButton"
+                Layout.preferredWidth: 48
+                Layout.minimumWidth: 48
+                Layout.maximumWidth: 48
+                Layout.preferredHeight: 30
+                Layout.maximumHeight: 30
                 text: panel.expanded ? "閉じる" : "開く"
                 enabled: panel.authenticated()
                 onClicked: panel.expanded = !panel.expanded
@@ -147,6 +158,7 @@ Rectangle {
                     id: modelCombo
                     objectName: "codexModelCombo"
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     model: backend ? backend.codexModels : []
                     textRole: "label"
                     valueRole: "id"
@@ -154,8 +166,11 @@ Rectangle {
                     Component.onCompleted: panel.syncModelSelection()
                     onActivated: backend.selectCodexModel(currentValue)
                 }
-                Button {
+                SmallButton {
                     objectName: "codexNewChatButton"
+                    Layout.preferredWidth: 48
+                    Layout.minimumWidth: 48
+                    Layout.maximumWidth: 48
                     text: "新規"
                     enabled: !panel.busy()
                     onClicked: backend.startNewCodexChat()
@@ -166,19 +181,26 @@ Rectangle {
                 Layout.fillWidth: true
                 Text {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     text: panel.chatStateLabel()
                     textFormat: Text.PlainText
                     color: backend && backend.codexChatState === "send_failed" ? panel.errorColor : panel.mutedColor
                     font.pixelSize: 9
                 }
-                Button {
+                SmallButton {
                     objectName: "codexReloginButton"
+                    Layout.preferredWidth: 68
+                    Layout.minimumWidth: 68
+                    Layout.maximumWidth: 68
                     text: "再ログイン"
                     enabled: !panel.busy()
                     onClicked: backend.reloginCodex()
                 }
-                Button {
+                SmallButton {
                     objectName: "codexLogoutButton"
+                    Layout.preferredWidth: 68
+                    Layout.minimumWidth: 68
+                    Layout.maximumWidth: 68
                     text: "ログアウト"
                     enabled: !panel.busy()
                     onClicked: {
@@ -251,6 +273,7 @@ Rectangle {
                     id: chatInput
                     objectName: "codexChatInput"
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 62
                     placeholderText: "Codexへのメッセージ"
                     textFormat: TextEdit.PlainText
@@ -259,8 +282,11 @@ Rectangle {
                     enabled: panel.authenticated() && !panel.busy()
                 }
                 ColumnLayout {
-                    Button {
+                    SmallButton {
                         objectName: "codexChatSendButton"
+                        Layout.preferredWidth: 48
+                        Layout.minimumWidth: 48
+                        Layout.maximumWidth: 48
                         text: "送信"
                         enabled: panel.authenticated() && !panel.busy() && chatInput.text.trim().length > 0
                         onClicked: {
@@ -269,8 +295,11 @@ Rectangle {
                             backend.sendCodexChatMessage(message)
                         }
                     }
-                    Button {
+                    SmallButton {
                         objectName: "codexChatStopButton"
+                        Layout.preferredWidth: 48
+                        Layout.minimumWidth: 48
+                        Layout.maximumWidth: 48
                         text: "停止"
                         enabled: panel.busy() && backend.codexChatState !== "stopping"
                         onClicked: backend.stopCodexChat()

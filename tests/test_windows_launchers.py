@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -13,12 +14,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
-    def test_start_uses_project_virtual_environment(self) -> None:
+    def test_start_delegates_to_cuda_aware_launcher(self) -> None:
         launcher = (ROOT / "start.bat").read_text(encoding="utf-8")
 
-        self.assertIn(r".venv\Scripts\python.exe", launcher)
-        self.assertIn("-m src.gui", launcher)
-        self.assertIn(r".local\ffmpeg_path.txt", launcher)
+        self.assertIn(r"scripts\launch.ps1", launcher)
+        self.assertIn(r"installer\launch.ps1", launcher)
+        self.assertIn(r"Sysnative\WindowsPowerShell\v1.0\powershell.exe", launcher)
+        self.assertNotIn("-m src.gui", launcher)
 
     def test_setup_uses_module_pip_and_winget_fallbacks(self) -> None:
         launcher = (ROOT / "setup.bat").read_text(encoding="utf-8")
@@ -49,6 +51,164 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
+        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
+        launch_script = ROOT / "installer" / "launch.ps1"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / ".gui" / "runtime_config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"shared": {"device": "cuda"}}), encoding="utf-8")
+
+            unavailable_python = root / "cuda-unavailable.cmd"
+            unavailable_python.write_text("@exit /b 1\r\n", encoding="ascii")
+            available_python = root / "cuda-available.cmd"
+            available_python.write_text("@exit /b 0\r\n", encoding="ascii")
+
+            def probe(python: Path) -> str:
+                result = subprocess.run(
+                    [
+                        powershell,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(launch_script),
+                        "-ProbeCudaRepairOnly",
+                        "-ProjectRootOverride",
+                        str(root),
+                        "-PythonOverride",
+                        str(python),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result.stdout.strip().splitlines()[-1]
+
+            self.assertEqual(probe(unavailable_python), "true")
+            self.assertEqual(probe(available_python), "false")
+
+            config_path.write_text(json.dumps({"shared": {"device": "cpu"}}), encoding="utf-8")
+            self.assertEqual(probe(unavailable_python), "false")
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_installer_launcher_routes_setup_and_gui_without_starting_both(self) -> None:
+        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
+        launch_script = ROOT / "installer" / "launch.ps1"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "Subtitle Edit Bay"
+            config_path = root / ".gui" / "runtime_config.json"
+            config_path.parent.mkdir(parents=True)
+            (root / "assets").mkdir()
+            (root / "src").mkdir()
+            (root / "src" / "__init__.py").write_text("", encoding="ascii")
+            (root / "src" / "gui.py").write_text(
+                'from pathlib import Path\nPath("gui-ran.txt").write_text("gui", encoding="ascii")\n',
+                encoding="ascii",
+            )
+            logs = root / "test logs"
+            setup_marker = root / "setup-ran.txt"
+            gui_marker = root / "gui-ran.txt"
+
+            unavailable_python = root / "cuda unavailable.cmd"
+            unavailable_python.write_text("@exit /b 1\r\n", encoding="ascii")
+            available_python = root / "cuda available.cmd"
+            available_python.write_text("@exit /b 0\r\n", encoding="ascii")
+            setup = root / "setup runner.cmd"
+            setup.write_text('@echo off\r\n> "%~dp0setup-ran.txt" echo setup\r\nexit /b 0\r\n', encoding="ascii")
+            gui = Path(sys.executable)
+            inherited_path = os.environ.get("Path") or os.environ.get("PATH") or ""
+            environment = {key: value for key, value in os.environ.items() if key.lower() != "path"}
+            environment["Path"] = inherited_path
+
+            def run_launcher(*, device: str, python: Path, pythonw: Path = gui, use_default_config: bool = False) -> None:
+                setup_marker.unlink(missing_ok=True)
+                gui_marker.unlink(missing_ok=True)
+                if use_default_config:
+                    config_path.unlink(missing_ok=True)
+                    (root / "assets" / "runtime_config.json").write_text(
+                        json.dumps({"shared": {"device": device}}),
+                        encoding="utf-8",
+                    )
+                else:
+                    config_path.write_text(json.dumps({"shared": {"device": device}}), encoding="utf-8")
+
+                result = subprocess.run(
+                    [
+                        powershell,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(launch_script),
+                        "-SuppressMessages",
+                        "-ProjectRootOverride",
+                        str(root),
+                        "-PythonOverride",
+                        str(python),
+                        "-PythonwOverride",
+                        str(pythonw),
+                        "-SetupExecutableOverride",
+                        str(setup),
+                        "-LogDirectoryOverride",
+                        str(logs),
+                    ],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            run_launcher(device="cuda", python=unavailable_python)
+            deadline = time.monotonic() + 5
+            while not setup_marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(setup_marker.is_file())
+            self.assertFalse(gui_marker.exists())
+
+            run_launcher(device="cuda", python=available_python)
+            self.assertTrue(
+                gui_marker.is_file(),
+                (logs / "latest-launch-error.log").read_text(encoding="utf-8", errors="replace"),
+            )
+            self.assertFalse(setup_marker.exists())
+
+            run_launcher(device="cpu", python=unavailable_python)
+            self.assertTrue(
+                gui_marker.is_file(),
+                (logs / "latest-launch-error.log").read_text(encoding="utf-8", errors="replace"),
+            )
+            self.assertFalse(setup_marker.exists())
+
+            run_launcher(device="cuda", python=unavailable_python, use_default_config=True)
+            deadline = time.monotonic() + 5
+            while not setup_marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(setup_marker.is_file())
+            self.assertFalse(gui_marker.exists())
+
+            run_launcher(device="cpu", python=unavailable_python, pythonw=root / "missing pythonw.exe")
+            deadline = time.monotonic() + 5
+            while not setup_marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(setup_marker.is_file())
+            self.assertFalse(gui_marker.exists())
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
     def test_setup_gpu_probe_searches_sysnative_and_system32_paths(self) -> None:

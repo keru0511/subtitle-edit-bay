@@ -109,6 +109,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         app._application_logger.clear_memory()
         app._last_process_diagnostic = None
         app._pending_process_error = ""
+        app._process_output_tail = ""
         app._elapsed_seconds = 0
         app._cancel_requested = False
         app._update_info = None
@@ -1455,6 +1456,25 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("7", self.app.status)
+
+    def test_process_failure_detail_uses_worker_output_not_newer_system_status(self) -> None:
+        self.app._active_job = "render"
+        self.app._running = True
+        self.app._cancel_requested = False
+
+        with (
+            patch.object(
+                self.app.process,
+                "readAllStandardOutput",
+                return_value=b"Starting WhisperX\ninput audio became unavailable\n",
+            ),
+            patch.object(self.app.process, "processId", return_value=42),
+        ):
+            self.app._process_finished(23, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("input audio became unavailable", self.app.status)
+        self.assertNotIn("文字起こししています", self.app.status)
 
     def test_final_progress_event_does_not_mask_process_error_or_cancel(self) -> None:
         final_events = "\n".join(
@@ -3930,7 +3950,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.stage, "EDIT")
         self.assertEqual(self.app.progress, 1.0)
         self.assertEqual(self.app.subtitleSegments[0]["text"], "retry completed")
-        self.assertNotIn("input audio became unavailable", self.app._log)
+        self.assertIn("input audio became unavailable", self.app._log)
         self.assertTrue(self._quick_item(window, "editSubtitlesButton").isEnabled())
 
     def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:

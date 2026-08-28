@@ -347,6 +347,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._application_logger.application_info = dict(self._application_info)
         self._last_process_diagnostic: ProcessDiagnosticSnapshot | None = None
         self._pending_process_error = ""
+        self._process_output_tail = ""
         self._log = self._application_logger.text
         self._record_startup_diagnostics()
         self._font_choices = build_font_choices(QFontDatabase.families())
@@ -2714,6 +2715,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._last_process_diagnostic = None
             self.lastProcessDiagnosticChanged.emit()
         self._pending_process_error = ""
+        self._process_output_tail = ""
         self._record_log(
             f"> {subprocess.list2cmdline(command)}",
             component="gui",
@@ -3535,6 +3537,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if not data:
             return
         normalized = data.replace("\r", "\n")
+        self._process_output_tail = (self._process_output_tail + normalized)[-50_000:]
         self._record_log(
             normalized,
             component=self._active_job or "process",
@@ -3684,8 +3687,8 @@ class EditBayBackend(LegacyEditBayBackend):
             failure_detail = next(
                 (
                     line.strip()
-                    for line in reversed(self._log.splitlines())
-                    if line.strip() and not line.lstrip().startswith(">")
+                    for line in reversed(self._process_output_tail.splitlines())
+                    if line.strip() and not line.lstrip().startswith("PROGRESS_EVENT ")
                 ),
                 "",
             )

@@ -2143,6 +2143,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
             window.resize(width, height)
             self.app.processEvents()
 
+            deadline = time.monotonic() + 1.0
+            while scroll_view.height() <= 0 and time.monotonic() < deadline:
+                QTest.qWait(10)
+                self.app.processEvents()
+
             self._assert_quick_item_within(window.contentItem(), panel)
             self._assert_quick_item_within(panel, save_button)
             self._assert_quick_item_within(panel, close_button)

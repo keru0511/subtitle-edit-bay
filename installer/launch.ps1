@@ -1,7 +1,11 @@
 ﻿param(
     [switch]$ProbeCudaRepairOnly,
+    [switch]$SuppressMessages,
     [string]$ProjectRootOverride = "",
-    [string]$PythonOverride = ""
+    [string]$PythonOverride = "",
+    [string]$PythonwOverride = "",
+    [string]$SetupExecutableOverride = "",
+    [string]$LogDirectoryOverride = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,11 +15,20 @@ $projectRoot = if ($ProjectRootOverride) {
 } else {
     [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 }
-$pythonw = Join-Path $projectRoot ".venv\Scripts\pythonw.exe"
+$pythonw = if ($PythonwOverride) {
+    [IO.Path]::GetFullPath($PythonwOverride)
+} else {
+    Join-Path $projectRoot ".venv\Scripts\pythonw.exe"
+}
 $python = if ($PythonOverride) {
     [IO.Path]::GetFullPath($PythonOverride)
 } else {
     Join-Path $projectRoot ".venv\Scripts\python.exe"
+}
+$setupExecutable = if ($SetupExecutableOverride) {
+    [IO.Path]::GetFullPath($SetupExecutableOverride)
+} else {
+    Join-Path $projectRoot "setup.bat"
 }
 
 function Show-Message {
@@ -24,8 +37,10 @@ function Show-Message {
         [string]$Title = "Subtitle Edit Bay"
     )
 
-    Add-Type -AssemblyName PresentationFramework
-    [System.Windows.MessageBox]::Show($Message, $Title) | Out-Null
+    if (-not $SuppressMessages) {
+        Add-Type -AssemblyName PresentationFramework
+        [System.Windows.MessageBox]::Show($Message, $Title) | Out-Null
+    }
 }
 
 function Test-CudaRepairRequired {
@@ -71,13 +86,13 @@ if ($ProbeCudaRepairOnly) {
 
 if (-not (Test-Path -LiteralPath $pythonw -PathType Leaf)) {
     Show-Message "初回セットアップが必要です。セットアップ画面を開きます。"
-    Start-Process -FilePath (Join-Path $projectRoot "setup.bat") -WorkingDirectory $projectRoot
+    Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot
     exit 0
 }
 
 if ($cudaRepairRequired) {
     Show-Message "GPU設定が選択されていますが、CUDA対応PyTorchが利用できません。`n`n実行環境の修復セットアップを開きます。完了後にアプリをもう一度起動してください。" "Subtitle Edit Bay - GPU環境の修復"
-    Start-Process -FilePath (Join-Path $projectRoot "setup.bat") -WorkingDirectory $projectRoot
+    Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot
     exit 0
 }
 
@@ -90,7 +105,11 @@ if (Test-Path -LiteralPath $ffmpegPathFile -PathType Leaf) {
 }
 
 $env:PYTHONUTF8 = "1"
-$logDirectory = Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"
+$logDirectory = if ($LogDirectoryOverride) {
+    [IO.Path]::GetFullPath($LogDirectoryOverride)
+} else {
+    Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"
+}
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $errorLog = Join-Path $logDirectory "latest-launch-error.log"
 

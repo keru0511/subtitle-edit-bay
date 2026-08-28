@@ -290,6 +290,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.app.processEvents()
 
+    def _assert_quick_item_within(self, container: QQuickItem, item: QQuickItem) -> None:
+        name = item.objectName()
+        self.assertTrue(item.isVisible(), name)
+        top_left = item.mapToItem(container, QPointF(0, 0))
+        bottom_right = item.mapToItem(container, QPointF(item.width(), item.height()))
+        self.assertGreaterEqual(top_left.x(), -1, name)
+        self.assertGreaterEqual(top_left.y(), -1, name)
+        self.assertLessEqual(bottom_right.x(), container.width() + 1, name)
+        self.assertLessEqual(bottom_right.y(), container.height() + 1, name)
+
+    def _assert_button_content_fits(self, button: QQuickItem) -> None:
+        content = button.property("contentItem")
+        self.assertIsNotNone(content, button.objectName())
+        self.assertLessEqual(content.property("implicitWidth"), button.width() + 1, button.objectName())
+
     def test_empty_project_can_be_opened_and_manually_edited(self) -> None:
         video, _audio, output = self._set_ready_sources()
         with patch("src.gui.probe_media_duration", return_value=30.0):
@@ -1969,6 +1984,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         codex_title = self._quick_item(window, "codexChatSidebarTitle")
         codex_subtitle = self._quick_item(window, "codexChatSidebarSubtitle")
         codex_chat = self._quick_item(window, "codexChatPanel")
+        codex_connect = self._quick_item(window, "codexConnectButton")
+        codex_toggle = self._quick_item(window, "codexChatToggleButton")
         central_column = stepper.parentItem()
         self.assertEqual(len(window.findChildren(QQuickItem, "codexChatPanel")), 1)
 
@@ -2023,6 +2040,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertLessEqual(codex_title.y() + codex_title.height(), codex_subtitle.y() + 1)
             self.assertLessEqual(codex_subtitle.y() + codex_subtitle.height(), codex_chat.y() + 1)
             self.assertLessEqual(codex_chat.y(), 90)
+            self._assert_quick_item_within(codex_chat, codex_connect)
+            self._assert_quick_item_within(codex_chat, codex_toggle)
+            self._assert_button_content_fits(codex_connect)
+            self._assert_button_content_fits(codex_toggle)
 
         window.resize(1220, 760)
         self.app.processEvents()
@@ -2348,13 +2369,31 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_codex_chat_stays_collapsed_until_authenticated(self) -> None:
         _, window = self._load_qml()
+        sidebar = self._quick_item(window, "codexChatSidebarContainer")
         panel = self._quick_item(window, "codexChatPanel")
+        connect = self._quick_item(window, "codexConnectButton")
         toggle = self._quick_item(window, "codexChatToggleButton")
         original_snapshot = self.app._codex_chat._snapshot
         try:
             self.assertFalse(panel.property("expanded"))
             self.assertAlmostEqual(panel.height(), 46, delta=1)
             self.assertFalse(toggle.isEnabled())
+            collapsed_y = panel.y()
+
+            login_pending = CodexChatSnapshot(
+                connection_state="ready",
+                auth_state="login_pending",
+                login_url="https://example.invalid/login",
+            )
+            self.app._codex_chat._snapshot = login_pending
+            self.app._on_codex_chat_state(login_pending)
+            QTest.qWait(50)
+            self.app.processEvents()
+            self.assertEqual(connect.property("text"), "ブラウザを開く")
+            self._assert_quick_item_within(panel, connect)
+            self._assert_quick_item_within(panel, toggle)
+            self._assert_button_content_fits(connect)
+            self._assert_button_content_fits(toggle)
 
             authenticated = CodexChatSnapshot(
                 connection_state="ready",
@@ -2374,11 +2413,48 @@ class GuiEditorRegressionTests(unittest.TestCase):
             QTest.qWait(50)
             self.app.processEvents()
             self.assertTrue(panel.property("expanded"))
-            self.assertGreaterEqual(
-                panel.height(),
-                180,
-                f"expanded panel height={panel.height()}, implicitHeight={panel.property('implicitHeight')}",
-            )
+            for width, height in ((1220, 760), (1520, 940)):
+                window.resize(width, height)
+                QTest.qWait(50)
+                self.app.processEvents()
+                self.assertGreaterEqual(
+                    panel.height(),
+                    180,
+                    f"window={width}x{height}, panel height={panel.height()}, implicitHeight={panel.property('implicitHeight')}",
+                )
+                self._assert_quick_item_within(sidebar, panel)
+                for name in (
+                    "codexChatToggleButton",
+                    "codexModelCombo",
+                    "codexNewChatButton",
+                    "codexReloginButton",
+                    "codexLogoutButton",
+                    "codexChatMessageList",
+                    "codexLocalReadNotice",
+                    "codexChatInput",
+                    "codexChatSendButton",
+                    "codexChatStopButton",
+                ):
+                    self._assert_quick_item_within(panel, self._quick_item(window, name))
+                for name in (
+                    "codexChatToggleButton",
+                    "codexNewChatButton",
+                    "codexReloginButton",
+                    "codexLogoutButton",
+                    "codexChatSendButton",
+                    "codexChatStopButton",
+                ):
+                    self._assert_button_content_fits(self._quick_item(window, name))
+
+            window.resize(1220, 760)
+            self.app.processEvents()
+            self._click(window, toggle)
+            QTest.qWait(50)
+            self.app.processEvents()
+            self.assertFalse(panel.property("expanded"))
+            self.assertAlmostEqual(panel.height(), 46, delta=1)
+            self.assertAlmostEqual(panel.y(), collapsed_y, delta=1)
+            self._assert_quick_item_within(panel, toggle)
         finally:
             self.app._codex_chat._snapshot = original_snapshot
             self.app._on_codex_chat_state(original_snapshot)

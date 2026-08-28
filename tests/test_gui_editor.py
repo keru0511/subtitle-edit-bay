@@ -2014,6 +2014,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertGreater(codex_chat.height(), 0)
             self.assertLessEqual(codex_chat.width(), codex_sidebar.width() + 1)
             self.assertLessEqual(codex_chat.height(), codex_sidebar.height() + 1)
+            self.assertFalse(codex_chat.property("expanded"))
+            self.assertAlmostEqual(codex_chat.height(), 46, delta=1)
 
         window.resize(1220, 760)
         self.app.processEvents()
@@ -2344,6 +2346,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         original_snapshot = self.app._codex_chat._snapshot
         try:
             self.assertFalse(panel.property("expanded"))
+            self.assertAlmostEqual(panel.height(), 46, delta=1)
             self.assertFalse(toggle.isEnabled())
 
             authenticated = CodexChatSnapshot(
@@ -2358,9 +2361,17 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app.processEvents()
 
             self.assertFalse(panel.property("expanded"))
+            self.assertAlmostEqual(panel.height(), 46, delta=1)
             self.assertTrue(toggle.isEnabled())
             self._click(window, toggle)
+            QTest.qWait(50)
+            self.app.processEvents()
             self.assertTrue(panel.property("expanded"))
+            self.assertGreaterEqual(
+                panel.height(),
+                180,
+                f"expanded panel height={panel.height()}, implicitHeight={panel.property('implicitHeight')}",
+            )
         finally:
             self.app._codex_chat._snapshot = original_snapshot
             self.app._on_codex_chat_state(original_snapshot)

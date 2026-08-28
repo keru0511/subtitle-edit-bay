@@ -16,8 +16,8 @@ Rectangle {
     property color accentColor: "#C8FF3D"
     property color errorColor: "#FF8A80"
 
-    width: expanded ? 420 : 320
-    height: expanded ? Math.min(680, parent ? parent.height - 24 : 680) : 46
+    implicitWidth: expanded ? 420 : 320
+    implicitHeight: expanded ? Math.min(680, parent ? parent.height - 24 : 680) : 46
     radius: 10
     color: panelColor
     border.color: backend && backend.codexChatError ? errorColor : borderColor

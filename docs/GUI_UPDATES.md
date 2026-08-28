@@ -11,7 +11,7 @@ Installer版の更新は、GUIでの確認、パッケージdownload、検証、
 5. 検証済みパッケージは保持し、`再起動して更新` または `後で` を選べる
 6. helperへpackage path、expected version/hash、parent PID、install root、restart path、result pathを渡す
 7. helperはGUI終了とfile lock解放を待ち、Inno Setupを非表示で実行する
-8. 必須ファイルとVERSIONを検証し、成功時だけ新ランチャーを自動起動する
+8. 必須ファイルとVERSIONを検証し、成功時だけ新ランチャーを自動起動する。ネイティブランチャーがない配布では `scripts/launch.ps1` をWindows PowerShellで起動する
 
 download失敗とapply失敗は別のエラーとして表示する。更新前にdirty project、render、文字起こし、Codex turnが残っている場合は開始しない。ユーザーデータ、プロジェクト、`.gui`、`.local`、media、speaker colorsはinstallerの更新対象外として保持する。
 

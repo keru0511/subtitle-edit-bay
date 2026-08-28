@@ -122,6 +122,58 @@ function Get-PackageSha256 {
     }
 }
 
+function Resolve-RestartCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$PreferredExecutable
+    )
+
+    if (Test-Path -LiteralPath $PreferredExecutable -PathType Leaf) {
+        return @{
+            FilePath = (Get-Item -LiteralPath $PreferredExecutable).FullName
+            Arguments = @()
+            Mode = "native"
+        }
+    }
+
+    $restartScript = Join-Path $Root "scripts\launch.ps1"
+    if (-not (Test-Path -LiteralPath $restartScript -PathType Leaf)) {
+        throw "Restart launcher is missing: $PreferredExecutable and $restartScript"
+    }
+
+    $powerShellCandidates = @()
+    if ($env:SystemRoot) {
+        $powerShellCandidates += Join-Path $env:SystemRoot "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+        $powerShellCandidates += Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    }
+    $powerShellCommand = Get-Command "powershell.exe" -ErrorAction SilentlyContinue
+    if ($powerShellCommand) {
+        $powerShellCandidates += $powerShellCommand.Source
+    }
+
+    foreach ($candidate in $powerShellCandidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return @{
+                FilePath = (Get-Item -LiteralPath $candidate).FullName
+                Arguments = @(
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-File",
+                    ('"' + $restartScript + '"')
+                )
+                Mode = "powershell"
+            }
+        }
+    }
+
+    throw "Windows PowerShell is required to restart the application fallback."
+}
+
 $oldVersion = "development"
 $recoveryRoot = ""
 try {
@@ -169,15 +221,18 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $InstallRoot "scripts\launch.ps1") -PathType Leaf)) {
         throw "Updated launcher script is missing."
     }
-    if (-not (Test-Path -LiteralPath $RestartExecutable -PathType Leaf)) {
-        throw "Restart executable is missing: $RestartExecutable"
-    }
+    $restartCommand = Resolve-RestartCommand -Root $InstallRoot -PreferredExecutable $RestartExecutable
 
     if ($recoveryRoot -and (Test-Path -LiteralPath $recoveryRoot)) {
         Remove-Item -LiteralPath $recoveryRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Write-UpdateResult @{ status = "success"; old_version = $oldVersion; new_version = $newVersion; log = $ResultPath }
-    Start-Process -FilePath $RestartExecutable -WorkingDirectory $InstallRoot -WindowStyle Hidden
+    Write-UpdateResult @{ status = "success"; old_version = $oldVersion; new_version = $newVersion; restart_mode = $restartCommand.Mode; log = $ResultPath }
+    if (@($restartCommand.Arguments).Count -gt 0) {
+        Start-Process -FilePath $restartCommand.FilePath -ArgumentList $restartCommand.Arguments -WorkingDirectory $InstallRoot -WindowStyle Hidden
+    }
+    else {
+        Start-Process -FilePath $restartCommand.FilePath -WorkingDirectory $InstallRoot -WindowStyle Hidden
+    }
     exit 0
 }
 catch {

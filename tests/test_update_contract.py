@@ -19,6 +19,9 @@ def test_helper_has_parent_wait_hash_version_result_and_restart_contract():
         "Restore-RecoverySnapshot",
         "rollback_restored",
         "rollback_failed",
+        "Resolve-RestartCommand",
+        "scripts\\launch.ps1",
+        "powershell.exe",
     ):
         assert marker in helper
     assert "rollback" in helper

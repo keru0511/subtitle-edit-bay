@@ -33,8 +33,10 @@ Rectangle {
         CodexChatPanel {
             objectName: "codexChatPanel"
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: 180
+            Layout.fillHeight: expanded
+            Layout.minimumHeight: expanded ? 180 : implicitHeight
+            Layout.preferredHeight: implicitHeight
+            Layout.maximumHeight: expanded ? sidebar.height : implicitHeight
             backend: sidebar.backend
             expanded: false
             panelColor: "#080A09"

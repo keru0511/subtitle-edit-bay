@@ -35,6 +35,9 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Validate CI test classification
+        run: python scripts/run_ci_tests.py --validate
+
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
@@ -49,8 +52,55 @@ jobs:
       - name: Run scoped mypy type check
         run: python scripts/check_quality.py --type-only --paths scripts/check_quality.py
 
+  portable-tests:
+    name: Portable, Qt, and FFmpeg tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            ffmpeg \
+            libegl1 \
+            libpulse0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run portable unit tests
+        run: python scripts/run_ci_tests.py --group portable-unit
+
+      - name: Run Qt and GUI tests
+        run: python scripts/run_ci_tests.py --group qt-gui
+
+      - name: Run FFmpeg runtime tests
+        env:
+          RUN_FFMPEG_SMOKE: "1"
+        run: python scripts/run_ci_tests.py --group ffmpeg-runtime
+
   windows-tests:
-    name: Windows tests
+    name: Windows runtime tests
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -80,15 +130,23 @@ jobs:
       - name: Install system runtime dependencies
         shell: pwsh
         run: |
-          $installed = $false
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-              choco install ffmpeg --yes --no-progress
-              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-                  $installed = $true
-                  break
-              }
-              if ($attempt -lt 3) {
-                  Start-Sleep -Seconds (10 * $attempt)
+          $installed = [bool](
+              (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and
+              (Get-Command ffprobe -ErrorAction SilentlyContinue)
+          )
+          if (-not $installed) {
+              for ($attempt = 1; $attempt -le 3; $attempt++) {
+                  choco install ffmpeg --yes --no-progress
+                  if (
+                      (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and
+                      (Get-Command ffprobe -ErrorAction SilentlyContinue)
+                  ) {
+                      $installed = $true
+                      break
+                  }
+                  if ($attempt -lt 3) {
+                      Start-Sleep -Seconds (10 * $attempt)
+                  }
               }
           }
           if (-not $installed) {
@@ -99,9 +157,7 @@ jobs:
 
       - name: Install Python dependencies
         shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt
 
       - name: Import Windows-critical modules
         shell: pwsh
@@ -137,9 +193,13 @@ jobs:
               raise SystemExit(exit_code)
           '@ | python -
 
-      - name: Run unit tests on Windows
+      - name: Run Windows runtime tests
         shell: pwsh
-        run: python -m unittest discover -s tests -p "test_*.py" -v
+        run: python scripts/run_ci_tests.py --group windows-runtime
+
+      - name: Run Windows FFmpeg and Qt media tests
+        shell: pwsh
+        run: python scripts/run_ci_tests.py --group windows-ffmpeg-runtime
 
   ffmpeg6-compat:
     name: FFmpeg 6 compatibility
@@ -190,7 +250,7 @@ jobs:
 
       - name: Run FFmpeg 6 compatibility tests
         shell: pwsh
-        run: python -m unittest discover -s tests -p "test_ffmpeg6_filter_script_runtime.py" -v
+        run: python scripts/run_ci_tests.py --group ffmpeg6-compat
 
   windows-installer-smoke:
     name: Windows installer smoke

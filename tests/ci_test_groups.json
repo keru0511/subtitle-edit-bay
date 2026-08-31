@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "groups": {
+    "ffmpeg-runtime": {
+      "modules": [
+        "test_issue_241_workflow",
+        "test_render_ass",
+        "test_short_video_ass"
+      ],
+      "selectors": []
+    },
+    "ffmpeg6-compat": {
+      "modules": [
+        "test_ffmpeg6_filter_script_runtime"
+      ],
+      "selectors": []
+    },
+    "portable-unit": {
+      "modules": [
+        "test_application_info",
+        "test_application_logging",
+        "test_ass_template",
+        "test_assemble_video",
+        "test_audio_auto_mix",
+        "test_audio_mixer",
+        "test_audio_preview_cache",
+        "test_batch",
+        "test_burn_subs",
+        "test_channel_presets",
+        "test_ci_test_groups",
+        "test_codex_app_server_client",
+        "test_codex_edit_proposal",
+        "test_codex_highlight_ranker",
+        "test_codex_runtime",
+        "test_color_config",
+        "test_craig_pipeline",
+        "test_craig_transcription_execution",
+        "test_gui_codex_chat_state",
+        "test_gui_codex_state",
+        "test_gui_runtime_settings",
+        "test_gui_source_state",
+        "test_gui_state",
+        "test_gui_state_commands",
+        "test_gui_transcription_context_state",
+        "test_highlight_candidates",
+        "test_highlight_preferences",
+        "test_highlight_visual_signals",
+        "test_media_probe",
+        "test_merge_transcripts",
+        "test_multi_source_short_video",
+        "test_process_utils",
+        "test_processing_progress",
+        "test_processing_queue",
+        "test_project_snapshots",
+        "test_quality_entrypoint",
+        "test_release_distribution",
+        "test_render_ass_extra",
+        "test_runtime_config",
+        "test_runtime_dependencies",
+        "test_runtime_settings",
+        "test_short_video",
+        "test_short_video_schema",
+        "test_silence_cut",
+        "test_subtitle_bulk_edit",
+        "test_subtitle_export",
+        "test_subtitle_layout_candidate_explanations",
+        "test_subtitle_layout_golden",
+        "test_subtitle_layout_modules",
+        "test_subtitle_layout_packer_bridge",
+        "test_subtitle_layout_scoring",
+        "test_subtitle_line_count",
+        "test_subtitle_project",
+        "test_subtitle_project_layout",
+        "test_subtitle_project_safety",
+        "test_subtitle_review",
+        "test_subtitle_workflow_context_cli",
+        "test_subtitle_workflow_cut",
+        "test_subtitle_workflow_runtime_settings",
+        "test_subtitle_workflow_transcription",
+        "test_system_basics",
+        "test_timeline_interchange",
+        "test_transcribe",
+        "test_transcribe_hints",
+        "test_transcript_cache",
+        "test_transcription_context",
+        "test_transcription_context_config",
+        "test_transcription_dictionary",
+        "test_transcription_dictionary_suggestions",
+        "test_transcription_execution",
+        "test_transcription_hint_plan",
+        "test_transcription_hint_workflow",
+        "test_transcription_hints",
+        "test_transcription_web_dictionary",
+        "test_validation_errors",
+        "test_video_encoding",
+        "test_youtube_package",
+        "test_youtube_text"
+      ],
+      "selectors": []
+    },
+    "qt-gui": {
+      "modules": [
+        "test_gui_editor",
+        "test_qml_context_action_bar",
+        "test_qml_static",
+        "test_qml_subtitle_line_count_panel",
+        "test_qml_transcription_context_panel",
+        "test_qml_transcription_context_wiring",
+        "test_realtime_audio_mixer"
+      ],
+      "selectors": []
+    },
+    "windows-ffmpeg-runtime": {
+      "modules": [
+        "test_runtime_media_smoke"
+      ],
+      "selectors": [
+        "tests.test_short_video_ass.ShortVideoRenderE2ETests.test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace"
+      ]
+    },
+    "windows-runtime": {
+      "modules": [
+        "test_launcher_contract",
+        "test_qprocess_launcher",
+        "test_update_contract",
+        "test_update_manager",
+        "test_updater",
+        "test_windows_launchers"
+      ],
+      "selectors": []
+    }
+  }
+}

@@ -349,10 +349,11 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
             self.assertTrue(any(item["codec_type"] == "audio" for item in streams))
 
     @unittest.skipUnless(
-        os.environ.get("RUN_FFMPEG_SMOKE") == "1"
+        os.name == "nt"
+        and os.environ.get("RUN_FFMPEG_SMOKE") == "1"
         and shutil.which("ffmpeg")
         and shutil.which("ffprobe"),
-        "RUN_FFMPEG_SMOKE=1 with ffmpeg and ffprobe required",
+        "Windows with RUN_FFMPEG_SMOKE=1, ffmpeg, and ffprobe required",
     )
     def test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace(
         self,

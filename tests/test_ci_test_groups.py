@@ -146,7 +146,9 @@ class CiWorkflowContractTests(unittest.TestCase):
             "--group ffmpeg6-compat",
             "Start GUI on Windows",
             "windows-launcher-tests:",
-            "actions/cache@v5",
+            "QT_FFMPEG_DECODING_HW_DEVICE_TYPES: \",\"",
+            "actions/cache/restore@v5",
+            "actions/cache/save@v5",
             "windows-ffmpeg-9.0.1-v1",
             "windows-installer-smoke:",
         ):

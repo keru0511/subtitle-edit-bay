@@ -113,6 +113,9 @@ jobs:
       RUN_FFMPEG_SMOKE: "1"
       RUN_QT_MEDIA_SMOKE: "1"
       RUN_GUI_AUDIO_MIXER_SMOKE: "1"
+      # Hosted runners have no usable GPU. Keep the Qt media smoke on its
+      # deterministic software-decoding path instead of probing DXVA2 first.
+      QT_FFMPEG_DECODING_HW_DEVICE_TYPES: ","
 
     steps:
       - name: Check out repository
@@ -129,7 +132,7 @@ jobs:
 
       - name: Restore Windows FFmpeg cache
         id: ffmpeg-cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: C:\ProgramData\chocolatey\lib\ffmpeg
           key: windows-ffmpeg-9.0.1-v1
@@ -171,6 +174,13 @@ jobs:
           }
           ffmpeg -version
           ffprobe -version
+
+      - name: Save Windows FFmpeg cache
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\ProgramData\chocolatey\lib\ffmpeg
+          key: windows-ffmpeg-9.0.1-v1
 
       - name: Install Python dependencies
         shell: pwsh

@@ -55,7 +55,6 @@ jobs:
 
   build:
     name: Build Windows installer
-    needs: test
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -163,7 +162,9 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: build
+    needs:
+      - test
+      - build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

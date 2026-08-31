@@ -141,9 +141,13 @@ class CiWorkflowContractTests(unittest.TestCase):
             "--group qt-gui",
             "--group ffmpeg-runtime",
             "--group windows-runtime",
+            "--group windows-launcher-runtime",
             "--group windows-ffmpeg-runtime",
             "--group ffmpeg6-compat",
             "Start GUI on Windows",
+            "windows-launcher-tests:",
+            "actions/cache@v5",
+            "windows-ffmpeg-9.0.1-v1",
             "windows-installer-smoke:",
         ):
             self.assertIn(expected, workflow)

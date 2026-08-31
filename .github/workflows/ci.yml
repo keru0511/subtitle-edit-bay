@@ -127,16 +127,33 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Restore Windows FFmpeg cache
+        id: ffmpeg-cache
+        uses: actions/cache@v5
+        with:
+          path: C:\ProgramData\chocolatey\lib\ffmpeg
+          key: windows-ffmpeg-9.0.1-v1
+
       - name: Install system runtime dependencies
         shell: pwsh
         run: |
+          $cachedFfmpeg = Get-ChildItem `
+              -LiteralPath "C:\ProgramData\chocolatey\lib\ffmpeg\tools" `
+              -Filter "ffmpeg.exe" -File -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          if ($cachedFfmpeg) {
+              $ffmpegDirectory = $cachedFfmpeg.Directory.FullName
+              Add-Content -LiteralPath $env:GITHUB_PATH -Value $ffmpegDirectory -Encoding UTF8
+              $env:PATH = "$ffmpegDirectory;$env:PATH"
+              Write-Host "Using cached FFmpeg from $ffmpegDirectory"
+          }
           $installed = [bool](
               (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and
               (Get-Command ffprobe -ErrorAction SilentlyContinue)
           )
           if (-not $installed) {
               for ($attempt = 1; $attempt -le 3; $attempt++) {
-                  choco install ffmpeg --yes --no-progress
+                  choco install ffmpeg --version=9.0.1 --yes --no-progress
                   if (
                       (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and
                       (Get-Command ffprobe -ErrorAction SilentlyContinue)
@@ -200,6 +217,28 @@ jobs:
       - name: Run Windows FFmpeg and Qt media tests
         shell: pwsh
         run: python scripts/run_ci_tests.py --group windows-ffmpeg-runtime
+
+  windows-launcher-tests:
+    name: Windows launcher tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Run Windows launcher tests
+        shell: pwsh
+        run: python scripts/run_ci_tests.py --group windows-launcher-runtime
 
   ffmpeg6-compat:
     name: FFmpeg 6 compatibility

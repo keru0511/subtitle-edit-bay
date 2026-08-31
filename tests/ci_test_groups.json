@@ -118,14 +118,19 @@
         "tests.test_short_video_ass.ShortVideoRenderE2ETests.test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace"
       ]
     },
+    "windows-launcher-runtime": {
+      "modules": [
+        "test_windows_launchers"
+      ],
+      "selectors": []
+    },
     "windows-runtime": {
       "modules": [
         "test_launcher_contract",
         "test_qprocess_launcher",
         "test_update_contract",
         "test_update_manager",
-        "test_updater",
-        "test_windows_launchers"
+        "test_updater"
       ],
       "selectors": []
     }

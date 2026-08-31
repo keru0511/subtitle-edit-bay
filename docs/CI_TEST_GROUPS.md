@@ -10,7 +10,8 @@
 | `portable-unit` | Ubuntu | OSや実ランタイムに依存しないロジック、モデル、設定、モックを使うプロセステスト |
 | `qt-gui` | Ubuntu（offscreen） | クロスプラットフォームのQt/QML、GUI状態、音声ミキサーのテスト |
 | `ffmpeg-runtime` | Ubuntu | 実際のFFmpeg/FFprobe/libassを使うクロスプラットフォームのメディアテスト |
-| `windows-runtime` | Windows | PowerShell、ランチャー、更新処理、Windows上のQProcessを検証するテスト |
+| `windows-runtime` | Windows | 更新処理、Windows上のQProcess、ランチャーと更新の静的契約を検証するテスト |
+| `windows-launcher-runtime` | Windows | Python外の依存を追加せず、PowerShell・BAT・インストーラー更新経路を実行するテスト |
 | `windows-ffmpeg-runtime` | Windows | Windows版FFmpeg、Qt Multimedia、GUI音声ミキサーを実際に動かすスモークテスト |
 | `ffmpeg6-compat` | Windows | 固定したFFmpeg 6.1.1でフィルタースクリプト互換性を検証するテスト |
 
@@ -18,6 +19,8 @@ Windowsの `Main.qml` 起動スモークは、テストモジュールとは別�
 `Start GUI on Windows` ステップで実行します。インストーラースモークと
 `.github/workflows/windows-deep-runtime.yml` のWhisperX/PyTorch/CUDA検証も独立したままです。
 これらの重い準備処理を通常のテストグループ内では繰り返しません。
+依存不要の `windows-launcher-runtime` は専用ジョブで並列実行し、通常のWindows
+ランタイムジョブではFFmpeg 9.0.1の展開済みツリーをキャッシュします。
 
 ## 所有権と意図的な再実行
 

@@ -24,6 +24,7 @@ REQUIRED_GROUPS = (
     "portable-unit",
     "qt-gui",
     "windows-ffmpeg-runtime",
+    "windows-launcher-runtime",
     "windows-runtime",
 )
 MODULE_NAME_PATTERN = re.compile(r"^test_[A-Za-z0-9_]+$")

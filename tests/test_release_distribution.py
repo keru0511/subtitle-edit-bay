@@ -71,12 +71,14 @@ class ReleaseDistributionTests(unittest.TestCase):
 
     def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        expected_group = (
+            "group: ci-${{ github.workflow }}-${{ github.event_name }}-"
+            "${{ github.event_name == 'pull_request' && github.event.pull_request.number || "
+            "github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}"
+        )
 
         self.assertIn("concurrency:", workflow)
-        self.assertIn("github.event.pull_request.number", workflow)
-        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
-        self.assertIn("github.run_id", workflow)
-        self.assertIn("github.ref", workflow)
+        self.assertIn(expected_group, workflow)
         self.assertIn("cancel-in-progress: true", workflow)
 
     def test_local_release_artifacts_are_ignored(self) -> None:

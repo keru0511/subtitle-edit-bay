@@ -60,13 +60,26 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("libpulse0", workflow)
         self.assertIn("libegl1", workflow)
         self.assertIn("name: Build Windows installer", workflow)
-        self.assertIn("needs: test", workflow)
+        self.assertNotIn("needs: test", workflow)
+        self.assertIn("needs:\n      - test\n      - build", workflow)
         self.assertIn("scripts/build_installer.ps1", workflow)
         self.assertIn("SubtitleEditBay-Setup.exe.sha256", workflow)
         self.assertIn("sha256sum --check", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("gh release upload", workflow)
         self.assertIn("contents: write", workflow)
+
+    def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        expected_group = (
+            "group: ci-${{ github.workflow }}-${{ github.event_name }}-"
+            "${{ github.event_name == 'pull_request' && github.event.pull_request.number || "
+            "github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}"
+        )
+
+        self.assertIn("concurrency:", workflow)
+        self.assertIn(expected_group, workflow)
+        self.assertIn("cancel-in-progress: true", workflow)
 
     def test_local_release_artifacts_are_ignored(self) -> None:
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")

@@ -52,7 +52,9 @@ python scripts/check_unittest_discovery.py
 ```
 
 The checker rejects module-level `test_*` functions, zero-test modules, and
-import failures. Platform-specific skipped tests still count as discovered.
+import failures. It also fails when no test modules match or a custom
+`load_tests` hook raises an error. Platform-specific skipped tests still count
+as discovered.
 
 Run the release workflow contract tests directly:
 

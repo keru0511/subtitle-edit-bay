@@ -46,15 +46,16 @@ def audit_test_modules(
     if not tests_dir.is_dir():
         raise ValueError(f"tests directory does not exist: {tests_dir}")
 
+    test_files = discover_test_files(tests_dir)
+    if not test_files:
+        raise ValueError(f"no test modules found in: {tests_dir}")
+
     importlib.invalidate_caches()
-    loader = unittest.TestLoader()
     results: list[ModuleDiscoveryResult] = []
     search_root = str(tests_dir.parent.resolve())
-    added_search_root = search_root not in sys.path
-    if added_search_root:
-        sys.path.insert(0, search_root)
+    sys.path.insert(0, search_root)
     try:
-        for path in discover_test_files(tests_dir):
+        for path in test_files:
             module_name = f"{package_name}.{path.stem}"
             errors: list[str] = []
             try:
@@ -67,17 +68,29 @@ def audit_test_modules(
 
             try:
                 module = importlib.import_module(module_name)
+                module_file = getattr(module, "__file__", None)
+                imported_path = Path(module_file).resolve() if module_file else None
+                if imported_path != path.resolve():
+                    errors.append(f"import resolved to unexpected file: {imported_path}")
+                loader = unittest.TestLoader()
                 suite = loader.loadTestsFromModule(module)
                 discovered_count = suite.countTestCases()
-            except Exception as exc:  # noqa: BLE001 - imports must be reported with the module name
+                for loader_error in loader.errors:
+                    lines = [line.strip() for line in loader_error.splitlines() if line.strip()]
+                    summary = lines[-1] if lines else "unknown loader error"
+                    errors.append(f"unittest loader failed: {summary}")
+            except unittest.SkipTest:
+                # Standard unittest discovery represents a skipped module as one
+                # synthetic skipped test, so it is discovered rather than empty.
+                discovered_count = 1
+            except (Exception, SystemExit) as exc:  # noqa: BLE001 - report import failures by module
                 errors.append(f"import failed: {type(exc).__name__}: {exc}")
                 discovered_count = 0
             if discovered_count == 0:
                 errors.append("unittest discovered 0 tests")
             results.append(ModuleDiscoveryResult(module_name, discovered_count, tuple(errors)))
     finally:
-        if added_search_root:
-            sys.path.remove(search_root)
+        sys.path.remove(search_root)
     return results
 
 

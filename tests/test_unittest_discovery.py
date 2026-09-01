@@ -7,11 +7,11 @@ import unittest
 import uuid
 from pathlib import Path
 
-from scripts.check_unittest_discovery import audit_test_modules
+from scripts.check_unittest_discovery import ModuleDiscoveryResult, audit_test_modules
 
 
 class UnittestDiscoveryCheckerTests(unittest.TestCase):
-    def _audit_fixture(self, files: dict[str, str]):
+    def _audit_fixture(self, files: dict[str, str]) -> list[ModuleDiscoveryResult]:
         temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
         root = Path(temporary_directory.name)
@@ -67,13 +67,54 @@ class UnittestDiscoveryCheckerTests(unittest.TestCase):
         self.assertEqual(results[0].discovered_count, 0)
         self.assertIn("unittest discovered 0 tests", results[0].errors)
 
-    def test_import_error_is_rejected(self) -> None:
-        results = self._audit_fixture({"test_broken.py": "raise RuntimeError('broken import')\n"})
+    def test_empty_test_directory_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no test modules found"):
+            self._audit_fixture({})
 
-        self.assertEqual(results[0].discovered_count, 0)
-        self.assertTrue(
-            any(error.startswith("import failed: RuntimeError: broken import") for error in results[0].errors)
+    def test_import_error_is_rejected(self) -> None:
+        fixtures = (
+            ("raise RuntimeError('broken import')\n", "import failed: RuntimeError: broken import"),
+            ("raise SystemExit('stopped import')\n", "import failed: SystemExit: stopped import"),
         )
+        for source, expected_error in fixtures:
+            with self.subTest(expected_error=expected_error):
+                results = self._audit_fixture({"test_broken.py": source})
+
+                self.assertEqual(results[0].discovered_count, 0)
+                self.assertIn(expected_error, results[0].errors)
+
+    def test_load_tests_error_is_rejected(self) -> None:
+        results = self._audit_fixture(
+            {
+                "test_broken_loader.py": """
+                    import unittest
+
+                    class ValidTests(unittest.TestCase):
+                        def test_example(self):
+                            self.assertTrue(True)
+
+                    def load_tests(loader, tests, pattern):
+                        raise RuntimeError("broken loader")
+                """,
+            }
+        )
+
+        self.assertEqual(results[0].discovered_count, 1)
+        self.assertIn("unittest loader failed: RuntimeError: broken loader", results[0].errors)
+
+    def test_module_level_skip_is_counted_as_discovered(self) -> None:
+        results = self._audit_fixture(
+            {
+                "test_skipped_module.py": """
+                    import unittest
+
+                    raise unittest.SkipTest("different platform")
+                """,
+            }
+        )
+
+        self.assertEqual(results[0].discovered_count, 1)
+        self.assertEqual(results[0].errors, ())
 
     def test_non_test_helper_is_ignored(self) -> None:
         results = self._audit_fixture(

@@ -233,14 +233,16 @@ Rectangle {
                 Button {
                     objectName: "codexApplyButton"
                     text: "選択した変更を適用"
-                    enabled: backend && !panel.codexRunning() && panel.proposalData.operations
+                    enabled: Boolean(backend) && !panel.codexRunning()
+                        && Boolean(panel.proposalData.operations)
                         && panel.proposalData.operations.length > 0
                     onClicked: backend.applyCodexProposal(panel.selectedOperationIds())
                 }
                 Button {
                     objectName: "codexDiscardButton"
                     text: "破棄"
-                    enabled: backend && !panel.codexRunning() && panel.proposalData.operations
+                    enabled: Boolean(backend) && !panel.codexRunning()
+                        && Boolean(panel.proposalData.operations)
                         && panel.proposalData.operations.length > 0
                     onClicked: backend.discardCodexProposal()
                 }

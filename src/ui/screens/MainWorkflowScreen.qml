@@ -856,11 +856,6 @@ ApplicationWindow {
                     }
                 }
             }
-            Connections {
-                target: root
-                function onSubtitleSegmentCacheChanged() { Qt.callLater(timelineRoot.refreshViewport) }
-            }
-
             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOn }
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
         }
@@ -1331,7 +1326,7 @@ ApplicationWindow {
       standardButtons: Dialog.Yes | Dialog.No
 
       contentItem: Text {
-          width: 420
+          implicitWidth: 420
           text: "同じ動画の編集プロジェクトが既に存在します。\n既存プロジェクトを上書きして文字起こしを再実行しますか？"
           color: root.textPrimary
           font.family: "Yu Gothic UI"
@@ -1351,7 +1346,7 @@ ApplicationWindow {
       standardButtons: Dialog.NoButton
 
       contentItem: ColumnLayout {
-          width: 440
+          implicitWidth: 440
           spacing: 10
           Text {
               Layout.fillWidth: true
@@ -2302,10 +2297,16 @@ ApplicationWindow {
                 Connections {
                     target: root.appBackend
                     function onSegmentsChanged() {
-                        Qt.callLater(function() { captionTable.revealSelectedCaption() })
+                        Qt.callLater(function() {
+                            if (captionTable && typeof captionTable.revealSelectedCaption === "function")
+                                captionTable.revealSelectedCaption()
+                        })
                     }
                     function onSelectionChanged() {
-                        Qt.callLater(function() { captionTable.revealSelectedCaption() })
+                        Qt.callLater(function() {
+                            if (captionTable && typeof captionTable.revealSelectedCaption === "function")
+                                captionTable.revealSelectedCaption()
+                        })
                     }
                 }
             }
@@ -2395,9 +2396,9 @@ ApplicationWindow {
         onDropped: function(drop) { root.importSourceDrop(drop) }
     }
 
-    Shortcut { sequence: StandardKey.Undo; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
-    Shortcut { sequence: StandardKey.Redo; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequence: StandardKey.Save; enabled: root.editorMode || root.mixerMode; onActivated: root.appBackend.saveProject() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
+    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.appBackend.saveProject() }
     Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
 
     Connections {
@@ -2417,4 +2418,3 @@ ApplicationWindow {
         mainPlayer.stop()
     }
 }
-

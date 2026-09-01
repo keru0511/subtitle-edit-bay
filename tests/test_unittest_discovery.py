@@ -102,6 +102,27 @@ class UnittestDiscoveryCheckerTests(unittest.TestCase):
         self.assertEqual(results[0].discovered_count, 1)
         self.assertIn("unittest loader failed: RuntimeError: broken loader", results[0].errors)
 
+    def test_load_tests_receives_standard_discovery_pattern(self) -> None:
+        results = self._audit_fixture(
+            {
+                "test_loader_pattern.py": """
+                    import unittest
+
+                    class ValidTests(unittest.TestCase):
+                        def test_example(self):
+                            self.assertTrue(True)
+
+                    def load_tests(loader, tests, pattern):
+                        if pattern != "test_*.py":
+                            raise RuntimeError(f"unexpected pattern: {pattern}")
+                        return tests
+                """,
+            }
+        )
+
+        self.assertEqual(results[0].discovered_count, 1)
+        self.assertEqual(results[0].errors, ())
+
     def test_module_level_skip_is_counted_as_discovered(self) -> None:
         results = self._audit_fixture(
             {

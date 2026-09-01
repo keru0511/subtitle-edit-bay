@@ -12,6 +12,7 @@ from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TESTS_DIR = REPO_ROOT / "tests"
+TEST_FILE_PATTERN = "test_*.py"
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ class ModuleDiscoveryResult:
 
 
 def discover_test_files(tests_dir: Path) -> list[Path]:
-    return sorted(path for path in tests_dir.glob("test_*.py") if path.is_file())
+    return sorted(path for path in tests_dir.glob(TEST_FILE_PATTERN) if path.is_file())
 
 
 def _module_level_tests(path: Path) -> tuple[str, ...]:
@@ -73,7 +74,7 @@ def audit_test_modules(
                 if imported_path != path.resolve():
                     errors.append(f"import resolved to unexpected file: {imported_path}")
                 loader = unittest.TestLoader()
-                suite = loader.loadTestsFromModule(module)
+                suite = loader.loadTestsFromModule(module, pattern=TEST_FILE_PATTERN)
                 discovered_count = suite.countTestCases()
                 for loader_error in loader.errors:
                     lines = [line.strip() for line in loader_error.splitlines() if line.strip()]

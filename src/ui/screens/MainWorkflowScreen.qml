@@ -1321,12 +1321,12 @@ ApplicationWindow {
       id: overwriteProjectDialog
       objectName: "overwriteProjectDialog"
       anchors.centerIn: Overlay.overlay
+      width: 480
       modal: true
       title: "既存プロジェクトの上書き"
       standardButtons: Dialog.Yes | Dialog.No
 
       contentItem: Text {
-          implicitWidth: 420
           text: "同じ動画の編集プロジェクトが既に存在します。\n既存プロジェクトを上書きして文字起こしを再実行しますか？"
           color: root.textPrimary
           font.family: "Yu Gothic UI"
@@ -1341,12 +1341,12 @@ ApplicationWindow {
       id: transcriptionMergeDialog
       objectName: "transcriptionMergeDialog"
       anchors.centerIn: Overlay.overlay
+      width: 500
       modal: true
       title: "既存字幕の取り込み方法"
       standardButtons: Dialog.NoButton
 
       contentItem: ColumnLayout {
-          implicitWidth: 440
           spacing: 10
           Text {
               Layout.fillWidth: true

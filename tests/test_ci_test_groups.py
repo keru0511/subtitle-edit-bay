@@ -28,10 +28,7 @@ CI_TESTS = load_ci_test_module()
 
 
 def create_manifest(modules: list[str] | None = None) -> dict[str, object]:
-    groups = {
-        group_name: {"modules": [], "selectors": []}
-        for group_name in CI_TESTS.REQUIRED_GROUPS
-    }
+    groups = {group_name: {"modules": [], "selectors": []} for group_name in CI_TESTS.REQUIRED_GROUPS}
     groups["portable-unit"]["modules"] = list(modules or [])
     return {"schema_version": 1, "groups": groups}
 
@@ -40,11 +37,7 @@ class CiTestGroupManifestTests(unittest.TestCase):
     def test_repository_manifest_classifies_every_test_module_once(self) -> None:
         groups = CI_TESTS.load_manifest()
 
-        classified = [
-            module_name
-            for group in groups.values()
-            for module_name in group["modules"]
-        ]
+        classified = [module_name for group in groups.values() for module_name in group["modules"]]
         discovered = CI_TESTS.discover_test_modules(REPO_ROOT / "tests")
         self.assertEqual(sorted(classified), discovered)
         self.assertEqual(len(classified), len(set(classified)))
@@ -96,20 +89,18 @@ class CiTestGroupManifestTests(unittest.TestCase):
         )
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
 
-    def test_top_level_function_selector_is_valid(self) -> None:
+    def test_test_case_method_selector_is_valid(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tests_dir = Path(temp_dir)
             (tests_dir / "test_shared.py").write_text("", encoding="utf-8")
             manifest = create_manifest(["test_shared"])
-            manifest["groups"]["windows-runtime"]["selectors"] = [
-                "tests.test_shared.test_windows_path"
-            ]
+            manifest["groups"]["windows-runtime"]["selectors"] = ["tests.test_shared.SharedTests.test_windows_path"]
 
             groups = CI_TESTS.validate_manifest(manifest, tests_dir)
 
         self.assertEqual(
             groups["windows-runtime"]["selectors"],
-            ["tests.test_shared.test_windows_path"],
+            ["tests.test_shared.SharedTests.test_windows_path"],
         )
 
     def test_selector_without_test_attribute_is_rejected(self) -> None:
@@ -117,9 +108,7 @@ class CiTestGroupManifestTests(unittest.TestCase):
             tests_dir = Path(temp_dir)
             (tests_dir / "test_shared.py").write_text("", encoding="utf-8")
             manifest = create_manifest(["test_shared"])
-            manifest["groups"]["windows-runtime"]["selectors"] = [
-                "tests.test_shared"
-            ]
+            manifest["groups"]["windows-runtime"]["selectors"] = ["tests.test_shared"]
 
             with self.assertRaisesRegex(
                 CI_TESTS.ManifestError,
@@ -129,18 +118,29 @@ class CiTestGroupManifestTests(unittest.TestCase):
 
 
 class CiTestRunnerTests(unittest.TestCase):
-    def test_top_level_test_functions_are_executed(self) -> None:
-        module = ModuleType("synthetic_ci_test_module")
+    def _install_synthetic_module(self, module_name: str, module: ModuleType) -> None:
+        package_name, attribute_name = module_name.rsplit(".", 1)
+        package = sys.modules[package_name]
+        sys.modules[module_name] = module
+        setattr(package, attribute_name, module)
+        self.addCleanup(sys.modules.pop, module_name, None)
+        self.addCleanup(delattr, package, attribute_name)
+
+    def test_module_suite_uses_standard_unittest_discovery(self) -> None:
+        module_name = "tests.test_synthetic_ci_module"
+        module = ModuleType(module_name)
         exec(
+            "import unittest\n"
             "executed = False\n"
-            "def test_top_level():\n"
-            "    global executed\n"
-            "    executed = True\n",
+            "class SyntheticTests(unittest.TestCase):\n"
+            "    def test_discovered(self):\n"
+            "        global executed\n"
+            "        executed = True\n",
             module.__dict__,
         )
-        suite = unittest.TestSuite()
+        self._install_synthetic_module(module_name, module)
 
-        CI_TESTS.add_top_level_test_functions(module, suite)
+        suite = CI_TESTS.load_module_suite("test_synthetic_ci_module", unittest.TestLoader())
         result = unittest.TestResult()
         suite.run(result)
 
@@ -148,21 +148,22 @@ class CiTestRunnerTests(unittest.TestCase):
         self.assertEqual(result.testsRun, 1)
         self.assertTrue(module.executed)
 
-    def test_top_level_function_selector_is_executed(self) -> None:
+    def test_test_case_method_selector_is_executed(self) -> None:
         module_name = "tests.test_synthetic_ci_selector"
         module = ModuleType(module_name)
         exec(
+            "import unittest\n"
             "executed = False\n"
-            "def test_selected():\n"
-            "    global executed\n"
-            "    executed = True\n",
+            "class SyntheticTests(unittest.TestCase):\n"
+            "    def test_selected(self):\n"
+            "        global executed\n"
+            "        executed = True\n",
             module.__dict__,
         )
-        sys.modules[module_name] = module
-        self.addCleanup(sys.modules.pop, module_name, None)
+        self._install_synthetic_module(module_name, module)
 
         suite = CI_TESTS.load_selector_suite(
-            f"{module_name}.test_selected",
+            f"{module_name}.SyntheticTests.test_selected",
             unittest.TestLoader(),
         )
         result = unittest.TestResult()
@@ -201,7 +202,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             "--group ffmpeg6-compat",
             "Start GUI on Windows",
             "windows-launcher-tests:",
-            "QT_FFMPEG_DECODING_HW_DEVICE_TYPES: \",\"",
+            'QT_FFMPEG_DECODING_HW_DEVICE_TYPES: ","',
             "actions/cache/restore@v5",
             "actions/cache/save@v5",
             "windows-ffmpeg-9.0.1-v1",
@@ -225,6 +226,18 @@ class CiWorkflowContractTests(unittest.TestCase):
             "--validate",
         ):
             self.assertIn(expected, documentation)
+
+    def test_ci_and_release_check_standard_unittest_discovery_first(self) -> None:
+        ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        discovery_command = "python scripts/check_unittest_discovery.py"
+
+        self.assertIn(discovery_command, ci_workflow)
+        self.assertLess(ci_workflow.index(discovery_command), ci_workflow.index("--group portable-unit"))
+        self.assertIn(discovery_command, release_workflow)
+        self.assertLess(
+            release_workflow.index(discovery_command), release_workflow.index("python -m unittest discover")
+        )
 
 
 if __name__ == "__main__":

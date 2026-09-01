@@ -92,6 +92,9 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
+      - name: Check standard unittest discovery
+        run: python scripts/check_unittest_discovery.py
+
       - name: Run portable unit tests
         run: python scripts/run_ci_tests.py --group portable-unit
 

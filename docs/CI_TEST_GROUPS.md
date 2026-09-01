@@ -32,8 +32,8 @@ Windowsの `Main.qml` 起動スモークは、テストモジュールとは別�
 `selectors` に完全なunittest名を登録します。現在は、クロスプラットフォームの
 `test_short_video_ass` をLinuxで所有しつつ、Windows固有のUnicodeパスと
 FFmpegフィルタースクリプトのケースだけを `windows-ffmpeg-runtime` で明示的に再実行します。
-`TestCase` のメソッドに加えて、`tests.test_module.test_function` 形式のモジュール直下の
-テスト関数も指定できます。後者はCIランナーが `FunctionTestCase` として実行します。
+selectorは `tests.test_module.TestCaseClass.test_method` 形式の標準unittest名にします。
+モジュール直下の `test_*` 関数は標準discoveryで収集されないため許可しません。
 
 ## ローカル実行
 
@@ -41,6 +41,12 @@ FFmpegフィルタースクリプトのケースだけを `windows-ffmpeg-runtim
 
 ```powershell
 python scripts/run_ci_tests.py --validate
+```
+
+標準unittestから全test moduleが収集できることを検証する場合:
+
+```powershell
+python scripts/check_unittest_discovery.py
 ```
 
 1グループを実行する場合:
@@ -60,9 +66,9 @@ GitHub Actionsでは同じ情報とスキップ理由ごとの件数をStep Summ
 
 ## テスト追加時の手順
 
-1. `tests/test_*.py` を追加する。
+1. `unittest.TestCase` を持つ `tests/test_*.py` を追加する。
 2. 主な実行環境に対応する1グループの `modules` に、拡張子なしのモジュール名を辞書順で追加する。
 3. 別環境で必要なケースだけを再実行する場合は、その環境の `selectors` に完全名を辞書順で追加する。
-4. `python scripts/run_ci_tests.py --validate` と対象グループを実行する。
+4. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
 
 モジュール単位の所有先を決められない場合は、テスト責務を分けてから登録してください。

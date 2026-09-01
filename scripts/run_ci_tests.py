@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
-import inspect
 import json
 import os
 import re
@@ -11,7 +9,6 @@ import time
 import unittest
 from collections import Counter
 from pathlib import Path
-from types import ModuleType
 from typing import Sequence
 
 
@@ -85,9 +82,7 @@ def validate_manifest(
             continue
         unknown_keys = sorted(set(raw_group) - {"modules", "selectors"})
         if unknown_keys:
-            errors.append(
-                f"groups.{group_name} has unknown keys: {', '.join(unknown_keys)}"
-            )
+            errors.append(f"groups.{group_name} has unknown keys: {', '.join(unknown_keys)}")
         modules = _validate_string_list(
             raw_group.get("modules", []),
             f"groups.{group_name}.modules",
@@ -102,20 +97,13 @@ def validate_manifest(
         all_selectors.extend(selectors)
         for module_name in modules:
             if not MODULE_NAME_PATTERN.fullmatch(module_name):
-                errors.append(
-                    f"groups.{group_name}.modules has invalid module name: {module_name}"
-                )
+                errors.append(f"groups.{group_name}.modules has invalid module name: {module_name}")
             module_owners.setdefault(module_name, []).append(group_name)
 
-    duplicated_modules = sorted(
-        module_name
-        for module_name, owners in module_owners.items()
-        if len(owners) > 1
-    )
+    duplicated_modules = sorted(module_name for module_name, owners in module_owners.items() if len(owners) > 1)
     for module_name in duplicated_modules:
         errors.append(
-            f"test module is assigned to multiple groups: {module_name} "
-            f"({', '.join(module_owners[module_name])})"
+            f"test module is assigned to multiple groups: {module_name} ({', '.join(module_owners[module_name])})"
         )
 
     discovered_modules = set(discover_test_modules(tests_dir))
@@ -127,16 +115,17 @@ def validate_manifest(
     if stale_modules:
         errors.append(f"manifest modules not found on disk: {', '.join(stale_modules)}")
 
-    duplicate_selectors = sorted(
-        selector for selector, count in Counter(all_selectors).items() if count > 1
-    )
+    duplicate_selectors = sorted(selector for selector, count in Counter(all_selectors).items() if count > 1)
     if duplicate_selectors:
-        errors.append(
-            f"selectors are assigned more than once: {', '.join(duplicate_selectors)}"
-        )
+        errors.append(f"selectors are assigned more than once: {', '.join(duplicate_selectors)}")
     for selector in all_selectors:
         parts = selector.split(".")
-        if len(parts) < 3 or parts[0] != "tests" or not MODULE_NAME_PATTERN.fullmatch(parts[1]):
+        if (
+            len(parts) < 4
+            or parts[0] != "tests"
+            or not MODULE_NAME_PATTERN.fullmatch(parts[1])
+            or not parts[-1].startswith("test_")
+        ):
             errors.append(f"invalid unittest selector: {selector}")
             continue
         if parts[1] not in discovered_modules:
@@ -160,41 +149,11 @@ def load_manifest(
     return validate_manifest(manifest, tests_dir)
 
 
-def add_top_level_test_functions(module: ModuleType, suite: unittest.TestSuite) -> None:
-    for name, function in inspect.getmembers(module, inspect.isfunction):
-        if name.startswith("test_") and function.__module__ == module.__name__:
-            suite.addTest(
-                unittest.FunctionTestCase(
-                    function,
-                    description=f"{module.__name__}.{name}",
-                )
-            )
-
-
 def load_module_suite(module_name: str, loader: unittest.TestLoader) -> unittest.TestSuite:
-    qualified_name = f"tests.{module_name}"
-    try:
-        module = importlib.import_module(qualified_name)
-    except Exception:
-        return loader.loadTestsFromName(qualified_name)
-    suite = loader.loadTestsFromModule(module)
-    add_top_level_test_functions(module, suite)
-    return suite
+    return loader.loadTestsFromName(f"tests.{module_name}")
 
 
 def load_selector_suite(selector: str, loader: unittest.TestLoader) -> unittest.TestSuite:
-    parts = selector.split(".")
-    if len(parts) == 3 and parts[2].startswith("test_"):
-        qualified_module_name = ".".join(parts[:2])
-        try:
-            module = importlib.import_module(qualified_module_name)
-        except Exception:
-            return loader.loadTestsFromName(selector)
-        function = getattr(module, parts[2], None)
-        if inspect.isfunction(function) and function.__module__ == module.__name__:
-            return unittest.TestSuite(
-                [unittest.FunctionTestCase(function, description=selector)]
-            )
     return loader.loadTestsFromName(selector)
 
 
@@ -296,24 +255,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.validate:
         total_modules = sum(len(group["modules"]) for group in groups.values())
-        print(
-            f"CI test manifest is valid: {total_modules} modules across "
-            f"{len(groups)} groups."
-        )
+        print(f"CI test manifest is valid: {total_modules} modules across {len(groups)} groups.")
         for group_name in sorted(groups):
             group = groups[group_name]
-            print(
-                f"- {group_name}: {len(group['modules'])} modules, "
-                f"{len(group['selectors'])} selectors"
-            )
+            print(f"- {group_name}: {len(group['modules'])} modules, {len(group['selectors'])} selectors")
         return 0
 
     selected_groups = list(dict.fromkeys(args.groups))
     unknown_groups = sorted(set(selected_groups) - set(groups))
     if unknown_groups:
         print(
-            f"Unknown CI test groups: {', '.join(unknown_groups)}. "
-            f"Choose from: {', '.join(sorted(groups))}",
+            f"Unknown CI test groups: {', '.join(unknown_groups)}. Choose from: {', '.join(sorted(groups))}",
             file=sys.stderr,
         )
         return 2

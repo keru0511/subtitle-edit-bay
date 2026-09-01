@@ -91,6 +91,7 @@
         "test_transcription_hint_workflow",
         "test_transcription_hints",
         "test_transcription_web_dictionary",
+        "test_unittest_discovery",
         "test_validation_errors",
         "test_video_encoding",
         "test_youtube_package",

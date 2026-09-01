@@ -53,7 +53,9 @@ python -m unittest tests.test_release_distribution -v
 These tests parse the workflow and validate the job DAG, transitive test/build
 gates, least-privilege publish permissions, and release step ordering. Mutation
 tests confirm that missing dependencies, cycles, `continue-on-error`,
-`always()`, and skipped artifact verification are rejected.
+success-bypassing `if` conditions, implicit token permissions, and skipped
+artifact verification, masked contract failures, or post-verification mutation
+steps are rejected.
 
 Run only Ruff format checks:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -120,15 +121,28 @@ def job_ancestors(
     return ancestors
 
 
+def _expression_body(value: str) -> str:
+    expression = value.strip()
+    wrapped = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", expression, re.DOTALL)
+    if wrapped:
+        return wrapped.group(1).strip()
+    return expression
+
+
 def _continue_on_error_enabled(value: Any) -> bool:
     if value is None or value is False:
         return False
-    if isinstance(value, str) and value.strip().lower() in {
-        "false",
-        "${{ false }}",
-    }:
+    return not (isinstance(value, str) and _expression_body(value).lower() == "false")
+
+
+def _condition_requires_success(item: Mapping[str, Any]) -> bool:
+    if "if" not in item:
+        return True
+    condition = item["if"]
+    if not isinstance(condition, str):
         return False
-    return True
+    expression = _expression_body(condition)
+    return re.fullmatch(r"success\s*\(\s*\)", expression, re.IGNORECASE) is not None
 
 
 def validate_publish_gate(
@@ -147,7 +161,8 @@ def validate_publish_gate(
             f"publish job {publish_job} does not depend on required gates: {', '.join(missing_gates)}"
         )
 
-    for job_id in (publish_job, *required_gates):
+    release_path = {publish_job, *ancestors}
+    for job_id in sorted(release_path):
         job = _job_mapping(jobs, job_id)
         if _continue_on_error_enabled(job.get("continue-on-error")):
             raise WorkflowContractError(f"required release job enables continue-on-error: {job_id}")
@@ -156,16 +171,35 @@ def validate_publish_gate(
                 if _continue_on_error_enabled(step.get("continue-on-error")):
                     step_id = step.get("id", index)
                     raise WorkflowContractError(f"required release step enables continue-on-error: {job_id}/{step_id}")
+        if not _condition_requires_success(job):
+            raise WorkflowContractError(f"release dependency job must use the default success condition: {job_id}")
 
-    publish_condition = str(publish.get("if", ""))
-    bypass = re.search(
-        r"\b(always|failure|cancelled)\s*\(",
-        publish_condition,
-        re.IGNORECASE,
-    )
-    if bypass:
-        status_function = bypass.group(1).lower()
-        raise WorkflowContractError(f"publish job must not use {status_function}(): {publish_job}")
+
+def _permission_summary(
+    value: Any,
+    *,
+    location: str,
+) -> tuple[str | None, set[str]]:
+    if value is None:
+        return None, set()
+    if isinstance(value, str):
+        if value == "read-all":
+            return "read", set()
+        if value == "write-all":
+            return "write", {"*"}
+        raise WorkflowContractError(f"invalid permissions value at {location}: {value}")
+    if not isinstance(value, Mapping):
+        raise WorkflowContractError(f"permissions must be a mapping at {location}")
+    invalid = [
+        f"{scope}={access}"
+        for scope, access in value.items()
+        if not isinstance(scope, str) or not isinstance(access, str) or access not in {"none", "read", "write"}
+    ]
+    if invalid:
+        raise WorkflowContractError(f"invalid permission entries at {location}: {', '.join(invalid)}")
+    contents = value.get("contents", "none")
+    write_scopes = {scope for scope, access in value.items() if access == "write"}
+    return contents, write_scopes
 
 
 def validate_publish_permissions(
@@ -174,10 +208,14 @@ def validate_publish_permissions(
     publish_job: str,
 ) -> None:
     top_level_permissions = workflow.get("permissions")
-    if top_level_permissions == "write-all":
-        raise WorkflowContractError("workflow must not grant write-all permissions")
-    if isinstance(top_level_permissions, Mapping) and top_level_permissions.get("contents") == "write":
+    top_level_contents, top_level_writes = _permission_summary(
+        top_level_permissions,
+        location="workflow",
+    )
+    if "contents" in top_level_writes or "*" in top_level_writes:
         raise WorkflowContractError("contents: write must be scoped to the publish job")
+    if top_level_writes:
+        raise WorkflowContractError("workflow must not grant write permissions: " + ", ".join(sorted(top_level_writes)))
 
     jobs = _workflow_jobs(workflow)
     for job_id in jobs:
@@ -186,11 +224,32 @@ def validate_publish_permissions(
         if job_id == publish_job:
             if permissions == "write-all":
                 raise WorkflowContractError(f"publish job must not grant write-all: {publish_job}")
-            if not isinstance(permissions, Mapping) or permissions.get("contents") != "write":
+            contents, write_scopes = _permission_summary(
+                permissions,
+                location=f"job {job_id}",
+            )
+            if "permissions" not in job or contents != "write":
                 raise WorkflowContractError(f"publish job must grant contents: write: {publish_job}")
+            unexpected_writes = write_scopes - {"contents"}
+            if unexpected_writes:
+                raise WorkflowContractError(
+                    f"publish job grants unexpected write permissions: {publish_job} "
+                    f"({', '.join(sorted(unexpected_writes))})"
+                )
             continue
-        if permissions == "write-all" or (isinstance(permissions, Mapping) and permissions.get("contents") == "write"):
-            raise WorkflowContractError(f"non-publish job grants contents: write: {job_id}")
+        if "permissions" in job:
+            contents, write_scopes = _permission_summary(
+                permissions,
+                location=f"job {job_id}",
+            )
+        else:
+            contents, write_scopes = top_level_contents, top_level_writes
+        if contents is None:
+            raise WorkflowContractError(f"non-publish job inherits an implicit contents permission: {job_id}")
+        if write_scopes:
+            raise WorkflowContractError(
+                f"non-publish job grants write permissions: {job_id} ({', '.join(sorted(write_scopes))})"
+            )
 
 
 def job_steps(
@@ -216,11 +275,39 @@ def step_by_id(
     return matches[0]
 
 
+def validate_step_command(
+    workflow: Mapping[str, Any],
+    job_id: str,
+    step_id: str,
+    *,
+    expected_shell: str,
+    expected_tokens: Sequence[str],
+) -> None:
+    """Require one contract command whose exit status is propagated by a built-in shell."""
+
+    step = step_by_id(workflow, job_id, step_id)
+    if step.get("shell") != expected_shell:
+        raise WorkflowContractError(f"required step must use shell {expected_shell}: {job_id}/{step_id}")
+    command = step.get("run")
+    if not isinstance(command, str):
+        raise WorkflowContractError(f"required step must define a run command: {job_id}/{step_id}")
+    try:
+        tokens = tuple(shlex.split(command, posix=True))
+    except ValueError as exc:
+        raise WorkflowContractError(f"required step has an invalid run command: {job_id}/{step_id}") from exc
+    if tokens != tuple(expected_tokens):
+        raise WorkflowContractError(f"required step must invoke the release contract directly: {job_id}/{step_id}")
+
+
 def validate_step_order(
     workflow: Mapping[str, Any],
     job_id: str,
     required_step_ids: Sequence[str],
+    *,
+    adjacent_pairs: Sequence[tuple[str, str]] = (),
 ) -> None:
+    """Require stable step IDs in order with fail-closed success conditions."""
+
     steps = job_steps(workflow, job_id)
     positions: dict[str, int] = {}
     for index, step in enumerate(steps):
@@ -235,3 +322,12 @@ def validate_step_order(
     ordered_positions = [positions[step_id] for step_id in required_step_ids]
     if ordered_positions != sorted(ordered_positions):
         raise WorkflowContractError(f"job {job_id} has unsafe step order: {' -> '.join(required_step_ids)}")
+    for predecessor, successor in adjacent_pairs:
+        if predecessor not in positions or successor not in positions:
+            raise WorkflowContractError(f"job {job_id} cannot validate adjacent steps: {predecessor} -> {successor}")
+        if positions[successor] != positions[predecessor] + 1:
+            raise WorkflowContractError(f"job {job_id} requires adjacent steps: {predecessor} -> {successor}")
+    for step_id in required_step_ids:
+        step = steps[positions[step_id]]
+        if not _condition_requires_success(step):
+            raise WorkflowContractError(f"required step must use the default success condition: {job_id}/{step_id}")

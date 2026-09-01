@@ -20,6 +20,7 @@ from tests.workflow_contracts import (
     job_ancestors,
     load_workflow,
     step_by_id,
+    validate_step_command,
     validate_publish_gate,
     validate_publish_permissions,
     validate_step_order,
@@ -99,17 +100,45 @@ class ReleaseDistributionTests(unittest.TestCase):
             workflow,
             "build",
             ("release", "source-version", "package", "upload"),
+            adjacent_pairs=(("package", "upload"),),
         )
         validate_step_order(
             workflow,
             "publish",
             ("download", "verify", "release"),
+            adjacent_pairs=(("verify", "release"),),
         )
 
-        source_validation = step_by_id(workflow, "build", "source-version")
-        self.assertIn("scripts/release_contract.py validate-source", source_validation["run"])
-        artifact_verification = step_by_id(workflow, "publish", "verify")
-        self.assertIn("scripts/release_contract.py verify-artifacts", artifact_verification["run"])
+        validate_step_command(
+            workflow,
+            "build",
+            "source-version",
+            expected_shell="pwsh",
+            expected_tokens=(
+                "python",
+                "scripts/release_contract.py",
+                "validate-source",
+                "--tag",
+                "${{ steps.release.outputs.tag }}",
+                "--version-file",
+                "VERSION",
+            ),
+        )
+        validate_step_command(
+            workflow,
+            "publish",
+            "verify",
+            expected_shell="bash",
+            expected_tokens=(
+                "python",
+                "scripts/release_contract.py",
+                "verify-artifacts",
+                "--directory",
+                "dist",
+                "--expected-version",
+                "${{ needs.build.outputs.version }}",
+            ),
+        )
 
         upload = step_by_id(workflow, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
@@ -154,6 +183,7 @@ class WorkflowContractHelperTests(unittest.TestCase):
     def _transitive_release_workflow(self) -> dict[str, Any]:
         return {
             "on": {"push": {"tags": ["v*"]}},
+            "permissions": {"contents": "read"},
             "jobs": {
                 "test": {"runs-on": "ubuntu-latest", "permissions": {"contents": "read"}},
                 "build": {"runs-on": "windows-latest", "permissions": {"contents": "read"}},
@@ -182,6 +212,8 @@ class WorkflowContractHelperTests(unittest.TestCase):
 
     def test_transitive_publish_dependencies_are_accepted(self) -> None:
         workflow = self._transitive_release_workflow()
+        workflow["jobs"]["publish"]["if"] = "${{ success() }}"
+        workflow["jobs"]["candidate"]["continue-on-error"] = "${{   false   }}"
 
         validate_publish_gate(
             workflow,
@@ -190,7 +222,7 @@ class WorkflowContractHelperTests(unittest.TestCase):
         )
         validate_publish_permissions(workflow, publish_job="publish")
 
-    def test_missing_gate_continue_on_error_and_always_are_rejected(self) -> None:
+    def test_missing_gate_continue_on_error_and_unsafe_conditions_are_rejected(self) -> None:
         mutations = []
 
         missing_test = self._transitive_release_workflow()
@@ -215,9 +247,22 @@ class WorkflowContractHelperTests(unittest.TestCase):
         ]
         mutations.append((step_continue_on_error, "step enables continue-on-error: test/run-tests"))
 
-        unconditional_publish = self._transitive_release_workflow()
-        unconditional_publish["jobs"]["publish"]["if"] = "${{ always() }}"
-        mutations.append((unconditional_publish, "must not use always"))
+        for condition in (
+            "${{ always() }}",
+            "${{ !success() }}",
+            "${{ success() || true }}",
+        ):
+            unconditional_publish = self._transitive_release_workflow()
+            unconditional_publish["jobs"]["publish"]["if"] = condition
+            mutations.append((unconditional_publish, "must use the default success condition"))
+
+        transitive_bypass = self._transitive_release_workflow()
+        transitive_bypass["jobs"]["candidate"]["if"] = "${{ always() }}"
+        mutations.append((transitive_bypass, "dependency job must use the default success condition"))
+
+        transitive_continue_on_error = self._transitive_release_workflow()
+        transitive_continue_on_error["jobs"]["candidate"]["continue-on-error"] = True
+        mutations.append((transitive_continue_on_error, "job enables continue-on-error: candidate"))
 
         for workflow, message in mutations:
             with (
@@ -247,8 +292,37 @@ class WorkflowContractHelperTests(unittest.TestCase):
     def test_write_permission_and_missing_verification_step_are_rejected(self) -> None:
         excessive_permissions = self._transitive_release_workflow()
         excessive_permissions["jobs"]["build"]["permissions"] = {"contents": "write"}
-        with self.assertRaisesRegex(WorkflowContractError, "non-publish job grants"):
+        with self.assertRaisesRegex(WorkflowContractError, "non-publish job grants write"):
             validate_publish_permissions(excessive_permissions, publish_job="publish")
+
+        excessive_publish_permissions = self._transitive_release_workflow()
+        excessive_publish_permissions["jobs"]["publish"]["permissions"]["packages"] = "write"
+        with self.assertRaisesRegex(WorkflowContractError, "unexpected write"):
+            validate_publish_permissions(
+                excessive_publish_permissions,
+                publish_job="publish",
+            )
+
+        implicit_permissions = self._transitive_release_workflow()
+        del implicit_permissions["permissions"]
+        del implicit_permissions["jobs"]["build"]["permissions"]
+        with self.assertRaisesRegex(WorkflowContractError, "inherits an implicit"):
+            validate_publish_permissions(implicit_permissions, publish_job="publish")
+
+        global_write = self._transitive_release_workflow()
+        global_write["permissions"] = {"contents": "write"}
+        with self.assertRaisesRegex(WorkflowContractError, "scoped to the publish job"):
+            validate_publish_permissions(global_write, publish_job="publish")
+
+        global_other_write = self._transitive_release_workflow()
+        global_other_write["permissions"] = {"contents": "read", "actions": "write"}
+        with self.assertRaisesRegex(WorkflowContractError, "workflow must not grant write"):
+            validate_publish_permissions(global_other_write, publish_job="publish")
+
+        malformed_permissions = self._transitive_release_workflow()
+        malformed_permissions["permissions"] = {"contents": ["read"]}
+        with self.assertRaisesRegex(WorkflowContractError, "invalid permission entries"):
+            validate_publish_permissions(malformed_permissions, publish_job="publish")
 
         workflow = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
         workflow["jobs"]["publish"]["steps"] = [
@@ -260,6 +334,138 @@ class WorkflowContractHelperTests(unittest.TestCase):
                 "publish",
                 ("download", "verify", "release"),
             )
+
+    def test_skipped_verification_and_failure_publish_are_rejected(self) -> None:
+        mutations = []
+
+        skipped_verification = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        step_by_id(skipped_verification, "publish", "verify")["if"] = "${{ false }}"
+        mutations.append((skipped_verification, "publish/verify"))
+
+        failure_publish = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        step_by_id(failure_publish, "publish", "release")["if"] = "${{ failure() }}"
+        mutations.append((failure_publish, "publish/release"))
+
+        skipped_source_validation = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        step_by_id(skipped_source_validation, "build", "source-version")["if"] = False
+        mutations.append((skipped_source_validation, "build/source-version"))
+
+        for workflow, location in mutations:
+            with (
+                self.subTest(location=location),
+                self.assertRaisesRegex(
+                    WorkflowContractError,
+                    location,
+                ),
+            ):
+                if location.startswith("build/"):
+                    validate_step_order(
+                        workflow,
+                        "build",
+                        ("release", "source-version", "package", "upload"),
+                        adjacent_pairs=(("package", "upload"),),
+                    )
+                else:
+                    validate_step_order(
+                        workflow,
+                        "publish",
+                        ("download", "verify", "release"),
+                        adjacent_pairs=(("verify", "release"),),
+                    )
+
+    def test_steps_cannot_mutate_artifacts_after_validation(self) -> None:
+        mutations = []
+
+        before_upload = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        upload_index = before_upload["jobs"]["build"]["steps"].index(step_by_id(before_upload, "build", "upload"))
+        before_upload["jobs"]["build"]["steps"].insert(
+            upload_index,
+            {"id": "mutate-package", "run": "echo mutate package"},
+        )
+        mutations.append(
+            (
+                before_upload,
+                "build",
+                ("release", "source-version", "package", "upload"),
+                (("package", "upload"),),
+            )
+        )
+
+        before_release = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        release_index = before_release["jobs"]["publish"]["steps"].index(
+            step_by_id(before_release, "publish", "release")
+        )
+        before_release["jobs"]["publish"]["steps"].insert(
+            release_index,
+            {"id": "mutate-verified-artifact", "run": "echo mutate artifact"},
+        )
+        mutations.append(
+            (
+                before_release,
+                "publish",
+                ("download", "verify", "release"),
+                (("verify", "release"),),
+            )
+        )
+
+        for workflow, job_id, required_steps, adjacent_pairs in mutations:
+            with (
+                self.subTest(job_id=job_id),
+                self.assertRaisesRegex(WorkflowContractError, "requires adjacent steps"),
+            ):
+                validate_step_order(
+                    workflow,
+                    job_id,
+                    required_steps,
+                    adjacent_pairs=adjacent_pairs,
+                )
+
+    def test_release_contract_commands_cannot_mask_failures_or_change_inputs(self) -> None:
+        mutations = []
+
+        masked_source_validation = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        step_by_id(masked_source_validation, "build", "source-version")["run"] += "; exit 0"
+        mutations.append((masked_source_validation, "build", "source-version", "pwsh"))
+
+        wrong_artifact_version = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        step_by_id(wrong_artifact_version, "publish", "verify")["run"] = (
+            "python scripts/release_contract.py verify-artifacts --directory dist --expected-version 0.0.0"
+        )
+        mutations.append((wrong_artifact_version, "publish", "verify", "bash"))
+
+        custom_shell = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        step_by_id(custom_shell, "publish", "verify")["shell"] = "bash {0}"
+        mutations.append((custom_shell, "publish", "verify", "bash"))
+
+        expected_tokens = {
+            "source-version": (
+                "python",
+                "scripts/release_contract.py",
+                "validate-source",
+                "--tag",
+                "${{ steps.release.outputs.tag }}",
+                "--version-file",
+                "VERSION",
+            ),
+            "verify": (
+                "python",
+                "scripts/release_contract.py",
+                "verify-artifacts",
+                "--directory",
+                "dist",
+                "--expected-version",
+                "${{ needs.build.outputs.version }}",
+            ),
+        }
+        for workflow, job_id, step_id, shell in mutations:
+            with self.subTest(job_id=job_id, step_id=step_id), self.assertRaises(WorkflowContractError):
+                validate_step_command(
+                    workflow,
+                    job_id,
+                    step_id,
+                    expected_shell=shell,
+                    expected_tokens=expected_tokens[step_id],
+                )
 
 
 class ReleaseArtifactContractTests(unittest.TestCase):
@@ -290,6 +496,12 @@ class ReleaseArtifactContractTests(unittest.TestCase):
         )
         return digest
 
+    def _rewrite_manifest(self, directory: Path, **changes: object) -> None:
+        manifest_path = directory / MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update(changes)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
     def test_source_tag_must_match_repository_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             version_file = Path(temp_dir) / "VERSION"
@@ -319,6 +531,32 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             self._write_release_artifacts(directory, version="1.2.4")
             with self.assertRaisesRegex(ReleaseContractError, "app_version mismatch"):
                 verify_release_artifacts(directory, "1.2.3")
+
+    def test_every_manifest_contract_field_is_verified(self) -> None:
+        mutations = (
+            ({"schema_version": 2}, "schema_version mismatch"),
+            ({"package_type": "archive"}, "package_type mismatch"),
+            ({"asset_name": "other.exe"}, "asset_name mismatch"),
+            ({"sha256": "0" * 64}, "sha256 mismatch"),
+            ({"required_files": ["VERSION"]}, "required_files is incomplete"),
+        )
+
+        for changes, message in mutations:
+            with tempfile.TemporaryDirectory() as temp_dir, self.subTest(changes=changes):
+                directory = Path(temp_dir)
+                self._write_release_artifacts(directory)
+                self._rewrite_manifest(directory, **changes)
+                with self.assertRaisesRegex(ReleaseContractError, message):
+                    verify_release_artifacts(directory, "1.2.3")
+
+    def test_installer_checksum_and_manifest_are_all_required(self) -> None:
+        for asset_name in RELEASE_ASSET_NAMES:
+            with tempfile.TemporaryDirectory() as temp_dir, self.subTest(asset_name=asset_name):
+                directory = Path(temp_dir)
+                self._write_release_artifacts(directory)
+                (directory / asset_name).unlink()
+                with self.assertRaisesRegex(ReleaseContractError, "artifacts are missing"):
+                    verify_release_artifacts(directory, "1.2.3")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,9 @@ concurrency:
   group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test on Linux
@@ -210,6 +213,7 @@ jobs:
 
       - name: Verify release artifacts
         id: verify
+        shell: bash
         run: >-
           python scripts/release_contract.py verify-artifacts
           --directory dist

@@ -3168,7 +3168,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         external_id = str(channels[external_index]["id"])
 
         video_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{video_index}")
-        self._click(window, self._quick_visual_item(video_strip, "mixerMuteButton"))
+        video_mute_button = self._quick_visual_item(video_strip, "mixerMuteButton")
+        self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         if not bool(channels[external_index]["enabled"]):
@@ -3177,7 +3178,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertTrue(QMetaObject.invokeMethod(enabled_check, "toggled"))
             QTest.qWait(50)
             external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
-        self._click(window, self._quick_visual_item(external_strip, "mixerSoloButton"))
+        external_solo_button = self._quick_visual_item(external_strip, "mixerSoloButton")
+        self.assertTrue(QMetaObject.invokeMethod(external_solo_button, "clicked"))
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         fader = self._quick_visual_item(external_strip, "mixerChannelFader")

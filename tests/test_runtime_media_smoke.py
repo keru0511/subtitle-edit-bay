@@ -309,7 +309,13 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             player.positionChanged.connect(lambda position: state.__setitem__("advanced", state["advanced"] or position > 0))
             sink.videoFrameChanged.connect(lambda _frame: state.__setitem__("frame", True))
             player.errorOccurred.connect(lambda _error, message: state["errors"].append(message or "media playback error"))
-            QTimer.singleShot(4000, app.quit)
+            # Qt Multimedia may need several seconds to initialize its bundled
+            # FFmpeg backend on a newly provisioned Windows hosted runner.
+            # Exit as soon as playback is proven, while retaining a bounded
+            # timeout that still catches a decoder which never starts.
+            player.positionChanged.connect(lambda position: app.quit() if position > 0 else None)
+            sink.videoFrameChanged.connect(lambda _frame: app.quit())
+            QTimer.singleShot(10000, app.quit)
             player.setSource(QUrl.fromLocalFile(str(video)))
             player.play()
             app.exec()

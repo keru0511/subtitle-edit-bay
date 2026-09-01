@@ -16,6 +16,10 @@ Install development-only tooling:
 python -m pip install -r requirements-dev.txt
 ```
 
+`requirements-dev.txt` also includes the YAML parser used by the GitHub Actions
+contract tests. Any CI job that runs `tests/test_release_distribution.py` must
+install both dependency files.
+
 Run the same default quality checks as the local entrypoint:
 
 ```powershell
@@ -39,6 +43,17 @@ Run only the test suite:
 ```powershell
 python scripts/check_quality.py --tests-only
 ```
+
+Run the release workflow contract tests directly:
+
+```powershell
+python -m unittest tests.test_release_distribution -v
+```
+
+These tests parse the workflow and validate the job DAG, transitive test/build
+gates, least-privilege publish permissions, and release step ordering. Mutation
+tests confirm that missing dependencies, cycles, `continue-on-error`,
+`always()`, and skipped artifact verification are rejected.
 
 Run only Ruff format checks:
 

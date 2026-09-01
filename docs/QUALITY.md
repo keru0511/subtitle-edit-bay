@@ -44,6 +44,16 @@ Run only the test suite:
 python scripts/check_quality.py --tests-only
 ```
 
+Check that every `test_*.py` module is importable and collected by standard
+unittest discovery:
+
+```powershell
+python scripts/check_unittest_discovery.py
+```
+
+The checker rejects module-level `test_*` functions, zero-test modules, and
+import failures. Platform-specific skipped tests still count as discovered.
+
 Run the release workflow contract tests directly:
 
 ```powershell

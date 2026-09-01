@@ -15,6 +15,9 @@ concurrency:
   group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test on Linux
@@ -43,12 +46,15 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
 
       - name: Run tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
@@ -90,6 +96,18 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Validate release source version
+        id: source-version
+        shell: pwsh
+        run: >-
+          python scripts/release_contract.py validate-source
+          --tag "${{ steps.release.outputs.tag }}"
+          --version-file VERSION
 
       - name: Ensure Inno Setup compiler
         shell: pwsh
@@ -111,6 +129,7 @@ jobs:
           }
           "INNO_SETUP_COMPILER=$compilerPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build installer
+        id: package
         shell: pwsh
         run: |
           $releaseDirectory = Join-Path $env:RUNNER_TEMP "subtitle-edit-bay-release"
@@ -144,6 +163,7 @@ jobs:
               -Encoding utf8
 
       - name: Upload installer artifact
+        id: upload
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.release.outputs.artifact_name }}
@@ -172,17 +192,35 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
       - name: Download tested installer
+        id: download
         uses: actions/download-artifact@v7
         with:
           name: ${{ needs.build.outputs.artifact_name }}
           path: dist
 
-      - name: Verify installer checksum
-        working-directory: dist
-        run: sha256sum --check SubtitleEditBay-Setup.exe.sha256
+      - name: Verify release artifacts
+        id: verify
+        shell: bash
+        run: >-
+          python scripts/release_contract.py verify-artifacts
+          --directory dist
+          --expected-version "${{ needs.build.outputs.version }}"
 
       - name: Create or update GitHub Release
+        id: release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

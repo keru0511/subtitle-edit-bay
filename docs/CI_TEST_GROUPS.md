@@ -32,6 +32,8 @@ Windowsの `Main.qml` 起動スモークは、テストモジュールとは別�
 `selectors` に完全なunittest名を登録します。現在は、クロスプラットフォームの
 `test_short_video_ass` をLinuxで所有しつつ、Windows固有のUnicodeパスと
 FFmpegフィルタースクリプトのケースだけを `windows-ffmpeg-runtime` で明示的に再実行します。
+`TestCase` のメソッドに加えて、`tests.test_module.test_function` 形式のモジュール直下の
+テスト関数も指定できます。後者はCIランナーが `FunctionTestCase` として実行します。
 
 ## ローカル実行
 

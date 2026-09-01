@@ -136,7 +136,7 @@ def validate_manifest(
         )
     for selector in all_selectors:
         parts = selector.split(".")
-        if len(parts) < 4 or parts[0] != "tests" or not MODULE_NAME_PATTERN.fullmatch(parts[1]):
+        if len(parts) < 3 or parts[0] != "tests" or not MODULE_NAME_PATTERN.fullmatch(parts[1]):
             errors.append(f"invalid unittest selector: {selector}")
             continue
         if parts[1] not in discovered_modules:
@@ -182,6 +182,22 @@ def load_module_suite(module_name: str, loader: unittest.TestLoader) -> unittest
     return suite
 
 
+def load_selector_suite(selector: str, loader: unittest.TestLoader) -> unittest.TestSuite:
+    parts = selector.split(".")
+    if len(parts) == 3 and parts[2].startswith("test_"):
+        qualified_module_name = ".".join(parts[:2])
+        try:
+            module = importlib.import_module(qualified_module_name)
+        except Exception:
+            return loader.loadTestsFromName(selector)
+        function = getattr(module, parts[2], None)
+        if inspect.isfunction(function) and function.__module__ == module.__name__:
+            return unittest.TestSuite(
+                [unittest.FunctionTestCase(function, description=selector)]
+            )
+    return loader.loadTestsFromName(selector)
+
+
 def build_suite(
     groups: dict[str, dict[str, list[str]]],
     selected_groups: Sequence[str],
@@ -193,7 +209,7 @@ def build_suite(
         for module_name in group["modules"]:
             suite.addTests(load_module_suite(module_name, loader))
         for selector in group["selectors"]:
-            suite.addTests(loader.loadTestsFromName(selector))
+            suite.addTests(load_selector_suite(selector, loader))
     return suite
 
 

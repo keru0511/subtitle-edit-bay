@@ -96,6 +96,37 @@ class CiTestGroupManifestTests(unittest.TestCase):
         )
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
 
+    def test_top_level_function_selector_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tests_dir = Path(temp_dir)
+            (tests_dir / "test_shared.py").write_text("", encoding="utf-8")
+            manifest = create_manifest(["test_shared"])
+            manifest["groups"]["windows-runtime"]["selectors"] = [
+                "tests.test_shared.test_windows_path"
+            ]
+
+            groups = CI_TESTS.validate_manifest(manifest, tests_dir)
+
+        self.assertEqual(
+            groups["windows-runtime"]["selectors"],
+            ["tests.test_shared.test_windows_path"],
+        )
+
+    def test_selector_without_test_attribute_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tests_dir = Path(temp_dir)
+            (tests_dir / "test_shared.py").write_text("", encoding="utf-8")
+            manifest = create_manifest(["test_shared"])
+            manifest["groups"]["windows-runtime"]["selectors"] = [
+                "tests.test_shared"
+            ]
+
+            with self.assertRaisesRegex(
+                CI_TESTS.ManifestError,
+                "invalid unittest selector: tests.test_shared",
+            ):
+                CI_TESTS.validate_manifest(manifest, tests_dir)
+
 
 class CiTestRunnerTests(unittest.TestCase):
     def test_top_level_test_functions_are_executed(self) -> None:
@@ -110,6 +141,30 @@ class CiTestRunnerTests(unittest.TestCase):
         suite = unittest.TestSuite()
 
         CI_TESTS.add_top_level_test_functions(module, suite)
+        result = unittest.TestResult()
+        suite.run(result)
+
+        self.assertTrue(result.wasSuccessful())
+        self.assertEqual(result.testsRun, 1)
+        self.assertTrue(module.executed)
+
+    def test_top_level_function_selector_is_executed(self) -> None:
+        module_name = "tests.test_synthetic_ci_selector"
+        module = ModuleType(module_name)
+        exec(
+            "executed = False\n"
+            "def test_selected():\n"
+            "    global executed\n"
+            "    executed = True\n",
+            module.__dict__,
+        )
+        sys.modules[module_name] = module
+        self.addCleanup(sys.modules.pop, module_name, None)
+
+        suite = CI_TESTS.load_selector_suite(
+            f"{module_name}.test_selected",
+            unittest.TestLoader(),
+        )
         result = unittest.TestResult()
         suite.run(result)
 

@@ -68,6 +68,7 @@ class GuiTestHarnessTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(self.workspace.cleanup)
         self.qml_path = Path(self.workspace.name) / "HarnessFixture.qml"
         self.qml_path.write_text(FIXTURE_QML, encoding="utf-8")
         self.harness = GuiTestHarness(
@@ -80,7 +81,6 @@ class GuiTestHarnessTests(unittest.TestCase):
                 ),
             ),
         )
-        self.addCleanup(self.workspace.cleanup)
         self.addCleanup(self.harness.cleanup)
 
     def test_load_find_click_resize_bounds_and_cleanup(self) -> None:

@@ -60,6 +60,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         cls._session.cleanup()
 
     def setUp(self) -> None:
+        self.addCleanup(self._session.finish_test)
         self.root = self._session.prepare_test(self._testMethodName)
         app = self.app
         self._media_probe_patch = patch.object(
@@ -68,17 +69,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
             side_effect=self._fake_media_file_has_required_streams,
         )
         self._media_probe_patch.start()
+        self.addCleanup(self._media_probe_patch.stop)
         qml_root = Path(__file__).resolve().parents[1] / "src" / "ui"
         self.gui = GuiTestHarness(self.app, backend=self.app, qml_roots=(qml_root,))
-
-    def tearDown(self) -> None:
-        try:
-            self.gui.cleanup()
-        finally:
-            try:
-                self._media_probe_patch.stop()
-            finally:
-                self._session.finish_test()
+        self.addCleanup(self.gui.cleanup)
 
     @staticmethod
     def _fake_media_file_has_required_streams(

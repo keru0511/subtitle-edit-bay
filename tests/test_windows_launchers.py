@@ -15,16 +15,27 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class WindowsLauncherTests(unittest.TestCase):
     def _require_windows_powershell(self) -> str:
-        executable = shutil.which("powershell.exe")
-        if executable is None:
-            self.fail("Windows PowerShell is required")
-        return str(Path(executable).resolve())
+        candidates: list[Path] = []
+        system_root = os.environ.get("SystemRoot")
+        if system_root:
+            candidates.extend(
+                [
+                    Path(system_root) / "Sysnative" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+                    Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+                ]
+            )
+        path_executable = shutil.which("powershell.exe")
+        if path_executable:
+            candidates.append(Path(path_executable))
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate.resolve())
+        self.fail("Windows PowerShell is required")
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_start_batch_runs_launch_script_from_distribution_root(self) -> None:
         command_prompt = os.environ.get("COMSPEC") or shutil.which("cmd.exe")
         self.assertTrue(command_prompt, "Windows command prompt is required")
-        self._require_windows_powershell()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)

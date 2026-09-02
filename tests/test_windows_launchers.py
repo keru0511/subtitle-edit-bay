@@ -7,13 +7,21 @@ import sys
 import tempfile
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    def _require_windows_git(self) -> str:
+        executable = shutil.which("git.exe")
+        if executable:
+            return str(Path(executable).resolve())
+        self.fail("Git for Windows is required")
+
     def _require_windows_powershell(self) -> str:
         candidates: list[Path] = []
         system_root = os.environ.get("SystemRoot")
@@ -31,6 +39,162 @@ class WindowsLauncherTests(unittest.TestCase):
             if candidate.is_file():
                 return str(candidate.resolve())
         self.fail("Windows PowerShell is required")
+
+    def _seed_installer_distribution(self, install: Path) -> None:
+        (install / "scripts").mkdir(parents=True)
+        (install / "src").mkdir()
+        (install / ".gui").mkdir()
+        (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
+        (install / "scripts" / "launch.ps1").write_text("old launcher", encoding="utf-8")
+        (install / "src" / "app.py").write_text("old app", encoding="utf-8")
+        (install / ".gui" / "runtime_config.json").write_text("old gui", encoding="utf-8")
+
+    def _write_fake_installer(self, base: Path, powershell: str, script_body: str) -> Path:
+        (base / "fake-installer.ps1").write_text(script_body, encoding="utf-8")
+        installer = base / "fake-installer.cmd"
+        installer.write_text(
+            "@echo off\r\n"
+            f'"{powershell}" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass '
+            '-File "%~dp0fake-installer.ps1" %*\r\n'
+            "exit /b %ERRORLEVEL%\r\n",
+            encoding="utf-8",
+        )
+        return installer
+
+    def _run_installer_update(
+        self,
+        *,
+        powershell: str,
+        package: Path,
+        install: Path,
+        restart_executable: Path,
+        result_path: Path,
+        expected_version: str = "v9.9.9",
+        expected_sha256: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        digest = expected_sha256 or hashlib.sha256(package.read_bytes()).hexdigest()
+        return subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "scripts" / "apply_installer_update.ps1"),
+                "-PackagePath",
+                str(package),
+                "-ParentPid",
+                "-1",
+                "-InstallRoot",
+                str(install),
+                "-RestartExecutable",
+                str(restart_executable),
+                "-ExpectedVersion",
+                expected_version,
+                "-ExpectedSha256",
+                digest,
+                "-ResultPath",
+                str(result_path),
+            ],
+            cwd=install,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+
+    def _write_restart_command(self, command: Path, marker: Path) -> None:
+        escaped_marker = str(marker).replace("%", "%%")
+        command.write_text(
+            f'@echo off\r\n> "{escaped_marker}" echo started\r\nexit /b 0\r\n',
+            encoding="utf-8",
+        )
+
+    def _run_git(self, git: str, *arguments: str | Path, cwd: Path) -> str:
+        result = subprocess.run(
+            [git, *(str(argument) for argument in arguments)],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout.strip()
+
+    def _run_update_script(
+        self,
+        powershell: str,
+        distribution: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(distribution / "scripts" / "update.ps1"),
+                *arguments,
+            ],
+            cwd=distribution,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+
+    def _write_git_distribution_version(self, source: Path, version: str, app_content: str) -> None:
+        (source / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+        (source / "src" / "app.py").write_text(app_content, encoding="utf-8")
+        (source / "scripts" / "setup.ps1").write_text(
+            "$root = Split-Path -Parent $PSScriptRoot\n"
+            f"[IO.File]::WriteAllText((Join-Path $root 'setup-ran.txt'), '{version}')\n",
+            encoding="utf-8",
+        )
+
+    def _create_git_update_fixture(self, base: Path, git: str) -> tuple[Path, Path]:
+        remote = base / "remote.git"
+        source = base / "upstream source"
+        distribution = base / "Subtitle Edit Bay"
+
+        self._run_git(git, "init", "--bare", "--initial-branch=main", remote, cwd=base)
+        self._run_git(git, "init", "--initial-branch=main", source, cwd=base)
+        self._run_git(git, "config", "user.name", "Updater Test", cwd=source)
+        self._run_git(git, "config", "user.email", "updater@example.invalid", cwd=source)
+        (source / "scripts").mkdir()
+        (source / "src").mkdir()
+        shutil.copy2(ROOT / "scripts" / "update.ps1", source / "scripts" / "update.ps1")
+        self._write_git_distribution_version(source, "v0.1.0", "old app")
+        self._run_git(git, "add", ".", cwd=source)
+        self._run_git(git, "commit", "-m", "initial", cwd=source)
+        self._run_git(git, "remote", "add", "origin", remote, cwd=source)
+        self._run_git(git, "push", "--set-upstream", "origin", "main", cwd=source)
+        self._run_git(git, "clone", "--branch", "main", remote, distribution, cwd=base)
+        self._run_git(git, "config", "user.name", "Updater Test", cwd=distribution)
+        self._run_git(git, "config", "user.email", "updater@example.invalid", cwd=distribution)
+        return source, distribution
+
+    def _push_git_distribution_version(
+        self,
+        source: Path,
+        git: str,
+        version: str,
+        app_content: str,
+    ) -> str:
+        self._write_git_distribution_version(source, version, app_content)
+        self._run_git(git, "add", ".", cwd=source)
+        self._run_git(git, "commit", "-m", f"release {version}", cwd=source)
+        self._run_git(git, "push", "origin", "main", cwd=source)
+        return self._run_git(git, "rev-parse", "HEAD", cwd=source)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_start_batch_runs_launch_script_from_distribution_root(self) -> None:
@@ -446,24 +610,135 @@ class WindowsLauncherTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout.strip().splitlines()[-1], "64")
 
-    def test_update_supports_git_and_zip_distributions(self) -> None:
-        launcher = (ROOT / "update.bat").read_text(encoding="utf-8")
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_update_batch_runs_update_script_from_distribution_root(self) -> None:
+        command_prompt = os.environ.get("COMSPEC") or shutil.which("cmd.exe")
+        self.assertTrue(command_prompt, "Windows command prompt is required")
+        self._require_windows_powershell()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            distribution = base / "Subtitle Edit Bay"
+            scripts = distribution / "scripts"
+            scripts.mkdir(parents=True)
+            outside = base / "unrelated working directory"
+            outside.mkdir()
+            shutil.copy2(ROOT / "update.bat", distribution / "update.bat")
+
+            marker = base / "update-result.json"
+            escaped_marker = str(marker).replace("'", "''")
+            (scripts / "update.ps1").write_text(
+                "$payload = [ordered]@{\n"
+                "    working_directory = (Get-Location).Path\n"
+                "    script_root = $PSScriptRoot\n"
+                "} | ConvertTo-Json -Compress\n"
+                f"[IO.File]::WriteAllText('{escaped_marker}', $payload)\n"
+                "exit 23\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [str(command_prompt), "/d", "/c", str(distribution / "update.bat")],
+                cwd=outside,
+                input="\n",
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertTrue(marker.is_file(), result.stdout + result.stderr)
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            self.assertEqual(Path(payload["working_directory"]).resolve(), distribution.resolve())
+            self.assertEqual(Path(payload["script_root"]).resolve(), scripts.resolve())
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_git_update_fast_forwards_and_preserves_untracked_data(self) -> None:
+        powershell = self._require_windows_powershell()
+        git = self._require_windows_git()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            source, distribution = self._create_git_update_fixture(base, git)
+            remote_head = self._push_git_distribution_version(source, git, "v0.2.0", "new app")
+
+            (distribution / ".gui").mkdir()
+            (distribution / "video_import").mkdir()
+            (distribution / ".gui" / "runtime_config.json").write_text("local gui", encoding="utf-8")
+            (distribution / "video_import" / "source.mkv").write_bytes(b"local video")
+            (distribution / "project-state.json").write_text("local project", encoding="utf-8")
+
+            result = self._run_update_script(powershell, distribution)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Source version before update: v0.1.0", result.stdout)
+            self.assertIn("Source version: v0.1.0 -> v0.2.0", result.stdout)
+            self.assertEqual(self._run_git(git, "rev-parse", "HEAD", cwd=distribution), remote_head)
+            self.assertEqual((distribution / "VERSION").read_text(encoding="utf-8"), "v0.2.0\n")
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "new app")
+            self.assertEqual((distribution / "setup-ran.txt").read_text(encoding="utf-8"), "v0.2.0")
+            self.assertEqual(
+                (distribution / ".gui" / "runtime_config.json").read_text(encoding="utf-8"),
+                "local gui",
+            )
+            self.assertEqual((distribution / "video_import" / "source.mkv").read_bytes(), b"local video")
+            self.assertEqual((distribution / "project-state.json").read_text(encoding="utf-8"), "local project")
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_git_update_rejects_tracked_worktree_changes(self) -> None:
+        powershell = self._require_windows_powershell()
+        git = self._require_windows_git()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            _, distribution = self._create_git_update_fixture(base, git)
+            initial_head = self._run_git(git, "rev-parse", "HEAD", cwd=distribution)
+            (distribution / "src" / "app.py").write_text("local edit", encoding="utf-8")
+
+            result = self._run_update_script(powershell, distribution)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Tracked files have local changes", result.stdout + result.stderr)
+            self.assertEqual(self._run_git(git, "rev-parse", "HEAD", cwd=distribution), initial_head)
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "local edit")
+            self.assertFalse((distribution / "setup-ran.txt").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_git_update_rejects_non_fast_forward_history(self) -> None:
+        powershell = self._require_windows_powershell()
+        git = self._require_windows_git()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            source, distribution = self._create_git_update_fixture(base, git)
+            self._run_git(git, "config", "pull.rebase", "true", cwd=distribution)
+            (distribution / "local-only.txt").write_text("local commit", encoding="utf-8")
+            self._run_git(git, "add", "local-only.txt", cwd=distribution)
+            self._run_git(git, "commit", "-m", "local commit", cwd=distribution)
+            local_head = self._run_git(git, "rev-parse", "HEAD", cwd=distribution)
+            (source / "remote-only.txt").write_text("remote commit", encoding="utf-8")
+            self._push_git_distribution_version(source, git, "v0.2.0", "new app")
+
+            result = self._run_update_script(powershell, distribution)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("git pull failed", result.stdout + result.stderr)
+            self.assertEqual(self._run_git(git, "rev-parse", "HEAD", cwd=distribution), local_head)
+            self.assertEqual((distribution / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "old app")
+            self.assertFalse((distribution / "remote-only.txt").exists())
+            self.assertFalse((distribution / "setup-ran.txt").exists())
+
+    def test_git_update_never_uses_destructive_reset(self) -> None:
         updater = (ROOT / "scripts" / "update.ps1").read_text(encoding="utf-8")
 
-        self.assertIn(r"scripts\update.ps1", launcher)
-        self.assertIn("pull --ff-only", updater)
-        self.assertIn("--untracked-files=no", updater)
-        self.assertIn("Invoke-WebRequest", updater)
-        self.assertIn("archive/refs/tags", updater)
-        self.assertIn('"video_import"', updater)
-        self.assertIn('"video_export"', updater)
-        self.assertIn("assets/speaker_colors.json", updater)
-        self.assertIn("update_backups", updater)
-        self.assertIn('Join-Path $projectRoot "scripts\\setup.ps1"', updater)
         self.assertNotIn("reset --hard", updater)
 
-    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
-    def test_zip_update_preserves_local_data_and_runs_new_setup(self) -> None:
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_zip_release_update_downloads_and_preserves_local_data(self) -> None:
+        powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             distribution = base / "distribution"
@@ -473,36 +748,41 @@ class WindowsLauncherTests(unittest.TestCase):
             (distribution / "scripts").mkdir(parents=True)
             (distribution / "src").mkdir()
             (distribution / "assets").mkdir()
-            (distribution / "video_import").mkdir()
-            (distribution / ".gui").mkdir()
-            (distribution / ".venv").mkdir()
-            (distribution / ".local").mkdir()
+            for directory in ("video_import", "video_export", "out", ".gui", ".venv", ".local"):
+                (distribution / directory).mkdir()
             shutil.copy2(ROOT / "scripts" / "update.ps1", distribution / "scripts" / "update.ps1")
             (distribution / "README.md").write_text("old readme", encoding="utf-8")
             (distribution / "src" / "app.py").write_text("old code", encoding="utf-8")
             (distribution / "legacy.txt").write_text("remove me", encoding="utf-8")
             (distribution / ".env").write_text("keep me", encoding="utf-8")
+            (distribution / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
             (distribution / ".local" / "update-manifest.json").write_text(
                 '["README.md", "src/app.py", "legacy.txt"]\n',
                 encoding="utf-8",
             )
+            (distribution / ".local" / "user-state.json").write_text("old local", encoding="utf-8")
             (distribution / "assets" / "speaker_colors.json").write_text("old colors", encoding="utf-8")
-            (distribution / "video_import" / "keep.mkv").write_bytes(b"video")
+            (distribution / "video_import" / "marker.txt").write_text("old import", encoding="utf-8")
+            (distribution / "video_export" / "marker.txt").write_text("old export", encoding="utf-8")
+            (distribution / "out" / "marker.txt").write_text("old output", encoding="utf-8")
             (distribution / ".gui" / "runtime_config.json").write_text("old gui", encoding="utf-8")
             (distribution / ".venv" / "marker.txt").write_text("old venv", encoding="utf-8")
 
             (archive_root / "scripts").mkdir(parents=True)
             (archive_root / "src").mkdir()
             (archive_root / "assets").mkdir()
-            (archive_root / "video_import").mkdir()
-            (archive_root / ".gui").mkdir()
-            (archive_root / ".venv").mkdir()
+            for directory in ("video_import", "video_export", "out", ".gui", ".venv", ".local"):
+                (archive_root / directory).mkdir()
             (archive_root / "README.md").write_text("new readme", encoding="utf-8")
             (archive_root / "src" / "app.py").write_text("new code", encoding="utf-8")
+            (archive_root / "VERSION").write_text("v0.2.0\n", encoding="utf-8")
             (archive_root / "assets" / "speaker_colors.json").write_text("new colors", encoding="utf-8")
-            (archive_root / "video_import" / "replace.txt").write_text("replace", encoding="utf-8")
+            (archive_root / "video_import" / "marker.txt").write_text("new import", encoding="utf-8")
+            (archive_root / "video_export" / "marker.txt").write_text("new export", encoding="utf-8")
+            (archive_root / "out" / "marker.txt").write_text("new output", encoding="utf-8")
             (archive_root / ".gui" / "runtime_config.json").write_text("new gui", encoding="utf-8")
             (archive_root / ".venv" / "marker.txt").write_text("new venv", encoding="utf-8")
+            (archive_root / ".local" / "user-state.json").write_text("new local", encoding="utf-8")
             (archive_root / "scripts" / "setup.ps1").write_text(
                 '$root = Split-Path -Parent $PSScriptRoot\n'
                 '[IO.File]::WriteAllText((Join-Path $root "setup-ran.txt"), "ok")\n',
@@ -510,42 +790,90 @@ class WindowsLauncherTests(unittest.TestCase):
             )
 
             zip_path = Path(shutil.make_archive(str(base / "latest"), "zip", root_dir=archive_parent))
-            result = subprocess.run(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(distribution / "scripts" / "update.ps1"),
-                    "-ArchiveUrl",
-                    str(zip_path),
-                ],
-                cwd=distribution,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            archive_bytes = zip_path.read_bytes()
+            requested_paths: list[str] = []
+
+            class ReleaseHandler(BaseHTTPRequestHandler):
+                def do_GET(self) -> None:
+                    requested_paths.append(self.path)
+                    if self.path == "/releases/latest":
+                        payload = json.dumps({"tag_name": "v0.2.0"}).encode("utf-8")
+                        content_type = "application/json"
+                    elif self.path == "/archive/refs/tags/v0.2.0.zip":
+                        payload = archive_bytes
+                        content_type = "application/zip"
+                    else:
+                        self.send_error(404)
+                        return
+
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+
+                def log_message(self, format: str, *args: object) -> None:
+                    pass
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), ReleaseHandler)
+            server_url = f"http://127.0.0.1:{server.server_address[1]}"
+            server_thread = Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            try:
+                result = self._run_update_script(
+                    powershell,
+                    distribution,
+                    "-ReleaseApiUrlOverride",
+                    f"{server_url}/releases/latest",
+                    "-ReleaseArchiveBaseUrlOverride",
+                    f"{server_url}/",
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                server_thread.join(timeout=5)
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                requested_paths,
+                ["/releases/latest", "/archive/refs/tags/v0.2.0.zip"],
+            )
+            self.assertIn("Resolved latest release: v0.2.0", result.stdout)
+            self.assertIn(f"Downloading ZIP distribution from {server_url}", result.stdout)
+            self.assertIn("Source version before update: v0.1.0", result.stdout)
+            self.assertIn("Source version after update: v0.2.0", result.stdout)
             self.assertEqual((distribution / "README.md").read_text(encoding="utf-8"), "new readme")
             self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "new code")
+            self.assertEqual((distribution / "VERSION").read_text(encoding="utf-8"), "v0.2.0\n")
             self.assertEqual((distribution / ".env").read_text(encoding="utf-8"), "keep me")
             self.assertFalse((distribution / "legacy.txt").exists())
-            self.assertEqual((distribution / "assets" / "speaker_colors.json").read_text(encoding="utf-8"), "old colors")
+            self.assertEqual(
+                (distribution / "assets" / "speaker_colors.json").read_text(encoding="utf-8"),
+                "old colors",
+            )
             self.assertEqual((distribution / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
             self.assertEqual((distribution / ".venv" / "marker.txt").read_text(encoding="utf-8"), "old venv")
-            self.assertTrue((distribution / "video_import" / "keep.mkv").is_file())
-            self.assertFalse((distribution / "video_import" / "replace.txt").exists())
+            self.assertEqual((distribution / ".local" / "user-state.json").read_text(encoding="utf-8"), "old local")
+            self.assertEqual((distribution / "video_import" / "marker.txt").read_text(encoding="utf-8"), "old import")
+            self.assertEqual((distribution / "video_export" / "marker.txt").read_text(encoding="utf-8"), "old export")
+            self.assertEqual((distribution / "out" / "marker.txt").read_text(encoding="utf-8"), "old output")
             self.assertEqual((distribution / "setup-ran.txt").read_text(encoding="utf-8"), "ok")
+
+            installed_manifest = json.loads(
+                (distribution / ".local" / "update-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("README.md", installed_manifest)
+            self.assertIn("VERSION", installed_manifest)
+            self.assertIn("scripts\\setup.ps1", installed_manifest)
+            self.assertNotIn(".gui\\runtime_config.json", installed_manifest)
 
             backups = list((distribution / ".local" / "update_backups").glob("*/README.md"))
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "old readme")
 
-    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_zip_update_rolls_back_when_setup_fails(self) -> None:
+        powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             distribution = base / "distribution"
@@ -555,10 +883,8 @@ class WindowsLauncherTests(unittest.TestCase):
             (distribution / "scripts").mkdir(parents=True)
             (distribution / "src").mkdir()
             (distribution / "assets").mkdir()
-            (distribution / "video_import").mkdir()
-            (distribution / ".gui").mkdir()
-            (distribution / ".venv").mkdir()
-            (distribution / ".local").mkdir()
+            for directory in ("video_import", "video_export", "out", ".gui", ".venv", ".local"):
+                (distribution / directory).mkdir()
             shutil.copy2(ROOT / "scripts" / "update.ps1", distribution / "scripts" / "update.ps1")
             (distribution / "README.md").write_text("old readme", encoding="utf-8")
             (distribution / "src" / "app.py").write_text("old code", encoding="utf-8")
@@ -568,8 +894,11 @@ class WindowsLauncherTests(unittest.TestCase):
                 '["README.md", "src/app.py", "legacy.txt"]\n',
                 encoding="utf-8",
             )
+            (distribution / ".local" / "user-state.json").write_text("old local", encoding="utf-8")
             (distribution / "assets" / "speaker_colors.json").write_text("old colors", encoding="utf-8")
-            (distribution / "video_import" / "keep.mkv").write_bytes(b"video")
+            (distribution / "video_import" / "marker.txt").write_text("old import", encoding="utf-8")
+            (distribution / "video_export" / "marker.txt").write_text("old export", encoding="utf-8")
+            (distribution / "out" / "marker.txt").write_text("old output", encoding="utf-8")
             (distribution / ".gui" / "runtime_config.json").write_text("old gui", encoding="utf-8")
             (distribution / ".venv" / "marker.txt").write_text("old venv", encoding="utf-8")
             (distribution / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
@@ -587,8 +916,10 @@ class WindowsLauncherTests(unittest.TestCase):
             zip_path = Path(shutil.make_archive(str(base / "latest"), "zip", root_dir=archive_parent))
             result = subprocess.run(
                 [
-                    "powershell.exe",
+                    powershell,
+                    "-NoLogo",
                     "-NoProfile",
+                    "-NonInteractive",
                     "-ExecutionPolicy",
                     "Bypass",
                     "-File",
@@ -601,6 +932,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=30,
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -615,7 +947,13 @@ class WindowsLauncherTests(unittest.TestCase):
                 (distribution / "assets" / "speaker_colors.json").read_text(encoding="utf-8"),
                 "old colors",
             )
-            self.assertTrue((distribution / "video_import" / "keep.mkv").is_file())
+            self.assertEqual((distribution / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((distribution / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
+            self.assertEqual((distribution / ".venv" / "marker.txt").read_text(encoding="utf-8"), "old venv")
+            self.assertEqual((distribution / ".local" / "user-state.json").read_text(encoding="utf-8"), "old local")
+            self.assertEqual((distribution / "video_import" / "marker.txt").read_text(encoding="utf-8"), "old import")
+            self.assertEqual((distribution / "video_export" / "marker.txt").read_text(encoding="utf-8"), "old export")
+            self.assertEqual((distribution / "out" / "marker.txt").read_text(encoding="utf-8"), "old output")
             self.assertFalse((distribution / "setup-ran.txt").exists())
 
             backups = list((distribution / ".local" / "update_backups").glob("*/README.md"))
@@ -641,74 +979,34 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertNotIn("\npython -m src.gui", readme)
         self.assertNotIn("\npython -m src.gui", usage)
 
-
-    def test_update_script_reports_version_before_and_after_zip_update(self) -> None:
-        script = (Path(__file__).resolve().parents[1] / "scripts" / "update.ps1").read_text(encoding="utf-8")
-
-        self.assertIn("Source version before update", script)
-        self.assertIn("Source version after update", script)
-        self.assertIn("$postUpdateVersion", script)
-        self.assertIn("Write-InstalledManifest", script)
-
-    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
-    def test_installer_helper_restarts_with_powershell_fallback(self) -> None:
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_applies_update_writes_result_and_restarts(self) -> None:
+        powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             install = base / "Subtitle Edit Bay"
-            (install / "scripts").mkdir(parents=True)
-            (install / "src").mkdir()
-            (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
-            (install / "scripts" / "launch.ps1").write_text("old launcher", encoding="utf-8")
-            (install / "src" / "app.py").write_text("old app", encoding="utf-8")
+            self._seed_installer_distribution(install)
             restart_marker = base / "restart-marker.txt"
-            escaped_marker = str(restart_marker).replace("'", "''")
+            restart_executable = install / "restart.cmd"
+            self._write_restart_command(restart_executable, restart_marker)
 
-            fake_script = base / "fake-installer.ps1"
-            fake_script.write_text(
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
                 "$root = (Get-Location).Path\n"
                 "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
-                f"$launcher = \"[IO.File]::WriteAllText('{escaped_marker}', 'started')\"\n"
-                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), $launcher)\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), 'new launcher')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\new.py'), 'new file')\n"
                 "exit 0\n",
-                encoding="utf-8",
-            )
-            fake_installer = base / "fake-installer.cmd"
-            fake_installer.write_text(
-                '@echo off\r\n'
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-installer.ps1" %*\r\n'
-                'exit /b %ERRORLEVEL%\r\n',
-                encoding="utf-8",
             )
             result_path = base / "update-result.json"
-            digest = hashlib.sha256(fake_installer.read_bytes()).hexdigest()
-            result = subprocess.run(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(ROOT / "scripts" / "apply_installer_update.ps1"),
-                    "-PackagePath",
-                    str(fake_installer),
-                    "-ParentPid",
-                    "-1",
-                    "-InstallRoot",
-                    str(install),
-                    "-RestartExecutable",
-                    str(install / "SubtitleEditBayLauncher.exe"),
-                    "-ExpectedVersion",
-                    "v9.9.9",
-                    "-ExpectedSha256",
-                    digest,
-                    "-ResultPath",
-                    str(result_path),
-                ],
-                cwd=install,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                restart_executable=restart_executable,
+                result_path=result_path,
             )
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -716,80 +1014,138 @@ class WindowsLauncherTests(unittest.TestCase):
             while not restart_marker.exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9", update_result)
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9")
+            self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "new launcher")
+            self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "new app")
+            self.assertEqual((install / "src" / "new.py").read_text(encoding="utf-8"), "new file")
+            self.assertEqual((install / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
             self.assertTrue(restart_marker.is_file(), update_result)
             self.assertEqual(update_result["status"], "success", update_result)
-            self.assertEqual(update_result["restart_mode"], "powershell", update_result)
+            self.assertEqual(update_result["old_version"], "v0.1.0", update_result)
+            self.assertEqual(update_result["new_version"], "v9.9.9", update_result)
+            self.assertEqual(update_result["restart_mode"], "native", update_result)
+            self.assertEqual(Path(update_result["log"]).resolve(), result_path.resolve())
 
-    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
-    def test_installer_helper_restores_snapshot_after_partial_failure(self) -> None:
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_rejects_checksum_before_starting_installer(self) -> None:
+        powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             install = base / "distribution"
-            (install / "scripts").mkdir(parents=True)
-            (install / "src").mkdir()
-            (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
-            (install / "scripts" / "launch.ps1").write_text("old launcher", encoding="utf-8")
-            (install / "src" / "app.py").write_text("old app", encoding="utf-8")
-            restart_executable = install / "SubtitleEditBayLauncher.exe"
-            restart_executable.write_bytes(b"old launcher binary")
+            self._seed_installer_distribution(install)
+            installer_marker = base / "installer-started.txt"
+            restart_marker = base / "restart-marker.txt"
+            restart_executable = install / "restart.cmd"
+            self._write_restart_command(restart_executable, restart_marker)
 
-            fake_script = base / "fake-installer.ps1"
-            fake_script.write_text(
-                "$root = (Get-Location).Path\n"
-                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
-                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), 'new launcher')\n"
-                "[IO.File]::WriteAllText((Join-Path $root 'src\\new.py'), 'new file')\n"
-                "exit 1\n",
-                encoding="utf-8",
-            )
+            escaped_marker = str(installer_marker).replace("%", "%%")
             fake_installer = base / "fake-installer.cmd"
             fake_installer.write_text(
-                '@echo off\r\n'
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-installer.ps1" %*\r\n'
-                'exit /b %ERRORLEVEL%\r\n',
+                f'@echo off\r\n> "{escaped_marker}" echo started\r\nexit /b 0\r\n',
                 encoding="utf-8",
             )
             result_path = base / "update-result.json"
-            digest = hashlib.sha256(fake_installer.read_bytes()).hexdigest()
-            result = subprocess.run(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(ROOT / "scripts" / "apply_installer_update.ps1"),
-                    "-PackagePath",
-                    str(fake_installer),
-                    "-ParentPid",
-                    "-1",
-                    "-InstallRoot",
-                    str(install),
-                    "-RestartExecutable",
-                    str(restart_executable),
-                    "-ExpectedVersion",
-                    "v9.9.9",
-                    "-ExpectedSha256",
-                    digest,
-                    "-ResultPath",
-                    str(result_path),
-                ],
-                cwd=install,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                restart_executable=restart_executable,
+                result_path=result_path,
+                expected_sha256="0" * 64,
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n", update_result)
+            self.assertFalse(installer_marker.exists(), update_result)
+            self.assertFalse(restart_marker.exists(), update_result)
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
+            self.assertNotEqual(update_result["status"], "success", update_result)
+            self.assertIn("checksum does not match", update_result["message"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_rolls_back_when_installed_version_mismatches(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            self._seed_installer_distribution(install)
+            restart_marker = base / "restart-marker.txt"
+            restart_executable = install / "restart.cmd"
+            self._write_restart_command(restart_executable, restart_marker)
+
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.8')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), 'new launcher')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\new.py'), 'new file')\n"
+                "exit 0\n",
+            )
+            result_path = base / "update-result.json"
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                restart_executable=restart_executable,
+                result_path=result_path,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertFalse(restart_marker.exists(), update_result)
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
             self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "old launcher")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertFalse((install / "src" / "new.py").exists())
+            self.assertEqual((install / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
             self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertTrue(update_result["rollback_restored"])
+            self.assertIn("does not match v9.9.9", update_result["message"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_restores_snapshot_after_partial_failure(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            self._seed_installer_distribution(install)
+            restart_marker = base / "restart-marker.txt"
+            restart_executable = install / "restart.cmd"
+            self._write_restart_command(restart_executable, restart_marker)
+
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), 'new launcher')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\new.py'), 'new file')\n"
+                "exit 1\n",
+            )
+            result_path = base / "update-result.json"
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                restart_executable=restart_executable,
+                result_path=result_path,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertFalse(restart_marker.exists(), update_result)
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "old launcher")
+            self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
+            self.assertFalse((install / "src" / "new.py").exists())
+            self.assertEqual((install / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
+            self.assertEqual(update_result["status"], "rollback", update_result)
+            self.assertTrue(update_result["rollback_restored"])
+            self.assertIn("Installer exited with code 1", update_result["message"])
 
 
 if __name__ == "__main__":

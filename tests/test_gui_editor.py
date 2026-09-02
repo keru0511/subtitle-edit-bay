@@ -3997,14 +3997,45 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         with patch.object(updater, "fetch_latest_release", return_value=self._fake_update_info()):
             self._click(window, check_button)
-            QTest.qWait(50)
-            while self.app._update_busy:
-                self.app.processEvents()
-                QTest.qWait(50)
+            self.gui.wait_until(
+                lambda: not self.app._update_busy,
+                description="update check completion",
+            )
 
         self.assertTrue(dialog.property("visible"))
         apply_button = self._quick_item(window, "applyUpdateButton")
         self.assertTrue(apply_button.property("visible"))
+
+        self.app._update_download_active = True
+        self.app._update_busy = True
+        self.app._update_download_bytes = 128
+        self.app._update_download_total = 256
+        self.app._update_download_cancel = threading.Event()
+        self.app.updateBusyChanged.emit()
+        self.app.updateDownloadProgressChanged.emit()
+        progress = self._quick_item(window, "updateDownloadProgressBar")
+        cancel = self._quick_item(window, "cancelUpdateDownloadButton")
+        self.gui.wait_until(
+            lambda: progress.isVisible() and cancel.isVisible(),
+            description="update download progress and cancel actions",
+        )
+        self.assertEqual(progress.property("value"), 128)
+        self.assertEqual(progress.property("to"), 256)
+        self._click(window, cancel)
+        self.assertTrue(self.app._update_download_cancel.is_set())
+
+        self.app._update_download_active = False
+        self.app._update_busy = False
+        self.app.updateBusyChanged.emit()
+        self.app.updateDownloadProgressChanged.emit()
+        self.app._update_package_ready = True
+        self.app.updatePackageReadyChanged.emit()
+        self.gui.wait_until(
+            lambda: apply_button.property("text") == "再起動して更新",
+            description="verified update package action",
+        )
+        self.app._update_package_ready = False
+        self.app.updatePackageReadyChanged.emit()
 
         with patch.object(self.app.process, "start"):
             self._click(window, apply_button)

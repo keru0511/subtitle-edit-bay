@@ -77,16 +77,27 @@ class CiTestGroupManifestTests(unittest.TestCase):
                     Path(temp_dir),
                 )
 
-    def test_windows_ffmpeg_rerun_uses_an_explicit_selector(self) -> None:
+    def test_windows_ffmpeg_reruns_use_explicit_selectors(self) -> None:
         groups = CI_TESTS.load_manifest()
 
         self.assertEqual(
             groups["windows-ffmpeg-runtime"]["selectors"],
             [
+                "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
+                "test_cpu_fallback_produces_compatible_h264_with_audio",
+                "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
+                "test_fixture_has_distinct_deterministic_time_bands",
+                "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
+                "test_line_count_override_changes_vertical_occupied_region",
+                "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
+                "test_manual_line_break_is_preserved_in_ass_and_rendered_pixels",
+                "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
+                "test_subtitle_pixels_follow_start_and_end_timing",
                 "tests.test_short_video_ass.ShortVideoRenderE2ETests."
                 "test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace"
             ],
         )
+        self.assertIn("test_media_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
 
     def test_test_case_method_selector_is_valid(self) -> None:

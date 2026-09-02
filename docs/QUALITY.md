@@ -142,6 +142,26 @@ executable re-resolution from the updated install root are owned by #260.
 PowerShell restart fallback removal and hidden-window behavior are owned by #257,
 and installer artifact inspection is owned by #262.
 
+## Media semantic E2E contracts
+
+Use `tests/media_test_utils.py` for deterministic, download-free lavfi fixtures,
+bounded FFmpeg/FFprobe execution, stream probing, RGB frame extraction, and
+region-level pixel comparison. Keep this helper outside the `test_*.py` discovery
+pattern. The owning test module belongs to `ffmpeg-runtime`; explicitly selected
+representative cases are rerun by `windows-ffmpeg-runtime`.
+
+Subtitle burn-in tests compare a rendered output with a no-dialogue control at the
+same timestamp. For the 30 fps fixture, timing checks use a one-frame allowance
+plus 20 ms of mux tolerance and sample on both sides of the start and end
+boundaries. Manual line breaks must appear as `\N` in ASS and increase the
+vertical occupied pixel region; file existence and ASS text alone are not enough.
+
+CPU fallback tests inject only the probed NVENC capability. They pass the codec
+returned by the production automatic-selection boundary into the real render,
+then inspect the output codec, pixel format, duration, faststart layout, and audio
+stream. Do not mock the FFmpeg encode or treat a permanently GPU-less runner as
+the fallback condition.
+
 Run the release workflow contract tests directly:
 
 ```powershell

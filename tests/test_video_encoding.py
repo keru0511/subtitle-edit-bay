@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from src.video_encoding import build_video_encoding_args
+from src.video_encoding import build_video_encoding_args, select_automatic_video_codec
 
 
 class VideoEncodingTests(unittest.TestCase):
+    def test_select_automatic_video_codec_uses_nvenc_capability(self) -> None:
+        self.assertEqual(select_automatic_video_codec(nvenc_available=True), "h264_nvenc")
+        self.assertEqual(select_automatic_video_codec(nvenc_available=False), "libx264")
+
     def test_build_video_encoding_args_libx264(self) -> None:
         args = build_video_encoding_args("libx264", x264_crf=23)
         self.assertEqual(args, ["-preset", "medium", "-crf", "23", "-profile:v", "high"])

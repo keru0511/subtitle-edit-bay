@@ -11,7 +11,6 @@ from pathlib import Path
 from src.burn_subs import run_ffmpeg_burn
 from src.silence_cut import cut_media_ranges
 from src.subtitle_project import create_project, save_project
-from src.subtitle_workflow import build_project_ass
 from src.subtitle_workflow_transcription import _extract_video_audio_track
 from src.transcribe import probe_audio_streams
 
@@ -117,48 +116,6 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
         self.assertTrue(mdat_offsets, "output missing mdat atom")
         self.assertLess(moov_offsets[0], mdat_offsets[0])
 
-    def test_ffmpeg_burns_ass_subtitles_on_real_media(self) -> None:
-        if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
-            self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            video = self._make_video(root / "input.mp4")
-            subtitle = root / "caption.ass"
-            subtitle.write_text(
-                "\n".join([
-                    "[Script Info]",
-                    "ScriptType: v4.00+",
-                    "PlayResX: 320",
-                    "PlayResY: 180",
-                    "",
-                    "[V4+ Styles]",
-                    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-                    "Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1",
-                    "",
-                    "[Events]",
-                    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-                    "Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,smoke subtitle",
-                    "",
-                ]),
-                encoding="utf-8",
-            )
-            output = root / "burned.mp4"
-
-            result = run_ffmpeg_burn(
-                str(video),
-                str(subtitle),
-                str(output),
-                video_codec="libx264",
-                audio_codec="aac",
-            )
-
-            self.assertEqual(result, output)
-            self.assertTrue(output.is_file())
-            self.assertGreater(output.stat().st_size, 0)
-            self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
-            self._assert_faststart_moov_before_mdat(output)
-
     def test_long_cut_media_ranges_preserves_video_audio_and_resolution(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
             self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
@@ -247,44 +204,6 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             self.assertTrue(path1.exists())
             self.assertTrue(path2.exists())
             self.assertEqual(path1, _extract_video_audio_track(str(video1), "0:a:0", transcript_dir))
-
-    def test_burn_subtitles_renders_line_count_and_literal_backslash_n(self) -> None:
-        if os.environ.get("RUN_FFMPEG_SMOKE") != "1":
-            self.skipTest("set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg media processing")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            video = self._make_video(root / "game.mp4", duration=1.0)
-            project = create_project(
-                video_path=video,
-                output_dir=root,
-                segments=[
-                    {
-                        "start": 0.0,
-                        "end": 0.5,
-                        "text": "first\\nsecond",
-                        "speaker": "Oz",
-                        "max_width": 24,
-                    },
-                    {
-                        "start": 0.5,
-                        "end": 1.0,
-                        "text": "alpha beta gamma delta",
-                        "speaker": "Oz",
-                        "max_width": 8,
-                        "subtitle_line_count": "2",
-                    },
-                ],
-            )
-            project_path = save_project(root / "game.subtitle-project.json", project)
-            ass_path = build_project_ass(project_path)
-            output = root / "burned.mp4"
-
-            run_ffmpeg_burn(str(video), str(ass_path), str(output), audio_codec="aac")
-
-            self.assertTrue(output.is_file())
-            self.assertGreater(output.stat().st_size, 0)
-            self.assertGreaterEqual(len(probe_audio_streams(str(output))), 1)
 
     def test_qt_multimedia_can_play_generated_video(self) -> None:
         if os.environ.get("RUN_QT_MEDIA_SMOKE") != "1":

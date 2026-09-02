@@ -30,8 +30,8 @@ Windowsの `Main.qml` 起動スモークは、テストモジュールとは別�
 
 別OSでも同じモジュールの特定ケースだけ再実行する必要がある場合は、対象グループの
 `selectors` に完全なunittest名を登録します。現在は、クロスプラットフォームの
-`test_short_video_ass` をLinuxで所有しつつ、Windows固有のUnicodeパスと
-FFmpegフィルタースクリプトのケースだけを `windows-ffmpeg-runtime` で明示的に再実行します。
+media semantic E2EをLinuxの `ffmpeg-runtime` で所有しつつ、字幕描画・CPU fallbackの
+代表ケースと、Windows固有のUnicodeパスを `windows-ffmpeg-runtime` で明示的に再実行します。
 selectorは `tests.test_module.TestCaseClass.test_method` 形式の標準unittest名にします。
 モジュール直下の `test_*` 関数は標準discoveryで収集されないため許可しません。
 

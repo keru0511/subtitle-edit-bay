@@ -118,6 +118,24 @@ gates. Product-EXE presence and removal of the PowerShell fallback are owned by
 owned by #262. Do not preserve a future-obsolete fallback with a positive source
 marker while those artifact contracts are pending.
 
+## Windows updater test contracts
+
+Test updater behavior by running the real BAT or PowerShell entrypoint against a
+temporary distribution tree. Assert installer start or non-start, exit result,
+installed version and files, preserved user data, recovery state, structured
+result, and restart marker. Positive source markers for PowerShell commands,
+function names, and log messages do not count as behavior coverage. Windows-only
+updater behavior belongs to the required `windows-launcher-runtime` CI group;
+Linux skips do not count as coverage. A missing required shell on Windows is a
+test failure, not a skip.
+
+The focused prohibition against `git reset --hard` remains a source-level data
+loss guard. End-to-end Git update transaction coverage, parent process-tree and
+file-lock release, atomic application/runtime rollback, old-version restart after
+rollback, and restart executable re-resolution from the updated install root are
+owned by #260. PowerShell restart fallback removal is owned by #257, and installer
+artifact inspection is owned by #262.
+
 Run the release workflow contract tests directly:
 
 ```powershell

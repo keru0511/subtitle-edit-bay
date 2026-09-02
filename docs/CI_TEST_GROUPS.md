@@ -10,7 +10,7 @@
 | `portable-unit` | Ubuntu | OSや実ランタイムに依存しないロジック、モデル、設定、モックを使うプロセステスト |
 | `qt-gui` | Ubuntu（offscreen） | クロスプラットフォームのQt/QML、GUI状態、音声ミキサーのテスト |
 | `ffmpeg-runtime` | Ubuntu | 実際のFFmpeg/FFprobe/libassを使うクロスプラットフォームのメディアテスト |
-| `windows-runtime` | Windows | 更新処理、Windows上のQProcess、更新ヘルパーの暫定的な静的契約を検証するテスト |
+| `windows-runtime` | Windows | 更新管理ロジックとWindows上のQProcessを検証するテスト |
 | `windows-launcher-runtime` | Windows | Python外の依存を追加せず、PowerShell・BAT・インストーラー更新経路を実プロセスと実ファイルシステムで検証するテスト |
 | `windows-ffmpeg-runtime` | Windows | Windows版FFmpeg、Qt Multimedia、GUI音声ミキサーを実際に動かすスモークテスト |
 | `ffmpeg6-compat` | Windows | 固定したFFmpeg 6.1.1でフィルタースクリプト互換性を検証するテスト |

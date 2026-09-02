@@ -7,13 +7,21 @@ import sys
 import tempfile
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    def _require_windows_git(self) -> str:
+        executable = shutil.which("git.exe")
+        if executable:
+            return str(Path(executable).resolve())
+        self.fail("Git for Windows is required")
+
     def _require_windows_powershell(self) -> str:
         candidates: list[Path] = []
         system_root = os.environ.get("SystemRoot")
@@ -104,6 +112,89 @@ class WindowsLauncherTests(unittest.TestCase):
             f'@echo off\r\n> "{escaped_marker}" echo started\r\nexit /b 0\r\n',
             encoding="utf-8",
         )
+
+    def _run_git(self, git: str, *arguments: str | Path, cwd: Path) -> str:
+        result = subprocess.run(
+            [git, *(str(argument) for argument in arguments)],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout.strip()
+
+    def _run_update_script(
+        self,
+        powershell: str,
+        distribution: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(distribution / "scripts" / "update.ps1"),
+                *arguments,
+            ],
+            cwd=distribution,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+
+    def _write_git_distribution_version(self, source: Path, version: str, app_content: str) -> None:
+        (source / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+        (source / "src" / "app.py").write_text(app_content, encoding="utf-8")
+        (source / "scripts" / "setup.ps1").write_text(
+            "$root = Split-Path -Parent $PSScriptRoot\n"
+            f"[IO.File]::WriteAllText((Join-Path $root 'setup-ran.txt'), '{version}')\n",
+            encoding="utf-8",
+        )
+
+    def _create_git_update_fixture(self, base: Path, git: str) -> tuple[Path, Path]:
+        remote = base / "remote.git"
+        source = base / "upstream source"
+        distribution = base / "Subtitle Edit Bay"
+
+        self._run_git(git, "init", "--bare", "--initial-branch=main", remote, cwd=base)
+        self._run_git(git, "init", "--initial-branch=main", source, cwd=base)
+        self._run_git(git, "config", "user.name", "Updater Test", cwd=source)
+        self._run_git(git, "config", "user.email", "updater@example.invalid", cwd=source)
+        (source / "scripts").mkdir()
+        (source / "src").mkdir()
+        shutil.copy2(ROOT / "scripts" / "update.ps1", source / "scripts" / "update.ps1")
+        self._write_git_distribution_version(source, "v0.1.0", "old app")
+        self._run_git(git, "add", ".", cwd=source)
+        self._run_git(git, "commit", "-m", "initial", cwd=source)
+        self._run_git(git, "remote", "add", "origin", remote, cwd=source)
+        self._run_git(git, "push", "--set-upstream", "origin", "main", cwd=source)
+        self._run_git(git, "clone", "--branch", "main", remote, distribution, cwd=base)
+        self._run_git(git, "config", "user.name", "Updater Test", cwd=distribution)
+        self._run_git(git, "config", "user.email", "updater@example.invalid", cwd=distribution)
+        return source, distribution
+
+    def _push_git_distribution_version(
+        self,
+        source: Path,
+        git: str,
+        version: str,
+        app_content: str,
+    ) -> str:
+        self._write_git_distribution_version(source, version, app_content)
+        self._run_git(git, "add", ".", cwd=source)
+        self._run_git(git, "commit", "-m", f"release {version}", cwd=source)
+        self._run_git(git, "push", "origin", "main", cwd=source)
+        return self._run_git(git, "rev-parse", "HEAD", cwd=source)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_start_batch_runs_launch_script_from_distribution_root(self) -> None:
@@ -563,13 +654,90 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertEqual(Path(payload["working_directory"]).resolve(), distribution.resolve())
             self.assertEqual(Path(payload["script_root"]).resolve(), scripts.resolve())
 
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_git_update_fast_forwards_and_preserves_untracked_data(self) -> None:
+        powershell = self._require_windows_powershell()
+        git = self._require_windows_git()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            source, distribution = self._create_git_update_fixture(base, git)
+            remote_head = self._push_git_distribution_version(source, git, "v0.2.0", "new app")
+
+            (distribution / ".gui").mkdir()
+            (distribution / "video_import").mkdir()
+            (distribution / ".gui" / "runtime_config.json").write_text("local gui", encoding="utf-8")
+            (distribution / "video_import" / "source.mkv").write_bytes(b"local video")
+            (distribution / "project-state.json").write_text("local project", encoding="utf-8")
+
+            result = self._run_update_script(powershell, distribution)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Source version before update: v0.1.0", result.stdout)
+            self.assertIn("Source version: v0.1.0 -> v0.2.0", result.stdout)
+            self.assertEqual(self._run_git(git, "rev-parse", "HEAD", cwd=distribution), remote_head)
+            self.assertEqual((distribution / "VERSION").read_text(encoding="utf-8"), "v0.2.0\n")
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "new app")
+            self.assertEqual((distribution / "setup-ran.txt").read_text(encoding="utf-8"), "v0.2.0")
+            self.assertEqual(
+                (distribution / ".gui" / "runtime_config.json").read_text(encoding="utf-8"),
+                "local gui",
+            )
+            self.assertEqual((distribution / "video_import" / "source.mkv").read_bytes(), b"local video")
+            self.assertEqual((distribution / "project-state.json").read_text(encoding="utf-8"), "local project")
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_git_update_rejects_tracked_worktree_changes(self) -> None:
+        powershell = self._require_windows_powershell()
+        git = self._require_windows_git()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            _, distribution = self._create_git_update_fixture(base, git)
+            initial_head = self._run_git(git, "rev-parse", "HEAD", cwd=distribution)
+            (distribution / "src" / "app.py").write_text("local edit", encoding="utf-8")
+
+            result = self._run_update_script(powershell, distribution)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Tracked files have local changes", result.stdout + result.stderr)
+            self.assertEqual(self._run_git(git, "rev-parse", "HEAD", cwd=distribution), initial_head)
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "local edit")
+            self.assertFalse((distribution / "setup-ran.txt").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_git_update_rejects_non_fast_forward_history(self) -> None:
+        powershell = self._require_windows_powershell()
+        git = self._require_windows_git()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            source, distribution = self._create_git_update_fixture(base, git)
+            self._run_git(git, "config", "pull.rebase", "true", cwd=distribution)
+            (distribution / "local-only.txt").write_text("local commit", encoding="utf-8")
+            self._run_git(git, "add", "local-only.txt", cwd=distribution)
+            self._run_git(git, "commit", "-m", "local commit", cwd=distribution)
+            local_head = self._run_git(git, "rev-parse", "HEAD", cwd=distribution)
+            (source / "remote-only.txt").write_text("remote commit", encoding="utf-8")
+            self._push_git_distribution_version(source, git, "v0.2.0", "new app")
+
+            result = self._run_update_script(powershell, distribution)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("git pull failed", result.stdout + result.stderr)
+            self.assertEqual(self._run_git(git, "rev-parse", "HEAD", cwd=distribution), local_head)
+            self.assertEqual((distribution / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "old app")
+            self.assertFalse((distribution / "remote-only.txt").exists())
+            self.assertFalse((distribution / "setup-ran.txt").exists())
+
     def test_git_update_never_uses_destructive_reset(self) -> None:
         updater = (ROOT / "scripts" / "update.ps1").read_text(encoding="utf-8")
 
         self.assertNotIn("reset --hard", updater)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
-    def test_zip_update_preserves_local_data_and_runs_new_setup(self) -> None:
+    def test_zip_release_update_downloads_and_preserves_local_data(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -622,28 +790,56 @@ class WindowsLauncherTests(unittest.TestCase):
             )
 
             zip_path = Path(shutil.make_archive(str(base / "latest"), "zip", root_dir=archive_parent))
-            result = subprocess.run(
-                [
+            archive_bytes = zip_path.read_bytes()
+            requested_paths: list[str] = []
+
+            class ReleaseHandler(BaseHTTPRequestHandler):
+                def do_GET(self) -> None:
+                    requested_paths.append(self.path)
+                    if self.path == "/releases/latest":
+                        payload = json.dumps({"tag_name": "v0.2.0"}).encode("utf-8")
+                        content_type = "application/json"
+                    elif self.path == "/archive/refs/tags/v0.2.0.zip":
+                        payload = archive_bytes
+                        content_type = "application/zip"
+                    else:
+                        self.send_error(404)
+                        return
+
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+
+                def log_message(self, format: str, *args: object) -> None:
+                    pass
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), ReleaseHandler)
+            server_url = f"http://127.0.0.1:{server.server_address[1]}"
+            server_thread = Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            try:
+                result = self._run_update_script(
                     powershell,
-                    "-NoLogo",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(distribution / "scripts" / "update.ps1"),
-                    "-ArchiveUrl",
-                    str(zip_path),
-                ],
-                cwd=distribution,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-            )
+                    distribution,
+                    "-ReleaseApiUrlOverride",
+                    f"{server_url}/releases/latest",
+                    "-ReleaseArchiveBaseUrlOverride",
+                    f"{server_url}/",
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                server_thread.join(timeout=5)
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                requested_paths,
+                ["/releases/latest", "/archive/refs/tags/v0.2.0.zip"],
+            )
+            self.assertIn("Resolved latest release: v0.2.0", result.stdout)
+            self.assertIn(f"Downloading ZIP distribution from {server_url}", result.stdout)
             self.assertIn("Source version before update: v0.1.0", result.stdout)
             self.assertIn("Source version after update: v0.2.0", result.stdout)
             self.assertEqual((distribution / "README.md").read_text(encoding="utf-8"), "new readme")

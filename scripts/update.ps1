@@ -1,5 +1,7 @@
 ﻿param(
-    [string]$ArchiveUrl = ""
+    [string]$ArchiveUrl = "",
+    [string]$ReleaseApiUrlOverride = "",
+    [string]$ReleaseArchiveBaseUrlOverride = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,7 +11,18 @@ Set-Location $projectRoot
 
 $releaseRepoOwner = "keru0511"
 $releaseRepoName = "subtitle-edit-bay"
-$releaseApiUrl = "https://api.github.com/repos/$releaseRepoOwner/$releaseRepoName/releases/latest"
+$releaseApiUrl = if ([string]::IsNullOrWhiteSpace($ReleaseApiUrlOverride)) {
+    "https://api.github.com/repos/$releaseRepoOwner/$releaseRepoName/releases/latest"
+}
+else {
+    $ReleaseApiUrlOverride
+}
+$releaseArchiveBaseUrl = if ([string]::IsNullOrWhiteSpace($ReleaseArchiveBaseUrlOverride)) {
+    "https://github.com/$releaseRepoOwner/$releaseRepoName"
+}
+else {
+    $ReleaseArchiveBaseUrlOverride.TrimEnd([char[]] "/")
+}
 
 $preservedTopLevel = @(
     ".git",
@@ -119,7 +132,7 @@ function Get-LatestReleaseInfo {
 function Get-ReleaseArchiveUrl {
     param([Parameter(Mandatory = $true)][string]$TagName)
 
-    return "https://github.com/$releaseRepoOwner/$releaseRepoName/archive/refs/tags/$TagName.zip"
+    return "$releaseArchiveBaseUrl/archive/refs/tags/$TagName.zip"
 }
 
 function Get-ApplicationVersion {

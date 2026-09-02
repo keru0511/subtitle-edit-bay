@@ -129,12 +129,18 @@ updater behavior belongs to the required `windows-launcher-runtime` CI group;
 Linux skips do not count as coverage. A missing required shell on Windows is a
 test failure, not a skip.
 
-The focused prohibition against `git reset --hard` remains a source-level data
-loss guard. End-to-end Git update transaction coverage, parent process-tree and
-file-lock release, atomic application/runtime rollback, old-version restart after
-rollback, and restart executable re-resolution from the updated install root are
-owned by #260. PowerShell restart fallback removal is owned by #257, and installer
-artifact inspection is owned by #262.
+Git checkout tests use a temporary bare repository to verify fast-forward-only
+updates, tracked-change rejection, setup execution, and untracked-data
+preservation. ZIP release tests use a loopback HTTP server and URL dependency
+injection to exercise release metadata resolution and archive download without
+external network access. The focused prohibition against `git reset --hard`
+remains a source-level data-loss guard.
+
+Installer-only parent process-tree and file-lock release, atomic
+application/runtime rollback, old-version restart after rollback, and restart
+executable re-resolution from the updated install root are owned by #260.
+PowerShell restart fallback removal and hidden-window behavior are owned by #257,
+and installer artifact inspection is owned by #262.
 
 Run the release workflow contract tests directly:
 

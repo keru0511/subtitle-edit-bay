@@ -14,13 +14,65 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
-    def test_start_delegates_to_cuda_aware_launcher(self) -> None:
-        launcher = (ROOT / "start.bat").read_text(encoding="utf-8")
+    def _require_windows_powershell(self) -> str:
+        candidates: list[Path] = []
+        system_root = os.environ.get("SystemRoot")
+        if system_root:
+            candidates.extend(
+                [
+                    Path(system_root) / "Sysnative" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+                    Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+                ]
+            )
+        path_executable = shutil.which("powershell.exe")
+        if path_executable:
+            candidates.append(Path(path_executable))
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate.resolve())
+        self.fail("Windows PowerShell is required")
 
-        self.assertIn(r"scripts\launch.ps1", launcher)
-        self.assertIn(r"installer\launch.ps1", launcher)
-        self.assertIn(r"Sysnative\WindowsPowerShell\v1.0\powershell.exe", launcher)
-        self.assertNotIn("-m src.gui", launcher)
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_start_batch_runs_launch_script_from_distribution_root(self) -> None:
+        command_prompt = os.environ.get("COMSPEC") or shutil.which("cmd.exe")
+        self.assertTrue(command_prompt, "Windows command prompt is required")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            distribution = base / "Subtitle Edit Bay"
+            scripts = distribution / "scripts"
+            scripts.mkdir(parents=True)
+            outside = base / "unrelated working directory"
+            outside.mkdir()
+            shutil.copy2(ROOT / "start.bat", distribution / "start.bat")
+
+            marker = base / "launch-result.json"
+            escaped_marker = str(marker).replace("'", "''")
+            (scripts / "launch.ps1").write_text(
+                "$payload = [ordered]@{\n"
+                "    working_directory = (Get-Location).Path\n"
+                "    script_root = $PSScriptRoot\n"
+                "} | ConvertTo-Json -Compress\n"
+                f"[IO.File]::WriteAllText('{escaped_marker}', $payload)\n"
+                "exit 23\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [str(command_prompt), "/d", "/c", str(distribution / "start.bat")],
+                cwd=outside,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+
+            self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+            self.assertTrue(marker.is_file(), result.stdout + result.stderr)
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            self.assertEqual(Path(payload["working_directory"]).resolve(), distribution.resolve())
+            self.assertEqual(Path(payload["script_root"]).resolve(), scripts.resolve())
 
     def test_setup_uses_module_pip_and_winget_fallbacks(self) -> None:
         launcher = (ROOT / "setup.bat").read_text(encoding="utf-8")
@@ -52,9 +104,9 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
 
-    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
-        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
+        powershell = self._require_windows_powershell()
         launch_script = ROOT / "installer" / "launch.ps1"
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -100,13 +152,18 @@ class WindowsLauncherTests(unittest.TestCase):
             config_path.write_text(json.dumps({"shared": {"device": "cpu"}}), encoding="utf-8")
             self.assertEqual(probe(unavailable_python), "false")
 
-    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
-    def test_installer_launcher_routes_setup_and_gui_without_starting_both(self) -> None:
-        powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
-        launch_script = ROOT / "installer" / "launch.ps1"
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installed_launcher_resolves_root_and_routes_setup_or_gui_exclusively(self) -> None:
+        powershell = self._require_windows_powershell()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "Subtitle Edit Bay"
+            scripts = root / "scripts"
+            scripts.mkdir(parents=True)
+            launch_script = scripts / "launch.ps1"
+            shutil.copy2(ROOT / "installer" / "launch.ps1", launch_script)
+            outside = Path(temp_dir) / "unrelated working directory"
+            outside.mkdir()
             config_path = root / ".gui" / "runtime_config.json"
             config_path.parent.mkdir(parents=True)
             (root / "assets").mkdir()
@@ -131,7 +188,9 @@ class WindowsLauncherTests(unittest.TestCase):
             environment = {key: value for key, value in os.environ.items() if key.lower() != "path"}
             environment["Path"] = inherited_path
 
-            def run_launcher(*, device: str, python: Path, pythonw: Path = gui, use_default_config: bool = False) -> None:
+            def run_launcher(
+                *, device: str, python: Path, pythonw: Path = gui, use_default_config: bool = False
+            ) -> None:
                 setup_marker.unlink(missing_ok=True)
                 gui_marker.unlink(missing_ok=True)
                 if use_default_config:
@@ -154,8 +213,6 @@ class WindowsLauncherTests(unittest.TestCase):
                         "-File",
                         str(launch_script),
                         "-SuppressMessages",
-                        "-ProjectRootOverride",
-                        str(root),
                         "-PythonOverride",
                         str(python),
                         "-PythonwOverride",
@@ -165,7 +222,7 @@ class WindowsLauncherTests(unittest.TestCase):
                         "-LogDirectoryOverride",
                         str(logs),
                     ],
-                    cwd=ROOT,
+                    cwd=outside,
                     env=environment,
                     capture_output=True,
                     text=True,
@@ -209,6 +266,20 @@ class WindowsLauncherTests(unittest.TestCase):
                 time.sleep(0.05)
             self.assertTrue(setup_marker.is_file())
             self.assertFalse(gui_marker.exists())
+
+            (root / "src" / "gui.py").write_text(
+                "import sys\n"
+                'sys.stderr.write("synthetic GUI child failure\\n")\n'
+                "raise SystemExit(23)\n",
+                encoding="utf-8",
+            )
+            run_launcher(device="cpu", python=unavailable_python)
+            self.assertFalse(setup_marker.exists())
+            self.assertFalse(gui_marker.exists())
+            self.assertIn(
+                "synthetic GUI child failure",
+                (logs / "latest-launch-error.log").read_text(encoding="utf-8", errors="replace"),
+            )
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
     def test_setup_gpu_probe_searches_sysnative_and_system32_paths(self) -> None:

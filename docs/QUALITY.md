@@ -102,6 +102,22 @@ Future UI behavior tests are owned by the feature that introduces the behavior:
 Each feature pull request adds its behavior tests with the implementation. Do not
 add permanently skipped tests or contracts for components that do not exist yet.
 
+## Windows launcher test contracts
+
+Test BAT and PowerShell launcher routing by starting the real entrypoint against a
+temporary distribution tree. Assert the resolved install root, exclusive GUI or
+repair child process, exit result, and diagnostic file instead of requiring C API
+names or PowerShell function names to remain in source files. Windows-only
+launcher behavior belongs to the required `windows-launcher-runtime` CI group;
+Linux skips do not count as coverage. A missing required shell on Windows is a
+test failure, not a skip.
+
+Native launcher and installer artifact requirements belong to their release
+gates. Product-EXE presence and removal of the PowerShell fallback are owned by
+#257. PE subsystem, architecture, imports, resources, and signing inspection are
+owned by #262. Do not preserve a future-obsolete fallback with a positive source
+marker while those artifact contracts are pending.
+
 Run the release workflow contract tests directly:
 
 ```powershell

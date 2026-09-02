@@ -124,7 +124,6 @@
     },
     "windows-runtime": {
       "modules": [
-        "test_launcher_contract",
         "test_qprocess_launcher",
         "test_update_contract",
         "test_update_manager",

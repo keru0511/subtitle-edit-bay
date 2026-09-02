@@ -33,6 +33,7 @@ from src import updater
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
+from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -205,6 +206,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_shared_backend_session_resets_state_before_each_test(self) -> None:
         first_root = self.root
+        base_config = deepcopy(self.app._config)
+        base_transcription_context = deepcopy(self.app.transcriptionContext)
+        base_codex_session_snapshot = self.app._codex_session.snapshot
         self.app._project = {
             "segments": [
                 {
@@ -220,6 +224,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._active_job = "leaked-job"
         self.app._highlight_candidates = [{"id": "leaked-highlight"}]
         self.app._update_busy = True
+        self.app._config = {"leaked": True}
+        self.app._transcription_context = {
+            **base_transcription_context,
+            "game_title": "leaked-game",
+        }
+        codex_stop_event = threading.Event()
+        leaked_codex_thread = threading.Thread(
+            target=codex_stop_event.wait,
+            name="leaked-codex-edit-session",
+            daemon=True,
+        )
+        self.app._codex_session._stop_event = codex_stop_event
+        self.app._codex_session._snapshot = CodexSessionSnapshot(state="running")
+        self.app._codex_session._thread = leaked_codex_thread
+        leaked_codex_thread.start()
         self.app._codex_chat._snapshot = CodexChatSnapshot(
             connection_state="ready",
             auth_state="authenticated",
@@ -237,6 +256,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._active_job, "")
         self.assertEqual(self.app._highlight_candidates, [])
         self.assertFalse(self.app._update_busy)
+        self.assertEqual(self.app._config, base_config)
+        self.assertEqual(self.app.transcriptionContext, base_transcription_context)
+        self.assertFalse(leaked_codex_thread.is_alive())
+        self.assertEqual(self.app._codex_session.snapshot, base_codex_session_snapshot)
         self.assertEqual(self.app._codex_chat.snapshot.auth_state, "unknown")
         self.assertEqual(self.app._codex_chat.snapshot.messages, ())
         self.assertFalse(self.app.autosave_timer.isActive())

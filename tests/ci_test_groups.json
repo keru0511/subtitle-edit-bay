@@ -103,11 +103,7 @@
       "modules": [
         "test_gui_editor",
         "test_gui_test_harness",
-        "test_qml_context_action_bar",
         "test_qml_static",
-        "test_qml_subtitle_line_count_panel",
-        "test_qml_transcription_context_panel",
-        "test_qml_transcription_context_wiring",
         "test_realtime_audio_mixer"
       ],
       "selectors": []

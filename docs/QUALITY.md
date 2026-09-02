@@ -72,6 +72,36 @@ Only allow a known message with `AllowedQmlMessage`, including a specific reason
 the harness deliberately ignores unrelated Qt backend noise when applying that
 policy.
 
+## QML test contracts
+
+QML source assertions are limited to contracts that cannot be expressed more
+reliably through a loaded UI. Keep `qmllint`, security prohibitions, exact copy
+that is itself a product requirement, importability, public component existence,
+and stable `objectName` values required by the GUI harness. Test user actions,
+visibility, enabled state, layout bounds, backend state, and saved project state by
+loading `Main.qml` through the GUI harness.
+
+Do not assert internal binding expressions, component placement, fixed pixel
+values, or the count and order of current layout elements. These details may
+change without changing the product contract. When a static behavior assertion is
+removed, identify its replacement behavior test or owning feature Issue in the
+pull request.
+
+Future UI behavior tests are owned by the feature that introduces the behavior:
+
+| Behavior | Owning Issue |
+|---|---|
+| Codex sidebar authentication and persistence | #249 |
+| Shared preview, edit modes, and playhead | #273 |
+| Subtitle and volume modes | #274 |
+| Cut mode and time mapping | #254 |
+| Separate short-video workspace | #275 |
+| Transcription and render actions | #276 |
+| Project-first start screen | #277 |
+
+Each feature pull request adds its behavior tests with the implementation. Do not
+add permanently skipped tests or contracts for components that do not exist yet.
+
 Run the release workflow contract tests directly:
 
 ```powershell

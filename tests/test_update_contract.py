@@ -29,17 +29,5 @@ class UpdateContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, helper)
 
-    def test_gui_update_dialog_has_download_progress_cancel_and_restart_actions(self) -> None:
-        qml = (ROOT / "src" / "ui" / "screens" / "MainWorkflowScreen.qml").read_text(encoding="utf-8")
-
-        for marker in (
-            "updateDownloadProgressBar",
-            "cancelUpdateDownloadButton",
-            "再起動して更新",
-            "updateDownloadActive",
-        ):
-            self.assertIn(marker, qml)
-
-
 if __name__ == "__main__":
     unittest.main()

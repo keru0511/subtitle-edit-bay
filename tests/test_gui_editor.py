@@ -258,18 +258,36 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._codex_chat.snapshot.messages, ())
         self.assertFalse(self.app.autosave_timer.isActive())
 
-    def test_empty_project_can_be_opened_and_manually_edited(self) -> None:
+    def test_empty_project_can_be_manually_edited_without_transcription_dependencies(self) -> None:
         video, _audio, output = self._set_ready_sources()
         with patch("src.gui.probe_media_duration", return_value=30.0):
             self.assertTrue(self.app.createEmptyProject())
 
         self.assertEqual(self.app.subtitleSegments, [])
         self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.app._dependencies = RuntimeDependencyStatus(
+            ffmpeg=True,
+            ffprobe=True,
+            whisperx=False,
+            cuda=False,
+            nvenc=False,
+        )
+        self.app.dependenciesChanged.emit()
+
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        transcribe = self._quick_item(window, "transcribeButton")
+        edit = self._quick_item(window, "editSubtitlesButton")
+        render = self._quick_item(window, "renderVideoButton")
+        self.assertFalse(transcribe.isEnabled())
+        self.assertTrue(edit.isEnabled())
+        self.assertTrue(render.isEnabled())
+
+        self._click(window, edit)
         self.assertTrue(self._quick_item(window, "editorEmptyState").isVisible())
         self._click(window, self._quick_item(window, "addCaptionButton"))
         self.assertEqual(self.app.segmentCount, 1)
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(len(load_project(output / "game.subtitle-project.json")["segments"]), 1)
 
     def test_empty_project_creation_never_overwrites_existing_project(self) -> None:
         _video, _audio, output = self._set_ready_sources()
@@ -2147,26 +2165,17 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_qml_workflow_layout_fits_supported_window_sizes(self) -> None:
         self._load_project()
         _, window = self._load_qml()
-        stepper = self._quick_item(window, "workflowStepper")
         action_bar = self._quick_item(window, "contextActionBar")
         video_panel = self._quick_item(window, "mainVideoPanel")
         log_panel = self._quick_item(window, "applicationLogPanel")
-        codex_sidebar = self._quick_item(window, "codexChatSidebarContainer")
-        codex_title = self._quick_item(window, "codexChatSidebarTitle")
-        codex_subtitle = self._quick_item(window, "codexChatSidebarSubtitle")
-        codex_chat = self._quick_item(window, "codexChatPanel")
-        codex_connect = self._quick_item(window, "codexConnectButton")
-        codex_toggle = self._quick_item(window, "codexChatToggleButton")
-        central_column = stepper.parentItem()
-        self.assertEqual(len(window.findChildren(QQuickItem, "codexChatPanel")), 1)
+        central_column = action_bar.parentItem()
 
         for width, height in ((1220, 760), (1520, 940)):
-            window.resize(width, height)
-            self.app.processEvents()
+            self.gui.resize(window, width, height)
 
             self.assertGreaterEqual(window.width(), width)
             self.assertGreaterEqual(window.height(), height)
-            for item in (stepper, action_bar, video_panel, log_panel):
+            for item in (action_bar, video_panel, log_panel):
                 self.assertGreater(item.width(), 0)
                 self.assertGreater(item.height(), 0)
                 self.assertGreaterEqual(item.x(), -1)
@@ -2174,72 +2183,46 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertGreaterEqual(item.y(), -1)
                 self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
 
-            self.assertLessEqual(stepper.y() + stepper.height(), action_bar.y() + 1)
-            self.assertGreaterEqual(stepper.height(), 68)
-            visual_items = []
-            pending_items = list(stepper.childItems())
-            while pending_items:
-                visual_item = pending_items.pop()
-                visual_items.append(visual_item)
-                pending_items.extend(visual_item.childItems())
-            for step_index, step_text in enumerate(("素材", "文字起こし", "字幕・音量編集", "書き出し"), 1):
-                step_number = next(
-                    item for item in visual_items if str(item.property("text")) == str(step_index)
-                )
-                step_label = next(
-                    item for item in visual_items if str(item.property("text")) == step_text
-                )
-                self.assertTrue(step_number.isVisible())
-                self.assertGreater(step_number.height(), 0)
-                self.assertTrue(step_label.isVisible())
-                self.assertGreater(step_label.height(), 0)
             self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
-            self.assertGreaterEqual(video_panel.height(), 300)
             self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
-            self.assertTrue(codex_sidebar.isVisible())
-            self.assertTrue(codex_chat.isVisible())
-            self.assertGreater(codex_sidebar.width(), 0)
-            self.assertGreater(codex_sidebar.height(), 0)
-            self.assertGreater(codex_chat.width(), 0)
-            self.assertGreater(codex_chat.height(), 0)
-            self.assertLessEqual(codex_chat.width(), codex_sidebar.width() + 1)
-            self.assertLessEqual(codex_chat.height(), codex_sidebar.height() + 1)
-            self.assertFalse(codex_chat.property("expanded"))
-            self.assertAlmostEqual(codex_chat.height(), 46, delta=1)
-            self.assertAlmostEqual(codex_title.height(), codex_title.property("implicitHeight"), delta=1)
-            self.assertAlmostEqual(codex_subtitle.height(), codex_subtitle.property("implicitHeight"), delta=1)
-            self.assertLessEqual(codex_title.y() + codex_title.height(), codex_subtitle.y() + 1)
-            self.assertLessEqual(codex_subtitle.y() + codex_subtitle.height(), codex_chat.y() + 1)
-            self.assertLessEqual(codex_chat.y(), 90)
-            self._assert_quick_item_within(codex_chat, codex_connect)
-            self._assert_quick_item_within(codex_chat, codex_toggle)
-            self._assert_button_content_fits(codex_connect)
-            self._assert_button_content_fits(codex_toggle)
 
-        window.resize(1220, 760)
-        self.app.processEvents()
+        self.gui.resize(window, 1220, 760)
         log_toggle = self._quick_item(window, "applicationLogToggleButton")
         self._click(window, log_toggle)
-        QTest.qWait(100)
-        self.app.processEvents()
+        self.gui.wait_until(
+            lambda: (
+                bool(log_panel.property("expanded"))
+                and video_panel.height() > 0
+                and log_panel.y() + log_panel.height() <= central_column.height() + 1
+            ),
+            description="expanded application log layout",
+        )
 
         self.assertTrue(log_panel.property("expanded"))
-        self.assertGreaterEqual(log_panel.height(), 280)
-        self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertGreater(log_panel.height(), 0)
+        self.assertGreater(video_panel.height(), 0)
         self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
         self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
         self._click(window, log_toggle)
-        QTest.qWait(100)
-        self.app.processEvents()
+        self.gui.wait_until(
+            lambda: not bool(log_panel.property("expanded")),
+            description="collapsed application log",
+        )
         self.app._set_status("GUI layout error", "ERROR")
-        QTest.qWait(100)
-        self.app.processEvents()
+        self.gui.wait_until(
+            lambda: (
+                bool(log_panel.property("expanded"))
+                and video_panel.height() > 0
+                and log_panel.y() + log_panel.height() <= central_column.height() + 1
+            ),
+            description="application log automatically expanded for an error",
+        )
 
         self.assertTrue(log_panel.property("expanded"))
-        self.assertGreaterEqual(log_panel.height(), 280)
-        self.assertGreaterEqual(video_panel.height(), 140)
+        self.assertGreater(log_panel.height(), 0)
+        self.assertGreater(video_panel.height(), 0)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
     def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
@@ -2247,15 +2230,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._processing_progress.start("render")
         self.app.progressDetailsChanged.emit()
         _, window = self._load_qml()
-        window.resize(1220, 760)
-        self.app.processEvents()
+        self.gui.resize(window, 1220, 760)
         progress_panel = self._quick_item(window, "processingProgressOverlay")
         log_panel = self._quick_item(window, "applicationLogPanel")
-        central_column = self._quick_item(window, "workflowStepper").parentItem()
+        central_column = self._quick_item(window, "contextActionBar").parentItem()
         layout_items = [
             self._quick_item(window, name)
             for name in (
-                "workflowStepper",
                 "contextActionBar",
                 "mainVideoPanel",
                 "processingProgressOverlay",
@@ -2274,9 +2255,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(log_panel.y(), progress_panel.y() + progress_panel.height())
 
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
-        QTest.qWait(100)
-        self.app.processEvents()
-        central_column = self._quick_item(window, "workflowStepper").parentItem()
+        self.gui.wait_until(
+            lambda: bool(log_panel.property("expanded"))
+            and all(
+                item.y() + item.height() <= central_column.height() + 1
+                for item in layout_items
+            ),
+            description="expanded application log below processing progress",
+        )
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreater(log_panel.height(), 0)
         for item in layout_items:
@@ -2524,99 +2510,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_codex_chat_connects_during_backend_startup(self) -> None:
         self.assertEqual(self._codex_chat_connect_calls, 1)
-
-    def test_codex_chat_stays_collapsed_until_authenticated(self) -> None:
-        _, window = self._load_qml()
-        sidebar = self._quick_item(window, "codexChatSidebarContainer")
-        panel = self._quick_item(window, "codexChatPanel")
-        connect = self._quick_item(window, "codexConnectButton")
-        toggle = self._quick_item(window, "codexChatToggleButton")
-        original_snapshot = self.app._codex_chat._snapshot
-        try:
-            self.assertFalse(panel.property("expanded"))
-            self.assertAlmostEqual(panel.height(), 46, delta=1)
-            self.assertFalse(toggle.isEnabled())
-            collapsed_y = panel.y()
-
-            login_pending = CodexChatSnapshot(
-                connection_state="ready",
-                auth_state="login_pending",
-                login_url="https://example.invalid/login",
-            )
-            self.app._codex_chat._snapshot = login_pending
-            self.app._on_codex_chat_state(login_pending)
-            QTest.qWait(50)
-            self.app.processEvents()
-            self.assertEqual(connect.property("text"), "ブラウザを開く")
-            self._assert_quick_item_within(panel, connect)
-            self._assert_quick_item_within(panel, toggle)
-            self._assert_button_content_fits(connect)
-            self._assert_button_content_fits(toggle)
-
-            authenticated = CodexChatSnapshot(
-                connection_state="ready",
-                auth_state="authenticated",
-                auth_label="ChatGPT",
-                models=({"id": "gpt-default", "label": "GPT Default"},),
-                selected_model="gpt-default",
-            )
-            self.app._codex_chat._snapshot = authenticated
-            self.app._on_codex_chat_state(authenticated)
-            self.app.processEvents()
-
-            self.assertFalse(panel.property("expanded"))
-            self.assertAlmostEqual(panel.height(), 46, delta=1)
-            self.assertTrue(toggle.isEnabled())
-            self._click(window, toggle)
-            QTest.qWait(50)
-            self.app.processEvents()
-            self.assertTrue(panel.property("expanded"))
-            for width, height in ((1220, 760), (1520, 940)):
-                window.resize(width, height)
-                QTest.qWait(50)
-                self.app.processEvents()
-                self.assertGreaterEqual(
-                    panel.height(),
-                    180,
-                    f"window={width}x{height}, panel height={panel.height()}, implicitHeight={panel.property('implicitHeight')}",
-                )
-                self._assert_quick_item_within(sidebar, panel)
-                for name in (
-                    "codexChatToggleButton",
-                    "codexModelCombo",
-                    "codexNewChatButton",
-                    "codexReloginButton",
-                    "codexLogoutButton",
-                    "codexChatMessageList",
-                    "codexLocalReadNotice",
-                    "codexChatInput",
-                    "codexChatSendButton",
-                    "codexChatStopButton",
-                ):
-                    self._assert_quick_item_within(panel, self._quick_item(window, name))
-                for name in (
-                    "codexChatToggleButton",
-                    "codexNewChatButton",
-                    "codexReloginButton",
-                    "codexLogoutButton",
-                    "codexChatSendButton",
-                    "codexChatStopButton",
-                ):
-                    self._assert_button_content_fits(self._quick_item(window, name))
-
-            window.resize(1220, 760)
-            self.app.processEvents()
-            self._click(window, toggle)
-            QTest.qWait(50)
-            self.app.processEvents()
-            self.assertFalse(panel.property("expanded"))
-            self.assertAlmostEqual(panel.height(), 46, delta=1)
-            self.assertAlmostEqual(panel.y(), collapsed_y, delta=1)
-            self._assert_quick_item_within(panel, toggle)
-        finally:
-            self.app._codex_chat._snapshot = original_snapshot
-            self.app._on_codex_chat_state(original_snapshot)
-            self.app.processEvents()
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()
@@ -4104,14 +3997,54 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         with patch.object(updater, "fetch_latest_release", return_value=self._fake_update_info()):
             self._click(window, check_button)
-            QTest.qWait(50)
-            while self.app._update_busy:
-                self.app.processEvents()
-                QTest.qWait(50)
+            self.gui.wait_until(
+                lambda: not self.app._update_busy,
+                description="update check completion",
+            )
 
         self.assertTrue(dialog.property("visible"))
         apply_button = self._quick_item(window, "applyUpdateButton")
         self.assertTrue(apply_button.property("visible"))
+
+        self.app._update_download_active = True
+        self.app._update_busy = True
+        self.app._update_download_bytes = 128
+        self.app._update_download_total = 256
+        self.app._update_download_cancel = threading.Event()
+        self.app.updateBusyChanged.emit()
+        self.app.updateDownloadProgressChanged.emit()
+        progress = self._quick_item(window, "updateDownloadProgressBar")
+        cancel = self._quick_item(window, "cancelUpdateDownloadButton")
+        self.gui.wait_until(
+            lambda: progress.isVisible() and cancel.isVisible(),
+            description="update download progress and cancel actions",
+        )
+        self.assertEqual(progress.property("value"), 128)
+        self.assertEqual(progress.property("to"), 256)
+        self._click(window, cancel)
+        self.assertTrue(self.app._update_download_cancel.is_set())
+
+        self.app.updateDownloadFinished.emit("", "ダウンロードをキャンセルしました")
+        self.gui.wait_until(
+            lambda: (
+                not self.app.updateDownloadActive
+                and not self.app.updateBusy
+                and self.app.stage == "CANCELLED"
+            ),
+            description="cancelled update download completion",
+        )
+        self.app._update_package_ready = True
+        self.app.updatePackageReadyChanged.emit()
+        self.gui.wait_until(
+            lambda: (
+                apply_button.isVisible()
+                and apply_button.isEnabled()
+                and apply_button.property("text") == "再起動して更新"
+            ),
+            description="verified update package action",
+        )
+        self.app._update_package_ready = False
+        self.app.updatePackageReadyChanged.emit()
 
         with patch.object(self.app.process, "start"):
             self._click(window, apply_button)

@@ -4024,7 +4024,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, cancel)
         self.assertTrue(self.app._update_download_cancel.is_set())
 
-        self.app._on_update_download_finished("", "ダウンロードをキャンセルしました")
+        self.app.updateDownloadFinished.emit("", "ダウンロードをキャンセルしました")
+        self.gui.wait_until(
+            lambda: (
+                not self.app.updateDownloadActive
+                and not self.app.updateBusy
+                and self.app.stage == "CANCELLED"
+            ),
+            description="cancelled update download completion",
+        )
         self.app._update_package_ready = True
         self.app.updatePackageReadyChanged.emit()
         self.gui.wait_until(

@@ -102,6 +102,7 @@
     "qt-gui": {
       "modules": [
         "test_gui_editor",
+        "test_gui_test_harness",
         "test_qml_context_action_bar",
         "test_qml_static",
         "test_qml_subtitle_line_count_panel",

@@ -56,6 +56,22 @@ import failures. It also fails when no test modules match or a custom
 `load_tests` hook raises an error. Platform-specific skipped tests still count
 as discovered.
 
+## GUI test harness
+
+GUI behavior tests share `tests/gui_test_harness.py`. The harness owns each QML
+engine and window, provides bounded condition-based waits, finds controls by
+`objectName`, performs mouse and keyboard interactions, checks visual bounds,
+captures Qt/QML runtime messages for failure diagnostics, and reliably drains
+deferred deletion during cleanup. `tests/edit_bay_gui_test_session.py` owns the
+shared backend, creates a separate workspace for every test, and centralizes the
+backend state and background-work reset.
+
+Use `wait_until` for asynchronous UI state instead of fixed sleeps. Runtime QML
+warnings from application-owned QML should fail the relevant behavior test.
+Only allow a known message with `AllowedQmlMessage`, including a specific reason;
+the harness deliberately ignores unrelated Qt backend noise when applying that
+policy.
+
 Run the release workflow contract tests directly:
 
 ```powershell

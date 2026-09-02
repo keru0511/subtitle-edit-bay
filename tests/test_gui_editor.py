@@ -7,7 +7,6 @@ import shutil
 import struct
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -19,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl, qInstallMessageHandler
+from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -32,8 +31,9 @@ from src.audio_preview_cache import (
 )
 from src import updater
 from src.codex_runtime import CodexRuntimeInfo
-from src.gui import EditBayBackend, build_font_choices
+from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
+from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -43,113 +43,36 @@ from src.subtitle_project import (
     load_project,
     save_project,
 )
+from tests.edit_bay_gui_test_session import EditBayGuiTestSession
+from tests.gui_test_harness import GuiTestHarness
 
 
 class GuiEditorRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls._workspace = tempfile.TemporaryDirectory()
-        cls._workspace_root = Path(cls._workspace.name)
-        with patch("src.gui.CodexChatController.connect") as connect:
-            cls.app = EditBayBackend([], workspace_root=cls._workspace_root)
-            cls._codex_chat_connect_calls = connect.call_count
-        cls._startup_log_text = cls.app.logText
-        cls._base_settings = deepcopy(cls.app.settings)
+        cls._session = EditBayGuiTestSession()
+        cls.app = cls._session.backend
+        cls._codex_chat_connect_calls = cls._session.codex_chat_connect_calls
+        cls._startup_log_text = cls._session.startup_log_text
 
     @classmethod
     def tearDownClass(cls) -> None:
-        cls.app.autosave_timer.stop()
-        cls.app.elapsed_timer.stop()
-        cls.app._codex_chat.shutdown()
-        cls.app._shutdown_executor()
-        cls._workspace.cleanup()
+        cls._session.cleanup()
 
     def setUp(self) -> None:
-        self.root = self._workspace_root / self._testMethodName
-        self.root.mkdir(parents=True)
-        self._engines: list[QQmlApplicationEngine] = []
-
+        self.addCleanup(self._session.finish_test)
+        self.root = self._session.prepare_test(self._testMethodName)
         app = self.app
-        app.autosave_timer.stop()
-        app.elapsed_timer.stop()
-        app.workspace_root = self.root
-        app.gui_config_path = self.root / ".gui" / "runtime_config.json"
-        app.color_config_path = self.root / "assets" / "speaker_colors.json"
-        app._project = None
-        app._project_path = ""
-        app._project_dirty = False
-        app._undo_stack.clear()
-        app._redo_stack.clear()
-        app._selected_segment_index = -1
-        app._active_job = ""
-        app._processing_progress.start("")
-        app._ffmpeg_duration_seconds = 0.0
-        app._ffmpeg_duration_from_event = False
-        app._processing_machine_event_seen = False
-        app._ass_path = ""
-        app._loading_project_sources = False
-        app._relinking_project_sources = False
-        app._source_selection = SourceSelection()
-        app._speakers = []
-        app._audio_tracks = app._default_audio_tracks()
-        app._alignment_result = app._empty_alignment_result()
-        app._alignment_busy = False
-        app._dependencies = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=True)
-        app._settings = deepcopy(self._base_settings)
-        app._running = False
-        app._status = "保存済み"
-        app._stage = "READY"
-        app._transcription_merge_mode = ""
-        app._transcription_preserved_segments = []
-        app._transcription_preserved_project = None
-        app._transcription_preserved_project_path = ""
-        app._transcription_generated_project_path = ""
-        app._progress = 0.0
-        app._log = ""
-        app._application_logger.clear_memory()
-        app._last_process_diagnostic = None
-        app._pending_process_error = ""
-        app._process_output_tail = ""
-        app._elapsed_seconds = 0
-        app._cancel_requested = False
-        app._update_info = None
-        app._update_error = ""
-        app._update_busy = False
-        app._audio_master_mixer.stop()
-        app._audio_preview_gains.clear()
-        app._audio_preview_levels.clear()
-        app._audio_preview_pending_levels.clear()
-        app._audio_preview_level_timer.stop()
-        app._audio_preview_cache_request += 1
-        app._audio_preview_cache_paths.clear()
-        app._audio_preview_cache_future = None
-        app._audio_preview_preparing = False
-        app.audio_preview_cache_root = self.root / ".audio-preview-cache"
         self._media_probe_patch = patch.object(
             app,
             "_is_supported_media_file",
             side_effect=self._fake_media_file_has_required_streams,
         )
         self._media_probe_patch.start()
-
-    def tearDown(self) -> None:
-        for engine in self._engines:
-            for window in engine.rootObjects():
-                window.close()
-                window.deleteLater()
-            engine.clearComponentCache()
-            engine.deleteLater()
-        self.app.processEvents()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        self.app.processEvents()
-        self.app.autosave_timer.stop()
-        self.app.elapsed_timer.stop()
-        self.app._project_dirty = False
-        self.app._running = False
-        self.app._active_job = ""
-        self.app._cancel_requested = False
-
-        self._media_probe_patch.stop()
+        self.addCleanup(self._media_probe_patch.stop)
+        qml_root = Path(__file__).resolve().parents[1] / "src" / "ui"
+        self.gui = GuiTestHarness(self.app, backend=self.app, qml_roots=(qml_root,))
+        self.addCleanup(self.gui.cleanup)
 
     @staticmethod
     def _fake_media_file_has_required_streams(
@@ -255,58 +178,85 @@ class GuiEditorRegressionTests(unittest.TestCase):
         return video, audio, output
 
     def _load_qml(self) -> tuple[QQmlApplicationEngine, QObject]:
-        engine = QQmlApplicationEngine()
-        engine.rootContext().setContextProperty("backend", self.app)
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
-        engine.load(QUrl.fromLocalFile(str(qml_path.resolve())))
-        self.assertTrue(engine.rootObjects())
-        window = engine.rootObjects()[0]
-        window.setWidth(1220)
-        window.setHeight(760)
-        self.app.processEvents()
-        self._engines.append(engine)
-        return engine, window
+        return self.gui.load_qml(qml_path)
 
     def _quick_item(self, window: QObject, name: str) -> QQuickItem:
-        item = window.findChild(QQuickItem, name)
-        self.assertIsNotNone(item, name)
-        return item
+        return self.gui.find_item(window, name)
 
     def _quick_visual_item(self, root: QQuickItem, name: str) -> QQuickItem:
-        if root.objectName() == name:
-            return root
-        for child in root.childItems():
-            try:
-                return self._quick_visual_item(child, name)
-            except AssertionError:
-                continue
-        self.fail(name)
+        return self.gui.find_visual_item(root, name)
 
     def _click(self, window: QObject, item: QQuickItem) -> None:
-        self.assertGreater(item.width(), 0, item.objectName())
-        self.assertGreater(item.height(), 0, item.objectName())
-        center = item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
-        QTest.mouseClick(
-            window,
-            Qt.MouseButton.LeftButton,
-            pos=QPoint(round(center.x()), round(center.y())),
-        )
-        self.app.processEvents()
+        self.gui.click(window, item)
 
     def _assert_quick_item_within(self, container: QQuickItem, item: QQuickItem) -> None:
-        name = item.objectName()
-        self.assertTrue(item.isVisible(), name)
-        top_left = item.mapToItem(container, QPointF(0, 0))
-        bottom_right = item.mapToItem(container, QPointF(item.width(), item.height()))
-        self.assertGreaterEqual(top_left.x(), -1, name)
-        self.assertGreaterEqual(top_left.y(), -1, name)
-        self.assertLessEqual(bottom_right.x(), container.width() + 1, name)
-        self.assertLessEqual(bottom_right.y(), container.height() + 1, name)
+        self.gui.assert_item_within(container, item)
 
     def _assert_button_content_fits(self, button: QQuickItem) -> None:
         content = button.property("contentItem")
         self.assertIsNotNone(content, button.objectName())
         self.assertLessEqual(content.property("implicitWidth"), button.width() + 1, button.objectName())
+
+    def test_shared_backend_session_resets_state_before_each_test(self) -> None:
+        first_root = self.root
+        base_config = deepcopy(self.app._config)
+        base_transcription_context = deepcopy(self.app.transcriptionContext)
+        base_codex_session_snapshot = self.app._codex_session.snapshot
+        self.app._project = {
+            "segments": [
+                {
+                    "id": "leaked-segment",
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "leaked",
+                }
+            ]
+        }
+        self.app._subtitle_model.set_segments(self.app._project["segments"])
+        self.app._source_selection = SourceSelection(video="leaked-video.mkv")
+        self.app._active_job = "leaked-job"
+        self.app._highlight_candidates = [{"id": "leaked-highlight"}]
+        self.app._update_busy = True
+        self.app._config = {"leaked": True}
+        self.app._transcription_context = {
+            **base_transcription_context,
+            "game_title": "leaked-game",
+        }
+        codex_stop_event = threading.Event()
+        leaked_codex_thread = threading.Thread(
+            target=codex_stop_event.wait,
+            name="leaked-codex-edit-session",
+            daemon=True,
+        )
+        self.app._codex_session._stop_event = codex_stop_event
+        self.app._codex_session._snapshot = CodexSessionSnapshot(state="running")
+        self.app._codex_session._thread = leaked_codex_thread
+        leaked_codex_thread.start()
+        self.app._codex_chat._snapshot = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            messages=({"role": "user", "text": "leaked"},),
+        )
+        self.app.autosave_timer.start(60_000)
+
+        self._session.finish_test()
+        self.root = self._session.prepare_test(f"{self._testMethodName}-repeat")
+
+        self.assertNotEqual(self.root, first_root)
+        self.assertIsNone(self.app._project)
+        self.assertEqual(self.app._subtitle_model.rowCount(), 0)
+        self.assertEqual(self.app.sourceSelection["video"], "")
+        self.assertEqual(self.app._active_job, "")
+        self.assertEqual(self.app._highlight_candidates, [])
+        self.assertFalse(self.app._update_busy)
+        self.assertEqual(self.app._config, base_config)
+        self.assertEqual(self.app.transcriptionContext, base_transcription_context)
+        self.assertFalse(leaked_codex_thread.is_alive())
+        self.assertEqual(self.app._codex_session.snapshot, base_codex_session_snapshot)
+        self.assertEqual(self.app._codex_chat.snapshot.auth_state, "unknown")
+        self.assertEqual(self.app._codex_chat.snapshot.messages, ())
+        self.assertFalse(self.app.autosave_timer.isActive())
 
     def test_empty_project_can_be_opened_and_manually_edited(self) -> None:
         video, _audio, output = self._set_ready_sources()
@@ -2140,13 +2090,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIsNotNone(flickable)
 
         for width, height in ((1220, 760), (1520, 940)):
-            window.resize(width, height)
-            self.app.processEvents()
-
-            deadline = time.monotonic() + 1.0
-            while scroll_view.height() <= 0 and time.monotonic() < deadline:
-                QTest.qWait(10)
-                self.app.processEvents()
+            self.gui.resize(window, width, height)
+            self.gui.wait_until(
+                lambda: scroll_view.height() > 0,
+                description="advanced settings scroll view layout",
+            )
 
             self._assert_quick_item_within(window.contentItem(), panel)
             self._assert_quick_item_within(panel, save_button)
@@ -2175,19 +2123,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._click(window, toggle)
         self.assertTrue(panel.isVisible())
-        QTest.keyClick(window, Qt.Key.Key_Escape)
-        QTest.qWait(50)
-        self.app.processEvents()
+        self.gui.key_click(window, Qt.Key.Key_Escape)
+        self.gui.wait_until(
+            lambda: not panel.isVisible(),
+            description="settings popup to close after Escape",
+        )
         self.assertFalse(panel.isVisible())
         self.assertFalse(window.property("settingsExpanded"))
 
         self._click(window, toggle)
         self.assertTrue(panel.isVisible())
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
-        QTest.qWait(50)
-        self.app.processEvents()
+        editor_page = self._quick_item(window, "editorPage")
+        self.gui.wait_until(
+            lambda: editor_page.isVisible() and not panel.isVisible(),
+            description="editor navigation and settings popup close",
+        )
 
-        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+        self.assertTrue(editor_page.isVisible())
         self.assertFalse(panel.isVisible())
         self.assertFalse(window.property("settingsExpanded"))
 
@@ -2412,64 +2365,51 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_qml_timeline_refresh_does_not_access_destroyed_segment_data(self) -> None:
         self._load_project()
-        messages: list[str] = []
-        previous_handler = qInstallMessageHandler(
-            lambda _message_type, _context, message: messages.append(message)
+        message_start = len(self.gui.messages)
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        timeline = self._quick_item(window, "editorTimeline")
+        self.gui.set_property(
+            timeline,
+            "visibleSegments",
+            [
+                {
+                    "sourceIndex": 0,
+                    "segment": {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "caption",
+                        "speaker": "Speaker_Alice",
+                        "subtitle_font_family": "",
+                    },
+                }
+            ],
         )
-        try:
-            _, window = self._load_qml()
-            self._click(window, self._quick_item(window, "editSubtitlesButton"))
-            timeline = self._quick_item(window, "editorTimeline")
-            timeline.setProperty(
-                "visibleSegments",
-                [
-                    {
-                        "sourceIndex": 0,
-                        "segment": {
-                            "start": 0.0,
-                            "end": 1.0,
-                            "text": "caption",
-                            "speaker": "Speaker_Alice",
-                            "subtitle_font_family": "",
-                        },
-                    }
-                ],
-            )
-            self.app.processEvents()
-            timeline.setProperty("visibleSegments", [])
-            self.app.processEvents()
-        finally:
-            qInstallMessageHandler(previous_handler)
+        self.gui.set_property(timeline, "visibleSegments", [])
 
-        type_errors = [message for message in messages if "TypeError" in message]
-        self.assertEqual(type_errors, [], "\n".join(type_errors))
+        self.gui.assert_no_messages_containing("TypeError", since=message_start)
 
     def test_qml_mixer_close_does_not_run_callbacks_in_destroyed_context(self) -> None:
         self._load_project()
-        messages: list[str] = []
-        previous_handler = qInstallMessageHandler(
-            lambda _message_type, _context, message: messages.append(message)
-        )
-        try:
-            _, window = self._load_qml()
-            for _ in range(3):
-                self._click(window, self._quick_item(window, "audioMixerOpenButton"))
-                self.assertIsNotNone(window.findChild(QObject, "mixerPreviewPlayers"))
-                self.app.updateAudioMixChannel(0, {"muted": True})
-                self.app.updateAudioMixChannel(0, {"muted": False})
-                self.app.processEvents()
-                self._click(window, self._quick_item(window, "mixerBackButton"))
-                QTest.qWait(80)
-                self.app.processEvents()
-        finally:
-            qInstallMessageHandler(previous_handler)
+        message_start = len(self.gui.messages)
+        _, window = self._load_qml()
+        for _ in range(3):
+            self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+            self.assertIsNotNone(window.findChild(QObject, "mixerPreviewPlayers"))
+            self.app.updateAudioMixChannel(0, {"muted": True})
+            self.app.updateAudioMixChannel(0, {"muted": False})
+            self.app.processEvents()
+            self._click(window, self._quick_item(window, "mixerBackButton"))
+            self.gui.wait_until(
+                lambda: window.findChild(QObject, "mixerContent") is None,
+                description="mixer loader cleanup",
+            )
 
-        invalid_context_errors = [
-            message
-            for message in messages
-            if "invalid context" in message or "syncPreviewPlayer" in message
-        ]
-        self.assertEqual(invalid_context_errors, [], chr(10).join(invalid_context_errors))
+        self.gui.assert_no_messages_containing(
+            "invalid context",
+            "syncPreviewPlayer",
+            since=message_start,
+        )
 
     def test_mixer_volume_change_preserves_horizontal_scroll(self) -> None:
         self.app._audio_tracks = [

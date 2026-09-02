@@ -79,7 +79,7 @@ MainWorkflowScreen {
     }
 
     Shortcut {
-        sequence: StandardKey.Save
+        sequences: [StandardKey.Save]
         enabled: screenRoot.dictionaryMode
         onActivated: dictionaryPage.saveContext()
     }

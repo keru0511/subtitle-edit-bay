@@ -4024,14 +4024,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, cancel)
         self.assertTrue(self.app._update_download_cancel.is_set())
 
-        self.app._update_download_active = False
-        self.app._update_busy = False
-        self.app.updateBusyChanged.emit()
-        self.app.updateDownloadProgressChanged.emit()
+        self.app._on_update_download_finished("", "ダウンロードをキャンセルしました")
         self.app._update_package_ready = True
         self.app.updatePackageReadyChanged.emit()
         self.gui.wait_until(
-            lambda: apply_button.property("text") == "再起動して更新",
+            lambda: (
+                apply_button.isVisible()
+                and apply_button.isEnabled()
+                and apply_button.property("text") == "再起動して更新"
+            ),
             description="verified update package action",
         )
         self.app._update_package_ready = False

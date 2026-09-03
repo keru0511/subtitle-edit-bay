@@ -22,6 +22,9 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "CodexChatPanel.qml",
     COMPONENTS_ROOT / "CodexSidebarContainer.qml",
     COMPONENTS_ROOT / "EditorModeRail.qml",
+    COMPONENTS_ROOT / "AudioPreviewBridge.qml",
+    COMPONENTS_ROOT / "AudioModeSettings.qml",
+    COMPONENTS_ROOT / "SubtitleModeSettings.qml",
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -125,12 +128,41 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "editorModeRail"', main_workspace)
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
         self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
-        self.assertIn('property Component modeEditorContent: null', workflow)
-        self.assertIn('property Component modeSettingsContent: null', workflow)
+        self.assertIn('property Component cutModeEditorContent: null', workflow)
+        self.assertIn('property Component cutModeSettingsContent: null', workflow)
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
         self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
-        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', main_workspace)
+        self.assertIn('objectName: "mainWorkspacePlayer"', main_workspace)
+        self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)
+
+    def test_subtitle_and_audio_modes_share_the_workspace_player(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        audio_bridge = (COMPONENTS_ROOT / "AudioPreviewBridge.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('objectName: "workspaceSubtitleEditor"', workflow)
+        self.assertIn('objectName: "workspaceAudioEditor"', workflow)
+        self.assertGreaterEqual(workflow.count("player: mainPlayer"), 2)
+        self.assertIn("editorPlayhead.sourcePositionMs", workflow)
+        self.assertEqual(workflow.count("AudioPreviewBridge {"), 1)
+        self.assertLess(
+            workflow.index("AudioPreviewBridge {"), workflow.index('objectName: "mainWorkspace"')
+        )
+        self.assertNotIn("videoOutput", audio_bridge)
+        self.assertNotIn("property real position", audio_bridge)
+        self.assertIn("root.player.position", audio_bridge)
+        self.assertIn("root.active && root.isPlaying()", audio_bridge)
+        self.assertIn("root.backend.audioPreviewGeneration", audio_bridge)
+        self.assertIn("root.preparedGeneration !== generation", audio_bridge)
+        self.assertIn("function onAudioPreviewCacheChanged()", audio_bridge)
+        self.assertIn('mainPlayer.position = sourcePosition', workflow)
+        self.assertIn("function onEditorPlayheadChanged()", workflow)
+        self.assertIn(
+            'root.appBackend.setEditorPlayhead(Math.round(mainPlayer.position), "source")',
+            workflow,
+        )
 
 
 if __name__ == "__main__":

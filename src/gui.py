@@ -391,6 +391,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._audio_preview_cache_paths: dict[str, str] = {}
         self._audio_preview_cache_future: Future[AudioPreviewCacheResult] | None = None
         self._audio_preview_cache_request = 0
+        self._audio_preview_generation = 0
         self._audio_preview_preparing = False
         self._audio_preview_cache_executor = ThreadPoolExecutor(
             max_workers=1,
@@ -1267,6 +1268,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def audioPreviewPreparing(self) -> bool:
         return self._audio_preview_preparing
 
+    @Property(int, notify=audioPreviewCacheChanged)
+    def audioPreviewGeneration(self) -> int:
+        return self._audio_preview_generation
+
     @Property(str, notify=audioPreviewCacheChanged)
     def audioPreviewCacheSummary(self) -> str:
         stats: AudioPreviewCacheStats = audio_preview_cache_stats(self.audio_preview_cache_root)
@@ -1293,6 +1298,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def _reset_audio_preview_cache(self) -> None:
         self._audio_master_mixer.stop()
         self._audio_preview_cache_request += 1
+        self._audio_preview_generation += 1
         self._audio_preview_cache_paths = {}
         self._audio_preview_preparing = False
         future = self._audio_preview_cache_future
@@ -1385,6 +1391,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def clearAudioPreviewCache(self) -> None:
         self.stopAudioMixerPreview()
         self._audio_preview_cache_request += 1
+        self._audio_preview_generation += 1
         self._audio_preview_cache_paths.clear()
         self._audio_preview_preparing = False
         future = self._audio_preview_cache_future

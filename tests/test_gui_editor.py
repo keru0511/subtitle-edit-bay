@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QSignalSpy, QTest
 
@@ -795,6 +795,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._load_project()
         self._prime_audio_preview_cache()
         self.assertGreater(len(self.app._audio_preview_cache_paths), 0)
+        generation = self.app.audioPreviewGeneration
 
         with patch("src.gui.clear_audio_preview_cache") as clear_cache:
             clear_cache.return_value = (0, 0)
@@ -803,6 +804,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         clear_cache.assert_called_once_with(self.app.audio_preview_cache_root)
         self.assertFalse(self.app._audio_preview_cache_paths)
         self.assertFalse(self.app.audioPreviewPreparing)
+        self.assertEqual(self.app.audioPreviewGeneration, generation + 1)
 
     def test_audio_mixer_updates_individual_source_and_resets(self) -> None:
         path = self._load_project()
@@ -2228,6 +2230,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_common_editor_workspace_switches_modes_without_losing_playhead(self) -> None:
         path, _, _ = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self._prime_audio_preview_cache()
         self.app._dependencies = RuntimeDependencyStatus(
             ffmpeg=True,
             ffprobe=True,
@@ -2235,7 +2238,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             cuda=False,
         )
         self.app.dependenciesChanged.emit()
-        engine, window = self._load_qml()
+        _, window = self._load_qml()
         self.gui.resize(window, 1220, 760)
 
         main = self._quick_item(window, "mainWorkspace")
@@ -2247,6 +2250,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         settings_loader = self._quick_item(window, "modeSettingsContentLoader")
         editor_fallback = self._quick_item(window, "modeEditorFallback")
         settings_fallback = self._quick_item(window, "modeSettingsFallback")
+        audio_bridge = self._quick_item(window, "workspaceAudioPreviewBridge")
+        main_audio_output = window.findChild(QObject, "mainWorkspaceAudioOutput")
+        self.assertIsNotNone(main_audio_output)
         subtitle_button = self._quick_item(window, "editorModeButton-subtitle")
         cut_button = self._quick_item(window, "editorModeButton-cut")
         audio_button = self._quick_item(window, "editorModeButton-audio")
@@ -2256,60 +2262,132 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(subtitle_button.isEnabled())
         self.assertFalse(cut_button.isEnabled())
         self.assertTrue(audio_button.isEnabled())
-        self.assertFalse(editor_loader.property("active"))
-        self.assertFalse(settings_loader.property("active"))
-        self.assertTrue(editor_fallback.isVisible())
-        self.assertTrue(settings_fallback.isVisible())
-
-        injected_editor = QQmlComponent(engine)
-        injected_editor.setData(
-            b'import QtQuick; Item { objectName: "injectedModeEditor" }',
-            QUrl(),
-        )
-        self.assertFalse(injected_editor.isError(), injected_editor.errors())
-        self.assertTrue(window.setProperty("modeEditorContent", injected_editor))
-        self.app.processEvents()
         self.assertTrue(editor_loader.property("active"))
-        self.assertFalse(editor_fallback.isVisible())
-        self.assertTrue(self._quick_item(window, "injectedModeEditor").isVisible())
-
-        injected_settings = QQmlComponent(engine)
-        injected_settings.setData(
-            b'import QtQuick; Item { objectName: "injectedModeSettings" }',
-            QUrl(),
-        )
-        self.assertFalse(injected_settings.isError(), injected_settings.errors())
-        self.assertTrue(window.setProperty("modeSettingsContent", injected_settings))
-        self.app.processEvents()
         self.assertTrue(settings_loader.property("active"))
+        self.assertFalse(editor_fallback.isVisible())
         self.assertFalse(settings_fallback.isVisible())
-        self.assertTrue(self._quick_item(window, "injectedModeSettings").isVisible())
+        subtitle_editor = self._quick_item(window, "workspaceSubtitleEditor")
+        self.assertTrue(subtitle_editor.isVisible())
+        subtitle_timeline = self._quick_visual_item(
+            subtitle_editor,
+            "workspaceSubtitleTimeline",
+        )
+        subtitle_timeline.setProperty("viewportX", 180.0)
+        self.app.processEvents()
+        self.assertTrue(self._quick_item(window, "workspaceSubtitleSettings").isVisible())
+        self.assertFalse(audio_bridge.property("active"))
+        self.assertFalse(audio_bridge.property("prepared"))
         self.assertTrue(self.app.editorModeCapabilities["canPreview"])
         self.assertTrue(self.app.editorModeCapabilities["canEditSubtitles"])
         self.assertFalse(self.app.editorModeCapabilities["canCut"])
         self.assertTrue(self.app.editorModeCapabilities["canMixAudio"])
 
-        self.app.setEditorPlayhead(12_345, "source")
+        class OffsetTimeMapping:
+            @staticmethod
+            def source_to_output(position_ms: int) -> int:
+                return max(0, position_ms - 1_000)
+
+            @staticmethod
+            def output_to_source(position_ms: int) -> int:
+                return position_ms + 1_000
+
+        self.app.set_editor_time_mapping(OffsetTimeMapping())
+        window.seekSharedPlayer(12_345, "output")
+        self.app.processEvents()
+        self.assertEqual(
+            self.app.editorPlayhead,
+            {"basis": "output", "sourcePositionMs": 13_345, "outputPositionMs": 12_345},
+        )
         self._click(window, audio_button)
         self.assertEqual(self.app.currentEditMode, "audio")
-        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+        self.assertEqual(
+            self.app.editorPlayhead,
+            {"basis": "output", "sourcePositionMs": 13_345, "outputPositionMs": 12_345},
+        )
         self.assertTrue(main.isVisible())
         self.assertFalse(self._quick_item(window, "mixerPage").isVisible())
+        self.assertTrue(self._quick_item(window, "workspaceAudioEditor").isVisible())
+        audio_timeline = self._quick_item(window, "workspaceAudioTimeline")
+        audio_timeline.setProperty("viewportX", 260.0)
+        self.app.processEvents()
+        audio_settings = self._quick_item(window, "workspaceAudioSettings")
+        self.assertTrue(audio_settings.isVisible())
+        self.assertTrue(audio_bridge.property("active"))
+        self.assertTrue(audio_bridge.property("prepared"))
+        self.assertTrue(main_audio_output.property("muted"))
+        first_channel = self.app.audioMixerChannels[0]
+        mute_button = self._quick_visual_item(audio_settings, "workspaceAudioMuteButton")
+        self._click(window, mute_button)
+        self.assertNotEqual(self.app.audioMixerChannels[0]["muted"], first_channel["muted"])
+        self.assertEqual(self.app.editorPlayhead["outputPositionMs"], 12_345)
+        preview_channel_id = self.app.audioMixerPreviewChannels[0]["id"]
+        preview_player = window.findChild(
+            QObject,
+            f"workspaceAudioPreviewPlayer-{preview_channel_id}",
+        )
+        self.assertIsNotNone(preview_player)
         self._click(window, subtitle_button)
         self.assertEqual(self.app.currentEditMode, "subtitle")
-        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+        self.assertEqual(
+            self.app.editorPlayhead,
+            {"basis": "output", "sourcePositionMs": 13_345, "outputPositionMs": 12_345},
+        )
+        subtitle_editor = self._quick_item(window, "workspaceSubtitleEditor")
+        self.assertTrue(subtitle_editor.isVisible())
+        self.assertAlmostEqual(
+            float(
+                self._quick_visual_item(
+                    subtitle_editor,
+                    "workspaceSubtitleTimeline",
+                ).property("viewportX")
+            ),
+            180.0,
+            delta=1.0,
+        )
+        self.assertFalse(audio_bridge.property("active"))
+        self.assertTrue(audio_bridge.property("prepared"))
+        self.assertFalse(main_audio_output.property("muted"))
+        self.assertIs(
+            window.findChild(QObject, f"workspaceAudioPreviewPlayer-{preview_channel_id}"),
+            preview_player,
+        )
+
+        self._click(window, audio_button)
+        self.assertTrue(audio_bridge.property("active"))
+        self.assertAlmostEqual(
+            float(self._quick_item(window, "workspaceAudioTimeline").property("viewportX")),
+            260.0,
+            delta=1.0,
+        )
+        self.assertIs(
+            window.findChild(QObject, f"workspaceAudioPreviewPlayer-{preview_channel_id}"),
+            preview_player,
+        )
+        for channel_index in range(len(self.app.audioMixerChannels)):
+            self.app.updateAudioMixChannel(channel_index, {"enabled": False})
+        self.app.processEvents()
+        self.assertFalse(audio_bridge.property("previewReady"))
+        self.assertTrue(main_audio_output.property("muted"))
+        self._click(window, subtitle_button)
+        self.assertFalse(main_audio_output.property("muted"))
 
         self.app.set_cut_editor_available(True)
         self.app.processEvents()
         self.assertTrue(cut_button.isEnabled())
         self._click(window, cut_button)
         self.assertEqual(self.app.currentEditMode, "cut")
-        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+        self.assertEqual(self.app.editorPlayhead["outputPositionMs"], 12_345)
         self.assertTrue(main.isVisible())
+        self.assertFalse(editor_loader.property("active"))
+        self.assertFalse(settings_loader.property("active"))
+        self.assertTrue(editor_fallback.isVisible())
+        self.assertTrue(settings_fallback.isVisible())
         self.app.set_cut_editor_available(False)
         self.app.processEvents()
         self.assertEqual(self.app.currentEditMode, "subtitle")
         self.assertFalse(cut_button.isEnabled())
+        self.assertTrue(editor_loader.property("active"))
+        self.assertTrue(settings_loader.property("active"))
 
         for item in (rail, video, editor_slot, settings_slot):
             self.assertGreater(item.width(), 0, item.objectName())
@@ -2325,6 +2403,66 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.editorModeCapabilities["canMixAudio"])
         self.assertFalse(audio_button.isEnabled())
         self.assertTrue(subtitle_button.isEnabled())
+
+    def test_workspace_subtitle_mode_adds_first_caption_at_shared_playhead(self) -> None:
+        path, _, _ = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        assert self.app._project is not None
+        self.app._project["segments"] = []
+        self.app._selected_segment_index = -1
+        self.app._sync_subtitle_model()
+        self.app.segmentsChanged.emit()
+        self.app.selectionChanged.emit()
+        _, window = self._load_qml()
+
+        self.assertEqual(self.app.segmentCount, 0)
+        self.assertTrue(self._quick_item(window, "editorModeButton-audio").isEnabled())
+        self.app.setEditorPlayhead(2_500, "source")
+        subtitle_editor = self._quick_item(window, "workspaceSubtitleEditor")
+        add_button = self._quick_visual_item(subtitle_editor, "workspaceSubtitleAddButton")
+        self._click(window, add_button)
+
+        self.assertEqual(self.app.segmentCount, 1)
+        self.assertEqual(self.app.segmentAt(0)["start"], 2.5)
+        subtitle_settings = self._quick_item(window, "workspaceSubtitleSettings")
+        text_area = self._quick_visual_item(subtitle_settings, "workspaceSubtitleTextArea")
+        self.assertTrue(text_area.isVisible())
+
+    def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 2,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "segment-b",
+                    "start": 3,
+                    "end": 5,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        subtitle_settings = self._quick_item(window, "workspaceSubtitleSettings")
+        text_area = self._quick_visual_item(subtitle_settings, "workspaceSubtitleTextArea")
+
+        text_area.forceActiveFocus()
+        text_area.setProperty("text", "edited first")
+        self.app.processEvents()
+        self.app.selectSegment(1)
+        self.app.processEvents()
+        self.app.selectEditMode("audio")
+        self.app.processEvents()
+
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited first")
+        self.assertEqual(self.app.segmentAt(1)["text"], "second")
 
     def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
         self._load_project()

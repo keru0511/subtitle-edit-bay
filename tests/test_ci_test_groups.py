@@ -83,6 +83,8 @@ class CiTestGroupManifestTests(unittest.TestCase):
         self.assertEqual(
             groups["windows-ffmpeg-runtime"]["selectors"],
             [
+                "tests.test_media_semantic_e2e.MediaCommandDiagnosticTests."
+                "test_timeout_terminates_descendant_processes",
                 "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
                 "test_cpu_fallback_produces_compatible_h264_with_audio",
                 "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
@@ -91,10 +93,9 @@ class CiTestGroupManifestTests(unittest.TestCase):
                 "test_line_count_override_changes_vertical_occupied_region",
                 "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
                 "test_manual_line_break_is_preserved_in_ass_and_rendered_pixels",
-                "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
-                "test_subtitle_pixels_follow_start_and_end_timing",
+                "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_subtitle_pixels_follow_start_and_end_timing",
                 "tests.test_short_video_ass.ShortVideoRenderE2ETests."
-                "test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace"
+                "test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace",
             ],
         )
         self.assertIn("test_media_semantic_e2e", groups["ffmpeg-runtime"]["modules"])

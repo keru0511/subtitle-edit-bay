@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -61,6 +62,36 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
             "fixture stderr",
         ):
             self.assertIn(expected, message)
+
+    def test_timeout_terminates_descendant_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            started_marker = Path(temp_dir) / "descendant-started.txt"
+            marker = Path(temp_dir) / "descendant-completed.txt"
+            child_code = (
+                "from pathlib import Path; "
+                "import time; "
+                f"Path({str(started_marker)!r}).write_text('started', encoding='utf-8'); "
+                "time.sleep(1.5); "
+                f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+            )
+            parent_code = (
+                "import subprocess, sys; "
+                f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+                "print(f'descendant_pid={child.pid}', flush=True); "
+                "child.wait()"
+            )
+
+            with self.assertRaises(AssertionError) as raised:
+                run_media_command(
+                    [sys.executable, "-c", parent_code],
+                    timeout_seconds=0.75,
+                    context="fixture=descendant-timeout-test",
+                )
+
+            self.assertIn("descendant_pid=", str(raised.exception))
+            self.assertTrue(started_marker.is_file(), "Descendant process did not reach the test checkpoint.")
+            time.sleep(1.6)
+            self.assertFalse(marker.exists(), "Timed-out command left a descendant process running.")
 
 
 @unittest.skipUnless(

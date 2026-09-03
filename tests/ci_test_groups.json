@@ -114,6 +114,7 @@
         "test_runtime_media_smoke"
       ],
       "selectors": [
+        "tests.test_media_semantic_e2e.MediaCommandDiagnosticTests.test_timeout_terminates_descendant_processes",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_cpu_fallback_produces_compatible_h264_with_audio",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_fixture_has_distinct_deterministic_time_bands",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_line_count_override_changes_vertical_occupied_region",

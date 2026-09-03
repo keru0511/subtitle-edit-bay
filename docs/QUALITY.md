@@ -145,10 +145,11 @@ and installer artifact inspection is owned by #262.
 ## Media semantic E2E contracts
 
 Use `tests/media_test_utils.py` for deterministic, download-free lavfi fixtures,
-bounded FFmpeg/FFprobe execution, stream probing, RGB frame extraction, and
-region-level pixel comparison. Keep this helper outside the `test_*.py` discovery
-pattern. The owning test module belongs to `ffmpeg-runtime`; explicitly selected
-representative cases are rerun by `windows-ffmpeg-runtime`.
+bounded FFmpeg/FFprobe execution with process-tree termination on timeout, stream
+probing, RGB frame extraction, and region-level pixel comparison. Keep this helper
+outside the `test_*.py` discovery pattern. The owning test module belongs to
+`ffmpeg-runtime`; explicitly selected representative cases are rerun by
+`windows-ffmpeg-runtime`.
 
 Subtitle burn-in tests compare a rendered output with a no-dialogue control at the
 same timestamp. For the 30 fps fixture, timing checks use a one-frame allowance

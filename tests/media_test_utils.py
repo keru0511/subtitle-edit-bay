@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import signal
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -10,6 +12,7 @@ from typing import Sequence
 
 
 MEDIA_COMMAND_TIMEOUT_SECONDS = 30.0
+PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,59 @@ def _command_failure(
     )
 
 
+def _process_creation_options() -> tuple[bool, int]:
+    if os.name == "nt":
+        return False, int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return True, 0
+
+
+def _terminate_process_tree(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
+def _collect_output_after_termination(
+    process: subprocess.Popen[str] | subprocess.Popen[bytes],
+    timeout_error: subprocess.TimeoutExpired,
+) -> tuple[str | bytes | None, str | bytes | None]:
+    try:
+        return process.communicate(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as cleanup_error:
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+        try:
+            process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        return (
+            cleanup_error.stdout if cleanup_error.stdout is not None else timeout_error.stdout,
+            cleanup_error.stderr if cleanup_error.stderr is not None else timeout_error.stderr,
+        )
+
+
 def run_media_command(
     command: Sequence[str],
     *,
@@ -124,33 +180,50 @@ def run_media_command(
     context: str = "",
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    start_new_session, creationflags = _process_creation_options()
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             list(command),
             cwd=cwd,
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout_seconds,
+            start_new_session=start_new_session,
+            creationflags=creationflags,
         )
-    except subprocess.TimeoutExpired as error:
+    except OSError as error:
         raise _command_failure(
             command,
             context=context,
-            stdout=error.stdout,
-            stderr=error.stderr,
+            stdout=None,
+            stderr=str(error),
+            detail="Media command could not start.",
+        ) from error
+
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        _terminate_process_tree(process)
+        timed_out_stdout, timed_out_stderr = _collect_output_after_termination(process, error)
+        raise _command_failure(
+            command,
+            context=context,
+            stdout=timed_out_stdout,
+            stderr=timed_out_stderr,
             detail=f"Media command timed out after {timeout_seconds:.1f}s.",
         ) from error
-    if result.returncode != 0:
+    if process.returncode != 0:
         raise _command_failure(
             command,
             context=context,
-            stdout=result.stdout,
-            stderr=result.stderr,
-            detail=f"Media command failed with exit code {result.returncode}.",
+            stdout=stdout,
+            stderr=stderr,
+            detail=f"Media command failed with exit code {process.returncode}.",
         )
-    return result
+    return subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
 
 
 def _run_media_command_bytes(
@@ -159,29 +232,46 @@ def _run_media_command_bytes(
     timeout_seconds: float = MEDIA_COMMAND_TIMEOUT_SECONDS,
     context: str = "",
 ) -> subprocess.CompletedProcess[bytes]:
+    start_new_session, creationflags = _process_creation_options()
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             list(command),
-            capture_output=True,
-            timeout=timeout_seconds,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=start_new_session,
+            creationflags=creationflags,
         )
-    except subprocess.TimeoutExpired as error:
+    except OSError as error:
         raise _command_failure(
             command,
             context=context,
-            stdout=error.stdout,
-            stderr=error.stderr,
+            stdout=None,
+            stderr=str(error),
+            detail="Media command could not start.",
+        ) from error
+
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        _terminate_process_tree(process)
+        timed_out_stdout, timed_out_stderr = _collect_output_after_termination(process, error)
+        raise _command_failure(
+            command,
+            context=context,
+            stdout=timed_out_stdout,
+            stderr=timed_out_stderr,
             detail=f"Media command timed out after {timeout_seconds:.1f}s.",
         ) from error
-    if result.returncode != 0:
+    if process.returncode != 0:
         raise _command_failure(
             command,
             context=context,
-            stdout=result.stdout,
-            stderr=result.stderr,
-            detail=f"Media command failed with exit code {result.returncode}.",
+            stdout=stdout,
+            stderr=stderr,
+            detail=f"Media command failed with exit code {process.returncode}.",
         )
-    return result
+    return subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
 
 
 def create_lavfi_av_fixture(
@@ -334,8 +424,11 @@ def extract_rgb_frame(
 ) -> RgbFrame:
     metadata = probe or probe_media(path)
     stream = video_stream(metadata)
-    width = int(stream["width"])
-    height = int(stream["height"])
+    try:
+        width = int(str(stream["width"]))
+        height = int(str(stream["height"]))
+    except (KeyError, ValueError) as error:
+        raise AssertionError(f"Video stream has invalid dimensions: {stream!r}") from error
     result = _run_media_command_bytes(
         [
             "ffmpeg",
@@ -395,7 +488,11 @@ def mean_rgb(frame: RgbFrame, region: FrameRegion | None = None) -> tuple[float,
         totals[1] += sum(row[1::3])
         totals[2] += sum(row[2::3])
     pixel_count = selected.width * selected.height
-    return tuple(total / pixel_count for total in totals)
+    return (
+        totals[0] / pixel_count,
+        totals[1] / pixel_count,
+        totals[2] / pixel_count,
+    )
 
 
 def mean_luma(frame: RgbFrame, region: FrameRegion | None = None) -> float:

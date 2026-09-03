@@ -1171,6 +1171,7 @@ ApplicationWindow {
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
+            Layout.alignment: Qt.AlignTop
             currentMode: root.appBackend.currentEditMode
             capabilities: root.appBackend.editorModeCapabilities
             panelColor: root.panel
@@ -1390,6 +1391,7 @@ ApplicationWindow {
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
+            Layout.alignment: Qt.AlignTop
             radius: 12
             color: root.panel
             border.color: root.border

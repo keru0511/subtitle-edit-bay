@@ -2513,6 +2513,44 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 5_500)
         self.assertEqual(self.app.selectedSegmentIndex, 1)
 
+    def test_qml_editor_selection_follows_the_visible_subtitle(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 1,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "second",
+                    "start": 0.025,
+                    "end": 0.075,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        overlay = self._quick_item(window, "editorSubtitleOverlay")
+        self.app.selectSegment(0)
+
+        self.gui.set_property(
+            overlay,
+            "activeSegments",
+            [
+                {"sourceIndex": 0, "text": "first"},
+                {"sourceIndex": 1, "text": "second"},
+            ],
+        )
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
+        # Gaps keep the most recently visible subtitle selected.
+        self.gui.set_property(overlay, "activeSegments", [])
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
     def test_qml_timeline_instantiates_only_visible_captions(self) -> None:
         segments = [
             {
@@ -3389,6 +3427,42 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(middle_clip["segment_id"], "segment-1500")
             self.assertEqual(build_clip_view.call_count, 2)
             self.assertEqual(format_preview.call_count, 2)
+
+    def test_short_mode_clamps_selection_after_removing_the_last_selected_clip(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 1,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "second",
+                    "start": 1,
+                    "end": 2,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        short_screen = self._quick_item(window, "shortModeScreen")
+        clip_list = self._quick_item(window, "shortModeClipList")
+        preview = self._quick_item(window, "shortModePreview")
+
+        self.gui.set_property(short_screen, "currentClipIndex", 1)
+        self.assertEqual(clip_list.property("selectedIndex"), 1)
+        self.assertEqual(preview.property("clipData").get("segment_id"), "second")
+
+        self.assertTrue(self.app.removeShortVideoClip(1))
+        self.gui.process_events()
+
+        self.assertEqual(short_screen.property("currentClipIndex"), 0)
+        self.assertEqual(clip_list.property("selectedIndex"), 0)
+        self.assertEqual(preview.property("clipData").get("segment_id"), "first")
 
     def test_short_mode_clip_list_and_preview(self) -> None:
         segments = [

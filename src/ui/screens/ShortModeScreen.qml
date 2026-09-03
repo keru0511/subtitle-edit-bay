@@ -14,6 +14,16 @@ Item {
     property var appBackend: backend
     property int currentClipIndex: 0
 
+    function clampCurrentClipIndex() {
+        if (!shortRoot.appBackend) return
+        var count = shortRoot.appBackend.shortVideoClipCount
+        var nextIndex = count > 0
+            ? Math.min(Math.max(0, shortRoot.currentClipIndex), count - 1)
+            : 0
+        if (nextIndex !== shortRoot.currentClipIndex)
+            shortRoot.currentClipIndex = nextIndex
+    }
+
     function currentClip() {
         if (!shortRoot.appBackend) return null
         var count = shortRoot.appBackend.shortVideoClipCount
@@ -25,7 +35,15 @@ Item {
         if (shortRoot.appBackend) shortRoot.appBackend.initializeShortVideoClips()
     }
 
-    Component.onCompleted: shortRoot.initializeIfNeeded()
+    Component.onCompleted: {
+        shortRoot.initializeIfNeeded()
+        shortRoot.clampCurrentClipIndex()
+    }
+
+    Connections {
+        target: shortRoot.appBackend
+        function onShortVideoClipDataChanged() { shortRoot.clampCurrentClipIndex() }
+    }
 
     ColumnLayout {
         anchors.fill: parent

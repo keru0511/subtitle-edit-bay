@@ -25,17 +25,6 @@ ColumnLayout {
     property int selectedIndex: 0
     signal selected(int index)
 
-    function clampSelected() {
-        if (!clipListRoot.appBackend) return
-        var count = clipListRoot.appBackend.shortVideoClipCount
-        if (selectedIndex >= count) selectedIndex = Math.max(0, count - 1)
-    }
-
-    Connections {
-        target: clipListRoot.appBackend
-        function onShortVideoChanged() { clipListRoot.clampSelected() }
-    }
-
     RowLayout {
         Layout.fillWidth: true
         spacing: 8

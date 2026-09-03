@@ -44,7 +44,7 @@ ApplicationWindow {
     readonly property bool shortMode: root.activeOverlay === "short"
     onEditorModeChanged: {
         if (root.editorMode)
-            root.syncEditorPlayhead(root.editorPositionCache)
+            root.syncEditorPlayhead(root.editorPositionCache, true)
     }
     property bool settingsExpanded: false
     property string colorTarget: ""
@@ -336,14 +336,22 @@ ApplicationWindow {
             advancedSettingsPopup.close()
     }
 
-    function syncEditorPlayhead(positionMs) {
+    function syncEditorPlayhead(positionMs, syncSelection) {
         var resolvedPosition = Math.max(0, Math.round(Number(positionMs) || 0))
         root.appBackend.setEditorPlayhead(
             resolvedPosition,
             String(root.appBackend.editorPlayhead.basis || "source")
         )
-        if (root.editorMode)
+        if (syncSelection && root.editorMode)
             root.appBackend.selectSegmentAtTime(resolvedPosition / 1000)
+    }
+
+    function syncEditorSelectionFromActiveSegments(activeSegments) {
+        if (!root.editorMode || !activeSegments || activeSegments.length === 0)
+            return
+        var sourceIndex = Number(activeSegments[activeSegments.length - 1].sourceIndex)
+        if (isFinite(sourceIndex) && sourceIndex >= 0)
+            root.appBackend.selectSegment(Math.floor(sourceIndex))
     }
 
     function openEditorScreen() {
@@ -1291,17 +1299,17 @@ ApplicationWindow {
                         if (!mainSeek.pressed)
                             mainSeek.value = mainPlayer.position
                         if (mainPlayer.playbackState !== MediaPlayer.PlayingState)
-                            root.syncEditorPlayhead(mainPlayer.position)
+                            root.syncEditorPlayhead(mainPlayer.position, true)
                     }
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
-                    onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position)
+                    onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
                 }
                 Timer {
-                    // Keep the visual playhead fluid without crossing into Python every frame.
+                    // Keep the shared playhead current; the overlay handles exact subtitle changes.
                     interval: 100
                     repeat: true
                     running: mainPlayer.playbackState === MediaPlayer.PlayingState
-                    onTriggered: root.syncEditorPlayhead(mainPlayer.position)
+                    onTriggered: root.syncEditorPlayhead(mainPlayer.position, false)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
                 SubtitleOverlay {
@@ -2247,6 +2255,7 @@ ApplicationWindow {
                         VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
                         SubtitleOverlay {
                             id: editorOverlay
+                            objectName: "editorSubtitleOverlay"
                             anchors.fill: editorVideo
                             appBackend: root.appBackend
                             player: mainPlayer
@@ -2259,6 +2268,8 @@ ApplicationWindow {
                             outlineThickness: root.selectedSubtitleOutlineThickness
                             speakerColors: root.projectSpeakerCache
                             subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                            onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
+                                editorOverlay.activeSegments)
                         }
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
                             Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }

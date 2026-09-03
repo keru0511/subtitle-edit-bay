@@ -1090,6 +1090,7 @@ ApplicationWindow {
         }
 
     RowLayout {
+        id: mainWorkspace
         objectName: "mainWorkspace"
         visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         anchors.fill: parent
@@ -1167,6 +1168,8 @@ ApplicationWindow {
             visible: root.appBackend.projectLoaded
             Layout.preferredWidth: 86
             Layout.minimumWidth: 86
+            Layout.minimumHeight: 0
+            Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             currentMode: root.appBackend.currentEditMode
             capabilities: root.appBackend.editorModeCapabilities
@@ -1384,6 +1387,8 @@ ApplicationWindow {
             visible: root.appBackend.projectLoaded
             Layout.preferredWidth: 210
             Layout.minimumWidth: 200
+            Layout.minimumHeight: 0
+            Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             radius: 12
             color: root.panel

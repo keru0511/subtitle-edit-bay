@@ -27,7 +27,7 @@ ColumnLayout {
 
     function clampSelected() {
         if (!clipListRoot.appBackend) return
-        var count = clipListRoot.appBackend.shortVideoClips.length
+        var count = clipListRoot.appBackend.shortVideoClipCount
         if (selectedIndex >= count) selectedIndex = Math.max(0, count - 1)
     }
 
@@ -124,11 +124,13 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
-        model: clipListRoot.appBackend ? clipListRoot.appBackend.shortVideoClips : []
+        model: clipListRoot.appBackend ? clipListRoot.appBackend.shortVideoClipModel : null
         spacing: 6
 
         delegate: Rectangle {
             id: clipItem
+            required property int index
+            required property var clipData
             objectName: "shortModeClipItem" + index
             width: clipListView.width
             height: 124
@@ -150,7 +152,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 4
                     Text {
-                        text: modelData.preview_text || modelData.text || ""
+                        text: clipItem.clipData.preview_text || clipItem.clipData.text || ""
                         color: "#F4F1E8"
                         font.family: "Yu Gothic UI"
                         font.pixelSize: 12
@@ -159,7 +161,9 @@ ColumnLayout {
                         Layout.fillWidth: true
                     }
                     Text {
-                        text: (modelData.speaker || "話者なし") + "  " + modelData.start.toFixed(2) + " - " + modelData.end.toFixed(2)
+                        text: (clipItem.clipData.speaker || "話者なし") + "  "
+                            + clipItem.clipData.start.toFixed(2) + " - "
+                            + clipItem.clipData.end.toFixed(2)
                         color: "#8E9B94"
                         font.family: "Cascadia Mono"
                         font.pixelSize: 10
@@ -171,17 +175,17 @@ ColumnLayout {
                             id: startTimeField
                             objectName: "shortModeStartTimeField" + index
                             Layout.preferredWidth: 82
-                            text: Number(modelData.start).toFixed(3)
+                            text: Number(clipItem.clipData.start).toFixed(3)
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
                                     && clipListRoot.appBackend.updateShortVideoClip(index, {"start": Number(text)})
-                                if (!accepted) text = Number(modelData.start).toFixed(3)
+                                if (!accepted) text = Number(clipItem.clipData.start).toFixed(3)
                                 focus = false
                             }
                             Binding {
                                 target: startTimeField
                                 property: "text"
-                                value: Number(modelData.start).toFixed(3)
+                                value: Number(clipItem.clipData.start).toFixed(3)
                                 when: !startTimeField.activeFocus
                             }
                         }
@@ -190,17 +194,17 @@ ColumnLayout {
                             id: endTimeField
                             objectName: "shortModeEndTimeField" + index
                             Layout.preferredWidth: 82
-                            text: Number(modelData.end).toFixed(3)
+                            text: Number(clipItem.clipData.end).toFixed(3)
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
                                     && clipListRoot.appBackend.updateShortVideoClip(index, {"end": Number(text)})
-                                if (!accepted) text = Number(modelData.end).toFixed(3)
+                                if (!accepted) text = Number(clipItem.clipData.end).toFixed(3)
                                 focus = false
                             }
                             Binding {
                                 target: endTimeField
                                 property: "text"
-                                value: Number(modelData.end).toFixed(3)
+                                value: Number(clipItem.clipData.end).toFixed(3)
                                 when: !endTimeField.activeFocus
                             }
                         }
@@ -213,7 +217,7 @@ ColumnLayout {
                     model: clipListRoot.fitOptions
                     textRole: "label"
                     valueRole: "value"
-                    currentIndex: clipListRoot.indexForFit(modelData.fit)
+                    currentIndex: clipListRoot.indexForFit(clipItem.clipData.fit)
                     onActivated: {
                         if (clipListRoot.appBackend) {
                             clipListRoot.appBackend.updateShortVideoClip(index, {"fit": fitCombo.currentValue})

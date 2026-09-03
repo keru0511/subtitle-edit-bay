@@ -16,9 +16,9 @@ Item {
 
     function currentClip() {
         if (!shortRoot.appBackend) return null
-        var clips = shortRoot.appBackend.shortVideoClips
-        if (currentClipIndex < 0 || currentClipIndex >= clips.length) return null
-        return clips[currentClipIndex]
+        var count = shortRoot.appBackend.shortVideoClipCount
+        if (currentClipIndex < 0 || currentClipIndex >= count) return null
+        return shortRoot.appBackend.shortVideoClipAt(currentClipIndex)
     }
 
     function initializeIfNeeded() {
@@ -47,7 +47,8 @@ Item {
                 id: exportButton
                 objectName: "shortModeExportButton"
                 implicitHeight: 32
-                enabled: shortRoot.appBackend && !shortRoot.appBackend.running && shortRoot.appBackend.shortVideoClips.length > 0
+                enabled: shortRoot.appBackend && !shortRoot.appBackend.running
+                    && shortRoot.appBackend.shortVideoClipCount > 0
                 text: "書き出す"
                 onClicked: {
                     shortRoot.appBackend.renderShortVideo()

@@ -286,6 +286,54 @@ class SubtitleListModel(QAbstractListModel):
         self.endResetModel()
 
 
+class ShortVideoClipListModel(QAbstractListModel):
+    ClipDataRole = Qt.ItemDataRole.UserRole + 1
+
+    _ROLE_NAMES = {
+        ClipDataRole: b"clipData",
+    }
+
+    def __init__(
+        self,
+        count_resolver: Callable[[], int],
+        data_resolver: Callable[[int], dict[str, Any]],
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._count_resolver = count_resolver
+        self._data_resolver = data_resolver
+        self._count = 0
+
+    def roleNames(self) -> dict[int, bytes]:
+        return self._ROLE_NAMES
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else self._count
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if (
+            role != self.ClipDataRole
+            or not index.isValid()
+            or not 0 <= index.row() < self._count
+        ):
+            return None
+        return self._data_resolver(index.row())
+
+    def refresh(self) -> None:
+        incoming_count = max(0, int(self._count_resolver()))
+        if incoming_count != self._count:
+            self.beginResetModel()
+            self._count = incoming_count
+            self.endResetModel()
+            return
+        if self._count:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(self._count - 1, 0),
+                [self.ClipDataRole],
+            )
+
+
 class EditBayBackend(LegacyEditBayBackend):
     projectChanged = Signal()
     projectDataChanged = Signal()
@@ -312,6 +360,7 @@ class EditBayBackend(LegacyEditBayBackend):
     updateDownloadProgressChanged = Signal()
     updatePackageReadyChanged = Signal()
     shortVideoChanged = Signal()
+    shortVideoClipDataChanged = Signal()
     codexStateChanged = Signal()
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
@@ -368,6 +417,13 @@ class EditBayBackend(LegacyEditBayBackend):
         self._record_startup_diagnostics()
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
+        self._segment_by_id: dict[str, dict[str, Any]] = {}
+        self._short_video_clip_model = ShortVideoClipListModel(
+            self._short_video_clip_count,
+            self._short_video_clip_view_at,
+            self,
+        )
+        self.shortVideoChanged.connect(self._refresh_short_video_clip_data)
         self._subtitle_layout_metrics: dict[str, float | int] = {
             "maxFontScale": 1.0,
             "maxLayoutRow": 0,
@@ -674,11 +730,15 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Property("QVariantList", notify=shortVideoChanged)
     def shortVideoClips(self) -> list[dict[str, Any]]:
-        if self._project is None:
-            return []
-        section = self._short_video_section()
-        clips = section.get("clips", [])
-        return [self._build_short_video_clip_view(clip, index) for index, clip in enumerate(clips)]
+        """Return all clips for callers outside QML.
+
+        QML uses ``shortVideoClipModel`` and ``shortVideoClipAt`` so delegates and
+        the preview only materialize the rows they currently need.
+        """
+        return [
+            self._short_video_clip_view_at(index)
+            for index in range(self._short_video_clip_count())
+        ]
 
     @Property("QVariantMap", notify=shortVideoChanged)
     def shortVideoSettings(self) -> dict[str, Any]:
@@ -711,6 +771,18 @@ class EditBayBackend(LegacyEditBayBackend):
     def subtitleModel(self) -> QObject:
         return self._subtitle_model
 
+    @Property(QObject, constant=True)
+    def shortVideoClipModel(self) -> QObject:
+        return self._short_video_clip_model
+
+    @Property(int, notify=shortVideoClipDataChanged)
+    def shortVideoClipCount(self) -> int:
+        return self._short_video_clip_count()
+
+    @Slot(int, result="QVariantMap")
+    def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+        return self._short_video_clip_view_at(index)
+
     @Property("QVariantList", constant=True)
     def fontChoices(self) -> list[dict[str, str]]:
         return deepcopy(self._font_choices)
@@ -721,6 +793,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     def _sync_subtitle_model(self) -> None:
         segments = self._project.get("segments", []) if self._project else []
+        self._segment_by_id = {str(segment["id"]): segment for segment in segments}
         self._subtitle_model.set_segments(segments)
         self._segment_starts = [float(item["start"]) for item in segments]
         prefix: list[float] = []
@@ -746,6 +819,7 @@ class EditBayBackend(LegacyEditBayBackend):
             for segment_id, cached in self._subtitle_preview_text_cache.items()
             if segment_id in segment_ids
         }
+        self._refresh_short_video_clip_data()
 
     @staticmethod
     def _subtitle_preview_signature(segment: dict[str, Any]) -> tuple[object, ...]:
@@ -814,12 +888,34 @@ class EditBayBackend(LegacyEditBayBackend):
         return section
 
     def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
+        return self._segment_by_id.get(str(segment_id))
+
+    def _short_video_clip_count(self) -> int:
         if self._project is None:
-            return None
-        for segment in self._project.get("segments", []):
-            if str(segment.get("id", "")) == segment_id:
-                return segment
-        return None
+            return 0
+        section = self._project.get("short_video", {})
+        if not isinstance(section, dict):
+            return 0
+        clips = section.get("clips", [])
+        return len(clips) if isinstance(clips, list) else 0
+
+    def _short_video_clip_view_at(self, index: int) -> dict[str, Any]:
+        if self._project is None:
+            return {}
+        section = self._project.get("short_video", {})
+        if not isinstance(section, dict):
+            return {}
+        clips = section.get("clips", [])
+        if not isinstance(clips, list) or not 0 <= index < len(clips):
+            return {}
+        clip = clips[index]
+        if not isinstance(clip, dict):
+            return {}
+        return self._build_short_video_clip_view(clip, index)
+
+    def _refresh_short_video_clip_data(self) -> None:
+        self._short_video_clip_model.refresh()
+        self.shortVideoClipDataChanged.emit()
 
     def _build_short_video_clip_view(self, clip: dict[str, Any], index: int) -> dict[str, Any]:
         segment_id = str(clip.get("segment_id", ""))
@@ -840,7 +936,7 @@ class EditBayBackend(LegacyEditBayBackend):
             "background_color": background_color,
             "text": str(segment.get("text", clip.get("text", ""))),
             "speaker": str(segment.get("speaker", clip.get("speaker", ""))),
-            "preview_text": segment_preview_text(segment) if segment else str(clip.get("text", "")),
+            "preview_text": self._preview_text_for_segment(segment) if segment else str(clip.get("text", "")),
         }
 
     @Slot()

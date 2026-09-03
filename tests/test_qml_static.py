@@ -146,14 +146,29 @@ class QmlStaticTests(unittest.TestCase):
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         overlay = (COMPONENTS_ROOT / "SubtitleOverlay.qml").read_text(encoding="utf-8")
         short_clip_list = (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8")
+        short_screen = (UI_ROOT / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
 
         self.assertNotIn("subtitleSegments", workflow)
         self.assertNotIn("subtitleSegments", overlay)
         self.assertNotIn("subtitleSegments", short_clip_list)
+        self.assertNotIn("shortVideoClips", short_clip_list)
+        self.assertNotIn("shortVideoClips", short_screen)
         self.assertIn("property var layoutMetrics", overlay)
         self.assertIn("appBackend.activeSubtitleSegments", overlay)
         self.assertIn("appBackend.segmentCount", workflow)
         self.assertIn("appBackend.subtitleModel", short_clip_list)
+        self.assertIn("appBackend.shortVideoClipModel", short_clip_list)
+        self.assertIn("appBackend.shortVideoClipCount", short_clip_list)
+        self.assertIn("appBackend.shortVideoClipCount", short_screen)
+        self.assertIn("appBackend.shortVideoClipAt", short_screen)
+
+    def test_short_mode_preview_keeps_playback_for_visual_only_updates(self) -> None:
+        preview = (COMPONENTS_ROOT / "ShortModePreview.qml").read_text(encoding="utf-8")
+
+        self.assertIn("function clipPlaybackKey(clip)", preview)
+        self.assertIn("if (!force && nextKey === previewRoot.activeClipKey) return", preview)
+        self.assertIn("onClipDataChanged: previewRoot.syncClipPlayback(false)", preview)
+        self.assertNotIn("previewPlayer.stop()\n            previewPlayer.position", preview)
 
 
 if __name__ == "__main__":

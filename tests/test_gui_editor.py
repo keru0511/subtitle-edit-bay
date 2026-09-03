@@ -3341,6 +3341,55 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(transition["type"], transition_type)
             self.assertAlmostEqual(float(transition["duration"]), duration)
 
+    def test_short_mode_clip_model_materializes_only_requested_rows(self) -> None:
+        segment_count = 3_000
+        self._load_project(
+            segments=[
+                {
+                    "id": f"segment-{index:04d}",
+                    "start": index * 0.009,
+                    "end": index * 0.009 + 0.05,
+                    "text": f"caption-{index}",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+                for index in range(segment_count)
+            ]
+        )
+        model = self.app._short_video_clip_model
+
+        with (
+            patch.object(
+                self.app,
+                "_build_short_video_clip_view",
+                wraps=self.app._build_short_video_clip_view,
+            ) as build_clip_view,
+            patch(
+                "src.gui.segment_preview_text",
+                wraps=original_segment_preview_text,
+            ) as format_preview,
+        ):
+            self.app.initializeShortVideoClips()
+
+            self.assertEqual(self.app.shortVideoClipCount, segment_count)
+            self.assertEqual(model.rowCount(), segment_count)
+            build_clip_view.assert_not_called()
+            format_preview.assert_not_called()
+
+            last_clip = model.data(
+                model.index(segment_count - 1, 0),
+                model.ClipDataRole,
+            )
+            self.assertEqual(last_clip["segment_id"], "segment-2999")
+            self.assertEqual(last_clip["preview_text"], "caption-2999")
+            self.assertEqual(build_clip_view.call_count, 1)
+            self.assertEqual(format_preview.call_count, 1)
+
+            middle_clip = self.app.shortVideoClipAt(segment_count // 2)
+            self.assertEqual(middle_clip["segment_id"], "segment-1500")
+            self.assertEqual(build_clip_view.call_count, 2)
+            self.assertEqual(format_preview.call_count, 2)
+
     def test_short_mode_clip_list_and_preview(self) -> None:
         segments = [
             {

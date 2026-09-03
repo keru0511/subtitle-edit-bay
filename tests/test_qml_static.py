@@ -126,6 +126,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
         self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
+        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', main_workspace)
 
 
 if __name__ == "__main__":

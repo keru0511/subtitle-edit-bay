@@ -96,6 +96,17 @@ class EditorWorkspaceStateTests(unittest.TestCase):
             {"basis": "output", "sourcePositionMs": 3_000, "outputPositionMs": 2_000},
         )
 
+    def test_mapping_change_preserves_output_basis_and_visible_position(self) -> None:
+        state = EditorWorkspaceState()
+        state.set_playhead(2_000, "output")
+
+        state.set_mapping(OffsetTimeMapping())
+
+        self.assertEqual(
+            state.playhead,
+            {"basis": "output", "sourcePositionMs": 3_000, "outputPositionMs": 2_000},
+        )
+
     def test_mode_falls_back_when_its_capability_disappears(self) -> None:
         state = EditorWorkspaceState()
         available = build_edit_mode_capabilities(

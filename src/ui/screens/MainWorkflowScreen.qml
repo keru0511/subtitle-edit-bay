@@ -1269,7 +1269,10 @@ ApplicationWindow {
                     onPositionChanged: {
                         if (!mainSeek.pressed)
                             mainSeek.value = mainPlayer.position
-                        root.appBackend.setEditorPlayhead(Math.round(mainPlayer.position), "source")
+                        root.appBackend.setEditorPlayhead(
+                            Math.round(mainPlayer.position),
+                            String(root.appBackend.editorPlayhead.basis || "source")
+                        )
                     }
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
                 }

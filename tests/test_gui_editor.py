@@ -2267,6 +2267,18 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.currentEditMode, "subtitle")
         self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
 
+        self.app.set_cut_editor_available(True)
+        self.app.processEvents()
+        self.assertTrue(cut_button.isEnabled())
+        self._click(window, cut_button)
+        self.assertEqual(self.app.currentEditMode, "cut")
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+        self.assertTrue(main.isVisible())
+        self.app.set_cut_editor_available(False)
+        self.app.processEvents()
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertFalse(cut_button.isEnabled())
+
         for item in (rail, video, editor_slot, settings_slot):
             self.assertGreater(item.width(), 0, item.objectName())
             self.assertGreater(item.height(), 0, item.objectName())

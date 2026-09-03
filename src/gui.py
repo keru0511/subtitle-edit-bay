@@ -352,6 +352,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._editor_workspace = EditorWorkspaceState()
+        self._cut_editor_available = False
         self.projectChanged.connect(self._refresh_editor_workspace)
         self.projectDataChanged.connect(self._refresh_editor_workspace)
         self.sourceSelectionChanged.connect(self._refresh_editor_workspace)
@@ -484,6 +485,7 @@ class EditBayBackend(LegacyEditBayBackend):
             project_loaded=self.projectLoaded,
             preview_available=bool(self.previewUrl),
             audio_available=self.audioMixerAvailable,
+            cut_available=self._cut_editor_available,
         )
 
     def _refresh_editor_workspace(self) -> None:
@@ -523,6 +525,15 @@ class EditBayBackend(LegacyEditBayBackend):
 
         self._editor_workspace.set_mapping(mapping)
         self.editorPlayheadChanged.emit()
+
+    def set_cut_editor_available(self, available: bool) -> None:
+        """Enable the cut mode when the non-destructive cut editor is connected."""
+
+        available = bool(available)
+        if self._cut_editor_available == available:
+            return
+        self._cut_editor_available = available
+        self._refresh_editor_workspace()
 
     def _reset_editor_timing(self) -> None:
         self._editor_workspace.set_mapping(None)

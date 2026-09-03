@@ -130,6 +130,8 @@ class EditorWorkspaceState:
 
     def set_mapping(self, mapping: TimeMapping | None) -> bool:
         self._mapping = mapping or IdentityTimeMapping()
+        if self._timeline_basis == "output":
+            return self.set_playhead(self._output_position_ms, "output")
         return self.set_playhead(self._source_position_ms, "source")
 
     def reset_playhead(self) -> bool:

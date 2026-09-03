@@ -36,6 +36,43 @@ Rectangle {
         return String(rail.capabilities.audioReason || "")
     }
 
+    component ModeButton: Button {
+        id: modeControl
+        required property string mode
+        required property string label
+        required property string mark
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 62
+        enabled: rail.modeEnabled(modeControl.mode)
+        opacity: enabled ? 1 : 0.48
+        onClicked: rail.modeRequested(modeControl.mode)
+
+        contentItem: Column {
+            spacing: 3
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: modeControl.mark
+                color: rail.currentMode === modeControl.mode ? "#10140F" : rail.textColor
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 16
+                font.weight: Font.Bold
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: modeControl.label
+                color: rail.currentMode === modeControl.mode ? "#10140F" : rail.textColor
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 9
+            }
+        }
+        background: Rectangle {
+            radius: 8
+            color: rail.currentMode === modeControl.mode ? rail.accentColor : rail.raisedColor
+            border.color: rail.currentMode === modeControl.mode ? rail.accentColor : rail.borderColor
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 8
@@ -50,63 +87,11 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
         }
 
-        Repeater {
-            model: [
-                {"mode": "subtitle", "label": "字幕", "mark": "字"},
-                {"mode": "cut", "label": "カット", "mark": "✂"},
-                {"mode": "audio", "label": "音量", "mark": "音"}
-            ]
-            delegate: ColumnLayout {
-                id: modeEntry
-                required property var modelData
-                Layout.fillWidth: true
-                spacing: 3
-
-                Button {
-                    id: modeButton
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 62
-                    objectName: "editorModeButton-" + String(modeEntry.modelData.mode)
-                    enabled: rail.modeEnabled(String(modeEntry.modelData.mode))
-                    opacity: enabled ? 1 : 0.48
-                    onClicked: rail.modeRequested(String(modeEntry.modelData.mode))
-
-                    contentItem: Column {
-                        spacing: 3
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: String(modeEntry.modelData.mark)
-                            color: rail.currentMode === String(modeEntry.modelData.mode) ? "#10140F" : rail.textColor
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 16
-                            font.weight: Font.Bold
-                        }
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: String(modeEntry.modelData.label)
-                            color: rail.currentMode === String(modeEntry.modelData.mode) ? "#10140F" : rail.textColor
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 9
-                        }
-                    }
-                    background: Rectangle {
-                        radius: 8
-                        color: rail.currentMode === String(modeEntry.modelData.mode) ? rail.accentColor : rail.raisedColor
-                        border.color: rail.currentMode === String(modeEntry.modelData.mode) ? rail.accentColor : rail.borderColor
-                    }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    visible: !modeButton.enabled
-                    text: String(modeEntry.modelData.mode) === "cut" ? "準備中" : "利用不可"
-                    color: rail.mutedColor
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 8
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
-        }
+        ModeButton { objectName: "editorModeButton-subtitle"; mode: "subtitle"; label: "字幕"; mark: "字" }
+        ModeButton { objectName: "editorModeButton-cut"; mode: "cut"; label: "カット"; mark: "✂" }
+        Text { Layout.fillWidth: true; visible: !rail.capabilities.canCut; text: "準備中"; color: rail.mutedColor; font.family: "Yu Gothic UI"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter }
+        ModeButton { objectName: "editorModeButton-audio"; mode: "audio"; label: "音量"; mark: "音" }
+        Text { Layout.fillWidth: true; visible: !rail.capabilities.canMixAudio; text: "利用不可"; color: rail.mutedColor; font.family: "Yu Gothic UI"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter }
 
         Item { Layout.fillHeight: true }
 

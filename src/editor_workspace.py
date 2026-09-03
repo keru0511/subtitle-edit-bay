@@ -62,9 +62,9 @@ def build_edit_mode_capabilities(
 
     return EditModeCapabilities(
         can_preview=project_loaded and preview_available,
-        can_edit_subtitles=project_loaded and preview_available,
-        can_cut=project_loaded and preview_available and cut_available,
-        can_mix_audio=project_loaded and preview_available and audio_available,
+        can_edit_subtitles=project_loaded,
+        can_cut=project_loaded and cut_available,
+        can_mix_audio=project_loaded and audio_available,
     )
 
 

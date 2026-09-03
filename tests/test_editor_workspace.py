@@ -42,6 +42,17 @@ class EditorWorkspaceStateTests(unittest.TestCase):
         self.assertTrue(capability_keys["canEditSubtitles"])
         self.assertTrue(capability_keys["canMixAudio"])
 
+    def test_missing_preview_does_not_disable_unrelated_editing_features(self) -> None:
+        capabilities = build_edit_mode_capabilities(
+            project_loaded=True,
+            preview_available=False,
+            audio_available=True,
+        )
+
+        self.assertFalse(capabilities.can_preview)
+        self.assertTrue(capabilities.can_edit_subtitles)
+        self.assertTrue(capabilities.can_mix_audio)
+
     def test_only_one_available_mode_can_be_selected(self) -> None:
         state = EditorWorkspaceState()
         capabilities = build_edit_mode_capabilities(

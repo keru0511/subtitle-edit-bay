@@ -2484,6 +2484,35 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIsNotNone(window.findChild(QQuickItem, "editorTimeline"))
         self.assertIsNotNone(window.findChild(QQuickItem, "projectSpeakerColorList"))
 
+    def test_qml_editor_activation_selects_subtitle_at_cached_playhead(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 1,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "second",
+                    "start": 5,
+                    "end": 6,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+
+        window.setProperty("editorPositionCache", 5_500)
+        window.setProperty("activeOverlay", "editor")
+        self.app.processEvents()
+
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 5_500)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
     def test_qml_timeline_instantiates_only_visible_captions(self) -> None:
         segments = [
             {

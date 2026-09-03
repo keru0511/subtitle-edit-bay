@@ -42,6 +42,10 @@ ApplicationWindow {
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
     readonly property bool shortMode: root.activeOverlay === "short"
+    onEditorModeChanged: {
+        if (root.editorMode)
+            root.syncEditorPlayhead(root.editorPositionCache)
+    }
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1

@@ -163,6 +163,21 @@ then inspect the output codec, pixel format, duration, faststart layout, and aud
 stream. Do not mock the FFmpeg encode or treat a permanently GPU-less runner as
 the fallback condition.
 
+Audio mixer semantic tests use three steady, low-level stereo tones at 440 Hz,
+880 Hz, and 1320 Hz. They save the complete channel state, invoke the production
+project render, reload the project, and inspect the output audio. Mute and solo
+checks use narrow frequency bands and require at least 15 dB of separation. Gain
+checks compare 50%, 100%, and 200% outputs with the expected `20 * log10(gain)`
+change within 2 dB while the fixture remains below the limiter range.
+
+Normalize checks measure EBU R128 integrated loudness with FFmpeg `ebur128`, not
+`volumedetect` mean volume. A six-second steady fixture provides a deterministic
+window: discard the first second as warm-up and measure the following four
+seconds. Compare the source with normalize-off output, then compare normalize-on
+output with the configured LUFS target. Assertion diagnostics must include
+measured frequency levels or integrated loudness, target and tolerance, the
+analysis command, and FFmpeg stderr.
+
 Run the release workflow contract tests directly:
 
 ```powershell

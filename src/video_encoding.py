@@ -4,6 +4,11 @@ DEFAULT_NVENC_CQ = 18
 DEFAULT_X264_CRF = 18
 
 
+def select_automatic_video_codec(*, nvenc_available: bool) -> str:
+    """Choose the production encoder from the probed runtime capability."""
+    return "h264_nvenc" if nvenc_available else "libx264"
+
+
 def build_video_encoding_args(
     video_codec: str,
     nvenc_preset: str = "p5",

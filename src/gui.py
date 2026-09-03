@@ -94,6 +94,7 @@ from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
+from .video_encoding import select_automatic_video_codec
 from . import update_manager, updater
 
 
@@ -2831,8 +2832,8 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         self.refreshDependencies()
         effective_settings = dict(settings)
-        effective_settings["video_codec"] = (
-            "h264_nvenc" if self._dependencies.nvenc else "libx264"
+        effective_settings["video_codec"] = select_automatic_video_codec(
+            nvenc_available=self._dependencies.nvenc,
         )
         self.saveSettings(effective_settings)
         self._update_project_settings(effective_settings)

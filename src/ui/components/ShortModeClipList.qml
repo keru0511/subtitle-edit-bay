@@ -50,15 +50,15 @@ ColumnLayout {
             textRole: "label"
             valueRole: "value"
             currentIndex: clipListRoot.appBackend
-                && clipListRoot.appBackend.subtitleSegments.length > 0 ? 0 : 1
+                && clipListRoot.appBackend.segmentCount > 0 ? 0 : 1
         }
         ComboBox {
             id: segmentCombo
             objectName: "shortModeSegmentCombo"
             Layout.fillWidth: true
-            model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitleSegments : []
-            textRole: "preview_text"
-            valueRole: "id"
+            model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitleModel : null
+            textRole: "text"
+            valueRole: "segmentId"
             enabled: clipSourceCombo.currentValue === "segment"
         }
         Text { text: "範囲"; color: "#8E9B94"; font.pixelSize: 10 }

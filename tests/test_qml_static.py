@@ -22,6 +22,8 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "CodexChatPanel.qml",
     COMPONENTS_ROOT / "CodexSidebarContainer.qml",
     COMPONENTS_ROOT / "EditorModeRail.qml",
+    COMPONENTS_ROOT / "SubtitleOverlay.qml",
+    COMPONENTS_ROOT / "ShortModePreview.qml",
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -118,6 +120,9 @@ class QmlStaticTests(unittest.TestCase):
         main_workspace = workflow.split('objectName: "mainWorkspace"', 1)[1].split(
             'objectName: "overwriteProjectDialog"', 1
         )[0]
+        editor_content = workflow.split("id: editorContentComponent", 1)[1].split(
+            "id: shortModePage", 1
+        )[0]
 
         self.assertIn('property string activeOverlay: ""', workflow)
         self.assertNotIn("\n    property bool editorMode:", workflow)
@@ -130,7 +135,25 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
         self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
-        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', main_workspace)
+        self.assertNotIn("MediaPlayer {", editor_content)
+        self.assertNotIn("editorPlayer", workflow)
+        self.assertIn("mainPlayer.videoOutput = editorVideo", editor_content)
+        self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
+        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', workflow)
+        self.assertIn("interval: 100", main_workspace)
+
+    def test_subtitle_preview_does_not_copy_the_full_segment_list(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        overlay = (COMPONENTS_ROOT / "SubtitleOverlay.qml").read_text(encoding="utf-8")
+        short_clip_list = (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8")
+
+        self.assertNotIn("subtitleSegments", workflow)
+        self.assertNotIn("subtitleSegments", overlay)
+        self.assertNotIn("subtitleSegments", short_clip_list)
+        self.assertIn("property var layoutMetrics", overlay)
+        self.assertIn("appBackend.activeSubtitleSegments", overlay)
+        self.assertIn("appBackend.segmentCount", workflow)
+        self.assertIn("appBackend.subtitleModel", short_clip_list)
 
 
 if __name__ == "__main__":

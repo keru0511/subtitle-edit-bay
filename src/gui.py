@@ -368,6 +368,11 @@ class EditBayBackend(LegacyEditBayBackend):
         self._record_startup_diagnostics()
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
+        self._subtitle_layout_metrics: dict[str, float | int] = {
+            "maxFontScale": 1.0,
+            "maxLayoutRow": 0,
+        }
+        self._subtitle_preview_text_cache: dict[str, tuple[tuple[object, ...], str]] = {}
         self._segment_starts: list[float] = []
         self._segment_prefix_max_end: list[float] = []
         self._project_revision = 0
@@ -662,6 +667,11 @@ class EditBayBackend(LegacyEditBayBackend):
             return []
         return deepcopy(self._project.get("segments", []))
 
+    @Property("QVariantMap", notify=segmentsChanged)
+    def subtitleLayoutMetrics(self) -> dict[str, float | int]:
+        """Return the small aggregate QML needs without copying every segment."""
+        return dict(self._subtitle_layout_metrics)
+
     @Property("QVariantList", notify=shortVideoChanged)
     def shortVideoClips(self) -> list[dict[str, Any]]:
         if self._project is None:
@@ -715,19 +725,56 @@ class EditBayBackend(LegacyEditBayBackend):
         self._segment_starts = [float(item["start"]) for item in segments]
         prefix: list[float] = []
         max_end = 0.0
+        max_font_scale = 1.0
+        max_layout_row = 0
         for segment in segments:
             max_end = max(max_end, float(segment["end"]))
             prefix.append(max_end)
+            max_font_scale = max(
+                max_font_scale,
+                max(0.1, float(segment.get("subtitle_font_scale", 1.0))),
+            )
+            max_layout_row = max(max_layout_row, int(segment.get("layout_row", 0)))
         self._segment_prefix_max_end = prefix
+        self._subtitle_layout_metrics = {
+            "maxFontScale": max_font_scale,
+            "maxLayoutRow": max_layout_row,
+        }
+        segment_ids = {str(segment["id"]) for segment in segments}
+        self._subtitle_preview_text_cache = {
+            segment_id: cached
+            for segment_id, cached in self._subtitle_preview_text_cache.items()
+            if segment_id in segment_ids
+        }
 
     @staticmethod
-    def _segment_view(segment: dict[str, Any], source_index: int | None = None) -> dict[str, Any]:
+    def _subtitle_preview_signature(segment: dict[str, Any]) -> tuple[object, ...]:
+        return (
+            str(segment.get("text", "")),
+            float(segment["start"]),
+            float(segment["end"]),
+            int(segment.get("max_width", 24)),
+            str(segment.get("subtitle_line_count", segment.get("line_count_override", "auto"))),
+            bool(segment.get("manual_text", False)),
+        )
+
+    def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
+        segment_id = str(segment["id"])
+        signature = self._subtitle_preview_signature(segment)
+        cached = self._subtitle_preview_text_cache.get(segment_id)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        preview_text = segment_preview_text(segment)
+        self._subtitle_preview_text_cache[segment_id] = (signature, preview_text)
+        return preview_text
+
+    def _segment_view(self, segment: dict[str, Any], source_index: int | None = None) -> dict[str, Any]:
         view = {
             "id": str(segment["id"]),
             "start": float(segment["start"]),
             "end": float(segment["end"]),
             "text": str(segment.get("text", "")),
-            "preview_text": segment_preview_text(segment),
+            "preview_text": self._preview_text_for_segment(segment),
             "speaker": str(segment.get("speaker", "")),
             "layout_row": int(segment.get("layout_row", 0)),
             "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),

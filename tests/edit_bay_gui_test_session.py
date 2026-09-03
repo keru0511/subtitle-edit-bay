@@ -52,9 +52,7 @@ class EditBayGuiTestSession:
         app._redo_stack.clear()
         app._selected_segment_index = -1
         app._project_revision = 0
-        app._subtitle_model.set_segments([])
-        app._segment_starts.clear()
-        app._segment_prefix_max_end.clear()
+        app._sync_subtitle_model()
 
         app._active_job = ""
         app._processing_progress.start("")

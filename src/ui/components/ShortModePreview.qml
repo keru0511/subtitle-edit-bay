@@ -94,6 +94,7 @@ Rectangle {
         anchors.fill: previewVideo
         appBackend: previewRoot.appBackend
         player: previewPlayer
+        layoutMetrics: previewRoot.appBackend ? previewRoot.appBackend.subtitleLayoutMetrics : ({})
         captionObjectPrefix: "shortSubtitleOverlayCaption"
         baseFontSize: previewRoot.subtitleBaseFontSize
         defaultSubtitleFontSize: 50

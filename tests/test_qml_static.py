@@ -21,6 +21,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "ProcessingProgressPanel.qml",
     COMPONENTS_ROOT / "CodexChatPanel.qml",
     COMPONENTS_ROOT / "CodexSidebarContainer.qml",
+    COMPONENTS_ROOT / "EditorModeRail.qml",
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -111,6 +112,20 @@ class QmlStaticTests(unittest.TestCase):
             for forbidden in forbidden_values:
                 with self.subTest(area=area, forbidden=forbidden):
                     self.assertNotIn(forbidden, qml_by_area[area])
+
+    def test_editor_workspace_has_one_overlay_and_one_shared_preview(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        main_workspace = workflow.split('objectName: "mainWorkspace"', 1)[1].split(
+            'objectName: "overwriteProjectDialog"', 1
+        )[0]
+
+        self.assertIn('property string activeOverlay: ""', workflow)
+        self.assertNotIn("\n    property bool editorMode:", workflow)
+        self.assertNotIn("\n    property bool mixerMode:", workflow)
+        self.assertIn('objectName: "editorModeRail"', main_workspace)
+        self.assertIn('objectName: "modeEditorSlot"', main_workspace)
+        self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
+        self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
 
 
 if __name__ == "__main__":

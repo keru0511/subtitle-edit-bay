@@ -72,6 +72,12 @@ from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
+from .editor_workspace import (
+    EditModeCapabilities,
+    EditorWorkspaceState,
+    TimeMapping,
+    build_edit_mode_capabilities,
+)
 from .gui_state import (
     build_gui_render_command,
     build_gui_short_video_command,
@@ -314,6 +320,9 @@ class EditBayBackend(LegacyEditBayBackend):
     highlightCandidatesChanged = Signal()
     highlightAnalysisChanged = Signal()
     progressDetailsChanged = Signal()
+    editorModeChanged = Signal()
+    editorCapabilitiesChanged = Signal()
+    editorPlayheadChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         resolved_workspace_root = (
@@ -342,6 +351,10 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=resolved_workspace_root)
+        self._editor_workspace = EditorWorkspaceState()
+        self.projectChanged.connect(self._refresh_editor_workspace)
+        self.projectDataChanged.connect(self._refresh_editor_workspace)
+        self.sourceSelectionChanged.connect(self._refresh_editor_workspace)
         self._processing_progress = ProcessingProgress()
         self._ffmpeg_duration_seconds = 0.0
         self._ffmpeg_duration_from_event = False
@@ -465,6 +478,56 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(bool, notify=projectChanged)
     def projectDirty(self) -> bool:
         return self._project_dirty
+
+    def _edit_mode_capabilities(self) -> EditModeCapabilities:
+        return build_edit_mode_capabilities(
+            project_loaded=self.projectLoaded,
+            preview_available=bool(self.previewUrl),
+            audio_available=self.audioMixerAvailable,
+        )
+
+    def _refresh_editor_workspace(self) -> None:
+        mode_changed = self._editor_workspace.ensure_available_mode(self._edit_mode_capabilities())
+        self.editorCapabilitiesChanged.emit()
+        if mode_changed:
+            self.editorModeChanged.emit()
+
+    @Property(str, notify=editorModeChanged)
+    def currentEditMode(self) -> str:
+        return self._editor_workspace.current_mode
+
+    @Property("QVariantMap", notify=editorCapabilitiesChanged)
+    def editorModeCapabilities(self) -> dict[str, object]:
+        return self._edit_mode_capabilities().as_dict()
+
+    @Property("QVariantMap", notify=editorPlayheadChanged)
+    def editorPlayhead(self) -> dict[str, object]:
+        return self._editor_workspace.playhead
+
+    @Slot(str, result=bool)
+    def selectEditMode(self, mode: str) -> bool:
+        changed = self._editor_workspace.select_mode(mode, self._edit_mode_capabilities())
+        if changed:
+            self.editorModeChanged.emit()
+        return changed
+
+    @Slot(int, str, result=bool)
+    def setEditorPlayhead(self, position_ms: int, basis: str) -> bool:
+        changed = self._editor_workspace.set_playhead(position_ms, basis)
+        if changed:
+            self.editorPlayheadChanged.emit()
+        return changed
+
+    def set_editor_time_mapping(self, mapping: TimeMapping | None) -> None:
+        """Install the source/output time mapper supplied by the cut editor."""
+
+        self._editor_workspace.set_mapping(mapping)
+        self.editorPlayheadChanged.emit()
+
+    def _reset_editor_timing(self) -> None:
+        self._editor_workspace.set_mapping(None)
+        self._editor_workspace.reset_playhead()
+        self.editorPlayheadChanged.emit()
 
     @Property(bool, notify=lastProcessDiagnosticChanged)
     def hasLastProcessDiagnostic(self) -> bool:
@@ -1920,6 +1983,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._selected_segment_index = -1
+        self._reset_editor_timing()
         self._project_revision += 1
         self._reset_audio_preview_cache()
         self._audio_preview_gains.clear()
@@ -2244,6 +2308,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._selected_segment_index = 0 if project.get("segments") else -1
+        self._reset_editor_timing()
         if update_sources:
             self._loading_project_sources = True
             try:

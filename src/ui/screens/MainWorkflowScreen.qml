@@ -32,10 +32,11 @@ ApplicationWindow {
     property real editorCaptionScrollY: 0
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
-    property bool editorMode: false
-    property bool mixerMode: false
-    property bool dictionaryMode: false
-    property bool shortMode: false
+    property string activeOverlay: ""
+    readonly property bool editorMode: root.activeOverlay === "editor"
+    readonly property bool mixerMode: root.activeOverlay === "mixer"
+    readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
+    readonly property bool shortMode: root.activeOverlay === "short"
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -309,6 +310,18 @@ ApplicationWindow {
         return 1
     }
 
+    function editModeTitle(mode) {
+        return {"subtitle": "字幕", "cut": "カット", "audio": "音量"}[mode] || "編集"
+    }
+
+    function editModeDescription(mode) {
+        if (mode === "subtitle")
+            return "字幕の内容とタイミングを編集します"
+        if (mode === "audio")
+            return "動画と各音声トラックのバランスを調整します"
+        return "出力動画に残す範囲を編集します"
+    }
+
     function closeSettingsPopup() {
         if (advancedSettingsPopup.opened)
             advancedSettingsPopup.close()
@@ -316,37 +329,34 @@ ApplicationWindow {
 
     function openEditorScreen() {
         root.closeSettingsPopup()
+        root.appBackend.selectEditMode("subtitle")
         if (!root.mixerMode) {
             root.editorPositionCache = mainPlayer.position
             mainPlayer.pause()
         } else
             root.appBackend.stopAudioMixerPreview()
-        root.mixerMode = false
-        root.dictionaryMode = false
-        root.shortMode = false
-        root.editorMode = true
+        root.activeOverlay = "editor"
     }
 
     function closeEditorScreen() {
         mainPlayer.position = root.editorPositionCache
-        root.editorMode = false
+        root.activeOverlay = ""
     }
 
     function openMixerScreen() {
         root.closeSettingsPopup()
+        if (!root.appBackend.selectEditMode("audio") && root.appBackend.currentEditMode !== "audio")
+            return
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.editorMode = false
-        root.dictionaryMode = false
-        root.shortMode = false
         root.appBackend.prepareAudioMixerPreview()
-        root.mixerMode = true
+        root.activeOverlay = "mixer"
     }
 
     function closeMixerScreen() {
         root.appBackend.stopAudioMixerPreview()
         mainPlayer.position = root.editorPositionCache
-        root.mixerMode = false
+        root.activeOverlay = ""
     }
 
     function openDictionaryScreen() {
@@ -356,15 +366,12 @@ ApplicationWindow {
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
-        root.editorMode = false
-        root.mixerMode = false
-        root.shortMode = false
-        root.dictionaryMode = true
+        root.activeOverlay = "dictionary"
     }
 
     function closeDictionaryScreen() {
         mainPlayer.position = root.editorPositionCache
-        root.dictionaryMode = false
+        root.activeOverlay = ""
     }
 
     function openShortModeScreen() {
@@ -374,14 +381,11 @@ ApplicationWindow {
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
-        root.editorMode = false
-        root.mixerMode = false
-        root.dictionaryMode = false
-        root.shortMode = true
+        root.activeOverlay = "short"
     }
 
     function closeShortModeScreen() {
-        root.shortMode = false
+        root.activeOverlay = ""
         mainPlayer.position = root.editorPositionCache
     }
 
@@ -1093,6 +1097,7 @@ ApplicationWindow {
         spacing: 10
 
         Rectangle {
+            visible: !root.appBackend.projectLoaded
             Layout.preferredWidth: 270
             Layout.fillHeight: true
             radius: 12
@@ -1154,6 +1159,24 @@ ApplicationWindow {
                 }
                 Text { Layout.fillWidth: true; text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status) + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
             }
+        }
+
+        EditorModeRail {
+            id: editorModeRail
+            objectName: "editorModeRail"
+            visible: root.appBackend.projectLoaded
+            Layout.preferredWidth: 86
+            Layout.minimumWidth: 86
+            Layout.fillHeight: true
+            currentMode: root.appBackend.currentEditMode
+            capabilities: root.appBackend.editorModeCapabilities
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            onModeRequested: function(mode) { root.appBackend.selectEditMode(mode) }
         }
 
         ColumnLayout {
@@ -1239,7 +1262,11 @@ ApplicationWindow {
                     source: root.appBackend.previewUrl
                     videoOutput: mainVideo
                     audioOutput: AudioOutput { volume: 0.7 }
-                    onPositionChanged: if (!mainSeek.pressed) mainSeek.value = mainPlayer.position
+                    onPositionChanged: {
+                        if (!mainSeek.pressed)
+                            mainSeek.value = mainPlayer.position
+                        root.appBackend.setEditorPlayhead(Math.round(mainPlayer.position), "source")
+                    }
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
@@ -1263,6 +1290,48 @@ ApplicationWindow {
                         ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
                         Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                         Text { text: root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000); color: root.textMuted; font.pixelSize: 10; font.family: "Cascadia Mono" }
+                    }
+                }
+            }
+
+
+            Rectangle {
+                id: modeEditorSlot
+                objectName: "modeEditorSlot"
+                visible: root.appBackend.projectLoaded
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 104 : 0
+                Layout.minimumHeight: visible ? 92 : 0
+                radius: 12
+                color: root.panel
+                border.color: root.border
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 12
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        Text { text: root.editModeTitle(root.appBackend.currentEditMode) + "編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 14; font.weight: Font.Bold }
+                        Text { Layout.fillWidth: true; text: root.editModeDescription(root.appBackend.currentEditMode); color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.appBackend.currentEditMode === "cut" && !root.appBackend.editorModeCapabilities.canCut
+                            text: root.appBackend.editorModeCapabilities.cutReason
+                            color: root.amber
+                            font.family: "Yu Gothic UI"
+                            font.pixelSize: 10
+                        }
+                    }
+                    SmallButton {
+                        objectName: "openCurrentModeEditorButton"
+                        text: root.appBackend.currentEditMode === "audio" ? "音量調整を開く" : "字幕編集を開く"
+                        visible: root.appBackend.currentEditMode !== "cut"
+                        enabled: root.appBackend.currentEditMode === "audio"
+                            ? root.appBackend.editorModeCapabilities.canMixAudio
+                            : root.appBackend.editorModeCapabilities.canEditSubtitles
+                        onClicked: root.appBackend.currentEditMode === "audio" ? root.openMixerScreen() : root.openEditorScreen()
                     }
                 }
             }
@@ -1305,6 +1374,38 @@ ApplicationWindow {
                 // to its collapsed minimum so its header remains reachable.
                 Layout.minimumHeight: root.appBackend.progressVisible ? 118 : implicitHeight
                 backend: root.appBackend
+            }
+        }
+
+
+        Rectangle {
+            id: modeSettingsSlot
+            objectName: "modeSettingsSlot"
+            visible: root.appBackend.projectLoaded
+            Layout.preferredWidth: 210
+            Layout.minimumWidth: 200
+            Layout.fillHeight: true
+            radius: 12
+            color: root.panel
+            border.color: root.border
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 10
+                PanelTitle { text: root.editModeTitle(root.appBackend.currentEditMode) + "の設定" }
+                Text { Layout.fillWidth: true; text: root.editModeDescription(root.appBackend.currentEditMode); color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+                Text { text: "共通の再生位置"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                Text { objectName: "sourcePlayheadText"; text: "素材  " + root.stamp(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 10 }
+                Text { objectName: "outputPlayheadText"; text: "出力  " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 10 }
+                Text { Layout.fillWidth: true; text: "カット適用後は素材時間と出力時間を対応付けます"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.Wrap }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
+                Text { text: "利用状況"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                Text { Layout.fillWidth: true; text: "字幕  利用可能"; color: root.appBackend.editorModeCapabilities.canEditSubtitles ? root.acid : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
+                Text { Layout.fillWidth: true; text: "カット  " + (root.appBackend.editorModeCapabilities.canCut ? "利用可能" : root.appBackend.editorModeCapabilities.cutReason); color: root.appBackend.editorModeCapabilities.canCut ? root.acid : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                Text { Layout.fillWidth: true; text: "音量  " + (root.appBackend.editorModeCapabilities.canMixAudio ? "利用可能" : root.appBackend.editorModeCapabilities.audioReason); color: root.appBackend.editorModeCapabilities.canMixAudio ? root.acid : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
+                Item { Layout.fillHeight: true }
             }
         }
 

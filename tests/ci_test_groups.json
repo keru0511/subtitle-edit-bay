@@ -37,6 +37,7 @@
         "test_color_config",
         "test_craig_pipeline",
         "test_craig_transcription_execution",
+        "test_editor_workspace",
         "test_gui_codex_chat_state",
         "test_gui_codex_state",
         "test_gui_runtime_settings",

@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QSignalSpy, QTest
 
@@ -2224,6 +2224,107 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreater(log_panel.height(), 0)
         self.assertGreater(video_panel.height(), 0)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+
+    def test_common_editor_workspace_switches_modes_without_losing_playhead(self) -> None:
+        path, _, _ = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self.app._dependencies = RuntimeDependencyStatus(
+            ffmpeg=True,
+            ffprobe=True,
+            whisperx=False,
+            cuda=False,
+        )
+        self.app.dependenciesChanged.emit()
+        engine, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+
+        main = self._quick_item(window, "mainWorkspace")
+        rail = self._quick_item(window, "editorModeRail")
+        video = self._quick_item(window, "mainVideoPanel")
+        editor_slot = self._quick_item(window, "modeEditorSlot")
+        settings_slot = self._quick_item(window, "modeSettingsSlot")
+        editor_loader = self._quick_item(window, "modeEditorContentLoader")
+        settings_loader = self._quick_item(window, "modeSettingsContentLoader")
+        editor_fallback = self._quick_item(window, "modeEditorFallback")
+        settings_fallback = self._quick_item(window, "modeSettingsFallback")
+        subtitle_button = self._quick_item(window, "editorModeButton-subtitle")
+        cut_button = self._quick_item(window, "editorModeButton-cut")
+        audio_button = self._quick_item(window, "editorModeButton-audio")
+
+        self.assertTrue(main.isVisible())
+        self.assertTrue(rail.isVisible())
+        self.assertTrue(subtitle_button.isEnabled())
+        self.assertFalse(cut_button.isEnabled())
+        self.assertTrue(audio_button.isEnabled())
+        self.assertFalse(editor_loader.property("active"))
+        self.assertFalse(settings_loader.property("active"))
+        self.assertTrue(editor_fallback.isVisible())
+        self.assertTrue(settings_fallback.isVisible())
+
+        injected_editor = QQmlComponent(engine)
+        injected_editor.setData(
+            b'import QtQuick; Item { objectName: "injectedModeEditor" }',
+            QUrl(),
+        )
+        self.assertFalse(injected_editor.isError(), injected_editor.errors())
+        self.assertTrue(window.setProperty("modeEditorContent", injected_editor))
+        self.app.processEvents()
+        self.assertTrue(editor_loader.property("active"))
+        self.assertFalse(editor_fallback.isVisible())
+        self.assertTrue(self._quick_item(window, "injectedModeEditor").isVisible())
+
+        injected_settings = QQmlComponent(engine)
+        injected_settings.setData(
+            b'import QtQuick; Item { objectName: "injectedModeSettings" }',
+            QUrl(),
+        )
+        self.assertFalse(injected_settings.isError(), injected_settings.errors())
+        self.assertTrue(window.setProperty("modeSettingsContent", injected_settings))
+        self.app.processEvents()
+        self.assertTrue(settings_loader.property("active"))
+        self.assertFalse(settings_fallback.isVisible())
+        self.assertTrue(self._quick_item(window, "injectedModeSettings").isVisible())
+        self.assertTrue(self.app.editorModeCapabilities["canPreview"])
+        self.assertTrue(self.app.editorModeCapabilities["canEditSubtitles"])
+        self.assertFalse(self.app.editorModeCapabilities["canCut"])
+        self.assertTrue(self.app.editorModeCapabilities["canMixAudio"])
+
+        self.app.setEditorPlayhead(12_345, "source")
+        self._click(window, audio_button)
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+        self.assertTrue(main.isVisible())
+        self.assertFalse(self._quick_item(window, "mixerPage").isVisible())
+        self._click(window, subtitle_button)
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+
+        self.app.set_cut_editor_available(True)
+        self.app.processEvents()
+        self.assertTrue(cut_button.isEnabled())
+        self._click(window, cut_button)
+        self.assertEqual(self.app.currentEditMode, "cut")
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_345)
+        self.assertTrue(main.isVisible())
+        self.app.set_cut_editor_available(False)
+        self.app.processEvents()
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertFalse(cut_button.isEnabled())
+
+        for item in (rail, video, editor_slot, settings_slot):
+            self.assertGreater(item.width(), 0, item.objectName())
+            self.assertGreater(item.height(), 0, item.objectName())
+            self._assert_quick_item_within(main, item)
+        self.assertLessEqual(video.y() + video.height(), editor_slot.y() + 1)
+        self.assertLessEqual(rail.x() + rail.width(), video.parentItem().x() + 1)
+        self.assertLessEqual(video.parentItem().x() + video.parentItem().width(), settings_slot.x() + 1)
+
+        self.app._project["audio_mix"]["channels"] = []
+        self.app.projectDataChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(self.app.editorModeCapabilities["canMixAudio"])
+        self.assertFalse(audio_button.isEnabled())
+        self.assertTrue(subtitle_button.isEnabled())
 
     def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
         self._load_project()

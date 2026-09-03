@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import signal
 import shutil
 import subprocess
@@ -30,6 +31,9 @@ class MediaFixture:
     height: int
     fps: int
     segments: tuple[MediaSegment, ...]
+    sample_rate: int = 48_000
+    audio_channel_layout: str = "mono"
+    tone_volume_db: float = 0.0
 
     @property
     def duration_seconds(self) -> float:
@@ -40,7 +44,73 @@ class MediaFixture:
             f"{segment.label}:{segment.duration_seconds:.3f}s/{segment.color}/{segment.tone_frequency_hz}Hz"
             for segment in self.segments
         )
-        return f"{self.width}x{self.height}@{self.fps}fps, bands=[{bands}]"
+        return (
+            f"{self.width}x{self.height}@{self.fps}fps, bands=[{bands}], "
+            f"audio={self.sample_rate}Hz/{self.audio_channel_layout}/{self.tone_volume_db:g}dB"
+        )
+
+
+@dataclass(frozen=True)
+class AudioFixture:
+    path: Path
+    frequency_hz: int
+    duration_seconds: float
+    sample_rate: int
+    channel_layout: str
+    volume_db: float
+
+    def describe(self) -> str:
+        return (
+            f"path={self.path}, frequency={self.frequency_hz}Hz, "
+            f"duration={self.duration_seconds:.3f}s, sample_rate={self.sample_rate}Hz, "
+            f"channel_layout={self.channel_layout}, volume={self.volume_db:g}dB"
+        )
+
+
+@dataclass(frozen=True)
+class AudioLevelMeasurement:
+    path: Path
+    frequency_hz: int | None
+    bandwidth_hz: int | None
+    mean_volume_db: float
+    max_volume_db: float
+    command: tuple[str, ...]
+    stderr: str
+
+    def describe(self) -> str:
+        band = (
+            f"frequency={self.frequency_hz}Hz, bandwidth={self.bandwidth_hz}Hz"
+            if self.frequency_hz is not None
+            else "frequency=broadband"
+        )
+        return (
+            f"path={self.path}, {band}, mean_volume={self.mean_volume_db:.2f}dB, "
+            f"max_volume={self.max_volume_db:.2f}dB\n"
+            f"command: {subprocess.list2cmdline(list(self.command))}\n"
+            f"ffmpeg stderr:\n{self.stderr or '(empty)'}"
+        )
+
+
+@dataclass(frozen=True)
+class IntegratedLoudnessMeasurement:
+    path: Path
+    integrated_lufs: float
+    start_seconds: float
+    duration_seconds: float | None
+    command: tuple[str, ...]
+    stderr: str
+
+    def describe(self) -> str:
+        interval = (
+            f"start={self.start_seconds:.3f}s, duration={self.duration_seconds:.3f}s"
+            if self.duration_seconds is not None
+            else f"start={self.start_seconds:.3f}s, duration=remaining"
+        )
+        return (
+            f"path={self.path}, integrated_loudness={self.integrated_lufs:.2f} LUFS, {interval}\n"
+            f"command: {subprocess.list2cmdline(list(self.command))}\n"
+            f"ffmpeg stderr:\n{self.stderr or '(empty)'}"
+        )
 
 
 @dataclass(frozen=True)
@@ -282,6 +352,8 @@ def create_lavfi_av_fixture(
     height: int = 180,
     fps: int = 30,
     sample_rate: int = 48_000,
+    audio_channel_layout: str = "mono",
+    tone_volume_db: float = 0.0,
 ) -> MediaFixture:
     require_media_tools()
     resolved_segments = tuple(segments)
@@ -289,6 +361,10 @@ def create_lavfi_av_fixture(
         raise ValueError("At least one media segment is required.")
     if width <= 0 or height <= 0 or fps <= 0 or sample_rate <= 0:
         raise ValueError("Fixture dimensions, fps, and sample rate must be positive.")
+    if audio_channel_layout not in {"mono", "stereo"}:
+        raise ValueError("Fixture audio channel layout must be mono or stereo.")
+    if not math.isfinite(tone_volume_db):
+        raise ValueError("Fixture tone volume must be finite.")
     if any(segment.duration_seconds <= 0 for segment in resolved_segments):
         raise ValueError("Fixture segment durations must be positive.")
 
@@ -313,7 +389,10 @@ def create_lavfi_av_fixture(
         filter_parts.extend(
             [
                 f"[{index * 2}:v]setpts=PTS-STARTPTS[v{index}]",
-                f"[{index * 2 + 1}:a]asetpts=PTS-STARTPTS[a{index}]",
+                (
+                    f"[{index * 2 + 1}:a]asetpts=PTS-STARTPTS,volume={tone_volume_db:g}dB,"
+                    f"aformat=sample_rates={sample_rate}:channel_layouts={audio_channel_layout}[a{index}]"
+                ),
             ]
         )
         concat_inputs.extend([f"[v{index}]", f"[a{index}]"])
@@ -322,7 +401,16 @@ def create_lavfi_av_fixture(
         filter_parts.extend(["[v0]null[outv]", "[a0]anull[outa]"])
     else:
         filter_parts.append("".join(concat_inputs) + f"concat=n={len(resolved_segments)}:v=1:a=1[outv][outa]")
-    fixture = MediaFixture(path, width, height, fps, resolved_segments)
+    fixture = MediaFixture(
+        path,
+        width,
+        height,
+        fps,
+        resolved_segments,
+        sample_rate=sample_rate,
+        audio_channel_layout=audio_channel_layout,
+        tone_volume_db=tone_volume_db,
+    )
     command.extend(
         [
             "-filter_complex",
@@ -352,6 +440,176 @@ def create_lavfi_av_fixture(
     if not path.is_file() or path.stat().st_size <= 0:
         raise AssertionError(f"FFmpeg did not create the fixture: {path}\n{fixture.describe()}")
     return fixture
+
+
+def create_lavfi_audio_fixture(
+    path: Path,
+    *,
+    frequency_hz: int,
+    duration_seconds: float,
+    sample_rate: int = 48_000,
+    channel_layout: str = "stereo",
+    volume_db: float = 0.0,
+) -> AudioFixture:
+    require_media_tools()
+    if frequency_hz <= 0 or duration_seconds <= 0 or sample_rate <= 0:
+        raise ValueError("Audio fixture frequency, duration, and sample rate must be positive.")
+    if channel_layout not in {"mono", "stereo"}:
+        raise ValueError("Audio fixture channel layout must be mono or stereo.")
+    if not math.isfinite(volume_db):
+        raise ValueError("Audio fixture volume must be finite.")
+    codecs = {".flac": "flac", ".wav": "pcm_s16le", ".wave": "pcm_s16le"}
+    audio_codec = codecs.get(path.suffix.lower())
+    if audio_codec is None:
+        raise ValueError("Audio fixture output must use a .wav, .wave, or .flac extension.")
+
+    fixture = AudioFixture(
+        path=path,
+        frequency_hz=frequency_hz,
+        duration_seconds=duration_seconds,
+        sample_rate=sample_rate,
+        channel_layout=channel_layout,
+        volume_db=volume_db,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency={frequency_hz}:sample_rate={sample_rate}:duration={duration_seconds:.6f}",
+        "-af",
+        (f"volume={volume_db:g}dB,aformat=sample_fmts=s16:sample_rates={sample_rate}:channel_layouts={channel_layout}"),
+        "-c:a",
+        audio_codec,
+        str(path),
+    ]
+    run_media_command(command, context=f"lavfi audio fixture: {fixture.describe()}")
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise AssertionError(f"FFmpeg did not create the audio fixture: {fixture.describe()}")
+    return fixture
+
+
+def _parse_decibel_value(value: str) -> float:
+    return float(value.lower())
+
+
+def measure_audio_level(
+    path: Path,
+    *,
+    frequency_hz: int | None = None,
+    bandwidth_hz: int = 80,
+) -> AudioLevelMeasurement:
+    require_media_tools()
+    if frequency_hz is not None and (frequency_hz <= 0 or bandwidth_hz <= 0):
+        raise ValueError("Band frequency and bandwidth must be positive.")
+    audio_filter = "volumedetect"
+    resolved_bandwidth: int | None = None
+    if frequency_hz is not None:
+        resolved_bandwidth = bandwidth_hz
+        audio_filter = f"bandpass=frequency={frequency_hz}:width_type=h:width={bandwidth_hz},volumedetect"
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        str(path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-af",
+        audio_filter,
+        "-f",
+        "null",
+        os.devnull,
+    ]
+    result = run_media_command(
+        command,
+        context=(
+            f"measure audio level: path={path}, "
+            f"frequency={f'{frequency_hz}Hz' if frequency_hz is not None else 'broadband'}, "
+            f"bandwidth={resolved_bandwidth}Hz"
+        ),
+    )
+    mean_matches = re.findall(r"mean_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
+    max_matches = re.findall(r"max_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
+    if not mean_matches or not max_matches:
+        raise _command_failure(
+            command,
+            context=f"parse volumedetect output for {path}",
+            stdout=result.stdout,
+            stderr=result.stderr,
+            detail="FFmpeg volumedetect output did not contain mean_volume and max_volume.",
+        )
+    return AudioLevelMeasurement(
+        path=path,
+        frequency_hz=frequency_hz,
+        bandwidth_hz=resolved_bandwidth,
+        mean_volume_db=_parse_decibel_value(mean_matches[-1]),
+        max_volume_db=_parse_decibel_value(max_matches[-1]),
+        command=tuple(command),
+        stderr=result.stderr,
+    )
+
+
+def measure_integrated_loudness(
+    path: Path,
+    *,
+    start_seconds: float = 0.0,
+    duration_seconds: float | None = None,
+) -> IntegratedLoudnessMeasurement:
+    require_media_tools()
+    if start_seconds < 0 or not math.isfinite(start_seconds):
+        raise ValueError("Integrated loudness measurement start must be finite and non-negative.")
+    if duration_seconds is not None and (duration_seconds <= 0 or not math.isfinite(duration_seconds)):
+        raise ValueError("Integrated loudness measurement duration must be finite and positive.")
+    filters = [f"atrim=start={start_seconds:g}"]
+    if duration_seconds is not None:
+        filters[0] += f":duration={duration_seconds:g}"
+    filters.extend(["asetpts=PTS-STARTPTS", "ebur128"])
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        str(path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-af",
+        ",".join(filters),
+        "-f",
+        "null",
+        os.devnull,
+    ]
+    result = run_media_command(
+        command,
+        context=(
+            f"measure EBU R128 integrated loudness: path={path}, "
+            f"start={start_seconds:g}s, duration={duration_seconds if duration_seconds is not None else 'remaining'}s"
+        ),
+    )
+    matches = re.findall(r"\bI:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*LUFS", result.stderr)
+    if not matches:
+        raise _command_failure(
+            command,
+            context=f"parse ebur128 output for {path}",
+            stdout=result.stdout,
+            stderr=result.stderr,
+            detail="FFmpeg ebur128 output did not contain integrated loudness.",
+        )
+    return IntegratedLoudnessMeasurement(
+        path=path,
+        integrated_lufs=_parse_decibel_value(matches[-1]),
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+        command=tuple(command),
+        stderr=result.stderr,
+    )
 
 
 def probe_media(path: Path) -> dict[str, object]:

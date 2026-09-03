@@ -3,6 +3,7 @@
   "groups": {
     "ffmpeg-runtime": {
       "modules": [
+        "test_audio_mix_semantic_e2e",
         "test_issue_241_workflow",
         "test_media_semantic_e2e",
         "test_render_ass",
@@ -114,6 +115,7 @@
         "test_runtime_media_smoke"
       ],
       "selectors": [
+        "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests.test_normalize_reaches_the_configured_ebu_r128_target",
         "tests.test_media_semantic_e2e.MediaCommandDiagnosticTests.test_timeout_terminates_descendant_processes",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_cpu_fallback_produces_compatible_h264_with_audio",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_fixture_has_distinct_deterministic_time_bands",

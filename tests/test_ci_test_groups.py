@@ -83,6 +83,8 @@ class CiTestGroupManifestTests(unittest.TestCase):
         self.assertEqual(
             groups["windows-ffmpeg-runtime"]["selectors"],
             [
+                "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests."
+                "test_normalize_reaches_the_configured_ebu_r128_target",
                 "tests.test_media_semantic_e2e.MediaCommandDiagnosticTests."
                 "test_timeout_terminates_descendant_processes",
                 "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
@@ -98,6 +100,7 @@ class CiTestGroupManifestTests(unittest.TestCase):
                 "test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace",
             ],
         )
+        self.assertIn("test_audio_mix_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_media_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
 

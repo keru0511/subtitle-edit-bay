@@ -33,6 +33,10 @@ ApplicationWindow {
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
+    // Follow-up editors (#254/#274) replace these two regions without
+    // creating another player or taking ownership of the shared playhead.
+    property Component modeEditorContent: null
+    property Component modeSettingsContent: null
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
@@ -1313,10 +1317,21 @@ ApplicationWindow {
                 color: root.panel
                 border.color: root.border
 
+                Loader {
+                    id: modeEditorContentLoader
+                    objectName: "modeEditorContentLoader"
+                    anchors.fill: parent
+                    active: root.appBackend.projectLoaded && root.modeEditorContent !== null
+                    sourceComponent: root.modeEditorContent
+                }
+
                 RowLayout {
+                    id: modeEditorFallback
+                    objectName: "modeEditorFallback"
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 12
+                    visible: !modeEditorContentLoader.active
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 4
@@ -1399,10 +1414,21 @@ ApplicationWindow {
             color: root.panel
             border.color: root.border
 
+            Loader {
+                id: modeSettingsContentLoader
+                objectName: "modeSettingsContentLoader"
+                anchors.fill: parent
+                active: root.appBackend.projectLoaded && root.modeSettingsContent !== null
+                sourceComponent: root.modeSettingsContent
+            }
+
             ColumnLayout {
+                id: modeSettingsFallback
+                objectName: "modeSettingsFallback"
                 anchors.fill: parent
                 anchors.margins: 12
                 spacing: 10
+                visible: !modeSettingsContentLoader.active
                 PanelTitle { text: root.editModeTitle(root.appBackend.currentEditMode) + "の設定" }
                 Text { Layout.fillWidth: true; text: root.editModeDescription(root.appBackend.currentEditMode); color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }

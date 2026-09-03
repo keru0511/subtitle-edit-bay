@@ -125,6 +125,10 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "editorModeRail"', main_workspace)
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
         self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
+        self.assertIn('property Component modeEditorContent: null', workflow)
+        self.assertIn('property Component modeSettingsContent: null', workflow)
+        self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
+        self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
         self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', main_workspace)
 

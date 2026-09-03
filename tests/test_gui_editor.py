@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QSignalSpy, QTest
 
@@ -2235,7 +2235,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             cuda=False,
         )
         self.app.dependenciesChanged.emit()
-        _, window = self._load_qml()
+        engine, window = self._load_qml()
         self.gui.resize(window, 1220, 760)
 
         main = self._quick_item(window, "mainWorkspace")
@@ -2243,6 +2243,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         video = self._quick_item(window, "mainVideoPanel")
         editor_slot = self._quick_item(window, "modeEditorSlot")
         settings_slot = self._quick_item(window, "modeSettingsSlot")
+        editor_loader = self._quick_item(window, "modeEditorContentLoader")
+        settings_loader = self._quick_item(window, "modeSettingsContentLoader")
+        editor_fallback = self._quick_item(window, "modeEditorFallback")
+        settings_fallback = self._quick_item(window, "modeSettingsFallback")
         subtitle_button = self._quick_item(window, "editorModeButton-subtitle")
         cut_button = self._quick_item(window, "editorModeButton-cut")
         audio_button = self._quick_item(window, "editorModeButton-audio")
@@ -2252,6 +2256,34 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(subtitle_button.isEnabled())
         self.assertFalse(cut_button.isEnabled())
         self.assertTrue(audio_button.isEnabled())
+        self.assertFalse(editor_loader.property("active"))
+        self.assertFalse(settings_loader.property("active"))
+        self.assertTrue(editor_fallback.isVisible())
+        self.assertTrue(settings_fallback.isVisible())
+
+        injected_editor = QQmlComponent(engine)
+        injected_editor.setData(
+            b'import QtQuick; Item { objectName: "injectedModeEditor" }',
+            QUrl(),
+        )
+        self.assertFalse(injected_editor.isError(), injected_editor.errors())
+        self.assertTrue(window.setProperty("modeEditorContent", injected_editor))
+        self.app.processEvents()
+        self.assertTrue(editor_loader.property("active"))
+        self.assertFalse(editor_fallback.isVisible())
+        self.assertTrue(self._quick_item(window, "injectedModeEditor").isVisible())
+
+        injected_settings = QQmlComponent(engine)
+        injected_settings.setData(
+            b'import QtQuick; Item { objectName: "injectedModeSettings" }',
+            QUrl(),
+        )
+        self.assertFalse(injected_settings.isError(), injected_settings.errors())
+        self.assertTrue(window.setProperty("modeSettingsContent", injected_settings))
+        self.app.processEvents()
+        self.assertTrue(settings_loader.property("active"))
+        self.assertFalse(settings_fallback.isVisible())
+        self.assertTrue(self._quick_item(window, "injectedModeSettings").isVisible())
         self.assertTrue(self.app.editorModeCapabilities["canPreview"])
         self.assertTrue(self.app.editorModeCapabilities["canEditSubtitles"])
         self.assertFalse(self.app.editorModeCapabilities["canCut"])

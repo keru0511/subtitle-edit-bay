@@ -757,6 +757,7 @@ ApplicationWindow {
                         id: captionClip
                         required property var modelData
                         property int sourceIndex: modelData ? Number(modelData.sourceIndex) : -1
+                        objectName: "timelineCaption-" + sourceIndex
                         property var segment: modelData && modelData.segment ? modelData.segment : ({})
                         property real originalX: 0
                         property real originalWidth: 0
@@ -1292,6 +1293,7 @@ ApplicationWindow {
                 clip: true
                 MediaPlayer {
                     id: mainPlayer
+                    objectName: "mainPreviewPlayer"
                     source: root.appBackend.previewUrl
                     videoOutput: mainVideo
                     audioOutput: AudioOutput { volume: 0.7 }
@@ -1331,7 +1333,7 @@ ApplicationWindow {
                     anchors.margins: 12; spacing: 2
                     Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
                     RowLayout { Layout.fillWidth: true
-                        ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
+                        ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
                         Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                         Text { text: root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000); color: root.textMuted; font.pixelSize: 10; font.family: "Cascadia Mono" }
                     }
@@ -2376,6 +2378,7 @@ ApplicationWindow {
                             delegate: Rectangle {
                                 id: captionRow
                                 required property int index
+                                objectName: "captionRow-" + index
                                 required property string segmentId
                                 required property real start
                                 required property real end

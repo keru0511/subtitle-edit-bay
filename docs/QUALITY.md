@@ -72,6 +72,11 @@ Only allow a known message with `AllowedQmlMessage`, including a specific reason
 the harness deliberately ignores unrelated Qt backend noise when applying that
 policy.
 
+Large-project responsiveness uses deterministic contracts in the regular test
+suite and a separate Windows Qt Multimedia benchmark. See
+[`GUI_PERFORMANCE.md`](GUI_PERFORMANCE.md) for the eight scenarios, metrics,
+baseline comparison, and local commands.
+
 ## QML test contracts
 
 QML source assertions are limited to contracts that cannot be expressed more

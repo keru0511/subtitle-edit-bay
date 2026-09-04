@@ -9,11 +9,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QMetaObject
+from PySide6.QtCore import QMetaObject, QObject, Signal
 from PySide6.QtGui import QGuiApplication
 from shiboken6 import delete
 
-from tests.gui_test_harness import AllowedQmlMessage, GuiTestHarness
+from tests.gui_test_harness import (
+    AllowedQmlMessage,
+    EventLoopLatencyProbe,
+    GuiTestHarness,
+    MediaPlayerSignalProbe,
+    summarize_durations_ms,
+)
 
 
 FIXTURE_QML = """\
@@ -50,6 +56,13 @@ Window {
     }
 }
 """
+
+
+class FakeMediaPlayer(QObject):
+    sourceChanged = Signal(object)
+    mediaStatusChanged = Signal(object)
+    playbackStateChanged = Signal(object)
+    positionChanged = Signal(int)
 
 
 class GuiTestHarnessTests(unittest.TestCase):
@@ -98,6 +111,10 @@ class GuiTestHarnessTests(unittest.TestCase):
         )
         self.harness.resize(window, 480, 300)
         self.harness.assert_item_within(window.contentItem(), target)
+        self.assertEqual(
+            self.harness.count_visual_items(window, object_name_prefix="target"),
+            1,
+        )
 
         self.harness.cleanup()
         self.harness.cleanup()
@@ -131,6 +148,53 @@ class GuiTestHarnessTests(unittest.TestCase):
                     reason="The fixture deliberately exercises runtime message capture.",
                 ),
             ),
+        )
+
+    def test_duration_summary_and_event_loop_probe(self) -> None:
+        summary = summarize_durations_ms(range(1, 21))
+        self.assertEqual(
+            summary.as_dict(),
+            {
+                "count": 20,
+                "p50_ms": 10.0,
+                "p95_ms": 19.0,
+                "max_ms": 20.0,
+            },
+        )
+
+        probe = EventLoopLatencyProbe(interval_ms=5)
+        probe.start()
+        self.harness.wait(25)
+        measured = probe.stop()
+
+        self.assertGreater(measured.count, 0)
+        self.assertGreaterEqual(measured.max_ms, 0.0)
+
+    def test_media_player_probe_reports_observable_transitions(self) -> None:
+        player = FakeMediaPlayer()
+        probe = MediaPlayerSignalProbe(player)
+
+        player.sourceChanged.emit("file:///fixture.mp4")
+        player.mediaStatusChanged.emit("LoadingMedia")
+        player.playbackStateChanged.emit("PlayingState")
+        player.positionChanged.emit(125)
+        player.playbackStateChanged.emit("PausedState")
+        player.playbackStateChanged.emit("StoppedState")
+
+        self.assertEqual(
+            probe.as_dict(),
+            {
+                "source_changes": 1,
+                "sources": ["file:///fixture.mp4"],
+                "media_status_transitions": 1,
+                "loading_transitions": 1,
+                "playback_state_transitions": 3,
+                "play_starts": 1,
+                "pauses": 1,
+                "stops": 1,
+                "position_events": 1,
+                "video_frames": 0,
+            },
         )
 
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, Iterable, TypeVar
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -17,6 +18,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPointF,
+    QTimer,
     Qt,
     QtMsgType,
     QUrl,
@@ -28,6 +30,129 @@ from PySide6.QtTest import QTest
 
 
 TObject = TypeVar("TObject", bound=QObject)
+
+
+@dataclass(frozen=True)
+class DurationSummary:
+    count: int
+    p50_ms: float
+    p95_ms: float
+    max_ms: float
+
+    def as_dict(self) -> dict[str, int | float]:
+        return {
+            "count": self.count,
+            "p50_ms": self.p50_ms,
+            "p95_ms": self.p95_ms,
+            "max_ms": self.max_ms,
+        }
+
+
+def summarize_durations_ms(values: Iterable[float]) -> DurationSummary:
+    """Summarize durations with deterministic nearest-rank percentiles."""
+
+    ordered = sorted(max(0.0, float(value)) for value in values)
+    if not ordered:
+        return DurationSummary(count=0, p50_ms=0.0, p95_ms=0.0, max_ms=0.0)
+
+    def percentile(percent: float) -> float:
+        rank = max(1, math.ceil(len(ordered) * percent))
+        return ordered[min(len(ordered), rank) - 1]
+
+    return DurationSummary(
+        count=len(ordered),
+        p50_ms=round(percentile(0.50), 3),
+        p95_ms=round(percentile(0.95), 3),
+        max_ms=round(ordered[-1], 3),
+    )
+
+
+class EventLoopLatencyProbe(QObject):
+    """Measure how late a precise Qt timer runs while GUI work is in flight."""
+
+    def __init__(self, *, interval_ms: int = 10, parent: QObject | None = None) -> None:
+        if interval_ms <= 0:
+            raise ValueError("interval_ms must be positive")
+        super().__init__(parent)
+        self.interval_ms = interval_ms
+        self.samples_ms: list[float] = []
+        self._expected_at = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(interval_ms)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer.timeout.connect(self._record_tick)
+
+    def start(self) -> None:
+        self.samples_ms.clear()
+        self._expected_at = time.monotonic() + self.interval_ms / 1_000
+        self._timer.start()
+
+    def stop(self) -> DurationSummary:
+        self._timer.stop()
+        return summarize_durations_ms(self.samples_ms)
+
+    def _record_tick(self) -> None:
+        now = time.monotonic()
+        self.samples_ms.append(max(0.0, (now - self._expected_at) * 1_000))
+        self._expected_at = now + self.interval_ms / 1_000
+
+
+def _enum_name(value: object) -> str:
+    name = getattr(value, "name", None)
+    return str(name if name is not None else value).rsplit(".", 1)[-1]
+
+
+class MediaPlayerSignalProbe:
+    """Collect observable source, loading, playback, and position transitions."""
+
+    def __init__(self, player: QObject) -> None:
+        self.player = player
+        self.reset()
+        player.sourceChanged.connect(self._source_changed)
+        player.mediaStatusChanged.connect(self._media_status_changed)
+        player.playbackStateChanged.connect(self._playback_state_changed)
+        player.positionChanged.connect(self._position_changed)
+        video_sink = getattr(player, "videoSink", None)
+        self.video_sink = video_sink() if callable(video_sink) else None
+        if self.video_sink is not None:
+            self.video_sink.videoFrameChanged.connect(self._video_frame_changed)
+
+    def reset(self) -> None:
+        self.sources: list[str] = []
+        self.media_statuses: list[str] = []
+        self.playback_states: list[str] = []
+        self.positions_ms: list[int] = []
+        self.video_frames = 0
+
+    def _source_changed(self, source: object) -> None:
+        to_string = getattr(source, "toString", None)
+        self.sources.append(str(to_string() if callable(to_string) else source))
+
+    def _media_status_changed(self, status: object) -> None:
+        self.media_statuses.append(_enum_name(status))
+
+    def _playback_state_changed(self, state: object) -> None:
+        self.playback_states.append(_enum_name(state))
+
+    def _position_changed(self, position: int) -> None:
+        self.positions_ms.append(int(position))
+
+    def _video_frame_changed(self, _frame: object) -> None:
+        self.video_frames += 1
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "source_changes": len(self.sources),
+            "sources": list(self.sources),
+            "media_status_transitions": len(self.media_statuses),
+            "loading_transitions": self.media_statuses.count("LoadingMedia"),
+            "playback_state_transitions": len(self.playback_states),
+            "play_starts": self.playback_states.count("PlayingState"),
+            "pauses": self.playback_states.count("PausedState"),
+            "stops": self.playback_states.count("StoppedState"),
+            "position_events": len(self.positions_ms),
+            "video_frames": self.video_frames,
+        }
 
 
 @dataclass(frozen=True)
@@ -222,6 +347,34 @@ class GuiTestHarness:
         raise AssertionError(
             f"Could not find visual item objectName={name!r}. Available visual object names: {available_text}"
         )
+
+    def visual_items(self, root: QObject) -> list[QQuickItem]:
+        """Return the live visual tree, including dynamically-created delegates."""
+
+        if isinstance(root, QQuickItem):
+            pending = [root]
+        else:
+            content_item = getattr(root, "contentItem", None)
+            pending = [content_item()] if callable(content_item) else []
+        found: list[QQuickItem] = []
+        seen: set[int] = set()
+        while pending:
+            item = pending.pop()
+            if not isinstance(item, QQuickItem) or id(item) in seen:
+                continue
+            seen.add(id(item))
+            found.append(item)
+            pending.extend(item.childItems())
+        return found
+
+    def count_visual_items(self, root: QObject, *, object_name_prefix: str) -> int:
+        return sum(item.objectName().startswith(object_name_prefix) for item in self.visual_items(root))
+
+    def wait(self, milliseconds: int) -> None:
+        if milliseconds < 0:
+            raise ValueError("milliseconds must not be negative")
+        QTest.qWait(milliseconds)
+        self.process_events()
 
     def click(self, window: QObject, item: QQuickItem) -> None:
         name = item.objectName() or type(item).__name__

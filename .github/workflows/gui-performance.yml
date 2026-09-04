@@ -1,0 +1,194 @@
+name: GUI performance
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/gui-performance.yml"
+      - "requirements.txt"
+      - "scripts/compare_gui_performance.py"
+      - "scripts/generate_large_gui_fixture.py"
+      - "scripts/run_gui_performance.py"
+      - "src/gui.py"
+      - "src/ui/**"
+      - "tests/gui_performance_scenarios.py"
+      - "tests/gui_test_harness.py"
+      - "tests/test_gui_editor.py"
+      - "tests/test_gui_large_project_performance.py"
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: "Repetitions per fixture"
+        required: true
+        default: "3"
+      playback_seconds:
+        description: "Continuous playback duration"
+        required: true
+        default: "30"
+      compare_ref:
+        description: "Reference revision (pre-#302 by default)"
+        required: true
+        default: "b600e90"
+      max_regression_percent:
+        description: "Allowed regression against the reference"
+        required: true
+        default: "20"
+      fail_on_regression:
+        description: "Fail when timing budgets are exceeded"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-performance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-gui-performance:
+    name: Windows Qt/QML benchmark
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
+      QT_FFMPEG_DECODING_HW_DEVICE_TYPES: ","
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out benchmark revision
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Restore Windows FFmpeg cache
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: C:\ProgramData\chocolatey\lib\ffmpeg
+          key: windows-ffmpeg-9.0.1-v1
+
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          $cachedFfmpeg = Get-ChildItem `
+              -LiteralPath "C:\ProgramData\chocolatey\lib\ffmpeg\tools" `
+              -Filter "ffmpeg.exe" -File -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          if ($cachedFfmpeg) {
+              $ffmpegDirectory = $cachedFfmpeg.Directory.FullName
+              Add-Content -LiteralPath $env:GITHUB_PATH -Value $ffmpegDirectory -Encoding UTF8
+              $env:PATH = "$ffmpegDirectory;$env:PATH"
+          }
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+              choco install ffmpeg --version=9.0.1 --yes --no-progress
+              if ($LASTEXITCODE -ne 0) {
+                  throw "FFmpeg installation failed with exit code $LASTEXITCODE."
+              }
+          }
+          ffmpeg -version
+
+      - name: Save Windows FFmpeg cache
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\ProgramData\chocolatey\lib\ffmpeg
+          key: windows-ffmpeg-9.0.1-v1
+
+      - name: Install application dependencies
+        shell: pwsh
+        run: python -m pip install -r requirements.txt
+
+      - name: Resolve benchmark inputs
+        id: benchmark-inputs
+        shell: pwsh
+        env:
+          INPUT_REPETITIONS: ${{ inputs.repetitions }}
+          INPUT_PLAYBACK_SECONDS: ${{ inputs.playback_seconds }}
+          INPUT_COMPARE_REF: ${{ inputs.compare_ref }}
+          INPUT_MAX_REGRESSION: ${{ inputs.max_regression_percent }}
+          INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression }}
+        run: |
+          $repetitions = if ($env:INPUT_REPETITIONS) { $env:INPUT_REPETITIONS } else { "3" }
+          $playbackSeconds = if ($env:INPUT_PLAYBACK_SECONDS) { $env:INPUT_PLAYBACK_SECONDS } else { "30" }
+          $compareRef = if ($env:INPUT_COMPARE_REF) { $env:INPUT_COMPARE_REF } else { "b600e90" }
+          $maxRegression = if ($env:INPUT_MAX_REGRESSION) { $env:INPUT_MAX_REGRESSION } else { "20" }
+          $failOnRegression = if ($env:INPUT_FAIL_ON_REGRESSION) { $env:INPUT_FAIL_ON_REGRESSION } else { "false" }
+          "repetitions=$repetitions" >> $env:GITHUB_OUTPUT
+          "playback_seconds=$playbackSeconds" >> $env:GITHUB_OUTPUT
+          "compare_ref=$compareRef" >> $env:GITHUB_OUTPUT
+          "max_regression=$maxRegression" >> $env:GITHUB_OUTPUT
+          "fail_on_regression=$failOnRegression" >> $env:GITHUB_OUTPUT
+
+      - name: Run current 3,000 and 10,000 subtitle scenarios
+        shell: pwsh
+        run: |
+          python scripts/run_gui_performance.py `
+            --segment-count 3000 `
+            --segment-count 10000 `
+            --repetitions "${{ steps.benchmark-inputs.outputs.repetitions }}" `
+            --playback-seconds "${{ steps.benchmark-inputs.outputs.playback_seconds }}" `
+            --revision-label "${{ github.sha }}" `
+            --output artifacts/gui-performance-current.json `
+            --fixture-dir "$env:RUNNER_TEMP/gui-performance-current"
+
+      - name: Run pre-#302 reference with the same harness
+        shell: pwsh
+        run: |
+          $referenceRoot = Join-Path $env:RUNNER_TEMP "gui-performance-reference"
+          git worktree add --detach $referenceRoot "${{ steps.benchmark-inputs.outputs.compare_ref }}"
+          New-Item -ItemType Directory -Force -Path "$referenceRoot/scripts" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$referenceRoot/tests" | Out-Null
+          Copy-Item scripts/generate_large_gui_fixture.py "$referenceRoot/scripts/generate_large_gui_fixture.py"
+          Copy-Item scripts/run_gui_performance.py "$referenceRoot/scripts/run_gui_performance.py"
+          Copy-Item tests/gui_performance_scenarios.py "$referenceRoot/tests/gui_performance_scenarios.py"
+          Copy-Item tests/gui_test_harness.py "$referenceRoot/tests/gui_test_harness.py"
+          Push-Location $referenceRoot
+          try {
+              python scripts/run_gui_performance.py `
+                --segment-count 3000 `
+                --repetitions "${{ steps.benchmark-inputs.outputs.repetitions }}" `
+                --playback-seconds "${{ steps.benchmark-inputs.outputs.playback_seconds }}" `
+                --revision-label "${{ steps.benchmark-inputs.outputs.compare_ref }}" `
+                --no-enforce-contracts `
+                --output "$env:GITHUB_WORKSPACE/artifacts/gui-performance-reference.json" `
+                --fixture-dir "$env:RUNNER_TEMP/gui-performance-reference-fixtures"
+          } finally {
+              Pop-Location
+          }
+
+      - name: Compare absolute and relative budgets
+        shell: pwsh
+        run: |
+          $arguments = @(
+              "scripts/compare_gui_performance.py",
+              "--current", "artifacts/gui-performance-current.json",
+              "--baseline", "artifacts/gui-performance-reference.json",
+              "--output", "artifacts/gui-performance-comparison.json",
+              "--max-regression-percent", "${{ steps.benchmark-inputs.outputs.max_regression }}"
+          )
+          if ("${{ steps.benchmark-inputs.outputs.fail_on_regression }}" -eq "true") {
+              $arguments += "--fail-on-regression"
+          }
+          python @arguments
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gui-performance-windows-${{ github.run_id }}
+          path: artifacts/gui-performance-*.json
+          if-no-files-found: error
+          retention-days: 30

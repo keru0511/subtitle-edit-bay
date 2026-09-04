@@ -127,7 +127,10 @@ def build_fixture_project(
             "outline_thickness": 3,
         },
         transcription={"fixture": "large-gui-performance", "segment_count": segment_count},
-        duration_seconds=DEFAULT_MEDIA_DURATION_SECONDS,
+        # Keep the project timeline consistent with every generated subtitle.
+        # The short synthetic media is sufficient for decode/playback scenarios,
+        # while list/timeline scenarios can still navigate the final row.
+        duration_seconds=project_duration,
     )
     project["short_video"] = {
         "schema_version": SHORT_VIDEO_SCHEMA_VERSION,

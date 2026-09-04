@@ -2583,6 +2583,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreater(len(visible), 0)
         self.assertLess(len(visible), len(segments))
         self.assertEqual(visible[0]["sourceIndex"], 0)
+        first_caption = self.gui.find_visual_item_by_properties(
+            timeline,
+            {"sourceIndex": 0},
+            required_properties=("segment", "originalX", "originalWidth"),
+        )
+        self.assertTrue(first_caption.isVisible())
+        self.assertGreater(first_caption.width(), 0)
 
     def test_qml_timeline_refresh_does_not_access_destroyed_segment_data(self) -> None:
         self._load_project()
@@ -3708,6 +3715,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(len(self.app.shortVideoClips), 2)
         self.assertEqual(self.app.shortVideoClips[-1]["segment_id"], "subtitle-segment")
+
+    def test_short_mode_fit_combo_updates_its_delegate_clip(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": f"segment-{index}",
+                    "start": float(index),
+                    "end": float(index + 1),
+                    "text": f"字幕 {index}",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+                for index in range(4)
+            ]
+        )
+        self.app.initializeShortVideoClips()
+        self.app.autosave_timer.stop()
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.set_property(clip_list, "contentY", 3 * 130)
+        self.gui.wait_until(
+            lambda: any(item.objectName() == "shortModeClipItem3" for item in self.gui.visual_items(clip_list)),
+            description="fourth short clip delegate",
+        )
+        delegate = self.gui.find_visual_item(clip_list, "shortModeClipItem3")
+        fit_combo = self.gui.find_visual_item(delegate, "shortModeFitCombo3")
+        self.gui.set_property(fit_combo, "currentIndex", 1)
+        self.gui.emit_signal(fit_combo, "activated", 1)
+
+        clips = self.app._project["short_video"]["clips"]
+        self.assertNotEqual(clips[1].get("fit"), "contain")
+        self.assertEqual(clips[3]["fit"], "contain")
 
     def test_video_only_project_explains_disabled_transcription(self) -> None:
         self._load_project(segments=[])

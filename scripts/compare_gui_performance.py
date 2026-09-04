@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Sequence
@@ -23,8 +24,11 @@ def _read_report(path: Path) -> dict[str, Any]:
     return report
 
 
-def _summary_value(scenario: dict[str, Any], metric: str) -> float:
-    return float(scenario[metric]["p50"])
+def _summary_value(scenario: dict[str, Any], metric: str, statistic: str) -> float:
+    value = float(scenario[metric][statistic])
+    if not math.isfinite(value):
+        raise ValueError(f"non-finite GUI performance value: {metric}.{statistic}")
+    return value
 
 
 def compare_reports(
@@ -52,9 +56,14 @@ def compare_reports(
                 baseline_fixture["scenarios"].get(scenario_name) if baseline_fixture is not None else None
             )
             for metric, absolute_limit in absolute_limits.items():
-                current_value = _summary_value(scenario, metric)
-                absolute_passed = current_value <= absolute_limit
-                baseline_value = _summary_value(baseline_scenario, metric) if baseline_scenario is not None else None
+                # Safety ceilings must catch even one frozen run. Relative
+                # comparisons stay on p50 so runner noise does not dominate.
+                current_value = _summary_value(scenario, metric, "p50")
+                current_worst = _summary_value(scenario, metric, "max")
+                absolute_passed = current_worst <= absolute_limit
+                baseline_value = (
+                    _summary_value(baseline_scenario, metric, "p50") if baseline_scenario is not None else None
+                )
                 regression_percent = None
                 relative_passed = True
                 if baseline_value is not None and baseline_value > 0.0:
@@ -66,9 +75,12 @@ def compare_reports(
                         "scenario": scenario_name,
                         "metric": metric,
                         "current": round(current_value, 3),
+                        "current_worst": round(current_worst, 3),
+                        "absolute_statistic": "max",
                         "absolute_limit": absolute_limit,
                         "absolute_passed": absolute_passed,
                         "baseline": round(baseline_value, 3) if baseline_value is not None else None,
+                        "relative_statistic": "p50",
                         "regression_percent": (
                             round(regression_percent, 3) if regression_percent is not None else None
                         ),
@@ -106,8 +118,8 @@ def markdown_summary(comparison: dict[str, Any]) -> str:
         f"Current: `{comparison['current_revision']}`  ",
         f"Baseline: `{comparison['baseline_revision'] or 'not supplied'}`",
         "",
-        "| Fixture | Scenario | Metric | Current | Baseline | Change | Limit | Result |",
-        "| ---: | --- | --- | ---: | ---: | ---: | ---: | --- |",
+        "| Fixture | Scenario | Metric | Current p50 | Current max | Baseline p50 | Change | Limit | Result |",
+        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for check in comparison["checks"]:
         baseline = "—" if check["baseline"] is None else f"{check['baseline']:.3f}"
@@ -115,7 +127,7 @@ def markdown_summary(comparison: dict[str, Any]) -> str:
         result = "PASS" if check["passed"] else "FAIL"
         lines.append(
             f"| {check['fixture']} | `{check['scenario']}` | `{check['metric']}` | "
-            f"{check['current']:.3f} | {baseline} | {change} | "
+            f"{check['current']:.3f} | {check['current_worst']:.3f} | {baseline} | {change} | "
             f"{check['absolute_limit']:.1f} / +{check['relative_limit_percent']:.1f}% | {result} |"
         )
     return "\n".join(lines) + "\n"
@@ -146,11 +158,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--fail-on-regression", action="store_true")
     args = parser.parse_args(argv)
-    if args.max_regression_percent < 0:
-        parser.error("--max-regression-percent must not be negative")
+    if not math.isfinite(args.max_regression_percent) or args.max_regression_percent < 0:
+        parser.error("--max-regression-percent must be finite and non-negative")
     for name in ("max_action_ms", "max_event_loop_ms", "max_playhead_lag_ms"):
-        if getattr(args, name) <= 0:
-            parser.error(f"--{name.replace('_', '-')} must be positive")
+        if not math.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
+            parser.error(f"--{name.replace('_', '-')} must be finite and positive")
     return args
 
 

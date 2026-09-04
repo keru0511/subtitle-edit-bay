@@ -758,7 +758,11 @@ ApplicationWindow {
                         required property var modelData
                         property int sourceIndex: modelData ? Number(modelData.sourceIndex) : -1
                         objectName: "timelineCaption-" + sourceIndex
-                        property var segment: modelData && modelData.segment ? modelData.segment : ({})
+                        // visibleSubtitleSegments returns a flat segment view. Keep
+                        // compatibility with explicitly wrapped diagnostic data.
+                        property var segment: modelData && modelData.segment
+                            ? modelData.segment
+                            : (modelData || ({}))
                         property real originalX: 0
                         property real originalWidth: 0
                         property real pointerStart: 0

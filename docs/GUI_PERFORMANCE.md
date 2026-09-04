@@ -17,11 +17,11 @@
 | `short_mode_selection_reorder_delete_settings` | クリップ選択・移動・trim・削除・設定変更 | delegate数、clip materialize回数 |
 | `short_visual_update_preserves_playback` | fit・背景色・字幕倍率だけを変更 | source・Loading・停止・再開回数 |
 
-各シナリオでは、10msのprecise timerによるイベントループ遅延のp50・p95・最大値、test-onlyバックエンドによるQML/Python境界呼び出し、字幕整形と配列materialize回数、MediaPlayerの状態遷移、プロセスのpeak RSSをJSONへ保存します。計測用counterはベンチマーク専用サブクラスにだけ存在し、通常起動時には実行されません。
+各シナリオでは、10msのprecise timerによるイベントループ遅延のp50・p95・最大値、test-onlyバックエンドによるQML/Python境界呼び出し、字幕整形と配列materialize回数、MediaPlayerの状態遷移・最初の映像frameまでの時間、プロセスのpeak RSSをJSONへ保存します。選択・編集・ショート操作はPythonからbackendを直接呼ばず、生成済みQML delegateと各controlのsignal handlerを通します。計測用counterはベンチマーク専用サブクラスにだけ存在し、通常起動時には実行されません。
 
 ## fixture
 
-fixtureは乱数や外部ダウンロードを使いません。字幕には単語時刻、重なり、4話者、手動改行、1行・2行指定、字幕ごとのフォントと倍率、全字幕に対応するショートクリップを含みます。動画と440Hzの音声はFFmpegのlavfiから実行時に生成され、生成物はリポジトリへコミットしません。
+fixtureは乱数や外部ダウンロードを使いません。字幕には単語時刻、重なり、4話者、手動改行、1行・2行指定、字幕ごとのフォントと倍率、全字幕に対応するショートクリップを含みます。projectのtimeline長は最終字幕まで確保し、先頭・中間・末尾のdelegateへ実際に移動できるようにします。再生検証に使う36秒の動画と440Hzの音声はFFmpegのlavfiから実行時に生成され、生成物はリポジトリへコミットしません。
 
 fixtureだけを生成する場合:
 
@@ -61,7 +61,7 @@ python scripts/run_gui_performance.py `
 
 ## 結果の判定
 
-絶対上限とbaselineからの悪化率を別々に記録します。既定値は、1操作45秒、イベントループ停止3秒、playheadのp95遅延500ms、baseline比20%です。これらはハングや明確な追従不能を検出する安全上限で、runner更新後は同じWindows runnerで3回以上測定してから狭めます。
+絶対上限とbaselineからの悪化率を別々に記録します。既定値は、1操作45秒、イベントループ停止3秒、playheadのp95遅延500ms、baseline比20%です。絶対上限は全繰り返しの最大値へ適用するため、1回だけ発生した停止も中央値に隠れません。baseline比はrunnerの揺らぎを抑えるためp50同士で比較し、Job Summaryには現在値のp50と最大値を併記します。これらはハングや明確な追従不能を検出する安全上限で、runner更新後は同じWindows runnerで3回以上測定してから狭めます。
 
 ```powershell
 python scripts/compare_gui_performance.py `
@@ -77,7 +77,7 @@ python scripts/compare_gui_performance.py `
 
 - 通常の`CI`では`tests/test_gui_large_project_performance.py`でfixtureの再現性とレポート診断を、`tests/test_gui_editor.py`で3,000件のListView virtualizationと編集画面でのMediaPlayer再利用を、時間閾値なしで検証します。
 - `GUI performance` workflowはWindowsで実動画を再生し、JSONを30日間Artifactとして保存します。QML・GUI・計測コードが変わるPRと手動実行が対象です。
-- workflowは既定で#302適用前の`b600e90`を別worktreeへ展開し、PR側と同じfixture・同じ計測ハーネス・同じrunnerで3,000件の比較値を取得します。現在側は3,000件と10,000件を測定します。
+- workflowは既定で#302適用前の`b600e90`を別worktreeへ展開し、PR側と同じfixture・同じ計測ハーネス・同じrunnerで3,000件の比較値を取得します。現在側は3,000件と10,000件を測定します。delegate数はrevision固有の`objectName`ではなく、両版に存在するQML propertyの組み合わせで識別します。
 - 通常のPRでは時間差をレポートだけに残し、不安定なrunner時間でマージを止めません。基準runnerで連続3回以上の分布を確認した後、手動実行の`fail_on_regression`を有効にして予算変更を検証します。
 - baselineを更新する際は、workflow run URL、commit SHA、Windows image、Python・PySide6・FFmpegバージョン、各回のJSONを残します。異なるrunnerや依存バージョンの結果を同じbaselineとして混ぜません。
 

@@ -121,34 +121,91 @@ jobs:
           INPUT_MAX_REGRESSION: ${{ inputs.max_regression_percent }}
           INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression }}
         run: |
-          $repetitions = if ($env:INPUT_REPETITIONS) { $env:INPUT_REPETITIONS } else { "3" }
-          $playbackSeconds = if ($env:INPUT_PLAYBACK_SECONDS) { $env:INPUT_PLAYBACK_SECONDS } else { "30" }
+          $rawRepetitions = if ($env:INPUT_REPETITIONS) { $env:INPUT_REPETITIONS } else { "3" }
+          $rawPlaybackSeconds = if ($env:INPUT_PLAYBACK_SECONDS) { $env:INPUT_PLAYBACK_SECONDS } else { "30" }
           $compareRef = if ($env:INPUT_COMPARE_REF) { $env:INPUT_COMPARE_REF } else { "b600e90" }
-          $maxRegression = if ($env:INPUT_MAX_REGRESSION) { $env:INPUT_MAX_REGRESSION } else { "20" }
-          $failOnRegression = if ($env:INPUT_FAIL_ON_REGRESSION) { $env:INPUT_FAIL_ON_REGRESSION } else { "false" }
+          $rawMaxRegression = if ($env:INPUT_MAX_REGRESSION) { $env:INPUT_MAX_REGRESSION } else { "20" }
+          $failOnRegression = if ($env:INPUT_FAIL_ON_REGRESSION) {
+              $env:INPUT_FAIL_ON_REGRESSION.ToLowerInvariant()
+          } else { "false" }
+
+          [int]$repetitions = 0
+          if (-not [int]::TryParse($rawRepetitions, [ref]$repetitions) -or $repetitions -lt 1 -or $repetitions -gt 10) {
+              throw "repetitions must be an integer from 1 through 10"
+          }
+          [double]$playbackSeconds = 0
+          $playbackParsed = [double]::TryParse(
+                  $rawPlaybackSeconds,
+                  [Globalization.NumberStyles]::Float,
+                  [Globalization.CultureInfo]::InvariantCulture,
+                  [ref]$playbackSeconds
+              )
+          if (-not $playbackParsed `
+                  -or [double]::IsNaN($playbackSeconds) `
+                  -or [double]::IsInfinity($playbackSeconds) `
+                  -or $playbackSeconds -lt 0.1 `
+                  -or $playbackSeconds -gt 30) {
+              throw "playback_seconds must be from 0.1 through 30"
+          }
+          [double]$maxRegression = 0
+          $maxRegressionParsed = [double]::TryParse(
+                  $rawMaxRegression,
+                  [Globalization.NumberStyles]::Float,
+                  [Globalization.CultureInfo]::InvariantCulture,
+                  [ref]$maxRegression
+              )
+          if (-not $maxRegressionParsed `
+                  -or [double]::IsNaN($maxRegression) `
+                  -or [double]::IsInfinity($maxRegression) `
+                  -or $maxRegression -lt 0 `
+                  -or $maxRegression -gt 1000) {
+              throw "max_regression_percent must be from 0 through 1000"
+          }
+          if ($failOnRegression -notin @("true", "false")) {
+              throw "fail_on_regression must be true or false"
+          }
+          $revisionExpression = "${compareRef}^{commit}"
+          $resolvedCompareLines = @(git rev-parse --verify --end-of-options $revisionExpression 2>$null)
+          $resolveExitCode = $LASTEXITCODE
+          if ($resolveExitCode -ne 0 -or $resolvedCompareLines.Count -ne 1) {
+              throw "compare_ref does not resolve to a commit"
+          }
+          $resolvedCompareRef = $resolvedCompareLines[0].Trim()
+          if ($resolvedCompareRef -notmatch "^[0-9a-f]{40}$") {
+              throw "compare_ref does not resolve to a commit"
+          }
+
           "repetitions=$repetitions" >> $env:GITHUB_OUTPUT
-          "playback_seconds=$playbackSeconds" >> $env:GITHUB_OUTPUT
-          "compare_ref=$compareRef" >> $env:GITHUB_OUTPUT
-          "max_regression=$maxRegression" >> $env:GITHUB_OUTPUT
+          "playback_seconds=$($playbackSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))" >> $env:GITHUB_OUTPUT
+          "compare_ref=$resolvedCompareRef" >> $env:GITHUB_OUTPUT
+          "max_regression=$($maxRegression.ToString([Globalization.CultureInfo]::InvariantCulture))" >> $env:GITHUB_OUTPUT
           "fail_on_regression=$failOnRegression" >> $env:GITHUB_OUTPUT
 
       - name: Run current 3,000 and 10,000 subtitle scenarios
         shell: pwsh
+        env:
+          BENCHMARK_REPETITIONS: ${{ steps.benchmark-inputs.outputs.repetitions }}
+          BENCHMARK_PLAYBACK_SECONDS: ${{ steps.benchmark-inputs.outputs.playback_seconds }}
+          BENCHMARK_CURRENT_SHA: ${{ github.sha }}
         run: |
           python scripts/run_gui_performance.py `
             --segment-count 3000 `
             --segment-count 10000 `
-            --repetitions "${{ steps.benchmark-inputs.outputs.repetitions }}" `
-            --playback-seconds "${{ steps.benchmark-inputs.outputs.playback_seconds }}" `
-            --revision-label "${{ github.sha }}" `
+            --repetitions $env:BENCHMARK_REPETITIONS `
+            --playback-seconds $env:BENCHMARK_PLAYBACK_SECONDS `
+            --revision-label $env:BENCHMARK_CURRENT_SHA `
             --output artifacts/gui-performance-current.json `
             --fixture-dir "$env:RUNNER_TEMP/gui-performance-current"
 
       - name: Run pre-#302 reference with the same harness
         shell: pwsh
+        env:
+          BENCHMARK_REPETITIONS: ${{ steps.benchmark-inputs.outputs.repetitions }}
+          BENCHMARK_PLAYBACK_SECONDS: ${{ steps.benchmark-inputs.outputs.playback_seconds }}
+          BENCHMARK_COMPARE_SHA: ${{ steps.benchmark-inputs.outputs.compare_ref }}
         run: |
           $referenceRoot = Join-Path $env:RUNNER_TEMP "gui-performance-reference"
-          git worktree add --detach $referenceRoot "${{ steps.benchmark-inputs.outputs.compare_ref }}"
+          git worktree add --detach $referenceRoot $env:BENCHMARK_COMPARE_SHA
           New-Item -ItemType Directory -Force -Path "$referenceRoot/scripts" | Out-Null
           New-Item -ItemType Directory -Force -Path "$referenceRoot/tests" | Out-Null
           Copy-Item scripts/generate_large_gui_fixture.py "$referenceRoot/scripts/generate_large_gui_fixture.py"
@@ -159,9 +216,9 @@ jobs:
           try {
               python scripts/run_gui_performance.py `
                 --segment-count 3000 `
-                --repetitions "${{ steps.benchmark-inputs.outputs.repetitions }}" `
-                --playback-seconds "${{ steps.benchmark-inputs.outputs.playback_seconds }}" `
-                --revision-label "${{ steps.benchmark-inputs.outputs.compare_ref }}" `
+                --repetitions $env:BENCHMARK_REPETITIONS `
+                --playback-seconds $env:BENCHMARK_PLAYBACK_SECONDS `
+                --revision-label $env:BENCHMARK_COMPARE_SHA `
                 --no-enforce-contracts `
                 --output "$env:GITHUB_WORKSPACE/artifacts/gui-performance-reference.json" `
                 --fixture-dir "$env:RUNNER_TEMP/gui-performance-reference-fixtures"
@@ -171,15 +228,18 @@ jobs:
 
       - name: Compare absolute and relative budgets
         shell: pwsh
+        env:
+          BENCHMARK_MAX_REGRESSION: ${{ steps.benchmark-inputs.outputs.max_regression }}
+          BENCHMARK_FAIL_ON_REGRESSION: ${{ steps.benchmark-inputs.outputs.fail_on_regression }}
         run: |
           $arguments = @(
               "scripts/compare_gui_performance.py",
               "--current", "artifacts/gui-performance-current.json",
               "--baseline", "artifacts/gui-performance-reference.json",
               "--output", "artifacts/gui-performance-comparison.json",
-              "--max-regression-percent", "${{ steps.benchmark-inputs.outputs.max_regression }}"
+              "--max-regression-percent", $env:BENCHMARK_MAX_REGRESSION
           )
-          if ("${{ steps.benchmark-inputs.outputs.fail_on_regression }}" -eq "true") {
+          if ($env:BENCHMARK_FAIL_ON_REGRESSION -eq "true") {
               $arguments += "--fail-on-regression"
           }
           python @arguments

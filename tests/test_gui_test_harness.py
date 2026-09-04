@@ -20,6 +20,11 @@ from tests.gui_test_harness import (
     MediaPlayerSignalProbe,
     summarize_durations_ms,
 )
+from tests.gui_performance_scenarios import (
+    _main_preview_contract_passed,
+    _playback_follow_contract_passed,
+    _short_visual_update_contract_passed,
+)
 
 
 FIXTURE_QML = """\
@@ -34,11 +39,15 @@ Window {
     height: 200
     property bool ready: false
     property int clickCount: 0
+    signal submitted(int amount)
+    onSubmitted: function(amount) { clickCount += amount }
 
     Component.onCompleted: ready = true
 
     Rectangle {
         objectName: "targetButton"
+        property string semanticRole: "fixture-delegate"
+        property int semanticIndex: 7
         x: 20
         y: 20
         width: 100
@@ -63,6 +72,17 @@ class FakeMediaPlayer(QObject):
     mediaStatusChanged = Signal(object)
     playbackStateChanged = Signal(object)
     positionChanged = Signal(int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_video_sink = FakeVideoSink()
+
+    def videoSink(self) -> QObject:
+        return self.current_video_sink
+
+
+class FakeVideoSink(QObject):
+    videoFrameChanged = Signal(object)
 
 
 class GuiTestHarnessTests(unittest.TestCase):
@@ -115,6 +135,20 @@ class GuiTestHarnessTests(unittest.TestCase):
             self.harness.count_visual_items(window, object_name_prefix="target"),
             1,
         )
+        self.assertIs(
+            self.harness.find_visual_item_by_properties(
+                window,
+                {"semanticIndex": 7},
+                required_properties=("semanticRole",),
+            ),
+            target,
+        )
+        self.assertEqual(
+            self.harness.visual_items_with_properties(window, "semanticRole", "semanticIndex"),
+            [target],
+        )
+        self.harness.emit_signal(window, "submitted", 2)
+        self.assertEqual(window.property("clickCount"), 3)
 
         self.harness.cleanup()
         self.harness.cleanup()
@@ -194,8 +228,78 @@ class GuiTestHarnessTests(unittest.TestCase):
                 "stops": 1,
                 "position_events": 1,
                 "video_frames": 0,
+                "first_video_frame_ms": None,
             },
         )
+
+    def test_media_player_probe_follows_reassigned_video_sink(self) -> None:
+        player = FakeMediaPlayer()
+        original_sink = player.current_video_sink
+        probe = MediaPlayerSignalProbe(player)
+        replacement_sink = FakeVideoSink()
+        player.current_video_sink = replacement_sink
+        probe.refresh_video_sink()
+        probe.reset()
+
+        original_sink.videoFrameChanged.emit(object())
+        replacement_sink.videoFrameChanged.emit(object())
+
+        snapshot = probe.as_dict()
+        self.assertEqual(snapshot["video_frames"], 1)
+        self.assertIsNotNone(snapshot["first_video_frame_ms"])
+
+    def test_main_playback_contract_requires_decoded_frames(self) -> None:
+        result = {
+            "advanced_playback_ms": 30_000,
+            "requested_playback_ms": 30_000,
+            "media": {
+                "play_starts": 1,
+                "video_frames": 0,
+                "first_video_frame_ms": None,
+            },
+        }
+
+        self.assertFalse(_main_preview_contract_passed(result))
+        result["media"].update({"video_frames": 450, "first_video_frame_ms": 125.0})
+        self.assertTrue(_main_preview_contract_passed(result))
+
+    def test_playback_follow_contract_rejects_seek_only_selection(self) -> None:
+        result = {
+            "advanced_playback_ms": 15_000,
+            "requested_playback_ms": 15_000,
+            "initial_selected_index": 16,
+            "final_selected_index": 16,
+            "selected_indices": [16],
+            "timeline_viewport_before_x": 0.0,
+            "timeline_viewport_after_x": 0.0,
+        }
+
+        self.assertFalse(_playback_follow_contract_passed(result))
+        result.update(
+            {
+                "final_selected_index": 20,
+                "selected_indices": [16, 17, 18, 19, 20],
+                "timeline_viewport_after_x": 520.0,
+            }
+        )
+        self.assertTrue(_playback_follow_contract_passed(result))
+
+    def test_short_visual_contract_rejects_position_reset(self) -> None:
+        result = {
+            "media": {
+                "source_changes": 0,
+                "loading_transitions": 0,
+                "stops": 0,
+                "play_starts": 0,
+            },
+            "playback_state_after": "PlayingState",
+            "position_before_ms": 600,
+            "position_after_ms": 0,
+        }
+
+        self.assertFalse(_short_visual_update_contract_passed(result))
+        result["position_after_ms"] = 625
+        self.assertTrue(_short_visual_update_contract_passed(result))
 
 
 if __name__ == "__main__":

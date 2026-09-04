@@ -207,9 +207,12 @@ ColumnLayout {
                     textRole: "label"
                     valueRole: "value"
                     currentIndex: clipListRoot.indexForFit(clipItem.clipData.fit)
-                    onActivated: {
+                    onActivated: function(_controlIndex) {
                         if (clipListRoot.appBackend) {
-                            clipListRoot.appBackend.updateShortVideoClip(index, {"fit": fitCombo.currentValue})
+                            clipListRoot.appBackend.updateShortVideoClip(
+                                clipItem.index,
+                                {"fit": fitCombo.currentValue}
+                            )
                         }
                     }
                 }

@@ -57,6 +57,31 @@ def _performance_report(elapsed_ms: float) -> dict[str, object]:
     }
 
 
+def _performance_report_with_event_loop_maxima(
+    maxima_ms: list[float],
+) -> dict[str, object]:
+    runs: list[dict[str, object]] = []
+    for maximum_ms in maxima_ms:
+        scenarios = [_scenario_sample(name, 100.0) for name in SCENARIO_NAMES]
+        for scenario in scenarios:
+            scenario["event_loop_latency_ms"]["max_ms"] = maximum_ms
+        runs.append(
+            {
+                "segment_count": 3_000,
+                "scenarios": scenarios,
+                "contracts": [{"name": "fixture", "passed": True, "evidence": "ok"}],
+                "contracts_passed": True,
+                "peak_rss_bytes": 100_000_000,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "revision_label": "fixture",
+        "runs": runs,
+        "summary": aggregate_runs(runs),
+    }
+
+
 class GuiPerformanceFixtureTests(unittest.TestCase):
     def test_required_large_fixture_sizes_are_repeatable_and_varied(self) -> None:
         three_thousand = generate_segments(3_000)
@@ -86,6 +111,7 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
         self.assertEqual(payload["created_at"], FIXTURE_TIMESTAMP)
         self.assertEqual(len(payload["segments"]), 25)
         self.assertEqual(len(payload["short_video"]["clips"]), 25)
+        self.assertEqual(payload["video"]["duration_seconds"], payload["segments"][-1]["end"])
 
     def test_report_aggregation_and_regression_diagnostics_name_the_scenario(self) -> None:
         baseline = _performance_report(100.0)
@@ -108,6 +134,28 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
         self.assertEqual(failed[0]["metric"], "action_elapsed_ms")
         self.assertEqual(failed[0]["regression_percent"], 30.0)
 
+    def test_absolute_budget_uses_worst_repetition_instead_of_median(self) -> None:
+        current = _performance_report_with_event_loop_maxima([100.0, 100.0, 100_000.0])
+
+        comparison = compare_reports(
+            current,
+            None,
+            max_regression_percent=20.0,
+            max_action_ms=45_000.0,
+            max_event_loop_ms=3_000.0,
+            max_playhead_lag_ms=500.0,
+        )
+
+        self.assertFalse(comparison["passed"])
+        event_loop_failure = next(
+            check for check in comparison["failed_checks"] if check["metric"] == "event_loop_max_ms"
+        )
+        self.assertEqual(event_loop_failure["current"], 100.0)
+        self.assertEqual(event_loop_failure["current_worst"], 100_000.0)
+        self.assertEqual(event_loop_failure["absolute_statistic"], "max")
+        self.assertEqual(event_loop_failure["relative_statistic"], "p50")
+        self.assertFalse(event_loop_failure["absolute_passed"])
+
     def test_heavy_windows_benchmark_is_separate_from_regular_ci(self) -> None:
         regular_ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         performance_ci = (REPO_ROOT / ".github" / "workflows" / "gui-performance.yml").read_text(encoding="utf-8")
@@ -118,6 +166,13 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
         self.assertIn("--segment-count 10000", performance_ci)
         self.assertIn('default: "b600e90"', performance_ci)
         self.assertIn("actions/upload-artifact", performance_ci)
+        self.assertIn("git rev-parse --verify", performance_ci)
+        self.assertIn("--end-of-options", performance_ci)
+        self.assertIn("[double]::IsNaN", performance_ci)
+        self.assertNotIn(
+            'git worktree add --detach $referenceRoot "${{',
+            performance_ci,
+        )
 
 
 if __name__ == "__main__":

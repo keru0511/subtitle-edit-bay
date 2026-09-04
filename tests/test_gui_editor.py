@@ -19,11 +19,12 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
-from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
+from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QSignalSpy, QTest
 
+from scripts.generate_large_gui_fixture import generate_segments
 from src.audio_preview_cache import (
     AudioPreviewCacheResult,
     audio_preview_cache_entries,
@@ -45,7 +46,7 @@ from src.subtitle_project import (
 )
 from src.subtitle_line_count import segment_preview_text as original_segment_preview_text
 from tests.edit_bay_gui_test_session import EditBayGuiTestSession
-from tests.gui_test_harness import GuiTestHarness
+from tests.gui_test_harness import GuiTestHarness, MediaPlayerSignalProbe
 
 
 class GuiEditorRegressionTests(unittest.TestCase):
@@ -95,6 +96,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         *,
         segments: list[dict[str, object]] | None = None,
         include_missing_audio: bool = False,
+        duration_seconds: float = 30.0,
     ) -> tuple[Path, Path, Path]:
         video = self.root / "game.mkv"
         video.write_bytes(b"video")
@@ -140,7 +142,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                     "words": [{"word": "abcdefgh", "start": 0, "end": 4}],
                 }
             ],
-            duration_seconds=30,
+            duration_seconds=duration_seconds,
         )
         path = output / "game.subtitle-project.json"
         save_project(path, project)
@@ -154,6 +156,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._prime_audio_preview_cache()
         self.app.autosave_timer.stop()
         return path
+
+    def _load_large_project(self, segment_count: int = 3_000) -> Path:
+        segments = generate_segments(segment_count)
+        return self._load_project(
+            segments=segments,
+            duration_seconds=float(segments[-1]["end"]) + 1.0,
+        )
 
     def _prime_audio_preview_cache(self) -> None:
         entries = audio_preview_cache_entries(
@@ -2574,6 +2583,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreater(len(visible), 0)
         self.assertLess(len(visible), len(segments))
         self.assertEqual(visible[0]["sourceIndex"], 0)
+        first_caption = self.gui.find_visual_item_by_properties(
+            timeline,
+            {"sourceIndex": 0},
+            required_properties=("segment", "originalX", "originalWidth"),
+        )
+        self.assertTrue(first_caption.isVisible())
+        self.assertGreater(first_caption.width(), 0)
 
     def test_qml_timeline_refresh_does_not_access_destroyed_segment_data(self) -> None:
         self._load_project()
@@ -2875,6 +2891,69 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(page.isVisible())
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
+
+    def test_large_lists_stay_virtualized_and_editor_reuses_main_player(self) -> None:
+        self._load_large_project()
+        _, window = self._load_qml()
+        player = self.gui.find_object(window, "mainPreviewPlayer", QMediaPlayer)
+        media_probe = MediaPlayerSignalProbe(player)
+        initial_player_count = len(window.findChildren(QMediaPlayer))
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.gui.wait_until(
+            lambda: window.findChild(QQuickItem, "captionTable") is not None,
+            description="large-project editor",
+            timeout_ms=10_000,
+        )
+        caption_table = self._quick_item(window, "captionTable")
+        timeline = self._quick_item(window, "editorTimeline")
+        self.app.selectSegment(2_999)
+        timeline.setProperty("viewportX", self.app.projectDuration * 64)
+        self.gui.wait(100)
+
+        caption_delegates = self.gui.count_visual_items(
+            window,
+            object_name_prefix="captionRow-",
+        )
+        timeline_delegates = self.gui.count_visual_items(
+            window,
+            object_name_prefix="timelineCaption-",
+        )
+        self.assertEqual(caption_table.property("count"), 3_000)
+        self.assertGreater(caption_delegates, 0)
+        self.assertLess(caption_delegates, 100)
+        self.assertGreater(timeline_delegates, 0)
+        self.assertLess(timeline_delegates, 100)
+
+        media_probe.reset()
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.gui.wait(100)
+
+        media = media_probe.as_dict()
+        self.assertEqual(media["source_changes"], 0)
+        self.assertEqual(media["loading_transitions"], 0)
+        self.assertEqual(len(window.findChildren(QMediaPlayer)), initial_player_count)
+
+    def test_large_short_clip_list_stays_virtualized(self) -> None:
+        self._load_large_project()
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self.gui.wait_until(
+            lambda: window.findChild(QQuickItem, "shortModeClipListView") is not None,
+            description="large short clip list",
+            timeout_ms=10_000,
+        )
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        delegates = self.gui.count_visual_items(
+            window,
+            object_name_prefix="shortModeClipItem",
+        )
+
+        self.assertEqual(clip_list.property("count"), 3_000)
+        self.assertGreater(delegates, 0)
+        self.assertLess(delegates, 100)
 
     def _generate_test_video(self, path: Path) -> None:
         subprocess.run(
@@ -3636,6 +3715,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(len(self.app.shortVideoClips), 2)
         self.assertEqual(self.app.shortVideoClips[-1]["segment_id"], "subtitle-segment")
+
+    def test_short_mode_fit_combo_updates_its_delegate_clip(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": f"segment-{index}",
+                    "start": float(index),
+                    "end": float(index + 1),
+                    "text": f"字幕 {index}",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+                for index in range(4)
+            ]
+        )
+        self.app.initializeShortVideoClips()
+        self.app.autosave_timer.stop()
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.set_property(clip_list, "contentY", 3 * 130)
+        self.gui.wait_until(
+            lambda: any(item.objectName() == "shortModeClipItem3" for item in self.gui.visual_items(clip_list)),
+            description="fourth short clip delegate",
+        )
+        delegate = self.gui.find_visual_item(clip_list, "shortModeClipItem3")
+        fit_combo = self.gui.find_visual_item(delegate, "shortModeFitCombo3")
+        self.gui.set_property(fit_combo, "currentIndex", 1)
+        self.gui.emit_signal(fit_combo, "activated", 1)
+
+        clips = self.app._project["short_video"]["clips"]
+        self.assertNotEqual(clips[1].get("fit"), "contain")
+        self.assertEqual(clips[3]["fit"], "contain")
 
     def test_video_only_project_explains_disabled_transcription(self) -> None:
         self._load_project(segments=[])

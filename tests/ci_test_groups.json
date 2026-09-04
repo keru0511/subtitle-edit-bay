@@ -40,6 +40,7 @@
         "test_editor_workspace",
         "test_gui_codex_chat_state",
         "test_gui_codex_state",
+        "test_gui_large_project_performance",
         "test_gui_runtime_settings",
         "test_gui_source_state",
         "test_gui_state",

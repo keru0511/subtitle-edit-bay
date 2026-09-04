@@ -72,11 +72,12 @@ Rectangle {
 
     MediaPlayer {
         id: previewPlayer
+        objectName: "shortPreviewPlayer"
         source: previewRoot.previewSource
         videoOutput: previewVideo
         audioOutput: AudioOutput { volume: 0.7 }
 
-        onPositionChanged: {
+        onPositionChanged: function(position) {
             if (!previewRoot.clipData) {
                 return
             }
@@ -86,7 +87,7 @@ Rectangle {
             }
         }
 
-        onPlaybackStateChanged: {
+        onPlaybackStateChanged: function(playbackState) {
             if (playbackState === MediaPlayer.StoppedState && previewRoot.clipData && previewRoot.appBackend && previewRoot.appBackend.previewUrl) {
                 previewPlayer.position = previewRoot.clipData.start * 1000
                 previewPlayer.play()

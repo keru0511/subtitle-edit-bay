@@ -27,6 +27,7 @@ ApplicationWindow {
     readonly property int selectedSubtitleOutlineThickness: root.subtitleOutlineThickness
     property var projectSpeakerCache: root.appBackend.projectSpeakers
     property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
+    property var subtitleLayoutMetricsCache: root.appBackend.subtitleLayoutMetrics
     property real editorPositionCache: 0
     property real editorTimelineScrollX: 0
     property real editorCaptionScrollY: 0
@@ -41,6 +42,10 @@ ApplicationWindow {
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
     readonly property bool shortMode: root.activeOverlay === "short"
+    onEditorModeChanged: {
+        if (root.editorMode)
+            root.syncEditorPlayhead(root.editorPositionCache, true)
+    }
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -331,6 +336,24 @@ ApplicationWindow {
             advancedSettingsPopup.close()
     }
 
+    function syncEditorPlayhead(positionMs, syncSelection) {
+        var resolvedPosition = Math.max(0, Math.round(Number(positionMs) || 0))
+        root.appBackend.setEditorPlayhead(
+            resolvedPosition,
+            String(root.appBackend.editorPlayhead.basis || "source")
+        )
+        if (syncSelection && root.editorMode)
+            root.appBackend.selectSegmentAtTime(resolvedPosition / 1000)
+    }
+
+    function syncEditorSelectionFromActiveSegments(activeSegments) {
+        if (!root.editorMode || !activeSegments || activeSegments.length === 0)
+            return
+        var sourceIndex = Number(activeSegments[activeSegments.length - 1].sourceIndex)
+        if (isFinite(sourceIndex) && sourceIndex >= 0)
+            root.appBackend.selectSegment(Math.floor(sourceIndex))
+    }
+
     function openEditorScreen() {
         root.closeSettingsPopup()
         root.appBackend.selectEditMode("subtitle")
@@ -343,7 +366,9 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
-        mainPlayer.position = root.editorPositionCache
+        root.editorPositionCache = mainPlayer.position
+        mainPlayer.pause()
+        mainPlayer.videoOutput = mainVideo
         root.activeOverlay = ""
     }
 
@@ -1228,7 +1253,7 @@ ApplicationWindow {
                 blockReason: root.transcriptionBlockReason()
                 audioMixerAvailable: root.appBackend.audioMixerAvailable
                 mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
-                subtitleAvailable: root.appBackend.subtitleSegments.length > 0
+                subtitleAvailable: root.appBackend.segmentCount > 0
                 outputFolderAvailable: Boolean(root.appBackend.sourceSelection.output_dir)
                 settingsExpanded: root.settingsExpanded
                 onSettingsRequested: root.toggleSettingsPopup()
@@ -1273,18 +1298,26 @@ ApplicationWindow {
                     onPositionChanged: {
                         if (!mainSeek.pressed)
                             mainSeek.value = mainPlayer.position
-                        root.appBackend.setEditorPlayhead(
-                            Math.round(mainPlayer.position),
-                            String(root.appBackend.editorPlayhead.basis || "source")
-                        )
+                        if (mainPlayer.playbackState !== MediaPlayer.PlayingState)
+                            root.syncEditorPlayhead(mainPlayer.position, true)
                     }
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
+                    onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
+                }
+                Timer {
+                    // Keep the shared playhead current; the overlay handles exact subtitle changes.
+                    interval: 100
+                    repeat: true
+                    running: mainPlayer.playbackState === MediaPlayer.PlayingState
+                    onTriggered: root.syncEditorPlayhead(mainPlayer.position, false)
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
                 SubtitleOverlay {
                     anchors.fill: mainVideo
                     appBackend: root.appBackend
                     player: mainPlayer
+                    layoutMetrics: root.subtitleLayoutMetricsCache
+                    active: mainWorkspace.visible
                     captionObjectPrefix: "mainSubtitleOverlayCaption"
                     baseFontSize: root.selectedSubtitleFontSize
                     defaultSubtitleFontSize: root.defaultSubtitleFontSize
@@ -2159,19 +2192,35 @@ ApplicationWindow {
         Component {
             id: editorContentComponent
             Item {
-                MediaPlayer {
-                    id: editorPlayer
-                    videoOutput: editorVideo
-                    audioOutput: AudioOutput { volume: 0.75 }
-                    source: root.appBackend.previewUrl
-                    Component.onCompleted: position = root.editorPositionCache
-                    onPositionChanged: {
-                        root.editorPositionCache = editorPlayer.position
+                id: editorContent
+                property bool selectionSyncReady: false
+
+                Component.onCompleted: {
+                    // Reuse the decoded source and move its output to the editor preview.
+                    var requestedPosition = root.editorPositionCache
+                    mainPlayer.pause()
+                    mainPlayer.videoOutput = editorVideo
+                    mainPlayer.position = requestedPosition
+                    editorSeek.to = Math.max(1, mainPlayer.duration)
+                    editorSeek.value = mainPlayer.position
+                    editorContent.selectionSyncReady = true
+                    root.syncEditorPlayhead(requestedPosition, true)
+                }
+                Component.onDestruction: {
+                    root.editorPositionCache = mainPlayer.position
+                    mainPlayer.pause()
+                    mainPlayer.videoOutput = mainVideo
+                }
+                Connections {
+                    target: mainPlayer
+                    function onPositionChanged() {
+                        root.editorPositionCache = mainPlayer.position
                         if (!editorSeek.pressed)
-                            editorSeek.value = editorPlayer.position
-                        root.appBackend.selectSegmentAtTime(editorPlayer.position / 1000)
+                            editorSeek.value = mainPlayer.position
                     }
-                    onDurationChanged: editorSeek.to = Math.max(1, editorPlayer.duration)
+                    function onDurationChanged() {
+                        editorSeek.to = Math.max(1, mainPlayer.duration)
+                    }
                 }
 
                 ColumnLayout {
@@ -2184,8 +2233,8 @@ ApplicationWindow {
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
                 SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
                 SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
-                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(editorPlayer.position / 1000) }
-                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(editorPlayer.position); onClicked: root.appBackend.splitSelectedSegment(editorPlayer.position / 1000) }
+                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(mainPlayer.position / 1000) }
+                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.appBackend.splitSelectedSegment(mainPlayer.position / 1000) }
                 SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
                 SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
@@ -2212,9 +2261,12 @@ ApplicationWindow {
                         VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
                         SubtitleOverlay {
                             id: editorOverlay
+                            objectName: "editorSubtitleOverlay"
                             anchors.fill: editorVideo
                             appBackend: root.appBackend
-                            player: editorPlayer
+                            player: mainPlayer
+                            layoutMetrics: root.subtitleLayoutMetricsCache
+                            active: root.editorMode
                             captionObjectPrefix: "editorSubtitleOverlayCaption"
                             baseFontSize: root.selectedSubtitleFontSize
                             defaultSubtitleFontSize: root.defaultSubtitleFontSize
@@ -2222,12 +2274,16 @@ ApplicationWindow {
                             outlineThickness: root.selectedSubtitleOutlineThickness
                             speakerColors: root.projectSpeakerCache
                             subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                            onActiveSegmentsChanged: {
+                                if (editorContent.selectionSyncReady)
+                                    root.syncEditorSelectionFromActiveSegments(editorOverlay.activeSegments)
+                            }
                         }
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
-                            Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: editorPlayer.position = value }
+                            Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
                             RowLayout { Layout.fillWidth: true
-                                ToolButton { text: editorPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: editorPlayer.playbackState === MediaPlayer.PlayingState ? editorPlayer.pause() : editorPlayer.play() }
-                                Text { Layout.fillWidth: true; text: root.stamp(editorPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
+                                ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
+                                Text { Layout.fillWidth: true; text: root.stamp(mainPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
                                 Text { text: editorOverlay.activeSegments.length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
                             }
                         }
@@ -2245,7 +2301,7 @@ ApplicationWindow {
                         objectName: "editorTimeline"
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(320, 90 + Math.max(1, root.projectSpeakerCache.length) * 42)
-                        player: editorPlayer
+                        player: mainPlayer
                         pixelsPerSecond: root.editorPixelsPerSecond
                         snapSeconds: root.snapMilliseconds / 1000
                         editable: true
@@ -2253,7 +2309,7 @@ ApplicationWindow {
                         onViewportXChanged: root.editorTimelineScrollX = viewportX
                         onSegmentActivated: function(index) {
                             var segment = root.appBackend.segmentAt(index)
-                            if (segment) editorPlayer.position = Number(segment.start) * 1000
+                            if (segment) mainPlayer.position = Number(segment.start) * 1000
                         }
                     }
                 }
@@ -2301,7 +2357,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.preferredHeight: implicitHeight
                             backend: root.appBackend
-                            currentTime: editorPlayer.position / 1000
+                            currentTime: mainPlayer.position / 1000
                         }
                         ListView {
                             id: captionTable
@@ -2332,7 +2388,7 @@ ApplicationWindow {
                                 width: captionTable.width; height: 122; radius: 8
                                 color: root.appBackend.selectedSegmentIndex === index ? "#263326" : root.raised
                                 border.color: root.appBackend.selectedSegmentIndex === index ? root.acid : root.border
-                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); editorPlayer.position = captionRow.start * 1000 } }
+                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); mainPlayer.position = captionRow.start * 1000 } }
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 7; spacing: 5
                                     RowLayout { Layout.fillWidth: true; spacing: 5
                                         Text { text: String(captionRow.index + 1).padStart(4, "0"); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9 }

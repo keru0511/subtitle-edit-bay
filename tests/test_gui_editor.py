@@ -43,6 +43,7 @@ from src.subtitle_project import (
     load_project,
     save_project,
 )
+from src.subtitle_line_count import segment_preview_text as original_segment_preview_text
 from tests.edit_bay_gui_test_session import EditBayGuiTestSession
 from tests.gui_test_harness import GuiTestHarness
 
@@ -1092,6 +1093,63 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(model.rowCount(), 2)
         self.assertEqual(model.data(model.index(0, 0), model.TextRole), "updated")
         self.assertEqual(model.data(model.index(0, 0), model.FontFamilyRole), "Yu Gothic")
+
+    def test_subtitle_layout_metrics_are_precomputed_for_preview(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 3,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                    "subtitle_font_scale": 0.8,
+                },
+                {
+                    "id": "second",
+                    "start": 0.5,
+                    "end": 2.5,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                    "subtitle_font_scale": 2.5,
+                },
+                {
+                    "id": "third",
+                    "start": 1,
+                    "end": 2,
+                    "text": "third",
+                    "speaker": "Speaker_Alice",
+                    "subtitle_font_scale": 1.25,
+                },
+            ]
+        )
+
+        self.assertEqual(
+            self.app.subtitleLayoutMetrics,
+            {"maxFontScale": 2.5, "maxLayoutRow": 2},
+        )
+
+        self.app.updateSegment(0, {"subtitle_font_scale": 3.0})
+        self.assertEqual(self.app.subtitleLayoutMetrics["maxFontScale"], 3.0)
+
+    def test_repeated_preview_queries_reuse_formatted_subtitle_text(self) -> None:
+        self._load_project()
+
+        with patch(
+            "src.gui.segment_preview_text",
+            wraps=original_segment_preview_text,
+        ) as formatter:
+            first = self.app.activeSubtitleSegments(1.0)
+            second = self.app.activeSubtitleSegments(1.1)
+
+            self.assertEqual(first[0]["preview_text"], second[0]["preview_text"])
+            self.assertEqual(formatter.call_count, 1)
+
+            self.app.updateSegment(0, {"text": "updated preview"})
+            updated = self.app.activeSubtitleSegments(1.0)
+
+            self.assertEqual(updated[0]["text"], "updated preview")
+            self.assertEqual(formatter.call_count, 2)
 
     def test_playback_time_selects_latest_active_subtitle_and_keeps_last_in_gaps(self) -> None:
         self._load_project(
@@ -2426,6 +2484,73 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIsNotNone(window.findChild(QQuickItem, "editorTimeline"))
         self.assertIsNotNone(window.findChild(QQuickItem, "projectSpeakerColorList"))
 
+    def test_qml_editor_activation_selects_subtitle_at_cached_playhead(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 1,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "second",
+                    "start": 5,
+                    "end": 6,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+
+        window.setProperty("editorPositionCache", 5_500)
+        window.setProperty("activeOverlay", "editor")
+        self.app.processEvents()
+
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 5_500)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
+    def test_qml_editor_selection_follows_the_visible_subtitle(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 1,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "second",
+                    "start": 0.025,
+                    "end": 0.075,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        overlay = self._quick_item(window, "editorSubtitleOverlay")
+        self.app.selectSegment(0)
+
+        self.gui.set_property(
+            overlay,
+            "activeSegments",
+            [
+                {"sourceIndex": 0, "text": "first"},
+                {"sourceIndex": 1, "text": "second"},
+            ],
+        )
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
+        # Gaps keep the most recently visible subtitle selected.
+        self.gui.set_property(overlay, "activeSegments", [])
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
     def test_qml_timeline_instantiates_only_visible_captions(self) -> None:
         segments = [
             {
@@ -3254,6 +3379,91 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(transition["type"], transition_type)
             self.assertAlmostEqual(float(transition["duration"]), duration)
 
+    def test_short_mode_clip_model_materializes_only_requested_rows(self) -> None:
+        segment_count = 3_000
+        self._load_project(
+            segments=[
+                {
+                    "id": f"segment-{index:04d}",
+                    "start": index * 0.009,
+                    "end": index * 0.009 + 0.05,
+                    "text": f"caption-{index}",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+                for index in range(segment_count)
+            ]
+        )
+        model = self.app._short_video_clip_model
+
+        with (
+            patch.object(
+                self.app,
+                "_build_short_video_clip_view",
+                wraps=self.app._build_short_video_clip_view,
+            ) as build_clip_view,
+            patch(
+                "src.gui.segment_preview_text",
+                wraps=original_segment_preview_text,
+            ) as format_preview,
+        ):
+            self.app.initializeShortVideoClips()
+
+            self.assertEqual(self.app.shortVideoClipCount, segment_count)
+            self.assertEqual(model.rowCount(), segment_count)
+            build_clip_view.assert_not_called()
+            format_preview.assert_not_called()
+
+            last_clip = model.data(
+                model.index(segment_count - 1, 0),
+                model.ClipDataRole,
+            )
+            self.assertEqual(last_clip["segment_id"], "segment-2999")
+            self.assertEqual(last_clip["preview_text"], "caption-2999")
+            self.assertEqual(build_clip_view.call_count, 1)
+            self.assertEqual(format_preview.call_count, 1)
+
+            middle_clip = self.app.shortVideoClipAt(segment_count // 2)
+            self.assertEqual(middle_clip["segment_id"], "segment-1500")
+            self.assertEqual(build_clip_view.call_count, 2)
+            self.assertEqual(format_preview.call_count, 2)
+
+    def test_short_mode_clamps_selection_after_removing_the_last_selected_clip(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "first",
+                    "start": 0,
+                    "end": 1,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "second",
+                    "start": 1,
+                    "end": 2,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        short_screen = self._quick_item(window, "shortModeScreen")
+        clip_list = self._quick_item(window, "shortModeClipList")
+        preview = self._quick_item(window, "shortModePreview")
+
+        self.gui.set_property(short_screen, "currentClipIndex", 1)
+        self.assertEqual(clip_list.property("selectedIndex"), 1)
+        self.assertEqual(preview.property("clipData").get("segment_id"), "second")
+
+        self.assertTrue(self.app.removeShortVideoClip(1))
+        self.gui.process_events()
+
+        self.assertEqual(short_screen.property("currentClipIndex"), 0)
+        self.assertEqual(clip_list.property("selectedIndex"), 0)
+        self.assertEqual(preview.property("clipData").get("segment_id"), "first")
+
     def test_short_mode_clip_list_and_preview(self) -> None:
         segments = [
             {
@@ -3399,6 +3609,33 @@ class GuiEditorRegressionTests(unittest.TestCase):
         clip = self.app.shortVideoClips[-1]
         self.assertEqual(clip["segment_id"], "")
         self.assertEqual((clip["start"], clip["end"]), (0.25, 0.75))
+
+    def test_short_mode_segment_picker_uses_the_subtitle_model(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "subtitle-segment",
+                    "start": 1.0,
+                    "end": 3.0,
+                    "text": "字幕の範囲",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                }
+            ]
+        )
+
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        segment_combo = self._quick_item(window, "shortModeSegmentCombo")
+        add_button = self._quick_item(window, "shortModeAddClipButton")
+
+        self.assertEqual(segment_combo.property("currentValue"), "subtitle-segment")
+        self.assertEqual(segment_combo.property("displayText"), "字幕の範囲")
+        self.assertTrue(add_button.property("enabled"))
+        self._click(window, add_button)
+
+        self.assertEqual(len(self.app.shortVideoClips), 2)
+        self.assertEqual(self.app.shortVideoClips[-1]["segment_id"], "subtitle-segment")
 
     def test_video_only_project_explains_disabled_transcription(self) -> None:
         self._load_project(segments=[])

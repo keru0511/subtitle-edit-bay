@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtMultimedia
 
@@ -6,6 +7,8 @@ Item {
 
     property var appBackend: null
     property MediaPlayer player: null
+    property var layoutMetrics: ({})
+    property bool active: true
     property string captionObjectPrefix: "subtitleOverlayCaption"
     property int baseFontSize: 50
     property int defaultSubtitleFontSize: 50
@@ -25,14 +28,7 @@ Item {
     }
 
     function maxSubtitleFontScale() {
-        var maxScale = 1
-        var allSegments = overlayRoot.appBackend ? overlayRoot.appBackend.subtitleSegments : []
-        for (var index = 0; index < allSegments.length; index++) {
-            var candidate = Number(allSegments[index].subtitle_font_scale)
-            if (candidate > 0)
-                maxScale = Math.max(maxScale, Math.max(0.1, candidate))
-        }
-        return maxScale
+        return Math.max(1, Number(overlayRoot.layoutMetrics.maxFontScale) || 1)
     }
 
     function maxSubtitlePixelSize() {
@@ -43,11 +39,7 @@ Item {
     }
 
     function maxLayoutRow() {
-        var maxRow = 0
-        var allSegments = overlayRoot.appBackend ? overlayRoot.appBackend.subtitleSegments : []
-        for (var index = 0; index < allSegments.length; index++)
-            maxRow = Math.max(maxRow, Number(allSegments[index].layout_row || 0))
-        return maxRow
+        return Math.max(0, Math.floor(Number(overlayRoot.layoutMetrics.maxLayoutRow) || 0))
     }
 
     function previewRowMarginStep() {
@@ -99,7 +91,7 @@ Item {
     }
 
     function refreshActiveSegments() {
-        var candidates = overlayRoot.appBackend && overlayRoot.player
+        var candidates = overlayRoot.active && overlayRoot.appBackend && overlayRoot.player
             ? overlayRoot.appBackend.activeSubtitleSegments(overlayRoot.player.position / 1000)
             : []
         var signature = JSON.stringify(candidates)
@@ -110,12 +102,13 @@ Item {
     }
 
     onPlayerChanged: overlayRoot.refreshActiveSegments()
+    onActiveChanged: overlayRoot.refreshActiveSegments()
     Connections {
-        target: overlayRoot.player
+        target: overlayRoot.active ? overlayRoot.player : null
         function onPositionChanged() { overlayRoot.refreshActiveSegments() }
     }
     Connections {
-        target: overlayRoot.appBackend
+        target: overlayRoot.active ? overlayRoot.appBackend : null
         function onSegmentsChanged() { overlayRoot.refreshActiveSegments() }
     }
 

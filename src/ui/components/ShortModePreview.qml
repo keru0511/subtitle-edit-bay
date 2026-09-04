@@ -14,8 +14,28 @@ Rectangle {
     property var appBackend: null
     property var clipData: null
     property string fallbackBackgroundColor: "#000000"
+    property string activeClipKey: ""
     readonly property var shortSettings: appBackend ? appBackend.shortVideoSettings : ({})
     readonly property var appSettings: appBackend ? appBackend.settings : ({})
+    readonly property string previewSource: appBackend ? appBackend.previewUrl : ""
+
+    function clipPlaybackKey(clip) {
+        if (!clip) return ""
+        return String(clip.index) + "|" + String(clip.segment_id || "") + "|"
+            + String(Number(clip.start)) + "|" + String(Number(clip.end))
+    }
+
+    function syncClipPlayback(force) {
+        var nextKey = previewRoot.clipPlaybackKey(previewRoot.clipData)
+        if (!force && nextKey === previewRoot.activeClipKey) return
+        previewRoot.activeClipKey = nextKey
+        if (nextKey !== "" && previewRoot.previewSource !== "") {
+            previewPlayer.position = previewRoot.clipData.start * 1000
+            previewPlayer.play()
+        } else {
+            previewPlayer.stop()
+        }
+    }
 
     function normalizedSubtitleScalePercent() {
         var configuredScale = shortSettings ? shortSettings.subtitle_scale_percent : undefined
@@ -52,7 +72,7 @@ Rectangle {
 
     MediaPlayer {
         id: previewPlayer
-        source: previewRoot.appBackend ? previewRoot.appBackend.previewUrl : ""
+        source: previewRoot.previewSource
         videoOutput: previewVideo
         audioOutput: AudioOutput { volume: 0.7 }
 
@@ -94,6 +114,7 @@ Rectangle {
         anchors.fill: previewVideo
         appBackend: previewRoot.appBackend
         player: previewPlayer
+        layoutMetrics: previewRoot.appBackend ? previewRoot.appBackend.subtitleLayoutMetrics : ({})
         captionObjectPrefix: "shortSubtitleOverlayCaption"
         baseFontSize: previewRoot.subtitleBaseFontSize
         defaultSubtitleFontSize: 50
@@ -114,13 +135,6 @@ Rectangle {
         wrapMode: Text.Wrap
     }
 
-    onClipDataChanged: {
-        if (clipData && previewRoot.appBackend && previewRoot.appBackend.previewUrl) {
-            previewPlayer.stop()
-            previewPlayer.position = clipData.start * 1000
-            previewPlayer.play()
-        } else {
-            previewPlayer.stop()
-        }
-    }
+    onClipDataChanged: previewRoot.syncClipPlayback(false)
+    onPreviewSourceChanged: previewRoot.syncClipPlayback(true)
 }

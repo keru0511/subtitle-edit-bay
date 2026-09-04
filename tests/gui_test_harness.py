@@ -18,6 +18,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPointF,
+    Slot,
     QTimer,
     Qt,
     QtMsgType,
@@ -102,10 +103,15 @@ def _enum_name(value: object) -> str:
     return str(name if name is not None else value).rsplit(".", 1)[-1]
 
 
-class MediaPlayerSignalProbe:
+class MediaPlayerSignalProbe(QObject):
     """Collect observable source, loading, playback, and position transitions."""
 
     def __init__(self, player: QObject) -> None:
+        # A QObject receiver keeps cross-thread multimedia signals queued onto
+        # the player's thread.  A plain Python callback can otherwise be
+        # invoked directly by the Windows decoding thread and intermittently
+        # crash while wrapping or releasing QVideoFrame.
+        super().__init__(player)
         self.player = player
         self.video_sink: QObject | None = None
         player.sourceChanged.connect(self._source_changed)
@@ -153,7 +159,8 @@ class MediaPlayerSignalProbe:
     def _position_changed(self, position: int) -> None:
         self.positions_ms.append(int(position))
 
-    def _video_frame_changed(self, _frame: object) -> None:
+    @Slot()
+    def _video_frame_changed(self) -> None:
         self.video_frames += 1
         if self.first_video_frame_ms is None:
             self.first_video_frame_ms = round((time.perf_counter() - self._started_at) * 1_000, 3)

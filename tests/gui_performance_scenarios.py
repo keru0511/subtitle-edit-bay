@@ -30,6 +30,41 @@ from tests.gui_test_harness import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 QML_PATH = REPO_ROOT / "src" / "ui" / "Main.qml"
+PRE_302_REFERENCE_REVISION = "b600e909ea7d891a827f9dc5031a6697eb2e7a64"
+
+
+def _repository_revision() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def _comparison_qml_message_allowlist(revision: str) -> tuple[AllowedQmlMessage, ...]:
+    if revision != PRE_302_REFERENCE_REVISION:
+        return ()
+    return (
+        AllowedQmlMessage(
+            pattern=(
+                r'Parameter "(?:position|playbackState)" is not declared\. '
+                r"Injection of parameters into signal handlers is deprecated\."
+            ),
+            reason="The pinned pre-#302 comparison source uses Qt's former implicit signal parameters.",
+        ),
+        AllowedQmlMessage(
+            pattern=(
+                r'Parameter "index" is not declared\. '
+                r"Injection of parameters into signal handlers is deprecated\."
+            ),
+            reason="The pinned pre-#302 short-fit handler uses Qt's former implicit signal parameter.",
+        ),
+    )
 
 
 def _peak_resident_set_bytes() -> int:
@@ -279,6 +314,7 @@ class GuiPerformanceScenarioRunner:
         self.project_path = project_path.resolve()
         self.playback_seconds = playback_seconds
         self.settle_ms = settle_ms
+        self.revision = _repository_revision()
         self._workspace = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         with patch("src.gui.CodexChatController.connect"):
             self.backend = InstrumentedEditBayBackend(
@@ -289,22 +325,7 @@ class GuiPerformanceScenarioRunner:
             self.backend,
             backend=self.backend,
             qml_roots=(QML_PATH.parent,),
-            qml_message_allowlist=(
-                AllowedQmlMessage(
-                    pattern=(
-                        r'Parameter "(?:position|playbackState)" is not declared\. '
-                        r"Injection of parameters into signal handlers is deprecated\."
-                    ),
-                    reason="The preserved pre-#302 comparison source uses Qt's former implicit signal parameters.",
-                ),
-                AllowedQmlMessage(
-                    pattern=(
-                        r'Parameter "index" is not declared\. '
-                        r"Injection of parameters into signal handlers is deprecated\."
-                    ),
-                    reason="The preserved pre-#302 short-fit handler uses Qt's former implicit signal parameter.",
-                ),
-            ),
+            qml_message_allowlist=_comparison_qml_message_allowlist(self.revision),
         )
         self.window: QObject | None = None
         self.main_player: QMediaPlayer | None = None
@@ -339,18 +360,8 @@ class GuiPerformanceScenarioRunner:
             self.close()
 
     def _metadata(self) -> dict[str, object]:
-        try:
-            revision = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=REPO_ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        except (OSError, subprocess.CalledProcessError):
-            revision = "unknown"
         return {
-            "revision": revision,
+            "revision": self.revision,
             "platform": platform.platform(),
             "python": platform.python_version(),
             "pyside": pyside_version,

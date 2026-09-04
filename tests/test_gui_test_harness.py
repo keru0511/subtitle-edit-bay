@@ -21,6 +21,8 @@ from tests.gui_test_harness import (
     summarize_durations_ms,
 )
 from tests.gui_performance_scenarios import (
+    PRE_302_REFERENCE_REVISION,
+    _comparison_qml_message_allowlist,
     _main_preview_contract_passed,
     _playback_follow_contract_passed,
     _short_visual_update_contract_passed,
@@ -183,6 +185,12 @@ class GuiTestHarnessTests(unittest.TestCase):
                 ),
             ),
         )
+
+    def test_comparison_qml_allowlist_is_limited_to_pinned_reference(self) -> None:
+        self.assertEqual(_comparison_qml_message_allowlist("current"), ())
+        legacy_allowlist = _comparison_qml_message_allowlist(PRE_302_REFERENCE_REVISION)
+        self.assertEqual(len(legacy_allowlist), 2)
+        self.assertTrue(all(allowed.reason for allowed in legacy_allowlist))
 
     def test_duration_summary_and_event_loop_probe(self) -> None:
         summary = summarize_durations_ms(range(1, 21))

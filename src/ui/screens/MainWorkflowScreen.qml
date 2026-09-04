@@ -2192,13 +2192,19 @@ ApplicationWindow {
         Component {
             id: editorContentComponent
             Item {
+                id: editorContent
+                property bool selectionSyncReady: false
+
                 Component.onCompleted: {
                     // Reuse the decoded source and move its output to the editor preview.
+                    var requestedPosition = root.editorPositionCache
                     mainPlayer.pause()
                     mainPlayer.videoOutput = editorVideo
-                    mainPlayer.position = root.editorPositionCache
+                    mainPlayer.position = requestedPosition
                     editorSeek.to = Math.max(1, mainPlayer.duration)
                     editorSeek.value = mainPlayer.position
+                    editorContent.selectionSyncReady = true
+                    root.syncEditorPlayhead(requestedPosition, true)
                 }
                 Component.onDestruction: {
                     root.editorPositionCache = mainPlayer.position
@@ -2268,8 +2274,10 @@ ApplicationWindow {
                             outlineThickness: root.selectedSubtitleOutlineThickness
                             speakerColors: root.projectSpeakerCache
                             subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
-                            onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
-                                editorOverlay.activeSegments)
+                            onActiveSegmentsChanged: {
+                                if (editorContent.selectionSyncReady)
+                                    root.syncEditorSelectionFromActiveSegments(editorOverlay.activeSegments)
+                            }
                         }
                         ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
                             Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }

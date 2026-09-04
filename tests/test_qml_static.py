@@ -25,6 +25,8 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
+    COMPONENTS_ROOT / "SubtitleOverlay.qml",
+    COMPONENTS_ROOT / "ShortModePreview.qml",
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -121,6 +123,9 @@ class QmlStaticTests(unittest.TestCase):
         main_workspace = workflow.split('objectName: "mainWorkspace"', 1)[1].split(
             'objectName: "overwriteProjectDialog"', 1
         )[0]
+        editor_content = workflow.split("id: editorContentComponent", 1)[1].split(
+            "id: shortModePage", 1
+        )[0]
 
         self.assertIn('property string activeOverlay: ""', workflow)
         self.assertNotIn("\n    property bool editorMode:", workflow)
@@ -135,6 +140,18 @@ class QmlStaticTests(unittest.TestCase):
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
         self.assertIn('objectName: "mainWorkspacePlayer"', main_workspace)
         self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)
+        self.assertNotIn("MediaPlayer {", editor_content)
+        self.assertNotIn("editorPlayer", workflow)
+        self.assertIn("mainPlayer.videoOutput = editorVideo", editor_content)
+        self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
+        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', workflow)
+        self.assertIn("interval: 100", main_workspace)
+        self.assertIn(
+            "onTriggered: root.syncEditorPlayhead(mainPlayer.position, false)",
+            main_workspace,
+        )
+        self.assertIn("onActiveSegmentsChanged:", editor_content)
+        self.assertIn("syncEditorSelectionFromActiveSegments", editor_content)
 
     def test_subtitle_and_audio_modes_share_the_workspace_player(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
@@ -160,9 +177,39 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('mainPlayer.position = sourcePosition', workflow)
         self.assertIn("function onEditorPlayheadChanged()", workflow)
         self.assertIn(
-            'root.appBackend.setEditorPlayhead(Math.round(mainPlayer.position), "source")',
+            'root.appBackend.setEditorPlayhead(resolvedPosition, "source")',
             workflow,
         )
+
+    def test_subtitle_preview_does_not_copy_the_full_segment_list(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        overlay = (COMPONENTS_ROOT / "SubtitleOverlay.qml").read_text(encoding="utf-8")
+        short_clip_list = (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8")
+        short_screen = (UI_ROOT / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
+
+        self.assertNotIn("subtitleSegments", workflow)
+        self.assertNotIn("subtitleSegments", overlay)
+        self.assertNotIn("subtitleSegments", short_clip_list)
+        self.assertNotIn("shortVideoClips", short_clip_list)
+        self.assertNotIn("shortVideoClips", short_screen)
+        self.assertIn("property var layoutMetrics", overlay)
+        self.assertIn("appBackend.activeSubtitleSegments", overlay)
+        self.assertIn("appBackend.segmentCount", workflow)
+        self.assertIn("appBackend.subtitleModel", short_clip_list)
+        self.assertIn("appBackend.shortVideoClipModel", short_clip_list)
+        self.assertIn("appBackend.shortVideoClipCount", short_screen)
+        self.assertIn("appBackend.shortVideoClipAt", short_screen)
+        self.assertIn("function clampCurrentClipIndex()", short_screen)
+        self.assertNotIn("function clampSelected()", short_clip_list)
+        self.assertNotIn("shortVideoClipCount", short_clip_list)
+
+    def test_short_mode_preview_keeps_playback_for_visual_only_updates(self) -> None:
+        preview = (COMPONENTS_ROOT / "ShortModePreview.qml").read_text(encoding="utf-8")
+
+        self.assertIn("function clipPlaybackKey(clip)", preview)
+        self.assertIn("if (!force && nextKey === previewRoot.activeClipKey) return", preview)
+        self.assertIn("onClipDataChanged: previewRoot.syncClipPlayback(false)", preview)
+        self.assertNotIn("previewPlayer.stop()\n            previewPlayer.position", preview)
 
 
 if __name__ == "__main__":

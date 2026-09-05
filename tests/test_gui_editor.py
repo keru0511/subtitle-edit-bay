@@ -2309,8 +2309,22 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._click(window, toggle)
         self.assertTrue(panel.isVisible())
-        actions = self._quick_item(window, "workflowActions")
-        self.assertLessEqual(actions.y() + actions.height(), actions.parentItem().height() + 1)
+        action_bar = self._quick_item(window, "contextActionBar")
+        for width, height in ((1220, 760), (1520, 940)):
+            self.gui.resize(window, width, height)
+            self._assert_quick_item_within(window.contentItem(), panel)
+            for group_name, button_names in (
+                ("transcriptionToolActions", ("transcribeButton", "transcriptionDictionaryOpenButton")),
+                ("outputActions", ("renderVideoButton", "shortModeOpenButton")),
+            ):
+                with self.subTest(size=(width, height), group=group_name):
+                    group = self._quick_item(window, group_name)
+                    self.assertTrue(group.isVisible())
+                    self._assert_quick_item_within(action_bar, group)
+                    for button_name in button_names:
+                        button = self._quick_item(window, button_name)
+                        self.assertTrue(button.isVisible())
+                        self._assert_quick_item_within(group, button)
 
         self._click(window, toggle)
         self.assertFalse(panel.isVisible())

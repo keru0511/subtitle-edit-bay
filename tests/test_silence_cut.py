@@ -113,9 +113,11 @@ class SilenceCutTests(unittest.TestCase):
 
     def test_build_concat_filter_joins_trimmed_segments(self) -> None:
         filter_text = build_concat_filter([(0.0, 1.2), (2.0, 3.5)])
-        self.assertIn("trim=start=0.000:end=1.200", filter_text)
+        self.assertIn("select='gte(t,0.000)*lt(t,1.200)+gte(t,2.000)*lt(t,3.500)'", filter_text)
+        self.assertIn("setpts='PTS-(0.000+0.800*gte(T,2.000))/TB'", filter_text)
         self.assertIn("atrim=start=2.000:end=3.500", filter_text)
-        self.assertIn("concat=n=2:v=1:a=1[v][a]", filter_text)
+        self.assertIn("apad=whole_dur=1.500,atrim=duration=1.500", filter_text)
+        self.assertIn("concat=n=2:v=0:a=1[a]", filter_text)
 
     def test_build_concat_filter_uses_explicit_audio_track(self) -> None:
         filter_text = build_concat_filter([(0.0, 1.2)], audio_track="0:a:3")
@@ -123,7 +125,7 @@ class SilenceCutTests(unittest.TestCase):
 
     def test_build_concat_filter_applies_audio_filter_after_concat(self) -> None:
         filter_text = build_concat_filter([(0.0, 1.2)], audio_filter="loudnorm=I=-16:LRA=11:TP=-1.5")
-        self.assertIn("concat=n=1:v=1:a=1[v][acat]", filter_text)
+        self.assertIn("concat=n=1:v=0:a=1[acat]", filter_text)
         self.assertIn("[acat]loudnorm=I=-16:LRA=11:TP=-1.5[a]", filter_text)
 
     def test_build_concat_filter_renders_retimed_subtitles_after_concat(self) -> None:
@@ -131,8 +133,18 @@ class SilenceCutTests(unittest.TestCase):
             [(2.0, 3.0)],
             video_filter="ass='sample.ass'",
         )
-        self.assertIn("concat=n=1:v=1:a=1[vcat][a]", filter_text)
+        self.assertIn("setpts='PTS-(2.000)/TB'[vcat]", filter_text)
         self.assertIn("[vcat]ass='sample.ass'[v]", filter_text)
+
+    def test_build_concat_filter_supports_video_without_audio(self) -> None:
+        filter_text = build_concat_filter(
+            [(0.0, 1.2), (2.0, 3.5)],
+            include_audio=False,
+        )
+
+        self.assertIn("setpts='PTS-(0.000+0.800*gte(T,2.000))/TB'[v]", filter_text)
+        self.assertNotIn("concat=", filter_text)
+        self.assertNotIn("atrim", filter_text)
 
     def test_retime_segments_for_keep_ranges_maps_to_output_timeline(self) -> None:
         segments = [
@@ -159,6 +171,19 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("-movflags", command)
         self.assertIn("+faststart", command)
         self.assertEqual(command[command.index("-movflags") + 1], "+faststart")
+
+    def test_build_silence_cut_command_omits_audio_for_video_only_source(self) -> None:
+        command = build_silence_cut_command(
+            "input.mp4",
+            "output.mp4",
+            [(0.0, 1.0)],
+            include_audio=False,
+        )
+
+        self.assertNotIn("[a]", command)
+        self.assertNotIn("-c:a", command)
+        self.assertIn("setpts='PTS-(0.000)/TB'[v]", command[command.index("-filter_complex") + 1])
+        self.assertEqual(command[command.index("-t") + 1], "1.000")
 
     def test_build_silence_cut_command_uses_nvenc_and_audio_filter(self) -> None:
         command = build_silence_cut_command(

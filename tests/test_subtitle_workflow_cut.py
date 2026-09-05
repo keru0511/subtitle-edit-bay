@@ -5,10 +5,157 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.subtitle_project import create_project, load_project, save_project
-from src.subtitle_workflow import render_project_video
+from src.subtitle_workflow import build_project_ass, render_project_video
 
 
 class SubtitleWorkflowCutTests(unittest.TestCase):
+    def test_project_ass_maps_source_subtitles_to_manual_cut_output_time(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                duration_seconds=5.0,
+                segments=[
+                    {"id": "before", "start": 0.5, "end": 1.5, "text": "before"},
+                    {"id": "removed", "start": 1.2, "end": 1.8, "text": "removed"},
+                    {"id": "after", "start": 2.2, "end": 3.0, "text": "after"},
+                ],
+                timeline={
+                    "cuts": [
+                        {"id": "cut", "source_start": 1.0, "source_end": 2.0}
+                    ]
+                },
+            )
+            project_path = save_project(root / "game.subtitle-project.json", project)
+            captured: dict[str, object] = {}
+
+            def capture_ass(transcript, output, **_kwargs):
+                captured["segments"] = transcript["segments"]
+                Path(output).write_text("ASS", encoding="utf-8")
+
+            with patch("src.subtitle_workflow.build_ass_from_data", side_effect=capture_ass):
+                build_project_ass(project_path)
+
+            segments = captured["segments"]
+            self.assertEqual([item["id"] for item in segments], ["before", "after"])
+            self.assertEqual(
+                [(item["start"], item["end"]) for item in segments],
+                [(0.5, 1.0), (1.2, 2.0)],
+            )
+
+    def test_manual_cut_render_uses_kept_ranges_and_retimed_subtitles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                duration_seconds=5.0,
+                segments=[{"start": 2.5, "end": 3.0, "text": "after cut"}],
+                timeline={
+                    "cuts": [
+                        {"id": "manual", "source_start": 1.0, "source_end": 2.0}
+                    ]
+                },
+            )
+            project_path = save_project(root / "game.subtitle-project.json", project)
+            ass_path = root / "game.edited.ass"
+            ass_path.write_text("ASS", encoding="utf-8")
+
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[{"codec_name": "aac"}]),
+                patch("src.subtitle_workflow.build_project_ass", return_value=ass_path),
+                patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
+            ):
+                output = render_project_video(project_path, audio_normalize=False)
+
+            self.assertEqual(cut_media.call_args.args[2], [(0.0, 1.0), (2.0, 5.0)])
+            self.assertTrue(cut_media.call_args.kwargs["include_audio"])
+            intermediate = Path(cut_media.call_args.args[1])
+            self.assertIn(".timeline-cut", intermediate.stem)
+            self.assertEqual(Path(burn.call_args.args[0]), intermediate)
+            self.assertEqual(Path(burn.call_args.args[1]), ass_path)
+            self.assertEqual(Path(burn.call_args.args[2]), output)
+            saved = load_project(project_path)
+            self.assertEqual(saved["render_settings"]["manual_cut_count"], 1)
+            self.assertEqual(saved["render_settings"]["output_duration_seconds"], 4.0)
+
+    def test_manual_cut_render_supports_video_without_audio_or_subtitles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "video-only.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                duration_seconds=3.0,
+                segments=[],
+                timeline={
+                    "cuts": [
+                        {"id": "manual", "source_start": 1.0, "source_end": 2.0}
+                    ]
+                },
+            )
+            project_path = save_project(root / "video-only.subtitle-project.json", project)
+
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+            ):
+                render_project_video(project_path, audio_normalize=False)
+
+            self.assertFalse(cut_media.call_args.kwargs["include_audio"])
+
+    def test_automatic_silence_cut_is_intersected_after_manual_cut_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mkv"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                duration_seconds=4.0,
+                segments=[],
+                audio_mix={
+                    "channels": [
+                        {
+                            "id": "video:0:a:0",
+                            "kind": "video",
+                            "selector": "0:a:0",
+                            "enabled": True,
+                        }
+                    ]
+                },
+                timeline={
+                    "cuts": [
+                        {"id": "manual", "source_start": 1.0, "source_end": 2.0}
+                    ]
+                },
+            )
+            project_path = save_project(root / "game.subtitle-project.json", project)
+
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[{"codec_name": "aac"}]),
+                patch("src.subtitle_workflow.detect_speech_ranges", return_value=[(0.0, 4.0)]),
+                patch(
+                    "src.subtitle_workflow.build_no_speech_plan",
+                    return_value=([(0.0, 0.5), (3.0, 4.0)], [(0.5, 3.0)]),
+                ),
+                patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+            ):
+                render_project_video(
+                    project_path,
+                    cut_no_speech=True,
+                    audio_normalize=False,
+                )
+
+            self.assertEqual(cut_media.call_args.args[2], [(0.5, 1.0), (2.0, 3.0)])
+
     def test_cut_no_speech_uses_video_audio_for_empty_project(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

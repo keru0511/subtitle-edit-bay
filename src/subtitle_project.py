@@ -3,6 +3,7 @@ from __future__ import annotations
 import heapq
 import json
 import math
+import subprocess
 import unicodedata
 from dataclasses import dataclass, field
 from copy import deepcopy
@@ -18,6 +19,8 @@ from .color_config import normalize_rgb_color
 from .short_video_schema import ShortVideo
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
+from .video_timeline import VideoTimeline, VideoTimelineError
+from .media_probe import probe_media_duration
 
 
 PROJECT_SCHEMA_VERSION = 1
@@ -306,20 +309,35 @@ class SubtitleProject:
     transcription_context: dict[str, Any]
     audio_mix: AudioMix | None
     segments: list[SubtitleSegment]
+    timeline: VideoTimeline
     short_video: ShortVideo = field(default_factory=ShortVideo)
     extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, payload: dict[str, Any]) -> "SubtitleProject":
-        video = payload.get("video", {})
+        migrated = migrate_project_payload(payload)
+        video = migrated.get("video", {})
         if not isinstance(video, dict):
             raise SubtitleProjectError("video must be an object")
-        migrated = migrate_project_payload(payload)
         segments = [
             SubtitleSegment.from_json(segment, index=index)
             for index, segment in enumerate(migrated.get("segments", []))
             if isinstance(segment, dict)
         ]
+        video_duration = max(
+            0.0,
+            _finite_number(
+                video.get("duration_seconds", 0.0) or 0.0,
+                "video.duration_seconds",
+            ),
+        )
+        try:
+            timeline = VideoTimeline.from_json(
+                migrated.get("timeline"),
+                source_duration=video_duration,
+            )
+        except VideoTimelineError as error:
+            raise SubtitleProjectError(str(error)) from error
         return cls(
             schema_version=int(migrated.get("schema_version", PROJECT_SCHEMA_VERSION)),
             project_type=str(migrated.get("project_type", PROJECT_TYPE)),
@@ -336,11 +354,12 @@ class SubtitleProject:
             transcription_context=deepcopy(migrated.get("transcription_context", {})),
             audio_mix=AudioMix.from_json(migrated["audio_mix"]) if isinstance(migrated.get("audio_mix"), dict) else None,
             segments=segments,
+            timeline=timeline,
             short_video=ShortVideo.from_json(migrated.get("short_video")),
             extras=deepcopy({key: value for key, value in migrated.items() if key not in {
                 "schema_version", "project_type", "created_at", "updated_at", "video", "output_dir",
                 "audio_sources", "speakers", "waveforms", "subtitle_settings", "render_settings",
-                "transcription", "transcription_context", "audio_mix", "segments", "short_video",
+                "transcription", "transcription_context", "audio_mix", "segments", "timeline", "short_video",
             }}),
         )
 
@@ -360,6 +379,7 @@ class SubtitleProject:
             "transcription": deepcopy(self.transcription),
             "transcription_context": deepcopy(self.transcription_context),
             "segments": [segment.to_json() for segment in self.segments],
+            "timeline": self.timeline.to_json(),
         }
         if self.audio_mix is not None:
             payload["audio_mix"] = self.audio_mix.to_json()
@@ -647,6 +667,7 @@ def create_project(
     transcription: dict[str, Any] | None = None,
     transcription_context: dict[str, Any] | None = None,
     audio_mix: dict[str, Any] | None = None,
+    timeline: dict[str, Any] | None = None,
     duration_seconds: float | None = None,
 ) -> dict[str, Any]:
     now = utc_timestamp()
@@ -669,6 +690,7 @@ def create_project(
         "transcription_context": deepcopy(transcription_context or {}),
         "audio_mix": deepcopy(audio_mix or {}),
         "segments": [deepcopy(segment) for segment in segments],
+        "timeline": deepcopy(timeline) if timeline is not None else None,
     }
     return validate_project(project)
 
@@ -690,8 +712,19 @@ def project_from_transcript(
     )
 
 
-def load_project(path: str | Path) -> dict[str, Any]:
+def load_project(path: str | Path, *, resolve_video_duration: bool = False) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if resolve_video_duration and isinstance(payload, dict):
+        video = payload.get("video", {})
+        if isinstance(video, dict) and not video.get("duration_seconds"):
+            video_path = str(video.get("path", ""))
+            if Path(video_path).is_file():
+                try:
+                    video["duration_seconds"] = probe_media_duration(video_path)
+                except (OSError, ValueError, subprocess.CalledProcessError):
+                    # Missing duration is safe for subtitle editing, but timeline
+                    # validation must refuse cuts rather than guess from captions.
+                    pass
     return validate_project(payload)
 
 
@@ -762,6 +795,7 @@ def project_to_view_payload(project: SubtitleProject | dict[str, Any]) -> dict[s
         ],
         "subtitle_settings": deepcopy(model.subtitle_settings),
         "render_settings": deepcopy(model.render_settings),
+        "timeline": model.timeline.as_view(),
     }
 
 

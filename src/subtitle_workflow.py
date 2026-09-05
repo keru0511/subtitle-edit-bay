@@ -86,6 +86,7 @@ from .subtitle_workflow_transcription import transcribe_to_project_with_context
 from .transcribe import probe_audio_streams
 from .transcription_context_config import transcription_context_from_runtime_config
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
+from .video_timeline import intersect_ranges, timeline_from_project
 
 
 DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284", "#81C8BE"]
@@ -547,11 +548,29 @@ def build_project_ass(
     *,
     subtitle_font_size: int | None = None,
     _project: dict[str, Any] | None = None,
+    _keep_ranges: list[tuple[float, float]] | None = None,
 ) -> Path:
-    project = _project if _project is not None else load_project(project_path)
+    project = _project if _project is not None else load_project(project_path, resolve_video_duration=True)
     output = Path(output_path) if output_path else derive_ass_path(project_path)
+    transcript = project_to_transcript(project, project_is_validated=True)
+    if _keep_ranges is not None:
+        transcript = {
+            "segments": retime_segments_for_keep_ranges(
+                transcript["segments"],
+                _keep_ranges,
+            )
+        }
+    else:
+        timeline = timeline_from_project(project)
+        if timeline.has_cuts:
+            transcript = {
+                "segments": retime_segments_for_keep_ranges(
+                    transcript["segments"],
+                    timeline.keep_ranges,
+                )
+            }
     build_ass_from_data(
-        project_to_transcript(project, project_is_validated=True),
+        transcript,
         str(output),
         **_ass_build_options(project, subtitle_font_size),
     )
@@ -579,10 +598,13 @@ def render_project_video(
     speech_threshold_db: str = DEFAULT_SPEECH_THRESHOLD_DB,
     speech_min_clip_seconds: float = DEFAULT_SPEECH_MIN_CLIP_SECONDS,
 ) -> Path:
-    project = load_project(project_path)
+    project = load_project(project_path, resolve_video_duration=True)
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
+    timeline = timeline_from_project(project)
+    manual_keep_ranges = timeline.keep_ranges
+    render_keep_ranges = manual_keep_ranges if timeline.has_cuts else []
     emit_progress_event("render", "prepare", phase="complete", progress=1.0)
     emit_progress_event("render", "subtitle", phase="start")
     has_subtitles = any(
@@ -709,8 +731,11 @@ def render_project_video(
             padding=speech_padding_seconds,
             min_clip_duration=speech_min_clip_seconds,
         )
+        if timeline.has_cuts:
+            keep_ranges = intersect_ranges(manual_keep_ranges, keep_ranges)
         if not keep_ranges:
             raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
+        render_keep_ranges = keep_ranges
         if has_subtitles:
             cut_ass = Path(project_path).with_name(f".{Path(project_path).stem}.cut.ass")
             transcript = project_to_transcript(project, project_is_validated=True)
@@ -736,6 +761,7 @@ def render_project_video(
                     audio_track=output_audio_track,
                     audio_mix=audio_mix if use_audio_mix else None,
                     audio_offset_seconds=offset_seconds,
+                    include_audio=has_audio_stream or use_audio_mix,
                     progress_callback=log_progress,
                 )
                 emit_progress_event("render", "audio", phase="complete", progress=1.0)
@@ -784,6 +810,77 @@ def render_project_video(
                 audio_track=output_audio_track,
                 audio_mix=audio_mix if use_audio_mix else None,
                 audio_offset_seconds=offset_seconds,
+                include_audio=has_audio_stream or use_audio_mix,
+                progress_callback=log_progress,
+            )
+    elif timeline.has_cuts:
+        if not manual_keep_ranges:
+            raise SystemExit("Manual cuts would remove the entire video; refusing to render.")
+        if has_subtitles:
+            cut_output = output.with_name(f"{output.stem}.timeline-cut{output.suffix or '.mp4'}")
+            log_progress(f"Applying {len(timeline.cuts)} manual cuts to {cut_output.name}")
+            cut_media_ranges(
+                video_path,
+                str(cut_output),
+                manual_keep_ranges,
+                video_codec=video_codec,
+                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                audio_filter=loudnorm_filter,
+                audio_track=output_audio_track,
+                audio_mix=audio_mix if use_audio_mix else None,
+                audio_offset_seconds=offset_seconds,
+                include_audio=has_audio_stream or use_audio_mix,
+                progress_callback=log_progress,
+            )
+            emit_progress_event("render", "audio", phase="complete", progress=1.0)
+            emit_progress_event(
+                "render",
+                "encode",
+                phase="metadata",
+                duration=timeline.output_duration,
+            )
+            emit_progress_event("render", "encode", phase="start")
+            log_progress(f"Rendering edited subtitles to {output.name}")
+            run_ffmpeg_burn(
+                str(cut_output),
+                str(ass_path),
+                str(output),
+                video_codec=video_codec,
+                audio_codec="copy",
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                include_audio=has_audio_stream or use_audio_mix,
+                progress_callback=log_progress,
+            )
+        else:
+            cut_output = output
+            emit_progress_event("render", "audio", phase="complete", progress=1.0)
+            emit_progress_event(
+                "render",
+                "encode",
+                phase="metadata",
+                duration=timeline.output_duration,
+            )
+            emit_progress_event("render", "encode", phase="start")
+            log_progress(f"Applying {len(timeline.cuts)} manual cuts to {output.name}")
+            cut_media_ranges(
+                video_path,
+                str(output),
+                manual_keep_ranges,
+                video_codec=video_codec,
+                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+                nvenc_preset=nvenc_preset,
+                nvenc_cq=nvenc_cq,
+                x264_crf=x264_crf,
+                audio_filter=loudnorm_filter,
+                audio_track=output_audio_track,
+                audio_mix=audio_mix if use_audio_mix else None,
+                audio_offset_seconds=offset_seconds,
+                include_audio=has_audio_stream or use_audio_mix,
                 progress_callback=log_progress,
             )
     else:
@@ -826,6 +923,12 @@ def render_project_video(
         "speech_padding_seconds": speech_padding_seconds,
         "speech_threshold_db": speech_threshold_db,
         "speech_min_clip_seconds": speech_min_clip_seconds,
+        "manual_cut_count": len(timeline.cuts),
+        "output_duration_seconds": (
+            round(sum(end - start for start, end in render_keep_ranges), 3)
+            if render_keep_ranges
+            else timeline.source_duration
+        ),
         "last_output": str(output.resolve()),
     }
     if cut_output is not None:

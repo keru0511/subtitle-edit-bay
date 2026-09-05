@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from src.subtitle_project import create_project, derive_ass_path, save_project
+from src.subtitle_project import create_project, derive_ass_path, load_project, save_project
 from src.subtitle_workflow import render_project_video
 from tests.media_test_utils import (
     FrameRegion,
@@ -112,6 +113,73 @@ class ManualCutSemanticE2ETests(unittest.TestCase):
             3.0,
             delta=DURATION_TOLERANCE_SECONDS,
         )
+
+    def test_fractional_cuts_keep_media_and_subtitles_on_one_output_clock(self) -> None:
+        timeline = {
+            "cuts": [
+                {"id": f"cut-{index}", "source_start": round(index * 0.2 + 0.075, 3),
+                 "source_end": round(index * 0.2 + 0.125, 3)}
+                for index in range(15)
+            ]
+        }
+        segments = [{"id": "tail", "start": 3.2, "end": 3.8, "text": "AFTER CUTS"}]
+        output = self._render_case("fractional-subtitle", segments, timeline)
+        control = self._render_case("fractional-control", [], timeline)
+        # The same mapping must also work without an audio stream to set concat's clock.
+        video_only = self.root / "fractional-source-video-only.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", str(self.fixture.path), "-an", "-c:v", "copy", str(video_only)],
+            check=True,
+            timeout=30,
+        )
+        project = create_project(
+            video_path=video_only, output_dir=self.root, segments=[],
+            duration_seconds=4.0, timeline=timeline,
+        )
+        project_path = save_project(self.root / "fractional-video-only.json", project)
+        silent_output = render_project_video(
+            project_path, self.root / "fractional-video-only.mp4", audio_normalize=False,
+        )
+        for result in (output, control, silent_output):
+            with self.subTest(output=result.name):
+                probe = probe_media(result)
+                self.assertAlmostEqual(media_duration_seconds(probe), 3.25, delta=DURATION_TOLERANCE_SECONDS)
+                for stream in probe["streams"]:
+                    self.assertAlmostEqual(float(stream["duration"]), 3.25, delta=DURATION_TOLERANCE_SECONDS)
+                # Source green starts at 3s, mapped to 2.25s, not the old 2.5s.
+                red, green, blue = mean_rgb(extract_rgb_frame(result, 2.35, probe=probe))
+                self.assertGreater(green, red + 30)
+                self.assertGreater(green, blue + 30)
+
+        ass = derive_ass_path(self.root / "fractional-subtitle.subtitle-project.json").read_text(encoding="utf-8")
+        self.assertIn("0:00:02.45,0:00:03.05", ass)
+        difference = compare_rgb_frames(
+            extract_rgb_frame(control, 2.7), extract_rgb_frame(output, 2.7), region=SUBTITLE_REGION,
+        )
+        assert_frame_difference_present(difference, context="caption after fifteen fractional cuts")
+        self.assertEqual(load_project(self.root / "fractional-subtitle.subtitle-project.json")["segments"][0]["start"], 3.2)
+
+    def test_missing_duration_is_probed_and_preserves_the_uncaptioned_tail(self) -> None:
+        project = create_project(
+            video_path=self.fixture.path, output_dir=self.root,
+            segments=[{"start": 0.0, "end": 2.0, "text": "EARLY CAPTION"}],
+            duration_seconds=4.0,
+            timeline={"cuts": [{"id": "cut", "source_start": 0.5, "source_end": 1.0}]},
+        )
+        # Simulate a legacy import, including cuts saved by the old fallback.
+        project["video"]["duration_seconds"] = 0.0
+        project_path = save_project(
+            self.root / "legacy-missing-duration.json", project, project_is_validated=True,
+        )
+        output = render_project_video(
+            project_path, self.root / "legacy-missing-duration.mp4", audio_normalize=False,
+        )
+        probe = probe_media(output)
+        self.assertAlmostEqual(media_duration_seconds(probe), 3.5, delta=DURATION_TOLERANCE_SECONDS)
+        red, green, blue = mean_rgb(extract_rgb_frame(output, 3.2, probe=probe))
+        self.assertGreater(green, red + 30)
+        self.assertGreater(green, blue + 30)
+        self.assertAlmostEqual(load_project(project_path)["video"]["duration_seconds"], 4.0, delta=0.03)
 
     def test_output_frame_after_cut_comes_from_the_next_source_range(self) -> None:
         frame = extract_rgb_frame(self.output, 1.5, probe=self.output_probe)

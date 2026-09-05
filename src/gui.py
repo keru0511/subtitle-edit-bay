@@ -2525,7 +2525,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     def _load_project_path(self, path: Path, *, update_sources: bool) -> bool:
         try:
-            project = load_project(path)
+            project = load_project(path, resolve_video_duration=True)
         except (OSError, json.JSONDecodeError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
             return False

@@ -22,10 +22,10 @@ Item {
     signal selectionChanged(real sourceStartMs, real sourceEndMs)
     signal cutSelected(string cutId, real sourceStartMs, real sourceEndMs)
 
-    function syncFields() {
-        if (!cutStartField.activeFocus)
+    function syncFields(force) {
+        if (force || !cutStartField.activeFocus)
             cutStartField.text = (Number(root.selectionStartMs || 0) / 1000).toFixed(3)
-        if (!cutEndField.activeFocus)
+        if (force || !cutEndField.activeFocus)
             cutEndField.text = (Number(root.selectionEndMs || 0) / 1000).toFixed(3)
     }
 
@@ -40,23 +40,37 @@ Item {
 
     onSelectionStartMsChanged: syncTimer.restart()
     onSelectionEndMsChanged: syncTimer.restart()
-    Component.onCompleted: syncFields()
+    Component.onCompleted: timelineSyncTimer.restart()
 
     Connections {
         target: root.backend
         function onCutTimelineChanged() {
+            timelineSyncTimer.restart()
+        }
+    }
+
+    Timer {
+        id: timelineSyncTimer
+        interval: 0
+        repeat: false
+        onTriggered: {
             if (root.selectedCutId) {
                 var found = false
                 for (var index = 0; index < root.timeline.cuts.length; ++index) {
                     if (String(root.timeline.cuts[index].id) === root.selectedCutId) {
                         found = true
+                        root.cutSelected(
+                            root.selectedCutId,
+                            Number(root.timeline.cuts[index].source_start) * 1000,
+                            Number(root.timeline.cuts[index].source_end) * 1000
+                        )
                         break
                     }
                 }
                 if (!found)
                     root.cutSelected("", root.selectionStartMs, root.selectionEndMs)
             }
-            syncTimer.restart()
+            root.syncFields(true)
         }
     }
 

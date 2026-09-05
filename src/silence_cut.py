@@ -190,29 +190,43 @@ def build_concat_filter(
     audio_track: str = DEFAULT_AUDIO_TRACK,
     include_audio: bool = True,
 ) -> str:
-    video_parts: list[str] = []
+    if not keep_ranges:
+        raise ValueError("At least one keep range is required.")
+    # Map each retained frame directly from source time to output time. Joining
+    # individually zero-based video clips accumulates frame-rounding errors at
+    # every cut (and concat then pads audio to those rounded video durations).
+    selection = "+".join(
+        f"gte(t,{start:.3f})*lt(t,{end:.3f})" for start, end in keep_ranges
+    )
+    removed = [f"{keep_ranges[0][0]:.3f}"]
+    for (_, previous_end), (start, _) in zip(keep_ranges, keep_ranges[1:]):
+        removed.append(f"{start - previous_end:.3f}*gte(T,{start:.3f})")
+    video_output = "[vcat]" if video_filter else "[v]"
+    filters = [
+        f"[0:v]trim=start={keep_ranges[0][0]:.3f}:end={keep_ranges[-1][1]:.3f},"
+        f"select='{selection}',setpts='PTS-({'+'.join(removed)})/TB'{video_output}"
+    ]
     audio_parts: list[str] = []
     concat_inputs: list[str] = []
     split_filtered_audio = include_audio and audio_track == "mixed_audio" and len(keep_ranges) > 1
     for index, (start, end) in enumerate(keep_ranges):
-        video_parts.append(f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{index}]")
         if include_audio:
             audio_source = f"mixed_audio_{index}" if split_filtered_audio else audio_track
-            audio_parts.append(f"[{audio_source}]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
-            concat_inputs.append(f"[v{index}][a{index}]")
-        else:
-            concat_inputs.append(f"[v{index}]")
-    video_output = "[vcat]" if video_filter else "[v]"
+            audio_parts.append(
+                f"[{audio_source}]atrim=start={start:.3f}:end={end:.3f},"
+                f"asetpts=PTS-STARTPTS,apad=whole_dur={end - start:.3f},"
+                f"atrim=duration={end - start:.3f}[a{index}]"
+            )
+            concat_inputs.append(f"[a{index}]")
     audio_output = "[acat]" if audio_filter else "[a]"
     audio_split = (
         [f"[mixed_audio]asplit={len(keep_ranges)}{''.join(f'[mixed_audio_{index}]' for index in range(len(keep_ranges)))}"]
         if split_filtered_audio
         else []
     )
-    concat_outputs = f"{video_output}{audio_output}" if include_audio else video_output
-    filters = audio_split + video_parts + audio_parts + [
-        f"{''.join(concat_inputs)}concat=n={len(keep_ranges)}:v=1:a={1 if include_audio else 0}{concat_outputs}"
-    ]
+    filters.extend(audio_split + audio_parts)
+    if include_audio:
+        filters.append(f"{''.join(concat_inputs)}concat=n={len(keep_ranges)}:v=0:a=1{audio_output}")
     if video_filter:
         filters.append(f"[vcat]{video_filter}[v]")
     if audio_filter and include_audio:
@@ -275,6 +289,7 @@ def build_silence_cut_command(
             command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
     if Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
         command.extend(["-movflags", "+faststart"])
+    command.extend(["-t", f"{sum(end - start for start, end in keep_ranges):.3f}"])
     command.append(output_path)
     return command
 

@@ -447,15 +447,7 @@ def timeline_from_project(project: Mapping[str, Any]) -> VideoTimeline:
             video.get("duration_seconds", 0.0) or 0.0,
             "video.duration_seconds",
         )
-    segment_ends = []
-    segments = project.get("segments", [])
-    if isinstance(segments, list):
-        segment_ends = [
-            _finite_seconds(segment.get("end", 0.0), "segment.end")
-            for segment in segments
-            if isinstance(segment, Mapping)
-        ]
     return VideoTimeline.from_json(
         project.get("timeline"),
-        source_duration=(video_duration if video_duration > 0.0 else max(segment_ends, default=0.0)),
+        source_duration=video_duration,
     )

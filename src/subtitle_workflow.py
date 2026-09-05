@@ -550,7 +550,7 @@ def build_project_ass(
     _project: dict[str, Any] | None = None,
     _keep_ranges: list[tuple[float, float]] | None = None,
 ) -> Path:
-    project = _project if _project is not None else load_project(project_path)
+    project = _project if _project is not None else load_project(project_path, resolve_video_duration=True)
     output = Path(output_path) if output_path else derive_ass_path(project_path)
     transcript = project_to_transcript(project, project_is_validated=True)
     if _keep_ranges is not None:
@@ -598,7 +598,7 @@ def render_project_video(
     speech_threshold_db: str = DEFAULT_SPEECH_THRESHOLD_DB,
     speech_min_clip_seconds: float = DEFAULT_SPEECH_MIN_CLIP_SECONDS,
 ) -> Path:
-    project = load_project(project_path)
+    project = load_project(project_path, resolve_video_duration=True)
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")

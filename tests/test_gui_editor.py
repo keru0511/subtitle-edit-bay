@@ -2613,6 +2613,51 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, redo_button)
         self.assertEqual(self.app.cutTimeline["cuts"][0]["source_start"], 5.0)
 
+    def test_workspace_cut_settings_follow_undo_redo_and_merged_boundaries(self) -> None:
+        self._load_project(duration_seconds=30.0)
+        self.app.addCut(5.0, 7.0)
+        cut_id = self.app.cutTimeline["cuts"][0]["id"]
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        settings = self._quick_item(window, "workspaceCutSettings")
+        window.setCutSelection(cut_id, 5_000, 7_000)
+        end_field = self._quick_visual_item(settings, "cutRangeEndField")
+        start_field = self._quick_visual_item(settings, "cutRangeStartField")
+        self.gui.wait_until(lambda: end_field.property("text") == "7.000", description="selected cut end")
+        end_field.forceActiveFocus()
+        end_field.setProperty("text", "9.000")
+        self._click(window, self._quick_visual_item(settings, "addCutButton"))
+        self.assertEqual(self.app.cutTimeline["cuts"][0]["source_end"], 9.0)
+
+        self._click(window, self._quick_visual_item(settings, "undoCutButton"))
+        self.gui.wait_until(lambda: end_field.property("text") == "7.000", description="undone cut end")
+        self.assertEqual(window.property("cutSelectionEndMs"), 7_000)
+        self._click(window, self._quick_visual_item(settings, "redoCutButton"))
+        self.gui.wait_until(lambda: end_field.property("text") == "9.000", description="redone cut end")
+
+        self.app.addCut(4.0, 6.0)
+        self.gui.wait_until(lambda: start_field.property("text") == "4.000", description="merged cut start")
+        self.assertEqual(window.property("cutSelectionStartMs"), 4_000)
+        self.assertEqual(self.app.cutTimeline["cuts"][0]["id"], cut_id)
+
+        self._click(window, self._quick_item(window, "editorModeButton-subtitle"))
+        self.app.undoEdit()
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        settings = self._quick_item(window, "workspaceCutSettings")
+        start_field = self._quick_visual_item(settings, "cutRangeStartField")
+        self.gui.wait_until(lambda: start_field.property("text") == "5.000", description="cut settings reopened after undo")
+
+    def test_loading_legacy_project_resolves_duration_for_cut_editor(self) -> None:
+        path, _, _ = self._make_project(duration_seconds=0.0)
+        with patch("src.subtitle_project.probe_media_duration", return_value=30.0):
+            self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.assertEqual(self.app.cutTimeline["sourceDuration"], 30.0)
+        self.assertTrue(self.app.addCut(1.0, 2.0))
+        self.assertEqual(self.app.cutOutputDuration, 29.0)
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(load_project(path)["video"]["duration_seconds"], 30.0)
+
     def test_workspace_subtitle_mode_adds_first_caption_at_shared_playhead(self) -> None:
         path, _, _ = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))

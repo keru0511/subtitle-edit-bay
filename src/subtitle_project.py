@@ -3,6 +3,7 @@ from __future__ import annotations
 import heapq
 import json
 import math
+import subprocess
 import unicodedata
 from dataclasses import dataclass, field
 from copy import deepcopy
@@ -19,6 +20,7 @@ from .short_video_schema import ShortVideo
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .video_timeline import VideoTimeline, VideoTimelineError
+from .media_probe import probe_media_duration
 
 
 PROJECT_SCHEMA_VERSION = 1
@@ -329,15 +331,10 @@ class SubtitleProject:
                 "video.duration_seconds",
             ),
         )
-        source_duration = (
-            video_duration
-            if video_duration > 0.0
-            else max((segment.end for segment in segments), default=0.0)
-        )
         try:
             timeline = VideoTimeline.from_json(
                 migrated.get("timeline"),
-                source_duration=source_duration,
+                source_duration=video_duration,
             )
         except VideoTimelineError as error:
             raise SubtitleProjectError(str(error)) from error
@@ -715,8 +712,19 @@ def project_from_transcript(
     )
 
 
-def load_project(path: str | Path) -> dict[str, Any]:
+def load_project(path: str | Path, *, resolve_video_duration: bool = False) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if resolve_video_duration and isinstance(payload, dict):
+        video = payload.get("video", {})
+        if isinstance(video, dict) and not video.get("duration_seconds"):
+            video_path = str(video.get("path", ""))
+            if Path(video_path).is_file():
+                try:
+                    video["duration_seconds"] = probe_media_duration(video_path)
+                except (OSError, ValueError, subprocess.CalledProcessError):
+                    # Missing duration is safe for subtitle editing, but timeline
+                    # validation must refuse cuts rather than guess from captions.
+                    pass
     return validate_project(payload)
 
 

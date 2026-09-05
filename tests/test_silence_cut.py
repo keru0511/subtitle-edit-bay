@@ -134,6 +134,15 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("concat=n=1:v=1:a=1[vcat][a]", filter_text)
         self.assertIn("[vcat]ass='sample.ass'[v]", filter_text)
 
+    def test_build_concat_filter_supports_video_without_audio(self) -> None:
+        filter_text = build_concat_filter(
+            [(0.0, 1.2), (2.0, 3.5)],
+            include_audio=False,
+        )
+
+        self.assertIn("[v0][v1]concat=n=2:v=1:a=0[v]", filter_text)
+        self.assertNotIn("atrim", filter_text)
+
     def test_retime_segments_for_keep_ranges_maps_to_output_timeline(self) -> None:
         segments = [
             {"start": 0.5, "end": 1.5, "text": "first", "layout_row": 0, "words": [{"start": 0.5, "end": 1.5}]},
@@ -159,6 +168,18 @@ class SilenceCutTests(unittest.TestCase):
         self.assertIn("-movflags", command)
         self.assertIn("+faststart", command)
         self.assertEqual(command[command.index("-movflags") + 1], "+faststart")
+
+    def test_build_silence_cut_command_omits_audio_for_video_only_source(self) -> None:
+        command = build_silence_cut_command(
+            "input.mp4",
+            "output.mp4",
+            [(0.0, 1.0)],
+            include_audio=False,
+        )
+
+        self.assertNotIn("[a]", command)
+        self.assertNotIn("-c:a", command)
+        self.assertIn("concat=n=1:v=1:a=0[v]", command[command.index("-filter_complex") + 1])
 
     def test_build_silence_cut_command_uses_nvenc_and_audio_filter(self) -> None:
         command = build_silence_cut_command(

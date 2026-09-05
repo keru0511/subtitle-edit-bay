@@ -39,10 +39,13 @@ ApplicationWindow {
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
-    // The cut implementation supplies only its own two components. Subtitle
-    // and audio reuse the existing backend through the shared workspace.
-    property Component cutModeEditorContent: null
-    property Component cutModeSettingsContent: null
+    property real cutSelectionStartMs: 0
+    property real cutSelectionEndMs: 0
+    property string selectedCutId: ""
+    // Cut supplies only mode-specific content. The common player, mode state,
+    // and source/output playhead remain owned by this workspace.
+    property Component cutModeEditorContent: cutWorkspaceEditorComponent
+    property Component cutModeSettingsContent: cutWorkspaceSettingsComponent
     property Component modeEditorContent: root.appBackend.currentEditMode === "subtitle"
         ? subtitleWorkspaceEditorComponent
         : (root.appBackend.currentEditMode === "audio"
@@ -373,6 +376,26 @@ ApplicationWindow {
         var changed = root.appBackend.setEditorPlayhead(position, timelineBasis)
         if (!changed)
             root.syncSharedPlayerToPlayhead()
+    }
+
+    function enforceCutPreview(positionMilliseconds) {
+        if (!root.appBackend.cutTimeline.hasCuts
+                || mainPlayer.playbackState !== MediaPlayer.PlayingState)
+            return false
+        var current = Math.max(0, Math.round(Number(positionMilliseconds) || 0))
+        var next = root.appBackend.nextCutPreviewSourceMs(current)
+        if (next <= current + 1)
+            return false
+        root.seekSharedPlayer(next, "source")
+        if (next >= Number(root.appBackend.cutTimeline.sourceDuration || 0) * 1000)
+            mainPlayer.pause()
+        return true
+    }
+
+    function setCutSelection(cutId, sourceStartMs, sourceEndMs) {
+        root.selectedCutId = String(cutId || "")
+        root.cutSelectionStartMs = Math.max(0, Number(sourceStartMs || 0))
+        root.cutSelectionEndMs = Math.max(root.cutSelectionStartMs, Number(sourceEndMs || 0))
     }
 
     function closeSettingsPopup() {
@@ -1011,7 +1034,7 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 0
                 Text { text: "SUBTITLE EDIT BAY"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 18; font.weight: Font.Bold; font.letterSpacing: 1.5 }
-                Text { text: "素材  /  文字起こし  /  字幕・音量編集  /  書き出し"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
+                Text { text: "素材  /  文字起こし  /  字幕・カット・音量  /  書き出し"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
             }
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 30; color: root.border }
             ColumnLayout {
@@ -1377,6 +1400,64 @@ ApplicationWindow {
         }
     }
 
+    Component {
+        id: cutWorkspaceEditorComponent
+
+        CutModeTimeline {
+            objectName: "workspaceCutEditor"
+            backend: root.appBackend
+            player: mainPlayer
+            timeline: root.appBackend.cutTimeline
+            selectionStartMs: root.cutSelectionStartMs
+            selectionEndMs: root.cutSelectionEndMs
+            selectedCutId: root.selectedCutId
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            warningColor: root.amber
+            cutColor: root.danger
+            onRangeSelected: function(sourceStartMs, sourceEndMs) {
+                root.setCutSelection("", sourceStartMs, sourceEndMs)
+            }
+            onCutSelected: function(cutId, sourceStartMs, sourceEndMs) {
+                root.setCutSelection(cutId, sourceStartMs, sourceEndMs)
+            }
+            onSeekRequested: function(sourcePositionMs) {
+                root.seekSharedPlayer(sourcePositionMs, "source")
+            }
+        }
+    }
+
+    Component {
+        id: cutWorkspaceSettingsComponent
+
+        CutModeSettings {
+            objectName: "workspaceCutSettings"
+            backend: root.appBackend
+            timeline: root.appBackend.cutTimeline
+            selectionStartMs: root.cutSelectionStartMs
+            selectionEndMs: root.cutSelectionEndMs
+            selectedCutId: root.selectedCutId
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            warningColor: root.amber
+            cutColor: root.danger
+            onSelectionChanged: function(sourceStartMs, sourceEndMs) {
+                root.setCutSelection(root.selectedCutId, sourceStartMs, sourceEndMs)
+            }
+            onCutSelected: function(cutId, sourceStartMs, sourceEndMs) {
+                root.setCutSelection(cutId, sourceStartMs, sourceEndMs)
+            }
+        }
+    }
+
     AudioPreviewBridge {
         id: workspaceAudioBridge
         width: 0
@@ -1512,7 +1593,7 @@ ApplicationWindow {
                     anchors.margins: 10
                     spacing: 8
                     Repeater {
-                        model: ["素材", "文字起こし", "字幕・音量編集", "書き出し"]
+                        model: ["素材", "文字起こし", "字幕・カット・音量", "書き出し"]
                         delegate: ColumnLayout {
                             id: stepDelegate
                             required property int index
@@ -1587,6 +1668,8 @@ ApplicationWindow {
                     onPositionChanged: {
                         if (!mainSeek.pressed)
                             mainSeek.value = mainPlayer.position
+                        if (root.enforceCutPreview(mainPlayer.position))
+                            return
                         var completedPendingSeek = false
                         if (root.pendingSharedSourcePosition >= 0
                                 && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
@@ -1606,7 +1689,10 @@ ApplicationWindow {
                     interval: 100
                     repeat: true
                     running: mainPlayer.playbackState === MediaPlayer.PlayingState
-                    onTriggered: root.syncEditorPlayhead(mainPlayer.position, false)
+                    onTriggered: {
+                        if (!root.enforceCutPreview(mainPlayer.position))
+                            root.syncEditorPlayhead(mainPlayer.position, false)
+                    }
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
                 SubtitleOverlay {
@@ -1634,7 +1720,16 @@ ApplicationWindow {
                     RowLayout { Layout.fillWidth: true
                         ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
                         Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text { text: root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000); color: root.textMuted; font.pixelSize: 10; font.family: "Cascadia Mono" }
+                        Text {
+                            text: root.appBackend.cutTimeline.hasCuts
+                                ? ("素材 " + root.stamp(mainPlayer.position / 1000)
+                                    + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
+                                    + " / " + root.stamp(root.appBackend.cutOutputDuration))
+                                : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
+                            color: root.textMuted
+                            font.pixelSize: 10
+                            font.family: "Cascadia Mono"
+                        }
                     }
                 }
             }
@@ -1646,7 +1741,7 @@ ApplicationWindow {
                 visible: root.appBackend.projectLoaded
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible
-                    ? (root.appBackend.currentEditMode === "cut" ? 104 : 156)
+                    ? (root.appBackend.currentEditMode === "cut" ? 122 : 156)
                     : 0
                 Layout.minimumHeight: visible
                     ? 92

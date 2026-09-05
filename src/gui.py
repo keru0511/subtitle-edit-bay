@@ -101,6 +101,7 @@ from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
 from .video_encoding import select_automatic_video_codec
+from .video_timeline import VideoTimeline, VideoTimelineError, timeline_from_project
 from . import update_manager, updater
 
 
@@ -372,6 +373,7 @@ class EditBayBackend(LegacyEditBayBackend):
     editorModeChanged = Signal()
     editorCapabilitiesChanged = Signal()
     editorPlayheadChanged = Signal()
+    cutTimelineChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         resolved_workspace_root = (
@@ -401,7 +403,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._editor_workspace = EditorWorkspaceState()
-        self._cut_editor_available = False
+        self._cut_editor_available = True
         self.projectChanged.connect(self._refresh_editor_workspace)
         self.projectDataChanged.connect(self._refresh_editor_workspace)
         self.sourceSelectionChanged.connect(self._refresh_editor_workspace)
@@ -568,6 +570,38 @@ class EditBayBackend(LegacyEditBayBackend):
     def editorPlayhead(self) -> dict[str, object]:
         return self._editor_workspace.playhead
 
+    def _cut_timeline_model(self) -> VideoTimeline:
+        if self._project is None:
+            return VideoTimeline.from_json(None, source_duration=0.0)
+        return timeline_from_project(self._project)
+
+    @Property("QVariantMap", notify=cutTimelineChanged)
+    def cutTimeline(self) -> dict[str, Any]:
+        return self._cut_timeline_model().as_view()
+
+    @Property(float, notify=cutTimelineChanged)
+    def cutOutputDuration(self) -> float:
+        return self._cut_timeline_model().output_duration
+
+    @Slot(int, result=int)
+    def sourceTimeToOutputMs(self, position_ms: int) -> int:
+        return self._cut_timeline_model().source_to_output(position_ms)
+
+    @Slot(int, result=int)
+    def outputTimeToSourceMs(self, position_ms: int) -> int:
+        return self._cut_timeline_model().output_to_source(position_ms)
+
+    @Slot(int, result=bool)
+    def isSourceTimeCut(self, position_ms: int) -> bool:
+        return self._cut_timeline_model().contains_source_seconds(position_ms / 1000.0)
+
+    @Slot(int, result=int)
+    def nextCutPreviewSourceMs(self, position_ms: int) -> int:
+        source_position = self._cut_timeline_model().next_playable_source_seconds(
+            position_ms / 1000.0
+        )
+        return int(round(source_position * 1000))
+
     @Slot(str, result=bool)
     def selectEditMode(self, mode: str) -> bool:
         changed = self._editor_workspace.select_mode(mode, self._edit_mode_capabilities())
@@ -587,6 +621,12 @@ class EditBayBackend(LegacyEditBayBackend):
 
         self._editor_workspace.set_mapping(mapping)
         self.editorPlayheadChanged.emit()
+
+    def _sync_project_timeline(self) -> None:
+        self.set_editor_time_mapping(
+            self._cut_timeline_model() if self._project is not None else None
+        )
+        self.cutTimelineChanged.emit()
 
     def set_cut_editor_available(self, available: bool) -> None:
         """Enable the cut mode when the non-destructive cut editor is connected."""
@@ -2171,6 +2211,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._redo_stack.clear()
         self._selected_segment_index = -1
         self._reset_editor_timing()
+        self.cutTimelineChanged.emit()
         self._project_revision += 1
         self._reset_audio_preview_cache()
         self._audio_preview_gains.clear()
@@ -2376,6 +2417,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._selected_segment_index = 0 if self._project["segments"] else -1
         save_project(preserved_project_path, self._project)
         self._project_dirty = False
+        self._sync_project_timeline()
         self._sync_subtitle_model()
         self.projectChanged.emit()
         self.projectDataChanged.emit()
@@ -2393,6 +2435,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project_dirty = False
         self._selected_segment_index = 0 if self._project.get("segments") else -1
         self._sync_subtitle_model()
+        self._sync_project_timeline()
         self.projectChanged.emit()
         self.projectDataChanged.emit()
         self.segmentsChanged.emit()
@@ -2496,6 +2539,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._redo_stack.clear()
         self._selected_segment_index = 0 if project.get("segments") else -1
         self._reset_editor_timing()
+        self._sync_project_timeline()
         if update_sources:
             self._loading_project_sources = True
             try:
@@ -2532,13 +2576,32 @@ class EditBayBackend(LegacyEditBayBackend):
     ) -> None:
         if self._project is None or (not before and not after):
             return
-        self._undo_stack.append(
+        self._push_history(
             {
+                "kind": "segments",
                 "before": deepcopy(before),
                 "after": deepcopy(after),
                 "reflow_layout": reflow_layout,
             }
         )
+
+    def _record_timeline_history(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        if self._project is None or before == after:
+            return
+        self._push_history(
+            {
+                "kind": "timeline",
+                "before": deepcopy(before),
+                "after": deepcopy(after),
+            }
+        )
+
+    def _push_history(self, entry: dict[str, Any]) -> None:
+        self._undo_stack.append(entry)
         if len(self._undo_stack) > 100:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
@@ -2601,6 +2664,9 @@ class EditBayBackend(LegacyEditBayBackend):
     def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
         if self._project is None:
             return
+        if entry.get("kind") == "timeline":
+            self._replace_timeline(deepcopy(entry.get(state, {})))
+            return
         affected_ids = {
             str(item["id"])
             for item in [*entry.get("before", []), *entry.get("after", [])]
@@ -2610,6 +2676,89 @@ class EditBayBackend(LegacyEditBayBackend):
         self._replace_segments(
             segments,
             reflow_layout=bool(entry.get("reflow_layout", True)),
+        )
+
+    def _replace_timeline(self, payload: dict[str, Any]) -> None:
+        if self._project is None:
+            return
+        source_duration = self._cut_timeline_model().source_duration
+        timeline = VideoTimeline.from_json(
+            payload,
+            source_duration=source_duration,
+        )
+        self._project["timeline"] = timeline.to_json()
+        self.set_editor_time_mapping(timeline)
+        self.cutTimelineChanged.emit()
+        self.projectDataChanged.emit()
+        self._mark_project_dirty()
+
+    def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:
+        if self._project is None:
+            return False
+        before = deepcopy(self._project.get("timeline", {}))
+        after = timeline.to_json()
+        if before == after:
+            return False
+        self._record_timeline_history(before, after)
+        self._replace_timeline(after)
+        self._set_status(status, "EDIT")
+        return True
+
+    @Slot(float, float, result=bool)
+    def addCut(self, source_start: float, source_end: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            timeline = self._cut_timeline_model().add_cut(source_start, source_end)
+        except VideoTimelineError as error:
+            self._set_status(f"カット範囲を追加できません: {error}", "CHECK")
+            return False
+        return self._commit_timeline(timeline, "カット範囲を追加しました")
+
+    @Slot(str, float, float, result=bool)
+    def updateCutRange(self, cut_id: str, source_start: float, source_end: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            timeline = self._cut_timeline_model().update_cut(
+                str(cut_id),
+                source_start,
+                source_end,
+            )
+        except VideoTimelineError as error:
+            self._set_status(f"カット範囲を変更できません: {error}", "CHECK")
+            return False
+        return self._commit_timeline(timeline, "カット範囲を変更しました")
+
+    @Slot(str, result=bool)
+    def restoreCut(self, cut_id: str) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            timeline = self._cut_timeline_model().restore_cut(str(cut_id))
+        except VideoTimelineError as error:
+            self._set_status(f"カット範囲を復元できません: {error}", "CHECK")
+            return False
+        return self._commit_timeline(timeline, "カット範囲を復元しました")
+
+    @Slot(float, float, result=bool)
+    def restoreRange(self, source_start: float, source_end: float) -> bool:
+        if self._project is None or self._running:
+            return False
+        try:
+            timeline = self._cut_timeline_model().restore_range(source_start, source_end)
+        except VideoTimelineError as error:
+            self._set_status(f"範囲を復元できません: {error}", "CHECK")
+            return False
+        return self._commit_timeline(timeline, "選択範囲を復元しました")
+
+    @Slot(result=bool)
+    def clearCuts(self) -> bool:
+        if self._project is None or self._running:
+            return False
+        return self._commit_timeline(
+            self._cut_timeline_model().clear_cuts(),
+            "すべてのカットを解除しました",
         )
 
     @Slot(int)
@@ -2803,6 +2952,14 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def undoSubtitleEdit(self) -> None:
+        self.undoEdit()
+
+    @Slot()
+    def undoCutEdit(self) -> None:
+        self.undoEdit()
+
+    @Slot()
+    def undoEdit(self) -> None:
         if self._project is None or not self._undo_stack:
             return
         entry = self._undo_stack.pop()
@@ -2812,6 +2969,14 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def redoSubtitleEdit(self) -> None:
+        self.redoEdit()
+
+    @Slot()
+    def redoCutEdit(self) -> None:
+        self.redoEdit()
+
+    @Slot()
+    def redoEdit(self) -> None:
         if self._project is None or not self._redo_stack:
             return
         entry = self._redo_stack.pop()

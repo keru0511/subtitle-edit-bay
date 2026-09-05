@@ -5,6 +5,7 @@
       "modules": [
         "test_audio_mix_semantic_e2e",
         "test_issue_241_workflow",
+        "test_manual_cut_semantic_e2e",
         "test_media_semantic_e2e",
         "test_render_ass",
         "test_short_video_ass"
@@ -98,6 +99,7 @@
         "test_unittest_discovery",
         "test_validation_errors",
         "test_video_encoding",
+        "test_video_timeline",
         "test_youtube_package",
         "test_youtube_text"
       ],

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QCoreApplication, QEvent, QProcess
 
+from src.editor_workspace import EditorWorkspaceState
 from src.gui import EditBayBackend
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
@@ -53,6 +54,8 @@ class EditBayGuiTestSession:
         app._selected_segment_index = -1
         app._project_revision = 0
         app._sync_subtitle_model()
+        app._cut_editor_available = True
+        app._editor_workspace = EditorWorkspaceState()
 
         app._active_job = ""
         app._processing_progress.start("")

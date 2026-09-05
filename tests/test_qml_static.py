@@ -24,6 +24,8 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "EditorModeRail.qml",
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
+    COMPONENTS_ROOT / "CutModeSettings.qml",
+    COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
     COMPONENTS_ROOT / "SubtitleOverlay.qml",
     COMPONENTS_ROOT / "ShortModePreview.qml",
@@ -133,8 +135,14 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "editorModeRail"', main_workspace)
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
         self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
-        self.assertIn('property Component cutModeEditorContent: null', workflow)
-        self.assertIn('property Component cutModeSettingsContent: null', workflow)
+        self.assertIn(
+            "property Component cutModeEditorContent: cutWorkspaceEditorComponent",
+            workflow,
+        )
+        self.assertIn(
+            "property Component cutModeSettingsContent: cutWorkspaceSettingsComponent",
+            workflow,
+        )
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
         self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
@@ -146,12 +154,30 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
         self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', workflow)
         self.assertIn("interval: 100", main_workspace)
+        self.assertIn("if (!root.enforceCutPreview(mainPlayer.position))", main_workspace)
         self.assertIn(
-            "onTriggered: root.syncEditorPlayhead(mainPlayer.position, false)",
+            "root.syncEditorPlayhead(mainPlayer.position, false)",
             main_workspace,
         )
         self.assertIn("onActiveSegmentsChanged:", editor_content)
         self.assertIn("syncEditorSelectionFromActiveSegments", editor_content)
+
+    def test_cut_mode_uses_the_shared_player_and_backend_time_mapping(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        cut_timeline = (COMPONENTS_ROOT / "CutModeTimeline.qml").read_text(
+            encoding="utf-8"
+        )
+        cut_settings = (COMPONENTS_ROOT / "CutModeSettings.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('objectName: "workspaceCutEditor"', workflow)
+        self.assertIn('objectName: "workspaceCutSettings"', workflow)
+        self.assertIn("player: mainPlayer", workflow)
+        self.assertIn("nextCutPreviewSourceMs", workflow)
+        self.assertIn("editorPlayhead.outputPositionMs", workflow)
+        self.assertNotIn("MediaPlayer {", cut_timeline)
+        self.assertNotIn("MediaPlayer {", cut_settings)
 
     def test_subtitle_and_audio_modes_share_the_workspace_player(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")

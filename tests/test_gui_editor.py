@@ -1040,6 +1040,70 @@ class GuiEditorRegressionTests(unittest.TestCase):
         current_untouched = next(item for item in self.app._project["segments"] if item["id"] == "segment-250")
         self.assertIs(current_untouched, untouched)
 
+    def test_nondestructive_cut_backend_maps_persists_and_undoes_ranges(self) -> None:
+        path = self._load_project(duration_seconds=30.0)
+        assert self.app._project is not None
+        original_segments = deepcopy(self.app._project["segments"])
+        original_short_video = deepcopy(self.app._project["short_video"])
+        self.app._dependencies = RuntimeDependencyStatus(
+            ffmpeg=False,
+            ffprobe=False,
+            whisperx=False,
+            cuda=False,
+        )
+        self.app.dependenciesChanged.emit()
+
+        self.assertTrue(self.app.editorModeCapabilities["canCut"])
+        self.assertEqual(self.app.cutTimeline["cuts"], [])
+        self.app.setEditorPlayhead(12_000, "source")
+        self.assertTrue(self.app.addCut(5.0, 10.0))
+
+        first_cut = self.app.cutTimeline["cuts"][0]
+        cut_id = first_cut["id"]
+        self.assertEqual(self.app.cutOutputDuration, 25.0)
+        self.assertEqual(self.app.sourceTimeToOutputMs(7_000), 5_000)
+        self.assertEqual(self.app.sourceTimeToOutputMs(12_000), 7_000)
+        self.assertEqual(self.app.outputTimeToSourceMs(5_000), 10_000)
+        self.assertTrue(self.app.isSourceTimeCut(7_000))
+        self.assertEqual(self.app.nextCutPreviewSourceMs(7_000), 10_000)
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_000)
+        self.assertEqual(self.app.editorPlayhead["outputPositionMs"], 7_000)
+
+        self.assertTrue(self.app.updateCutRange(cut_id, 6.0, 9.0))
+        self.assertEqual(self.app.cutTimeline["cuts"][0]["id"], cut_id)
+        self.assertEqual(self.app.cutOutputDuration, 27.0)
+        self.app.undoCutEdit()
+        self.assertEqual(
+            (self.app.cutTimeline["cuts"][0]["source_start"], self.app.cutTimeline["cuts"][0]["source_end"]),
+            (5.0, 10.0),
+        )
+        self.app.redoCutEdit()
+        self.assertEqual(
+            (self.app.cutTimeline["cuts"][0]["source_start"], self.app.cutTimeline["cuts"][0]["source_end"]),
+            (6.0, 9.0),
+        )
+
+        self.assertTrue(self.app.restoreRange(7.0, 8.0))
+        self.assertEqual(
+            [
+                (cut["source_start"], cut["source_end"])
+                for cut in self.app.cutTimeline["cuts"]
+            ],
+            [(6.0, 7.0), (8.0, 9.0)],
+        )
+        self.assertEqual(self.app.cutOutputDuration, 28.0)
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(load_project(path)["timeline"], self.app._project["timeline"])
+
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.assertEqual(self.app.cutOutputDuration, 28.0)
+        self.assertEqual(self.app._project["segments"], original_segments)
+        self.assertEqual(self.app._project["short_video"], original_short_video)
+        saved_timeline = deepcopy(self.app.cutTimeline)
+        self.assertFalse(self.app.addCut(0.0, 30.0))
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertEqual(self.app.cutTimeline, saved_timeline)
+
     def test_diff_history_restores_overlap_layout_rows(self) -> None:
         self._load_project(
             segments=[
@@ -2350,7 +2414,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(main.isVisible())
         self.assertTrue(rail.isVisible())
         self.assertTrue(subtitle_button.isEnabled())
-        self.assertFalse(cut_button.isEnabled())
+        self.assertTrue(cut_button.isEnabled())
         self.assertTrue(audio_button.isEnabled())
         self.assertTrue(editor_loader.property("active"))
         self.assertTrue(settings_loader.property("active"))
@@ -2369,7 +2433,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(audio_bridge.property("prepared"))
         self.assertTrue(self.app.editorModeCapabilities["canPreview"])
         self.assertTrue(self.app.editorModeCapabilities["canEditSubtitles"])
-        self.assertFalse(self.app.editorModeCapabilities["canCut"])
+        self.assertTrue(self.app.editorModeCapabilities["canCut"])
         self.assertTrue(self.app.editorModeCapabilities["canMixAudio"])
 
         class OffsetTimeMapping:
@@ -2472,21 +2536,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, subtitle_button)
         self.assertFalse(main_audio_output.property("muted"))
 
-        self.app.set_cut_editor_available(True)
-        self.app.processEvents()
-        self.assertTrue(cut_button.isEnabled())
         self._click(window, cut_button)
         self.assertEqual(self.app.currentEditMode, "cut")
         self.assertEqual(self.app.editorPlayhead["outputPositionMs"], 12_345)
         self.assertTrue(main.isVisible())
-        self.assertFalse(editor_loader.property("active"))
-        self.assertFalse(settings_loader.property("active"))
-        self.assertTrue(editor_fallback.isVisible())
-        self.assertTrue(settings_fallback.isVisible())
-        self.app.set_cut_editor_available(False)
-        self.app.processEvents()
+        self.assertTrue(editor_loader.property("active"))
+        self.assertTrue(settings_loader.property("active"))
+        self.assertFalse(editor_fallback.isVisible())
+        self.assertFalse(settings_fallback.isVisible())
+        self.assertTrue(self._quick_item(window, "workspaceCutEditor").isVisible())
+        self.assertTrue(self._quick_item(window, "workspaceCutSettings").isVisible())
+        self._click(window, subtitle_button)
         self.assertEqual(self.app.currentEditMode, "subtitle")
-        self.assertFalse(cut_button.isEnabled())
+        self.assertTrue(cut_button.isEnabled())
         self.assertTrue(editor_loader.property("active"))
         self.assertTrue(settings_loader.property("active"))
 
@@ -2504,6 +2566,52 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.editorModeCapabilities["canMixAudio"])
         self.assertFalse(audio_button.isEnabled())
         self.assertTrue(subtitle_button.isEnabled())
+        self.assertTrue(cut_button.isEnabled())
+
+    def test_workspace_cut_mode_adds_and_undoes_a_selected_range(self) -> None:
+        self._load_project(duration_seconds=30.0)
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        initial_player_count = len(window.findChildren(QMediaPlayer))
+
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self.gui.wait_until(
+            lambda: window.findChild(QQuickItem, "workspaceCutSettings") is not None,
+            description="cut workspace",
+        )
+        self.assertTrue(self._quick_item(window, "workspaceCutEditor").isVisible())
+        settings = self._quick_item(window, "workspaceCutSettings")
+        self.assertTrue(settings.isVisible())
+        self.assertEqual(len(window.findChildren(QMediaPlayer)), initial_player_count)
+
+        window.setCutSelection("", 5_000, 7_000)
+        self.gui.wait(10)
+        start_field = self._quick_visual_item(settings, "cutRangeStartField")
+        end_field = self._quick_visual_item(settings, "cutRangeEndField")
+        self.assertEqual(start_field.property("text"), "5.000")
+        self.assertEqual(end_field.property("text"), "7.000")
+        add_button = self._quick_visual_item(settings, "addCutButton")
+        self.assertTrue(add_button.isEnabled())
+        self._click(window, add_button)
+
+        self.assertEqual(
+            [
+                (cut["source_start"], cut["source_end"])
+                for cut in self.app.cutTimeline["cuts"]
+            ],
+            [(5.0, 7.0)],
+        )
+        self.assertEqual(self.app.cutOutputDuration, 28.0)
+        self.assertEqual(len(window.findChildren(QMediaPlayer)), initial_player_count)
+
+        undo_button = self._quick_visual_item(settings, "undoCutButton")
+        self.assertTrue(undo_button.isEnabled())
+        self._click(window, undo_button)
+        self.assertEqual(self.app.cutTimeline["cuts"], [])
+        redo_button = self._quick_visual_item(settings, "redoCutButton")
+        self.assertTrue(redo_button.isEnabled())
+        self._click(window, redo_button)
+        self.assertEqual(self.app.cutTimeline["cuts"][0]["source_start"], 5.0)
 
     def test_workspace_subtitle_mode_adds_first_caption_at_shared_playhead(self) -> None:
         path, _, _ = self._make_project()

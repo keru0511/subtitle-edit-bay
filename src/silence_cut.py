@@ -174,8 +174,8 @@ def retime_segments_for_keep_ranges(
                 continue
             retimed = dict(segment)
             shift = output_cursor - keep_start
-            retimed["start"] = overlap_start + shift
-            retimed["end"] = overlap_end + shift
+            retimed["start"] = round(overlap_start + shift, 3)
+            retimed["end"] = round(overlap_end + shift, 3)
             # Layout is already packed; stale source word times must not trigger another timing pass.
             retimed.pop("words", None)
             retimed_segments.append(retimed)
@@ -188,16 +188,20 @@ def build_concat_filter(
     audio_filter: str | None = None,
     video_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
+    include_audio: bool = True,
 ) -> str:
     video_parts: list[str] = []
     audio_parts: list[str] = []
     concat_inputs: list[str] = []
-    split_filtered_audio = audio_track == "mixed_audio" and len(keep_ranges) > 1
+    split_filtered_audio = include_audio and audio_track == "mixed_audio" and len(keep_ranges) > 1
     for index, (start, end) in enumerate(keep_ranges):
         video_parts.append(f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{index}]")
-        audio_source = f"mixed_audio_{index}" if split_filtered_audio else audio_track
-        audio_parts.append(f"[{audio_source}]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
-        concat_inputs.append(f"[v{index}][a{index}]")
+        if include_audio:
+            audio_source = f"mixed_audio_{index}" if split_filtered_audio else audio_track
+            audio_parts.append(f"[{audio_source}]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{index}]")
+            concat_inputs.append(f"[v{index}][a{index}]")
+        else:
+            concat_inputs.append(f"[v{index}]")
     video_output = "[vcat]" if video_filter else "[v]"
     audio_output = "[acat]" if audio_filter else "[a]"
     audio_split = (
@@ -205,12 +209,13 @@ def build_concat_filter(
         if split_filtered_audio
         else []
     )
+    concat_outputs = f"{video_output}{audio_output}" if include_audio else video_output
     filters = audio_split + video_parts + audio_parts + [
-        f"{''.join(concat_inputs)}concat=n={len(keep_ranges)}:v=1:a=1{video_output}{audio_output}"
+        f"{''.join(concat_inputs)}concat=n={len(keep_ranges)}:v=1:a={1 if include_audio else 0}{concat_outputs}"
     ]
     if video_filter:
         filters.append(f"[vcat]{video_filter}[v]")
-    if audio_filter:
+    if audio_filter and include_audio:
         filters.append(f"[acat]{audio_filter}[a]")
     return ";".join(filters)
 
@@ -231,11 +236,13 @@ def build_silence_cut_command(
     audio_mix: dict | None = None,
     audio_offset_seconds: float = 0.0,
     filter_script_option: str = LEGACY_FILTER_SCRIPT_OPTION,
+    include_audio: bool = True,
 ) -> list[str]:
     if not keep_ranges:
         raise ValueError("At least one keep range is required.")
     input_args: list[str] = []
     mix_filter = ""
+    include_audio = include_audio or audio_mix is not None
     if audio_mix is not None:
         input_args, mix_filter = build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)
         audio_track = "mixed_audio"
@@ -244,6 +251,7 @@ def build_silence_cut_command(
         audio_filter=audio_filter,
         video_filter=video_filter,
         audio_track=audio_track,
+        include_audio=include_audio,
     )
     if filter_script_path:
         filter_option = filter_script_option
@@ -252,23 +260,20 @@ def build_silence_cut_command(
     filter_value = filter_script_path or (f"{mix_filter};{concat_filter}" if mix_filter else concat_filter)
     command = ["ffmpeg", "-y", "-i", input_path]
     command.extend(input_args)
-    command.extend([
-        filter_option,
-        filter_value,
-        "-map",
-        "[v]",
-        "-map",
-        "[a]",
-        "-c:v",
-        video_codec,
-    ])
+    command.extend([filter_option, filter_value, "-map", "[v]"])
+    if include_audio:
+        command.extend(["-map", "[a]"])
+    command.extend(["-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    command.extend(["-pix_fmt", PIX_FMT, "-c:a", audio_codec])
-    if audio_filter or audio_mix is not None:
-        command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
-    if Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
+    command.extend(["-pix_fmt", PIX_FMT])
+    if include_audio and Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
         if audio_codec == "copy":
             audio_codec = "aac"
+    if include_audio:
+        command.extend(["-c:a", audio_codec])
+        if audio_filter or audio_mix is not None:
+            command.extend(["-ar", DEFAULT_FILTERED_AUDIO_RATE])
+    if Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
         command.extend(["-movflags", "+faststart"])
     command.append(output_path)
     return command
@@ -291,10 +296,12 @@ def cut_media_ranges(
     filter_script_path: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
     filter_script_option: str | None = None,
+    include_audio: bool = True,
 ) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     mix_filter = ""
+    include_audio = include_audio or audio_mix is not None
     if audio_mix is not None:
         _, mix_filter = build_audio_mix_filter(audio_mix, offset_seconds=audio_offset_seconds)
     concat_filter = build_concat_filter(
@@ -302,6 +309,7 @@ def cut_media_ranges(
         audio_filter=audio_filter,
         video_filter=video_filter,
         audio_track="mixed_audio" if audio_mix is not None else audio_track,
+        include_audio=include_audio,
     )
     filter_graph = f"{mix_filter};{concat_filter}" if mix_filter else concat_filter
     use_filter_script = (
@@ -342,6 +350,7 @@ def cut_media_ranges(
                 audio_track=audio_track,
                 audio_mix=audio_mix,
                 audio_offset_seconds=audio_offset_seconds,
+                include_audio=include_audio,
             )
 
         run_atomic_ffmpeg_export(

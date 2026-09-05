@@ -65,8 +65,9 @@ Item {
                 id: exportButton
                 objectName: "shortModeExportButton"
                 implicitHeight: 32
-                enabled: shortRoot.appBackend && !shortRoot.appBackend.running
-                    && shortRoot.appBackend.shortVideoClipCount > 0
+                enabled: shortRoot.appBackend && shortRoot.appBackend.actionCapabilities.canRenderShort
+                ToolTip.visible: hovered && !enabled
+                ToolTip.text: shortRoot.appBackend ? shortRoot.appBackend.actionCapabilities.shortRenderReason : ""
                 text: "書き出す"
                 onClicked: {
                     shortRoot.appBackend.renderShortVideo()

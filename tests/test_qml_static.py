@@ -14,6 +14,7 @@ WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
 SHARED_CONTROL_QML_FILES = (
+    COMPONENTS_ROOT / "ContextActionBar.qml",
     COMPONENTS_ROOT / "PanelTitle.qml",
     COMPONENTS_ROOT / "SmallButton.qml",
     COMPONENTS_ROOT / "CompactSpinBox.qml",

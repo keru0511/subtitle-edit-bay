@@ -12,6 +12,11 @@ ApplicationWindow {
     // qmllint disable unqualified
     property var appBackend: backend
     // qmllint enable unqualified
+    readonly property var workflowCapabilities: {
+        // Depend on backend notifications as well as the unsaved device choice.
+        var snapshot = root.appBackend.actionCapabilities
+        return snapshot ? root.appBackend.actionCapabilitiesForDevice(deviceCombo.currentText) : ({})
+    }
     property real timelinePixelsPerSecond: 34
     property real editorPixelsPerSecond: 64
     property int snapMilliseconds: 100
@@ -273,21 +278,19 @@ ApplicationWindow {
     }
 
     function transcriptionBlockReason() {
-        if (root.appBackend.running)
-            return "処理中です。完了または停止するまで入力と編集は変更できません"
-        if (!root.appBackend.dependencyStatus.ready)
-            return "実行ツールが不足しています: " + root.appBackend.dependencyStatus.missing.join(", ")
-        if (deviceCombo.currentText === "cuda" && !root.appBackend.dependencyStatus.cuda)
-            return "GPU処理を利用できません。処理方法をCPUに変更するか、アプリの実行環境を修復してください"
-        if (!root.appBackend.sourceSelection.video)
-            return "素材設定で動画を指定してください"
-        if (root.appBackend.speakers.length === 0 && root.appBackend.audioTracks.length <= 1)
-            return "話者音声または動画内音声が必要です"
-        if (!root.appBackend.sourceSelection.output_dir)
-            return "素材設定で出力先フォルダを指定してください"
+        return String(root.workflowCapabilities.transcriptionReason || "")
+    }
+
+    // Shared entry for the workspace tool and the future start screen (#277).
+    function requestTranscription() {
+        if (!root.workflowCapabilities.canTranscribe)
+            return
         if (root.appBackend.projectLoaded)
-            return ""
-        return ""
+            transcriptionMergeDialog.open()
+        else if (root.appBackend.transcriptionProjectExists())
+            overwriteProjectDialog.open()
+        else
+            root.appBackend.startTranscription(root.currentSettings(), false)
     }
 
     function canSplitSelectedSegment(positionMs) {
@@ -1165,7 +1168,7 @@ ApplicationWindow {
                         width: advancedSettingsScrollView.availableWidth
                         spacing: 10
                         PanelTitle { text: "文字起こしエンジン" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; objectName: "deviceCombo"; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
                         RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
                         RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
@@ -1584,6 +1587,7 @@ ApplicationWindow {
 
             Rectangle {
                 objectName: "workflowStepper"
+                visible: !root.appBackend.projectLoaded
                 Layout.fillWidth: true
                 Layout.preferredHeight: 68
                 Layout.minimumHeight: 68
@@ -1614,7 +1618,9 @@ ApplicationWindow {
                 running: root.appBackend.running
                 activeJob: root.appBackend.activeJob
                 canCreateProject: Boolean(root.appBackend.sourceSelection.video) && Boolean(root.appBackend.sourceSelection.output_dir)
-                canStartTranscription: !root.appBackend.running && root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && (root.appBackend.speakers.length > 0 || root.appBackend.audioTracks.length > 1) && root.appBackend.dependencyStatus.ready && (deviceCombo.currentText !== "cuda" || root.appBackend.dependencyStatus.cuda)
+                canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
+                canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal)
+                renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
                 blockReason: root.transcriptionBlockReason()
                 audioMixerAvailable: root.appBackend.audioMixerAvailable
                 mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
@@ -1624,14 +1630,7 @@ ApplicationWindow {
                 onSettingsRequested: root.toggleSettingsPopup()
                 onDictionaryRequested: root.openDictionaryScreen()
                 onCreateProjectRequested: root.appBackend.createEmptyProject()
-                onStartTranscriptionRequested: {
-                    if (root.appBackend.projectLoaded)
-                        transcriptionMergeDialog.open()
-                    else if (root.appBackend.transcriptionProjectExists())
-                        overwriteProjectDialog.open()
-                    else
-                        root.appBackend.startTranscription(root.currentSettings(), false)
-                }
+                onStartTranscriptionRequested: root.requestTranscription()
                 onEditorRequested: root.openEditorScreen()
                 onMixerRequested: root.openMixerScreen()
                 onShortModeRequested: root.openShortModeScreen()
@@ -2271,9 +2270,8 @@ ApplicationWindow {
                             objectName: "mixerRenderButton"
                             implicitHeight: 34
                             text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
-                            enabled: root.appBackend.projectLoaded && !root.appBackend.running
+                            enabled: Boolean(root.workflowCapabilities.canRenderNormal)
                             onClicked: {
-                                root.closeMixerScreen()
                                 root.appBackend.renderVideo(root.currentSettings())
                             }
                             contentItem: Text { text: mixerRenderButton.text; color: mixerRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }

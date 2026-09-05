@@ -346,6 +346,94 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(start_command.call_args.args[1], "render")
 
+    def test_action_capabilities_keep_editing_and_export_independent_of_asr(self) -> None:
+        self._set_ready_sources()
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        self.app._dependencies = RuntimeDependencyStatus(True, True, False, cuda=False, nvenc=True)
+        self.app.dependenciesChanged.emit()
+        _, window = self._load_qml()
+        self.assertFalse(self._quick_item(window, "workflowStepper").isVisible())
+        self.assertFalse(self._quick_item(window, "transcribeButton").isEnabled())
+        self.assertTrue(self._quick_item(window, "renderVideoButton").isEnabled())
+        self.assertTrue(self._quick_item(window, "transcriptionDictionaryOpenButton").isVisible())
+        for mode in ("subtitle", "cut", "audio"):
+            self.assertTrue(self._quick_item(window, f"editorModeButton-{mode}").isEnabled())
+        caps = self.app.actionCapabilities
+        self.assertTrue(caps["canRenderNormal"])
+        self.assertTrue(caps["canRenderShort"])
+        self.assertTrue(caps["canUseNvenc"])
+        self.assertFalse(caps["canUseTranscriptionCuda"])
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=False)
+        self.app.dependenciesChanged.emit()
+        device = self._quick_item(window, "deviceCombo")
+        device.setProperty("currentIndex", 1)  # cpu
+        self.app.processEvents()
+        self.assertEqual(device.property("currentText"), "cpu")
+        self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
+
+    def test_both_render_actions_share_preflight_progress_and_preserve_workspace(self) -> None:
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        self.app.selectEditMode("cut")
+        self.app.setEditorPlayhead(2300, "source")
+        for short in (False, True):
+            for nvenc, codec in ((False, "libx264"), (True, "h264_nvenc")):
+                with self.subTest(short=short, nvenc=nvenc):
+                    self.app._dependencies = RuntimeDependencyStatus(True, True, False, cuda=False, nvenc=nvenc)
+                    with patch.object(self.app, "refreshDependencies"), patch.object(self.app, "_start_process"):
+                        if short:
+                            self.app.renderShortVideo()
+                        else:
+                            self.app.renderVideo(self.app.settings)
+                    self.assertEqual(self.app.activeJob, "render_short" if short else "render")
+                    self.assertEqual(self.app.settings["video_codec"], codec)
+                    self.assertTrue(self.app.progressSteps)
+                    self.assertEqual(self.app.currentEditMode, "cut")
+                    self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 2300)
+                    self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+                    self.assertEqual(self.app.stage, "COMPLETE")
+                    self.assertEqual(self.app.currentEditMode, "cut")
+                    self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 2300)
+
+    def test_render_preflight_rejects_missing_ffmpeg_without_starting_process(self) -> None:
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        self.app._dependencies = RuntimeDependencyStatus(False, True, True, cuda=True, nvenc=True)
+        for short in (False, True):
+            with patch.object(self.app, "refreshDependencies"), patch.object(self.app, "_start_process") as start:
+                if short:
+                    self.app.renderShortVideo()
+                else:
+                    self.app.renderVideo(self.app.settings)
+                start.assert_not_called()
+            self.assertIn("ffmpeg", self.app.status)
+
+    def test_followup_transcription_restores_mode_and_mapped_playhead(self) -> None:
+        self._set_ready_sources()
+        project_path = self._load_project()
+        self.app._project["timeline"] = {"cuts": [{"id": "cut", "source_start": 1, "source_end": 2}]}
+        self.app._sync_project_timeline()
+        for integration in ("merge", "replace"):
+            self.app.selectEditMode("cut")
+            self.app.setEditorPlayhead(2500, "output")
+            before = self.app.editorPlayhead
+            with patch.object(self.app, "_start_process"):
+                self.app.transcribeProject(self.app.settings, integration)
+            generated_path = Path(self.app._transcription_generated_project_path)
+            generated = create_project(
+                video_path=self.app._project["video"]["path"], output_dir=generated_path.parent,
+                segments=[{"start": 4, "end": 5, "text": "generated"}], duration_seconds=30,
+            )
+            save_project(generated_path, generated)
+            self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+            self.assertEqual(self.app.stage, "EDIT")
+            self.assertEqual(self.app.currentEditMode, "cut")
+            self.assertEqual(self.app.editorPlayhead, before)
+            self.assertEqual(self.app.projectPath, str(project_path))
+            self.assertEqual(len(self.app._project["timeline"]["cuts"]), 1)
+            self.assertFalse(generated_path.exists())
+
     def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
         choices = build_font_choices(["Yu Gothic", "@Yu Gothic", " arial ", "Arial", ""])
 
@@ -1441,7 +1529,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
             self.app.startTranscription(self.app.settings)
             self.assertEqual(self.app.stage, "CHECK")
-            self.assertIn("出力先", self.app.status)
+            self.assertIn("動画を指定", self.app.status)
 
     def test_transcription_starts_with_video_audio_only(self) -> None:
         video = self.root / "game.mkv"
@@ -3562,7 +3650,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         progress_changes = QSignalSpy(self.app.progressChanged)
         finished = QSignalSpy(self.app.process.finished)
-        with patch("src.gui.build_gui_render_command", side_effect=build_test_command):
+        with patch("src.workflow_actions.build_gui_render_command", side_effect=build_test_command):
             self._click(window, self._quick_item(window, "editorRenderButton"))
             if finished.count() == 0:
                 self.assertTrue(finished.wait(30_000), self.app.process.errorString())
@@ -3645,7 +3733,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
 
         finished = QSignalSpy(self.app.process.finished)
-        with patch("src.gui.build_gui_render_command", side_effect=build_test_command):
+        with patch("src.workflow_actions.build_gui_render_command", side_effect=build_test_command):
             self._click(window, self._quick_item(window, "renderVideoButton"))
             if finished.count() == 0:
                 self.assertTrue(finished.wait(60_000), self.app.process.errorString())
@@ -3743,7 +3831,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._quick_item(window, "normalizeSwitch").setProperty("checked", False)
         finished = QSignalSpy(self.app.process.finished)
-        with patch("src.gui.build_gui_render_command", side_effect=build_test_command):
+        with patch("src.workflow_actions.build_gui_render_command", side_effect=build_test_command):
             self._click(window, self._quick_item(window, "mixerRenderButton"))
             if finished.count() == 0:
                 self.assertTrue(finished.wait(60_000), self.app.process.errorString())
@@ -4170,7 +4258,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         transcribe_button = self._quick_item(window, "transcribeButton")
         reason = self._quick_item(window, "workflowBlockReason")
         self.assertFalse(transcribe_button.isEnabled())
-        self.assertIn("話者音声または動画内音声が必要", reason.property("text"))
+        self.assertIn("動画内に音声トラックが見つかりません", reason.property("text"))
 
     def test_empty_short_mode_gui_adds_range_clip_and_enables_export(self) -> None:
         _video, _audio, _output = self._set_ready_sources()

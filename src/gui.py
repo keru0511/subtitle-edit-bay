@@ -452,6 +452,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._audio_preview_cache_paths: dict[str, str] = {}
         self._audio_preview_cache_future: Future[AudioPreviewCacheResult] | None = None
         self._audio_preview_cache_request = 0
+        self._audio_preview_generation = 0
         self._audio_preview_preparing = False
         self._audio_preview_cache_executor = ThreadPoolExecutor(
             max_workers=1,
@@ -1410,6 +1411,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def audioPreviewPreparing(self) -> bool:
         return self._audio_preview_preparing
 
+    @Property(int, notify=audioPreviewCacheChanged)
+    def audioPreviewGeneration(self) -> int:
+        return self._audio_preview_generation
+
     @Property(str, notify=audioPreviewCacheChanged)
     def audioPreviewCacheSummary(self) -> str:
         stats: AudioPreviewCacheStats = audio_preview_cache_stats(self.audio_preview_cache_root)
@@ -1436,6 +1441,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def _reset_audio_preview_cache(self) -> None:
         self._audio_master_mixer.stop()
         self._audio_preview_cache_request += 1
+        self._audio_preview_generation += 1
         self._audio_preview_cache_paths = {}
         self._audio_preview_preparing = False
         future = self._audio_preview_cache_future
@@ -1528,6 +1534,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def clearAudioPreviewCache(self) -> None:
         self.stopAudioMixerPreview()
         self._audio_preview_cache_request += 1
+        self._audio_preview_generation += 1
         self._audio_preview_cache_paths.clear()
         self._audio_preview_preparing = False
         future = self._audio_preview_cache_future
@@ -1552,6 +1559,32 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(bool, notify=projectDataChanged)
     def audioMixerAvailable(self) -> bool:
         return bool(self.audioMixerChannels)
+
+    def _enabled_audio_mixer_channel_ids(self) -> set[str]:
+        if self._project is None:
+            return set()
+        return {
+            str(channel.get("id", ""))
+            for channel in self._project.get("audio_mix", {}).get("channels", [])
+            if isinstance(channel, dict)
+            and bool(channel.get("enabled"))
+            and str(channel.get("id", "")).strip()
+        }
+
+    @Property(bool, notify=projectDataChanged)
+    def audioMixerPreviewComplete(self) -> bool:
+        enabled_ids = self._enabled_audio_mixer_channel_ids()
+        if not enabled_ids:
+            return False
+        return all(
+            bool(path := self._audio_preview_cache_paths.get(channel_id))
+            and Path(path).is_file()
+            for channel_id in enabled_ids
+        )
+
+    @Property(bool, notify=projectDataChanged)
+    def audioMixerIntentionalSilence(self) -> bool:
+        return self.audioMixerAvailable and not self._enabled_audio_mixer_channel_ids()
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:

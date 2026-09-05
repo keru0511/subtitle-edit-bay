@@ -1012,7 +1012,7 @@ class GuiPerformanceScenarioRunner:
 
     def _find_main_player(self) -> QMediaPlayer:
         window = self._window()
-        named = window.findChild(QMediaPlayer, "mainPreviewPlayer")
+        named = window.findChild(QMediaPlayer, "mainWorkspacePlayer")
         if named is not None:
             return named
         players = self._media_players()

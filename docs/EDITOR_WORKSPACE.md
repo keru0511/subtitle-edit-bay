@@ -16,7 +16,9 @@
 
 ## 後続機能の接続点
 
-画面下部の `modeEditorSlot` はモード固有のタイムライン／一覧、右側の `modeSettingsSlot` は設定と操作の配置先です。後続機能は `modeEditorContent` と `modeSettingsContent` に `Component` を設定して既定表示を置き換えます。差し込むコンポーネントは共通プレビューを所有せず、`appBackend.currentEditMode` と `appBackend.editorPlayhead` を参照します。具体的な字幕・音量UIの統合は Issue #274 が担当します。
+画面下部の `modeEditorSlot` はモード固有のタイムライン／一覧、右側の `modeSettingsSlot` は設定と操作の配置先です。字幕・音量モードはそれぞれ既存の字幕モデル／音声ミックス状態を利用し、`appBackend.currentEditMode` と `appBackend.editorPlayhead` を共有します。カット機能は `cutModeEditorContent` と `cutModeSettingsContent` に `Component` を設定して既定表示を置き換えます。
+
+字幕モードの追加・分割・選択は `editorPlayhead.sourcePositionMs` を使用します。音量モードのPCMデコーダは `AudioPreviewBridge` から共通プレイヤーへ従属し、映像用の第二プレイヤーや独自playheadを持ちません。再生・一時停止・シークは中央プレビューを操作し、音声ミキサーだけがその位置へ追従します。
 
 カット適用前は素材時間と出力時間を同一として扱います。Issue #254 は `TimeMapping` を実装し、`set_editor_time_mapping()` へ渡すことで両時間軸を対応付けます。マッピングの交換時は現在の基準時間軸とその位置を維持し、もう一方の位置だけを再計算します。カット機能の接続後に `set_cut_editor_available(True)` を呼ぶことでカットモードを有効化します。接続前は `canCut` を `false` とし、空のカット編集UIを有効化しません。
 

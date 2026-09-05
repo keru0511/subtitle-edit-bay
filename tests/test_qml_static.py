@@ -22,6 +22,9 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "CodexChatPanel.qml",
     COMPONENTS_ROOT / "CodexSidebarContainer.qml",
     COMPONENTS_ROOT / "EditorModeRail.qml",
+    COMPONENTS_ROOT / "AudioPreviewBridge.qml",
+    COMPONENTS_ROOT / "AudioModeSettings.qml",
+    COMPONENTS_ROOT / "SubtitleModeSettings.qml",
     COMPONENTS_ROOT / "SubtitleOverlay.qml",
     COMPONENTS_ROOT / "ShortModePreview.qml",
 )
@@ -130,11 +133,13 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "editorModeRail"', main_workspace)
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
         self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
-        self.assertIn('property Component modeEditorContent: null', workflow)
-        self.assertIn('property Component modeSettingsContent: null', workflow)
+        self.assertIn('property Component cutModeEditorContent: null', workflow)
+        self.assertIn('property Component cutModeSettingsContent: null', workflow)
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
         self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
+        self.assertIn('objectName: "mainWorkspacePlayer"', main_workspace)
+        self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)
         self.assertNotIn("MediaPlayer {", editor_content)
         self.assertNotIn("editorPlayer", workflow)
         self.assertIn("mainPlayer.videoOutput = editorVideo", editor_content)
@@ -147,6 +152,18 @@ class QmlStaticTests(unittest.TestCase):
         )
         self.assertIn("onActiveSegmentsChanged:", editor_content)
         self.assertIn("syncEditorSelectionFromActiveSegments", editor_content)
+
+    def test_subtitle_and_audio_modes_share_the_workspace_player(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        audio_bridge = (COMPONENTS_ROOT / "AudioPreviewBridge.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('objectName: "workspaceSubtitleEditor"', workflow)
+        self.assertIn('objectName: "workspaceAudioEditor"', workflow)
+        self.assertEqual(workflow.count("AudioPreviewBridge {"), 1)
+        self.assertNotIn("videoOutput", audio_bridge)
+        self.assertNotIn("property real position", audio_bridge)
 
     def test_subtitle_preview_does_not_copy_the_full_segment_list(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")

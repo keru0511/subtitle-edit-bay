@@ -215,6 +215,11 @@ class GuiTestHarnessTests(unittest.TestCase):
     def test_media_player_probe_reports_observable_transitions(self) -> None:
         player = FakeMediaPlayer()
         probe = MediaPlayerSignalProbe(player)
+        self.assertIs(probe.parent(), player)
+        self.assertGreaterEqual(
+            probe.metaObject().indexOfSlot("_video_frame_changed()"),
+            0,
+        )
 
         player.sourceChanged.emit("file:///fixture.mp4")
         player.mediaStatusChanged.emit("LoadingMedia")

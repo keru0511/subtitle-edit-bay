@@ -31,13 +31,28 @@ ApplicationWindow {
     property real editorPositionCache: 0
     property real editorTimelineScrollX: 0
     property real editorCaptionScrollY: 0
+    property real workspaceAudioTimelineScrollX: 0
+    property real workspaceAudioSettingsScrollY: 0
+    property int sharedSeekRevision: 0
+    property bool applyingSharedSeek: false
+    property real pendingSharedSourcePosition: -1
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
-    // Follow-up editors (#254/#274) replace these two regions without
-    // creating another player or taking ownership of the shared playhead.
-    property Component modeEditorContent: null
-    property Component modeSettingsContent: null
+    // The cut implementation supplies only its own two components. Subtitle
+    // and audio reuse the existing backend through the shared workspace.
+    property Component cutModeEditorContent: null
+    property Component cutModeSettingsContent: null
+    property Component modeEditorContent: root.appBackend.currentEditMode === "subtitle"
+        ? subtitleWorkspaceEditorComponent
+        : (root.appBackend.currentEditMode === "audio"
+            ? audioWorkspaceEditorComponent
+            : root.cutModeEditorContent)
+    property Component modeSettingsContent: root.appBackend.currentEditMode === "subtitle"
+        ? subtitleWorkspaceSettingsComponent
+        : (root.appBackend.currentEditMode === "audio"
+            ? audioWorkspaceSettingsComponent
+            : root.cutModeSettingsContent)
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
@@ -302,7 +317,8 @@ ApplicationWindow {
 
     function subtitlePreviewText(segmentData) {
         var sourceIndex = Number(segmentData.sourceIndex)
-        if (root.editorMode && sourceIndex === root.editorDraftSegmentIndex)
+        if ((root.editorMode || root.appBackend.currentEditMode === "subtitle")
+                && sourceIndex === root.editorDraftSegmentIndex)
             return root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)
         if (segmentData.preview_text !== undefined)
             return String(segmentData.preview_text)
@@ -331,6 +347,34 @@ ApplicationWindow {
         return "出力動画に残す範囲を編集します"
     }
 
+    function selectWorkspaceMode(mode) {
+        var changed = root.appBackend.selectEditMode(mode)
+        return changed || root.appBackend.currentEditMode === mode
+    }
+
+    function syncSharedPlayerToPlayhead() {
+        // The shared player always renders source media. Output-timeline
+        // positions are converted once by the backend's shared mapping.
+        var sourcePosition = Number(root.appBackend.editorPlayhead.sourcePositionMs || 0)
+        if (Math.abs(mainPlayer.position - sourcePosition) <= 1)
+            return false
+        root.pendingSharedSourcePosition = sourcePosition
+        sharedSeekGuardTimer.restart()
+        root.applyingSharedSeek = true
+        mainPlayer.position = sourcePosition
+        root.applyingSharedSeek = false
+        root.sharedSeekRevision += 1
+        return true
+    }
+
+    function seekSharedPlayer(positionMilliseconds, basis) {
+        var position = Math.max(0, Math.round(Number(positionMilliseconds) || 0))
+        var timelineBasis = basis || String(root.appBackend.editorPlayhead.basis || "source")
+        var changed = root.appBackend.setEditorPlayhead(position, timelineBasis)
+        if (!changed)
+            root.syncSharedPlayerToPlayhead()
+    }
+
     function closeSettingsPopup() {
         if (advancedSettingsPopup.opened)
             advancedSettingsPopup.close()
@@ -338,16 +382,33 @@ ApplicationWindow {
 
     function syncEditorPlayhead(positionMs, syncSelection) {
         var resolvedPosition = Math.max(0, Math.round(Number(positionMs) || 0))
-        root.appBackend.setEditorPlayhead(
-            resolvedPosition,
-            String(root.appBackend.editorPlayhead.basis || "source")
-        )
-        if (syncSelection && root.editorMode)
-            root.appBackend.selectSegmentAtTime(resolvedPosition / 1000)
+        if (root.pendingSharedSourcePosition >= 0) {
+            if (Math.abs(resolvedPosition - root.pendingSharedSourcePosition) > 80)
+                return
+            root.pendingSharedSourcePosition = -1
+            sharedSeekGuardTimer.stop()
+        } else if (!root.applyingSharedSeek) {
+            // The shared player always reports source-media positions. Keeping
+            // that basis here avoids applying an output-to-source mapping twice.
+            root.appBackend.setEditorPlayhead(resolvedPosition, "source")
+        }
+        if (syncSelection
+                && root.editorDraftSegmentIndex < 0
+                && (root.editorMode
+                    || (root.activeOverlay === ""
+                        && root.appBackend.currentEditMode === "subtitle")))
+            root.appBackend.selectSegmentAtTime(
+                Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000
+            )
     }
 
     function syncEditorSelectionFromActiveSegments(activeSegments) {
-        if (!root.editorMode || !activeSegments || activeSegments.length === 0)
+        var subtitleSelectionActive = root.editorMode
+            || (root.activeOverlay === "" && root.appBackend.currentEditMode === "subtitle")
+        if (!subtitleSelectionActive
+                || root.editorDraftSegmentIndex >= 0
+                || !activeSegments
+                || activeSegments.length === 0)
             return
         var sourceIndex = Number(activeSegments[activeSegments.length - 1].sourceIndex)
         if (isFinite(sourceIndex) && sourceIndex >= 0)
@@ -556,6 +617,7 @@ ApplicationWindow {
         property bool editable: true
         property bool showSegments: true
         property bool showTrackVolume: false
+        property var seekHandler: null
         property var lanes: root.projectSpeakerCache
         property var waveforms: root.subtitleWaveformCache
         property alias viewportX: timelineFlick.contentX
@@ -654,8 +716,11 @@ ApplicationWindow {
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton
                     onClicked: function(mouse) {
-                        if (timelineRoot.player)
-                            timelineRoot.player.position = Math.max(0, mouse.x / timelineRoot.pixelsPerSecond * 1000)
+                        var position = Math.max(0, mouse.x / timelineRoot.pixelsPerSecond * 1000)
+                        if (timelineRoot.seekHandler)
+                            timelineRoot.seekHandler(position)
+                        else if (timelineRoot.player)
+                            timelineRoot.player.position = position
                     }
                 }
 
@@ -1123,6 +1188,220 @@ ApplicationWindow {
             }
         }
 
+    Component {
+        id: subtitleWorkspaceEditorComponent
+
+        Item {
+            objectName: "workspaceSubtitleEditor"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 5
+                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
+                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
+                    SmallButton {
+                        objectName: "workspaceSubtitleAddButton"
+                        text: "+ 字幕追加"
+                        enabled: !root.appBackend.running
+                        onClicked: root.appBackend.addSegment(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
+                    }
+                    SmallButton {
+                        objectName: "workspaceSubtitleSplitButton"
+                        text: "分割"
+                        enabled: !root.appBackend.running
+                            && root.canSplitSelectedSegment(root.appBackend.editorPlayhead.sourcePositionMs)
+                        onClicked: root.appBackend.splitSelectedSegment(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
+                    }
+                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
+                    Item { Layout.fillWidth: true }
+                    SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
+                    SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                }
+
+                SubtitleTimeline {
+                    id: workspaceSubtitleTimeline
+                    objectName: "workspaceSubtitleTimeline"
+                    property bool restoringViewport: true
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    player: mainPlayer
+                    pixelsPerSecond: root.editorPixelsPerSecond
+                    snapSeconds: root.snapMilliseconds / 1000
+                    editable: true
+                    seekHandler: function(positionMilliseconds) {
+                        root.seekSharedPlayer(positionMilliseconds, "source")
+                    }
+                    onViewportXChanged: {
+                        if (!restoringViewport)
+                            root.editorTimelineScrollX = viewportX
+                    }
+                    onSegmentActivated: function(index) {
+                        var segment = root.appBackend.segmentAt(index)
+                        if (segment)
+                            root.seekSharedPlayer(Number(segment.start) * 1000, "source")
+                    }
+                    Timer {
+                        interval: 0
+                        running: true
+                        repeat: false
+                        onTriggered: {
+                            workspaceSubtitleTimeline.viewportX = root.editorTimelineScrollX
+                            workspaceSubtitleTimeline.restoringViewport = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: audioWorkspaceEditorComponent
+
+        Item {
+            objectName: "workspaceAudioEditor"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    PanelTitle { text: "音声タイムライン" }
+                    Text {
+                        text: root.appBackend.audioPreviewPreparing
+                            ? "プレビュー音声を準備中…"
+                            : (workspaceAudioBridge.intentionalSilence
+                                ? "すべての音声トラックが無効です"
+                                : (workspaceAudioBridge.previewReady
+                                    ? "共通プレビューへ接続済み"
+                                    : "ミックスを準備できないため元の音声を再生します"))
+                        color: workspaceAudioBridge.previewReady
+                            || workspaceAudioBridge.intentionalSilence
+                            ? root.acid
+                            : root.textMuted
+                        font.family: "Yu Gothic UI"
+                        font.pixelSize: 9
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text { text: "再生・シークは中央プレビューと共通"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
+                }
+
+                SubtitleTimeline {
+                    id: workspaceAudioTimeline
+                    objectName: "workspaceAudioTimeline"
+                    property bool restoringViewport: true
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    player: mainPlayer
+                    pixelsPerSecond: root.timelinePixelsPerSecond
+                    laneHeight: 34
+                    editable: false
+                    showSegments: false
+                    showTrackVolume: true
+                    lanes: root.appBackend.audioMixerSequenceChannels
+                    waveforms: root.appBackend.audioMixerSequenceChannels
+                    seekHandler: function(positionMilliseconds) {
+                        root.seekSharedPlayer(positionMilliseconds, "source")
+                    }
+                    onViewportXChanged: {
+                        if (!restoringViewport)
+                            root.workspaceAudioTimelineScrollX = viewportX
+                    }
+                    Timer {
+                        interval: 0
+                        running: true
+                        repeat: false
+                        onTriggered: {
+                            workspaceAudioTimeline.viewportX = root.workspaceAudioTimelineScrollX
+                            workspaceAudioTimeline.restoringViewport = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: subtitleWorkspaceSettingsComponent
+
+        SubtitleModeSettings {
+            objectName: "workspaceSubtitleSettings"
+            backend: root.appBackend
+            speakers: root.projectSpeakerCache
+            fontChoices: root.appBackend.fontChoices
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            savedContentY: root.editorCaptionScrollY
+            beginDraft: root.beginSubtitleDraft
+            updateDraft: root.updateSubtitleDraft
+            clearDraft: root.clearSubtitleDraft
+            onSeekRequested: function(positionMilliseconds) {
+                root.seekSharedPlayer(positionMilliseconds, "source")
+            }
+            onSpeakerColorRequested: function(speakerIndex, currentColor) {
+                root.openSpeakerColorPicker("project", speakerIndex, currentColor)
+            }
+            onContentYChangedByUser: function(value) {
+                root.editorCaptionScrollY = value
+            }
+        }
+    }
+
+    Component {
+        id: audioWorkspaceSettingsComponent
+
+        AudioModeSettings {
+            objectName: "workspaceAudioSettings"
+            backend: root.appBackend
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            warningColor: root.amber
+            savedContentY: root.workspaceAudioSettingsScrollY
+            onContentYChangedByUser: function(value) {
+                root.workspaceAudioSettingsScrollY = value
+            }
+        }
+    }
+
+    AudioPreviewBridge {
+        id: workspaceAudioBridge
+        width: 0
+        height: 0
+        backend: root.appBackend
+        player: mainPlayer
+        active: root.appBackend.currentEditMode === "audio" && mainWorkspace.visible
+        seekRevision: root.sharedSeekRevision
+    }
+
+    Connections {
+        target: root.appBackend
+
+        function onEditorPlayheadChanged() {
+            root.syncSharedPlayerToPlayhead()
+        }
+    }
+
+    Timer {
+        id: sharedSeekGuardTimer
+        interval: 400
+        repeat: false
+        onTriggered: root.pendingSharedSourcePosition = -1
+    }
+
     RowLayout {
         id: mainWorkspace
         objectName: "mainWorkspace"
@@ -1214,7 +1493,7 @@ ApplicationWindow {
             textColor: root.textPrimary
             mutedColor: root.textMuted
             accentColor: root.acid
-            onModeRequested: function(mode) { root.appBackend.selectEditMode(mode) }
+            onModeRequested: function(mode) { root.selectWorkspaceMode(mode) }
         }
 
         ColumnLayout {
@@ -1290,21 +1569,33 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 Layout.minimumHeight: root.appBackend.progressVisible
                     ? (root.height <= 800 ? 170 : 300)
-                    : (applicationLogPanel.expanded && root.height <= 800 ? 140 : 300)
+                    : (root.height <= 800 ? (applicationLogPanel.expanded ? 140 : 190) : 300)
                 radius: 12
                 color: "#080A09"
                 border.color: root.border
                 clip: true
                 MediaPlayer {
                     id: mainPlayer
-                    objectName: "mainPreviewPlayer"
+                    objectName: "mainWorkspacePlayer"
                     source: root.appBackend.previewUrl
                     videoOutput: mainVideo
-                    audioOutput: AudioOutput { volume: 0.7 }
+                    audioOutput: AudioOutput {
+                        objectName: "mainWorkspaceAudioOutput"
+                        volume: 0.7
+                        muted: workspaceAudioBridge.muteSourceAudio
+                    }
                     onPositionChanged: {
                         if (!mainSeek.pressed)
                             mainSeek.value = mainPlayer.position
-                        if (mainPlayer.playbackState !== MediaPlayer.PlayingState)
+                        var completedPendingSeek = false
+                        if (root.pendingSharedSourcePosition >= 0
+                                && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
+                            root.pendingSharedSourcePosition = -1
+                            sharedSeekGuardTimer.stop()
+                            completedPendingSeek = true
+                        }
+                        if (!completedPendingSeek
+                                && mainPlayer.playbackState !== MediaPlayer.PlayingState)
                             root.syncEditorPlayhead(mainPlayer.position, true)
                     }
                     onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
@@ -1319,6 +1610,7 @@ ApplicationWindow {
                 }
                 VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
                 SubtitleOverlay {
+                    id: mainSubtitleOverlay
                     anchors.fill: mainVideo
                     appBackend: root.appBackend
                     player: mainPlayer
@@ -1331,11 +1623,14 @@ ApplicationWindow {
                     outlineThickness: root.selectedSubtitleOutlineThickness
                     speakerColors: root.projectSpeakerCache
                     subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                    onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
+                        mainSubtitleOverlay.activeSegments
+                    )
                 }
                 ColumnLayout {
                     anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                     anchors.margins: 12; spacing: 2
-                    Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
+                    Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: root.seekSharedPlayer(value, "source") }
                     RowLayout { Layout.fillWidth: true
                         ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
                         Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
@@ -1350,8 +1645,12 @@ ApplicationWindow {
                 objectName: "modeEditorSlot"
                 visible: root.appBackend.projectLoaded
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? 104 : 0
-                Layout.minimumHeight: visible ? 92 : 0
+                Layout.preferredHeight: visible
+                    ? (root.appBackend.currentEditMode === "cut" ? 104 : 156)
+                    : 0
+                Layout.minimumHeight: visible
+                    ? 92
+                    : 0
                 radius: 12
                 color: root.panel
                 border.color: root.border

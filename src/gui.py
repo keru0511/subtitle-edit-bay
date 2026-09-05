@@ -1560,6 +1560,32 @@ class EditBayBackend(LegacyEditBayBackend):
     def audioMixerAvailable(self) -> bool:
         return bool(self.audioMixerChannels)
 
+    def _enabled_audio_mixer_channel_ids(self) -> set[str]:
+        if self._project is None:
+            return set()
+        return {
+            str(channel.get("id", ""))
+            for channel in self._project.get("audio_mix", {}).get("channels", [])
+            if isinstance(channel, dict)
+            and bool(channel.get("enabled"))
+            and str(channel.get("id", "")).strip()
+        }
+
+    @Property(bool, notify=projectDataChanged)
+    def audioMixerPreviewComplete(self) -> bool:
+        enabled_ids = self._enabled_audio_mixer_channel_ids()
+        if not enabled_ids:
+            return False
+        return all(
+            bool(path := self._audio_preview_cache_paths.get(channel_id))
+            and Path(path).is_file()
+            for channel_id in enabled_ids
+        )
+
+    @Property(bool, notify=projectDataChanged)
+    def audioMixerIntentionalSilence(self) -> bool:
+        return self.audioMixerAvailable and not self._enabled_audio_mixer_channel_ids()
+
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
         if self._project is None:

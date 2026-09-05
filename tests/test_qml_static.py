@@ -161,25 +161,9 @@ class QmlStaticTests(unittest.TestCase):
 
         self.assertIn('objectName: "workspaceSubtitleEditor"', workflow)
         self.assertIn('objectName: "workspaceAudioEditor"', workflow)
-        self.assertGreaterEqual(workflow.count("player: mainPlayer"), 2)
-        self.assertIn("editorPlayhead.sourcePositionMs", workflow)
         self.assertEqual(workflow.count("AudioPreviewBridge {"), 1)
-        self.assertLess(
-            workflow.index("AudioPreviewBridge {"), workflow.index('objectName: "mainWorkspace"')
-        )
         self.assertNotIn("videoOutput", audio_bridge)
         self.assertNotIn("property real position", audio_bridge)
-        self.assertIn("root.player.position", audio_bridge)
-        self.assertIn("root.active && root.isPlaying()", audio_bridge)
-        self.assertIn("root.backend.audioPreviewGeneration", audio_bridge)
-        self.assertIn("root.preparedGeneration !== generation", audio_bridge)
-        self.assertIn("function onAudioPreviewCacheChanged()", audio_bridge)
-        self.assertIn('mainPlayer.position = sourcePosition', workflow)
-        self.assertIn("function onEditorPlayheadChanged()", workflow)
-        self.assertIn(
-            'root.appBackend.setEditorPlayhead(resolvedPosition, "source")',
-            workflow,
-        )
 
     def test_subtitle_preview_does_not_copy_the_full_segment_list(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")

@@ -14,7 +14,12 @@ Item {
     property int seekRevision: 0
     readonly property bool previewReady: Boolean(root.backend)
         && !root.backend.audioPreviewPreparing
+        && root.backend.audioMixerPreviewComplete
         && root.backend.audioMixerPreviewChannels.length > 0
+    readonly property bool intentionalSilence: Boolean(root.backend)
+        && root.backend.audioMixerIntentionalSilence
+    readonly property bool muteSourceAudio: root.active
+        && (root.previewReady || root.intentionalSilence)
 
     function isPlaying() {
         return root.player

@@ -604,6 +604,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_audio_mixer_preview_applies_channel_state_gain_and_source_metadata(self) -> None:
         self._load_project()
         channels = self.app.audioMixerChannels
+        self.assertTrue(self.app.audioMixerPreviewComplete)
+        self.assertFalse(self.app.audioMixerIntentionalSilence)
         self.assertEqual(channels[0]["preview_audio_track_index"], 0)
         self.assertTrue(channels[0]["preview_url"].startswith("file:"))
         self.assertEqual(channels[1]["preview_offset_seconds"], 0.0)
@@ -655,6 +657,27 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._publish_audio_preview_levels()
         self.assertEqual(self.app.audioPreviewLevels[channel_id], 1.0)
         self.app._audio_preview_level_timer.stop()
+        self.app.autosave_timer.stop()
+
+    def test_audio_mixer_preview_requires_every_enabled_channel_cache(self) -> None:
+        self._load_project()
+        external_channel = self.app.audioMixerChannels[1]
+        self.app._audio_preview_cache_paths.pop(external_channel["id"])
+
+        self.app.updateAudioMixChannel(1, {"enabled": True})
+
+        self.assertFalse(self.app.audioMixerPreviewComplete)
+        self.assertFalse(self.app.audioMixerIntentionalSilence)
+        self.assertEqual(
+            [channel["kind"] for channel in self.app.audioMixerPreviewChannels],
+            ["video"],
+        )
+
+        for index in range(len(self.app.audioMixerChannels)):
+            self.app.updateAudioMixChannel(index, {"enabled": False})
+
+        self.assertFalse(self.app.audioMixerPreviewComplete)
+        self.assertTrue(self.app.audioMixerIntentionalSilence)
         self.app.autosave_timer.stop()
 
     def test_audio_preview_gain_is_independent_of_active_channel_count(self) -> None:
@@ -2430,10 +2453,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
             window.findChild(QObject, f"workspaceAudioPreviewPlayer-{preview_channel_id}"),
             preview_player,
         )
+        active_channel_id = self.app.audioMixerChannels[0]["id"]
+        self.app._audio_preview_cache_paths.pop(active_channel_id)
+        self.app._notify_audio_mixer_preview(structure_changed=True)
+        self.app.projectDataChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(self.app.audioMixerPreviewComplete)
+        self.assertFalse(audio_bridge.property("previewReady"))
+        self.assertFalse(audio_bridge.property("muteSourceAudio"))
+        self.assertFalse(main_audio_output.property("muted"))
         for channel_index in range(len(self.app.audioMixerChannels)):
             self.app.updateAudioMixChannel(channel_index, {"enabled": False})
         self.app.processEvents()
         self.assertFalse(audio_bridge.property("previewReady"))
+        self.assertTrue(audio_bridge.property("intentionalSilence"))
+        self.assertTrue(audio_bridge.property("muteSourceAudio"))
         self.assertTrue(main_audio_output.property("muted"))
         self._click(window, subtitle_button)
         self.assertFalse(main_audio_output.property("muted"))
@@ -2514,6 +2548,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 },
             ]
         )
+        self.app.selectEditMode("subtitle")
         _, window = self._load_qml()
         subtitle_settings = self._quick_item(window, "workspaceSubtitleSettings")
         text_area = self._quick_visual_item(subtitle_settings, "workspaceSubtitleTextArea")
@@ -2530,6 +2565,86 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.selectedSegmentIndex, 1)
         self.assertEqual(self.app.segmentAt(0)["text"], "edited first")
         self.assertEqual(self.app.segmentAt(1)["text"], "second")
+
+    def test_workspace_subtitle_time_edit_preserves_new_selection_by_id(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "segment-a",
+                    "start": 0,
+                    "end": 2,
+                    "text": "first",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "segment-b",
+                    "start": 3,
+                    "end": 5,
+                    "text": "second",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        subtitle_settings = self._quick_item(window, "workspaceSubtitleSettings")
+        start_field = self._quick_visual_item(
+            subtitle_settings,
+            "workspaceSubtitleStartField",
+        )
+
+        start_field.forceActiveFocus()
+        start_field.setProperty("text", "4.500")
+        self.app.processEvents()
+        self.app.selectSegment(1)
+        self.app.processEvents()
+        self.gui.emit_signal(start_field, "editingFinished")
+
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        self.assertEqual(self.app.segmentAt(0)["id"], "segment-b")
+        self.assertEqual(self.app.segmentAt(1)["id"], "segment-a")
+        self.assertEqual(self.app.segmentAt(1)["start"], 4.5)
+
+    def test_workspace_audio_channel_update_preserves_vertical_scroll(self) -> None:
+        self.app._audio_tracks = [
+            {"selector": f"0:a:{index}", "label": f"Track {index + 1}"}
+            for index in range(8)
+        ]
+        self._load_project()
+        for index in range(len(self.app.audioMixerChannels)):
+            self.app.updateAudioMixChannel(index, {"enabled": True})
+        self.app.autosave_timer.stop()
+
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self.addCleanup(self.app.selectEditMode, "subtitle")
+        self._click(window, self._quick_item(window, "editorModeButton-audio"))
+        audio_settings = self._quick_item(window, "workspaceAudioSettings")
+        channel_list = self._quick_item(window, "workspaceAudioChannelList")
+        self.gui.wait_until(
+            lambda: channel_list.property("contentHeight") > channel_list.height(),
+            description="workspace audio channel list layout",
+        )
+        channel_list.setProperty("contentY", 300.0)
+        self.app.processEvents()
+        original_y = float(channel_list.property("contentY"))
+        self.assertGreater(original_y, 0)
+        muted_before = self.app.audioMixerChannels[5]["muted"]
+
+        audio_settings.updateChannel(5, {"muted": not muted_before})
+        self.gui.wait_until(
+            lambda: (
+                self.app.audioMixerChannels[5]["muted"] != muted_before
+                and abs(float(channel_list.property("contentY")) - original_y) <= 1
+            ),
+            description="workspace audio channel list scroll restoration",
+        )
+
+        self.assertAlmostEqual(
+            float(channel_list.property("contentY")),
+            original_y,
+            delta=1,
+        )
 
     def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
         self._load_project()

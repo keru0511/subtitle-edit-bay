@@ -16,10 +16,35 @@ Item {
     property color warningColor: "#FFB547"
     property real savedContentY: 0
     property bool restoringContentY: true
+    property real pendingContentY: -1
     signal contentYChangedByUser(real value)
 
+    function preserveChannelScroll() {
+        if (!root.restoringContentY || root.pendingContentY < 0)
+            root.pendingContentY = channelList.contentY
+        root.restoringContentY = true
+    }
+
+    function restoreChannelScroll() {
+        var targetY = root.pendingContentY >= 0
+            ? root.pendingContentY
+            : root.savedContentY
+        var maximumY = Math.max(0, channelList.contentHeight - channelList.height)
+        channelList.contentY = Math.max(0, Math.min(targetY, maximumY))
+        root.pendingContentY = -1
+        root.restoringContentY = false
+    }
+
     function updateChannel(index, changes) {
+        root.preserveChannelScroll()
         root.backend.updateAudioMixChannel(index, changes)
+        channelScrollRestoreTimer.restart()
+    }
+
+    function resetMixer() {
+        root.preserveChannelScroll()
+        root.backend.resetAudioMixer()
+        channelScrollRestoreTimer.restart()
     }
 
     ColumnLayout {
@@ -48,7 +73,7 @@ Item {
                 Layout.fillWidth: true
                 text: "リセット"
                 enabled: !root.backend.running
-                onClicked: root.backend.resetAudioMixer()
+                onClicked: root.resetMixer()
             }
             SmallButton {
                 objectName: "workspaceAudioSaveButton"
@@ -80,14 +105,20 @@ Item {
                 if (!root.restoringContentY)
                     root.contentYChangedByUser(contentY)
             }
+            onContentHeightChanged: {
+                if (root.restoringContentY && root.pendingContentY >= 0)
+                    channelScrollRestoreTimer.restart()
+            }
 
             Timer {
+                id: channelScrollRestoreTimer
                 interval: 0
                 running: true
                 repeat: false
                 onTriggered: {
-                    channelList.contentY = root.savedContentY
-                    root.restoringContentY = false
+                    if (root.pendingContentY < 0)
+                        root.pendingContentY = root.savedContentY
+                    root.restoreChannelScroll()
                 }
             }
 

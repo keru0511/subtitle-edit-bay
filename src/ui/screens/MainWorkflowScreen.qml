@@ -1276,8 +1276,15 @@ ApplicationWindow {
                     Text {
                         text: root.appBackend.audioPreviewPreparing
                             ? "プレビュー音声を準備中…"
-                            : (workspaceAudioBridge.previewReady ? "共通プレビューへ接続済み" : "プレビュー音声を準備できません")
-                        color: workspaceAudioBridge.previewReady ? root.acid : root.textMuted
+                            : (workspaceAudioBridge.intentionalSilence
+                                ? "すべての音声トラックが無効です"
+                                : (workspaceAudioBridge.previewReady
+                                    ? "共通プレビューへ接続済み"
+                                    : "ミックスを準備できないため元の音声を再生します"))
+                        color: workspaceAudioBridge.previewReady
+                            || workspaceAudioBridge.intentionalSilence
+                            ? root.acid
+                            : root.textMuted
                         font.family: "Yu Gothic UI"
                         font.pixelSize: 9
                     }
@@ -1575,8 +1582,7 @@ ApplicationWindow {
                     audioOutput: AudioOutput {
                         objectName: "mainWorkspaceAudioOutput"
                         volume: 0.7
-                        muted: root.appBackend.currentEditMode === "audio"
-                            && root.appBackend.audioMixerAvailable
+                        muted: workspaceAudioBridge.muteSourceAudio
                     }
                     onPositionChanged: {
                         if (!mainSeek.pressed)

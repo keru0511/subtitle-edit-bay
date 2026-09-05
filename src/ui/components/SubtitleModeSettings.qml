@@ -48,6 +48,57 @@ Item {
         syncEditorTimer.restart()
     }
 
+    function segmentIdAt(index) {
+        if (index < 0)
+            return ""
+        var segment = root.backend.segmentAt(index)
+        return segment && segment.id !== undefined ? String(segment.id) : ""
+    }
+
+    function segmentIndexForId(segmentId) {
+        if (!segmentId)
+            return -1
+        for (var index = 0; index < root.backend.segmentCount; ++index) {
+            if (root.segmentIdAt(index) === segmentId)
+                return index
+        }
+        return -1
+    }
+
+    function beginTimeEdit(field) {
+        field.editingSegmentIndex = root.backend.selectedSegmentIndex
+        field.editingSegmentId = root.segmentIdAt(field.editingSegmentIndex)
+    }
+
+    function restoreSelection(selectedIndex, selectedId, editedId) {
+        if (selectedIndex < 0) {
+            root.backend.selectSegment(-1)
+            return
+        }
+        if (selectedId === editedId)
+            return
+        var restoreIndex = root.segmentIndexForId(selectedId)
+        if (restoreIndex >= 0)
+            root.backend.selectSegment(restoreIndex)
+    }
+
+    function commitTimeEdit(field, propertyName) {
+        var editedId = field.editingSegmentId
+        var editIndex = editedId
+            ? root.segmentIndexForId(editedId)
+            : field.editingSegmentIndex
+        var selectedIndex = root.backend.selectedSegmentIndex
+        var selectedId = root.segmentIdAt(selectedIndex)
+        if (editIndex >= 0 && field.acceptableInput) {
+            var changes = ({})
+            changes[propertyName] = Number(field.text)
+            root.backend.updateSegment(editIndex, changes)
+            root.restoreSelection(selectedIndex, selectedId, editedId)
+        }
+        field.editingSegmentIndex = -1
+        field.editingSegmentId = ""
+    }
+
     function syncEditorFields() {
         var segment = root.selectedSegment || ({})
         if (!startField.activeFocus)
@@ -192,33 +243,27 @@ Item {
                         id: startField
                         objectName: "workspaceSubtitleStartField"
                         property int editingSegmentIndex: -1
+                        property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "開始"
                         onActiveFocusChanged: {
                             if (activeFocus)
-                                editingSegmentIndex = root.backend.selectedSegmentIndex
+                                root.beginTimeEdit(startField)
                         }
-                        onEditingFinished: {
-                            if (editingSegmentIndex >= 0)
-                                root.backend.updateSegment(editingSegmentIndex, {"start": Number(text)})
-                            editingSegmentIndex = -1
-                        }
+                        onEditingFinished: root.commitTimeEdit(startField, "start")
                     }
                     TimeField {
                         id: endField
                         objectName: "workspaceSubtitleEndField"
                         property int editingSegmentIndex: -1
+                        property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "終了"
                         onActiveFocusChanged: {
                             if (activeFocus)
-                                editingSegmentIndex = root.backend.selectedSegmentIndex
+                                root.beginTimeEdit(endField)
                         }
-                        onEditingFinished: {
-                            if (editingSegmentIndex >= 0)
-                                root.backend.updateSegment(editingSegmentIndex, {"end": Number(text)})
-                            editingSegmentIndex = -1
-                        }
+                        onEditingFinished: root.commitTimeEdit(endField, "end")
                     }
                 }
                 ComboBox {

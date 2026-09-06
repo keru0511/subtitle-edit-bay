@@ -331,8 +331,9 @@ ApplicationWindow {
             return
         if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
             root.pendingWelcomeTranscriptionSettings = executionSettings
-            root.appBackend.loadProject(root.appBackend.projectSavePath)
-            if (root.appBackend.projectLoaded)
+            var selectedSources = JSON.parse(JSON.stringify(root.appBackend.sourceSelection))
+            if (root.appBackend.loadProjectWithSelectedSources(
+                    root.appBackend.projectSavePath, selectedSources))
                 overwriteProjectDialog.open()
             else
                 root.pendingWelcomeTranscriptionSettings = null
@@ -1566,6 +1567,26 @@ ApplicationWindow {
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
                 }
+                Rectangle {
+                    objectName: "startScreenStatusPanel"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 58 : 0
+                    visible: root.appBackend.stage === "ERROR" || root.appBackend.stage === "CHECK"
+                    radius: 8
+                    color: root.appBackend.stage === "ERROR" ? "#321C1C" : "#302A1C"
+                    border.color: root.appBackend.stage === "ERROR" ? root.danger : root.amber
+                    Text {
+                        objectName: "startScreenStatusText"
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        text: root.appBackend.status
+                        color: root.textPrimary
+                        font.family: "Yu Gothic UI"
+                        font.pixelSize: 10
+                        wrapMode: Text.Wrap
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
                 Item { Layout.preferredHeight: 4 }
                 Button {
                     id: newVideoEditButtonControl
@@ -1642,71 +1663,6 @@ ApplicationWindow {
                     elide: Text.ElideMiddle
                     horizontalAlignment: Text.AlignHCenter
                 }
-            }
-        }
-
-        Rectangle {
-            visible: false
-            Layout.preferredWidth: 270
-            Layout.fillHeight: true
-            radius: 12
-            color: root.panel
-            border.color: root.border
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 10
-                PanelTitle { text: "素材と話者" }
-                Rectangle {
-                    Layout.fillWidth: true; Layout.preferredHeight: 70; radius: 9; color: root.raised; border.color: root.border
-                    Column { anchors.fill: parent; anchors.margins: 10; spacing: 3
-                        Text { text: "動画"; color: root.textMuted; font.pixelSize: 9; font.family: "Yu Gothic UI" }
-                        Text { width: parent.width; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text { width: parent.width; text: root.appBackend.projectSavePath ? "プロジェクト: " + root.appBackend.projectSavePath : "保存先は動画の選択後に決まります"; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                    }
-                }
-                ListView {
-                    id: speakerSourceList
-                    Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 6
-                    model: root.appBackend.speakers
-                    delegate: Rectangle {
-                        id: speakerSourceDelegate
-                        required property int index
-                        required property var modelData
-                        width: speakerSourceList.width; height: 48; radius: 8; color: root.raised
-                        RowLayout { anchors.fill: parent; anchors.margins: 8; spacing: 8
-                            Button {
-                                id: sourceSpeakerColorButton
-                                objectName: "sourceSpeakerColorButton"
-                                Layout.preferredWidth: 28; Layout.preferredHeight: 30
-                                enabled: !root.appBackend.running
-                                onClicked: root.openSpeakerColorPicker("source", speakerSourceDelegate.index, speakerSourceDelegate.modelData.color)
-                                contentItem: Rectangle { radius: 5; color: speakerSourceDelegate.modelData.color; border.color: root.textPrimary; border.width: 1 }
-                                background: Rectangle { radius: 6; color: "transparent"; border.color: sourceSpeakerColorButton.hovered ? root.acid : root.border }
-                                ToolTip.visible: hovered
-                                ToolTip.text: "字幕色を変更"
-                            }
-                            ColumnLayout { Layout.fillWidth: true; spacing: 0
-                                Text { Layout.fillWidth: true; text: speakerSourceDelegate.modelData.name; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideRight }
-                                Text { Layout.fillWidth: true; text: speakerSourceDelegate.modelData.file_name; color: root.textMuted; font.pixelSize: 9; font.family: "Bahnschrift"; elide: Text.ElideMiddle }
-                            }
-                            ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(speakerSourceDelegate.index) }
-                        }
-                    }
-                }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                PanelTitle { text: "音声同期" }
-                ComboBox { id: referenceCombo; Layout.fillWidth: true; model: root.appBackend.speakers; textRole: "file_name"; valueRole: "path" }
-                ComboBox { id: trackCombo; Layout.fillWidth: true; model: root.appBackend.audioTracks; textRole: "label"; valueRole: "selector" }
-                RowLayout { Layout.fillWidth: true
-                    TimeField { id: manualOffsetField; Layout.fillWidth: true; text: "0.000"; validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 } }
-                    SmallButton {
-                        text: root.appBackend.alignmentBusy ? "調整中" : "音声のずれを自動調整"
-                        enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
-                        onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
-                    }
-                }
-                Text { Layout.fillWidth: true; text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status) + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒" : ""); color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI" }
             }
         }
 
@@ -2132,10 +2088,81 @@ ApplicationWindow {
                 id: sourceAudioList
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5; model: root.appBackend.speakers
                 delegate: Rectangle { id: sourceAudioDelegate; required property int index; required property var modelData; width: sourceAudioList.width; height: 38; radius: 7; color: root.raised
-                    RowLayout { anchors.fill: parent; anchors.margins: 7; Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 22; radius: 3; color: sourceAudioDelegate.modelData.color } Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle } ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) } }
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 7
+                        Button {
+                            objectName: "sourceSpeakerColorButton"
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 24
+                            enabled: !root.appBackend.running
+                            onClicked: root.openSpeakerColorPicker("source", sourceAudioDelegate.index, sourceAudioDelegate.modelData.color)
+                            contentItem: Rectangle { radius: 4; color: sourceAudioDelegate.modelData.color; border.color: root.textPrimary }
+                            background: Rectangle { radius: 5; color: "transparent"; border.color: root.border }
+                            ToolTip.visible: hovered
+                            ToolTip.text: "字幕色を変更"
+                        }
+                        Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle }
+                        ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) }
+                    }
                 }
             }
             RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
+            PanelTitle { text: "文字起こし対象と音声同期" }
+            RowLayout {
+                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Text { text: "動画音声トラック"; color: root.textMuted; font.pixelSize: 9 }
+                    ComboBox {
+                        id: trackCombo
+                        objectName: "videoAudioTrackCombo"
+                        Layout.fillWidth: true
+                        model: root.appBackend.audioTracks
+                        textRole: "label"
+                        valueRole: "selector"
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Text { text: "同期の基準音声"; color: root.textMuted; font.pixelSize: 9 }
+                    ComboBox {
+                        id: referenceCombo
+                        objectName: "referenceAudioCombo"
+                        Layout.fillWidth: true
+                        model: root.appBackend.speakers
+                        textRole: "file_name"
+                        valueRole: "path"
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "手動補正（秒）"; color: root.textMuted; font.pixelSize: 9 }
+                TimeField {
+                    id: manualOffsetField
+                    objectName: "manualAlignmentOffsetField"
+                    Layout.fillWidth: true
+                    text: "0.000"
+                    validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 }
+                }
+                SmallButton {
+                    objectName: "analyzeAlignmentButton"
+                    text: root.appBackend.alignmentBusy ? "調整中" : "音声のずれを自動調整"
+                    enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
+                    onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status)
+                    + (root.appBackend.alignmentResult.offset !== undefined
+                        ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒"
+                        : "")
+                color: root.textMuted
+                font.pixelSize: 9
+                font.family: "Yu Gothic UI"
+            }
             PanelTitle { text: "プロジェクト保存先" }
             RowLayout {
                 Layout.fillWidth: true

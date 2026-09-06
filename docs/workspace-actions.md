@@ -34,7 +34,11 @@
 
 GUIの文字起こし作業ファイルはプロジェクトの隣の `.<プロジェクト名>.work/` に保存します。文字起こしキャッシュ・中間JSON・追加／置換用の一時プロジェクトが含まれます。保存したJSONの `transcription.work_dir` からログの場所も追跡できます。別名保存後の文字起こしは新しい保存先の作業フォルダを使います。既存のキャッシュや参照ファイルは移動・削除しません。
 
+相対パスの文字起こし辞書は、作業フォルダを移しても同じファイルを参照します。新規GUIプロジェクトでは作成時のプロジェクトフォルダを基準にし、既存プロジェクトでは従来の作業先（未記録なら `output_dir`）を引き継ぎます。基準は `transcription.context_base_dir` に保存し、出力先変更・別名保存・再読込後も維持します。
+
 CLIの従来の `transcribe --output-dir DIR` は互換性のため、作業先と完成動画の出力先を同じDIRにします。分ける場合は `--project-path` と `--render-output-dir` を指定します。完成動画の出力先を未設定にするには `--render-output-dir ""` を渡します。`render` / `render-short` の `--output FILE` はJSONの設定より優先されます。
+
+CLIの辞書の相対パスは従来どおり `--output-dir` 基準です。作業先と分ける場合は `--context-base-dir DIR` を指定します。指定時には確認済み辞書のパスを絶対パスで生成プロジェクトに記録します。
 
 ```bash
 python -m src.subtitle_workflow transcribe --video game.mp4 --audio-file 1-alice.flac --output-dir projects/.edit.work --project-path projects/edit.subtitle-project.json --render-output-dir "" --run

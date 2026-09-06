@@ -1028,6 +1028,7 @@ def main() -> None:
     transcribe.add_argument("--video-audio-track")
     transcribe.add_argument("--output-dir", required=True)
     transcribe.add_argument("--render-output-dir", help="Completed video export directory; an empty value leaves it unset. Defaults to --output-dir for legacy CLI calls.")
+    transcribe.add_argument("--context-base-dir", help="Base directory for relative transcription dictionary paths. Defaults to --output-dir.")
     transcribe.add_argument("--project-path", help="Explicit editable project output path.")
     transcribe.add_argument("--reference-audio")
     transcribe.add_argument("--reference-track")
@@ -1097,6 +1098,7 @@ def main() -> None:
             output_dir=args.output_dir,
             project_path=args.project_path,
             render_output_dir=args.render_output_dir,
+            context_base_dir=args.context_base_dir,
             reference_audio=args.reference_audio,
             reference_track=args.reference_track,
             video_audio_track=args.video_audio_track,

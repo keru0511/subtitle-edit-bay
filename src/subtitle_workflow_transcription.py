@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -49,7 +50,7 @@ from .subtitle_project import (
 from .transcribe import build_extract_audio_command, probe_audio_streams
 from .transcription_context import TranscriptionContext, transcription_context_from_mapping
 from .transcription_hint_plan import TranscriptionAsrSettings
-from .transcription_hint_workflow import build_craig_hint_plan_from_context
+from .transcription_hint_workflow import build_craig_hint_plan_from_context, resolve_confirmed_dictionary_path
 
 DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284", "#81C8BE"]
 
@@ -253,6 +254,7 @@ def transcribe_to_project_with_context(
     output_dir: str,
     project_path: str | None = None,
     render_output_dir: str | None = None,
+    context_base_dir: str | None = None,
     reference_audio: str | None = None,
     reference_track: str | None = None,
     video_audio_track: str | None = None,
@@ -285,6 +287,10 @@ def transcribe_to_project_with_context(
     be safely reduced to a thin call-through.
     """
     context = transcription_context_from_mapping(transcription_context) if not isinstance(transcription_context, TranscriptionContext) else transcription_context
+    if context_base_dir is not None:
+        dictionary_path = resolve_confirmed_dictionary_path(context, base_dir=context_base_dir)
+        if dictionary_path is not None:
+            context = replace(context, dictionary_path=str(dictionary_path.resolve()))
     context_payload = context.to_dict()
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -399,6 +405,7 @@ def transcribe_to_project_with_context(
         transcription_context=context_payload,
         transcription={
             "work_dir": str(output.resolve()),
+            "context_base_dir": str(Path(context_base_dir or output).resolve()),
             "model": model,
             "device": device,
             "compute_type": compute_type,

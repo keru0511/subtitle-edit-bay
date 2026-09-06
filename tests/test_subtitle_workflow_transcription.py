@@ -239,14 +239,25 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
                 ):
                     work = root / "projects" / ".edit.work"
                     target = root / "projects" / "edit.subtitle-project.json"
+                    dictionary = root / "dictionary.json"
+                    dictionary.write_text('{"game_title":"Test","terms":[{"term":"スプラッシュボム"}]}', encoding="utf-8")
                     actual = transcribe_to_project_with_context(
                         video_path=str(video), audio_files=[str(audio)], output_dir=str(work),
                         project_path=target, render_output_dir=export, overwrite_project=True,
+                        context_base_dir=str(root),
+                        transcription_context={"dictionary_path": "dictionary.json", "dictionary_confirmed": True},
                     )
                     project = load_project(actual)
                     self.assertEqual(actual, target)
                     self.assertEqual(project["output_dir"], export)
                     self.assertEqual(project["transcription"]["work_dir"], str(work))
+                    self.assertEqual(project["transcription"]["context_base_dir"], str(root))
+                    hint = build_default_workflow_transcription_hint(
+                        transcribe.call_args.kwargs["transcription_context"],
+                        output_dir=work, asr_settings=build_workflow_asr_settings(),
+                    )
+                    self.assertIn("スプラッシュボム", hint.hotwords)
+                    self.assertEqual(project["transcription_context"]["dictionary_path"], str(dictionary))
                     self.assertEqual(transcribe.call_args.args[1], work / "transcripts")
                     for key in ("merged_json", "filtered_json"):
                         artifact = Path(project["transcription"][key])

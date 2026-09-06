@@ -47,6 +47,7 @@ class SubtitleWorkflowContextCliTests(unittest.TestCase):
         self.assertEqual(transcribe.call_args.kwargs["audio_files"], ["1-alice.flac"])
         self.assertEqual(transcribe.call_args.kwargs["device"], "cpu")
         self.assertIsNone(transcribe.call_args.kwargs["render_output_dir"])
+        self.assertIsNone(transcribe.call_args.kwargs["context_base_dir"])
 
     def test_gui_command_keeps_empty_export_separate_from_work_and_project_paths(self) -> None:
         import src.subtitle_workflow as subtitle_workflow
@@ -59,6 +60,7 @@ class SubtitleWorkflowContextCliTests(unittest.TestCase):
             command = build_gui_transcribe_command(
                 root / "config.json", video="video.mkv", audio_files=["1-alice.flac"],
                 output_dir=str(work), project_path=str(project_path), render_output_dir="",
+                context_base_dir=str(project_path.parent),
             )
             with (
                 mock.patch.object(sys, "argv", ["subtitle_workflow", *command[4:]]),
@@ -71,6 +73,7 @@ class SubtitleWorkflowContextCliTests(unittest.TestCase):
             self.assertEqual(transcribe.call_args.kwargs["output_dir"], str(work))
             self.assertEqual(transcribe.call_args.kwargs["project_path"], str(project_path))
             self.assertEqual(transcribe.call_args.kwargs["render_output_dir"], "")
+            self.assertEqual(transcribe.call_args.kwargs["context_base_dir"], str(project_path.parent))
 
     def test_transcribe_phase_accepts_video_audio_track_without_audio_files(self) -> None:
         import src.subtitle_workflow as subtitle_workflow

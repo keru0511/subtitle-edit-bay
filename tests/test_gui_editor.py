@@ -333,6 +333,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(saved["audio_mix"]["customized"])
         self.assertTrue(saved["short_video"]["clips"])
         self.assertEqual(saved["output_dir"], "")
+        self.assertEqual(saved["transcription"]["context_base_dir"], str(path.parent))
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
         self.assertTrue(self.app.actionCapabilities["canTranscribe"])
         with patch.object(self.app, "refreshDependencies"), patch.object(self.app, "_start_command") as start:
@@ -374,6 +375,55 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(load_project(path)["output_dir"], str(export))
         self.assertEqual(load_project(path)["segments"][0]["text"], "unsaved edit")
         self.assertEqual(list(export.iterdir()), [])
+
+    def test_export_change_is_visible_and_saved_before_source_popup_closes(self) -> None:
+        path = self._load_project()
+        export = self.root / "new-export"
+        export.mkdir()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)):
+            self._click(window, self._quick_item(window, "videoOutputDirectoryButton"))
+        self.assertEqual(self._quick_item(window, "videoOutputDirectoryText").property("text"), str(export))
+        target = self.root / "copy.subtitle-project.json"
+        with patch("src.gui.QFileDialog.getSaveFileName", return_value=(str(target), "")):
+            self._click(window, self._quick_item(window, "projectSaveAsButton"))
+        self.assertEqual(load_project(target)["output_dir"], str(export))
+        self.assertEqual(Path(self.app.projectPath), target)
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.videoOutputDirectory, str(export))
+        self.assertNotEqual(path, target)
+
+    def test_save_as_does_not_overwrite_an_unconfirmed_extension_completed_target(self) -> None:
+        path = self._load_project()
+        self.app.updateSegment(0, {"text": "unsaved"})
+        target = self.root / "existing.subtitle-project.json"
+        sentinel = b"do not overwrite"
+        target.write_bytes(sentinel)
+        with patch("src.gui.QFileDialog.getSaveFileName", return_value=(str(self.root / "existing"), "")):
+            self.app.browseProjectSaveAs()
+        self.assertEqual(target.read_bytes(), sentinel)
+        self.assertEqual(Path(self.app.projectPath), path)
+        self.assertTrue(self.app.projectDirty)
+        self.assertEqual(self.app.stage, "CHECK")
+
+    def test_legacy_dictionary_reference_survives_export_and_project_location_changes(self) -> None:
+        path = self._load_project()
+        legacy_base = path.parent
+        dictionary = legacy_base / "dictionary.json"
+        dictionary.write_text('{"game_title":"Test","terms":[]}', encoding="utf-8")
+        context = {"dictionary_path": "dictionary.json", "dictionary_confirmed": True}
+        self.app.setOutputDirectory("")
+        target = self.root / "moved" / "edit.subtitle-project.json"
+        self.assertTrue(self.app.saveProjectAs(str(target)))
+        self.assertTrue(self.app._load_project_path(target, update_sources=True))
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+        with patch.object(self.app, "_start_command") as start:
+            self.app.transcribeProject({**self.app.settings, "transcription_context": context}, "merge")
+        command = start.call_args.args[0]
+        self.assertIn("--context-base-dir", command)
+        self.assertEqual(Path(command[command.index("--context-base-dir") + 1]), legacy_base)
 
     def test_save_as_preserves_export_and_waits_for_pending_autosave(self) -> None:
         path = self._load_project()

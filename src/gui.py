@@ -2004,10 +2004,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def _set_source_selection(self, selection: Any) -> None:
         previous = self._source_selection
         super()._set_source_selection(selection)
-        if self._loading_project_sources or self._relinking_project_sources or self._project is None:
+        if self._loading_project_sources or self._project is None:
             return
         media_changed = previous.video != selection.video or previous.audio_files != selection.audio_files
-        if media_changed and not self._project_source_selection_matches(selection):
+        if not self._relinking_project_sources and media_changed and not self._project_source_selection_matches(selection):
             self._clear_project()
         elif previous.output_dir != selection.output_dir:
             self._project["output_dir"] = selection.output_dir
@@ -2051,10 +2051,6 @@ class EditBayBackend(LegacyEditBayBackend):
                 or previous.audio_files != self._source_selection.audio_files
             ) and not self._project_source_selection_matches(self._source_selection):
                 self._clear_project()
-            elif self._project is not None and self._project.get("output_dir", "") != self._source_selection.output_dir:
-                self._project["output_dir"] = self._source_selection.output_dir
-                self._mark_project_dirty()
-                self.projectDataChanged.emit()
         finally:
             self._relinking_project_sources = False
             self._relink_source_selection = None
@@ -2213,7 +2209,7 @@ class EditBayBackend(LegacyEditBayBackend):
             audio_sources=deepcopy(self._speakers),
             speakers=deepcopy(self._speakers),
             duration_seconds=duration_seconds,
-            transcription={"status": "not_started"},
+            transcription={"status": "not_started", "context_base_dir": str(project_path.parent.resolve())},
         )
         reconcile_audio_mix(
             project,
@@ -2337,6 +2333,12 @@ class EditBayBackend(LegacyEditBayBackend):
         target = self._local_path(path)
         if target.suffix.lower() != ".json":
             target = target.with_name(target.name + ".subtitle-project.json")
+            if target.exists():
+                self._set_status(
+                    "拡張子を補った保存先には既存プロジェクトがあります。拡張子付きで選択するか、別の名前を指定してください",
+                    "CHECK",
+                )
+                return False
         if self._project is None:
             return self._create_empty_project(target)
         self.autosave_timer.stop()
@@ -2602,6 +2604,10 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
             return False
         self._project = project
+        transcription = project.setdefault("transcription", {})
+        transcription.setdefault("context_base_dir", str(Path(
+            transcription.get("work_dir") or project.get("output_dir") or path.parent
+        ).resolve()))
         self._apply_project_subtitle_settings(project)
         self._project_path = str(path.resolve())
         self._project_dirty = False
@@ -3326,6 +3332,7 @@ class EditBayBackend(LegacyEditBayBackend):
             audio_files=audio_files,
             output_dir=str(project_work_directory(self.projectSavePath)),
             render_output_dir=self.videoOutputDirectory,
+            context_base_dir=str((self._project or {}).get("transcription", {}).get("context_base_dir") or Path(self.projectSavePath).parent),
             reference_audio=reference_audio,
             reference_track=reference_track,
             video_audio_track=video_audio_track,

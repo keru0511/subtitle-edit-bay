@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from src.runtime_dependencies import RuntimeDependencyStatus
-from src.subtitle_project import create_project
+from src.subtitle_project import create_project, load_project, resolve_render_output_path, save_project
 from src.workflow_actions import (
     prepare_render_request, render_capability, render_output_path,
     transcription_capability, validate_render_output,
@@ -31,7 +31,7 @@ class WorkflowActionTests(unittest.TestCase):
     def transcription(self, dependencies, *, device="cpu", **kwargs):
         return transcription_capability(
             dependencies, device=device, has_video=True, has_audio=True,
-            output_dir=str(self.root), **kwargs,
+            project_path=self.path, **kwargs,
         )
 
     def test_whisperx_and_cuda_only_gate_the_corresponding_transcription(self) -> None:
@@ -71,7 +71,7 @@ class WorkflowActionTests(unittest.TestCase):
         self.assertFalse(render_capability(self.dependencies, self.project, self.path, short=True).enabled)
 
     def test_output_validation_is_independent_for_each_artifact(self) -> None:
-        output = render_output_path(self.path, short=True)
+        output = render_output_path(self.path, self.project, short=True)
         output.mkdir()
         self.assertTrue(render_capability(self.dependencies, self.project, self.path).enabled)
         self.assertFalse(render_capability(self.dependencies, self.project, self.path, short=True).enabled)
@@ -88,3 +88,28 @@ class WorkflowActionTests(unittest.TestCase):
         self.video.unlink()
         self.assertFalse(render_capability(self.dependencies, self.project, self.path).enabled)
         self.assertFalse(self.transcription(replace(self.dependencies, whisperx=True), running=True).enabled)
+
+    def test_unset_export_directory_roundtrips_and_only_blocks_render(self) -> None:
+        project = create_project(video_path=self.video, segments=[])
+        save_project(self.path, project)
+        project = load_project(self.path)
+        self.assertEqual(project["output_dir"], "")
+        self.assertTrue(self.transcription(replace(self.dependencies, whisperx=True)).enabled)
+        self.assertFalse(render_capability(self.dependencies, project, self.path).enabled)
+        self.assertTrue(render_capability(self.dependencies, project, self.path, require_output=False).enabled)
+        with self.assertRaisesRegex(ValueError, "出力先"):
+            resolve_render_output_path(self.path, project)
+        explicit = self.root / "explicit.mp4"
+        self.assertEqual(resolve_render_output_path(self.path, project, explicit), explicit)
+
+    def test_legacy_export_directory_is_preserved_when_project_moves(self) -> None:
+        export = self.root / "final-videos"
+        self.project["output_dir"] = str(export)
+        moved_path = self.root / "projects" / "renamed.subtitle-project.json"
+        save_project(moved_path, self.project)
+        project = load_project(moved_path)
+        for short, name in ((False, "renamed.edited.subtitled.mp4"), (True, "renamed.short.mp4")):
+            with self.subTest(short=short):
+                self.assertEqual(render_output_path(moved_path, project, short=short), export / name)
+                self.assertTrue(render_capability(self.dependencies, project, str(moved_path), short=short).enabled)
+        self.assertFalse(export.exists())

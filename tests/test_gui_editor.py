@@ -297,11 +297,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "addCaptionButton"))
         self.assertEqual(self.app.segmentCount, 1)
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(len(load_project(output / "game.subtitle-project.json")["segments"]), 1)
+        self.assertEqual(len(load_project(video.with_suffix(".subtitle-project.json"))["segments"]), 1)
 
     def test_empty_project_creation_never_overwrites_existing_project(self) -> None:
         _video, _audio, output = self._set_ready_sources()
-        project_path = output / "game.subtitle-project.json"
+        project_path = Path(self.app.projectSavePath)
         sentinel = create_project(
             video_path=self.app.sourceSelection["video"],
             output_dir=output,
@@ -312,6 +312,189 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with patch("src.gui.probe_media_duration", return_value=30.0):
             self.assertFalse(self.app.createEmptyProject())
         self.assertEqual(load_project(project_path)["segments"][0]["text"], "keep")
+
+    def test_project_without_export_directory_supports_editing_and_transcription(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        self.app.setOutputDirectory("")
+        with patch("src.gui.probe_media_duration", return_value=30.0):
+            self.assertTrue(self.app.createEmptyProject())
+        path = video.with_suffix(".subtitle-project.json")
+        self.assertEqual(Path(self.app.projectPath), path)
+        self.assertEqual(load_project(path)["output_dir"], "")
+        self.app.addSegment(0.0)
+        self.app.updateSegment(0, {"text": "手動字幕"})
+        self.assertTrue(self.app.addCut(5.0, 10.0))
+        self.app.updateAudioMixChannel(0, {"volume_percent": 75})
+        self.app.initializeShortVideoClips()
+        self.assertTrue(self.app.saveProject())
+        saved = load_project(path)
+        self.assertEqual(saved["segments"][0]["text"], "手動字幕")
+        self.assertTrue(saved["timeline"]["cuts"])
+        self.assertTrue(saved["audio_mix"]["customized"])
+        self.assertTrue(saved["short_video"]["clips"])
+        self.assertEqual(saved["output_dir"], "")
+        self.assertEqual(saved["transcription"]["context_base_dir"], str(path.parent))
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+        self.assertTrue(self.app.actionCapabilities["canTranscribe"])
+        with patch.object(self.app, "refreshDependencies"), patch.object(self.app, "_start_command") as start:
+            self.app.transcribeProject(self.app.settings, "merge")
+        command = start.call_args.args[0]
+        self.assertEqual(command[command.index("--render-output-dir") + 1], "")
+        work = path.parent / ".game.work"
+        self.assertEqual(Path(command[command.index("--output-dir") + 1]), work)
+        self.assertEqual(Path(command[command.index("--project-path") + 1]).parent, work)
+        self.assertEqual(Path(self.app.projectPath), path)
+
+    def test_changing_export_directory_preserves_editor_and_autosave_path(self) -> None:
+        path = self._load_project(duration_seconds=30.0)
+        self.app.updateSegment(0, {"text": "unsaved edit"})
+        self.app.addCut(5.0, 10.0)
+        self.app.updateAudioMixChannel(1, {"volume_percent": 75})
+        self.app.initializeShortVideoClips()
+        self.app.setEditorPlayhead(12_000, "source")
+        project = self.app._project
+        preserved = deepcopy(project)
+        history = deepcopy(self.app._undo_stack)
+        selection = self.app.selectedSegmentIndex
+        export = self.root / "new-export"
+        export.mkdir()
+        self.app.beginSourceRelink()
+        self.app.setOutputDirectory(str(export))
+        self.app.finishSourceRelink()
+        self.assertIs(self.app._project, project)
+        self.assertEqual(self.app._undo_stack, history)
+        self.assertEqual(self.app.selectedSegmentIndex, selection)
+        self.assertEqual(self.app.editorPlayhead["sourcePositionMs"], 12_000)
+        self.assertEqual(Path(self.app.projectPath), path)
+        for key in ("segments", "timeline", "audio_mix", "short_video"):
+            self.assertEqual(project[key], preserved[key])
+        self.app.autosave_timer.stop()
+        self.app._autosave_project()
+        self.app._wait_for_autosave()
+        self.app.processEvents()
+        self.assertEqual(load_project(path)["output_dir"], str(export))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "unsaved edit")
+        self.assertEqual(list(export.iterdir()), [])
+
+    def test_export_change_is_visible_and_saved_before_source_popup_closes(self) -> None:
+        path = self._load_project()
+        export = self.root / "new-export"
+        export.mkdir()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)):
+            self._click(window, self._quick_item(window, "videoOutputDirectoryButton"))
+        self.assertEqual(self._quick_item(window, "videoOutputDirectoryText").property("text"), str(export))
+        target = self.root / "copy.subtitle-project.json"
+        with patch("src.gui.QFileDialog.getSaveFileName", return_value=(str(target), "")):
+            self._click(window, self._quick_item(window, "projectSaveAsButton"))
+        self.assertEqual(load_project(target)["output_dir"], str(export))
+        self.assertEqual(Path(self.app.projectPath), target)
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.videoOutputDirectory, str(export))
+        self.assertNotEqual(path, target)
+
+    def test_save_as_does_not_overwrite_an_unconfirmed_extension_completed_target(self) -> None:
+        path = self._load_project()
+        self.app.updateSegment(0, {"text": "unsaved"})
+        target = self.root / "existing.subtitle-project.json"
+        sentinel = b"do not overwrite"
+        target.write_bytes(sentinel)
+        with patch("src.gui.QFileDialog.getSaveFileName", return_value=(str(self.root / "existing"), "")):
+            self.app.browseProjectSaveAs()
+        self.assertEqual(target.read_bytes(), sentinel)
+        self.assertEqual(Path(self.app.projectPath), path)
+        self.assertTrue(self.app.projectDirty)
+        self.assertEqual(self.app.stage, "CHECK")
+
+    def test_legacy_dictionary_reference_survives_export_and_project_location_changes(self) -> None:
+        path = self._load_project()
+        legacy_base = path.parent
+        dictionary = legacy_base / "dictionary.json"
+        dictionary.write_text('{"game_title":"Test","terms":[]}', encoding="utf-8")
+        context = {"dictionary_path": "dictionary.json", "dictionary_confirmed": True}
+        self.app.setOutputDirectory("")
+        target = self.root / "moved" / "edit.subtitle-project.json"
+        self.assertTrue(self.app.saveProjectAs(str(target)))
+        self.assertTrue(self.app._load_project_path(target, update_sources=True))
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+        with patch.object(self.app, "_start_command") as start:
+            self.app.transcribeProject({**self.app.settings, "transcription_context": context}, "merge")
+        command = start.call_args.args[0]
+        self.assertIn("--context-base-dir", command)
+        self.assertEqual(Path(command[command.index("--context-base-dir") + 1]), legacy_base)
+
+    def test_save_as_preserves_export_and_waits_for_pending_autosave(self) -> None:
+        path = self._load_project()
+        export = self.app.videoOutputDirectory
+        self.app.updateSegment(0, {"text": "first"})
+        self.app.autosave_timer.stop()
+        self.app._autosave_project()
+        self.app.updateSegment(0, {"text": "latest"})
+        history = deepcopy(self.app._undo_stack)
+        target = self.root / "projects" / "custom.subtitle-project.json"
+        self.assertTrue(self.app.saveProjectAs(str(target)))
+        self.app.processEvents()
+        self.assertEqual(Path(self.app.projectPath), target)
+        self.assertEqual(self.app.videoOutputDirectory, export)
+        self.assertEqual(self.app._undo_stack, history)
+        self.assertEqual(load_project(target)["segments"][0]["text"], "latest")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self.app.updateSegment(0, {"text": "after save as"})
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(load_project(target)["segments"][0]["text"], "after save as")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        with patch("src.gui.save_project", side_effect=OSError("read only")):
+            self.assertFalse(self.app.saveProjectAs(str(self.root / "failed.json")))
+        self.assertEqual(Path(self.app.projectPath), target)
+
+    def test_render_without_output_directory_prompts_and_cancel_preserves_project(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        self.app.setOutputDirectory("")
+        self.app._dependencies = RuntimeDependencyStatus(True, True, False, cuda=False)
+        for short in (False, True):
+            with self.subTest(short=short):
+                self.app.setOutputDirectory("")
+                preserved = deepcopy(self.app._project)
+                action = self.app.renderShortVideo if short else lambda: self.app.renderVideo(self.app.settings)
+                with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value="") as choose, patch.object(self.app, "_start_command") as start:
+                    action()
+                choose.assert_called_once()
+                start.assert_not_called()
+                self.assertEqual(self.app._project, preserved)
+                self.assertEqual(Path(self.app.projectPath), path)
+                export = self.root / f"export-{short}"
+                export.mkdir()
+                with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)), patch.object(self.app, "_start_command") as start:
+                    action()
+                command = start.call_args.args[0]
+                self.assertEqual(Path(command[command.index("--output") + 1]).parent, export)
+                self.assertEqual(Path(self.app.projectPath), path)
+                self.assertEqual(load_project(path)["output_dir"], str(export))
+
+    def test_output_unset_qml_offers_export_and_distinct_save_locations(self) -> None:
+        path = self._load_project()
+        self.app.setOutputDirectory("")
+        self.app.initializeShortVideoClips()
+        self.app._dependencies = RuntimeDependencyStatus(True, True, False, cuda=False)
+        self.app.dependenciesChanged.emit()
+        _, window = self._load_qml()
+        self.assertFalse(self.app.actionCapabilities["canRenderNormal"])
+        self.assertTrue(self.app.actionCapabilities["normalRenderNeedsOutput"])
+        self.assertTrue(self._quick_item(window, "renderVideoButton").isEnabled())
+        self.assertIn("出力先を選んで", self._quick_item(window, "renderVideoButton").property("text"))
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        popup = window.findChild(QObject, "sourcePopup")
+        content = popup.property("contentItem")
+        for name in ("projectSaveAsButton", "videoOutputDirectoryButton", "sourceDoneButton"):
+            self._assert_quick_item_within(content, self._quick_item(window, name))
+        self.assertEqual(self._quick_item(window, "projectSavePathText").property("text"), str(path))
+        self.assertIn("書き出すとき", self._quick_item(window, "videoOutputDirectoryText").property("text"))
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self.assertTrue(self._quick_item(window, "shortModeExportButton").isEnabled())
 
     def test_video_only_empty_project_disables_mixer_before_normal_render(self) -> None:
         video = self.root / "video-only.mkv"
@@ -473,7 +656,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(self.app.sourceSelection["video"], "")
         self.assertEqual(self.app.sourceSelection["audio_files"], [])
-        self.assertEqual(self.app.sourceSelection["output_dir"], "")
+        self.assertEqual(self.app.sourceSelection["output_dir"], str(missing_output.resolve()))
 
     def test_load_project_saves_pending_changes_before_switching(self) -> None:
         self._load_project()
@@ -1073,9 +1256,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_undo_redo_save_and_write_failures_are_guarded(self) -> None:
         path = self._load_project()
 
+        self.app.setOutputDirectory("")
         self.app.openOutputFolder()
         self.assertEqual(self.app.stage, "CHECK")
         self.assertIn("出力先フォルダ", self.app.status)
+
+        self.app.setOutputDirectory(str(path.parent))
 
         self.app.updateSegment(0, {"text": "after"})
         self.app.undoSubtitleEdit()
@@ -1636,7 +1822,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_process_finish_handles_transcribe_render_cancel_and_error(self) -> None:
         video, _, output = self._set_ready_sources()
         path, _, _ = self._make_project()
-        expected_path = output / "game.subtitle-project.json"
+        expected_path = video.with_suffix(".subtitle-project.json")
         if path != expected_path:
             save_project(expected_path, load_project(path))
 
@@ -2176,6 +2362,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.projectSpeakers[0]["color"], original_project["speakers"][0]["color"])
         self.assertEqual(self.app.projectSpeakers[0]["track_key"], original_project["speakers"][0]["track_key"])
         self.app.finishSourceRelink()
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(Path(self.app.projectPath), path)
 
     def test_finish_source_relink_clears_relinking_state(self) -> None:
         path, _, _ = self._make_project()
@@ -4259,8 +4448,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(clips[3]["fit"], "contain")
 
     def test_video_only_project_explains_disabled_transcription(self) -> None:
-        self._load_project(segments=[])
         self._set_ready_sources()
+        self._load_project(segments=[])
         self.app._project["speakers"] = []
         self.app._project["audio_sources"] = []
         self.app._speakers = []
@@ -4408,7 +4597,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_transcription_gui_process_creates_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
-        project_path = output / "game.subtitle-project.json"
+        project_path = Path(self.app.projectSavePath)
         template_path = self.root / "transcription-result-template.json"
         project = create_project(
             video_path=video,
@@ -4466,7 +4655,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(Path(captured_options["config_path"]).resolve(), self.app.gui_config_path.resolve())
         self.assertEqual(captured_options["video"], str(video.resolve()))
         self.assertEqual(captured_options["audio_files"], [str(audio.resolve())])
-        self.assertEqual(captured_options["output_dir"], str(output.resolve()))
+        self.assertEqual(captured_options["output_dir"], str(project_path.parent / ".game.work"))
+        self.assertEqual(captured_options["render_output_dir"], str(output.resolve()))
+        self.assertEqual(captured_options["project_path"], str(project_path))
         self.assertFalse(captured_options["overwrite_project"])
         self.assertTrue(self.app.gui_config_path.is_file())
         self.assertTrue(project_path.is_file())
@@ -4591,8 +4782,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         generated_path = Path(start_transcription.call_args.args[2])
         self.assertNotEqual(generated_path.resolve(), default_path.resolve())
-        self.assertEqual(generated_path.parent.resolve(), output.resolve())
-        self.assertTrue(generated_path.name.startswith(".game.subtitle-project."))
+        self.assertEqual(generated_path.parent.resolve(), output.resolve() / ".custom-edit.work")
+        self.assertTrue(generated_path.name.startswith(".custom-edit.subtitle-project."))
         self.assertEqual(load_project(default_path)["segments"], sentinel["segments"])
 
     def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
@@ -4725,7 +4916,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
-        project_path = output / "game.subtitle-project.json"
+        project_path = Path(self.app.projectSavePath)
         template_path = self.root / "retry-result-template.json"
         project = create_project(
             video_path=video,
@@ -4814,7 +5005,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_transcribe_with_existing_project_shows_overwrite_confirmation(self) -> None:
         video, _audio, _output = self._set_ready_sources()
-        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path = Path(self.app.projectSavePath)
         project_path.write_text("{}", encoding="utf-8")
 
         _, window = self._load_qml()
@@ -4830,7 +5021,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_transcribe_reject_overwrite_does_not_start(self) -> None:
         video, _audio, _output = self._set_ready_sources()
-        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path = Path(self.app.projectSavePath)
         project_path.write_text("{}", encoding="utf-8")
 
         _, window = self._load_qml()
@@ -4848,7 +5039,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_transcribe_accept_overwrite_passes_overwrite_flag(self) -> None:
         video, _audio, _output = self._set_ready_sources()
-        project_path = _output / f"{video.stem}.subtitle-project.json"
+        project_path = Path(self.app.projectSavePath)
         project_path.write_text("{}", encoding="utf-8")
 
         _, window = self._load_qml()

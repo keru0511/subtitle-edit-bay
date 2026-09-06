@@ -336,7 +336,7 @@ ApplicationWindow {
             return 4
         if (root.appBackend.projectLoaded)
             return 3
-        if (root.appBackend.sourceSelection.video && root.appBackend.sourceSelection.output_dir && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready)
+        if (root.appBackend.sourceSelection.video && root.appBackend.speakers.length > 0 && root.appBackend.dependencyStatus.ready)
             return 2
         return 1
     }
@@ -1511,7 +1511,7 @@ ApplicationWindow {
                     Column { anchors.fill: parent; anchors.margins: 10; spacing: 3
                         Text { text: "動画"; color: root.textMuted; font.pixelSize: 9; font.family: "Yu Gothic UI" }
                         Text { width: parent.width; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text { width: parent.width; text: root.appBackend.sourceSelection.output_dir || "出力先未選択"; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
+                        Text { width: parent.width; text: root.appBackend.projectSavePath ? "プロジェクト: " + root.appBackend.projectSavePath : "保存先は動画の選択後に決まります"; color: root.textMuted; font.pixelSize: 10; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                     }
                 }
                 ListView {
@@ -1617,15 +1617,16 @@ ApplicationWindow {
                 projectLoaded: root.appBackend.projectLoaded
                 running: root.appBackend.running
                 activeJob: root.appBackend.activeJob
-                canCreateProject: Boolean(root.appBackend.sourceSelection.video) && Boolean(root.appBackend.sourceSelection.output_dir)
+                canCreateProject: Boolean(root.appBackend.sourceSelection.video)
                 canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
-                canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal)
+                canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
+                renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
                 renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
                 blockReason: root.transcriptionBlockReason()
                 audioMixerAvailable: root.appBackend.audioMixerAvailable
                 mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
                 subtitleAvailable: root.appBackend.segmentCount > 0
-                outputFolderAvailable: Boolean(root.appBackend.sourceSelection.output_dir)
+                outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
                 settingsExpanded: root.settingsExpanded
                 onSettingsRequested: root.toggleSettingsPopup()
                 onDictionaryRequested: root.openDictionaryScreen()
@@ -1939,7 +1940,7 @@ ApplicationWindow {
         objectName: "sourcePopup"
         id: sourcePopup
         anchors.centerIn: Overlay.overlay
-        width: 620; height: 520; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
+        width: 620; height: 680; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
         onOpened: root.appBackend.beginSourceRelink()
         onClosed: root.appBackend.finishSourceRelink()
         background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
@@ -1999,8 +2000,18 @@ ApplicationWindow {
                 }
             }
             RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
-            PanelTitle { text: "出力先フォルダ" }
-            RowLayout { Layout.fillWidth: true; Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.output_dir || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() } }
+            PanelTitle { text: "プロジェクト保存先" }
+            RowLayout {
+                Layout.fillWidth: true
+                Text { objectName: "projectSavePathText"; Layout.fillWidth: true; text: root.appBackend.projectSavePath || "動画の選択後に決まります"; color: root.textMuted; elide: Text.ElideMiddle }
+                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.appBackend.browseProjectSaveAs() }
+            }
+            PanelTitle { text: "完成動画の出力先" }
+            RowLayout {
+                Layout.fillWidth: true
+                Text { objectName: "videoOutputDirectoryText"; Layout.fillWidth: true; text: root.appBackend.videoOutputDirectory || "書き出すときに選択できます"; color: root.textMuted; elide: Text.ElideMiddle }
+                SmallButton { objectName: "videoOutputDirectoryButton"; text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() }
+            }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "素材を再指定"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
         }
     }
@@ -2270,7 +2281,7 @@ ApplicationWindow {
                             objectName: "mixerRenderButton"
                             implicitHeight: 34
                             text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
-                            enabled: Boolean(root.workflowCapabilities.canRenderNormal)
+                            enabled: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
                             onClicked: {
                                 root.appBackend.renderVideo(root.currentSettings())
                             }

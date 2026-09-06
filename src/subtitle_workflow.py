@@ -76,8 +76,7 @@ from .subtitle_project import (
     create_project,
     derive_ass_path,
     derive_project_path,
-    derive_render_path,
-    derive_short_render_path,
+    resolve_render_output_path,
     load_project,
     project_to_transcript,
     save_project,
@@ -599,6 +598,7 @@ def render_project_video(
     speech_min_clip_seconds: float = DEFAULT_SPEECH_MIN_CLIP_SECONDS,
 ) -> Path:
     project = load_project(project_path, resolve_video_duration=True)
+    output = resolve_render_output_path(project_path, project, output_path)
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
@@ -614,7 +614,6 @@ def render_project_video(
     ass_path = build_project_ass(project_path, _project=project) if has_subtitles else None
     emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
     emit_progress_event("render", "audio", phase="start")
-    output = Path(output_path) if output_path else derive_render_path(project_path)
     loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
     audio_mix = project.get("audio_mix", {})
     use_audio_mix = bool(audio_mix.get("customized", False))
@@ -961,7 +960,7 @@ def render_project_short_video(
     if not video_path or not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
 
-    output = Path(output_path) if output_path else derive_short_render_path(project_path)
+    output = resolve_render_output_path(project_path, project, output_path, short=True)
     if audio_codec == "copy":
         audio_codec = "aac"
     has_subtitles = any(
@@ -1028,6 +1027,8 @@ def main() -> None:
     transcribe.add_argument("--audio-file", action="append")
     transcribe.add_argument("--video-audio-track")
     transcribe.add_argument("--output-dir", required=True)
+    transcribe.add_argument("--render-output-dir", help="Completed video export directory; an empty value leaves it unset. Defaults to --output-dir for legacy CLI calls.")
+    transcribe.add_argument("--context-base-dir", help="Base directory for relative transcription dictionary paths. Defaults to --output-dir.")
     transcribe.add_argument("--project-path", help="Explicit editable project output path.")
     transcribe.add_argument("--reference-audio")
     transcribe.add_argument("--reference-track")
@@ -1060,7 +1061,7 @@ def main() -> None:
 
     if args.phase == "transcribe":
         if not args.run:
-            print(derive_project_path(args.video, args.output_dir))
+            print(Path(args.project_path) if args.project_path else derive_project_path(args.video, args.output_dir))
             return
         settings = settings_from_config(config)
         transcribe_options = _transcribe_options_with_cli_overrides(
@@ -1096,6 +1097,8 @@ def main() -> None:
             audio_files=args.audio_file or [],
             output_dir=args.output_dir,
             project_path=args.project_path,
+            render_output_dir=args.render_output_dir,
+            context_base_dir=args.context_base_dir,
             reference_audio=args.reference_audio,
             reference_track=args.reference_track,
             video_audio_track=args.video_audio_track,
@@ -1112,7 +1115,7 @@ def main() -> None:
 
     if args.phase == "render-short":
         if not args.run:
-            print(Path(args.output) if args.output else derive_short_render_path(args.project))
+            print(Path(args.output) if args.output else resolve_render_output_path(args.project, load_project(args.project), short=True))
             return
         settings = settings_from_config(config)
         dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=False)
@@ -1125,7 +1128,7 @@ def main() -> None:
         return
 
     if not args.run:
-        print(Path(args.output) if args.output else derive_render_path(args.project))
+        print(Path(args.output) if args.output else resolve_render_output_path(args.project, load_project(args.project)))
         return
     settings = settings_from_config(config)
     dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=False)

@@ -89,6 +89,7 @@ from .subtitle_project import (
     derive_project_path,
     load_project,
     normalize_segment,
+    project_work_directory,
     save_project,
 )
 from .processing_progress import ProcessingProgress, parse_ffmpeg_timestamp, parse_progress_events
@@ -2001,11 +2002,17 @@ class EditBayBackend(LegacyEditBayBackend):
         self._set_status(f"{speaker.get('name', '話者')} の字幕色を保存しました", "SAVED")
 
     def _set_source_selection(self, selection: Any) -> None:
+        previous = self._source_selection
         super()._set_source_selection(selection)
-        if self._loading_project_sources or self._relinking_project_sources or self._project is None:
+        if self._loading_project_sources or self._project is None:
             return
-        if not self._project_source_selection_matches(selection):
+        media_changed = previous.video != selection.video or previous.audio_files != selection.audio_files
+        if not self._relinking_project_sources and media_changed and not self._project_source_selection_matches(selection):
             self._clear_project()
+        elif previous.output_dir != selection.output_dir:
+            self._project["output_dir"] = selection.output_dir
+            self._mark_project_dirty()
+            self.projectDataChanged.emit()
 
     def _normalized_source_path(self, value: str) -> str:
         if not value:
@@ -2023,12 +2030,9 @@ class EditBayBackend(LegacyEditBayBackend):
             if item.get("path")
         }
         selected_audio = {self._normalized_source_path(path) for path in selection.audio_files}
-        project_output = self._normalized_source_path(str(self._project.get("output_dir", "")))
-        selected_output = self._normalized_source_path(selection.output_dir)
         return (
             selected_video == project_video
             and selected_audio == project_audio
-            and selected_output == project_output
         )
 
     @Slot()
@@ -2041,7 +2045,11 @@ class EditBayBackend(LegacyEditBayBackend):
         if not self._relinking_project_sources:
             return
         try:
-            if self._project is not None and self._relink_source_selection != self._source_selection:
+            previous = self._relink_source_selection
+            if self._project is not None and previous is not None and (
+                previous.video != self._source_selection.video
+                or previous.audio_files != self._source_selection.audio_files
+            ) and not self._project_source_selection_matches(self._source_selection):
                 self._clear_project()
         finally:
             self._relinking_project_sources = False
@@ -2064,7 +2072,7 @@ class EditBayBackend(LegacyEditBayBackend):
         selected_video = str(Path(self._source_selection.video).resolve()) if self._source_selection.video else ""
         selected_output = str(Path(self._source_selection.output_dir).resolve()) if self._source_selection.output_dir else ""
 
-        if not selected_video or not selected_output or not source_entries:
+        if not selected_video:
             self._set_status("Relink requires a complete source selection", "CHECK")
             return
 
@@ -2133,7 +2141,6 @@ class EditBayBackend(LegacyEditBayBackend):
                 self._project["video"].get("duration_seconds", 0.0)
             )
 
-        self._project_path = str(derive_project_path(selected_video, selected_output))
         reconcile_audio_mix(self._project, self._mixer_video_tracks())
 
         if self._project != old_project:
@@ -2146,10 +2153,23 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("Project sources relinked", "EDIT")
 
     def _default_project_path(self) -> Path | None:
+        if self._project is not None and self._project_path:
+            return Path(self._project_path)
         selection = self._source_selection
-        if not selection.video or not selection.output_dir:
+        if not selection.video:
             return None
-        return derive_project_path(selection.video, selection.output_dir)
+        return derive_project_path(selection.video, Path(selection.video).parent)
+
+    @Property(str, notify=actionCapabilitiesChanged)
+    def projectSavePath(self) -> str:
+        path = self._default_project_path()
+        return str(path) if path else ""
+
+    @Property(str, notify=actionCapabilitiesChanged)
+    def videoOutputDirectory(self) -> str:
+        if self._project is not None:
+            return str(self._project.get("output_dir", ""))
+        return self._source_selection.output_dir
 
     @Slot(result=bool)
     def transcriptionProjectExists(self) -> bool:
@@ -2158,20 +2178,22 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(result=bool)
     def createEmptyProject(self) -> bool:
+        return self._create_empty_project(self._default_project_path())
+
+    def _create_empty_project(self, project_path: Path | None) -> bool:
         if self._running:
             self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
             return False
         selection = self._source_selection
-        if not Path(selection.video).is_file() or not selection.output_dir:
-            self._set_status("動画と出力先フォルダを指定してください", "CHECK")
+        if not Path(selection.video).is_file():
+            self._set_status("編集する動画を指定してください", "CHECK")
             return False
-        project_path = self._default_project_path()
         if project_path is None:
             self._set_status("編集プロジェクトの保存先を決定できません", "ERROR")
             return False
         if project_path.is_file():
             self._set_status(
-                "既存プロジェクトは上書きしません。プロジェクトを開くか、別の出力先を指定してください",
+                "既存プロジェクトは上書きしません。プロジェクトを開くか、別のプロジェクト保存先を指定してください",
                 "CHECK",
             )
             return False
@@ -2187,7 +2209,7 @@ class EditBayBackend(LegacyEditBayBackend):
             audio_sources=deepcopy(self._speakers),
             speakers=deepcopy(self._speakers),
             duration_seconds=duration_seconds,
-            transcription={"status": "not_started"},
+            transcription={"status": "not_started", "context_base_dir": str(project_path.parent.resolve())},
         )
         reconcile_audio_mix(
             project,
@@ -2242,6 +2264,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def resetSources(self) -> None:
+        if self._running:
+            return
         super().resetSources()
         if not self._loading_project_sources and self._project is not None:
             self._clear_project()
@@ -2249,12 +2273,15 @@ class EditBayBackend(LegacyEditBayBackend):
     @Slot(str)
     def setVideoFile(self, path: str) -> None:
         super().setVideoFile(path)
-        self._try_load_default_project()
+        if not self._running and self._project is None:
+            self._try_load_default_project()
 
     @Slot(str)
     def setOutputDirectory(self, path: str) -> None:
-        super().setOutputDirectory(path)
-        self._try_load_default_project()
+        if not path and not self._running:
+            self._set_source_selection(replace(self._source_selection, output_dir=""))
+        else:
+            super().setOutputDirectory(path)
 
     @Slot(result=str)
     def browseShortModeBgm(self) -> str:
@@ -2276,7 +2303,8 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._running:
             self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
             return
-        start_dir = self._source_selection.output_dir or str(self.workspace_root)
+        default_path = self._default_project_path()
+        start_dir = str(default_path.parent) if default_path else str(self.workspace_root)
         path, _ = QFileDialog.getOpenFileName(
             None,
             "字幕編集プロジェクトを開く",
@@ -2285,6 +2313,47 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         if path:
             self.loadProject(path)
+
+    @Slot()
+    def browseProjectSaveAs(self) -> None:
+        if self._running or not self._source_selection.video and self._project is None:
+            return
+        default_path = self._default_project_path()
+        path, _ = QFileDialog.getSaveFileName(
+            None, "編集プロジェクトの保存先", str(default_path or self.workspace_root),
+            "Subtitle projects (*.subtitle-project.json);;JSON files (*.json)",
+        )
+        if path:
+            self.saveProjectAs(path)
+
+    @Slot(str, result=bool)
+    def saveProjectAs(self, path: str) -> bool:
+        if self._running or not path:
+            return False
+        target = self._local_path(path)
+        if target.suffix.lower() != ".json":
+            target = target.with_name(target.name + ".subtitle-project.json")
+            if target.exists():
+                self._set_status(
+                    "拡張子を補った保存先には既存プロジェクトがあります。拡張子付きで選択するか、別の名前を指定してください",
+                    "CHECK",
+                )
+                return False
+        if self._project is None:
+            return self._create_empty_project(target)
+        self.autosave_timer.stop()
+        self._wait_for_autosave()
+        try:
+            save_project(target, self._project, project_is_validated=True)
+        except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+            self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
+            return False
+        self._project_path = str(target.resolve())
+        self._project_revision += 1
+        self._project_dirty = False
+        self.projectChanged.emit()
+        self._set_status("別の場所に編集プロジェクトを保存しました", "SAVED")
+        return True
 
     def _mixer_video_tracks(self) -> list[dict[str, str]]:
         tracks = [
@@ -2348,7 +2417,7 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         if self._project_dirty:
             if not self._project_path:
-                self._set_status("先に出力先フォルダを指定してください", "ERROR")
+                self._set_status("先にプロジェクト保存先を指定してください", "ERROR")
                 return
             if not self.saveProject():
                 return
@@ -2382,7 +2451,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._reset_transcription_integration_state()
             self._set_status("文字起こし結果の保存先を決定できません", "ERROR")
             return
-        generated_project_path = default_project_path.with_name(
+        generated_project_path = project_work_directory(default_project_path) / (
             f".{default_project_path.stem}.{uuid4().hex}.subtitle-project.json"
         )
         self.startTranscription(settings, True, str(generated_project_path))
@@ -2535,6 +2604,10 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
             return False
         self._project = project
+        transcription = project.setdefault("transcription", {})
+        transcription.setdefault("context_base_dir", str(Path(
+            transcription.get("work_dir") or project.get("output_dir") or path.parent
+        ).resolve()))
         self._apply_project_subtitle_settings(project)
         self._project_path = str(path.resolve())
         self._project_dirty = False
@@ -2545,24 +2618,21 @@ class EditBayBackend(LegacyEditBayBackend):
         self._selected_segment_index = 0 if project.get("segments") else -1
         self._reset_editor_timing()
         self._sync_project_timeline()
-        if update_sources:
-            self._loading_project_sources = True
-            try:
+        self._loading_project_sources = True
+        try:
+            selection = replace(self._source_selection, output_dir=str(project.get("output_dir", "")))
+            if update_sources:
                 video = Path(str(project.get("video", {}).get("path", "")))
-                output_dir = Path(str(project.get("output_dir", "")))
                 audio_files = [str(item.get("path", "")) for item in project.get("audio_sources", [])]
                 resolved_audio_files = [str(Path(item).resolve()) for item in audio_files if Path(item).is_file()]
-
-                self._set_source_selection(
-                    replace(
-                        self._source_selection,
-                        video=str(video.resolve()) if video.is_file() else "",
-                        output_dir=str(output_dir.resolve()) if output_dir.is_dir() else "",
-                        audio_files=tuple(resolved_audio_files),
-                    )
+                selection = replace(
+                    selection,
+                    video=str(video.resolve()) if video.is_file() else "",
+                    audio_files=tuple(resolved_audio_files),
                 )
-            finally:
-                self._loading_project_sources = False
+            self._set_source_selection(selection)
+        finally:
+            self._loading_project_sources = False
         reconcile_audio_mix(self._project, self._mixer_video_tracks())
         self._sync_subtitle_model()
         self.projectChanged.emit()
@@ -3180,7 +3250,7 @@ class EditBayBackend(LegacyEditBayBackend):
             device=device,
             has_video=Path(self._source_selection.video).is_file(),
             has_audio=self._has_audio_source([speaker["path"] for speaker in self._speakers]),
-            output_dir=self._source_selection.output_dir,
+            project_path=self.projectSavePath,
             running=self._running,
         )
 
@@ -3197,6 +3267,12 @@ class EditBayBackend(LegacyEditBayBackend):
         short = render_capability(
             self._dependencies, self._project, self._project_path, short=True, running=self._running,
         )
+        needs_output = {}
+        for artifact, is_short in (("normal", False), ("short", True)):
+            needs_output[artifact] = not self.videoOutputDirectory and render_capability(
+                self._dependencies, self._project, self._project_path, short=is_short,
+                running=self._running, require_output=False,
+            ).enabled
         return {
             "canTranscribe": transcribe.enabled,
             "transcriptionReason": transcribe.reason,
@@ -3204,6 +3280,8 @@ class EditBayBackend(LegacyEditBayBackend):
             "normalRenderReason": normal.reason,
             "canRenderShort": short.enabled,
             "shortRenderReason": short.reason,
+            "normalRenderNeedsOutput": needs_output["normal"],
+            "shortRenderNeedsOutput": needs_output["short"],
             "canUseTranscriptionCuda": self._dependencies.cuda,
             "canUseNvenc": self._dependencies.nvenc,
         }
@@ -3252,13 +3330,15 @@ class EditBayBackend(LegacyEditBayBackend):
             self.gui_config_path,
             video=selection.video,
             audio_files=audio_files,
-            output_dir=selection.output_dir,
+            output_dir=str(project_work_directory(self.projectSavePath)),
+            render_output_dir=self.videoOutputDirectory,
+            context_base_dir=str((self._project or {}).get("transcription", {}).get("context_base_dir") or Path(self.projectSavePath).parent),
             reference_audio=reference_audio,
             reference_track=reference_track,
             video_audio_track=video_audio_track,
             alignment_offset_adjustment=adjustment,
             overwrite_project=overwrite_project,
-            project_path=project_path,
+            project_path=project_path or self.projectSavePath,
         )
         self._start_command(command, "transcribe", "文字起こしを開始しています")
 
@@ -3274,6 +3354,17 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._running or self._project is None:
             return
         self.refreshDependencies()
+        preflight = render_capability(
+            self._dependencies, self._project, self._project_path, short=short, require_output=False,
+        )
+        if not preflight.enabled:
+            self._set_status(preflight.reason, "CHECK")
+            return
+        if not self.videoOutputDirectory:
+            self.browseOutputDirectory()
+            if not self.videoOutputDirectory:
+                self._set_status("書き出しを中止しました。プロジェクトはそのまま編集できます", "CHECK")
+                return
         try:
             request = prepare_render_request(
                 self._dependencies, self._project, self._project_path,
@@ -3893,7 +3984,11 @@ class EditBayBackend(LegacyEditBayBackend):
         return str(self._application_logger.log_path)
 
     def _related_process_log_tail(self) -> str:
-        output_directory = str(self._source_selection.output_dir or "").strip()
+        if self._active_job == "transcribe" and self.projectSavePath:
+            output_directory = str(project_work_directory(self.projectSavePath))
+        else:
+            transcription = (self._project or {}).get("transcription", {})
+            output_directory = str(transcription.get("work_dir") or self.videoOutputDirectory).strip()
         if not output_directory:
             return ""
         transcript_directory = Path(output_directory) / "transcripts"

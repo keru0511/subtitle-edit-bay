@@ -2032,13 +2032,32 @@ ApplicationWindow {
         objectName: "sourcePopup"
         id: sourcePopup
         anchors.centerIn: Overlay.overlay
-        width: 620; height: 680; modal: true; focus: true; closePolicy: Popup.CloseOnEscape
+        width: Math.min(620, Overlay.overlay.width - 32)
+        height: Math.min(680, Overlay.overlay.height - 32)
+        modal: true; focus: true; closePolicy: Popup.CloseOnEscape
         onOpened: root.appBackend.beginSourceRelink()
         onClosed: root.appBackend.finishSourceRelink()
         background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
         ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
             RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
+            ScrollView {
+                id: sourceSettingsScrollView
+                objectName: "sourceSettingsScrollView"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical: ScrollBar {
+                    objectName: "sourceSettingsVerticalScrollBar"
+                    policy: ScrollBar.AsNeeded
+                }
+                ColumnLayout {
+                    id: sourceSettingsContent
+                    objectName: "sourceSettingsContent"
+                    width: sourceSettingsScrollView.availableWidth
+                    spacing: 12
             Rectangle {
+                objectName: "sourceDependencyWarning"
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? 62 : 0
                 visible: !root.appBackend.dependencyStatus.ready
@@ -2086,7 +2105,9 @@ ApplicationWindow {
             PanelTitle { text: "話者音声" }
             ListView {
                 id: sourceAudioList
-                Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5; model: root.appBackend.speakers
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(48, Math.min(124, contentHeight))
+                clip: true; spacing: 5; model: root.appBackend.speakers
                 delegate: Rectangle { id: sourceAudioDelegate; required property int index; required property var modelData; width: sourceAudioList.width; height: 38; radius: 7; color: root.raised
                     RowLayout {
                         anchors.fill: parent
@@ -2175,7 +2196,15 @@ ApplicationWindow {
                 Text { objectName: "videoOutputDirectoryText"; Layout.fillWidth: true; text: root.appBackend.videoOutputDirectory || "書き出すときに選択できます"; color: root.textMuted; elide: Text.ElideMiddle }
                 SmallButton { objectName: "videoOutputDirectoryButton"; text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() }
             }
-            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } Button { objectName: "sourceRelinkButton"; text: "素材を再指定"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() } Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() } }
+                }
+            }
+            RowLayout {
+                objectName: "sourcePopupFooter"
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { objectName: "sourceRelinkButton"; text: "素材を再指定"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() }
+                Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() }
+            }
         }
     }
 

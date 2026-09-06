@@ -663,6 +663,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         export.mkdir()
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "sourceSetupButton"))
+        scroll_view = self._quick_item(window, "sourceSettingsScrollView")
+        flickable = scroll_view.property("contentItem")
+        max_content_y = max(
+            0.0,
+            float(flickable.property("contentHeight")) - float(flickable.property("height")),
+        )
+        flickable.setProperty("contentY", max_content_y)
+        self.app.processEvents()
         with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)):
             self._click(window, self._quick_item(window, "videoOutputDirectoryButton"))
         self.assertEqual(self._quick_item(window, "videoOutputDirectoryText").property("text"), str(export))
@@ -759,21 +767,52 @@ class GuiEditorRegressionTests(unittest.TestCase):
         path = self._load_project()
         self.app.setOutputDirectory("")
         self.app.initializeShortVideoClips()
-        self.app._dependencies = RuntimeDependencyStatus(True, True, False, cuda=False)
-        self.app.dependenciesChanged.emit()
         _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
         self.assertFalse(self.app.actionCapabilities["canRenderNormal"])
         self.assertTrue(self.app.actionCapabilities["normalRenderNeedsOutput"])
         self.assertTrue(self._quick_item(window, "renderVideoButton").isEnabled())
         self.assertIn("出力先を選んで", self._quick_item(window, "renderVideoButton").property("text"))
-        self._click(window, self._quick_item(window, "sourceSetupButton"))
-        popup = window.findChild(QObject, "sourcePopup")
-        content = popup.property("contentItem")
-        for name in ("projectSaveAsButton", "videoOutputDirectoryButton", "sourceDoneButton"):
-            self._assert_quick_item_within(content, self._quick_item(window, name))
-        self.assertEqual(self._quick_item(window, "projectSavePathText").property("text"), str(path))
-        self.assertIn("書き出すとき", self._quick_item(window, "videoOutputDirectoryText").property("text"))
-        self._click(window, self._quick_item(window, "sourceDoneButton"))
+
+        for dependencies, warning_visible in (
+            (RuntimeDependencyStatus(True, True, False, cuda=False), True),
+            (RuntimeDependencyStatus(True, True, True, cuda=False), False),
+        ):
+            with self.subTest(warning_visible=warning_visible):
+                self.app._dependencies = dependencies
+                self.app.dependenciesChanged.emit()
+                self._click(window, self._quick_item(window, "sourceSetupButton"))
+                popup = window.findChild(QObject, "sourcePopup")
+                content = popup.property("contentItem")
+                scroll_view = self._quick_item(window, "sourceSettingsScrollView")
+                scroll_content = self._quick_item(window, "sourceSettingsContent")
+                scroll_bar = self._quick_item(window, "sourceSettingsVerticalScrollBar")
+                footer = self._quick_item(window, "sourcePopupFooter")
+                done_button = self._quick_item(window, "sourceDoneButton")
+                warning = self._quick_item(window, "sourceDependencyWarning")
+                flickable = scroll_view.property("contentItem")
+                self.assertIsNotNone(flickable)
+                self.assertEqual(warning.isVisible(), warning_visible)
+                self._assert_quick_item_within(content, footer)
+                self._assert_quick_item_within(content, done_button)
+                self.assertGreater(scroll_content.property("implicitHeight"), scroll_view.height())
+                self.assertTrue(scroll_bar.isVisible())
+                self.assertLess(float(scroll_bar.property("size")), 1.0)
+
+                max_content_y = max(
+                    0.0,
+                    float(flickable.property("contentHeight")) - float(flickable.property("height")),
+                )
+                flickable.setProperty("contentY", max_content_y)
+                self.app.processEvents()
+                for name in ("projectSaveAsButton", "videoOutputDirectoryButton"):
+                    self._assert_quick_item_within(scroll_view, self._quick_item(window, name))
+                self._assert_quick_item_within(content, footer)
+                self._assert_quick_item_within(content, done_button)
+                self.assertEqual(self._quick_item(window, "projectSavePathText").property("text"), str(path))
+                self.assertIn("書き出すとき", self._quick_item(window, "videoOutputDirectoryText").property("text"))
+                flickable.setProperty("contentY", 0)
+                self._click(window, done_button)
         self._click(window, self._quick_item(window, "shortModeOpenButton"))
         self.assertTrue(self._quick_item(window, "shortModeExportButton").isEnabled())
 

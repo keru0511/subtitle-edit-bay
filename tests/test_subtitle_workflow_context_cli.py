@@ -46,6 +46,31 @@ class SubtitleWorkflowContextCliTests(unittest.TestCase):
         self.assertEqual(transcribe.call_args.kwargs["video_path"], "video.mkv")
         self.assertEqual(transcribe.call_args.kwargs["audio_files"], ["1-alice.flac"])
         self.assertEqual(transcribe.call_args.kwargs["device"], "cpu")
+        self.assertIsNone(transcribe.call_args.kwargs["render_output_dir"])
+
+    def test_gui_command_keeps_empty_export_separate_from_work_and_project_paths(self) -> None:
+        import src.subtitle_workflow as subtitle_workflow
+        from src.gui_state import build_gui_transcribe_command
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_path = root / "projects" / "edit.subtitle-project.json"
+            work = project_path.parent / ".edit.work"
+            command = build_gui_transcribe_command(
+                root / "config.json", video="video.mkv", audio_files=["1-alice.flac"],
+                output_dir=str(work), project_path=str(project_path), render_output_dir="",
+            )
+            with (
+                mock.patch.object(sys, "argv", ["subtitle_workflow", *command[4:]]),
+                mock.patch("src.subtitle_workflow.load_command_runtime_config", return_value={}),
+                mock.patch("src.subtitle_workflow.check_runtime_dependencies", return_value=object()),
+                mock.patch("src.subtitle_workflow.format_dependency_error", return_value=None),
+                mock.patch("src.subtitle_workflow.transcribe_to_project_with_context", return_value=project_path) as transcribe,
+            ):
+                subtitle_workflow.main()
+            self.assertEqual(transcribe.call_args.kwargs["output_dir"], str(work))
+            self.assertEqual(transcribe.call_args.kwargs["project_path"], str(project_path))
+            self.assertEqual(transcribe.call_args.kwargs["render_output_dir"], "")
 
     def test_transcribe_phase_accepts_video_audio_track_without_audio_files(self) -> None:
         import src.subtitle_workflow as subtitle_workflow

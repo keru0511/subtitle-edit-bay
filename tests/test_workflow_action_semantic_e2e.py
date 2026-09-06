@@ -37,7 +37,7 @@ class WorkflowActionSemanticE2ETests(unittest.TestCase):
         for short in (False, True):
             with self.subTest(short=short):
                 project = create_project(
-                    video_path=self.fixture.path, output_dir=self.root, segments=[], duration_seconds=2,
+                    video_path=self.fixture.path, output_dir=self.root / "final-videos", segments=[], duration_seconds=2,
                 )
                 project["short_video"] = {
                     "enabled": True,
@@ -45,7 +45,7 @@ class WorkflowActionSemanticE2ETests(unittest.TestCase):
                     "global_fit": "contain",
                     "clips": [{"start": 0, "end": 2}],
                 }
-                path = save_project(self.root / f"zero-{short}.subtitle-project.json", project)
+                path = save_project(self.root / "projects" / f"zero-{short}.subtitle-project.json", project)
                 config_path = self.root / f"config-{short}.json"
                 request = prepare_render_request(dependencies, project, str(path), config_path, short=short)
                 self.assertEqual(request.video_codec, "libx264")
@@ -60,6 +60,8 @@ class WorkflowActionSemanticE2ETests(unittest.TestCase):
                 self.assertNotIn("subtitles=", result.stdout + result.stderr)
                 self.assertFalse(derive_ass_path(path).exists())
                 self.assertEqual(load_project(path)["segments"], [])
+                self.assertEqual(request.output_path.parent, self.root / "final-videos")
+                self.assertFalse((path.parent / request.output_path.name).exists())
                 probe = probe_media(request.output_path)
                 stream = video_stream(probe)
                 self.assertEqual(stream["codec_name"], "h264")

@@ -252,6 +252,7 @@ def transcribe_to_project_with_context(
     audio_files: list[str],
     output_dir: str,
     project_path: str | None = None,
+    render_output_dir: str | None = None,
     reference_audio: str | None = None,
     reference_track: str | None = None,
     video_audio_track: str | None = None,
@@ -379,7 +380,7 @@ def transcribe_to_project_with_context(
 
     project = create_project(
         video_path=video_path,
-        output_dir=output,
+        output_dir=output if render_output_dir is None else render_output_dir,
         duration_seconds=duration_seconds,
         segments=refined,
         audio_sources=speakers,
@@ -397,6 +398,7 @@ def transcribe_to_project_with_context(
         render_settings=render_settings,
         transcription_context=context_payload,
         transcription={
+            "work_dir": str(output.resolve()),
             "model": model,
             "device": device,
             "compute_type": compute_type,

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -435,6 +435,29 @@ def derive_short_render_path(project_path: str | Path) -> Path:
     return path.with_name(f"{name}.short.mp4")
 
 
+def project_work_directory(project_path: str | Path) -> Path:
+    """Keep transcription intermediates with the project, apart from exports."""
+    path = Path(project_path)
+    name = path.name.removesuffix(".subtitle-project.json")
+    return path.with_name(f".{name}.work")
+
+
+def resolve_render_output_path(
+    project_path: str | Path,
+    project: Mapping[str, Any],
+    output_path: str | Path | None = None,
+    *,
+    short: bool = False,
+) -> Path:
+    if output_path:
+        return Path(output_path)
+    output_dir = str(project.get("output_dir", ""))
+    if not output_dir:
+        raise ValueError("完成動画の出力先フォルダを選択してください")
+    name = derive_short_render_path(project_path) if short else derive_render_path(project_path)
+    return Path(output_dir) / name.name
+
+
 def _finite_number(value: Any, field: str) -> float:
     try:
         result = float(value)
@@ -657,7 +680,7 @@ def validate_project(project: dict[str, Any]) -> dict[str, Any]:
 def create_project(
     *,
     video_path: str | Path,
-    output_dir: str | Path,
+    output_dir: str | Path = "",
     segments: Iterable[dict[str, Any]],
     audio_sources: Iterable[dict[str, Any]] = (),
     speakers: Iterable[dict[str, Any]] = (),
@@ -680,7 +703,7 @@ def create_project(
             "path": str(Path(video_path).resolve()),
             "duration_seconds": max(0.0, float(duration_seconds or 0.0)),
         },
-        "output_dir": str(Path(output_dir).resolve()),
+        "output_dir": str(Path(output_dir).resolve()) if output_dir else "",
         "audio_sources": [deepcopy(source) for source in audio_sources],
         "speakers": [deepcopy(speaker) for speaker in speakers],
         "waveforms": [deepcopy(waveform) for waveform in waveforms],

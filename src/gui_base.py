@@ -250,7 +250,8 @@ class EditBayBackend(QApplication):
         video_changed = previous.video != selection.video
         media_changed = video_changed or previous.audio_files != selection.audio_files
         self._source_selection = selection
-        self._speakers = build_speaker_entries_from_files(selection.audio_files, self.color_config_path)
+        if media_changed:
+            self._speakers = build_speaker_entries_from_files(selection.audio_files, self.color_config_path)
 
         if video_changed:
             self._probe_audio_tracks(selection.video)
@@ -270,8 +271,6 @@ class EditBayBackend(QApplication):
             self._set_status("動画をドロップしてください", "INPUT")
         elif not self._source_selection.audio_files:
             self._set_status("1つ以上の話者音声をドロップしてください", "INPUT")
-        elif not self._source_selection.output_dir:
-            self._set_status("出力先フォルダを指定してください", "INPUT")
         else:
             self._set_status(f"入力準備完了: {len(self._speakers)}人の話者音声", "READY")
 
@@ -450,7 +449,7 @@ class EditBayBackend(QApplication):
             self._set_status("処理中は出力先を変更できません", "BUSY")
             return
         start_dir = self._source_selection.output_dir or str(self.workspace_root)
-        folder = QFileDialog.getExistingDirectory(None, "出力先を選択", start_dir)
+        folder = QFileDialog.getExistingDirectory(None, "完成動画の出力先を選択", start_dir)
         if folder:
             self.setOutputDirectory(folder)
 

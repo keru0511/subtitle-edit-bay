@@ -20,7 +20,7 @@ from .media_probe import probe_media_duration, probe_media_stream_types
 from .processing_progress import progress_event_line
 from .short_video_schema import ShortVideo, ShortVideoBgm, ShortVideoClip, ShortVideoError
 from .short_video_timeline import build_short_video_timeline
-from .subtitle_project import derive_short_render_path, load_project
+from .subtitle_project import load_project, resolve_render_output_path
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 DEFAULT_SHORT_VIDEO_CODEC = "libx264"
@@ -397,7 +397,7 @@ def render_short_video(
         raise ShortVideoError("short_video.clips is empty; nothing to render")
     _emit_progress_event("clips", phase="start")
 
-    output = Path(output_path) if output_path else derive_short_render_path(project_path)
+    output = resolve_render_output_path(project_path, project, output_path, short=True)
     output.parent.mkdir(parents=True, exist_ok=True)
 
     try:

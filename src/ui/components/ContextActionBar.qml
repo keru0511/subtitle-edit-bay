@@ -11,6 +11,7 @@ Rectangle {
     property string activeJob: ""
     property bool canStartTranscription: false
     property bool canRenderNormal: false
+    property bool renderNeedsOutput: false
     property bool canCreateProject: false
     property bool audioMixerAvailable: true
     property bool subtitleAvailable: false
@@ -136,7 +137,7 @@ Rectangle {
                 objectName: "renderVideoButton"
                 primary: true
                 enabled: actionBar.canRenderNormal
-                text: actionBar.activeJob === "render" ? "動画を書き出し中..." : (actionBar.subtitleAvailable ? "通常動画を書き出す（字幕焼き付け）" : "通常動画を書き出す")
+                text: actionBar.activeJob === "render" ? "動画を書き出し中..." : (actionBar.renderNeedsOutput ? "出力先を選んで通常動画を書き出す" : (actionBar.subtitleAvailable ? "通常動画を書き出す（字幕焼き付け）" : "通常動画を書き出す"))
                 reason: actionBar.renderBlockReason
                 onClicked: actionBar.renderRequested()
             }

@@ -209,6 +209,7 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
 
         self.assertEqual(project_path.resolve(), existing_project_path.resolve())
         self.assertNotIn("sentinel", project)
+        self.assertEqual(project["output_dir"], str(existing_project_path.parent.resolve()))
         self.assertEqual(project["transcription_context"]["game_title"], "Splatoon 3")
         self.assertEqual(project["transcription_context"]["creator_terms"], ["ナワバリバトル"])
         self.assertEqual(project["subtitle_settings"]["outline_color"], "#345678")
@@ -217,6 +218,41 @@ class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
         passed_context = transcribe.call_args.kwargs["transcription_context"]
         self.assertIsInstance(passed_context, TranscriptionContext)
         self.assertEqual(passed_context.game_title, "Splatoon 3")
+
+    def test_transcription_separates_work_project_and_optional_export_locations(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "game.mp4"
+            audio = root / "1-alice.flac"
+            video.write_bytes(b"video")
+            audio.write_bytes(b"audio")
+            segment = {"start": 0, "end": 1, "text": "hello", "speaker": "Oz"}
+            for export in ("", str(root / "final-videos")):
+                with (
+                    self.subTest(export=export),
+                    patch("src.subtitle_workflow_transcription.resolve_alignment", return_value=("0:a:0", 0, 1)),
+                    patch("src.subtitle_workflow_transcription._build_waveforms", return_value=[]),
+                    patch("src.subtitle_workflow_transcription.refine_segments", return_value=([segment], [])),
+                    patch("src.subtitle_workflow_transcription.probe_media_duration", return_value=10),
+                    patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=[]),
+                    patch("src.subtitle_workflow_transcription.transcribe_craig_audio_files_for_workflow", return_value=CraigTranscriptionBatch({}, [segment])) as transcribe,
+                ):
+                    work = root / "projects" / ".edit.work"
+                    target = root / "projects" / "edit.subtitle-project.json"
+                    actual = transcribe_to_project_with_context(
+                        video_path=str(video), audio_files=[str(audio)], output_dir=str(work),
+                        project_path=target, render_output_dir=export, overwrite_project=True,
+                    )
+                    project = load_project(actual)
+                    self.assertEqual(actual, target)
+                    self.assertEqual(project["output_dir"], export)
+                    self.assertEqual(project["transcription"]["work_dir"], str(work))
+                    self.assertEqual(transcribe.call_args.args[1], work / "transcripts")
+                    for key in ("merged_json", "filtered_json"):
+                        artifact = Path(project["transcription"][key])
+                        self.assertTrue(artifact.is_file())
+                        self.assertTrue(artifact.is_relative_to(work))
+                    self.assertFalse((root / "final-videos").exists())
 
     def test_context_project_entrypoint_emits_machine_progress_events(self) -> None:
         with TemporaryDirectory() as temp_dir:

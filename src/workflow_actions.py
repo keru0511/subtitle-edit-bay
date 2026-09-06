@@ -12,7 +12,7 @@ from typing import Any, Mapping
 
 from .gui_state import build_gui_render_command, build_gui_short_video_command
 from .runtime_dependencies import RuntimeDependencyStatus
-from .subtitle_project import derive_render_path, derive_short_render_path
+from .subtitle_project import resolve_render_output_path
 from .video_encoding import select_automatic_video_codec
 
 
@@ -39,7 +39,7 @@ def transcription_capability(
     device: str,
     has_video: bool,
     has_audio: bool,
-    output_dir: str,
+    project_path: str,
     running: bool = False,
 ) -> ActionCapability:
     if running:
@@ -53,14 +53,13 @@ def transcription_capability(
         return ActionCapability("素材設定で動画を指定してください")
     if not has_audio:
         return ActionCapability("動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。")
-    if not output_dir:
-        return ActionCapability("素材設定で出力先フォルダを指定してください")
+    if not project_path:
+        return ActionCapability("プロジェクト保存先を指定してください")
     return ActionCapability()
 
 
-def render_output_path(project_path: str | Path, *, short: bool) -> Path:
-    """Keep the existing save model; #272 owns output directory separation."""
-    return derive_short_render_path(project_path) if short else derive_render_path(project_path)
+def render_output_path(project_path: str | Path, project: Mapping[str, Any], *, short: bool) -> Path:
+    return resolve_render_output_path(project_path, project, short=short)
 
 
 def validate_render_output(output: Path, project: Mapping[str, Any], project_path: str) -> None:
@@ -86,6 +85,7 @@ def render_capability(
     *,
     short: bool = False,
     running: bool = False,
+    require_output: bool = True,
 ) -> ActionCapability:
     if running:
         return ActionCapability("処理の完了または停止を待ってください")
@@ -101,7 +101,8 @@ def render_capability(
             short_video = project.get("short_video", {})
             if not short_video.get("enabled") or not short_video.get("clips"):
                 return ActionCapability("ショート動画のクリップを追加してください")
-        validate_render_output(render_output_path(project_path, short=short), project, project_path)
+        if require_output:
+            validate_render_output(render_output_path(project_path, project, short=short), project, project_path)
     except (OSError, ValueError) as error:
         return ActionCapability(str(error))
     return ActionCapability()
@@ -119,7 +120,8 @@ def prepare_render_request(
     capability = render_capability(dependencies, project, project_path, short=short, running=running)
     if not capability.enabled:
         raise ValueError(capability.reason)
-    output = render_output_path(project_path, short=short)
+    assert project is not None  # Validated by render_capability.
+    output = render_output_path(project_path, project, short=short)
     builder = build_gui_short_video_command if short else build_gui_render_command
     return RenderRequest(
         job="render_short" if short else "render",

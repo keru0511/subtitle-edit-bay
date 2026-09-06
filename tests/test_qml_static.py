@@ -40,6 +40,16 @@ QML_LINT_FILES = (
 
 
 class QmlStaticTests(unittest.TestCase):
+    def test_start_screen_uses_project_actions_instead_of_workflow_steps(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "screens" / "MainWorkflowScreen.qml").read_text(encoding="utf-8")
+        self.assertIn('objectName: "projectStartScreen"', source)
+        self.assertIn('objectName: "newVideoEditButton"', source)
+        self.assertIn('objectName: "startScreenOpenProjectButton"', source)
+        self.assertIn('objectName: "startWithTranscriptionButton"', source)
+        self.assertIn('objectName: "startScreenSettingsButton"', source)
+        self.assertNotIn('"文字起こし後に自動作成"', source)
+        self.assertNotIn('model: ["素材", "文字起こし", "字幕・カット・音量", "書き出し"]', source)
+
     def test_qml_files_pass_qmllint_without_warnings(self) -> None:
         executable_name = "pyside6-qmllint.exe" if os.name == "nt" else "pyside6-qmllint"
         bundled = Path(sys.executable).with_name(executable_name)

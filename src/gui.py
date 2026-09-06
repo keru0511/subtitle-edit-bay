@@ -2424,6 +2424,33 @@ class EditBayBackend(LegacyEditBayBackend):
         candidate = self._local_path(path)
         self._load_project_path(candidate, update_sources=True)
 
+    @Slot(str, "QVariantMap", result=bool)
+    def loadProjectWithSelectedSources(self, path: str, source_selection: dict[str, Any]) -> bool:
+        """Load an existing project while keeping the sources chosen for the next transcription."""
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
+            return False
+        if self._project_dirty:
+            if not self._project_path or not self.saveProject():
+                return False
+
+        candidate = self._local_path(path)
+        selected_sources = SourceSelection(
+            video=str(source_selection.get("video", "")),
+            output_dir=str(source_selection.get("output_dir", "")),
+            audio_files=tuple(str(item) for item in source_selection.get("audio_files", [])),
+        )
+        if not self._load_project_path(candidate, update_sources=True):
+            return False
+
+        self.beginSourceRelink()
+        try:
+            self._set_source_selection(selected_sources)
+            self.relinkProjectSources()
+        finally:
+            self.finishSourceRelink()
+        return self._project is not None and self._project_source_selection_matches(selected_sources)
+
     @Slot("QVariantMap", str)
     def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
         if self._running:

@@ -469,7 +469,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_existing_project_transcription_keeps_newly_selected_audio_source(self) -> None:
         _video, saved_audio, _output = self._set_ready_sources()
-        self._save_default_project_for_selected_sources()
+        project_path = self._save_default_project_for_selected_sources()
+        saved_project = project_path.read_bytes()
         selected_audio = self.root / "2-new-speaker.flac"
         selected_audio.write_bytes(b"new audio")
         self.app.setAudioFiles([str(selected_audio)], False)
@@ -486,6 +487,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 dialog.property("visible"),
                 f"stage={self.app.stage} status={self.app.status} loaded={self.app.projectLoaded}",
             )
+            self.assertFalse(self.app.projectLoaded)
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(project_path.read_bytes(), saved_project)
             dialog.accept()
             self.app.processEvents()
 
@@ -5342,13 +5346,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertIsNotNone(dialog)
             self.assertTrue(dialog.property("visible"))
             self.assertEqual(dialog.property("title"), "既存プロジェクトの上書き")
-            self.assertTrue(self.app.projectLoaded)
-            self.assertEqual(Path(self.app.projectPath), project_path)
+            self.assertFalse(self.app.projectLoaded)
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(Path(self.app.projectSavePath), project_path)
             start_command.assert_not_called()
 
     def test_transcribe_reject_overwrite_does_not_start(self) -> None:
-        self._set_ready_sources()
+        _video, saved_audio, _output = self._set_ready_sources()
         project_path = self._save_default_project_for_selected_sources()
+        saved_project_bytes = project_path.read_bytes()
+        saved_project = load_project(project_path)
+        selected_audio = self.root / "2-new-speaker.flac"
+        selected_audio.write_bytes(b"new audio")
+        self.app.setAudioFiles([str(selected_audio)], False)
 
         _, window = self._load_qml()
         with patch.object(self.app, "_start_command") as start_command:
@@ -5357,13 +5367,29 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
             self.assertIsNotNone(dialog)
+            self.assertFalse(self.app.projectLoaded)
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(project_path.read_bytes(), saved_project_bytes)
             dialog.reject()
             self.app.processEvents()
 
             start_command.assert_not_called()
             self.assertFalse(dialog.property("visible"))
-            self.assertTrue(self.app.projectLoaded)
-            self.assertEqual(Path(self.app.projectPath), project_path)
+            self.assertFalse(self.app.projectLoaded)
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(self.app.sourceSelection["audio_files"], [str(selected_audio.resolve())])
+
+            self.assertFalse(self.app.autosave_timer.isActive())
+            QTest.qWait(800)
+            self.app.processEvents()
+            self.assertEqual(project_path.read_bytes(), saved_project_bytes)
+            project_after_rejection = load_project(project_path)
+            self.assertEqual(project_after_rejection["audio_sources"], saved_project["audio_sources"])
+            self.assertEqual(project_after_rejection["speakers"], saved_project["speakers"])
+            self.assertEqual(
+                [item["path"] for item in project_after_rejection["audio_sources"]],
+                [str(saved_audio.resolve())],
+            )
 
     def test_transcribe_accept_overwrite_passes_overwrite_flag(self) -> None:
         self._set_ready_sources()

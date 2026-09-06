@@ -41,7 +41,7 @@ ApplicationWindow {
     property int sharedSeekRevision: 0
     property bool applyingSharedSeek: false
     property real pendingSharedSourcePosition: -1
-    property var pendingWelcomeTranscriptionSettings: null
+    property var pendingWelcomeTranscriptionRequest: null
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
@@ -330,13 +330,12 @@ ApplicationWindow {
         if (!root.workflowCapabilities.canTranscribe)
             return
         if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
-            root.pendingWelcomeTranscriptionSettings = executionSettings
-            var selectedSources = JSON.parse(JSON.stringify(root.appBackend.sourceSelection))
-            if (root.appBackend.loadProjectWithSelectedSources(
-                    root.appBackend.projectSavePath, selectedSources))
-                overwriteProjectDialog.open()
-            else
-                root.pendingWelcomeTranscriptionSettings = null
+            root.pendingWelcomeTranscriptionRequest = {
+                "settings": executionSettings,
+                "sources": JSON.parse(JSON.stringify(root.appBackend.sourceSelection)),
+                "projectPath": String(root.appBackend.projectSavePath)
+            }
+            overwriteProjectDialog.open()
             return
         }
         if (!root.appBackend.projectLoaded && !root.appBackend.createEmptyProject())
@@ -1988,15 +1987,21 @@ ApplicationWindow {
       }
 
       onAccepted: {
-          var settings = root.pendingWelcomeTranscriptionSettings
-              || JSON.parse(JSON.stringify(root.currentSettings()))
-          root.pendingWelcomeTranscriptionSettings = null
+          var request = root.pendingWelcomeTranscriptionRequest
+          root.pendingWelcomeTranscriptionRequest = null
+          if (request) {
+              if (root.appBackend.loadProjectWithSelectedSources(
+                      request.projectPath, request.sources))
+                  root.appBackend.transcribeProject(request.settings, "replace")
+              return
+          }
+          var settings = JSON.parse(JSON.stringify(root.currentSettings()))
           if (root.appBackend.projectLoaded)
               root.appBackend.transcribeProject(settings, "replace")
           else
               root.appBackend.startTranscription(settings, true)
       }
-      onRejected: root.pendingWelcomeTranscriptionSettings = null
+      onRejected: root.pendingWelcomeTranscriptionRequest = null
   }
 
   Dialog {

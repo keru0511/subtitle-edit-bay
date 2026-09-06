@@ -78,11 +78,8 @@ from .editor_workspace import (
     TimeMapping,
     build_edit_mode_capabilities,
 )
-from .gui_state import (
-    build_gui_render_command,
-    build_gui_short_video_command,
-    build_gui_transcribe_command,
-)
+from .gui_state import build_gui_transcribe_command
+from .workflow_actions import ActionCapability, prepare_render_request, render_capability, transcription_capability
 from .media_probe import probe_media_duration
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
@@ -100,7 +97,6 @@ from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
-from .video_encoding import select_automatic_video_codec
 from .video_timeline import VideoTimeline, VideoTimelineError, timeline_from_project
 from . import update_manager, updater
 
@@ -374,6 +370,7 @@ class EditBayBackend(LegacyEditBayBackend):
     editorCapabilitiesChanged = Signal()
     editorPlayheadChanged = Signal()
     cutTimelineChanged = Signal()
+    actionCapabilitiesChanged = Signal()
 
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         resolved_workspace_root = (
@@ -403,6 +400,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._editor_workspace = EditorWorkspaceState()
+        for signal in (
+            self.dependenciesChanged, self.sourceSelectionChanged, self.speakersChanged,
+            self.audioTracksChanged, self.settingsChanged, self.projectChanged,
+            self.projectDataChanged, self.shortVideoChanged, self.runningChanged,
+        ):
+            signal.connect(self.actionCapabilitiesChanged.emit)
         self._cut_editor_available = True
         self.projectChanged.connect(self._refresh_editor_workspace)
         self.projectDataChanged.connect(self._refresh_editor_workspace)
@@ -2354,6 +2357,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot("QVariantMap", str)
     def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+        if self._running:
+            return
         selected_mode = str(mode or "").strip().lower()
         if selected_mode not in {"replace", "merge"}:
             self._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
@@ -3169,6 +3174,40 @@ class EditBayBackend(LegacyEditBayBackend):
                 return selector
         return ""
 
+    def _transcription_capability(self, device: str) -> ActionCapability:
+        return transcription_capability(
+            self._dependencies,
+            device=device,
+            has_video=Path(self._source_selection.video).is_file(),
+            has_audio=self._has_audio_source([speaker["path"] for speaker in self._speakers]),
+            output_dir=self._source_selection.output_dir,
+            running=self._running,
+        )
+
+    @Property("QVariantMap", notify=actionCapabilitiesChanged)
+    def actionCapabilities(self) -> dict[str, Any]:
+        return self.actionCapabilitiesForDevice(str(self._settings.get("device", "cuda")))
+
+    @Slot(str, result="QVariantMap")
+    def actionCapabilitiesForDevice(self, device: str) -> dict[str, Any]:
+        transcribe = self._transcription_capability(device)
+        normal = render_capability(
+            self._dependencies, self._project, self._project_path, running=self._running,
+        )
+        short = render_capability(
+            self._dependencies, self._project, self._project_path, short=True, running=self._running,
+        )
+        return {
+            "canTranscribe": transcribe.enabled,
+            "transcriptionReason": transcribe.reason,
+            "canRenderNormal": normal.enabled,
+            "normalRenderReason": normal.reason,
+            "canRenderShort": short.enabled,
+            "shortRenderReason": short.reason,
+            "canUseTranscriptionCuda": self._dependencies.cuda,
+            "canUseNvenc": self._dependencies.nvenc,
+        }
+
     @Slot("QVariantMap", bool)
     def startTranscription(
         self,
@@ -3186,34 +3225,18 @@ class EditBayBackend(LegacyEditBayBackend):
             if project_path is not None:
                 self._reset_transcription_integration_state()
 
-        audio_tracks = list(self._audio_tracks)
         if not self._dependencies.ready:
             self.refreshDependencies()
-        if not self._dependencies.ready:
-            missing = ", ".join(self._dependencies.missing())
-            reject_start(f"実行できません。インストールが必要です: {missing}", "SETUP")
-            return
-        if str(settings.get("device") or self._settings.get("device")) == "cuda" and not self._dependencies.cuda:
-            reject_start(
-                "CUDA版PyTorchが利用できません。setup.batを再実行するか、処理デバイスをCPUへ変更してください",
-                "SETUP",
-            )
+        audio_tracks = list(self._audio_tracks)
+        device = str(settings.get("device") or self._settings.get("device"))
+        capability = self._transcription_capability(device)
+        if not capability.enabled:
+            setup_missing = not self._dependencies.ready or (device == "cuda" and not self._dependencies.cuda)
+            reject_start(capability.reason, "SETUP" if setup_missing else "CHECK")
             return
         selection = self._source_selection
         audio_files = [speaker["path"] for speaker in self._speakers]
         video_audio_track = ""
-        if not Path(selection.video).is_file():
-            reject_start("動画・話者音声・出力先を指定してください", "CHECK")
-            return
-        if not audio_files and not self._has_audio_source(audio_files, audio_tracks):
-            reject_start(
-                "動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。",
-                "CHECK",
-            )
-            return
-        if not selection.output_dir:
-            reject_start("動画・話者音声・出力先を指定してください", "CHECK")
-            return
         if not audio_files:
             video_audio_track = str(settings.get("reference_track") or self._default_video_audio_track(audio_tracks))
         reference_audio = settings.get("reference_audio")
@@ -3245,20 +3268,29 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot("QVariantMap")
     def renderVideo(self, settings: dict[str, Any]) -> None:
+        self._start_render(settings, short=False)
+
+    def _start_render(self, settings: dict[str, Any], *, short: bool) -> None:
         if self._running or self._project is None:
             return
         self.refreshDependencies()
+        try:
+            request = prepare_render_request(
+                self._dependencies, self._project, self._project_path,
+                self.gui_config_path, short=short,
+            )
+        except ValueError as error:
+            self._set_status(str(error), "CHECK")
+            return
         effective_settings = dict(settings)
-        effective_settings["video_codec"] = select_automatic_video_codec(
-            nvenc_available=self._dependencies.nvenc,
-        )
+        effective_settings["video_codec"] = request.video_codec
         self.saveSettings(effective_settings)
         self._update_project_settings(effective_settings)
         if not self.saveProject():
             return
-        command = build_gui_render_command(self.gui_config_path, project_path=self._project_path)
-        mode = "GPU" if self._dependencies.nvenc else "CPU"
-        self._start_command(command, "render", f"{mode}を自動選択して動画を書き出しています")
+        mode = "GPU" if request.video_codec == "h264_nvenc" else "CPU"
+        artifact = "ショート動画" if short else "動画"
+        self._start_command(request.command, request.job, f"{mode}を自動選択して{artifact}を書き出しています")
 
     @Slot()
     def checkForUpdates(self) -> None:
@@ -3482,16 +3514,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def renderShortVideo(self) -> None:
-        if self._running or self._project is None:
-            return
-        self.refreshDependencies()
-        if not self.saveProject():
-            return
-        command = build_gui_short_video_command(
-            self.gui_config_path, project_path=self._project_path
-        )
-        mode = "GPU" if self._dependencies.nvenc else "CPU"
-        self._start_command(command, "render_short", f"{mode}を自動選択してショート動画を書き出しています")
+        self._start_render(self.settings, short=True)
 
     @Slot()
     def reconnectCodexChat(self) -> None:
@@ -4136,6 +4159,10 @@ class EditBayBackend(LegacyEditBayBackend):
         elif exit_code == 0:
             self._finish_processing_progress("completed")
             if completed_job == "transcribe":
+                preserved_workspace = (
+                    (self.currentEditMode, self.editorPlayhead)
+                    if self._transcription_preserved_project is not None else None
+                )
                 generated_project_path = (
                     Path(self._transcription_generated_project_path)
                     if self._transcription_generated_project_path
@@ -4167,6 +4194,11 @@ class EditBayBackend(LegacyEditBayBackend):
                 if self._transcription_generated_project_path and not loaded:
                     integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
                 self._reset_transcription_integration_state()
+                if preserved_workspace is not None:
+                    self.selectEditMode(preserved_workspace[0])
+                    playhead = preserved_workspace[1]
+                    basis = playhead["basis"]
+                    self.setEditorPlayhead(playhead[f"{basis}PositionMs"], basis)
                 if integration_error:
                     self._set_status(integration_error, "ERROR")
                 else:

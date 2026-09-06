@@ -41,6 +41,7 @@ ApplicationWindow {
     property int sharedSeekRevision: 0
     property bool applyingSharedSeek: false
     property real pendingSharedSourcePosition: -1
+    property var pendingWelcomeTranscriptionSettings: null
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
@@ -296,27 +297,50 @@ ApplicationWindow {
     function startNewVideoEdit() {
         if (!root.appBackend.sourceSelection.video)
             root.appBackend.browseVideoFile()
-        if (root.appBackend.sourceSelection.video && !root.appBackend.projectLoaded)
+        if (!root.appBackend.sourceSelection.video || root.appBackend.projectLoaded)
+            return
+        if (root.appBackend.transcriptionProjectExists())
+            root.appBackend.loadProject(root.appBackend.projectSavePath)
+        else
             root.appBackend.createEmptyProject()
     }
 
+    function hasTranscriptionAudio() {
+        if (root.appBackend.speakers.length > 0)
+            return true
+        for (var index = 0; index < root.appBackend.audioTracks.length; ++index) {
+            if (String(root.appBackend.audioTracks[index].selector || "").length > 0)
+                return true
+        }
+        return false
+    }
+
+    function welcomeTranscriptionBlockReason() {
+        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio())
+            return ""
+        return root.workflowCapabilities.canTranscribe ? "" : root.transcriptionBlockReason()
+    }
+
     function startTranscriptionFromWelcome() {
-        var hasAudio = root.appBackend.speakers.length > 0
-        for (var index = 0; index < root.appBackend.audioTracks.length && !hasAudio; ++index)
-            hasAudio = String(root.appBackend.audioTracks[index].selector || "").length > 0
-        if (!root.appBackend.sourceSelection.video || !hasAudio) {
+        var executionSettings = JSON.parse(JSON.stringify(root.currentSettings()))
+        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio()) {
             sourcePopup.open()
             return
         }
         if (!root.workflowCapabilities.canTranscribe)
             return
         if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
-            overwriteProjectDialog.open()
+            root.pendingWelcomeTranscriptionSettings = executionSettings
+            root.appBackend.loadProject(root.appBackend.projectSavePath)
+            if (root.appBackend.projectLoaded)
+                overwriteProjectDialog.open()
+            else
+                root.pendingWelcomeTranscriptionSettings = null
             return
         }
         if (!root.appBackend.projectLoaded && !root.appBackend.createEmptyProject())
             return
-        root.appBackend.startTranscription(root.currentSettings(), true)
+        root.appBackend.startTranscription(executionSettings, true)
     }
 
     function canSplitSelectedSegment(positionMs) {
@@ -1185,7 +1209,7 @@ ApplicationWindow {
                         spacing: 10
                         PanelTitle { text: "文字起こしエンジン" }
                         RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; objectName: "deviceCombo"; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
+                        RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; objectName: "modelCombo"; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
                         RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                         PanelTitle { text: "字幕" }
@@ -1573,6 +1597,8 @@ ApplicationWindow {
                         text: "文字起こしから始める"
                         enabled: !root.appBackend.running
                         onClicked: root.startTranscriptionFromWelcome()
+                        ToolTip.visible: hovered && root.welcomeTranscriptionBlockReason().length > 0
+                        ToolTip.text: root.welcomeTranscriptionBlockReason()
                     }
                     Button {
                         objectName: "startScreenSourceSetupButton"
@@ -1595,6 +1621,17 @@ ApplicationWindow {
                         enabled: !root.appBackend.running
                         onClicked: root.toggleSettingsPopup()
                     }
+                }
+                Text {
+                    objectName: "startScreenTranscriptionBlockReason"
+                    Layout.fillWidth: true
+                    visible: root.welcomeTranscriptionBlockReason().length > 0
+                    text: root.welcomeTranscriptionBlockReason()
+                    color: root.amber
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
                 }
                 Text {
                     Layout.fillWidth: true
@@ -1994,7 +2031,16 @@ ApplicationWindow {
           wrapMode: Text.Wrap
       }
 
-      onAccepted: root.appBackend.startTranscription(root.currentSettings(), true)
+      onAccepted: {
+          var settings = root.pendingWelcomeTranscriptionSettings
+              || JSON.parse(JSON.stringify(root.currentSettings()))
+          root.pendingWelcomeTranscriptionSettings = null
+          if (root.appBackend.projectLoaded)
+              root.appBackend.transcribeProject(settings, "replace")
+          else
+              root.appBackend.startTranscription(settings, true)
+      }
+      onRejected: root.pendingWelcomeTranscriptionSettings = null
   }
 
   Dialog {

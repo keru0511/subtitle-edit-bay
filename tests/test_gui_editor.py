@@ -42,6 +42,7 @@ from src.subtitle_project import (
     assign_project_layout_rows,
     create_project,
     load_project,
+    project_work_directory,
     save_project,
 )
 from src.subtitle_line_count import segment_preview_text as original_segment_preview_text
@@ -299,6 +300,126 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(len(load_project(video.with_suffix(".subtitle-project.json"))["segments"]), 1)
 
+    def test_project_start_screen_prioritizes_new_edit_and_existing_project(self) -> None:
+        _, window = self._load_qml()
+        start_screen = self._quick_item(window, "projectStartScreen")
+        self.assertTrue(start_screen.isVisible())
+        self.assertIsNone(window.findChild(QObject, "workflowStepper"))
+        self.assertFalse(self._quick_item(window, "contextActionBar").isVisible())
+        for width, height in ((1220, 760), (1520, 940)):
+            self.gui.resize(window, width, height)
+            self._assert_quick_item_within(window.contentItem(), start_screen)
+            for name in (
+                "newVideoEditButton", "startScreenOpenProjectButton", "startWithTranscriptionButton",
+                "startScreenSourceSetupButton", "startScreenDictionaryButton", "startScreenSettingsButton",
+            ):
+                button = self._quick_item(window, name)
+                self.assertTrue(button.isVisible())
+                self._assert_quick_item_within(start_screen, button)
+        self.assertGreater(
+            self._quick_item(window, "newVideoEditButton").height(),
+            self._quick_item(window, "startWithTranscriptionButton").height(),
+        )
+
+        with patch.object(self.app, "browseProjectFile") as browse:
+            self._click(window, self._quick_item(window, "startScreenOpenProjectButton"))
+        browse.assert_called_once()
+
+        self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        self.assertTrue(window.findChild(QObject, "sourcePopup").property("visible"))
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        self.assertTrue(window.property("dictionaryMode"))
+
+    def test_new_video_start_action_creates_empty_project_and_opens_workspace(self) -> None:
+        video = self.root / "new-video.mkv"
+        video.write_bytes(b"video")
+        _, window = self._load_qml()
+        with (
+            patch("src.gui_base.QFileDialog.getOpenFileName", return_value=(str(video), "")),
+            patch.object(self.app, "_probe_audio_tracks"),
+            patch("src.gui.probe_media_duration", return_value=30.0),
+        ):
+            self._click(window, self._quick_item(window, "newVideoEditButton"))
+
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.subtitleSegments, [])
+        self.assertEqual(Path(self.app.projectPath), video.with_suffix(".subtitle-project.json"))
+        self.assertFalse(self._quick_item(window, "projectStartScreen").isVisible())
+        self.assertTrue(self._quick_item(window, "mainVideoPanel").isVisible())
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+
+    def test_new_video_start_action_uses_video_already_selected_in_source_setup(self) -> None:
+        video = self.root / "selected.mkv"
+        video.write_bytes(b"video")
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+        _, window = self._load_qml()
+        with (
+            patch("src.gui_base.QFileDialog.getOpenFileName") as browse,
+            patch("src.gui.probe_media_duration", return_value=30.0),
+        ):
+            self._click(window, self._quick_item(window, "newVideoEditButton"))
+        browse.assert_not_called()
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(Path(self.app.projectPath), video.with_suffix(".subtitle-project.json"))
+
+    def test_start_screen_transcription_reuses_shared_action_and_keeps_empty_project_on_cancel(self) -> None:
+        video, _audio, _output = self._set_ready_sources()
+        self.app.setOutputDirectory("")
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+        self.app.dependenciesChanged.emit()
+        _, window = self._load_qml()
+        with (
+            patch("src.gui.probe_media_duration", return_value=30.0),
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
+
+        start.assert_called_once()
+        command, job, _status = start.call_args.args
+        self.assertEqual(job, "transcribe")
+        self.assertIn("--overwrite-project", command)
+        self.assertEqual(Path(command[command.index("--project-path") + 1]), Path(self.app.projectPath))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(Path(self.app.projectPath), video.with_suffix(".subtitle-project.json"))
+        self.assertEqual(self.app.subtitleSegments, [])
+
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app._cancel_requested = True
+        self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.subtitleSegments, [])
+
+    def test_start_screen_transcription_opens_source_setup_when_sources_are_missing(self) -> None:
+        _, window = self._load_qml()
+        with patch.object(self.app, "startTranscription") as start:
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
+        start.assert_not_called()
+        self.assertTrue(window.findChild(QObject, "sourcePopup").property("visible"))
+
+    def test_start_screen_transcription_accepts_video_embedded_audio(self) -> None:
+        video = self.root / "video-with-audio.mkv"
+        video.write_bytes(b"video")
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "AAC stereo"}]
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+        self.app.audioTracksChanged.emit()
+        self.app.dependenciesChanged.emit()
+        _, window = self._load_qml()
+        with (
+            patch("src.gui.probe_media_duration", return_value=30.0),
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
+        command = start.call_args.args[0]
+        self.assertEqual(command[command.index("--video-audio-track") + 1], "0:a:0")
+        self.assertTrue(self.app.projectLoaded)
+
     def test_empty_project_creation_never_overwrites_existing_project(self) -> None:
         _video, _audio, output = self._set_ready_sources()
         project_path = Path(self.app.projectSavePath)
@@ -536,7 +657,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._dependencies = RuntimeDependencyStatus(True, True, False, cuda=False, nvenc=True)
         self.app.dependenciesChanged.emit()
         _, window = self._load_qml()
-        self.assertFalse(self._quick_item(window, "workflowStepper").isVisible())
+        self.assertIsNone(window.findChild(QObject, "workflowStepper"))
         self.assertFalse(self._quick_item(window, "transcribeButton").isEnabled())
         self.assertTrue(self._quick_item(window, "renderVideoButton").isEnabled())
         self.assertTrue(self._quick_item(window, "transcriptionDictionaryOpenButton").isVisible())
@@ -2070,6 +2191,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._application_logger.max_memory_chars = original_limit
 
     def test_qml_system_log_panel_displays_startup_entries(self) -> None:
+        self._load_project()
         self.app._record_log(
             "起動時システムログを表示",
             component="startup",
@@ -2083,6 +2205,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self._quick_item(window, "applicationLogPanel").property("expanded"))
 
     def test_qml_system_log_panel_scrolls_to_the_latest_entry(self) -> None:
+        self._load_project()
         for index in range(250):
             self.app._record_log(
                 f"system-log-{index:03d} " + ("x" * 80),
@@ -2168,14 +2291,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertNotIn("private-login", self.app.logText)
 
     def test_error_copy_preserves_failure_after_settings_save_and_drains_output(self) -> None:
-        output = self.root / "output"
+        self._load_project()
+        output = project_work_directory(self.app.projectSavePath)
         transcript_directory = output / "transcripts"
         transcript_directory.mkdir(parents=True)
         (transcript_directory / "speaker.whisperx.log").write_text(
             "WhisperX traceback: CUDA out of memory\n",
             encoding="utf-8",
         )
-        self.app._source_selection = SourceSelection(output_dir=str(output))
         self.app._active_job = "transcribe"
         self.app._running = True
         _, window = self._load_qml()
@@ -2214,6 +2337,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIn("status: GUI設定を保存しました", current_diagnostic)
 
     def test_cancelled_process_has_a_distinct_diagnostic_result(self) -> None:
+        self._load_project()
         self.app._active_job = "render"
         self.app._running = True
         self.app._cancel_requested = True
@@ -2379,24 +2503,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_qml_workflow_state_matrix(self) -> None:
         _, window = self._load_qml()
+        start_screen = self._quick_item(window, "projectStartScreen")
+        start_transcription = self._quick_item(window, "startWithTranscriptionButton")
         transcribe = self._quick_item(window, "transcribeButton")
         edit = self._quick_item(window, "editSubtitlesButton")
         render = self._quick_item(window, "renderVideoButton")
         reason = self._quick_item(window, "workflowBlockReason")
-        output = self._quick_item(window, "outputFolderButton")
 
-        self.assertTrue(transcribe.isVisible())
-        self.assertFalse(transcribe.isEnabled())
+        self.assertTrue(start_screen.isVisible())
+        self.assertTrue(start_transcription.isVisible())
+        self.assertTrue(start_transcription.isEnabled())
+        self.assertFalse(transcribe.isVisible())
         self.assertFalse(edit.isVisible())
         self.assertFalse(render.isVisible())
-        self.assertTrue(reason.isVisible())
-        self.assertIn("素材設定で", reason.property("text"))
-        self.assertFalse(output.isEnabled())
+        self.assertFalse(reason.isVisible())
 
         self._set_ready_sources()
-        self.assertTrue(transcribe.isEnabled())
-        self.assertFalse(reason.isVisible())
-        self.assertTrue(output.isEnabled())
+        self.assertTrue(start_screen.isVisible())
+        self.assertTrue(start_transcription.isEnabled())
 
         self.app._source_selection = SourceSelection()
         self.app._speakers = []
@@ -2406,6 +2530,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         path, _, _ = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
         self.app.processEvents()
+        self.assertFalse(start_screen.isVisible())
         self.assertTrue(transcribe.isVisible())
         self.assertIn("追加 / 更新", transcribe.property("text"))
         self.assertFalse(transcribe.isEnabled())
@@ -2490,8 +2615,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
 
     def test_qml_settings_round_trip_and_expanded_popup_fit(self) -> None:
-        _, window = self._load_qml()
         self._load_project()
+        _, window = self._load_qml()
         panel = self._quick_item(window, "advancedSettingsPanel")
         toggle = self._quick_item(window, "settingsToggleButton")
         self.assertFalse(panel.isVisible())
@@ -2541,7 +2666,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_qml_settings_popup_keeps_actions_visible_and_bottom_settings_scrollable(self) -> None:
         _, window = self._load_qml()
-        toggle = self._quick_item(window, "settingsToggleButton")
+        toggle = self._quick_item(window, "startScreenSettingsButton")
         self._click(window, toggle)
 
         panel = self._quick_item(window, "advancedSettingsPanel")
@@ -3156,6 +3281,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(stop_button.isVisible())
 
     def test_qml_zero_advanced_settings_are_preserved_in_round_trip(self) -> None:
+        self._load_project()
         self.app._settings.update(
             {
                 "subtitle_max_gap_seconds": 0.0,
@@ -3574,7 +3700,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertTrue(main.isVisible())
         self.assertFalse(page.isVisible())
-        self._click(window, self._quick_item(window, "transcriptionDictionaryOpenButton"))
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
         self.assertFalse(main.isVisible())
         self.assertTrue(page.isVisible())
 
@@ -4583,7 +4709,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         _, window = self._load_qml()
         with patch.object(self.app, "_start_command") as start_command:
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
@@ -4593,7 +4719,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             start_command.assert_called_once()
             command = start_command.call_args[0][0]
             self.assertEqual(start_command.call_args[0][1], "transcribe")
-            self.assertNotIn("--overwrite-project", command)
+            self.assertIn("--overwrite-project", command)
 
     def test_transcription_gui_process_creates_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
@@ -4647,7 +4773,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         progress_changes = QSignalSpy(self.app.progressChanged)
         finished = QSignalSpy(self.app.process.finished)
         with patch("src.gui.build_gui_transcribe_command", side_effect=build_test_command):
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             if finished.count() == 0:
                 self.assertTrue(finished.wait(10_000), self.app.process.errorString())
             self.app.processEvents()
@@ -4658,7 +4784,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(captured_options["output_dir"], str(project_path.parent / ".game.work"))
         self.assertEqual(captured_options["render_output_dir"], str(output.resolve()))
         self.assertEqual(captured_options["project_path"], str(project_path))
-        self.assertFalse(captured_options["overwrite_project"])
+        self.assertTrue(captured_options["overwrite_project"])
         self.assertTrue(self.app.gui_config_path.is_file())
         self.assertTrue(project_path.is_file())
         self.assertTrue(self.app.projectLoaded)
@@ -4833,7 +4959,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         started = QSignalSpy(self.app.process.started)
         finished = QSignalSpy(self.app.process.finished)
         with patch("src.gui.build_gui_transcribe_command", side_effect=build_wait_command):
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             if started.count() == 0:
                 self.assertTrue(started.wait(10_000), self.app.process.errorString())
             QTest.qWait(100)
@@ -4973,7 +5099,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         with patch("src.gui.build_gui_transcribe_command", side_effect=build_attempt_command):
             first_finished = QSignalSpy(self.app.process.finished)
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             if first_finished.count() == 0:
                 self.assertTrue(first_finished.wait(10_000), self.app.process.errorString())
             self.app.processEvents()
@@ -4990,6 +5116,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
             second_finished = QSignalSpy(self.app.process.finished)
             self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "transcriptionMergeReplaceButton"))
             if second_finished.count() == 0:
                 self.assertTrue(second_finished.wait(10_000), self.app.process.errorString())
             self.app.processEvents()
@@ -5010,7 +5137,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         _, window = self._load_qml()
         with patch.object(self.app, "_start_command") as start_command:
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
@@ -5026,7 +5153,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         _, window = self._load_qml()
         with patch.object(self.app, "_start_command") as start_command:
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
@@ -5044,7 +5171,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         _, window = self._load_qml()
         with patch.object(self.app, "_start_command") as start_command:
-            self._click(window, self._quick_item(window, "transcribeButton"))
+            self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")

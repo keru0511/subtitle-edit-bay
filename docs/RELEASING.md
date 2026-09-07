@@ -33,14 +33,11 @@ git status --short
 
 ## リリースの作成
 
-リリース対象のコミットに注釈付きタグを作成し、GitHubへpushします。次は `v0.1.0` を公開する例です。
+バージョン更新は直接 `main` へpushせず、リリースPRで行います。`VERSION` を更新し、同じタグを内容に持つ `release-requests/vX.Y.Z` を追加してください。例えば `v0.4.7` では、`VERSION` と `release-requests/v0.4.7` の内容をどちらも `v0.4.7` にします。
 
-~~~powershell
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
-~~~
+リリースPRが `main` へマージされると `.github/workflows/release-request.yml` が、追加された要求が1件だけであること、要求・`VERSION`・タグが一致すること、対象が最新の `main` であることを検証します。検証後にマージコミットへ注釈付きタグを作成し、`.github/workflows/release.yml` を明示的に起動します。タグやReleaseが既にある場合は、別コミットへ付け替えません。
 
-厳密な `vX.Y.Z` タグのpushを契機に `.github/workflows/release.yml` が次を自動実行します。
+`release.yml` は次を自動実行します。
 
 1. タグ形式、タグの存在、タグと `VERSION` の一致を検証する
 2. Python 3.10環境で自動テストを実行する
@@ -49,7 +46,7 @@ git push origin v0.1.0
 5. 同じタグのGitHub Releaseを作成し、リリースノートを生成する
 6. `SubtitleEditBay-Setup.exe`、`SubtitleEditBay-Setup.exe.sha256`、`SubtitleEditBay-Setup.exe.manifest.json` を添付する
 
-一時的な失敗はGitHub Actionsからジョブを再実行できます。ワークフローを手動実行する場合は、既に存在するタグを `vX.Y.Z` 形式で指定します。コード修正が必要になった場合はタグを移動せず、修正後にパッチ番号を上げた新しいタグを作成してください。
+一時的な失敗はGitHub Actionsからジョブを再実行できます。`release-request.yml` は同じコミットの正しい注釈付きタグを再利用し、進行中のリリースを重複起動しません。`release.yml` を手動実行する場合は、既に存在するタグを `vX.Y.Z` 形式で指定します。コード修正が必要になった場合はタグを移動せず、修正後にパッチ番号を上げた新しいリリースPRを作成してください。
 
 ## リリース後の検証
 

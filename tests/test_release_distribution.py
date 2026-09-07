@@ -29,6 +29,7 @@ from tests.workflow_contracts import (
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+RELEASE_REQUEST_WORKFLOW = ROOT / ".github" / "workflows" / "release-request.yml"
 RELEASE_ASSET_NAMES = {
     INSTALLER_NAME,
     CHECKSUM_NAME,
@@ -150,6 +151,36 @@ class ReleaseDistributionTests(unittest.TestCase):
         release = step_by_id(workflow, "publish", "release")
         published_assets = str(release["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
+
+    def test_release_request_workflow_is_pr_driven_and_fail_closed(self) -> None:
+        workflow = load_workflow(RELEASE_REQUEST_WORKFLOW)
+        triggers = workflow["on"]["push"]
+        permissions = workflow["permissions"]
+        release_step = step_by_id(workflow, "create-tag", "release")
+        command = str(release_step["run"])
+
+        self.assertEqual(triggers["branches"], ["main"])
+        self.assertEqual(triggers["paths"], ["release-requests/v*"])
+        self.assertEqual(permissions["contents"], "write")
+        self.assertEqual(permissions["actions"], "write")
+        self.assertNotIn("pull_request", workflow["on"])
+        for guard in (
+            "git diff --diff-filter=A",
+            "Exactly one new release request is required",
+            "Request, VERSION, and tag must match",
+            "Release request must tag the current main HEAD",
+            "Existing tag is not the expected annotated tag",
+            "git tag -a",
+            "gh workflow run release.yml",
+        ):
+            self.assertIn(guard, command)
+
+    def test_current_release_request_matches_version(self) -> None:
+        version = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
+        request = ROOT / "release-requests" / version
+
+        self.assertTrue(request.is_file())
+        self.assertEqual(request.read_text(encoding="utf-8-sig").strip(), version)
 
     def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

@@ -803,14 +803,28 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertTrue(scroll_bar.isVisible())
                 self.assertLess(float(scroll_bar.property("size")), 1.0)
 
-                max_content_y = max(
-                    0.0,
-                    float(flickable.property("contentHeight")) - float(flickable.property("height")),
+                bottom_buttons = tuple(
+                    self._quick_item(window, name) for name in ("projectSaveAsButton", "videoOutputDirectoryButton")
                 )
-                flickable.setProperty("contentY", max_content_y)
-                self.app.processEvents()
-                for name in ("projectSaveAsButton", "videoOutputDirectoryButton"):
-                    self._assert_quick_item_within(scroll_view, self._quick_item(window, name))
+
+                def scroll_bottom_is_visible() -> bool:
+                    max_content_y = max(
+                        0.0,
+                        float(flickable.property("contentHeight")) - float(flickable.property("height")),
+                    )
+                    flickable.setProperty("contentY", max_content_y)
+                    return all(
+                        button.mapToItem(scroll_view, QPointF(button.width(), button.height())).y()
+                        <= scroll_view.height() + 1
+                        for button in bottom_buttons
+                    )
+
+                self.gui.wait_until(
+                    scroll_bottom_is_visible,
+                    description="source settings layout and bottom scroll position",
+                )
+                for button in bottom_buttons:
+                    self._assert_quick_item_within(scroll_view, button)
                 self._assert_quick_item_within(content, footer)
                 self._assert_quick_item_within(content, done_button)
                 self.assertEqual(self._quick_item(window, "projectSavePathText").property("text"), str(path))

@@ -9,10 +9,12 @@ Rectangle {
     property var backend
     property var proposalData: backend && backend.codexProposal
         ? backend.codexProposal : ({"summary": "", "operations": []})
+    property var operations: proposalData && proposalData.operations
+        ? proposalData.operations : []
     property var selectedOperationState: ({})
     visible: Boolean(backend) && (backend.codexState === "running"
         || backend.codexState === "starting" || backend.codexState === "authenticating"
-        || proposalData.operations.length > 0)
+        || operations.length > 0)
     implicitHeight: visible ? Math.min(220, content.implicitHeight + 16) : 0
     radius: 7
     color: "#18211C"
@@ -35,8 +37,8 @@ Rectangle {
     }
     function selectedOperationIds() {
         var ids = []
-        for (var index = 0; index < proposalData.operations.length; ++index) {
-            var operationId = operationIdFor(proposalData.operations[index], index)
+        for (var index = 0; index < operations.length; ++index) {
+            var operationId = operationIdFor(operations[index], index)
             if (isOperationSelected(operationId))
                 ids.push(operationId)
         }
@@ -71,7 +73,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(112, contentHeight)
             clip: true
-            model: card.proposalData.operations || []
+            model: card.operations
             delegate: RowLayout {
                 required property var modelData
                 property string operationId: card.operationIdFor(modelData, index)
@@ -91,14 +93,14 @@ Rectangle {
             Button {
                 objectName: "codexApplyButton"
                 text: "選択した変更を適用"
-                enabled: card.proposalData.operations.length > 0
+                enabled: card.operations.length > 0
                     && ["starting", "authenticating", "running"].indexOf(backend.codexState) < 0
                 onClicked: backend.applyCodexProposal(card.selectedOperationIds())
             }
             Button {
                 objectName: "codexDiscardButton"
                 text: "破棄"
-                enabled: card.proposalData.operations.length > 0
+                enabled: card.operations.length > 0
                 onClicked: backend.discardCodexProposal()
             }
             Item { Layout.fillWidth: true }

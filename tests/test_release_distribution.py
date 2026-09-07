@@ -117,6 +117,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("release-preparation.json", package)
         self.assertIn("pull_request_number", package)
         self.assertIn("workflow_run_id", package)
+        self.assertIn("[long]$ProducerWorkflowRunId = 0", package)
+        self.assertIn("[int]$ProducerWorkflowRunAttempt = 0", package)
         self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
         self.assertIn("engine.rootObjects()", smoke)

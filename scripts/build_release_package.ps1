@@ -10,14 +10,11 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
 
-    [Parameter(Mandatory = $true)]
-    [string]$ProducerRepository,
+    [string]$ProducerRepository = $env:GITHUB_REPOSITORY,
 
-    [Parameter(Mandatory = $true)]
-    [long]$ProducerWorkflowRunId,
+    [long]$ProducerWorkflowRunId = 0,
 
-    [Parameter(Mandatory = $true)]
-    [int]$ProducerWorkflowRunAttempt,
+    [int]$ProducerWorkflowRunAttempt = 0,
 
     [int]$PullRequestNumber = 0,
 

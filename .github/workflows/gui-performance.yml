@@ -9,6 +9,7 @@ on:
       - "scripts/aggregate_gui_performance.py"
       - "scripts/compare_gui_performance.py"
       - "scripts/generate_large_gui_fixture.py"
+      - "scripts/gui_performance_report.py"
       - "scripts/plan_gui_performance.py"
       - "scripts/run_gui_performance.py"
       - "src/gui.py"

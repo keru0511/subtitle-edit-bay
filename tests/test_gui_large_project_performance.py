@@ -11,7 +11,7 @@ from scripts.generate_large_gui_fixture import (
     generate_segments,
     write_fixture_project,
 )
-from scripts.run_gui_performance import SCENARIO_NAMES, aggregate_runs
+from scripts.gui_performance_report import SCENARIO_NAMES, aggregate_runs
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

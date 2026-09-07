@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -10,8 +12,9 @@ from pathlib import Path
 
 from scripts.aggregate_gui_performance import ReportValidationError, aggregate_shards
 from scripts.compare_gui_performance import compare_reports, main as compare_main
+from scripts.gui_performance_report import SCENARIO_NAMES
 from scripts.plan_gui_performance import validate_inputs
-from scripts.run_gui_performance import SCENARIO_NAMES, parse_args
+from scripts.run_gui_performance import parse_args
 from tests.workflow_contracts import load_workflow
 
 
@@ -118,6 +121,16 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
 
     def complete_reports(self) -> list[dict[str, object]]:
         return [shard_report(kind, repetition) for repetition in range(1, 4) for kind in ("current", "baseline")]
+
+    def test_aggregation_cli_imports_without_site_packages(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-S", "scripts/aggregate_gui_performance.py", "--help"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def aggregate(self, reports: list[dict[str, object]]):
         return aggregate_shards(
@@ -260,6 +273,7 @@ class GuiPerformanceWorkflowContractTests(unittest.TestCase):
         paths = set(load_workflow(WORKFLOW)["on"]["pull_request"]["paths"])
         for expected in (
             "scripts/aggregate_gui_performance.py",
+            "scripts/gui_performance_report.py",
             "scripts/plan_gui_performance.py",
             "scripts/run_gui_performance.py",
             "tests/test_gui_performance_pipeline.py",

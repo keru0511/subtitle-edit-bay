@@ -307,6 +307,10 @@ class ManualCutSemanticE2ETests(unittest.TestCase):
                         f"retimed subtitle {text!r}: output_time={output_time:.3f}s, "
                         f"expected_source_time={source_time:.3f}s"
                     ),
+                    # The four-letter TAIL caption occupies few pixels at 320x180.
+                    # Keep the independent changed-pixel guard while allowing its
+                    # expected cross-platform antialiasing range.
+                    minimum_mean_delta=0.3,
                 )
 
 

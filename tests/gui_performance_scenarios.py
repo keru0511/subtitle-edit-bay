@@ -1090,7 +1090,7 @@ class GuiPerformanceScenarioRunner:
         )
 
     def _open_short_mode(self) -> None:
-        if self._window().property("activeOverlay") == "short":
+        if self._window().property("currentWorkspace") == "short-artifact":
             return
         self.harness.click(
             self._window(),
@@ -1118,7 +1118,7 @@ class GuiPerformanceScenarioRunner:
         self.harness.wait(100)
         self.harness.click(self._window(), back)
         self.harness.wait_until(
-            lambda: self._window().property("activeOverlay") != "short",
+            lambda: self._window().property("currentWorkspace") == "normal-video",
             description="short mode to close",
             timeout_ms=5_000,
         )

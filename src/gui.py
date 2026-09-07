@@ -792,6 +792,7 @@ class EditBayBackend(LegacyEditBayBackend):
         section = self._short_video_section()
         return {
             "enabled": bool(section.get("enabled", False)),
+            "time_basis": str(section.get("time_basis", "source")),
             "output": deepcopy(section.get("output", {})),
             "global_fit": str(section.get("global_fit", "cover")),
             "global_background_color": str(section.get("global_background_color", "000000")),
@@ -910,6 +911,7 @@ class EditBayBackend(LegacyEditBayBackend):
             "short_video",
             {
                 "enabled": False,
+                "time_basis": "source",
                 "output": {"width": 1080, "height": 1920, "fps": 30},
                 "global_fit": "cover",
                 "global_background_color": "000000",
@@ -922,6 +924,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if not isinstance(section, dict):
             section = self._project["short_video"] = {
                 "enabled": False,
+                "time_basis": "source",
                 "output": {"width": 1080, "height": 1920, "fps": 30},
                 "global_fit": "cover",
                 "global_background_color": "000000",

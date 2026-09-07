@@ -101,6 +101,10 @@ def render_capability(
             short_video = project.get("short_video", {})
             if not short_video.get("enabled") or not short_video.get("clips"):
                 return ActionCapability("ショート動画のクリップを追加してください")
+            if str(short_video.get("time_basis", "source")) != "source":
+                return ActionCapability(
+                    "ショートの時刻基準が不明です。元ソース動画の時間へ変換してください"
+                )
         if require_output:
             validate_render_output(render_output_path(project_path, project, short=short), project, project_path)
     except (OSError, ValueError) as error:

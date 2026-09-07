@@ -14,6 +14,7 @@ class ShortVideoSchemaTests(unittest.TestCase):
     def test_default_short_video_from_empty_json(self) -> None:
         short_video = ShortVideo.from_json({})
         self.assertFalse(short_video.enabled)
+        self.assertEqual(short_video.time_basis, "source")
         self.assertEqual(short_video.output.width, 1080)
         self.assertEqual(short_video.output.height, 1920)
         self.assertEqual(short_video.output.fps, 30)
@@ -41,6 +42,11 @@ class ShortVideoSchemaTests(unittest.TestCase):
         short_video = ShortVideo.from_json(payload)
         restored = ShortVideo.from_json(short_video.to_json())
         self.assertEqual(restored.to_json(), short_video.to_json())
+        self.assertEqual(restored.to_json()["time_basis"], "source")
+
+    def test_output_timeline_basis_requires_explicit_conversion(self) -> None:
+        with self.assertRaisesRegex(ShortVideoError, "time_basis"):
+            ShortVideo.from_json({"time_basis": "output", "clips": []})
 
     def test_clip_inheritance_remains_distinguishable_after_round_trip(self) -> None:
         short_video = ShortVideo.from_json(

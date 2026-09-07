@@ -17,6 +17,8 @@ REQUIRED_INSTALLED_FILES = {
     "VERSION",
     "scripts/launch.ps1",
     "scripts/apply_installer_update.ps1",
+    "scripts/setup.ps1",
+    "scripts/validate_runtime.ps1",
 }
 VERSION_PATTERN = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 TAG_PATTERN = re.compile(r"^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$")

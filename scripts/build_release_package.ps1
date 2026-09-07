@@ -42,7 +42,13 @@ $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowe
     source_sha = $SourceSha.ToLowerInvariant()
     asset_name = "SubtitleEditBay-Setup.exe"
     sha256 = $hash
-    required_files = @("VERSION", "scripts/launch.ps1", "scripts/apply_installer_update.ps1")
+    required_files = @(
+        "VERSION",
+        "scripts/launch.ps1",
+        "scripts/apply_installer_update.ps1",
+        "scripts/setup.ps1",
+        "scripts/validate_runtime.ps1"
+    )
 } | ConvertTo-Json -Depth 5 | Set-Content `
     -LiteralPath "$installerPath.manifest.json" `
     -Encoding utf8

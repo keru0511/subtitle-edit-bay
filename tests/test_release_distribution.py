@@ -554,6 +554,8 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
+                        "scripts/setup.ps1",
+                        "scripts/validate_runtime.ps1",
                     ],
                 }
             ),

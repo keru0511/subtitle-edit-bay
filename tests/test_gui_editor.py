@@ -3806,7 +3806,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertTrue(window.setProperty("activeOverlay", "editor"))
         self.app.processEvents()
-        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+        editor_page = self._quick_item(window, "editorPage")
+        editor_back = self._quick_item(window, "editorBackButton")
+        self.assertTrue(editor_page.isVisible())
+        self.assertLess(
+            login_route.mapToScene(QPointF(0, 0)).x(),
+            editor_back.mapToScene(QPointF(0, 0)).x(),
+        )
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")

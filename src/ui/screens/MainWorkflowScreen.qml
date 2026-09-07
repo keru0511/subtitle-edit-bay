@@ -3180,7 +3180,7 @@ ApplicationWindow {
         id: codexLoginRoute
         objectName: "codexLoginRoute"
         anchors.top: parent.top
-        anchors.right: parent.right
+        anchors.left: parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34

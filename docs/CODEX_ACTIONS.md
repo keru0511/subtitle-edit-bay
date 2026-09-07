@@ -42,6 +42,12 @@ Codexからアプリ機能を利用するときは、`src/codex_actions.py` の�
 
 音量・timeline Proposalなど後続のdomain Issueは、新しいbackend handlerをこの固定mapへ明示登録し、`ACTION_DEFINITIONS` の引数契約とdomain validatorを追加します。反射的な `getattr` や自由形式method名には拡張しません。
 
+## 横断レビュー
+
+`review_project` は字幕、音量、通常timeline、ショート、処理状態、依存関係、render可否をpath-freeなReview Contextへまとめ、変更を行わない `ReviewResult` を返します。長尺字幕は上限付きchunkへ分割し、重複findingsをstable IDで統合します。各findingはcategory、target、severity、reasonと、利用可能な型付きActionへのrouteを持ちます。利用できないdomainは前提不足として残し、実行可能routeを付けません。
+
+ReviewResultの `project_revision` が現在値と一致しなければstaleとして扱います。「レビューして」だけではProposal、job、永続Planを開始しません。修正を依頼された場合も、#256のorchestratorが現在状態を再inspectし、#248/#251/#252/#253の各Actionへ明示的にroutingします。
+
 ## Result
 
 結果は `success`、`rejected`、`failed` のいずれかで、`code`、ユーザー向けmessage、現在revisionを返します。成功時は必要に応じて `current_state`、`proposal`、`job` を含みます。予期しない例外は `handler_failed` に変換し、例外本文、秘密情報、local pathをCodexへ返しません。

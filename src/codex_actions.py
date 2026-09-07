@@ -6,6 +6,8 @@ from enum import Enum
 import math
 from typing import Any, Callable, Mapping, Protocol
 
+from .codex_review import build_review_context, review_context
+
 ACTION_SCHEMA_VERSION = 1
 
 
@@ -201,6 +203,10 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     "inspect_dependency_state": ActionDefinition(ActionKind.INSPECT),
     "inspect_render_state": ActionDefinition(ActionKind.INSPECT),
     "inspect_selection_state": ActionDefinition(ActionKind.INSPECT),
+    "review_project": ActionDefinition(
+        ActionKind.INSPECT,
+        fields={"subtitle_chunk_size": FieldSchema((int,), minimum=25, maximum=500)},
+    ),
     "propose_subtitle_edit": ActionDefinition(
         ActionKind.PROPOSE,
         fields={
@@ -422,6 +428,7 @@ class GuiActionBackend:
             "inspect_dependency_state": self._inspect_dependencies,
             "inspect_render_state": self._inspect_render,
             "inspect_selection_state": self._inspect_selection,
+            "review_project": self._review_project,
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
@@ -533,6 +540,17 @@ class GuiActionBackend:
         return HandlerResult(
             "selection state inspected",
             state={"segment_id": segment_id, "playhead": deepcopy(dict(self._gui.editorPlayhead))},
+        )
+
+    def _review_project(self, args: Mapping[str, Any]) -> HandlerResult:
+        context = build_review_context(
+            self._gui,
+            subtitle_chunk_size=int(args.get("subtitle_chunk_size", 200)),
+        )
+        result = review_context(context).to_json()
+        return HandlerResult(
+            "project review completed",
+            state={"review_context": context, "review_result": result},
         )
 
     def _propose_subtitle(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:

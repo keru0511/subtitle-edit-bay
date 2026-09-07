@@ -3804,17 +3804,20 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(sidebar.width(), 300)
         self.assertEqual(self.app._codex_chat.snapshot.thread_id, "thread-249")
 
-        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.assertTrue(QMetaObject.invokeMethod(window, "openEditorScreen"))
+        self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
 
-        self._click(window, self._quick_item(window, "editorBackButton"))
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self.assertTrue(QMetaObject.invokeMethod(window, "closeEditorScreen"))
+        self.assertTrue(QMetaObject.invokeMethod(window, "openShortModeScreen"))
+        self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
 
-        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self.assertTrue(QMetaObject.invokeMethod(window, "closeShortModeScreen"))
+        self.app.processEvents()
         unauthenticated = CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated")
         self.app._codex_chat._snapshot = unauthenticated
         self.app._on_codex_chat_state(unauthenticated)

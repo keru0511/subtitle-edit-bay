@@ -768,20 +768,28 @@ class ReleaseStateTests(unittest.TestCase):
         ):
             git_tag_exists("origin", "v1.2.3")
 
-    def _response(self, payload: dict[str, object]):
+    def _response(self, payload: object):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
         return response
+
+    def _not_found(self) -> HTTPError:
+        return HTTPError("https://api.github.com", 404, "Not Found", {}, None)
 
     def test_release_query_distinguishes_published_draft_and_missing(self) -> None:
         published_payload = {"tag_name": "v1.2.3", "draft": False, "published_at": "2026-09-07T00:00:00Z"}
         draft_payload = {"tag_name": "v1.2.3", "draft": True, "published_at": None}
         with patch("scripts.release_state.urllib.request.urlopen", return_value=self._response(published_payload)):
             published = github_release_state("owner/repo", "v1.2.3", "token")
-        with patch("scripts.release_state.urllib.request.urlopen", return_value=self._response(draft_payload)):
+        with patch(
+            "scripts.release_state.urllib.request.urlopen",
+            side_effect=(self._not_found(), self._response([draft_payload])),
+        ):
             draft = github_release_state("owner/repo", "v1.2.3", "token")
-        missing = HTTPError("https://api.github.com", 404, "Not Found", {}, None)
-        with patch("scripts.release_state.urllib.request.urlopen", side_effect=missing):
+        with patch(
+            "scripts.release_state.urllib.request.urlopen",
+            side_effect=(self._not_found(), self._response([])),
+        ):
             absent = github_release_state("owner/repo", "v1.2.3", "token")
 
         self.assertIsNotNone(published)
@@ -792,8 +800,25 @@ class ReleaseStateTests(unittest.TestCase):
         self.assertFalse(draft.published)
         self.assertIsNone(absent)
 
+    def test_release_query_pages_through_authenticated_draft_search(self) -> None:
+        first_page = [
+            {"tag_name": f"v0.0.{index}", "draft": False, "published_at": "2026-09-07T00:00:00Z"}
+            for index in range(100)
+        ]
+        draft_payload = {"tag_name": "v1.2.3", "draft": True, "published_at": None}
+        with patch(
+            "scripts.release_state.urllib.request.urlopen",
+            side_effect=(self._not_found(), self._response(first_page), self._response([draft_payload])),
+        ) as urlopen:
+            state = github_release_state("owner/repo", "v1.2.3", "token")
+
+        self.assertEqual(publication_action(state), "publish-draft")
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertIn("page=2", urlopen.call_args.args[0].full_url)
+
     def test_release_query_rejects_api_authentication_and_transport_errors(self) -> None:
         failures = (
+            HTTPError("https://api.github.com", 404, "Not Found", {}, None),
             HTTPError("https://api.github.com", 401, "Unauthorized", {}, None),
             HTTPError("https://api.github.com", 500, "Server Error", {}, None),
             URLError("network unavailable"),
@@ -801,7 +826,10 @@ class ReleaseStateTests(unittest.TestCase):
         for failure in failures:
             with (
                 self.subTest(failure=failure),
-                patch("scripts.release_state.urllib.request.urlopen", side_effect=failure),
+                patch(
+                    "scripts.release_state.urllib.request.urlopen",
+                    side_effect=(self._not_found(), failure),
+                ),
                 self.assertRaises(ReleaseStateError),
             ):
                 github_release_state("owner/repo", "v1.2.3", "token")

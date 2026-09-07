@@ -21,6 +21,8 @@ from scripts.release_contract import ReleaseContractError, release_version_from_
 
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RELEASES_PER_PAGE = 100
+MAX_RELEASE_PAGES = 1000
 
 
 class ReleaseStateError(RuntimeError):
@@ -72,8 +74,35 @@ def github_release_state(
         raise ReleaseStateError(f"invalid GitHub repository: {repository}")
     if not token:
         raise ReleaseStateError("GH_TOKEN is required to query GitHub Releases")
+    api_root = api_url.rstrip("/")
     quoted_tag = urllib.parse.quote(release_version, safe="")
-    url = f"{api_url.rstrip('/')}/repos/{repository}/releases/tags/{quoted_tag}"
+    published_url = f"{api_root}/repos/{repository}/releases/tags/{quoted_tag}"
+
+    published = _request_github_json(published_url, token, allow_not_found=True)
+    if published is not None:
+        return _parse_release(published, release_version)
+
+    # The tag endpoint returns published releases only. An authenticated list is
+    # required to distinguish a remaining draft from a genuinely unused tag.
+    for page in range(1, MAX_RELEASE_PAGES + 1):
+        query = urllib.parse.urlencode({"per_page": RELEASES_PER_PAGE, "page": page})
+        releases_url = f"{api_root}/repos/{repository}/releases?{query}"
+        payload = _request_github_json(releases_url, token, allow_not_found=False)
+        if not isinstance(payload, list):
+            raise ReleaseStateError("GitHub Releases list response must be an array")
+        matches = [
+            release for release in payload if isinstance(release, dict) and release.get("tag_name") == release_version
+        ]
+        if len(matches) > 1:
+            raise ReleaseStateError(f"multiple GitHub Releases use tag {release_version}")
+        if matches:
+            return _parse_release(matches[0], release_version)
+        if len(payload) < RELEASES_PER_PAGE:
+            return None
+    raise ReleaseStateError(f"GitHub Releases pagination exceeded {MAX_RELEASE_PAGES} pages")
+
+
+def _request_github_json(url: str, token: str, *, allow_not_found: bool) -> object | None:
     request = urllib.request.Request(
         url,
         headers={
@@ -85,13 +114,16 @@ def github_release_state(
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.load(response)
+            return json.load(response)
     except urllib.error.HTTPError as exc:
-        if exc.code == 404:
+        if exc.code == 404 and allow_not_found:
             return None
-        raise ReleaseStateError(f"GitHub Release query failed with HTTP {exc.code} for {release_version}") from exc
+        raise ReleaseStateError(f"GitHub Release query failed with HTTP {exc.code}: {url}") from exc
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise ReleaseStateError(f"GitHub Release query failed for {release_version}: {exc}") from exc
+        raise ReleaseStateError(f"GitHub Release query failed: {url}: {exc}") from exc
+
+
+def _parse_release(payload: object, release_version: str) -> GitHubReleaseState:
     if not isinstance(payload, dict):
         raise ReleaseStateError("GitHub Release response must be an object")
     if payload.get("tag_name") != release_version:

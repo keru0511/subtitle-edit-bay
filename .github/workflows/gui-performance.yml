@@ -4,9 +4,12 @@ on:
   pull_request:
     paths:
       - ".github/workflows/gui-performance.yml"
+      - "docs/GUI_PERFORMANCE.md"
       - "requirements.txt"
+      - "scripts/aggregate_gui_performance.py"
       - "scripts/compare_gui_performance.py"
       - "scripts/generate_large_gui_fixture.py"
+      - "scripts/plan_gui_performance.py"
       - "scripts/run_gui_performance.py"
       - "src/gui.py"
       - "src/ui/**"
@@ -14,6 +17,7 @@ on:
       - "tests/gui_test_harness.py"
       - "tests/test_gui_editor.py"
       - "tests/test_gui_large_project_performance.py"
+      - "tests/test_gui_performance_pipeline.py"
   workflow_dispatch:
     inputs:
       repetitions:
@@ -46,10 +50,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows-gui-performance:
-    name: Windows Qt/QML benchmark
+  prepare:
+    name: Validate inputs and plan shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      repetitions: ${{ steps.plan.outputs.repetitions }}
+      playback_seconds: ${{ steps.plan.outputs.playback_seconds }}
+      compare_ref: ${{ steps.plan.outputs.compare_ref }}
+      max_regression: ${{ steps.plan.outputs.max_regression }}
+      fail_on_regression: ${{ steps.plan.outputs.fail_on_regression }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Check out benchmark revision
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate inputs and create repetition matrix
+        id: plan
+        env:
+          INPUT_REPETITIONS: ${{ inputs.repetitions || '3' }}
+          INPUT_PLAYBACK_SECONDS: ${{ inputs.playback_seconds || '30' }}
+          INPUT_COMPARE_REF: ${{ inputs.compare_ref || 'b600e90' }}
+          INPUT_MAX_REGRESSION: ${{ inputs.max_regression_percent || '20' }}
+          INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression || 'false' }}
+        run: |
+          python scripts/plan_gui_performance.py \
+            --repetitions "$INPUT_REPETITIONS" \
+            --playback-seconds "$INPUT_PLAYBACK_SECONDS" \
+            --compare-ref "$INPUT_COMPARE_REF" \
+            --max-regression-percent "$INPUT_MAX_REGRESSION" \
+            --fail-on-regression "$INPUT_FAIL_ON_REGRESSION" \
+            --github-output "$GITHUB_OUTPUT"
+
+  benchmark:
+    name: Windows benchmark (repetition ${{ matrix.repetition }})
+    needs: prepare
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       PYTHONUTF8: "1"
       QT_QPA_PLATFORM: offscreen
@@ -111,98 +155,38 @@ jobs:
         shell: pwsh
         run: python -m pip install -r requirements.txt
 
-      - name: Resolve benchmark inputs
-        id: benchmark-inputs
-        shell: pwsh
-        env:
-          INPUT_REPETITIONS: ${{ inputs.repetitions }}
-          INPUT_PLAYBACK_SECONDS: ${{ inputs.playback_seconds }}
-          INPUT_COMPARE_REF: ${{ inputs.compare_ref }}
-          INPUT_MAX_REGRESSION: ${{ inputs.max_regression_percent }}
-          INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression }}
-        run: |
-          $rawRepetitions = if ($env:INPUT_REPETITIONS) { $env:INPUT_REPETITIONS } else { "3" }
-          $rawPlaybackSeconds = if ($env:INPUT_PLAYBACK_SECONDS) { $env:INPUT_PLAYBACK_SECONDS } else { "30" }
-          $compareRef = if ($env:INPUT_COMPARE_REF) { $env:INPUT_COMPARE_REF } else { "b600e90" }
-          $rawMaxRegression = if ($env:INPUT_MAX_REGRESSION) { $env:INPUT_MAX_REGRESSION } else { "20" }
-          $failOnRegression = if ($env:INPUT_FAIL_ON_REGRESSION) {
-              $env:INPUT_FAIL_ON_REGRESSION.ToLowerInvariant()
-          } else { "false" }
-
-          [int]$repetitions = 0
-          if (-not [int]::TryParse($rawRepetitions, [ref]$repetitions) -or $repetitions -lt 1 -or $repetitions -gt 10) {
-              throw "repetitions must be an integer from 1 through 10"
-          }
-          [double]$playbackSeconds = 0
-          $playbackParsed = [double]::TryParse(
-                  $rawPlaybackSeconds,
-                  [Globalization.NumberStyles]::Float,
-                  [Globalization.CultureInfo]::InvariantCulture,
-                  [ref]$playbackSeconds
-              )
-          if (-not $playbackParsed `
-                  -or [double]::IsNaN($playbackSeconds) `
-                  -or [double]::IsInfinity($playbackSeconds) `
-                  -or $playbackSeconds -lt 0.1 `
-                  -or $playbackSeconds -gt 30) {
-              throw "playback_seconds must be from 0.1 through 30"
-          }
-          [double]$maxRegression = 0
-          $maxRegressionParsed = [double]::TryParse(
-                  $rawMaxRegression,
-                  [Globalization.NumberStyles]::Float,
-                  [Globalization.CultureInfo]::InvariantCulture,
-                  [ref]$maxRegression
-              )
-          if (-not $maxRegressionParsed `
-                  -or [double]::IsNaN($maxRegression) `
-                  -or [double]::IsInfinity($maxRegression) `
-                  -or $maxRegression -lt 0 `
-                  -or $maxRegression -gt 1000) {
-              throw "max_regression_percent must be from 0 through 1000"
-          }
-          if ($failOnRegression -notin @("true", "false")) {
-              throw "fail_on_regression must be true or false"
-          }
-          $revisionExpression = "${compareRef}^{commit}"
-          $resolvedCompareLines = @(git rev-parse --verify --end-of-options $revisionExpression 2>$null)
-          $resolveExitCode = $LASTEXITCODE
-          if ($resolveExitCode -ne 0 -or $resolvedCompareLines.Count -ne 1) {
-              throw "compare_ref does not resolve to a commit"
-          }
-          $resolvedCompareRef = $resolvedCompareLines[0].Trim()
-          if ($resolvedCompareRef -notmatch "^[0-9a-f]{40}$") {
-              throw "compare_ref does not resolve to a commit"
-          }
-
-          "repetitions=$repetitions" >> $env:GITHUB_OUTPUT
-          "playback_seconds=$($playbackSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))" >> $env:GITHUB_OUTPUT
-          "compare_ref=$resolvedCompareRef" >> $env:GITHUB_OUTPUT
-          "max_regression=$($maxRegression.ToString([Globalization.CultureInfo]::InvariantCulture))" >> $env:GITHUB_OUTPUT
-          "fail_on_regression=$failOnRegression" >> $env:GITHUB_OUTPUT
-
       - name: Run current 3,000 and 10,000 subtitle scenarios
         shell: pwsh
         env:
-          BENCHMARK_REPETITIONS: ${{ steps.benchmark-inputs.outputs.repetitions }}
-          BENCHMARK_PLAYBACK_SECONDS: ${{ steps.benchmark-inputs.outputs.playback_seconds }}
+          BENCHMARK_REPETITIONS: ${{ needs.prepare.outputs.repetitions }}
+          BENCHMARK_PLAYBACK_SECONDS: ${{ needs.prepare.outputs.playback_seconds }}
           BENCHMARK_CURRENT_SHA: ${{ github.sha }}
+          BENCHMARK_REPETITION: ${{ matrix.repetition }}
         run: |
           python scripts/run_gui_performance.py `
             --segment-count 3000 `
             --segment-count 10000 `
-            --repetitions $env:BENCHMARK_REPETITIONS `
+            --repetitions 1 `
+            --repetition-index $env:BENCHMARK_REPETITION `
+            --total-repetitions $env:BENCHMARK_REPETITIONS `
             --playback-seconds $env:BENCHMARK_PLAYBACK_SECONDS `
             --revision-label $env:BENCHMARK_CURRENT_SHA `
-            --output artifacts/gui-performance-current.json `
+            --harness-revision $env:BENCHMARK_CURRENT_SHA `
+            --run-id $env:GITHUB_RUN_ID `
+            --run-attempt $env:GITHUB_RUN_ATTEMPT `
+            --shard-id $env:BENCHMARK_REPETITION `
+            --output "artifacts/gui-performance-current-$env:BENCHMARK_REPETITION.json" `
             --fixture-dir "$env:RUNNER_TEMP/gui-performance-current"
 
-      - name: Run pre-#302 reference with the same harness
+      - name: Run reference 3,000 subtitle scenario with the same harness
+        if: always()
         shell: pwsh
         env:
-          BENCHMARK_REPETITIONS: ${{ steps.benchmark-inputs.outputs.repetitions }}
-          BENCHMARK_PLAYBACK_SECONDS: ${{ steps.benchmark-inputs.outputs.playback_seconds }}
-          BENCHMARK_COMPARE_SHA: ${{ steps.benchmark-inputs.outputs.compare_ref }}
+          BENCHMARK_REPETITIONS: ${{ needs.prepare.outputs.repetitions }}
+          BENCHMARK_PLAYBACK_SECONDS: ${{ needs.prepare.outputs.playback_seconds }}
+          BENCHMARK_COMPARE_SHA: ${{ needs.prepare.outputs.compare_ref }}
+          BENCHMARK_CURRENT_SHA: ${{ github.sha }}
+          BENCHMARK_REPETITION: ${{ matrix.repetition }}
         run: |
           $referenceRoot = Join-Path $env:RUNNER_TEMP "gui-performance-reference"
           git worktree add --detach $referenceRoot $env:BENCHMARK_COMPARE_SHA
@@ -216,39 +200,104 @@ jobs:
           try {
               python scripts/run_gui_performance.py `
                 --segment-count 3000 `
-                --repetitions $env:BENCHMARK_REPETITIONS `
+                --repetitions 1 `
+                --repetition-index $env:BENCHMARK_REPETITION `
+                --total-repetitions $env:BENCHMARK_REPETITIONS `
                 --playback-seconds $env:BENCHMARK_PLAYBACK_SECONDS `
                 --revision-label $env:BENCHMARK_COMPARE_SHA `
+                --harness-revision $env:BENCHMARK_CURRENT_SHA `
+                --run-id $env:GITHUB_RUN_ID `
+                --run-attempt $env:GITHUB_RUN_ATTEMPT `
+                --shard-id $env:BENCHMARK_REPETITION `
                 --no-enforce-contracts `
-                --output "$env:GITHUB_WORKSPACE/artifacts/gui-performance-reference.json" `
+                --output "$env:GITHUB_WORKSPACE/artifacts/gui-performance-reference-$env:BENCHMARK_REPETITION.json" `
                 --fixture-dir "$env:RUNNER_TEMP/gui-performance-reference-fixtures"
           } finally {
               Pop-Location
           }
 
-      - name: Compare absolute and relative budgets
-        shell: pwsh
-        env:
-          BENCHMARK_MAX_REGRESSION: ${{ steps.benchmark-inputs.outputs.max_regression }}
-          BENCHMARK_FAIL_ON_REGRESSION: ${{ steps.benchmark-inputs.outputs.fail_on_regression }}
-        run: |
-          $arguments = @(
-              "scripts/compare_gui_performance.py",
-              "--current", "artifacts/gui-performance-current.json",
-              "--baseline", "artifacts/gui-performance-reference.json",
-              "--output", "artifacts/gui-performance-comparison.json",
-              "--max-regression-percent", $env:BENCHMARK_MAX_REGRESSION
-          )
-          if ($env:BENCHMARK_FAIL_ON_REGRESSION -eq "true") {
-              $arguments += "--fail-on-regression"
-          }
-          python @arguments
-
-      - name: Upload reports
+      - name: Upload shard reports
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: gui-performance-windows-${{ github.run_id }}
+          name: gui-performance-shard-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.repetition }}
           path: artifacts/gui-performance-*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    name: Integrated benchmark gate
+    needs:
+      - prepare
+      - benchmark
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out benchmark revision
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download this attempt's shard reports
+        if: always()
+        uses: actions/download-artifact@v7
+        with:
+          pattern: gui-performance-shard-${{ github.run_id }}-*
+          path: artifacts/shards
+
+      - name: Validate, aggregate, and compare all raw results
+        if: always()
+        env:
+          BENCHMARK_JOB_RESULT: ${{ needs.benchmark.result }}
+          BENCHMARK_REPETITIONS: ${{ needs.prepare.outputs.repetitions }}
+          BENCHMARK_PLAYBACK_SECONDS: ${{ needs.prepare.outputs.playback_seconds }}
+          BENCHMARK_COMPARE_SHA: ${{ needs.prepare.outputs.compare_ref }}
+          BENCHMARK_MAX_REGRESSION: ${{ needs.prepare.outputs.max_regression }}
+          BENCHMARK_FAIL_ON_REGRESSION: ${{ needs.prepare.outputs.fail_on_regression }}
+        run: |
+          set +e
+          python scripts/aggregate_gui_performance.py \
+            --input-dir artifacts/shards \
+            --output-dir artifacts/combined \
+            --repetitions "$BENCHMARK_REPETITIONS" \
+            --playback-seconds "$BENCHMARK_PLAYBACK_SECONDS" \
+            --current-revision "${{ github.sha }}" \
+            --baseline-revision "$BENCHMARK_COMPARE_SHA" \
+            --harness-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
+          aggregate_status=$?
+
+          comparison_status=0
+          if [[ $aggregate_status -eq 0 ]]; then
+            comparison_args=(
+              scripts/compare_gui_performance.py
+              --current artifacts/combined/gui-performance-current.json
+              --baseline artifacts/combined/gui-performance-reference.json
+              --output artifacts/combined/gui-performance-comparison.json
+              --max-regression-percent "$BENCHMARK_MAX_REGRESSION"
+            )
+            if [[ "$BENCHMARK_FAIL_ON_REGRESSION" == "true" ]]; then
+              comparison_args+=(--fail-on-regression)
+            fi
+            python "${comparison_args[@]}"
+            comparison_status=$?
+          fi
+
+          if [[ "$BENCHMARK_JOB_RESULT" != "success" ]]; then
+            echo "Benchmark matrix result was $BENCHMARK_JOB_RESULT; the integrated gate cannot pass."
+            exit 1
+          fi
+          if [[ $aggregate_status -ne 0 || $comparison_status -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Upload integrated reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gui-performance-integrated-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/combined/gui-performance-*.json
           if-no-files-found: error
           retention-days: 30

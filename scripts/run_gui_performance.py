@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import math
 import os
+import platform
 import subprocess
 import sys
 from collections import defaultdict
@@ -40,6 +42,49 @@ SCENARIO_NAMES = (
     "short_mode_selection_reorder_delete_settings",
     "short_visual_update_preserves_playback",
 )
+
+
+def _command_version(command: str) -> str | None:
+    try:
+        completed = subprocess.run(
+            [command, "-version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return None
+    output = completed.stdout or completed.stderr
+    return output.splitlines()[0].strip() if output else None
+
+
+def environment_info() -> dict[str, Any]:
+    packages: dict[str, str | None] = {}
+    for name in ("PySide6", "shiboken6"):
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[name] = None
+    return {
+        "python": {
+            "implementation": platform.python_implementation(),
+            "version": platform.python_version(),
+        },
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "packages": packages,
+        "ffmpeg": _command_version("ffmpeg"),
+        "ffprobe": _command_version("ffprobe"),
+        "runner": {
+            "os": os.environ.get("RUNNER_OS"),
+            "arch": os.environ.get("RUNNER_ARCH"),
+            "name": os.environ.get("RUNNER_NAME"),
+            "image_os": os.environ.get("ImageOS"),
+            "image_version": os.environ.get("ImageVersion"),
+        },
+    }
 
 
 def _nearest_rank_summary(values: Sequence[float], *, digits: int = 3) -> dict[str, float | int]:
@@ -190,7 +235,12 @@ def _run_controller(args: argparse.Namespace) -> int:
     runs: list[dict[str, Any]] = []
     contract_failure = False
     for segment_count, project_path in project_paths.items():
-        for repetition in range(1, args.repetitions + 1):
+        for local_repetition in range(1, args.repetitions + 1):
+            repetition = (
+                args.repetition_index
+                if args.repetition_index is not None
+                else local_repetition
+            )
             worker_output = worker_dir / f"{segment_count}-{repetition}.json"
             completed = subprocess.run(
                 _worker_command(
@@ -218,9 +268,18 @@ def _run_controller(args: argparse.Namespace) -> int:
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "revision_label": args.revision_label,
+        "harness_revision": args.harness_revision,
+        "provenance": {
+            "run_id": args.run_id,
+            "run_attempt": args.run_attempt,
+            "shard_id": args.shard_id,
+        },
+        "environment": environment_info(),
         "configuration": {
             "segment_counts": args.segment_counts,
             "repetitions": args.repetitions,
+            "total_repetitions": args.total_repetitions,
+            "repetition_indices": sorted({int(run["repetition"]) for run in runs}),
             "playback_seconds": args.playback_seconds,
             "settle_ms": args.settle_ms,
             "contracts_enforced": args.enforce_contracts,
@@ -258,11 +317,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Subtitle count; may be specified more than once (default: 3000 and 10000).",
     )
     parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument(
+        "--repetition-index",
+        type=int,
+        help="Global repetition number for a single-repetition CI shard.",
+    )
+    parser.add_argument(
+        "--total-repetitions",
+        type=int,
+        help="Total repetitions planned across all CI shards.",
+    )
     parser.add_argument("--playback-seconds", type=float, default=30.0)
     parser.add_argument("--settle-ms", type=int, default=100)
     parser.add_argument("--output", type=Path, default=Path("artifacts/gui-performance.json"))
     parser.add_argument("--fixture-dir", type=Path)
     parser.add_argument("--revision-label", default=os.environ.get("GITHUB_SHA", "local"))
+    parser.add_argument("--harness-revision", default=os.environ.get("GITHUB_SHA", "local"))
+    parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))
+    parser.add_argument("--run-attempt", default=os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
+    parser.add_argument("--shard-id", default="local")
     parser.add_argument(
         "--enforce-contracts",
         action=argparse.BooleanOptionalAction,
@@ -270,8 +343,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     args.segment_counts = args.segment_counts or list(DEFAULT_SEGMENT_COUNTS)
+    args.total_repetitions = args.total_repetitions or args.repetitions
     if args.repetitions <= 0:
         parser.error("--repetitions must be positive")
+    if args.total_repetitions <= 0:
+        parser.error("--total-repetitions must be positive")
+    if args.repetition_index is not None:
+        if args.repetitions != 1:
+            parser.error("--repetition-index requires --repetitions 1")
+        if not 1 <= args.repetition_index <= args.total_repetitions:
+            parser.error("--repetition-index must be within --total-repetitions")
     if not 0.1 <= args.playback_seconds <= 30.0:
         parser.error("--playback-seconds must be between 0.1 and 30")
     if args.settle_ms < 0:

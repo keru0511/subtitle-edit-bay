@@ -159,6 +159,7 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
     def test_heavy_windows_benchmark_is_separate_from_regular_ci(self) -> None:
         regular_ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         performance_ci = (REPO_ROOT / ".github" / "workflows" / "gui-performance.yml").read_text(encoding="utf-8")
+        performance_plan = (REPO_ROOT / "scripts" / "plan_gui_performance.py").read_text(encoding="utf-8")
 
         self.assertNotIn("run_gui_performance.py", regular_ci)
         self.assertIn("runs-on: windows-latest", performance_ci)
@@ -166,9 +167,9 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
         self.assertIn("--segment-count 10000", performance_ci)
         self.assertIn('default: "b600e90"', performance_ci)
         self.assertIn("actions/upload-artifact", performance_ci)
-        self.assertIn("git rev-parse --verify", performance_ci)
-        self.assertIn("--end-of-options", performance_ci)
-        self.assertIn("[double]::IsNaN", performance_ci)
+        self.assertIn('"git", "rev-parse", "--verify"', performance_plan)
+        self.assertIn('"--end-of-options"', performance_plan)
+        self.assertIn("math.isfinite", performance_plan)
         self.assertNotIn(
             'git worktree add --detach $referenceRoot "${{',
             performance_ci,

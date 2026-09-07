@@ -18,6 +18,13 @@ from scripts.release_contract import (
     validate_source_version,
     verify_release_artifacts,
 )
+from scripts.release_candidate import (
+    REQUIRED_JOB_NAMES,
+    ReleaseCandidateError,
+    select_release_candidate,
+    verify_promotion_record,
+    write_promotion_record,
+)
 from scripts.release_readiness import (
     ReleaseReadinessError,
     assert_preparation_results,
@@ -38,7 +45,6 @@ from tests.workflow_contracts import (
     job_ancestors,
     load_workflow,
     step_by_id,
-    validate_step_command,
     validate_publish_gate,
     validate_publish_permissions,
     validate_step_order,
@@ -112,11 +118,11 @@ class ReleaseDistributionTests(unittest.TestCase):
         triggers = workflow["on"]
 
         self.assertEqual(set(triggers), {"workflow_call"})
-        self.assertEqual(set(triggers["workflow_call"]["inputs"]), {"source_sha", "release_version"})
+        self.assertEqual(set(triggers["workflow_call"]["inputs"]), {"release_commit_sha", "release_version"})
         validate_publish_gate(
             workflow,
             publish_job="publish",
-            required_gates=("prepare", "tag"),
+            required_gates=("candidate", "tag"),
         )
         self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertEqual(workflow["jobs"]["tag"]["permissions"], {"contents": "write"})
@@ -125,8 +131,12 @@ class ReleaseDistributionTests(unittest.TestCase):
             {"actions": "read", "contents": "write"},
         )
         graph = build_job_graph(workflow)
-        self.assertTrue({"prepare", "tag"}.issubset(job_ancestors(graph, "publish")))
-        self.assertEqual(workflow["jobs"]["prepare"]["uses"], "./.github/workflows/release-prepare.yml")
+        self.assertTrue({"candidate", "tag"}.issubset(job_ancestors(graph, "publish")))
+        self.assertNotIn("prepare", workflow["jobs"])
+        self.assertEqual(
+            workflow["jobs"]["candidate"]["permissions"],
+            {"actions": "read", "contents": "read", "pull-requests": "read"},
+        )
 
     def test_release_entrypoint_passes_exact_source_and_version(self) -> None:
         release = load_workflow(RELEASE_WORKFLOW)
@@ -135,10 +145,13 @@ class ReleaseDistributionTests(unittest.TestCase):
 
         self.assertEqual(
             release["concurrency"]["group"],
-            "release-${{ inputs.release_version }}-${{ inputs.source_sha }}",
+            "release-${{ inputs.release_version }}-${{ inputs.release_commit_sha }}",
         )
         self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
-        self.assertEqual(reusable_release["with"]["source_sha"], "${{ needs.validate.outputs.source_sha }}")
+        self.assertEqual(
+            reusable_release["with"]["release_commit_sha"],
+            "${{ needs.validate.outputs.source_sha }}",
+        )
         self.assertEqual(
             reusable_release["with"]["release_version"],
             "${{ needs.validate.outputs.release_version }}",
@@ -163,8 +176,17 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
+        self.assertIn("release-promotion.json", published_assets)
         self.assertNotIn("--clobber", published_assets)
-        self.assertIn("cmp dist/SubtitleEditBay-Setup.exe.sha256", published_assets)
+        self.assertIn('cmp "dist/$asset" "existing-release/$asset"', published_assets)
+
+        candidate = workflow["jobs"]["candidate"]
+        self.assertNotIn("release-prepare.yml", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertIn("release_candidate.py select", str(step_by_id(workflow, "candidate", "select")["run"]))
+        download = step_by_id(workflow, "candidate", "download")
+        self.assertEqual(download["with"]["run-id"], "${{ steps.select.outputs.workflow_run_id }}")
+        self.assertEqual(download["with"]["artifact-ids"], "${{ steps.select.outputs.artifact_id }}")
+        self.assertNotIn("continue-on-error", candidate)
 
     def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -179,8 +201,13 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn('steps.state.outputs.action }}" == "publish-draft"', command)
         self.assertIn('gh release edit "$RELEASE_VERSION"', command)
         self.assertIn("--draft=false", command)
-        self.assertLess(command.index("verify-artifacts"), command.index("--draft=false"))
-        self.assertLess(command.index("cmp dist/SubtitleEditBay-Setup.exe.sha256"), command.index("--draft=false"))
+        verify = str(step_by_id(workflow, "publish", "verify")["run"])
+        self.assertIn("verify-artifacts", verify)
+        self.assertIn("verify-promotion", verify)
+        self.assertIn('cmp "dist/$asset" "existing-release/$asset"', command)
+        self.assertLess(command.index("cmp"), command.index("--draft=false"))
+        self.assertIn('[[ "${#missing[@]}" -eq 0 ]]', command)
+        self.assertIn("gh release upload", command)
         self.assertNotIn("--clobber", command)
         self.assertIn("release_state.py assert-published", str(published["run"]))
         self.assertEqual(publish["steps"][-1]["id"], "published")
@@ -491,40 +518,157 @@ class WorkflowContractHelperTests(unittest.TestCase):
                 )
 
     def test_release_contract_commands_cannot_mask_failures_or_change_inputs(self) -> None:
-        mutations = []
+        workflow = load_workflow(RELEASE_WORKFLOW)
+        command = str(step_by_id(workflow, "publish", "verify")["run"])
 
-        wrong_artifact_version = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(wrong_artifact_version, "publish", "verify")["run"] = (
-            "python scripts/release_contract.py verify-artifacts --directory dist --expected-version 0.0.0"
-        )
-        mutations.append((wrong_artifact_version, "publish", "verify", "bash"))
+        self.assertIn('--expected-version "${{ inputs.release_version }}"', command)
+        self.assertIn('--expected-source-sha "$CANDIDATE_SOURCE_SHA"', command)
+        self.assertIn('[[ "$actual_sha256" == "$INSTALLER_SHA256" ]]', command)
+        self.assertNotIn("|| true", command)
+        self.assertEqual(step_by_id(workflow, "publish", "verify")["shell"], "bash")
 
-        custom_shell = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(custom_shell, "publish", "verify")["shell"] = "bash {0}"
-        mutations.append((custom_shell, "publish", "verify", "bash"))
 
-        expected_tokens = {
-            "verify": (
-                "python",
-                "scripts/release_contract.py",
-                "verify-artifacts",
-                "--directory",
-                "dist",
-                "--expected-version",
-                "${{ inputs.release_version }}",
-                "--expected-source-sha",
-                "${{ inputs.source_sha }}",
-            ),
+class ReleaseCandidateTests(unittest.TestCase):
+    RELEASE_SHA = "d" * 40
+    CANDIDATE_SHA = "c" * 40
+    HEAD_SHA = "b" * 40
+    BASE_SHA = "a" * 40
+    TREE_SHA = "e" * 40
+
+    def _api(
+        self,
+        *,
+        run_conclusion: str = "success",
+        job_conclusions: dict[str, str] | None = None,
+        artifact_expired: bool = False,
+        candidate_tree: str | None = None,
+        candidate_parents: tuple[str, ...] | None = None,
+        include_older_success: bool = False,
+    ) -> MagicMock:
+        api = MagicMock()
+        api.repository = "owner/repo"
+        pull = {
+            "number": 42,
+            "merged": True,
+            "merged_at": "2026-09-07T00:00:00Z",
+            "merge_commit_sha": self.RELEASE_SHA,
+            "head": {"sha": self.HEAD_SHA, "repo": {"full_name": "owner/repo"}},
+            "base": {"sha": self.BASE_SHA, "ref": "main"},
         }
-        for workflow, job_id, step_id, shell in mutations:
-            with self.subTest(job_id=job_id, step_id=step_id), self.assertRaises(WorkflowContractError):
-                validate_step_command(
-                    workflow,
-                    job_id,
-                    step_id,
-                    expected_shell=shell,
-                    expected_tokens=expected_tokens[step_id],
-                )
+        latest_run = {
+            "id": 200,
+            "run_attempt": 2,
+            "created_at": "2026-09-07T02:00:00Z",
+            "status": "completed",
+            "conclusion": run_conclusion,
+            "event": "pull_request",
+            "path": ".github/workflows/release-readiness.yml",
+            "head_sha": self.HEAD_SHA,
+            "head_repository": {"full_name": "owner/repo"},
+            "pull_requests": [{"number": 42}],
+        }
+        runs = [latest_run]
+        if include_older_success:
+            older = dict(latest_run, id=100, run_attempt=1, created_at="2026-09-07T01:00:00Z", conclusion="success")
+            runs.append(older)
+        jobs = [
+            {
+                "name": (
+                    f"Prepare merge candidate / {name}"
+                    if name not in {"Classify merge candidate", "Release readiness"}
+                    else name
+                ),
+                "status": "completed",
+                "conclusion": (job_conclusions or {}).get(name, "success"),
+                "run_attempt": 2,
+            }
+            for name in REQUIRED_JOB_NAMES
+        ]
+        artifact = {
+            "id": 300,
+            "name": f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}",
+            "digest": "sha256:" + "f" * 64,
+            "expired": artifact_expired,
+            "expires_at": "2026-09-21T00:00:00Z",
+        }
+
+        def get(path: str, query: dict[str, object] | None = None) -> object:
+            if path.endswith("/pulls/42"):
+                return pull
+            if path.endswith(f"/git/commits/{self.CANDIDATE_SHA}"):
+                return {
+                    "tree": {"sha": candidate_tree or self.TREE_SHA},
+                    "parents": [{"sha": sha} for sha in (candidate_parents or (self.BASE_SHA, self.HEAD_SHA))],
+                }
+            if path.endswith(f"/git/commits/{self.RELEASE_SHA}"):
+                return {"tree": {"sha": self.TREE_SHA}, "parents": [{"sha": self.BASE_SHA}]}
+            raise AssertionError(path)
+
+        def pages(
+            path: str,
+            key: str | None = None,
+            query: dict[str, object] | None = None,
+        ) -> list[object]:
+            if path.endswith(f"/commits/{self.RELEASE_SHA}/pulls"):
+                return [pull]
+            if path.endswith("/pulls/42/files"):
+                return [{"filename": "VERSION"}]
+            if path.endswith("/runs"):
+                return runs
+            if path.endswith("/runs/200/jobs"):
+                return jobs
+            if path.endswith("/runs/200/artifacts"):
+                return [artifact]
+            raise AssertionError(path)
+
+        api.get.side_effect = get
+        api.pages.side_effect = pages
+        return api
+
+    def test_selects_exact_successful_candidate_and_records_distinct_release_commit(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+
+        self.assertEqual(candidate.pull_request_number, 42)
+        self.assertEqual(candidate.candidate_source_sha, self.CANDIDATE_SHA)
+        self.assertEqual(candidate.release_commit_sha, self.RELEASE_SHA)
+        self.assertEqual(candidate.candidate_source_tree, candidate.release_commit_tree)
+        self.assertEqual(candidate.workflow_run_id, 200)
+        self.assertEqual(candidate.workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_id, 300)
+
+    def test_does_not_fall_back_when_latest_matching_run_failed(self) -> None:
+        api = self._api(run_conclusion="failure", include_older_success=True)
+
+        with self.assertRaisesRegex(ReleaseCandidateError, "latest matching.*did not succeed"):
+            select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+
+    def test_rejects_missing_verification_stale_head_tree_and_expiry(self) -> None:
+        cases = (
+            (self._api(job_conclusions={"Install and start prepared package": "skipped"}), "did not succeed"),
+            (self._api(candidate_parents=(self.BASE_SHA, "f" * 40)), "final tested merge"),
+            (self._api(candidate_tree="f" * 40), "source trees differ"),
+            (self._api(artifact_expired=True), "expired"),
+        )
+        for api, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ReleaseCandidateError, message):
+                select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+
+    def test_promotion_record_is_stable_and_detects_mismatch(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            expected = directory / "expected.json"
+            actual = directory / "actual.json"
+            write_promotion_record(expected, candidate_path, "1" * 64)
+            write_promotion_record(actual, candidate_path, "1" * 64)
+            verify_promotion_record(actual, expected)
+            payload = json.loads(actual.read_text(encoding="utf-8"))
+            payload["installer_sha256"] = "2" * 64
+            actual.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                verify_promotion_record(actual, expected)
 
 
 class ReleaseArtifactContractTests(unittest.TestCase):
@@ -680,10 +824,12 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
         self.assertFalse(result.requires_preparation)
 
     def test_release_infrastructure_change_is_prepared_without_publishing(self) -> None:
-        result = classify_values((".github/workflows/release.yml",), "v1.2.3", "v1.2.3")
+        for changed_file in (".github/workflows/release.yml", "scripts/release_candidate.py"):
+            with self.subTest(changed_file=changed_file):
+                result = classify_values((changed_file,), "v1.2.3", "v1.2.3")
 
-        self.assertEqual(result.kind, "infrastructure")
-        self.assertTrue(result.requires_preparation)
+                self.assertEqual(result.kind, "infrastructure")
+                self.assertTrue(result.requires_preparation)
 
     def test_invalid_release_changes_fail_instead_of_becoming_normal(self) -> None:
         cases = (

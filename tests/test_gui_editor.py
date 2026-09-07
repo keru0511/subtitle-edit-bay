@@ -3778,6 +3778,50 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.status, "ショート動画を書き出しています")
         self.assertEqual(self.app.stage, "ENCODE")
 
+    def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        login_route = self._quick_item(window, "codexLoginRoute")
+
+        self.assertFalse(sidebar.isVisible())
+        self.assertTrue(login_route.isVisible())
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(
+                connection_state="ready",
+                auth_state="authenticated",
+                auth_label="ChatGPT",
+                thread_id="thread-249",
+                selected_model="gpt-test",
+                messages=({"role": "user", "text": "keep this conversation"},),
+            )
+        )
+        self.app.processEvents()
+
+        self.assertTrue(sidebar.isVisible())
+        self.assertFalse(login_route.isVisible())
+        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(self.app._codex_chat.snapshot.thread_id, "thread-249")
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.assertTrue(sidebar.isVisible())
+        self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
+        self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
+
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self.assertTrue(sidebar.isVisible())
+        self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
+
+        self.app._on_codex_chat_state(
+            CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated")
+        )
+        self.app.processEvents()
+        self.assertFalse(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 0)
+        self.assertTrue(login_route.isVisible())
+
     def test_codex_model_persistence_does_not_replace_workflow_status(self) -> None:
         self.app._settings["codex_model"] = ""
         self.app._status = "文字起こしを実行しています"

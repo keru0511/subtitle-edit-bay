@@ -5,11 +5,18 @@ Rectangle {
     id: sidebar
 
     property var backend
+    property bool wasAuthenticated: false
 
     objectName: "codexChatSidebarContainer"
     radius: 12
     color: "#121715"
     border.color: "#2A3530"
+
+    Component.onCompleted: {
+        wasAuthenticated = backend && backend.codexAuthState === "authenticated"
+        if (wasAuthenticated)
+            chatPanel.expanded = true
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -49,6 +56,20 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: !chatPanel.expanded
+        }
+    }
+
+    Connections {
+        target: sidebar.backend
+
+        function onCodexChatChanged() {
+            var authenticated = sidebar.backend
+                && sidebar.backend.codexAuthState === "authenticated"
+            if (authenticated && !sidebar.wasAuthenticated)
+                chatPanel.expanded = true
+            else if (!authenticated)
+                chatPanel.expanded = false
+            sidebar.wasAuthenticated = authenticated
         }
     }
 }

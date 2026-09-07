@@ -66,10 +66,17 @@ ApplicationWindow {
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
     readonly property bool shortMode: root.activeOverlay === "short"
+    readonly property bool codexAuthenticated: root.appBackend
+        && root.appBackend.codexAuthState === "authenticated"
+    readonly property bool codexSidebarOverlay: root.width < 1400
+    readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0
+    property bool codexDrawerOpen: true
+    property bool previousCodexAuthenticated: false
     onEditorModeChanged: {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
     }
+    Component.onCompleted: previousCodexAuthenticated = root.codexAuthenticated
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -1517,6 +1524,12 @@ ApplicationWindow {
         function onEditorPlayheadChanged() {
             root.syncSharedPlayerToPlayhead()
         }
+
+        function onCodexChatChanged() {
+            if (root.codexAuthenticated && !root.previousCodexAuthenticated)
+                root.codexDrawerOpen = true
+            root.previousCodexAuthenticated = root.codexAuthenticated
+        }
     }
 
     Timer {
@@ -1531,7 +1544,10 @@ ApplicationWindow {
         objectName: "mainWorkspace"
         visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
         anchors.fill: parent
-        anchors.margins: 12
+        anchors.leftMargin: 12
+        anchors.topMargin: 12
+        anchors.bottomMargin: 12
+        anchors.rightMargin: root.codexSidebarWidth + 22
         spacing: 10
 
         Rectangle {
@@ -1960,13 +1976,6 @@ ApplicationWindow {
             }
         }
 
-        CodexSidebarContainer {
-            Layout.preferredWidth: 300
-            Layout.minimumWidth: 280
-            Layout.fillHeight: true
-            backend: root.appBackend
-            visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
-        }
     }
 
   Dialog {
@@ -2222,6 +2231,7 @@ ApplicationWindow {
         id: mixerPage
         objectName: "mixerPage"
         anchors.fill: parent
+        anchors.rightMargin: root.codexSidebarWidth + (root.codexAuthenticated ? 10 : 0)
         visible: root.mixerMode
         z: 100
         color: "#0D1210"
@@ -2785,6 +2795,7 @@ ApplicationWindow {
         id: editorPage
         objectName: "editorPage"
         anchors.fill: parent
+        anchors.rightMargin: root.codexSidebarWidth + (root.codexAuthenticated ? 10 : 0)
         visible: root.editorMode
         z: 100
         color: "#0D1210"
@@ -3122,6 +3133,7 @@ ApplicationWindow {
         id: shortModePage
         objectName: "shortModePage"
         anchors.fill: parent
+        anchors.rightMargin: root.codexSidebarWidth + (root.codexAuthenticated ? 10 : 0)
         visible: root.shortMode
         z: 100
         color: "#0D1210"
@@ -3136,6 +3148,60 @@ ApplicationWindow {
             active: root.shortMode
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
+        }
+    }
+
+    CodexSidebarContainer {
+        id: codexSidebar
+        objectName: "commonCodexSidebar"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        width: root.codexAuthenticated ? 300 : 0
+        visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)
+        z: 600
+        backend: root.appBackend
+    }
+
+    SmallButton {
+        objectName: "codexDrawerToggle"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        width: 86
+        height: 34
+        visible: root.codexAuthenticated && root.codexSidebarOverlay
+        z: 650
+        text: root.codexDrawerOpen ? "Codexを閉じる" : "Codexを開く"
+        onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
+    }
+
+    SmallButton {
+        id: codexLoginRoute
+        objectName: "codexLoginRoute"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        width: text === "ブラウザを開く" ? 116 : 92
+        height: 34
+        visible: !root.codexAuthenticated
+        z: 650
+        text: root.appBackend && root.appBackend.codexAuthState === "login_pending"
+            ? "ブラウザを開く"
+            : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0
+                ? "再接続" : "Codexログイン")
+        enabled: root.appBackend
+            && root.appBackend.codexConnectionState !== "connecting"
+            && root.appBackend.codexAuthState !== "checking"
+            && root.appBackend.codexAuthState !== "logging_in"
+        onClicked: {
+            if (root.appBackend.codexAuthState === "login_pending")
+                root.appBackend.openCodexLoginPage()
+            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
+                root.appBackend.reconnectCodexChat()
+            else
+                root.appBackend.startCodexLogin()
         }
     }
 

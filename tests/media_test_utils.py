@@ -503,10 +503,16 @@ def measure_audio_level(
     *,
     frequency_hz: int | None = None,
     bandwidth_hz: int = 80,
+    start_seconds: float = 0.0,
+    duration_seconds: float | None = None,
 ) -> AudioLevelMeasurement:
     require_media_tools()
     if frequency_hz is not None and (frequency_hz <= 0 or bandwidth_hz <= 0):
         raise ValueError("Band frequency and bandwidth must be positive.")
+    if start_seconds < 0 or not math.isfinite(start_seconds):
+        raise ValueError("Audio measurement start must be finite and non-negative.")
+    if duration_seconds is not None and (duration_seconds <= 0 or not math.isfinite(duration_seconds)):
+        raise ValueError("Audio measurement duration must be finite and positive.")
     audio_filter = "volumedetect"
     resolved_bandwidth: int | None = None
     if frequency_hz is not None:
@@ -516,23 +522,24 @@ def measure_audio_level(
         "ffmpeg",
         "-hide_banner",
         "-nostats",
+        "-ss",
+        f"{start_seconds:.6f}",
         "-i",
         str(path),
         "-map",
         "0:a:0",
         "-vn",
-        "-af",
-        audio_filter,
-        "-f",
-        "null",
-        os.devnull,
     ]
+    if duration_seconds is not None:
+        command.extend(["-t", f"{duration_seconds:.6f}"])
+    command.extend(["-af", audio_filter, "-f", "null", os.devnull])
     result = run_media_command(
         command,
         context=(
             f"measure audio level: path={path}, "
             f"frequency={f'{frequency_hz}Hz' if frequency_hz is not None else 'broadband'}, "
-            f"bandwidth={resolved_bandwidth}Hz"
+            f"bandwidth={resolved_bandwidth}Hz, start={start_seconds:.3f}s, "
+            f"duration={duration_seconds if duration_seconds is not None else 'remaining'}s"
         ),
     )
     mean_matches = re.findall(r"mean_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)

@@ -25,7 +25,7 @@ $objectDirectory = Join-Path ([IO.Path]::GetTempPath()) ("subtitle-edit-bay-laun
 New-Item -ItemType Directory -Path $objectDirectory -Force | Out-Null
 try {
     Push-Location $objectDirectory
-    & $compiler.Source /nologo /O2 /W4 /DUNICODE /D_UNICODE $sourcePath /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS /MACHINE:X64
+    & $compiler.Source /nologo /O2 /W4 $sourcePath /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS /MACHINE:X64 user32.lib
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher compilation failed with exit code $LASTEXITCODE."
     }

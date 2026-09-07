@@ -132,6 +132,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertNotIn("AllowMissingCompiler", build)
         self.assertNotIn("AllowMissingCompiler", launcher_build)
         self.assertIn("/MACHINE:X64", launcher_build)
+        self.assertIn("user32.lib", launcher_build)
         self.assertIn("Launcher build did not produce the required executable", build)
         self.assertIn('"SubtitleEditBayLauncher.exe"', manifest_build)
 

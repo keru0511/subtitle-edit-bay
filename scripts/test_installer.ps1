@@ -46,8 +46,9 @@ foreach ($path in @(
     }
 }
 $installedVersion = (Get-Content -LiteralPath (Join-Path $installDir "VERSION") -Raw).Trim()
-if ($installedVersion -ne $ExpectedVersion) {
-    throw "Installed VERSION mismatch: expected=$ExpectedVersion actual=$installedVersion"
+$expectedInstalledVersion = $ExpectedVersion.Substring(1)
+if ($installedVersion -ne $expectedInstalledVersion) {
+    throw "Installed VERSION mismatch: expected=$expectedInstalledVersion actual=$installedVersion"
 }
 
 $venvPython = Join-Path $installDir ".venv\Scripts\python.exe"

@@ -94,6 +94,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[string]$ProjectRoot", build)
         self.assertIn("source_sha", package)
         self.assertIn("release-preparation.json", package)
+        self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
         self.assertIn("engine.rootObjects()", smoke)
 

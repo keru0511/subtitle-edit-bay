@@ -271,7 +271,9 @@ try {
     $versionPath = Join-Path $InstallRoot "VERSION"
     if (Test-Path -LiteralPath $versionPath -PathType Leaf) { $oldVersion = (Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8).Trim() }
     Write-StepLog "transaction=$correlationId old_version=$oldVersion install_root=$InstallRoot"
-    Wait-ForUpdateProcesses -ProcessIds $processIds
+    if ($processIds.Count -gt 0) {
+        Wait-ForUpdateProcesses -ProcessIds $processIds
+    }
     Wait-ForInstallLocks
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) { throw "Downloaded installer package is missing." }
     if ((Get-PackageSha256 -Path $PackagePath) -ne $ExpectedSha256.ToLowerInvariant()) { throw "Installer package checksum does not match." }

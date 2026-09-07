@@ -250,9 +250,10 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn(discovery_command, ci_workflow)
         self.assertLess(ci_workflow.index(discovery_command), ci_workflow.index("--group portable-unit"))
         self.assertIn(discovery_command, release_workflow)
-        self.assertLess(
-            release_workflow.index(discovery_command), release_workflow.index("python -m unittest discover")
-        )
+        self.assertLess(release_workflow.index(discovery_command), release_workflow.index("--group portable-unit"))
+        for group in ("portable-unit", "qt-gui", "ffmpeg-runtime"):
+            self.assertIn(f"python scripts/run_ci_tests.py --group {group}", release_workflow)
+        self.assertNotIn('python -m unittest discover -s tests -p "test_*.py" -v', release_workflow)
 
 
 if __name__ == "__main__":

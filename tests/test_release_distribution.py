@@ -202,7 +202,9 @@ class ReleaseDistributionTests(unittest.TestCase):
             "Requested tag and VERSION must match",
             "A release merge must change only VERSION",
             "A manual release must use the current main HEAD",
+            "Existing release tag must be annotated",
             "Existing tag is not the expected annotated tag",
+            "Existing tag and its VERSION must match",
             "git tag -a",
             'echo "tag=$tag" >> "$GITHUB_OUTPUT"',
         ):

@@ -56,8 +56,16 @@ jobs:
       - name: Check standard unittest discovery
         run: python scripts/check_unittest_discovery.py
 
-      - name: Run tests
-        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Run portable unit tests
+        run: python scripts/run_ci_tests.py --group portable-unit
+
+      - name: Run Qt and GUI tests
+        run: python scripts/run_ci_tests.py --group qt-gui
+
+      - name: Run FFmpeg runtime tests
+        env:
+          RUN_FFMPEG_SMOKE: "1"
+        run: python scripts/run_ci_tests.py --group ffmpeg-runtime
 
   build:
     name: Build Windows installer

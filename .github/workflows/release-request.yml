@@ -76,9 +76,20 @@ jobs:
           existing_tag="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
           existing_target="$(git ls-remote origin "refs/tags/$tag^{}" | awk '{print $1}')"
           if [[ -n "$existing_tag" ]]; then
-            if [[ -z "$existing_target" || "$existing_target" != "$RELEASE_SHA" ]]; then
+            if [[ -z "$existing_target" ]]; then
+              echo "Existing release tag must be annotated: $tag" >&2
+              exit 1
+            fi
+            if [[ "$RELEASE_POLICY" == "merged-version" && "$existing_target" != "$RELEASE_SHA" ]]; then
               echo "Existing tag is not the expected annotated tag for this release: $tag" >&2
               exit 1
+            fi
+            if [[ "$RELEASE_POLICY" == "current-main" ]]; then
+              tagged_source_tag="$(git show "$existing_target:VERSION" | tr -d '\r\n')"
+              if [[ "$tagged_source_tag" != "$tag" ]]; then
+                echo "Existing tag and its VERSION must match: tag=$tag VERSION=$tagged_source_tag" >&2
+                exit 1
+              fi
             fi
           else
             if [[ "$RELEASE_POLICY" == "current-main" ]]; then

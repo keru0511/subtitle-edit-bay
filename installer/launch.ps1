@@ -68,7 +68,7 @@ function Show-Message {
         [string]$Title = "Subtitle Edit Bay"
     )
 
-    if (-not $SuppressMessages) {
+    if (-not $SuppressMessages -and $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES -ne "1") {
         Add-Type -AssemblyName PresentationFramework
         [System.Windows.MessageBox]::Show($Message, $Title) | Out-Null
     }
@@ -155,9 +155,11 @@ try {
 
     if ($process.ExitCode -ne 0) {
         Show-Message "アプリを起動できませんでした。`n`n初回セットアップ・修復を実行してください。`n診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"
+        exit $process.ExitCode
     }
 }
 catch {
     $_ | Out-String | Set-Content -LiteralPath $errorLog -Encoding UTF8
     Show-Message "アプリを起動できませんでした。`n`n初回セットアップ・修復を実行してください。`n診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"
+    exit 1
 }

@@ -80,11 +80,13 @@ if ($readyProbe.ExitCode -ne 0) {
 
 $smokeResult = Join-Path ([IO.Path]::GetDirectoryName($installDir)) "installed-gui-smoke.json"
 $env:SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT = $smokeResult
+$env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES = "1"
 try {
     $launch = Start-Process -FilePath $launcher -WorkingDirectory $installDir -Wait -PassThru
     if ($launch.ExitCode -ne 0) { throw "Product launcher exited with code $($launch.ExitCode)." }
 } finally {
     Remove-Item Env:SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT -ErrorAction SilentlyContinue
+    Remove-Item Env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES -ErrorAction SilentlyContinue
 }
 if (-not (Test-Path -LiteralPath $smokeResult -PathType Leaf)) {
     throw "Product launcher did not record GUI readiness: $smokeResult"

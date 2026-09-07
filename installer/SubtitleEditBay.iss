@@ -66,6 +66,7 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 [Tasks]
 Name: "desktopicon"; Description: "デスクトップにショートカットを作成する"; GroupDescription: "追加アイコン:"; Flags: checkedonce
 Name: "initialsetup"; Description: "インストール完了後に初回セットアップを実行する"; GroupDescription: "初回セットアップ:"; Flags: checkedonce
+Name: "legacymigration"; Description: "BAT/ZIP版の設定とworkspace参照を引き継ぐ"; GroupDescription: "旧版からの移行:"; Flags: unchecked
 
 [Dirs]
 Name: "{app}\video_import"
@@ -96,7 +97,7 @@ Name: "{group}\アンインストール"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Subtitle Edit Bay"; Filename: "{code:LauncherExecutable}"; Parameters: "{code:LauncherParameters}"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\setup.bat"; Description: "初回セットアップを実行する（インターネット接続が必要です）"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent shellexec; Tasks: initialsetup
+Filename: "{app}\setup.bat"; Parameters: "{code:SetupParameters}"; Description: "初回セットアップを実行する（インターネット接続が必要です）"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent shellexec; Tasks: initialsetup
 
 [UninstallDelete]
 ; The virtual environment is generated and can be safely recreated. User settings,
@@ -105,6 +106,82 @@ Type: filesandordirs; Name: "{app}\.venv"
 Type: files; Name: "{app}\VERSION"
 
 [Code]
+var
+  LegacyWorkspacePage: TInputDirWizardPage;
+  MigrationComponentsPage: TInputOptionWizardPage;
+
+procedure InitializeWizard;
+begin
+  LegacyWorkspacePage := CreateInputDirPage(
+    wpSelectTasks,
+    'BAT/ZIP版からの移行',
+    '以前使っていたSubtitle Edit Bayフォルダーを指定してください。',
+    '旧フォルダーは変更・削除されません。Python環境はInstaller用に新しく構築します。',
+    False,
+    ''
+  );
+  LegacyWorkspacePage.Add('旧BAT/ZIP版フォルダー:');
+
+  MigrationComponentsPage := CreateInputOptionPage(
+    LegacyWorkspacePage.ID,
+    '引き継ぐデータ',
+    '旧フォルダーから引き継ぐ項目を選択してください。',
+    '既存のInstallerデータは上書きせず、projectや素材は旧フォルダーに残します。',
+    False,
+    False
+  );
+  MigrationComponentsPage.Add('アプリ設定（capability検証付き）');
+  MigrationComponentsPage.Add('話者色');
+  MigrationComponentsPage.Add('project・素材・出力の場所を登録');
+  MigrationComponentsPage.Values[0] := True;
+  MigrationComponentsPage.Values[1] := True;
+  MigrationComponentsPage.Values[2] := True;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := ((PageID = LegacyWorkspacePage.ID) or (PageID = MigrationComponentsPage.ID)) and
+    not WizardIsTaskSelected('legacymigration');
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  LegacyPath: String;
+begin
+  Result := True;
+  if (CurPageID <> MigrationComponentsPage.ID) or not WizardIsTaskSelected('legacymigration') then
+    Exit;
+
+  LegacyPath := LegacyWorkspacePage.Values[0];
+  if (LegacyPath = '') or
+    not FileExists(AddBackslash(LegacyPath) + 'setup.bat') or
+    not FileExists(AddBackslash(LegacyPath) + 'start.bat') or
+    not DirExists(AddBackslash(LegacyPath) + 'src') then
+  begin
+    MsgBox(
+      'setup.bat、start.bat、srcフォルダーを含む旧Subtitle Edit Bayフォルダーを指定してください。',
+      mbError,
+      MB_OK
+    );
+    Result := False;
+  end;
+end;
+
+function SetupParameters(Param: String): String;
+begin
+  Result := '';
+  if WizardIsTaskSelected('legacymigration') then
+  begin
+    Result := '--migration-source "' + LegacyWorkspacePage.Values[0] + '"';
+    if not MigrationComponentsPage.Values[0] then
+      Result := Result + ' --skip-runtime-config';
+    if not MigrationComponentsPage.Values[1] then
+      Result := Result + ' --skip-speaker-colors';
+    if not MigrationComponentsPage.Values[2] then
+      Result := Result + ' --skip-workspace-reference';
+  end;
+end;
+
 function LauncherExecutable(Param: String): String;
 begin
   if FileExists(ExpandConstant('{app}\SubtitleEditBayLauncher.exe')) then

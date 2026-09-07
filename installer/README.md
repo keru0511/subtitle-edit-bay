@@ -1,5 +1,8 @@
 # Windows installer
 
+BAT/ZIP版からの移行方針とcleanup手順は
+[`docs/INSTALLER_MIGRATION.md`](../docs/INSTALLER_MIGRATION.md)を参照してください。
+
 `SubtitleEditBay.iss` packages the source distribution as a per-user Windows
 installer. It deliberately does not package `.venv`, `.gui`, `.local`, imported
 videos, exports, or generated output.

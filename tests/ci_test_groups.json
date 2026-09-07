@@ -51,6 +51,7 @@
         "test_highlight_candidates",
         "test_highlight_preferences",
         "test_highlight_visual_signals",
+        "test_installer_migration",
         "test_media_probe",
         "test_merge_transcripts",
         "test_multi_source_short_video",

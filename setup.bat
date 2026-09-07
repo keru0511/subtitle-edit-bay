@@ -8,7 +8,7 @@ if /I not "%~1"=="--probe-powershell" goto run_setup
 "%POWERSHELL_EXE%" -NoProfile -NonInteractive -Command "[IntPtr]::Size * 8"
 exit /b %ERRORLEVEL%
 :run_setup
-"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup.ps1"
+"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup.ps1" %*
 if errorlevel 1 (
     echo.
     echo Setup failed. Review the message above.

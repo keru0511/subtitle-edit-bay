@@ -2,7 +2,8 @@ param(
     [switch]$ProbeNvidiaOnly,
     [switch]$ProbeNvidiaStatusOnly,
     [string]$NvidiaSmiSearchRoot = "",
-    [string]$NvidiaSmiOverride = ""
+    [string]$NvidiaSmiOverride = "",
+    [string]$MigrationSource = ""
 )
 
 # Windows PowerShell 5.1 turns text written to stderr by native programs into
@@ -281,6 +282,36 @@ if ($nvidiaGpuAvailable -and -not $cudaAvailable) {
     throw "An NVIDIA GPU was detected, but CUDA-enabled PyTorch is unavailable. Re-run setup.bat after checking the NVIDIA driver and network connection."
 }
 
+& $venvPython -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Python dependency verification failed." }
+
+& $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict(); print(status.to_dict())"
+if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed." }
+
+if ($MigrationSource) {
+    Write-Host "Migrating settings from the BAT/ZIP workspace: $MigrationSource"
+    $migrationArguments = @(
+        "-m",
+        "src.installer_migration",
+        "--source",
+        $MigrationSource,
+        "--destination",
+        (Get-Location).Path
+    )
+    if ($cudaAvailable) {
+        $migrationArguments += "--cuda"
+    }
+    $nvencAvailableText = & $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; print('true' if check_runtime_dependencies(probe_nvenc=True).nvenc else 'false')"
+    if ($LASTEXITCODE -ne 0) { throw "Runtime capability verification for migration failed." }
+    if ($nvencAvailableText.Trim() -eq "true") {
+        $migrationArguments += "--nvenc"
+    }
+    & $venvPython @migrationArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "BAT/ZIP workspace migration failed. The old workspace was not modified."
+    }
+}
+
 $configPath = ".gui\runtime_config.json"
 $configChanged = $false
 if (Test-Path -LiteralPath $configPath -PathType Leaf) {
@@ -309,12 +340,6 @@ if ($configChanged) {
 if (-not (Test-Path -LiteralPath "assets\speaker_colors.json")) {
     Copy-Item -LiteralPath "assets\speaker_colors.example.json" -Destination "assets\speaker_colors.json"
 }
-
-& $venvPython -m pip check
-if ($LASTEXITCODE -ne 0) { throw "Python dependency verification failed." }
-
-& $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict(); print(status.to_dict())"
-if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed." }
 
 if ($cudaAvailable) {
     Write-Host "CUDA: available"

@@ -61,6 +61,13 @@ from .gui_codex_state import (
 )
 from .codex_app_server_client import CodexAppServerClient
 from .codex_actions import ActionResult, ActionScope, build_gui_action_dispatcher
+from .codex_timeline_proposal import (
+    TIMELINE_PROPOSAL_OUTPUT_SCHEMA,
+    TimelineProposal,
+    TimelineProposalError,
+    apply_timeline_proposal,
+    build_timeline_proposal_context,
+)
 from .codex_runtime import detect_codex
 from .gui_codex_chat_state import (
     CodexChatController,
@@ -369,6 +376,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexStateChanged = Signal()
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
+    codexTimelineProposalChanged = Signal()
     codexChatChanged = Signal()
     codexCallbackRequested = Signal(object)
     highlightCandidatesChanged = Signal()
@@ -508,6 +516,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_download_cancel = threading.Event()
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
         self._codex_proposal: dict[str, Any] | None = None
+        self._codex_timeline_proposal: dict[str, Any] | None = None
         self._codex_current_time: float | None = None
         self.codexCallbackRequested.connect(
             self._run_codex_callback,
@@ -517,6 +526,12 @@ class EditBayBackend(LegacyEditBayBackend):
             on_state=self._on_codex_state,
             on_message=self._on_codex_message,
             on_proposal=self._on_codex_proposal,
+            callback_dispatcher=self._dispatch_codex_callback,
+        )
+        self._codex_timeline_session = CodexSessionController(
+            proposal_parser=TimelineProposal.from_json,
+            on_state=self._on_codex_timeline_state,
+            on_proposal=self._on_codex_timeline_proposal,
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self._codex_actions = build_gui_action_dispatcher(self)
@@ -531,6 +546,7 @@ class EditBayBackend(LegacyEditBayBackend):
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self.aboutToQuit.connect(self._codex_chat.shutdown)
+        self.aboutToQuit.connect(self._codex_timeline_session.stop)
         self._codex_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
@@ -689,6 +705,14 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property("QVariantMap", notify=codexProposalChanged)
     def codexProposal(self) -> dict[str, Any]:
         return dict(self._codex_proposal or {})
+
+    @Property("QVariantMap", notify=codexTimelineProposalChanged)
+    def codexTimelineProposal(self) -> dict[str, Any]:
+        return deepcopy(self._codex_timeline_proposal or {})
+
+    @Property(str, notify=codexTimelineProposalChanged)
+    def codexTimelineProposalState(self) -> str:
+        return self._codex_timeline_session.snapshot.state
 
     @Property("QStringList", constant=True)
     def codexScopes(self) -> list[str]:
@@ -982,6 +1006,7 @@ class EditBayBackend(LegacyEditBayBackend):
         end = float(clip.get("end", segment.get("end", 0.0)))
         return {
             "index": index,
+            "proposal_id": str(clip.get("proposal_id", "")),
             "segment_id": segment_id,
             "start": start,
             "end": end,
@@ -1006,6 +1031,7 @@ class EditBayBackend(LegacyEditBayBackend):
         ):
             clips.append(
                 {
+                    "proposal_id": f"short-clip-{uuid4().hex[:12]}",
                     "segment_id": str(segment.get("id", "")),
                     "start": float(segment.get("start", 0.0)),
                     "end": float(segment.get("end", 0.0)),
@@ -1028,6 +1054,7 @@ class EditBayBackend(LegacyEditBayBackend):
         clips = list(section.get("clips", []))
         clips.append(
             {
+                "proposal_id": f"short-clip-{uuid4().hex[:12]}",
                 "segment_id": segment_id,
                 "start": float(segment.get("start", 0.0)),
                 "end": float(segment.get("end", 0.0)),
@@ -1055,7 +1082,14 @@ class EditBayBackend(LegacyEditBayBackend):
             return False
         section = self._short_video_section()
         clips = list(section.get("clips", []))
-        clips.append({"segment_id": "", "start": round(start, 3), "end": round(end, 3)})
+        clips.append(
+            {
+                "proposal_id": f"short-clip-{uuid4().hex[:12]}",
+                "segment_id": "",
+                "start": round(start, 3),
+                "end": round(end, 3),
+            }
+        )
         section["enabled"] = True
         section["clips"] = clips
         self._mark_project_dirty()
@@ -1360,6 +1394,7 @@ class EditBayBackend(LegacyEditBayBackend):
         section["enabled"] = True
         clips.append(
             {
+                "proposal_id": f"short-clip-{uuid4().hex[:12]}",
                 "segment_id": source_ids[0],
                 "start": candidate_start,
                 "end": candidate_end,
@@ -3817,6 +3852,107 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_proposal = None
         self.codexProposalChanged.emit()
         self._set_status("Codex編集案を破棄しました", "EDIT")
+
+    def start_codex_timeline_proposal(self, *, intent: str, target: str) -> bool:
+        if self._project is None or self._codex_timeline_session.running or self._codex_session.running:
+            return False
+        try:
+            context = build_timeline_proposal_context(
+                self._project,
+                target=target,
+                project_revision=self._project_revision,
+                highlight_candidates=self._highlight_candidates,
+                selection=self.editorPlayhead,
+            )
+            self._codex_timeline_proposal = None
+            self.codexTimelineProposalChanged.emit()
+            self._codex_timeline_session.start(
+                prompt=(
+                    f"{intent}\n"
+                    "返答は指定schemaのProposalだけにし、contextのproject_revisionとstate_revisionを"
+                    "base_revision/base_state_revisionへそのまま設定してください。"
+                ),
+                context=context,
+                output_schema=TIMELINE_PROPOSAL_OUTPUT_SCHEMA,
+                revision=self._project_revision,
+            )
+        except (TimelineProposalError, CodexSessionError, ValueError):
+            return False
+        return True
+
+    @Slot(str, str, result=bool)
+    def startCodexTimelineProposal(self, intent: str, target: str) -> bool:
+        """Start a typed timeline proposal from the shared Codex UI."""
+
+        return self.start_codex_timeline_proposal(intent=intent, target=target)
+
+    def apply_codex_timeline_proposal(
+        self,
+        *,
+        selected_operation_ids: set[str] | None = None,
+        confirmed_large_change: bool = False,
+    ) -> bool:
+        if self._project is None or self._codex_timeline_proposal is None or self._running:
+            return False
+        try:
+            result = apply_timeline_proposal(
+                self._project,
+                self._codex_timeline_proposal,
+                current_revision=self._project_revision,
+                selected_operation_ids=selected_operation_ids,
+                highlight_candidates=self._highlight_candidates,
+                confirmed_large_change=confirmed_large_change,
+            )
+        except TimelineProposalError as error:
+            self._set_status(f"構成案を適用できません: {error}", "CHECK")
+            return False
+        if result.target == "normal":
+            before = deepcopy(self._project.get("timeline", {}))
+            after = deepcopy(result.project["timeline"])
+            self._record_timeline_history(before, after)
+            self._replace_timeline(after)
+        else:
+            self._project["short_video"] = deepcopy(result.project["short_video"])
+            self._refresh_short_video_clip_data()
+            self.shortVideoChanged.emit()
+            self.projectDataChanged.emit()
+            self._mark_project_dirty()
+        self._codex_timeline_proposal = None
+        self.codexTimelineProposalChanged.emit()
+        self._set_status("Codexの構成案を適用しました", "EDIT")
+        return True
+
+    @Slot("QVariantList", bool, result=bool)
+    def applyCodexTimelineProposal(
+        self,
+        selected_operation_ids: list[str],
+        confirmed_large_change: bool,
+    ) -> bool:
+        """Apply only the operations explicitly selected in the proposal UI."""
+
+        return self.apply_codex_timeline_proposal(
+            selected_operation_ids=set(selected_operation_ids),
+            confirmed_large_change=confirmed_large_change,
+        )
+
+    def discard_codex_timeline_proposal(self) -> None:
+        self._codex_timeline_proposal = None
+        self.codexTimelineProposalChanged.emit()
+
+    @Slot()
+    def discardCodexTimelineProposal(self) -> None:
+        self.discard_codex_timeline_proposal()
+
+    @Slot()
+    def stopCodexTimelineProposal(self) -> None:
+        self._codex_timeline_session.stop()
+
+    def _on_codex_timeline_state(self, _snapshot: CodexSessionSnapshot) -> None:
+        self.codexTimelineProposalChanged.emit()
+
+    def _on_codex_timeline_proposal(self, proposal: Mapping[str, Any]) -> None:
+        self._codex_timeline_proposal = deepcopy(dict(proposal))
+        self.codexTimelineProposalChanged.emit()
 
     def dispatch_codex_action(
         self,

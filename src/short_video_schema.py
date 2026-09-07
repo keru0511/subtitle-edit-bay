@@ -113,6 +113,8 @@ class ShortVideoBgm:
 
 @dataclass(frozen=True)
 class ShortVideoClip:
+    proposal_id: str = ""
+    highlight_candidate_id: str = ""
     segment_id: str = ""
     start: float = 0.0
     end: float = 0.0
@@ -125,6 +127,8 @@ class ShortVideoClip:
             return cls()
         if not isinstance(payload, dict):
             raise ShortVideoError("clip must be an object")
+        proposal_id = str(payload.get("proposal_id", "")).strip()
+        highlight_candidate_id = str(payload.get("highlight_candidate_id", "")).strip()
         segment_id = str(payload.get("segment_id", ""))
         start = _finite_number(payload.get("start", 0.0), "clip.start")
         end = _finite_number(payload.get("end", start), "clip.end")
@@ -141,6 +145,8 @@ class ShortVideoClip:
         if end < start:
             end = start
         return cls(
+            proposal_id=proposal_id,
+            highlight_candidate_id=highlight_candidate_id,
             segment_id=segment_id,
             start=round(start, 3),
             end=round(end, 3),
@@ -154,6 +160,10 @@ class ShortVideoClip:
             "start": self.start,
             "end": self.end,
         }
+        if self.proposal_id:
+            payload["proposal_id"] = self.proposal_id
+        if self.highlight_candidate_id:
+            payload["highlight_candidate_id"] = self.highlight_candidate_id
         if self.fit:
             payload["fit"] = self.fit
         if self.background_color:
@@ -171,6 +181,7 @@ class ShortVideo:
     transition: ShortVideoTransition = field(default_factory=ShortVideoTransition)
     bgm: ShortVideoBgm = field(default_factory=ShortVideoBgm)
     clips: list[ShortVideoClip] = field(default_factory=list)
+    duration_target_seconds: float | None = None
 
     @classmethod
     def from_json(
@@ -230,6 +241,12 @@ class ShortVideo:
                 clips.append(ShortVideoClip.from_json(clip_payload))
             else:
                 raise ShortVideoError(f"short_video.clips[{index}] must be an object")
+        raw_duration_target = payload.get("duration_target_seconds")
+        duration_target = None
+        if raw_duration_target is not None:
+            duration_target = _finite_number(raw_duration_target, "duration_target_seconds")
+            if duration_target <= 0.0:
+                raise ShortVideoError("duration_target_seconds must be positive")
         return cls(
             enabled=enabled,
             output=output,
@@ -239,10 +256,11 @@ class ShortVideo:
             transition=transition,
             bgm=bgm,
             clips=clips,
+            duration_target_seconds=(round(duration_target, 3) if duration_target is not None else None),
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": SHORT_VIDEO_SCHEMA_VERSION,
             "enabled": self.enabled,
             "output": self.output.to_json(),
@@ -253,6 +271,9 @@ class ShortVideo:
             "bgm": self.bgm.to_json(),
             "clips": [clip.to_json() for clip in self.clips],
         }
+        if self.duration_target_seconds is not None:
+            payload["duration_target_seconds"] = self.duration_target_seconds
+        return payload
 
     def clip_for_segment(self, segment_id: str) -> ShortVideoClip | None:
         for clip in self.clips:

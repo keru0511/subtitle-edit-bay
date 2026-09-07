@@ -180,6 +180,29 @@ class CodexActionTests(unittest.TestCase):
         self.assertEqual(result.proposal["base_revision"], 7)
         self.assertEqual(self.backend.project, before)
 
+    def test_timeline_proposal_action_requires_an_allowlisted_target(self) -> None:
+        accepted = self.dispatcher.dispatch(
+            request(
+                "propose",
+                "propose_timeline_edit",
+                {"intent": "60秒にして", "target": "short"},
+                revision=7,
+            ),
+            trusted_scope=self.scope,
+        )
+        rejected = self.dispatcher.dispatch(
+            request(
+                "propose",
+                "propose_timeline_edit",
+                {"intent": "切って", "target": "source-file"},
+                revision=7,
+            ),
+            trusted_scope=self.scope,
+        )
+
+        self.assertEqual(accepted.status.value, "success")
+        self.assertEqual(rejected.code, "invalid_schema")
+
     def test_unknown_proposal_operation_is_returned_as_structured_rejection(self) -> None:
         result = self.dispatcher.dispatch(
             request(
@@ -257,6 +280,24 @@ class CodexActionTests(unittest.TestCase):
 
 
 class GuiActionBackendTests(unittest.TestCase):
+    def test_timeline_proposal_dispatches_only_to_fixed_gui_boundary(self) -> None:
+        class GuiStub:
+            calls: list[tuple[str, str]] = []
+
+            def start_codex_timeline_proposal(self, *, intent: str, target: str) -> bool:
+                self.calls.append((intent, target))
+                return True
+
+        gui = GuiStub()
+        result = GuiActionBackend(gui).propose(
+            "propose_timeline_edit",
+            {"intent": "冒頭を短く", "target": "normal"},
+            4,
+        )
+
+        self.assertEqual(gui.calls, [("冒頭を短く", "normal")])
+        self.assertEqual(result.state, {"status": "running", "target": "normal"})
+
     def test_inspect_filters_local_paths_and_unknown_dispatch_is_rejected(self) -> None:
         class GuiStub:
             _project_revision = 4

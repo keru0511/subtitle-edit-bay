@@ -226,7 +226,10 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     ),
     "propose_timeline_edit": ActionDefinition(
         ActionKind.PROPOSE,
-        fields={"intent": FieldSchema((str,), required=True, non_empty=True)},
+        fields={
+            "intent": FieldSchema((str,), required=True, non_empty=True),
+            "target": FieldSchema((str,), required=True, choices=frozenset({"normal", "short"})),
+        },
         revision_policy=RevisionPolicy.CURRENT,
         confirmation_policy=ConfirmationPolicy.EXPLICIT_APPLY,
         conflicts_with_job=True,
@@ -425,6 +428,7 @@ class GuiActionBackend:
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
+            "propose_timeline_edit": self._propose_timeline,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
@@ -441,6 +445,10 @@ class GuiActionBackend:
     def active_job(self) -> str:
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
+        if self._gui._codex_session.running:
+            return "subtitle_proposal"
+        if self._gui._codex_timeline_session.running:
+            return "timeline_proposal"
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
         return ""
@@ -545,6 +553,17 @@ class GuiActionBackend:
         if not self._gui._codex_session.running:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
+
+    def _propose_timeline(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
+        if not self._gui.start_codex_timeline_proposal(
+            intent=str(args["intent"]),
+            target=str(args["target"]),
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "timeline proposal could not be started")
+        return HandlerResult(
+            "timeline proposal generation started",
+            state={"status": "running", "target": str(args["target"])},
+        )
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

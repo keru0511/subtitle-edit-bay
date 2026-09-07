@@ -39,6 +39,8 @@ jobs:
         id: release
         shell: bash
         env:
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          RELEASE_POLICY: ${{ github.event_name == 'workflow_dispatch' && 'current-main' || 'merged-version' }}
           RELEASE_SHA: ${{ github.sha }}
           REQUESTED_TAG: ${{ inputs.tag || '' }}
         run: |
@@ -55,6 +57,22 @@ jobs:
             exit 1
           fi
 
+          if [[ "$RELEASE_POLICY" == "merged-version" ]]; then
+            if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+              echo "A VERSION release requires an existing main history." >&2
+              exit 1
+            fi
+            mapfile -t changed_files < <(git diff --name-only "$BEFORE_SHA" "$RELEASE_SHA")
+            if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]:-}" != "VERSION" ]]; then
+              echo "A release merge must change only VERSION." >&2
+              printf 'Changed file: %s\n' "${changed_files[@]}" >&2
+              exit 1
+            fi
+          elif [[ "$RELEASE_POLICY" != "current-main" ]]; then
+            echo "Unknown release policy: $RELEASE_POLICY" >&2
+            exit 1
+          fi
+
           existing_tag="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
           existing_target="$(git ls-remote origin "refs/tags/$tag^{}" | awk '{print $1}')"
           if [[ -n "$existing_tag" ]]; then
@@ -63,10 +81,12 @@ jobs:
               exit 1
             fi
           else
-            remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-            if [[ "$remote_main" != "$RELEASE_SHA" ]]; then
-              echo "A new release must use the current main HEAD: main=$remote_main release=$RELEASE_SHA" >&2
-              exit 1
+            if [[ "$RELEASE_POLICY" == "current-main" ]]; then
+              remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+              if [[ "$remote_main" != "$RELEASE_SHA" ]]; then
+                echo "A manual release must use the current main HEAD: main=$remote_main release=$RELEASE_SHA" >&2
+                exit 1
+              fi
             fi
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

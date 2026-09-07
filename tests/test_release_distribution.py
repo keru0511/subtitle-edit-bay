@@ -183,6 +183,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         permissions = workflow["permissions"]
         release_step = step_by_id(workflow, "prepare", "release")
         command = str(release_step["run"])
+        release_env = release_step["env"]
         reusable_release = workflow["jobs"]["release"]
 
         self.assertEqual(triggers["branches"], ["main"])
@@ -191,15 +192,26 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertEqual(permissions["contents"], "write")
         self.assertEqual(permissions["actions"], "read")
         self.assertNotIn("pull_request", workflow["on"])
+        self.assertEqual(release_env["BEFORE_SHA"], "${{ github.event.before || '' }}")
+        self.assertEqual(
+            release_env["RELEASE_POLICY"],
+            "${{ github.event_name == 'workflow_dispatch' && 'current-main' || 'merged-version' }}",
+        )
         for guard in (
             "VERSION must be a strict vX.Y.Z tag",
             "Requested tag and VERSION must match",
-            "A new release must use the current main HEAD",
+            "A release merge must change only VERSION",
+            "A manual release must use the current main HEAD",
             "Existing tag is not the expected annotated tag",
             "git tag -a",
             'echo "tag=$tag" >> "$GITHUB_OUTPUT"',
         ):
             self.assertIn(guard, command)
+        self.assertIn(
+            'if [[ "$RELEASE_POLICY" == "current-main" ]]; then\n'
+            '    remote_main="$(git ls-remote origin refs/heads/main',
+            command,
+        )
         self.assertEqual(reusable_release["needs"], "prepare")
         self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
         self.assertEqual(reusable_release["with"]["tag"], "${{ needs.prepare.outputs.tag }}")

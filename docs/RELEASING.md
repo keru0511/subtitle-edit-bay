@@ -35,7 +35,7 @@ git status --short
 
 バージョン更新は直接 `main` へpushせず、`VERSION` だけを更新するリリースPRで行います。PRのタイトルと説明には、マージするとそのバージョンが公開されることを明記してください。人が判断するのは、バージョン番号と、その内容を公開してよいかどうかです。
 
-リリースPRが `main` へマージされると、親Workflowの `.github/workflows/release-request.yml` が `VERSION` の形式と対象コミットを検証し、マージコミットへ同名の注釈付きタグを作成します。続いて、再利用可能な `.github/workflows/release.yml` を `workflow_call` で呼び出します。タグ名やWorkflow間の値の受け渡しは自動化され、タグ作成から公開完了までを親Workflowの1回の実行で追跡できます。既存タグを別コミットへ付け替えることはありません。
+リリースPRが `main` へマージされると、親Workflowの `.github/workflows/release-request.yml` が変更対象が `VERSION` だけであること、バージョン形式、対象コミットを検証し、そのマージコミットへ同名の注釈付きタグを作成します。開始待ちの間に `main` が進んでも、承認されたマージコミットが公開対象です。続いて、再利用可能な `.github/workflows/release.yml` を `workflow_call` で呼び出します。タグ名やWorkflow間の値の受け渡しは自動化され、タグ作成から公開完了までを親Workflowの1回の実行で追跡できます。既存タグを別コミットへ付け替えることはありません。
 
 互換経路としてタグを直接pushした場合は、`.github/workflows/release-tag.yml` がタグ名を `release.yml` の入力へ変換します。公開処理本体の `release.yml` は起動イベントを判定せず、すべての経路で受け取ったタグ入力だけを使用します。
 

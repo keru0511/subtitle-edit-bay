@@ -3787,16 +3787,16 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(sidebar.isVisible())
         self.assertTrue(login_route.isVisible())
 
-        self.app._on_codex_chat_state(
-            CodexChatSnapshot(
-                connection_state="ready",
-                auth_state="authenticated",
-                auth_label="ChatGPT",
-                thread_id="thread-249",
-                selected_model="gpt-test",
-                messages=({"role": "user", "text": "keep this conversation"},),
-            )
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+            thread_id="thread-249",
+            selected_model="gpt-test",
+            messages=({"role": "user", "text": "keep this conversation"},),
         )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
         self.app.processEvents()
 
         self.assertTrue(sidebar.isVisible())
@@ -3814,9 +3814,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
 
-        self.app._on_codex_chat_state(
-            CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated")
-        )
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        unauthenticated = CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated")
+        self.app._codex_chat._snapshot = unauthenticated
+        self.app._on_codex_chat_state(unauthenticated)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
         self.assertEqual(sidebar.width(), 0)

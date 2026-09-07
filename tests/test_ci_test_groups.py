@@ -98,11 +98,20 @@ class CiTestGroupManifestTests(unittest.TestCase):
                 "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_subtitle_pixels_follow_start_and_end_timing",
                 "tests.test_short_video_ass.ShortVideoRenderE2ETests."
                 "test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace",
+                "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests."
+                "test_clip_order_boundary_duration_and_unselected_media",
+                "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests."
+                "test_short_without_subtitles_keeps_final_media_contract",
+                "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests."
+                "test_source_time_basis_uses_original_source_ranges_in_final_media",
+                "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests."
+                "test_subtitles_follow_selected_clips_on_short_output_timeline",
             ],
         )
         self.assertIn("test_audio_mix_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_media_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
+        self.assertIn("test_short_video_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
 
     def test_test_case_method_selector_is_valid(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

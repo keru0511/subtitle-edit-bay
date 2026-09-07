@@ -1,72 +1,57 @@
-name: Create release tag from merged request
+name: Release from merged version
 
 on:
   push:
     branches:
       - main
     paths:
-      - "release-requests/v*"
+      - VERSION
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag matching VERSION (for example, v1.2.3)"
+        required: true
+        type: string
 
 concurrency:
   group: release-request-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  actions: write
+  actions: read
   contents: write
 
 jobs:
-  create-tag:
-    name: Validate request and create tag
+  prepare:
+    name: Validate version and create tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
 
     steps:
-      - name: Check out merged release request
+      - name: Check out release commit
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Validate request, create annotated tag, and start release
+      - name: Validate version and create annotated tag
         id: release
         shell: bash
         env:
-          BEFORE_SHA: ${{ github.event.before }}
           RELEASE_SHA: ${{ github.sha }}
-          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
         run: |
           set -euo pipefail
 
-          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
-            echo "A release request requires an existing main history." >&2
-            exit 1
-          fi
-
-          mapfile -t requests < <(
-            git diff --diff-filter=A --name-only "$BEFORE_SHA" "$RELEASE_SHA" -- 'release-requests/v*'
-          )
-          if (( ${#requests[@]} != 1 )); then
-            echo "Exactly one new release request is required; found ${#requests[@]}." >&2
-            exit 1
-          fi
-
-          request_path="${requests[0]}"
-          tag="${request_path#release-requests/}"
-          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Release request must be named release-requests/vX.Y.Z: $request_path" >&2
-            exit 1
-          fi
-
-          request_tag="$(tr -d '\r\n' < "$request_path")"
           source_tag="$(tr -d '\r\n' < VERSION)"
-          if [[ "$request_tag" != "$tag" || "$source_tag" != "$tag" ]]; then
-            echo "Request, VERSION, and tag must match: request=$request_tag VERSION=$source_tag tag=$tag" >&2
+          tag="${REQUESTED_TAG:-$source_tag}"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "VERSION must be a strict vX.Y.Z tag: $tag" >&2
             exit 1
           fi
-
-          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          if [[ "$remote_main" != "$RELEASE_SHA" ]]; then
-            echo "Release request must tag the current main HEAD: main=$remote_main request=$RELEASE_SHA" >&2
+          if [[ "$source_tag" != "$tag" ]]; then
+            echo "Requested tag and VERSION must match: requested=$tag VERSION=$source_tag" >&2
             exit 1
           fi
 
@@ -78,28 +63,23 @@ jobs:
               exit 1
             fi
           else
+            remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+            if [[ "$remote_main" != "$RELEASE_SHA" ]]; then
+              echo "A new release must use the current main HEAD: main=$remote_main release=$RELEASE_SHA" >&2
+              exit 1
+            fi
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" "$RELEASE_SHA" -m "Release $tag"
             git push origin "refs/tags/$tag"
           fi
 
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release already exists; workflow dispatch is not required: $tag"
-            exit 0
-          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-          active_run_count="$(
-            gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --limit 50 \
-              --json event,headSha,status \
-              --jq "[.[] | select(.event == \"workflow_dispatch\" and .headSha == \"$RELEASE_SHA\" and (.status == \"queued\" or .status == \"in_progress\"))] | length"
-          )"
-          if [[ "$active_run_count" != "0" ]]; then
-            echo "Release workflow is already active for $tag."
-            exit 0
-          fi
-
-          gh workflow run release.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            --field tag="$tag"
+  release:
+    name: Build and publish release
+    needs: prepare
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit

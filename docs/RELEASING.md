@@ -33,9 +33,9 @@ git status --short
 
 ## リリースの作成
 
-バージョン更新は直接 `main` へpushせず、リリースPRで行います。`VERSION` を更新し、同じタグを内容に持つ `release-requests/vX.Y.Z` を追加してください。例えば `v0.4.7` では、`VERSION` と `release-requests/v0.4.7` の内容をどちらも `v0.4.7` にします。
+バージョン更新は直接 `main` へpushせず、`VERSION` だけを更新するリリースPRで行います。PRのタイトルと説明には、マージするとそのバージョンが公開されることを明記してください。人が判断するのは、バージョン番号と、その内容を公開してよいかどうかです。
 
-リリースPRが `main` へマージされると `.github/workflows/release-request.yml` が、追加された要求が1件だけであること、要求・`VERSION`・タグが一致すること、対象が最新の `main` であることを検証します。検証後にマージコミットへ注釈付きタグを作成し、`.github/workflows/release.yml` を明示的に起動します。タグやReleaseが既にある場合は、別コミットへ付け替えません。
+リリースPRが `main` へマージされると、親Workflowの `.github/workflows/release-request.yml` が `VERSION` の形式と対象コミットを検証し、マージコミットへ同名の注釈付きタグを作成します。続いて、再利用可能な `.github/workflows/release.yml` を `workflow_call` で呼び出します。タグ名やWorkflow間の値の受け渡しは自動化され、タグ作成から公開完了までを親Workflowの1回の実行で追跡できます。既存タグを別コミットへ付け替えることはありません。
 
 `release.yml` は次を自動実行します。
 
@@ -46,7 +46,7 @@ git status --short
 5. 同じタグのGitHub Releaseを作成し、リリースノートを生成する
 6. `SubtitleEditBay-Setup.exe`、`SubtitleEditBay-Setup.exe.sha256`、`SubtitleEditBay-Setup.exe.manifest.json` を添付する
 
-一時的な失敗はGitHub Actionsからジョブを再実行できます。`release-request.yml` は同じコミットの正しい注釈付きタグを再利用し、進行中のリリースを重複起動しません。`release.yml` を手動実行する場合は、既に存在するタグを `vX.Y.Z` 形式で指定します。コード修正が必要になった場合はタグを移動せず、修正後にパッチ番号を上げた新しいリリースPRを作成してください。
+一時的な失敗は、親Workflowの失敗ジョブまたは実行全体をGitHub Actionsから再実行します。既に作成済みのタグが同じ公開対象を指していれば、そのタグを再利用して同じ処理を続行します。過去にマージ済みの `VERSION` を公開するなどの例外時だけ、親Workflowを手動実行し、`VERSION` と同じ `vX.Y.Z` を指定します。通常運用では手動入力は不要です。コード修正が必要になった場合はタグを移動せず、修正後にパッチ番号を上げた新しいリリースPRを作成してください。
 
 ## リリース後の検証
 

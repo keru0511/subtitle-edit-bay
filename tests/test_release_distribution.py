@@ -84,6 +84,7 @@ class ReleaseDistributionTests(unittest.TestCase):
 
         self.assertIsInstance(triggers, dict)
         self.assertIn("v*", triggers["push"]["tags"])
+        self.assertIn("workflow_call", triggers)
         self.assertIn("workflow_dispatch", triggers)
         validate_publish_gate(
             workflow,
@@ -156,31 +157,28 @@ class ReleaseDistributionTests(unittest.TestCase):
         workflow = load_workflow(RELEASE_REQUEST_WORKFLOW)
         triggers = workflow["on"]["push"]
         permissions = workflow["permissions"]
-        release_step = step_by_id(workflow, "create-tag", "release")
+        release_step = step_by_id(workflow, "prepare", "release")
         command = str(release_step["run"])
+        reusable_release = workflow["jobs"]["release"]
 
         self.assertEqual(triggers["branches"], ["main"])
-        self.assertEqual(triggers["paths"], ["release-requests/v*"])
+        self.assertEqual(triggers["paths"], ["VERSION"])
+        self.assertIn("workflow_dispatch", workflow["on"])
         self.assertEqual(permissions["contents"], "write")
-        self.assertEqual(permissions["actions"], "write")
+        self.assertEqual(permissions["actions"], "read")
         self.assertNotIn("pull_request", workflow["on"])
         for guard in (
-            "git diff --diff-filter=A",
-            "Exactly one new release request is required",
-            "Request, VERSION, and tag must match",
-            "Release request must tag the current main HEAD",
+            "VERSION must be a strict vX.Y.Z tag",
+            "Requested tag and VERSION must match",
+            "A new release must use the current main HEAD",
             "Existing tag is not the expected annotated tag",
             "git tag -a",
-            "gh workflow run release.yml",
+            'echo "tag=$tag" >> "$GITHUB_OUTPUT"',
         ):
             self.assertIn(guard, command)
-
-    def test_current_release_request_matches_version(self) -> None:
-        version = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
-        request = ROOT / "release-requests" / version
-
-        self.assertTrue(request.is_file())
-        self.assertEqual(request.read_text(encoding="utf-8-sig").strip(), version)
+        self.assertEqual(reusable_release["needs"], "prepare")
+        self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
+        self.assertEqual(reusable_release["with"]["tag"], "${{ needs.prepare.outputs.tag }}")
 
     def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

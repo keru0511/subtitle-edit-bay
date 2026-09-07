@@ -30,6 +30,7 @@ from tests.workflow_contracts import (
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 RELEASE_REQUEST_WORKFLOW = ROOT / ".github" / "workflows" / "release-request.yml"
+RELEASE_TAG_WORKFLOW = ROOT / ".github" / "workflows" / "release-tag.yml"
 RELEASE_ASSET_NAMES = {
     INSTALLER_NAME,
     CHECKSUM_NAME,
@@ -83,9 +84,12 @@ class ReleaseDistributionTests(unittest.TestCase):
         triggers = workflow["on"]
 
         self.assertIsInstance(triggers, dict)
-        self.assertIn("v*", triggers["push"]["tags"])
         self.assertIn("workflow_call", triggers)
-        self.assertIn("workflow_dispatch", triggers)
+        self.assertEqual(set(triggers), {"workflow_call"})
+        self.assertEqual(
+            triggers["workflow_call"]["inputs"]["tag"],
+            {"description": "Existing release tag (for example, v1.2.3)", "required": True, "type": "string"},
+        )
         validate_publish_gate(
             workflow,
             publish_job="publish",
@@ -94,6 +98,26 @@ class ReleaseDistributionTests(unittest.TestCase):
         validate_publish_permissions(workflow, publish_job="publish")
         graph = build_job_graph(workflow)
         self.assertTrue({"test", "build"}.issubset(job_ancestors(graph, "publish")))
+
+    def test_release_entrypoints_pass_the_correct_tag_to_reusable_workflow(self) -> None:
+        release = load_workflow(RELEASE_WORKFLOW)
+        request = load_workflow(RELEASE_REQUEST_WORKFLOW)
+        tag_push = load_workflow(RELEASE_TAG_WORKFLOW)
+
+        self.assertEqual(release["concurrency"]["group"], "release-${{ inputs.tag }}")
+        test_checkout = release["jobs"]["test"]["steps"][0]
+        self.assertEqual(test_checkout["with"]["ref"], "${{ inputs.tag }}")
+        self.assertEqual(release["jobs"]["build"]["env"]["RELEASE_TAG"], "${{ inputs.tag }}")
+        self.assertNotIn("github.ref_name", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertNotIn("github.event_name", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+
+        prepare_release = step_by_id(request, "prepare", "release")
+        self.assertEqual(prepare_release["env"]["REQUESTED_TAG"], "${{ inputs.tag || '' }}")
+        self.assertEqual(request["jobs"]["release"]["with"]["tag"], "${{ needs.prepare.outputs.tag }}")
+
+        self.assertEqual(tag_push["on"]["push"]["tags"], ["v*"])
+        self.assertEqual(tag_push["jobs"]["release"]["uses"], "./.github/workflows/release.yml")
+        self.assertEqual(tag_push["jobs"]["release"]["with"]["tag"], "${{ github.ref_name }}")
 
     def test_release_workflow_validates_source_and_artifacts_before_publish(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)

@@ -1,16 +1,7 @@
 name: Release Windows installer
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_call:
-    inputs:
-      tag:
-        description: "Existing release tag (for example, v1.2.3)"
-        required: true
-        type: string
-  workflow_dispatch:
     inputs:
       tag:
         description: "Existing release tag (for example, v1.2.3)"
@@ -18,7 +9,7 @@ on:
         type: string
 
 concurrency:
-  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 permissions:
@@ -36,7 +27,7 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          ref: ${{ inputs.tag }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -75,7 +66,7 @@ jobs:
     permissions:
       contents: read
     env:
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      RELEASE_TAG: ${{ inputs.tag }}
 
     steps:
       - name: Validate release tag

@@ -37,6 +37,8 @@ git status --short
 
 リリースPRが `main` へマージされると、親Workflowの `.github/workflows/release-request.yml` が `VERSION` の形式と対象コミットを検証し、マージコミットへ同名の注釈付きタグを作成します。続いて、再利用可能な `.github/workflows/release.yml` を `workflow_call` で呼び出します。タグ名やWorkflow間の値の受け渡しは自動化され、タグ作成から公開完了までを親Workflowの1回の実行で追跡できます。既存タグを別コミットへ付け替えることはありません。
 
+互換経路としてタグを直接pushした場合は、`.github/workflows/release-tag.yml` がタグ名を `release.yml` の入力へ変換します。公開処理本体の `release.yml` は起動イベントを判定せず、すべての経路で受け取ったタグ入力だけを使用します。
+
 `release.yml` は次を自動実行します。
 
 1. タグ形式、タグの存在、タグと `VERSION` の一致を検証する
@@ -46,7 +48,7 @@ git status --short
 5. 同じタグのGitHub Releaseを作成し、リリースノートを生成する
 6. `SubtitleEditBay-Setup.exe`、`SubtitleEditBay-Setup.exe.sha256`、`SubtitleEditBay-Setup.exe.manifest.json` を添付する
 
-一時的な失敗は、親Workflowの失敗ジョブまたは実行全体をGitHub Actionsから再実行します。既に作成済みのタグが同じ公開対象を指していれば、そのタグを再利用して同じ処理を続行します。過去にマージ済みの `VERSION` を公開するなどの例外時だけ、親Workflowを手動実行し、`VERSION` と同じ `vX.Y.Z` を指定します。通常運用では手動入力は不要です。コード修正が必要になった場合はタグを移動せず、修正後にパッチ番号を上げた新しいリリースPRを作成してください。
+一時的な失敗は、親Workflowの失敗ジョブまたは実行全体をGitHub Actionsから再実行します。既に作成済みのタグが同じ公開対象を指していれば、そのタグを再利用して同じ処理を続行します。`VERSION` 更新時に自動起動されなかった現在の `main` HEADを公開する場合だけ、親Workflowを手動実行し、`VERSION` と同じ `vX.Y.Z` を指定します。過去のコミットを指定して公開する機能ではありません。通常運用では手動入力は不要です。コード修正が必要になった場合はタグを移動せず、修正後にパッチ番号を上げた新しいリリースPRを作成してください。
 
 ## リリース後の検証
 

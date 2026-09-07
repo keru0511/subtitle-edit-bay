@@ -35,7 +35,9 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 2. 準備済みartifactを再検証する
 3. GitHub Releaseを作り、インストーラー、SHA-256、manifest、`release-preparation.json` を添付する
 
-既存Releaseの再実行では公開済みassetをダウンロードしてSHAと対象コミットを照合します。同一なら何も上書きせず成功し、異なる場合は停止します。`--clobber` は使いません。
+既存Releaseの再実行ではassetをダウンロードしてSHAと対象コミットを照合します。公開済みかつ同一なら何も上書きせず成功します。draftかつ同一なら正式公開し、異なる場合や公開状態を確認できない場合は停止します。`--clobber` は使いません。
+
+タグとGitHub Releaseの衝突確認では、不存在だけを新規公開可能と判定します。通信障害、認証エラー、APIエラーなどで状態を確認できない場合は、衝突なしとは扱わず準備または公開を停止します。
 
 障害復旧の手動実行では、`Release from merged version` に次の2値を明示します。
 

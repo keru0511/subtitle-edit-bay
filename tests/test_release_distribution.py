@@ -1,11 +1,13 @@
 import copy
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from urllib.error import HTTPError, URLError
+from unittest.mock import MagicMock, patch
 
 from scripts.release_contract import (
     CHECKSUM_NAME,
@@ -22,6 +24,13 @@ from scripts.release_readiness import (
     assert_readiness_result,
     classify_changes,
     classify_values,
+)
+from scripts.release_state import (
+    GitHubReleaseState,
+    ReleaseStateError,
+    git_tag_exists,
+    github_release_state,
+    publication_action,
 )
 from tests.workflow_contracts import (
     WorkflowContractError,
@@ -152,10 +161,29 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
-        published_assets = str(workflow["jobs"]["publish"]["steps"][-1]["run"])
+        published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
         self.assertNotIn("--clobber", published_assets)
         self.assertIn("cmp dist/SubtitleEditBay-Setup.exe.sha256", published_assets)
+
+    def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
+        workflow = load_workflow(RELEASE_WORKFLOW)
+        publish = workflow["jobs"]["publish"]
+        state = step_by_id(workflow, "publish", "state")
+        release = step_by_id(workflow, "publish", "release")
+        published = step_by_id(workflow, "publish", "published")
+        command = str(release["run"])
+
+        self.assertIn("release_state.py inspect-release", str(state["run"]))
+        self.assertIn('steps.state.outputs.action }}" == "reuse"', command)
+        self.assertIn('steps.state.outputs.action }}" == "publish-draft"', command)
+        self.assertIn('gh release edit "$RELEASE_VERSION"', command)
+        self.assertIn("--draft=false", command)
+        self.assertLess(command.index("verify-artifacts"), command.index("--draft=false"))
+        self.assertLess(command.index("cmp dist/SubtitleEditBay-Setup.exe.sha256"), command.index("--draft=false"))
+        self.assertNotIn("--clobber", command)
+        self.assertIn("release_state.py assert-published", str(published["run"]))
+        self.assertEqual(publish["steps"][-1]["id"], "published")
 
     def test_release_request_uses_actual_merge_sha_and_supports_fixed_target_retry(self) -> None:
         workflow = load_workflow(RELEASE_REQUEST_WORKFLOW)
@@ -172,10 +200,14 @@ class ReleaseDistributionTests(unittest.TestCase):
             "git merge-base --is-ancestor",
             "scripts/release_readiness.py",
             '[[ "$kind" == "release" ]]',
+            'classified_version="$(sed -n \'s/^release_version=//p\' "$output_file")"',
+            'release_version="$classified_version"',
             'echo "source_sha=$source_sha"',
         ):
             self.assertIn(guard, command)
         self.assertNotIn("remote_main", command)
+        self.assertNotIn("tr -d", command)
+        self.assertEqual(command.count('git show "$source_sha:VERSION"'), 0)
 
     def test_release_readiness_is_unskippable_and_fail_closed(self) -> None:
         workflow = load_workflow(RELEASE_READINESS_WORKFLOW)
@@ -201,6 +233,9 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertNotIn("pull_request_target", workflow_text)
         self.assertNotIn("git tag", workflow_text)
         self.assertNotIn("gh release create", workflow_text)
+        collision = str(workflow["jobs"]["classify"]["steps"][-1]["run"])
+        self.assertIn("release_state.py ensure-available", collision)
+        self.assertNotIn("gh release view", collision)
 
     def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -380,7 +415,7 @@ class WorkflowContractHelperTests(unittest.TestCase):
             step for step in workflow["jobs"]["publish"]["steps"] if step.get("id") != "verify"
         ]
         with self.assertRaisesRegex(WorkflowContractError, "missing required steps: verify"):
-            validate_step_order(workflow, "publish", ("download", "verify", "release"))
+            validate_step_order(workflow, "publish", ("download", "verify", "state", "release", "published"))
 
     def test_skipped_verification_and_failure_publish_are_rejected(self) -> None:
         mutations = []
@@ -404,8 +439,8 @@ class WorkflowContractHelperTests(unittest.TestCase):
                 validate_step_order(
                     workflow,
                     "publish",
-                    ("download", "verify", "release"),
-                    adjacent_pairs=(("verify", "release"),),
+                    ("download", "verify", "state", "release", "published"),
+                    adjacent_pairs=(("verify", "state"), ("state", "release"), ("release", "published")),
                 )
 
     def test_steps_cannot_mutate_artifacts_after_validation(self) -> None:
@@ -438,8 +473,8 @@ class WorkflowContractHelperTests(unittest.TestCase):
             (
                 before_release,
                 "publish",
-                ("download", "verify", "release"),
-                (("verify", "release"),),
+                ("download", "verify", "state", "release", "published"),
+                (("verify", "state"), ("state", "release"), ("release", "published")),
             )
         )
 
@@ -674,6 +709,16 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
         ):
             classify_changes("a" * 40, "b" * 40)
 
+    def test_version_whitespace_is_normalized_once_for_preparation_and_publish(self) -> None:
+        with patch(
+            "scripts.release_readiness._git",
+            side_effect=("M\tVERSION\n", "v1.2.4 \r\n", "v1.2.3\n"),
+        ):
+            result = classify_changes("a" * 40, "b" * 40)
+
+        self.assertEqual(result.kind, "release")
+        self.assertEqual(result.release_version, "v1.2.4")
+
     def test_aggregate_accepts_only_expected_success_or_normal_skip(self) -> None:
         assert_readiness_result("release", "success", True, "success")
         assert_readiness_result("infrastructure", "success", True, "success")
@@ -696,6 +741,70 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
         for bad_result in ("failure", "cancelled", "skipped"):
             with self.subTest(result=bad_result), self.assertRaises(ReleaseReadinessError):
                 assert_preparation_results(("success", bad_result, "success", "success"))
+
+
+class ReleaseStateTests(unittest.TestCase):
+    def test_publication_action_separates_new_published_and_draft_releases(self) -> None:
+        self.assertEqual(publication_action(None), "create")
+        self.assertEqual(publication_action(GitHubReleaseState(draft=False, published=True)), "reuse")
+        self.assertEqual(publication_action(GitHubReleaseState(draft=True, published=False)), "publish-draft")
+        with self.assertRaisesRegex(ReleaseStateError, "neither a draft nor published"):
+            publication_action(GitHubReleaseState(draft=False, published=False))
+
+    def test_tag_query_distinguishes_missing_existing_and_errors(self) -> None:
+        cases = ((0, True), (2, False))
+        for returncode, expected in cases:
+            completed = subprocess.CompletedProcess(("git",), returncode, stdout="", stderr="")
+            with (
+                self.subTest(returncode=returncode),
+                patch("scripts.release_state.subprocess.run", return_value=completed),
+            ):
+                self.assertIs(git_tag_exists("origin", "v1.2.3"), expected)
+
+        failed = subprocess.CompletedProcess(("git",), 128, stdout="", stderr="authentication failed")
+        with (
+            patch("scripts.release_state.subprocess.run", return_value=failed),
+            self.assertRaisesRegex(ReleaseStateError, "authentication failed"),
+        ):
+            git_tag_exists("origin", "v1.2.3")
+
+    def _response(self, payload: dict[str, object]):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        return response
+
+    def test_release_query_distinguishes_published_draft_and_missing(self) -> None:
+        published_payload = {"tag_name": "v1.2.3", "draft": False, "published_at": "2026-09-07T00:00:00Z"}
+        draft_payload = {"tag_name": "v1.2.3", "draft": True, "published_at": None}
+        with patch("scripts.release_state.urllib.request.urlopen", return_value=self._response(published_payload)):
+            published = github_release_state("owner/repo", "v1.2.3", "token")
+        with patch("scripts.release_state.urllib.request.urlopen", return_value=self._response(draft_payload)):
+            draft = github_release_state("owner/repo", "v1.2.3", "token")
+        missing = HTTPError("https://api.github.com", 404, "Not Found", {}, None)
+        with patch("scripts.release_state.urllib.request.urlopen", side_effect=missing):
+            absent = github_release_state("owner/repo", "v1.2.3", "token")
+
+        self.assertIsNotNone(published)
+        self.assertTrue(published.published)
+        self.assertFalse(published.draft)
+        self.assertIsNotNone(draft)
+        self.assertTrue(draft.draft)
+        self.assertFalse(draft.published)
+        self.assertIsNone(absent)
+
+    def test_release_query_rejects_api_authentication_and_transport_errors(self) -> None:
+        failures = (
+            HTTPError("https://api.github.com", 401, "Unauthorized", {}, None),
+            HTTPError("https://api.github.com", 500, "Server Error", {}, None),
+            URLError("network unavailable"),
+        )
+        for failure in failures:
+            with (
+                self.subTest(failure=failure),
+                patch("scripts.release_state.urllib.request.urlopen", side_effect=failure),
+                self.assertRaises(ReleaseStateError),
+            ):
+                github_release_state("owner/repo", "v1.2.3", "token")
 
 
 if __name__ == "__main__":

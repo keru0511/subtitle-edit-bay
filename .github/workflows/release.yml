@@ -99,7 +99,17 @@ jobs:
           --directory dist
           --expected-version "${{ inputs.release_version }}"
           --expected-source-sha "${{ inputs.source_sha }}"
-      - name: Create release or verify an identical existing release
+      - name: Inspect existing GitHub Release
+        id: state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_state.py inspect-release
+          --repository "$GITHUB_REPOSITORY"
+          --release-version "${{ inputs.release_version }}"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Create, publish, or verify an identical existing release
         id: release
         shell: bash
         env:
@@ -114,7 +124,7 @@ jobs:
             "dist/SubtitleEditBay-Setup.exe.manifest.json"
             "dist/release-preparation.json"
           )
-          if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if [[ "${{ steps.state.outputs.action }}" != "create" ]]; then
             mkdir existing-release
             gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir existing-release
             python release-tools/scripts/release_contract.py verify-artifacts \
@@ -122,11 +132,27 @@ jobs:
               --expected-version "${RELEASE_VERSION#v}" \
               --expected-source-sha "$SOURCE_SHA"
             cmp dist/SubtitleEditBay-Setup.exe.sha256 existing-release/SubtitleEditBay-Setup.exe.sha256
-            echo "An identical release already exists; no assets were overwritten."
-            exit 0
+            if [[ "${{ steps.state.outputs.action }}" == "reuse" ]]; then
+              echo "An identical published release already exists; no assets were overwritten."
+            elif [[ "${{ steps.state.outputs.action }}" == "publish-draft" ]]; then
+              gh release edit "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
+            else
+              echo "Unexpected existing release action: ${{ steps.state.outputs.action }}" >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_VERSION" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Subtitle Edit Bay ${RELEASE_VERSION#v}" \
+              --generate-notes
           fi
-          gh release create "$RELEASE_VERSION" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "Subtitle Edit Bay ${RELEASE_VERSION#v}" \
-            --generate-notes
+      - name: Require published GitHub Release
+        id: published
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_state.py assert-published
+          --repository "$GITHUB_REPOSITORY"
+          --release-version "${{ inputs.release_version }}"

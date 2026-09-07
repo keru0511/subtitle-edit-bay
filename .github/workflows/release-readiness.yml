@@ -50,14 +50,10 @@ jobs:
           RELEASE_VERSION: ${{ steps.classify.outputs.release_version }}
         run: |
           set -euo pipefail
-          if git ls-remote --exit-code origin "refs/tags/$RELEASE_VERSION" >/dev/null 2>&1; then
-            echo "Release tag already exists: $RELEASE_VERSION" >&2
-            exit 1
-          fi
-          if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "GitHub Release already exists: $RELEASE_VERSION" >&2
-            exit 1
-          fi
+          python scripts/release_state.py ensure-available \
+            --remote origin \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-version "$RELEASE_VERSION"
 
   prepare:
     name: Prepare merge candidate

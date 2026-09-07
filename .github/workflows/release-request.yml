@@ -61,7 +61,6 @@ jobs:
             base_sha="$(git rev-parse "$source_sha^1")"
           else
             source_sha="$EVENT_SOURCE_SHA"
-            release_version="$(git show "$source_sha:VERSION" | tr -d '\r\n')"
             base_sha="$EVENT_BEFORE_SHA"
           fi
           output_file="$(mktemp)"
@@ -71,11 +70,12 @@ jobs:
             --github-output "$output_file"
           kind="$(sed -n 's/^kind=//p' "$output_file")"
           [[ "$kind" == "release" ]] || { echo "Publication target is not a VERSION-only release commit." >&2; exit 1; }
-          source_version="$(git show "$source_sha:VERSION" | tr -d '\r\n')"
-          [[ "$release_version" == "$source_version" ]] || {
+          classified_version="$(sed -n 's/^release_version=//p' "$output_file")"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$release_version" != "$classified_version" ]]; then
             echo "Requested release_version does not match the source VERSION." >&2
             exit 1
-          }
+          fi
+          release_version="$classified_version"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 

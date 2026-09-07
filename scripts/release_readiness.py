@@ -24,6 +24,7 @@ RELEASE_INFRASTRUCTURE_FILES = {
     "scripts/build_release_package.ps1",
     "scripts/release_contract.py",
     "scripts/release_readiness.py",
+    "scripts/release_state.py",
     "scripts/run_ci_tests.py",
     "scripts/test_installer.ps1",
     "tests/ci_test_groups.json",

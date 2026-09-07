@@ -73,6 +73,14 @@ New-Item -ItemType Directory -Path $statusDirectory -Force | Out-Null
     details = @{ provider = "ci-cpu" }
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $statusDirectory "setup-status.json") -Encoding UTF8
 
+$configDirectory = Join-Path $installDir ".gui"
+New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
+$runtimeConfig = Get-Content -LiteralPath (Join-Path $installDir "assets\runtime_config.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$runtimeConfig.shared.device = "cpu"
+$runtimeConfig.shared.compute_type = "int8"
+$runtimeConfig.craig_pipeline.video_codec = "libx264"
+$runtimeConfig | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $configDirectory "runtime_config.json") -Encoding UTF8
+
 $readyProbe = Start-Process -FilePath $launcher -ArgumentList "--probe-setup" -WorkingDirectory $installDir -Wait -PassThru
 if ($readyProbe.ExitCode -ne 0) {
     throw "A completed setup environment was rejected: exit=$($readyProbe.ExitCode)"

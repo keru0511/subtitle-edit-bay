@@ -122,6 +122,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn('"SubtitleEditBayLauncher.exe"', smoke)
         self.assertIn('Start-Process -FilePath $launcher', smoke)
         self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
+        self.assertIn('$runtimeConfig.shared.device = "cpu"', smoke)
         self.assertIn('"--probe-setup"', smoke)
         self.assertNotIn("installed-gui-smoke.py", smoke)
 

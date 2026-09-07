@@ -330,6 +330,12 @@ class WindowsLauncherTests(unittest.TestCase):
             outside.mkdir()
             config_path = root / ".gui" / "runtime_config.json"
             config_path.parent.mkdir(parents=True)
+            (root / "VERSION").write_text("1.2.3\n", encoding="ascii")
+            (root / ".local").mkdir()
+            (root / ".local" / "setup-status.json").write_text(
+                json.dumps({"schema_version": 1, "status": "success", "app_version": "1.2.3"}),
+                encoding="utf-8",
+            )
             (root / "assets").mkdir()
             (root / "src").mkdir()
             (root / "src" / "__init__.py").write_text("", encoding="ascii")

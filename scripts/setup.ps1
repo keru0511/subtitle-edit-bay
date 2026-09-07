@@ -155,6 +155,33 @@ if ($ProbeNvidiaStatusOnly) {
     exit 0
 }
 
+$setupStatusPath = Join-Path (Get-Location) ".local\setup-status.json"
+function Write-SetupStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [string]$Message = "",
+        [hashtable]$Details = @{}
+    )
+    New-Item -ItemType Directory -Path (Split-Path -Parent $setupStatusPath) -Force | Out-Null
+    $version = if (Test-Path -LiteralPath "VERSION" -PathType Leaf) {
+        (Get-Content -LiteralPath "VERSION" -Raw -Encoding UTF8).Trim()
+    } else { "" }
+    @{
+        schema_version = 1
+        status = $Status
+        app_version = $version
+        message = $Message
+        details = $Details
+        updated_at = [DateTime]::UtcNow.ToString("o")
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $setupStatusPath -Encoding UTF8
+}
+
+Write-SetupStatus -Status "running"
+trap {
+    Write-SetupStatus -Status "failed" -Message $_.Exception.Message
+    exit 1
+}
+
 Write-Host "Subtitle Edit Bay setup"
 Write-Host "This can take a while because WhisperX and PyTorch are large."
 
@@ -322,3 +349,10 @@ if ($cudaAvailable) {
     Write-Host "CUDA: unavailable. The first-run preset was configured for CPU and libx264."
 }
 Write-Host "Setup verification passed."
+Write-SetupStatus -Status "success" -Details @{
+    python = $venvPython
+    cuda_available = $cudaAvailable
+    cuda_runtime = $cudaRuntime
+    device_name = [string]$torchRuntime.device_name
+    ffmpeg_directory = $ffmpegDirectory
+}

@@ -14,6 +14,7 @@ CHECKSUM_NAME = f"{INSTALLER_NAME}.sha256"
 MANIFEST_NAME = f"{INSTALLER_NAME}.manifest.json"
 PREPARATION_NAME = "release-preparation.json"
 REQUIRED_INSTALLED_FILES = {
+    "SubtitleEditBayLauncher.exe",
     "VERSION",
     "scripts/launch.ps1",
     "scripts/apply_installer_update.ps1",

@@ -1,4 +1,7 @@
 ﻿param(
+    [ValidateSet("Launch", "Setup", "Update")]
+    [string]$Action = "Launch",
+    [switch]$ProbeSetupStateOnly,
     [switch]$ProbeCudaRepairOnly,
     [switch]$SuppressMessages,
     [string]$ProjectRootOverride = "",
@@ -29,6 +32,34 @@ $setupExecutable = if ($SetupExecutableOverride) {
     [IO.Path]::GetFullPath($SetupExecutableOverride)
 } else {
     Join-Path $projectRoot "setup.bat"
+}
+$updateExecutable = Join-Path $projectRoot "update.bat"
+
+function Test-SetupComplete {
+    $statusPath = Join-Path $projectRoot ".local\setup-status.json"
+    $versionPath = Join-Path $projectRoot "VERSION"
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $pythonw -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $statusPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $versionPath -PathType Leaf)) { return $false }
+    try {
+        $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $version = (Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8).Trim()
+        return [string]$status.status -eq "success" -and [string]$status.app_version -eq $version
+    } catch { return $false }
+}
+
+if ($ProbeSetupStateOnly) {
+    if (Test-SetupComplete) { exit 0 }
+    exit 3
+}
+if ($Action -eq "Setup") {
+    $process = Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot -Wait -PassThru
+    exit $process.ExitCode
+}
+if ($Action -eq "Update") {
+    $process = Start-Process -FilePath $updateExecutable -WorkingDirectory $projectRoot -Wait -PassThru
+    exit $process.ExitCode
 }
 
 function Show-Message {
@@ -84,7 +115,7 @@ if ($ProbeCudaRepairOnly) {
     exit 0
 }
 
-if (-not (Test-Path -LiteralPath $pythonw -PathType Leaf)) {
+if (-not (Test-SetupComplete)) {
     Show-Message "初回セットアップが必要です。セットアップ画面を開きます。"
     Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot
     exit 0

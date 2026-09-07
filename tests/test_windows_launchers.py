@@ -261,7 +261,6 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
         self.assertIn("runtime\\runtime-contract.json", setup)
         self.assertIn("--require-hashes", setup)
-        self.assertIn("--only-binary=:all:", setup)
         self.assertIn(".venv.staging", setup)
         self.assertIn("runtime-manifest.json", setup)
         self.assertIn("verify-tools", setup)

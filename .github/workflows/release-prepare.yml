@@ -153,7 +153,7 @@ jobs:
           python -m venv "${{ runner.temp }}/release-runtime"
           $runtimePython = "${{ runner.temp }}/release-runtime/Scripts/python.exe"
           & $runtimePython -m pip install "pip==$($contract.python.pip_version)"
-          & $runtimePython -m pip install --require-hashes --only-binary=:all: --index-url $contract.profiles.cpu.index_url -r source/runtime/requirements-windows-cpu.lock
+          & $runtimePython -m pip install --require-hashes --index-url $contract.profiles.cpu.index_url -r source/runtime/requirements-windows-cpu.lock
           & $runtimePython -m pip check
           & $runtimePython source/scripts/runtime_contract.py verify-runtime --root source --profile cpu --manifest-output "${{ runner.temp }}/runtime-manifest.json"
       - name: Ensure Inno Setup compiler

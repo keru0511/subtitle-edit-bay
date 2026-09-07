@@ -235,10 +235,7 @@ if ($LASTEXITCODE -ne 0) { throw "Could not create the staging Python environmen
 $stagingPython = (Resolve-Path "$stagingVenv\Scripts\python.exe").Path
 & $stagingPython -m pip install "pip==$($runtimeContract.python.pip_version)"
 if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
-$pipArguments = @(
-    "-m", "pip", "install", "--require-hashes", "--only-binary=:all:",
-    "--index-url", [string]$profileContract.index_url
-)
+$pipArguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$profileContract.index_url)
 if ($profileContract.extra_index_url) {
     $pipArguments += @("--extra-index-url", [string]$profileContract.extra_index_url)
 }

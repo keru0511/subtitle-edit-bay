@@ -6,8 +6,8 @@ Windows の配布版は `runtime/runtime-contract.json` を契約の起点とし
 
 ## 再現と修復
 
-`setup.ps1` は GPU を検出してプロファイルを選び、対応する lock を `--require-hashes` と
-`--only-binary=:all:` で新しい `.venv.staging` にインストールします。全パッケージの版、主要 module の
+`setup.ps1` は GPU を検出してプロファイルを選び、対応する lock を `--require-hashes` で新しい
+`.venv.staging` にインストールします。全パッケージの版、主要 module の
 実 import、FFmpeg/ffprobe、CUDA を検証してから既存 `.venv` と入れ替えます。途中で失敗した場合、既存の
 実行環境は維持されます。
 

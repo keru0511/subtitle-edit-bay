@@ -63,7 +63,7 @@ jobs:
           }
           $selected = $contract.profiles.$profile
           python -m pip install "pip==$($contract.python.pip_version)"
-          $arguments = @("-m", "pip", "install", "--require-hashes", "--only-binary=:all:", "--index-url", $selected.index_url)
+          $arguments = @("-m", "pip", "install", "--require-hashes", "--index-url", $selected.index_url)
           if ($selected.extra_index_url) { $arguments += @("--extra-index-url", $selected.extra_index_url) }
           $arguments += @("-r", $selected.lock_file)
           python @arguments

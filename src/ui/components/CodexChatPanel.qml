@@ -29,7 +29,8 @@ Rectangle {
     }
 
     function busy() {
-        return backend && ["sending", "streaming", "stopping"].indexOf(backend.codexChatState) >= 0
+        return backend && (["sending", "streaming", "stopping"].indexOf(backend.codexChatState) >= 0
+            || ["starting", "authenticating", "running"].indexOf(backend.codexState) >= 0)
     }
 
     function authStateLabel() {
@@ -179,6 +180,28 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
+                visible: editScope.currentValue === "time_range"
+                Text { text: "範囲"; color: panel.mutedColor; font.pixelSize: 9 }
+                TextField {
+                    id: rangeStart
+                    objectName: "codexChatRangeStart"
+                    Layout.fillWidth: true
+                    text: "0.000"
+                    validator: DoubleValidator { bottom: 0; top: 86400; decimals: 3 }
+                }
+                Text { text: "〜"; color: panel.mutedColor }
+                TextField {
+                    id: rangeEnd
+                    objectName: "codexChatRangeEnd"
+                    Layout.fillWidth: true
+                    text: "0.000"
+                    validator: DoubleValidator { bottom: 0; top: 86400; decimals: 3 }
+                }
+                Text { text: "秒"; color: panel.mutedColor; font.pixelSize: 9 }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
                 Text {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
@@ -245,6 +268,13 @@ Rectangle {
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             }
 
+            CodexEditPanel {
+                objectName: "codexChatProposalCard"
+                Layout.fillWidth: true
+                Layout.preferredHeight: implicitHeight
+                backend: panel.backend
+            }
+
             Text {
                 Layout.fillWidth: true
                 visible: backend && (backend.codexModelError || backend.codexChatError)
@@ -269,6 +299,22 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
+                ComboBox {
+                    id: editScope
+                    objectName: "codexChatEditScope"
+                    Layout.preferredWidth: 92
+                    model: [
+                        {"label": "自動", "value": "auto"},
+                        {"label": "選択字幕", "value": "selected"},
+                        {"label": "再生位置", "value": "current"},
+                        {"label": "時間範囲", "value": "time_range"},
+                        {"label": "全字幕", "value": "all"}
+                    ]
+                    textRole: "label"
+                    valueRole: "value"
+                    ToolTip.visible: hovered
+                    ToolTip.text: "字幕編集の対象。自動では全字幕を選びません"
+                }
                 TextArea {
                     id: chatInput
                     objectName: "codexChatInput"
@@ -292,7 +338,12 @@ Rectangle {
                         onClicked: {
                             var message = chatInput.text
                             chatInput.clear()
-                            backend.sendCodexChatMessage(message)
+                            backend.sendCodexChatMessage(
+                                message,
+                                editScope.currentValue,
+                                Number(rangeStart.text || 0),
+                                Number(rangeEnd.text || 0)
+                            )
                         }
                     }
                     SmallButton {

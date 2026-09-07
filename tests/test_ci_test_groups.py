@@ -222,6 +222,9 @@ class CiWorkflowContractTests(unittest.TestCase):
             "actions/cache/save@v5",
             "windows-ffmpeg-9.0.1-v1",
             "windows-installer-smoke:",
+            "scripts/build_release_package.ps1",
+            "scripts/release_contract.py verify-artifacts",
+            "scripts/test_installer.ps1",
         ):
             self.assertIn(expected, workflow)
         self.assertNotIn(
@@ -244,15 +247,16 @@ class CiWorkflowContractTests(unittest.TestCase):
 
     def test_ci_and_release_check_standard_unittest_discovery_first(self) -> None:
         ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-        release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        release_workflow = (REPO_ROOT / ".github" / "workflows" / "release-prepare.yml").read_text(encoding="utf-8")
         discovery_command = "python scripts/check_unittest_discovery.py"
 
         self.assertIn(discovery_command, ci_workflow)
         self.assertLess(ci_workflow.index(discovery_command), ci_workflow.index("--group portable-unit"))
         self.assertIn(discovery_command, release_workflow)
-        self.assertLess(
-            release_workflow.index(discovery_command), release_workflow.index("python -m unittest discover")
-        )
+        self.assertLess(release_workflow.index(discovery_command), release_workflow.index("--group portable-unit"))
+        for group in ("portable-unit", "qt-gui", "ffmpeg-runtime"):
+            self.assertIn(f"python scripts/run_ci_tests.py --group {group}", release_workflow)
+        self.assertNotIn('python -m unittest discover -s tests -p "test_*.py" -v', release_workflow)
 
 
 if __name__ == "__main__":

@@ -2201,6 +2201,7 @@ ApplicationWindow {
                 Text { objectName: "videoOutputDirectoryText"; Layout.fillWidth: true; text: root.appBackend.videoOutputDirectory || "書き出すときに選択できます"; color: root.textMuted; elide: Text.ElideMiddle }
                 SmallButton { objectName: "videoOutputDirectoryButton"; text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() }
             }
+            Item { Layout.fillWidth: true; Layout.preferredHeight: 8 }
                 }
             }
             RowLayout {

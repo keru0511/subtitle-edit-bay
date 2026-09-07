@@ -12,6 +12,7 @@ from typing import Sequence
 INSTALLER_NAME = "SubtitleEditBay-Setup.exe"
 CHECKSUM_NAME = f"{INSTALLER_NAME}.sha256"
 MANIFEST_NAME = f"{INSTALLER_NAME}.manifest.json"
+PREPARATION_NAME = "release-preparation.json"
 REQUIRED_INSTALLED_FILES = {
     "VERSION",
     "scripts/launch.ps1",
@@ -20,6 +21,7 @@ REQUIRED_INSTALLED_FILES = {
 VERSION_PATTERN = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 TAG_PATTERN = re.compile(r"^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$")
 CHECKSUM_PATTERN = re.compile(rf"^([0-9a-fA-F]{{64}}) [ *]{re.escape(INSTALLER_NAME)}$")
+SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 class ReleaseContractError(ValueError):
@@ -33,8 +35,8 @@ def release_version_from_tag(tag: str) -> str:
     return match.group(1)
 
 
-def validate_source_version(tag: str, version_file: Path) -> str:
-    expected_version = release_version_from_tag(tag)
+def validate_source_version(release_version: str, version_file: Path) -> str:
+    expected_version = release_version_from_tag(release_version)
     try:
         stored_version = version_file.read_text(encoding="utf-8-sig").strip()
     except OSError as exc:
@@ -43,7 +45,7 @@ def validate_source_version(tag: str, version_file: Path) -> str:
     if not VERSION_PATTERN.fullmatch(normalized_version):
         raise ReleaseContractError(f"VERSION must use X.Y.Z or vX.Y.Z without leading zeroes: {stored_version}")
     if normalized_version != expected_version:
-        raise ReleaseContractError(f"release tag {tag} does not match VERSION {stored_version}")
+        raise ReleaseContractError(f"release version {release_version} does not match VERSION {stored_version}")
     return expected_version
 
 
@@ -79,13 +81,25 @@ def _read_manifest(path: Path) -> dict[str, object]:
     return payload
 
 
-def verify_release_artifacts(directory: Path, expected_version: str) -> str:
-    if not VERSION_PATTERN.fullmatch(expected_version):
+def verify_release_artifacts(
+    directory: Path,
+    expected_version: str,
+    expected_source_sha: str = "",
+) -> str:
+    normalized_expected_version = expected_version.removeprefix("v")
+    if not VERSION_PATTERN.fullmatch(normalized_expected_version):
         raise ReleaseContractError(f"expected version must use X.Y.Z without leading zeroes: {expected_version}")
+    if expected_source_sha and not SOURCE_SHA_PATTERN.fullmatch(expected_source_sha):
+        raise ReleaseContractError(
+            f"expected source SHA must be 40 lowercase hexadecimal characters: {expected_source_sha}"
+        )
     installer_path = directory / INSTALLER_NAME
     checksum_path = directory / CHECKSUM_NAME
     manifest_path = directory / MANIFEST_NAME
-    missing = [path.name for path in (installer_path, checksum_path, manifest_path) if not path.is_file()]
+    preparation_path = directory / PREPARATION_NAME
+    missing = [
+        path.name for path in (installer_path, checksum_path, manifest_path, preparation_path) if not path.is_file()
+    ]
     if missing:
         raise ReleaseContractError(f"release artifacts are missing: {', '.join(missing)}")
 
@@ -98,7 +112,7 @@ def verify_release_artifacts(directory: Path, expected_version: str) -> str:
     expected_values = {
         "schema_version": 1,
         "package_type": "installer",
-        "app_version": expected_version,
+        "app_version": normalized_expected_version,
         "asset_name": INSTALLER_NAME,
         "sha256": actual_digest,
     }
@@ -106,6 +120,32 @@ def verify_release_artifacts(directory: Path, expected_version: str) -> str:
         if manifest.get(key) != expected_value:
             raise ReleaseContractError(
                 f"manifest {key} mismatch: expected {expected_value!r}, got {manifest.get(key)!r}"
+            )
+
+    manifest_source_sha = manifest.get("source_sha")
+    if not isinstance(manifest_source_sha, str) or not SOURCE_SHA_PATTERN.fullmatch(manifest_source_sha):
+        raise ReleaseContractError("manifest source_sha must be a full lowercase commit SHA")
+    if expected_source_sha and manifest_source_sha != expected_source_sha:
+        raise ReleaseContractError(
+            f"manifest source_sha mismatch: expected {expected_source_sha!r}, got {manifest.get('source_sha')!r}"
+        )
+
+    preparation = _read_manifest(preparation_path)
+    expected_preparation = {
+        "schema_version": 1,
+        "source_sha": expected_source_sha or manifest_source_sha,
+        "release_version": f"v{normalized_expected_version}",
+        "artifact_name": (
+            f"subtitle-edit-bay-{normalized_expected_version}-windows-installer-"
+            f"{expected_source_sha or manifest_source_sha}"
+        ),
+        "asset_name": INSTALLER_NAME,
+        "sha256": actual_digest,
+    }
+    for key, expected_value in expected_preparation.items():
+        if preparation.get(key) != expected_value:
+            raise ReleaseContractError(
+                f"preparation {key} mismatch: expected {expected_value!r}, got {preparation.get(key)!r}"
             )
 
     required_files = manifest.get("required_files")
@@ -123,9 +163,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     source_parser = subparsers.add_parser(
         "validate-source",
-        help="Require the release tag and VERSION file to match.",
+        help="Require the release version and VERSION file to match.",
     )
-    source_parser.add_argument("--tag", required=True)
+    source_parser.add_argument("--release-version", required=True)
     source_parser.add_argument("--version-file", type=Path, default=Path("VERSION"))
 
     artifacts_parser = subparsers.add_parser(
@@ -134,6 +174,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     artifacts_parser.add_argument("--directory", type=Path, required=True)
     artifacts_parser.add_argument("--expected-version", required=True)
+    artifacts_parser.add_argument("--expected-source-sha", default="")
     return parser.parse_args(argv)
 
 
@@ -141,10 +182,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         if args.command == "validate-source":
-            version = validate_source_version(args.tag, args.version_file)
+            version = validate_source_version(args.release_version, args.version_file)
             print(f"Release source version is valid: {version}")
         else:
-            digest = verify_release_artifacts(args.directory, args.expected_version)
+            digest = verify_release_artifacts(
+                args.directory,
+                args.expected_version,
+                args.expected_source_sha,
+            )
             print(f"Release artifacts are valid: sha256={digest}")
     except ReleaseContractError as exc:
         print(f"Release contract error: {exc}", file=sys.stderr)

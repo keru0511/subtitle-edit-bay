@@ -1,0 +1,87 @@
+name: Release readiness
+
+on:
+  pull_request:
+    branches:
+      - main
+  merge_group:
+    types:
+      - checks_requested
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-readiness-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify merge candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      kind: ${{ steps.classify.outputs.kind }}
+      release_version: ${{ steps.classify.outputs.release_version }}
+      requires_preparation: ${{ steps.classify.outputs.requires_preparation }}
+    steps:
+      - name: Check out merge candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify actual VERSION change
+        id: classify
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: >-
+          python scripts/release_readiness.py classify
+          --base-sha "$BASE_SHA"
+          --source-sha "$SOURCE_SHA"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Reject release version collisions
+        if: steps.classify.outputs.kind == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.classify.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          python scripts/release_state.py ensure-available \
+            --remote origin \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-version "$RELEASE_VERSION"
+
+  prepare:
+    name: Prepare merge candidate
+    needs: classify
+    if: needs.classify.outputs.requires_preparation == 'true'
+    uses: ./.github/workflows/release-prepare.yml
+    with:
+      source_sha: ${{ github.sha }}
+      release_version: ${{ needs.classify.outputs.release_version }}
+
+  readiness:
+    name: Release readiness
+    if: always()
+    needs:
+      - classify
+      - prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out merge candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require expected classification and preparation
+        run: >-
+          python scripts/release_readiness.py assert-readiness
+          --kind "${{ needs.classify.outputs.kind }}"
+          --classify-result "${{ needs.classify.result }}"
+          --requires-preparation "${{ needs.classify.outputs.requires_preparation || 'false' }}"
+          --prepare-result "${{ needs.prepare.result }}"

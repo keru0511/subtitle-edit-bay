@@ -134,6 +134,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         updater = (ROOT / "scripts" / "apply_installer_update.ps1").read_text(encoding="utf-8-sig")
 
         self.assertIn("/MT", launcher)
+        self.assertIn("user32.lib", launcher)
         self.assertIn("VERSIONINFO", launcher)
         self.assertIn('VALUE "ProductName"', launcher)
         self.assertIn("verify_windows_binary.ps1", launcher)

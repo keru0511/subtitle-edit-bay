@@ -76,7 +76,6 @@ ApplicationWindow {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
     }
-    Component.onCompleted: previousCodexAuthenticated = root.codexAuthenticated
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -3278,6 +3277,7 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        root.previousCodexAuthenticated = root.codexAuthenticated
         root.syncSettings()
     }
     onClosing: function(close) {

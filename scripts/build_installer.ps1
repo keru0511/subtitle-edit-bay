@@ -7,12 +7,14 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$OutputPath,
 
-    [string]$IsccPath
+    [string]$IsccPath,
+
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = "Stop"
 
-$projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+$projectRoot = [IO.Path]::GetFullPath($ProjectRoot)
 $installerScript = Join-Path $projectRoot "installer\SubtitleEditBay.iss"
 
 function Find-InnoSetupCompiler {

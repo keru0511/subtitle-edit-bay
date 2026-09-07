@@ -222,6 +222,9 @@ class CiWorkflowContractTests(unittest.TestCase):
             "actions/cache/save@v5",
             "windows-ffmpeg-9.0.1-v1",
             "windows-installer-smoke:",
+            "scripts/build_release_package.ps1",
+            "scripts/release_contract.py verify-artifacts",
+            "scripts/test_installer.ps1",
         ):
             self.assertIn(expected, workflow)
         self.assertNotIn(
@@ -244,7 +247,7 @@ class CiWorkflowContractTests(unittest.TestCase):
 
     def test_ci_and_release_check_standard_unittest_discovery_first(self) -> None:
         ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-        release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        release_workflow = (REPO_ROOT / ".github" / "workflows" / "release-prepare.yml").read_text(encoding="utf-8")
         discovery_command = "python scripts/check_unittest_discovery.py"
 
         self.assertIn(discovery_command, ci_workflow)

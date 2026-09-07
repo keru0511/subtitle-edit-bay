@@ -5,14 +5,23 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from scripts.release_contract import (
     CHECKSUM_NAME,
     INSTALLER_NAME,
     MANIFEST_NAME,
+    PREPARATION_NAME,
     ReleaseContractError,
     validate_source_version,
     verify_release_artifacts,
+)
+from scripts.release_readiness import (
+    ReleaseReadinessError,
+    assert_preparation_results,
+    assert_readiness_result,
+    classify_changes,
+    classify_values,
 )
 from tests.workflow_contracts import (
     WorkflowContractError,
@@ -30,11 +39,13 @@ from tests.workflow_contracts import (
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 RELEASE_REQUEST_WORKFLOW = ROOT / ".github" / "workflows" / "release-request.yml"
-RELEASE_TAG_WORKFLOW = ROOT / ".github" / "workflows" / "release-tag.yml"
+RELEASE_PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "release-prepare.yml"
+RELEASE_READINESS_WORKFLOW = ROOT / ".github" / "workflows" / "release-readiness.yml"
 RELEASE_ASSET_NAMES = {
     INSTALLER_NAME,
     CHECKSUM_NAME,
     MANIFEST_NAME,
+    PREPARATION_NAME,
 }
 
 
@@ -71,6 +82,8 @@ class ReleaseDistributionTests(unittest.TestCase):
 
     def test_build_script_has_stable_release_contract(self) -> None:
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
+        package = (ROOT / "scripts" / "build_release_package.ps1").read_text(encoding="utf-8-sig")
+        smoke = (ROOT / "scripts" / "test_installer.ps1").read_text(encoding="utf-8-sig")
 
         self.assertIn("[string]$Version", build)
         self.assertIn("[string]$OutputPath", build)
@@ -78,146 +91,115 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("INNO_SETUP_COMPILER", build)
         self.assertIn("OutputPath must end with .exe", build)
         self.assertIn("Inno Setup completed without producing", build)
+        self.assertIn("[string]$ProjectRoot", build)
+        self.assertIn("source_sha", package)
+        self.assertIn("release-preparation.json", package)
+        self.assertIn("Installed VERSION mismatch", smoke)
+        self.assertIn("engine.rootObjects()", smoke)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
         triggers = workflow["on"]
 
-        self.assertIsInstance(triggers, dict)
-        self.assertIn("workflow_call", triggers)
         self.assertEqual(set(triggers), {"workflow_call"})
-        self.assertEqual(
-            triggers["workflow_call"]["inputs"]["tag"],
-            {"description": "Existing release tag (for example, v1.2.3)", "required": True, "type": "string"},
-        )
+        self.assertEqual(set(triggers["workflow_call"]["inputs"]), {"source_sha", "release_version"})
         validate_publish_gate(
             workflow,
             publish_job="publish",
-            required_gates=("test", "build"),
+            required_gates=("prepare", "tag"),
         )
-        validate_publish_permissions(workflow, publish_job="publish")
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertEqual(workflow["jobs"]["tag"]["permissions"], {"contents": "write"})
+        self.assertEqual(
+            workflow["jobs"]["publish"]["permissions"],
+            {"actions": "read", "contents": "write"},
+        )
         graph = build_job_graph(workflow)
-        self.assertTrue({"test", "build"}.issubset(job_ancestors(graph, "publish")))
+        self.assertTrue({"prepare", "tag"}.issubset(job_ancestors(graph, "publish")))
+        self.assertEqual(workflow["jobs"]["prepare"]["uses"], "./.github/workflows/release-prepare.yml")
 
-    def test_release_entrypoints_pass_the_correct_tag_to_reusable_workflow(self) -> None:
+    def test_release_entrypoint_passes_exact_source_and_version(self) -> None:
         release = load_workflow(RELEASE_WORKFLOW)
         request = load_workflow(RELEASE_REQUEST_WORKFLOW)
-        tag_push = load_workflow(RELEASE_TAG_WORKFLOW)
+        reusable_release = request["jobs"]["release"]
 
-        self.assertEqual(release["concurrency"]["group"], "release-${{ inputs.tag }}")
-        test_checkout = release["jobs"]["test"]["steps"][0]
-        self.assertEqual(test_checkout["with"]["ref"], "${{ inputs.tag }}")
-        self.assertEqual(release["jobs"]["build"]["env"]["RELEASE_TAG"], "${{ inputs.tag }}")
-        self.assertNotIn("github.ref_name", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
-        self.assertNotIn("github.event_name", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
-
-        prepare_release = step_by_id(request, "prepare", "release")
-        self.assertEqual(prepare_release["env"]["REQUESTED_TAG"], "${{ inputs.tag || '' }}")
-        self.assertEqual(request["jobs"]["release"]["with"]["tag"], "${{ needs.prepare.outputs.tag }}")
-
-        self.assertEqual(tag_push["on"]["push"]["tags"], ["v*"])
-        self.assertEqual(tag_push["jobs"]["release"]["uses"], "./.github/workflows/release.yml")
-        self.assertEqual(tag_push["jobs"]["release"]["with"]["tag"], "${{ github.ref_name }}")
+        self.assertEqual(
+            release["concurrency"]["group"],
+            "release-${{ inputs.release_version }}-${{ inputs.source_sha }}",
+        )
+        self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
+        self.assertEqual(reusable_release["with"]["source_sha"], "${{ needs.validate.outputs.source_sha }}")
+        self.assertEqual(
+            reusable_release["with"]["release_version"],
+            "${{ needs.validate.outputs.release_version }}",
+        )
+        self.assertFalse(
+            (ROOT / ".github" / "workflows" / "release-tag.yml").exists(),
+            "direct tag push must not be a publishing entrypoint",
+        )
 
     def test_release_workflow_validates_source_and_artifacts_before_publish(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
+        preparation = load_workflow(RELEASE_PREPARE_WORKFLOW)
 
         validate_step_order(
-            workflow,
+            preparation,
             "build",
-            ("release", "source-version", "package", "upload"),
-            adjacent_pairs=(("package", "upload"),),
+            ("upload",),
         )
-        validate_step_order(
-            workflow,
-            "publish",
-            ("download", "verify", "release"),
-            adjacent_pairs=(("verify", "release"),),
-        )
-
-        validate_step_command(
-            workflow,
-            "build",
-            "source-version",
-            expected_shell="pwsh",
-            expected_tokens=(
-                "python",
-                "scripts/release_contract.py",
-                "validate-source",
-                "--tag",
-                "${{ steps.release.outputs.tag }}",
-                "--version-file",
-                "VERSION",
-            ),
-        )
-        validate_step_command(
-            workflow,
-            "publish",
-            "verify",
-            expected_shell="bash",
-            expected_tokens=(
-                "python",
-                "scripts/release_contract.py",
-                "verify-artifacts",
-                "--directory",
-                "dist",
-                "--expected-version",
-                "${{ needs.build.outputs.version }}",
-            ),
-        )
-
-        upload = step_by_id(workflow, "build", "upload")
+        upload = step_by_id(preparation, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
-
-        download = step_by_id(workflow, "publish", "download")
-        self.assertTrue(str(download["uses"]).startswith("actions/download-artifact@"))
-        release = step_by_id(workflow, "publish", "release")
-        published_assets = str(release["run"])
+        published_assets = str(workflow["jobs"]["publish"]["steps"][-1]["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
+        self.assertNotIn("--clobber", published_assets)
+        self.assertIn("cmp dist/SubtitleEditBay-Setup.exe.sha256", published_assets)
 
-    def test_release_request_workflow_is_pr_driven_and_fail_closed(self) -> None:
+    def test_release_request_uses_actual_merge_sha_and_supports_fixed_target_retry(self) -> None:
         workflow = load_workflow(RELEASE_REQUEST_WORKFLOW)
         triggers = workflow["on"]["push"]
-        permissions = workflow["permissions"]
-        release_step = step_by_id(workflow, "prepare", "release")
+        release_step = step_by_id(workflow, "validate", "release")
         command = str(release_step["run"])
-        release_env = release_step["env"]
-        reusable_release = workflow["jobs"]["release"]
 
         self.assertEqual(triggers["branches"], ["main"])
         self.assertEqual(triggers["paths"], ["VERSION"])
         self.assertIn("workflow_dispatch", workflow["on"])
-        self.assertEqual(permissions["contents"], "write")
-        self.assertEqual(permissions["actions"], "read")
-        self.assertNotIn("pull_request", workflow["on"])
-        self.assertEqual(release_env["BEFORE_SHA"], "${{ github.event.before || '' }}")
-        self.assertEqual(
-            release_env["RELEASE_POLICY"],
-            "${{ github.event_name == 'workflow_dispatch' && 'current-main' || 'merged-version' }}",
-        )
         for guard in (
-            "VERSION must be a strict vX.Y.Z tag",
-            "Requested tag and VERSION must match",
-            "A release merge must change only VERSION",
-            "A manual release must use the current main HEAD",
-            "Existing release tag must be annotated",
-            "Existing tag is not the expected annotated tag",
-            "Existing tag and its VERSION must match",
-            "git tag -a",
-            'echo "tag=$tag" >> "$GITHUB_OUTPUT"',
+            'source_sha="$EVENT_SOURCE_SHA"',
+            'source_sha="$REQUESTED_SOURCE_SHA"',
+            "git merge-base --is-ancestor",
+            "scripts/release_readiness.py",
+            '[[ "$kind" == "release" ]]',
+            'echo "source_sha=$source_sha"',
         ):
             self.assertIn(guard, command)
-        self.assertIn(
-            'if [[ "$RELEASE_POLICY" == "current-main" ]]; then\n'
-            '    remote_main="$(git ls-remote origin refs/heads/main',
-            command,
-        )
-        self.assertEqual(reusable_release["needs"], "prepare")
-        self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
-        self.assertEqual(reusable_release["with"]["tag"], "${{ needs.prepare.outputs.tag }}")
-        self.assertNotIn("secrets", reusable_release)
+        self.assertNotIn("remote_main", command)
+
+    def test_release_readiness_is_unskippable_and_fail_closed(self) -> None:
+        workflow = load_workflow(RELEASE_READINESS_WORKFLOW)
+        triggers = workflow["on"]
+        aggregate = workflow["jobs"]["readiness"]
+        command = str(aggregate["steps"][-1]["run"])
+
+        self.assertIn("pull_request", triggers)
+        self.assertIn("merge_group", triggers)
+        self.assertNotIn("paths", triggers["pull_request"])
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertEqual(aggregate["if"], "always()")
+        self.assertEqual(set(aggregate["needs"]), {"classify", "prepare"})
+        self.assertIn("scripts/release_readiness.py assert-readiness", command)
+        self.assertIn("needs.classify.result", command)
+        self.assertIn("needs.prepare.result", command)
+        self.assertNotIn("continue-on-error", RELEASE_READINESS_WORKFLOW.read_text(encoding="utf-8"))
+
+        prepare = workflow["jobs"]["prepare"]
+        self.assertEqual(prepare["uses"], "./.github/workflows/release-prepare.yml")
+        self.assertEqual(prepare["with"]["source_sha"], "${{ github.sha }}")
+        workflow_text = RELEASE_READINESS_WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("pull_request_target", workflow_text)
+        self.assertNotIn("git tag", workflow_text)
+        self.assertNotIn("gh release create", workflow_text)
 
     def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -397,11 +379,7 @@ class WorkflowContractHelperTests(unittest.TestCase):
             step for step in workflow["jobs"]["publish"]["steps"] if step.get("id") != "verify"
         ]
         with self.assertRaisesRegex(WorkflowContractError, "missing required steps: verify"):
-            validate_step_order(
-                workflow,
-                "publish",
-                ("download", "verify", "release"),
-            )
+            validate_step_order(workflow, "publish", ("download", "verify", "release"))
 
     def test_skipped_verification_and_failure_publish_are_rejected(self) -> None:
         mutations = []
@@ -414,10 +392,6 @@ class WorkflowContractHelperTests(unittest.TestCase):
         step_by_id(failure_publish, "publish", "release")["if"] = "${{ failure() }}"
         mutations.append((failure_publish, "publish/release"))
 
-        skipped_source_validation = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(skipped_source_validation, "build", "source-version")["if"] = False
-        mutations.append((skipped_source_validation, "build/source-version"))
-
         for workflow, location in mutations:
             with (
                 self.subTest(location=location),
@@ -426,25 +400,17 @@ class WorkflowContractHelperTests(unittest.TestCase):
                     location,
                 ),
             ):
-                if location.startswith("build/"):
-                    validate_step_order(
-                        workflow,
-                        "build",
-                        ("release", "source-version", "package", "upload"),
-                        adjacent_pairs=(("package", "upload"),),
-                    )
-                else:
-                    validate_step_order(
-                        workflow,
-                        "publish",
-                        ("download", "verify", "release"),
-                        adjacent_pairs=(("verify", "release"),),
-                    )
+                validate_step_order(
+                    workflow,
+                    "publish",
+                    ("download", "verify", "release"),
+                    adjacent_pairs=(("verify", "release"),),
+                )
 
     def test_steps_cannot_mutate_artifacts_after_validation(self) -> None:
         mutations = []
 
-        before_upload = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        before_upload = copy.deepcopy(load_workflow(RELEASE_PREPARE_WORKFLOW))
         upload_index = before_upload["jobs"]["build"]["steps"].index(step_by_id(before_upload, "build", "upload"))
         before_upload["jobs"]["build"]["steps"].insert(
             upload_index,
@@ -454,8 +420,8 @@ class WorkflowContractHelperTests(unittest.TestCase):
             (
                 before_upload,
                 "build",
-                ("release", "source-version", "package", "upload"),
-                (("package", "upload"),),
+                ("package", "verify", "upload"),
+                (("verify", "upload"),),
             )
         )
 
@@ -491,10 +457,6 @@ class WorkflowContractHelperTests(unittest.TestCase):
     def test_release_contract_commands_cannot_mask_failures_or_change_inputs(self) -> None:
         mutations = []
 
-        masked_source_validation = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(masked_source_validation, "build", "source-version")["run"] += "; exit 0"
-        mutations.append((masked_source_validation, "build", "source-version", "pwsh"))
-
         wrong_artifact_version = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
         step_by_id(wrong_artifact_version, "publish", "verify")["run"] = (
             "python scripts/release_contract.py verify-artifacts --directory dist --expected-version 0.0.0"
@@ -506,15 +468,6 @@ class WorkflowContractHelperTests(unittest.TestCase):
         mutations.append((custom_shell, "publish", "verify", "bash"))
 
         expected_tokens = {
-            "source-version": (
-                "python",
-                "scripts/release_contract.py",
-                "validate-source",
-                "--tag",
-                "${{ steps.release.outputs.tag }}",
-                "--version-file",
-                "VERSION",
-            ),
             "verify": (
                 "python",
                 "scripts/release_contract.py",
@@ -522,7 +475,9 @@ class WorkflowContractHelperTests(unittest.TestCase):
                 "--directory",
                 "dist",
                 "--expected-version",
-                "${{ needs.build.outputs.version }}",
+                "${{ inputs.release_version }}",
+                "--expected-source-sha",
+                "${{ inputs.source_sha }}",
             ),
         }
         for workflow, job_id, step_id, shell in mutations:
@@ -537,7 +492,12 @@ class WorkflowContractHelperTests(unittest.TestCase):
 
 
 class ReleaseArtifactContractTests(unittest.TestCase):
-    def _write_release_artifacts(self, directory: Path, version: str = "1.2.3") -> str:
+    def _write_release_artifacts(
+        self,
+        directory: Path,
+        version: str = "1.2.3",
+        source_sha: str = "a" * 40,
+    ) -> str:
         installer = directory / INSTALLER_NAME
         installer.write_bytes(b"deterministic installer bytes")
         digest = hashlib.sha256(installer.read_bytes()).hexdigest()
@@ -551,6 +511,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                     "schema_version": 1,
                     "package_type": "installer",
                     "app_version": version,
+                    "source_sha": source_sha,
                     "asset_name": INSTALLER_NAME,
                     "sha256": digest,
                     "required_files": [
@@ -562,6 +523,19 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (directory / PREPARATION_NAME).write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "source_sha": source_sha,
+                    "release_version": f"v{version}",
+                    "artifact_name": f"subtitle-edit-bay-{version}-windows-installer-{source_sha}",
+                    "asset_name": INSTALLER_NAME,
+                    "sha256": digest,
+                }
+            ),
+            encoding="utf-8",
+        )
         return digest
 
     def _rewrite_manifest(self, directory: Path, **changes: object) -> None:
@@ -569,6 +543,12 @@ class ReleaseArtifactContractTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest.update(changes)
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def _rewrite_preparation(self, directory: Path, **changes: object) -> None:
+        preparation_path = directory / PREPARATION_NAME
+        preparation = json.loads(preparation_path.read_text(encoding="utf-8"))
+        preparation.update(changes)
+        preparation_path.write_text(json.dumps(preparation), encoding="utf-8")
 
     def test_source_tag_must_match_repository_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -584,7 +564,14 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             directory = Path(temp_dir)
             digest = self._write_release_artifacts(directory)
 
-            self.assertEqual(verify_release_artifacts(directory, "1.2.3"), digest)
+            self.assertEqual(verify_release_artifacts(directory, "v1.2.3", "a" * 40), digest)
+
+    def test_artifact_source_identity_must_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            self._write_release_artifacts(directory)
+            with self.assertRaisesRegex(ReleaseContractError, "source_sha mismatch"):
+                verify_release_artifacts(directory, "1.2.3", "b" * 40)
 
     def test_tampered_installer_and_wrong_manifest_version_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -617,6 +604,21 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReleaseContractError, message):
                     verify_release_artifacts(directory, "1.2.3")
 
+    def test_preparation_identity_is_verified(self) -> None:
+        mutations = (
+            ({"source_sha": "b" * 40}, "preparation source_sha mismatch"),
+            ({"release_version": "v1.2.4"}, "preparation release_version mismatch"),
+            ({"artifact_name": "other"}, "preparation artifact_name mismatch"),
+            ({"sha256": "0" * 64}, "preparation sha256 mismatch"),
+        )
+        for changes, message in mutations:
+            with tempfile.TemporaryDirectory() as temp_dir, self.subTest(changes=changes):
+                directory = Path(temp_dir)
+                self._write_release_artifacts(directory)
+                self._rewrite_preparation(directory, **changes)
+                with self.assertRaisesRegex(ReleaseContractError, message):
+                    verify_release_artifacts(directory, "1.2.3", "a" * 40)
+
     def test_installer_checksum_and_manifest_are_all_required(self) -> None:
         for asset_name in RELEASE_ASSET_NAMES:
             with tempfile.TemporaryDirectory() as temp_dir, self.subTest(asset_name=asset_name):
@@ -625,6 +627,74 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                 (directory / asset_name).unlink()
                 with self.assertRaisesRegex(ReleaseContractError, "artifacts are missing"):
                     verify_release_artifacts(directory, "1.2.3")
+
+
+class ReleaseReadinessClassificationTests(unittest.TestCase):
+    def test_version_only_increase_is_a_release(self) -> None:
+        result = classify_values(("VERSION",), "v1.2.3", "v1.2.4")
+
+        self.assertEqual(result.kind, "release")
+        self.assertTrue(result.requires_preparation)
+        self.assertEqual(result.release_version, "v1.2.4")
+
+    def test_normal_change_does_not_require_release_preparation(self) -> None:
+        result = classify_values(("src/gui.py",), "v1.2.3", "v1.2.3")
+
+        self.assertEqual(result.kind, "normal")
+        self.assertFalse(result.requires_preparation)
+
+    def test_release_infrastructure_change_is_prepared_without_publishing(self) -> None:
+        result = classify_values((".github/workflows/release.yml",), "v1.2.3", "v1.2.3")
+
+        self.assertEqual(result.kind, "infrastructure")
+        self.assertTrue(result.requires_preparation)
+
+    def test_invalid_release_changes_fail_instead_of_becoming_normal(self) -> None:
+        cases = (
+            (("VERSION", "src/gui.py"), "v1.2.3", "v1.2.4", "must change only VERSION"),
+            (("VERSION",), "v1.2.3", "v1.2.3", "without changing its value"),
+            (("VERSION",), "v1.2.3", "v1.2.2", "must increase"),
+            (("VERSION",), "v1.2.3", "1.2.4", "source VERSION is invalid"),
+        )
+        for changed, previous, requested, message in cases:
+            with (
+                self.subTest(changed=changed, requested=requested),
+                self.assertRaisesRegex(ReleaseReadinessError, message),
+            ):
+                classify_values(changed, previous, requested)
+
+    def test_deleted_version_file_fails_classification(self) -> None:
+        with (
+            patch(
+                "scripts.release_readiness._git",
+                side_effect=("D\tVERSION\n", ReleaseReadinessError("VERSION is missing")),
+            ),
+            self.assertRaisesRegex(ReleaseReadinessError, "VERSION is missing"),
+        ):
+            classify_changes("a" * 40, "b" * 40)
+
+    def test_aggregate_accepts_only_expected_success_or_normal_skip(self) -> None:
+        assert_readiness_result("release", "success", True, "success")
+        assert_readiness_result("infrastructure", "success", True, "success")
+        assert_readiness_result("normal", "success", False, "skipped")
+
+        failures = (
+            ("release", "failure", True, "success"),
+            ("release", "success", True, "failure"),
+            ("release", "success", True, "cancelled"),
+            ("release", "success", True, "skipped"),
+            ("normal", "success", False, "success"),
+            ("unexpected", "success", False, "skipped"),
+        )
+        for values in failures:
+            with self.subTest(values=values), self.assertRaises(ReleaseReadinessError):
+                assert_readiness_result(*values)
+
+    def test_preparation_aggregate_rejects_failure_cancel_and_skip(self) -> None:
+        assert_preparation_results(("success", "success", "success", "success"))
+        for bad_result in ("failure", "cancelled", "skipped"):
+            with self.subTest(result=bad_result), self.assertRaises(ReleaseReadinessError):
+                assert_preparation_results(("success", bad_result, "success", "success"))
 
 
 if __name__ == "__main__":

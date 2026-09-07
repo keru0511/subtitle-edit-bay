@@ -1,0 +1,271 @@
+name: Reusable release preparation
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: "Exact commit to test and package"
+        required: true
+        type: string
+      release_version:
+        description: "Strict vX.Y.Z version embedded in the package"
+        required: true
+        type: string
+    outputs:
+      artifact_name:
+        value: ${{ jobs.readiness.outputs.artifact_name }}
+      artifact_id:
+        value: ${{ jobs.readiness.outputs.artifact_id }}
+      artifact_digest:
+        value: ${{ jobs.readiness.outputs.artifact_digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate source and version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      app_version: ${{ steps.contract.outputs.app_version }}
+      artifact_name: ${{ steps.contract.outputs.artifact_name }}
+    steps:
+      - name: Check out preparation tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: release-tools
+      - name: Check out exact source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: source
+      - name: Validate preparation inputs
+        id: contract
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be a full commit SHA." >&2; exit 1; }
+          [[ "$(git -C source rev-parse HEAD)" == "$SOURCE_SHA" ]] || { echo "Checkout does not match source_sha." >&2; exit 1; }
+          python release-tools/scripts/release_contract.py validate-source \
+            --release-version "$RELEASE_VERSION" --version-file source/VERSION
+          app_version="${RELEASE_VERSION#v}"
+          echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=subtitle-edit-bay-$app_version-windows-installer-$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Release tests on Linux
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: source
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg libegl1 libpulse0
+          ffmpeg -version
+          ffprobe -version
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            source/requirements.txt
+            source/requirements-dev.txt
+      - name: Install test dependencies
+        working-directory: source
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+      - name: Check standard unittest discovery
+        working-directory: source
+        run: python scripts/check_unittest_discovery.py
+      - name: Run portable unit tests
+        working-directory: source
+        run: python scripts/run_ci_tests.py --group portable-unit
+      - name: Run Qt and GUI tests
+        working-directory: source
+        run: python scripts/run_ci_tests.py --group qt-gui
+      - name: Run FFmpeg runtime tests
+        working-directory: source
+        env:
+          RUN_FFMPEG_SMOKE: "1"
+        run: python scripts/run_ci_tests.py --group ffmpeg-runtime
+
+  build:
+    name: Build and verify Windows installer
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Check out preparation tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: release-tools
+      - name: Check out exact source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: source
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Ensure Inno Setup compiler
+        shell: pwsh
+        run: |
+          $compiler = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+          if (-not $compiler) {
+              choco install innosetup --yes --no-progress
+              if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed with exit code $LASTEXITCODE." }
+              $candidate = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+              if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Inno Setup compiler was not found: $candidate" }
+              "INNO_SETUP_COMPILER=$candidate" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+      - name: Build release package
+        id: package
+        shell: pwsh
+        run: >-
+          ./release-tools/scripts/build_release_package.ps1
+          -ReleaseVersion "${{ inputs.release_version }}"
+          -SourceSha "${{ inputs.source_sha }}"
+          -OutputDirectory "${{ runner.temp }}/subtitle-edit-bay-release"
+          -SourceDirectory "${{ github.workspace }}/source"
+      - name: Verify release package
+        id: verify
+        shell: pwsh
+        run: >-
+          python release-tools/scripts/release_contract.py verify-artifacts
+          --directory "${{ runner.temp }}/subtitle-edit-bay-release"
+          --expected-version "${{ needs.validate.outputs.app_version }}"
+          --expected-source-sha "${{ inputs.source_sha }}"
+      - name: Upload prepared installer
+        id: upload
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: |
+            ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe
+            ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe.sha256
+            ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe.manifest.json
+            ${{ runner.temp }}/subtitle-edit-bay-release/release-preparation.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  smoke:
+    name: Install and start prepared package
+    needs:
+      - validate
+      - build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      QT_QUICK_CONTROLS_STYLE: Basic
+      QT_QUICK_BACKEND: software
+      QSG_RHI_BACKEND: software
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Check out preparation tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: release-tools
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Download prepared installer
+        id: download
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/subtitle-edit-bay-release
+      - name: Install and start prepared application
+        id: install
+        shell: pwsh
+        run: >-
+          ./release-tools/scripts/test_installer.ps1
+          -InstallerPath "${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe"
+          -ExpectedVersion "${{ inputs.release_version }}"
+          -InstallDirectory "${{ runner.temp }}/SubtitleEditBayInstalled"
+
+  readiness:
+    name: Preparation result
+    if: always()
+    needs:
+      - validate
+      - test
+      - build
+      - smoke
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ needs.validate.outputs.artifact_name }}
+      artifact_id: ${{ needs.build.outputs.artifact_id }}
+      artifact_digest: ${{ needs.build.outputs.artifact_digest }}
+    steps:
+      - name: Check out preparation tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: release-tools
+      - name: Require every preparation stage
+        run: >-
+          python release-tools/scripts/release_readiness.py assert-preparation
+          --result "${{ needs.validate.result }}"
+          --result "${{ needs.test.result }}"
+          --result "${{ needs.build.result }}"
+          --result "${{ needs.smoke.result }}"
+      - name: Record preparation identity
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          ARTIFACT_NAME: ${{ needs.validate.outputs.artifact_name }}
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact_digest }}
+        run: |
+          {
+            echo "### Release preparation"
+            echo "- Source: \`$SOURCE_SHA\`"
+            echo "- Version: \`$RELEASE_VERSION\`"
+            echo "- Artifact: \`$ARTIFACT_NAME\` (ID \`$ARTIFACT_ID\`, digest \`$ARTIFACT_DIGEST\`)"
+          } >> "$GITHUB_STEP_SUMMARY"

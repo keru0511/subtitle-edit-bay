@@ -1,71 +1,66 @@
 # リリースガイド
 
-この文書は、Windows向けインストーラーをGitHub Releasesで公開する担当者向けです。利用者には[最新リリース](https://github.com/keru0511/subtitle-edit-bay/releases/latest)から `SubtitleEditBay-Setup.exe` を1つダウンロードする導線を案内します。
+通常リリースで人が行う操作は、`VERSION` だけを変更するPull Requestの作成、内容確認、マージです。公開タグには厳密な `vX.Y.Z` を使います。公開済みのタグを削除・付け替えしないでください。
 
-## バージョンとタグ
+## マージ前のRelease readiness
 
-公開タグにはSemantic Versioning形式の `vX.Y.Z` を使用します。
+`Release readiness` Workflowは、`main` 向けのすべてのPull RequestとMerge queueの候補で動きます。`paths` フィルターは使いません。
 
-- `X`: 互換性を壊す変更
-- `Y`: 後方互換のある機能追加
-- `Z`: 後方互換のある修正
+- `VERSION` の実際の値が変わる場合はリリースPRです。変更ファイルが `VERSION` だけであること、値が厳密な `vX.Y.Z` で増加していること、同じタグやGitHub Releaseがないことを検証します。
+- リリースWorkflow、インストーラー、検証スクリプトを変更するPRは、`VERSION` を変えなくても基盤変更として準備処理を実行します。公開要求にはしません。
+- それ以外は通常PRであることを明示して成功します。通常のCIは別途必要です。
+- 不正なVERSION、判定失敗、テスト・ビルド・成果物検証・インストール・起動確認の失敗、キャンセル、予期しないskipは失敗として集約されます。
 
-例は `v0.1.0`、`v0.1.1`、`v1.0.0` です。タグから先頭の `v` を除いたバージョンは、リリース対象コミットの `VERSION`（先頭の `v` は省略可）と一致させてください。公開済みのタグを削除・付け替えしないでください。公開後に問題が見つかった場合は、修正してパッチ番号を上げた新しいタグを作成します。
+リリースPRと基盤変更PRでは、PRブランチ単独ではなくGitHubが作成した `main` との仮マージSHAを `source_sha` として、次を実行します。
 
-## タグ作成前チェック
+1. VERSIONと入力バージョンの一致を検証する
+2. FFmpeg／ffprobe、Qt offscreen環境を明示して、分類済みテスト群を別プロセスで実行する
+3. 正式バージョンを埋め込んだWindowsインストーラーを作る
+4. SHA-256、manifest、対象SHA、準備記録を検証する
+5. そのインストーラーをサイレントインストールし、配置内容、VERSION、GUI起動を確認する
 
-1. リリース対象を `main` へ反映し、リモートと同期します。
-2. `VERSION` が作成予定のタグと一致することを確認します。
-3. 作業ツリーに意図しない変更がないことを確認します。
-4. 自動テストを実行します。
-5. README、利用ガイド、設定ガイドに利用者向けの変更が反映されていることを確認します。
-6. APIキー、トークン、入力素材、出力動画、個人設定が含まれていないことを確認します。
-7. 可能なら、まっさらなWindows環境でインストールと起動を確認します。
+PRの準備処理は `contents: read` だけで動き、タグやReleaseを作りません。`pull_request_target` や公開用資格情報も使いません。
 
-~~~powershell
-git switch main
-git pull --ff-only
-git status --short
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
-~~~
+### v0.4.8で検出したGUIテスト失敗
 
-`git status --short` に出力がある場合は、その変更がリリースへ含めるものか確認してから進めます。
+失敗したRelease runは911件を1つのPythonプロセスで一括実行し、通常CIは分類済みグループを別プロセスで実行していました。`start.call_args` が `None` になった2件はReleaseで同じ順序のとき再現し、通常CI方式では成功したため、アプリ処理の削除やテストskipではなく、実行単位を通常CIと共通の `run_ci_tests.py` に統一しました。さらにRelease環境にもFFmpegとffprobeを明示的に導入し、Qtのoffscreen／software環境変数を通常CIと揃えています。
 
-## リリースの作成
+## マージ後の公開
 
-バージョン更新は直接 `main` へpushせず、`VERSION` だけを更新するリリースPRで行います。PRのタイトルと説明には、マージするとそのバージョンが公開されることを明記してください。人が判断するのは、バージョン番号と、その内容を公開してよいかどうかです。
+リリースPRをマージすると `release-request.yml` が、そのpushイベントの実際のマージSHAとVERSIONを固定します。待機中に `main` が進んでも対象を最新HEADへ差し替えません。
 
-リリースPRが `main` へマージされると、親Workflowの `.github/workflows/release-request.yml` が変更対象が `VERSION` だけであること、バージョン形式、対象コミットを検証し、そのマージコミットへ同名の注釈付きタグを作成します。開始待ちの間に `main` が進んでも、承認されたマージコミットが公開対象です。続いて、再利用可能な `.github/workflows/release.yml` を `workflow_call` で呼び出します。タグ名やWorkflow間の値の受け渡しは自動化され、タグ作成から公開完了までを親Workflowの1回の実行で追跡できます。既存タグを別コミットへ付け替えることはありません。
+公開処理は `release-prepare.yml` をもう一度呼び、テスト、正式版インストーラー構築、成果物検証、インストール・起動確認がすべて成功した後にだけ、次を行います。
 
-互換経路としてタグを直接pushした場合は、`.github/workflows/release-tag.yml` がタグ名を `release.yml` の入力へ変換します。公開処理本体の `release.yml` は起動イベントを判定せず、すべての経路で受け取ったタグ入力だけを使用します。
+1. 対象SHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
+2. 準備済みartifactを再検証する
+3. GitHub Releaseを作り、インストーラー、SHA-256、manifest、`release-preparation.json` を添付する
 
-`release.yml` は次を自動実行します。
+既存Releaseの再実行では公開済みassetをダウンロードしてSHAと対象コミットを照合します。同一なら何も上書きせず成功し、異なる場合は停止します。`--clobber` は使いません。
 
-1. タグ形式、タグの存在、タグと `VERSION` の一致を検証する
-2. Python 3.10環境で自動テストを実行する
-3. Inno SetupでWindowsインストーラーを構築する
-4. SHA-256チェックサム、manifestのバージョンと必須ファイル契約を検証する
-5. 同じタグのGitHub Releaseを作成し、リリースノートを生成する
-6. `SubtitleEditBay-Setup.exe`、`SubtitleEditBay-Setup.exe.sha256`、`SubtitleEditBay-Setup.exe.manifest.json` を添付する
+障害復旧の手動実行では、`Release from merged version` に次の2値を明示します。
 
-一時的な失敗は、親Workflowの失敗ジョブまたは実行全体をGitHub Actionsから再実行します。既に作成済みのタグが同じ公開対象を指していれば、そのタグを再利用して同じ処理を続行します。Workflow自体の修正後に既存タグの公開を再開する場合は、親Workflowを手動実行して対象タグを指定します。この経路はタグが指すコミットの `VERSION` も検証し、タグを移動せず、現在の安全なWorkflow定義で同じソースを再構築します。新規タグを手動作成できる対象は現在の `main` HEADだけです。通常運用では手動入力は不要です。ソースコードの修正が必要になった場合は、既存タグを移動せず、パッチ番号を上げた新しいリリースPRを作成してください。
+- `source_sha`: 既に `main` に含まれる、VERSIONだけを変更したコミットの完全な40桁SHA
+- `release_version`: そのコミットのVERSIONと同じ `vX.Y.Z`
 
-## リリース後の検証
+この経路も共通準備処理を迂回しません。直接タグpushを公開入口にするWorkflowはありません。
 
-1. GitHub Actionsの `Release Windows installer` が成功していることを確認します。
-2. 対象タグのReleaseが作成されていることを確認します。
-3. Assetsに `SubtitleEditBay-Setup.exe`、チェックサム、manifestが表示されることを確認します。
-4. [直接ダウンロードURL](https://github.com/keru0511/subtitle-edit-bay/releases/latest/download/SubtitleEditBay-Setup.exe)からファイルを取得できることを確認します。
-5. ダウンロードしたファイルをWindows上で実行し、インストール、初回セットアップ、GUI起動を確認します。
-6. 可能なら短い検証素材で、文字起こしから字幕編集、動画書き出しまでを確認します。
+## 必須チェック設定
 
-初版の `SubtitleEditBay-Setup.exe` はアプリのソースを配置するインストーラーで、初回セットアップ時にPython、FFmpeg、WhisperXなどの実行環境をネットワーク経由で導入する場合があります。オフラインインストーラーではありません。ネットワーク障害、空き容量不足、セキュリティソフトによる停止も含めて検証してください。
+Workflow追加だけではマージを制限できません。`main` のRulesetまたはBranch protectionで、既存の必須CIに加えてジョブ `Release readiness` を必須にし、次を設定してください。
 
-公開後の利用者向けURLは次の2つです。
+- Pull Requestを必須にする
+- 必須チェック成功を必須にする
+- マージ前にブランチを最新化する（strict / require branches to be up to date）
+- 管理者を含む通常操作に適用し、意図しないbypass actorを登録しない
+- Merge queueを使う場合は `merge_group` のチェックも必須にする
 
-- リリースページ: <https://github.com/keru0511/subtitle-edit-bay/releases/latest>
-- EXE直接取得: <https://github.com/keru0511/subtitle-edit-bay/releases/latest/download/SubtitleEditBay-Setup.exe>
+2026-09-07時点の確認では、Repository Rulesets APIの応答は空でした。Branch protectionはGitHub AppにAdministration権限がなく確認・変更できなかったため、上記設定はこのPRからは未適用です。設定後、通常PRとVERSION-only PRの両方で `Release readiness` がrequiredとして表示され、古い成功結果だけではマージできないことを確認してください。
 
-## ZIP版について
+## リリース後の確認
 
-ZIP展開後に `setup.bat` と `start.bat` を実行する方法は、開発用途およびインストーラーが使えない場合の代替経路として維持します。一般利用者への第一案内には `SubtitleEditBay-Setup.exe` を使用してください。
+1. `Release from merged version` と、その中の共通準備・公開ジョブが成功していることを確認する
+2. 対象タグがマージSHAを指すことを確認する
+3. Assetsに `SubtitleEditBay-Setup.exe`、同名の `.sha256` と `.manifest.json`、`release-preparation.json` があることを確認する
+4. [直接ダウンロードURL](https://github.com/keru0511/subtitle-edit-bay/releases/latest/download/SubtitleEditBay-Setup.exe)から取得できることを確認する
+
+公開時のGitHub通信障害などは再実行で復旧します。ソース修正が必要なら既存タグは動かさず、パッチ番号を上げた新しいVERSION-only PRを作成します。

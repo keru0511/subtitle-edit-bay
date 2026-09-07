@@ -13,12 +13,13 @@
 - 実際の公開commitに一意に対応し、`main` へマージされた同一repositoryのPRである
 - PRの変更ファイルが `VERSION` の1件だけで、最終head/baseが確定している
 - 最終headに対応する未完了を含む最新の `release-readiness.yml` のpull_request runであり、そのrunが成功完了している。マージ後にAPIの `pull_requests` が空になっても、repository、workflow、head branch/SHA、最終base/head、候補commitの親とtreeでPRとの対応を確認する
-- 最新runと同じattemptに属する分類、Linuxテスト、Windows build、install/start、準備集約、readiness集約の全ジョブが成功している
-- 同じ最終headに対応する未完了を含む最新の通常CI runが成功完了し、品質、portable/Qt/FFmpeg、Windows runtime、launcher、FFmpeg 6、installer smokeの全ジョブが同じattemptで成功している
-- versionと候補SHAを含むartifactが1件だけ存在し、artifact ID、GitHub SHA-256 digest、期限を取得でき、未失効である
+- 分類、Linuxテスト、Windows build、install/start、準備集約、readiness集約について、各ジョブの最新実行が成功している。失敗ジョブだけの再実行では、準備runの最新attemptと、成功済みbuild・install/startのattemptを分けて記録する
+- 同じ最終headに対応する未完了を含む最新の通常CI runが成功完了し、品質、portable/Qt/FFmpeg、Windows runtime、launcher、FFmpeg 6、installer smokeの各最新実行が成功している
+- 通常CIが実際にcheckoutした仮マージSHA/treeとhead/baseを、全必須ジョブ成功後のidentity artifactに保存する。そのSHA、親、treeがRelease readiness候補と一致する
+- version、候補SHA、build attemptを含むartifactが1件だけ存在し、artifact ID、GitHub SHA-256 digest、期限を取得でき、未失効である
 - 候補SHAが最終base/headを親に持つ仮マージcommitで、候補treeと公開commitのtreeが一致する
 
-候補の `candidate_source_sha` とタグを付ける `release_commit_sha` は別に保存する。候補のmanifestや準備記録を正式マージSHAへ書き換えない。対応関係、run/attempt、artifact ID/digest、PR、両tree、installer checksumは `release-promotion.json` に記録する。
+候補の `candidate_source_sha` とタグを付ける `release_commit_sha` は別に保存する。候補のmanifestや準備記録を正式マージSHAへ書き換えない。準備runの最新attempt、artifact生成attempt、install/start attempt、通常CIのrun/attemptと検証対象SHA/tree、artifact ID/digest、PR、installer checksumは `release-promotion.json` に記録する。
 
 最新の該当runが待機中、実行中、失敗、キャンセル、skipの場合、古い成功runへフォールバックしない。PR更新、base/head不一致、tree不一致、fork、未知のjob構成、重複artifact、digest欠落、期限切れ、APIエラーも公開不可とする。artifactはGitHub APIからZIPを取得し、展開前にZIP全体のSHA-256をAPIのdigestと一致させる。
 
@@ -30,7 +31,7 @@ tree一致だけでは履歴や外部入力を使うbuild一般の同一性を�
 
 ## 再実行と復旧
 
-同じworkflow runの全job再実行では、最初に保存した不変の昇格判断artifactをdigest検証して再利用し、選択済みの候補run/attempt、通常CI run/attempt、artifact ID/digestを維持する。保存済み判断を上書きしない。公開途中のAPI障害ではbuildやtestを起動しない。
+準備Workflowで失敗jobだけを再実行した場合、成功済みbuild artifactとinstall/start結果は生成attemptのまま再利用し、準備runの最新attemptとは別に照合する。artifact名は生成attemptを含め、全job再実行で新しいbuildが作られた場合も既存artifactを上書きしない。公開Workflowの全job再実行では、最初に保存した不変の昇格判断artifactをdigest検証して再利用し、選択済みの候補run/attempt、通常CI run/attempt、artifact ID/digestを維持する。公開途中のAPI障害ではbuildやtestを起動しない。
 
 - 既存タグが別commitを指す場合は停止し、削除・付け替えしない
 - 公開済みReleaseは全assetが候補とbyte単位で同じ場合だけ再利用する。欠落や差異があれば停止する

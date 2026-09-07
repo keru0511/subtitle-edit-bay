@@ -20,6 +20,7 @@ from scripts.release_contract import (
     verify_release_artifacts,
 )
 from scripts.release_candidate import (
+    CI_VALIDATION_JOB_NAME,
     REQUIRED_CI_JOB_NAMES,
     REQUIRED_JOB_NAMES,
     RELEASE_ARTIFACT_FILES,
@@ -27,8 +28,10 @@ from scripts.release_candidate import (
     extract_verified_artifact,
     resolve_release_candidate,
     select_release_candidate,
+    verify_ci_validation_binding,
     verify_preparation_binding,
     verify_promotion_record,
+    write_ci_validation_identity,
     write_promotion_record,
 )
 from scripts.release_readiness import (
@@ -62,6 +65,7 @@ RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 RELEASE_REQUEST_WORKFLOW = ROOT / ".github" / "workflows" / "release-request.yml"
 RELEASE_PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "release-prepare.yml"
 RELEASE_READINESS_WORKFLOW = ROOT / ".github" / "workflows" / "release-readiness.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_ASSET_NAMES = {
     INSTALLER_NAME,
     CHECKSUM_NAME,
@@ -182,6 +186,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         )
         upload = step_by_id(preparation, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
+        validation_command = str(step_by_id(preparation, "validate", "contract")["run"])
+        self.assertIn("-attempt-$GITHUB_RUN_ATTEMPT", validation_command)
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
@@ -204,6 +210,40 @@ class ReleaseDistributionTests(unittest.TestCase):
         upload = next(step for step in candidate["steps"] if step.get("name") == "Upload promotion record")
         self.assertEqual(upload["if"], "steps.select.outputs.decision_reused != 'true'")
         self.assertNotIn("continue-on-error", candidate)
+
+        ci_download = next(
+            step for step in candidate["steps"] if step.get("name") == "Download the CI validation identity"
+        )
+        self.assertIn('--artifact-id "${{ steps.select.outputs.ci_artifact_id }}"', str(ci_download["run"]))
+        self.assertIn(
+            '--artifact-digest "${{ steps.select.outputs.ci_artifact_digest }}"',
+            str(ci_download["run"]),
+        )
+
+    def test_normal_ci_records_the_exact_validated_merge_identity(self) -> None:
+        workflow = load_workflow(CI_WORKFLOW)
+        result = workflow["jobs"]["validation-result"]
+
+        self.assertEqual(result["name"], "CI validation result")
+        self.assertEqual(
+            set(result["needs"]),
+            {
+                "python-quality",
+                "portable-tests",
+                "windows-tests",
+                "windows-launcher-tests",
+                "ffmpeg6-compat",
+                "windows-installer-smoke",
+            },
+        )
+        record = next(step for step in result["steps"] if step.get("name") == "Record validated source identity")
+        command = str(record["run"])
+        self.assertIn("write-ci-validation", command)
+        self.assertIn("git rev-parse HEAD", command)
+        self.assertIn("git rev-parse 'HEAD^{tree}'", command)
+        self.assertIn("--pull-request-base-sha", command)
+        upload = next(step for step in result["steps"] if step.get("name") == "Upload immutable CI validation identity")
+        self.assertIn("${{ github.sha }}-attempt-${{ github.run_attempt }}", upload["with"]["name"])
 
     def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -565,11 +605,16 @@ class ReleaseCandidateTests(unittest.TestCase):
         run_status: str = "completed",
         job_conclusions: dict[str, str] | None = None,
         ci_job_conclusions: dict[str, str] | None = None,
+        readiness_job_attempts: dict[str, int] | None = None,
         artifact_expired: bool = False,
         candidate_tree: str | None = None,
         candidate_parents: tuple[str, ...] | None = None,
+        ci_source_sha: str | None = None,
+        ci_source_tree: str | None = None,
+        ci_source_parents: tuple[str, ...] | None = None,
         include_older_success: bool = False,
         include_newer_in_progress: bool = False,
+        include_failed_test_attempt: bool = False,
         empty_pull_requests: bool = False,
         contradictory_pull_requests: bool = False,
     ) -> MagicMock:
@@ -633,10 +678,19 @@ class ReleaseCandidateTests(unittest.TestCase):
                 ),
                 "status": "completed",
                 "conclusion": (job_conclusions or {}).get(name, "success"),
-                "run_attempt": 2,
+                "run_attempt": (readiness_job_attempts or {}).get(name, 2),
             }
             for name in REQUIRED_JOB_NAMES
         ]
+        if include_failed_test_attempt:
+            readiness_jobs.append(
+                {
+                    "name": "Prepare merge candidate / Release tests on Linux",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "run_attempt": 1,
+                }
+            )
         ci_run = dict(
             latest_run,
             id=201,
@@ -652,13 +706,24 @@ class ReleaseCandidateTests(unittest.TestCase):
                 "conclusion": (ci_job_conclusions or {}).get(name, "success"),
                 "run_attempt": 1,
             }
-            for name in REQUIRED_CI_JOB_NAMES
+            for name in (*REQUIRED_CI_JOB_NAMES, CI_VALIDATION_JOB_NAME)
         ]
         artifact = {
             "id": 300,
-            "name": f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}",
+            "name": (
+                f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
+                f"-attempt-{(readiness_job_attempts or {}).get('Build and verify Windows installer', 2)}"
+            ),
             "digest": "sha256:" + "f" * 64,
             "expired": artifact_expired,
+            "expires_at": "2026-09-21T00:00:00Z",
+        }
+        selected_ci_source_sha = ci_source_sha or self.CANDIDATE_SHA
+        ci_artifact = {
+            "id": 301,
+            "name": f"ci-validation-identity-{selected_ci_source_sha}-attempt-1",
+            "digest": "sha256:" + "1" * 64,
+            "expired": False,
             "expires_at": "2026-09-21T00:00:00Z",
         }
 
@@ -669,6 +734,11 @@ class ReleaseCandidateTests(unittest.TestCase):
                 return {
                     "tree": {"sha": candidate_tree or self.TREE_SHA},
                     "parents": [{"sha": sha} for sha in (candidate_parents or (self.BASE_SHA, self.HEAD_SHA))],
+                }
+            if ci_source_sha and path.endswith(f"/git/commits/{ci_source_sha}"):
+                return {
+                    "tree": {"sha": ci_source_tree or self.TREE_SHA},
+                    "parents": [{"sha": sha} for sha in (ci_source_parents or (self.BASE_SHA, self.HEAD_SHA))],
                 }
             if path.endswith(f"/git/commits/{self.RELEASE_SHA}"):
                 return {"tree": {"sha": self.TREE_SHA}, "parents": [{"sha": self.BASE_SHA}]}
@@ -693,6 +763,8 @@ class ReleaseCandidateTests(unittest.TestCase):
                 return ci_jobs
             if path.endswith("/runs/200/artifacts"):
                 return [artifact]
+            if path.endswith("/runs/201/artifacts"):
+                return [ci_artifact]
             raise AssertionError(path)
 
         api.get.side_effect = get
@@ -708,8 +780,13 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.assertEqual(candidate.candidate_source_tree, candidate.release_commit_tree)
         self.assertEqual(candidate.workflow_run_id, 200)
         self.assertEqual(candidate.workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 2)
+        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 2)
         self.assertEqual(candidate.ci_workflow_run_id, 201)
         self.assertEqual(candidate.ci_workflow_run_attempt, 1)
+        self.assertEqual(candidate.ci_candidate_source_sha, self.CANDIDATE_SHA)
+        self.assertEqual(candidate.ci_candidate_source_tree, self.TREE_SHA)
+        self.assertEqual(candidate.ci_artifact_id, 301)
         self.assertEqual(candidate.artifact_id, 300)
 
     def test_accepts_cleared_post_merge_pull_association_with_full_identity(self) -> None:
@@ -755,6 +832,19 @@ class ReleaseCandidateTests(unittest.TestCase):
                 "v1.2.3",
             )
 
+    def test_rejects_ci_that_validated_same_head_against_an_old_base(self) -> None:
+        old_ci_sha = "f" * 40
+        with self.assertRaisesRegex(ReleaseCandidateError, "CI source is not the final merge"):
+            select_release_candidate(
+                self._api(
+                    ci_source_sha=old_ci_sha,
+                    ci_source_tree="9" * 40,
+                    ci_source_parents=("8" * 40, self.HEAD_SHA),
+                ),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
+
     def test_rejects_missing_verification_stale_head_tree_and_expiry(self) -> None:
         cases = (
             (self._api(job_conclusions={"Install and start prepared package": "skipped"}), "did not succeed"),
@@ -794,7 +884,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             "pull_request_head_branch": candidate.pull_request_head_branch,
             "workflow_path": candidate.workflow_path,
             "workflow_run_id": candidate.workflow_run_id,
-            "workflow_run_attempt": candidate.workflow_run_attempt,
+            "workflow_run_attempt": candidate.artifact_workflow_run_attempt,
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
@@ -808,6 +898,81 @@ class ReleaseCandidateTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
                 verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_partial_rerun_reuses_successful_build_artifact_from_prior_attempt(self) -> None:
+        prior_attempt_jobs = {
+            "Classify merge candidate": 1,
+            "Validate source and version": 1,
+            "Build and verify Windows installer": 1,
+            "Install and start prepared package": 1,
+        }
+        api = self._api(
+            readiness_job_attempts=prior_attempt_jobs,
+            include_failed_test_attempt=True,
+        )
+        candidate = select_release_candidate(
+            api,
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+        self.assertEqual(candidate.workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 1)
+        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 1)
+        self.assertEqual(candidate.artifact_id, 300)
+        self.assertTrue(candidate.artifact_name.endswith("-attempt-1"))
+        job_queries = [
+            call.kwargs["query"]
+            for call in api.pages.call_args_list
+            if call.args and str(call.args[0]).endswith("/jobs")
+        ]
+        self.assertEqual(job_queries, [{"filter": "all"}, {"filter": "all"}])
+
+        producer = {
+            "repository": candidate.repository,
+            "event_name": "pull_request",
+            "pull_request_number": candidate.pull_request_number,
+            "pull_request_head_sha": candidate.pull_request_head_sha,
+            "pull_request_base_sha": candidate.pull_request_base_sha,
+            "pull_request_head_branch": candidate.pull_request_head_branch,
+            "workflow_path": candidate.workflow_path,
+            "workflow_run_id": candidate.workflow_run_id,
+            "workflow_run_attempt": 1,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            preparation_path = directory / "release-preparation.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+
+            verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_ci_identity_record_must_match_selected_merge_content(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            identity_path = directory / "ci-validation-identity.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            write_ci_validation_identity(
+                identity_path,
+                candidate.repository,
+                candidate.pull_request_number,
+                candidate.pull_request_head_sha,
+                candidate.pull_request_base_sha,
+                candidate.pull_request_head_branch,
+                candidate.ci_candidate_source_sha,
+                candidate.ci_candidate_source_tree,
+                candidate.ci_workflow_run_id,
+                candidate.ci_artifact_workflow_run_attempt,
+            )
+            verify_ci_validation_binding(candidate_path, identity_path)
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            identity["pull_request_base_sha"] = "9" * 40
+            identity_path.write_text(json.dumps(identity), encoding="utf-8")
+
+            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                verify_ci_validation_binding(candidate_path, identity_path)
 
     def test_archive_digest_rejects_self_consistent_replacement(self) -> None:
         def write_archive(path: Path, installer: bytes) -> None:

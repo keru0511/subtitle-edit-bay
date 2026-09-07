@@ -33,12 +33,13 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 
 1. 実際のマージSHAに対応する、マージ済みのVERSION-only PRを固定する
 2. そのPRの最終head/baseに対する未完了を含む最新の `Release readiness` runを特定する。APIのPR対応がマージ後に空でもhead branch/SHA、repository、workflow、候補commitの親/treeで結び、最新runが未完了・失敗・キャンセルなら過去の成功runへ戻らない
-3. readiness run/attemptの必須7ジョブに加え、同じ最終headの最新の通常CI run/attemptで品質、portable/Qt/FFmpeg、Windows runtime、launcher、FFmpeg 6、installer smokeがすべて成功したことをGitHub APIで確認する
-4. artifact ID/digestが一意で未失効であることを確認し、APIから取得したZIP全体のSHA-256をdigestと照合してから展開する
-5. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
-6. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する
-7. 対象の実マージSHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
-8. 検証済みのinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
+3. readinessの必須7ジョブについて各ジョブの最新実行が成功したことを確認する。失敗jobだけの再実行では、準備runの最新attemptと、artifactを生成したbuild attempt、同じartifactを確認したinstall/start attemptを分けて保持する
+4. 同じ最終headの最新の通常CIで必須6ジョブが成功したことに加え、成功後に保存した仮マージSHA/tree/head/baseのidentity artifactがRelease readiness候補と一致することを確認する
+5. build attemptを含むartifact名、ID、digestが一意で未失効であることを確認し、APIから取得したZIP全体のSHA-256をdigestと照合してから展開する
+6. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
+7. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する
+8. 対象の実マージSHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
+9. 検証済みのinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
 
 この処理はテスト、依存解決、installer build、install/startを行いません。候補選択と照合の詳細は [リリース候補昇格契約](release-candidate-promotion.md) を参照してください。
 

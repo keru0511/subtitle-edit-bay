@@ -37,6 +37,8 @@ jobs:
       workflow_run_attempt: ${{ steps.select.outputs.workflow_run_attempt }}
       ci_workflow_run_id: ${{ steps.select.outputs.ci_workflow_run_id }}
       ci_workflow_run_attempt: ${{ steps.select.outputs.ci_workflow_run_attempt }}
+      ci_artifact_id: ${{ steps.select.outputs.ci_artifact_id }}
+      ci_artifact_digest: ${{ steps.select.outputs.ci_artifact_digest }}
       pull_request_number: ${{ steps.select.outputs.pull_request_number }}
       installer_sha256: ${{ steps.verify.outputs.installer_sha256 }}
       promotion_artifact_name: ${{ steps.context.outputs.name }}
@@ -86,6 +88,17 @@ jobs:
           --expected-file SubtitleEditBay-Setup.exe.sha256
           --expected-file SubtitleEditBay-Setup.exe.manifest.json
           --expected-file release-preparation.json
+      - name: Download the CI validation identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ steps.select.outputs.ci_artifact_id }}"
+          --artifact-digest "${{ steps.select.outputs.ci_artifact_digest }}"
+          --destination ci-identity
+          --expected-file ci-validation-identity.json
       - name: Verify candidate bytes and provenance
         id: verify
         shell: bash
@@ -100,6 +113,9 @@ jobs:
           python release-tools/scripts/release_candidate.py verify-preparation \
             --candidate selected-candidate.json \
             --preparation dist/release-preparation.json
+          python release-tools/scripts/release_candidate.py verify-ci-validation \
+            --candidate selected-candidate.json \
+            --identity ci-identity/ci-validation-identity.json
           installer_sha256="$(sha256sum dist/SubtitleEditBay-Setup.exe | awk '{print $1}')"
           echo "installer_sha256=$installer_sha256" >> "$GITHUB_OUTPUT"
           python release-tools/scripts/release_candidate.py write-promotion \
@@ -210,6 +226,17 @@ jobs:
           --destination promotion
           --expected-file selected-candidate.json
           --expected-file release-promotion.json
+      - name: Download frozen CI validation identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ needs.candidate.outputs.ci_artifact_id }}"
+          --artifact-digest "${{ needs.candidate.outputs.ci_artifact_digest }}"
+          --destination ci-identity
+          --expected-file ci-validation-identity.json
       - name: Verify selected installer again
         id: verify
         shell: bash
@@ -225,6 +252,9 @@ jobs:
           python release-tools/scripts/release_candidate.py verify-preparation \
             --candidate promotion/selected-candidate.json \
             --preparation dist/release-preparation.json
+          python release-tools/scripts/release_candidate.py verify-ci-validation \
+            --candidate promotion/selected-candidate.json \
+            --identity ci-identity/ci-validation-identity.json
           actual_sha256="$(sha256sum dist/SubtitleEditBay-Setup.exe | awk '{print $1}')"
           [[ "$actual_sha256" == "$INSTALLER_SHA256" ]] || { echo "Installer changed after candidate verification." >&2; exit 1; }
           python release-tools/scripts/release_candidate.py write-promotion \

@@ -39,6 +39,7 @@ REQUIRED_CI_JOB_NAMES = (
     "FFmpeg 6 compatibility",
     "Windows installer smoke",
 )
+CI_VALIDATION_JOB_NAME = "CI validation result"
 # Kept as the public compatibility name used by existing contract tests.
 REQUIRED_JOB_NAMES = REQUIRED_READINESS_JOB_NAMES
 PER_PAGE = 100
@@ -52,6 +53,7 @@ RELEASE_ARTIFACT_FILES = (
     "release-preparation.json",
 )
 DECISION_ARTIFACT_FILES = ("selected-candidate.json", "release-promotion.json")
+CI_IDENTITY_FILE = "ci-validation-identity.json"
 
 
 class ReleaseCandidateError(RuntimeError):
@@ -85,8 +87,17 @@ class ReleaseCandidate:
     workflow_path: str
     workflow_run_id: int
     workflow_run_attempt: int
+    artifact_workflow_run_attempt: int
+    installer_smoke_workflow_run_attempt: int
     ci_workflow_run_id: int
     ci_workflow_run_attempt: int
+    ci_artifact_workflow_run_attempt: int
+    ci_candidate_source_sha: str
+    ci_candidate_source_tree: str
+    ci_artifact_id: int
+    ci_artifact_name: str
+    ci_artifact_digest: str
+    ci_artifact_expires_at: str
     artifact_id: int
     artifact_name: str
     artifact_digest: str
@@ -385,33 +396,51 @@ def _require_successful_jobs(
     run_id: int,
     run_attempt: int,
     required_job_names: Sequence[str],
-) -> None:
+) -> dict[str, int]:
     jobs = api.pages(
         f"/repos/{api.repository}/actions/runs/{run_id}/jobs",
         key="jobs",
-        query={"filter": "latest"},
+        query={"filter": "all"},
     )
     job_objects = [_object(job, "workflow job") for job in jobs]
+    successful_attempts: dict[str, int] = {}
     for required_name in required_job_names:
         matches = [
             job
             for job in job_objects
             if _string(job.get("name"), "workflow job name").split(" / ")[-1] == required_name
         ]
-        if len(matches) != 1:
-            raise ReleaseCandidateError(
-                f"required workflow job must appear exactly once: {required_name}; found {len(matches)}"
-            )
-        job = matches[0]
+        if not matches:
+            raise ReleaseCandidateError(f"required workflow job is missing: {required_name}")
+        attempts: dict[int, dict[str, object]] = {}
+        for job in matches:
+            attempt = _integer(job.get("run_attempt"), f"{required_name} run attempt")
+            if attempt > run_attempt:
+                raise ReleaseCandidateError(f"required workflow job has a future run attempt: {required_name}")
+            if attempt in attempts:
+                raise ReleaseCandidateError(
+                    f"required workflow job appears more than once in attempt {attempt}: {required_name}"
+                )
+            attempts[attempt] = job
+        job_attempt = max(attempts)
+        job = attempts[job_attempt]
         if job.get("conclusion") != "success" or job.get("status") != "completed":
             raise ReleaseCandidateError(f"required workflow job did not succeed: {required_name}")
-        if _integer(job.get("run_attempt"), f"{required_name} run attempt") != run_attempt:
-            raise ReleaseCandidateError(f"required workflow job belongs to a different run attempt: {required_name}")
+        successful_attempts[required_name] = job_attempt
+    return successful_attempts
 
 
-def _candidate_artifact(api: GitHubApi, run_id: int, release_version: str) -> dict[str, object]:
+def _candidate_artifact(
+    api: GitHubApi,
+    run_id: int,
+    release_version: str,
+    producer_attempt: int,
+) -> dict[str, object]:
     version = release_version.removeprefix("v")
-    name_pattern = re.compile(rf"^subtitle-edit-bay-{re.escape(version)}-windows-installer-([0-9a-f]{{40}})$")
+    name_pattern = re.compile(
+        rf"^subtitle-edit-bay-{re.escape(version)}-windows-installer-"
+        rf"([0-9a-f]{{40}})-attempt-{producer_attempt}$"
+    )
     artifacts = api.pages(f"/repos/{api.repository}/actions/runs/{run_id}/artifacts", key="artifacts")
     matches = []
     for value in artifacts:
@@ -428,6 +457,30 @@ def _candidate_artifact(api: GitHubApi, run_id: int, release_version: str) -> di
     if not ARTIFACT_DIGEST_PATTERN.fullmatch(digest):
         raise ReleaseCandidateError("artifact digest must be a GitHub SHA-256 digest")
     _string(artifact.get("expires_at"), "artifact expiry")
+    return artifact
+
+
+def _ci_identity_artifact(api: GitHubApi, run_id: int, producer_attempt: int) -> dict[str, object]:
+    name_pattern = re.compile(rf"^ci-validation-identity-([0-9a-f]{{40}})-attempt-{producer_attempt}$")
+    artifacts = api.pages(f"/repos/{api.repository}/actions/runs/{run_id}/artifacts", key="artifacts")
+    matches = [
+        artifact
+        for value in artifacts
+        if (artifact := _object(value, "CI validation artifact"))
+        and isinstance(artifact.get("name"), str)
+        and name_pattern.fullmatch(str(artifact["name"]))
+    ]
+    if len(matches) != 1:
+        raise ReleaseCandidateError(
+            f"CI validation identity artifact for attempt {producer_attempt} must be unique; found {len(matches)}"
+        )
+    artifact = matches[0]
+    if artifact.get("expired") is not False:
+        raise ReleaseCandidateError("CI validation identity artifact is expired or has unknown expiry state")
+    digest = _string(artifact.get("digest"), "CI validation artifact digest")
+    if not ARTIFACT_DIGEST_PATTERN.fullmatch(digest):
+        raise ReleaseCandidateError("CI validation artifact digest must be a GitHub SHA-256 digest")
+    _string(artifact.get("expires_at"), "CI validation artifact expiry")
     return artifact
 
 
@@ -450,21 +503,47 @@ def select_release_candidate(
     run = _latest_workflow_run(api, pull_number, head_sha, head_branch, WORKFLOW_PATH)
     run_id = _integer(run.get("id"), "workflow run id")
     run_attempt = _integer(run.get("run_attempt"), "workflow run attempt")
-    _require_successful_jobs(api, run_id, run_attempt, REQUIRED_READINESS_JOB_NAMES)
+    readiness_job_attempts = _require_successful_jobs(
+        api,
+        run_id,
+        run_attempt,
+        REQUIRED_READINESS_JOB_NAMES,
+    )
     ci_run = _latest_workflow_run(api, pull_number, head_sha, head_branch, CI_WORKFLOW_PATH)
     ci_run_id = _integer(ci_run.get("id"), "CI workflow run id")
     ci_run_attempt = _integer(ci_run.get("run_attempt"), "CI workflow run attempt")
-    _require_successful_jobs(api, ci_run_id, ci_run_attempt, REQUIRED_CI_JOB_NAMES)
-    artifact = _candidate_artifact(api, run_id, release_version)
+    ci_job_attempts = _require_successful_jobs(
+        api,
+        ci_run_id,
+        ci_run_attempt,
+        (*REQUIRED_CI_JOB_NAMES, CI_VALIDATION_JOB_NAME),
+    )
+    artifact_producer_attempt = readiness_job_attempts["Build and verify Windows installer"]
+    artifact = _candidate_artifact(api, run_id, release_version, artifact_producer_attempt)
     artifact_name = _string(artifact.get("name"), "artifact name")
-    candidate_source_sha = _sha(artifact_name.rsplit("-", 1)[-1], "candidate source SHA")
+    candidate_source_sha = _sha(
+        artifact_name.split("-attempt-", 1)[0].rsplit("-", 1)[-1],
+        "candidate source SHA",
+    )
+    ci_artifact = _ci_identity_artifact(
+        api,
+        ci_run_id,
+        ci_job_attempts[CI_VALIDATION_JOB_NAME],
+    )
+    ci_artifact_name = _string(ci_artifact.get("name"), "CI validation artifact name")
+    ci_source_sha = _sha(ci_artifact_name.split("-attempt-", 1)[0].rsplit("-", 1)[-1], "CI source SHA")
 
     candidate_tree, candidate_parents = _commit_identity(api, candidate_source_sha, "candidate source")
+    ci_tree, ci_parents = _commit_identity(api, ci_source_sha, "CI source")
     release_tree, _ = _commit_identity(api, release_commit_sha, "release commit")
     if candidate_parents != (base_sha, head_sha):
         raise ReleaseCandidateError("candidate source is not the final tested merge of the approved head and base")
     if candidate_tree != release_tree:
         raise ReleaseCandidateError("candidate and release source trees differ")
+    if ci_parents != (base_sha, head_sha):
+        raise ReleaseCandidateError("CI source is not the final merge of the approved head and base")
+    if ci_source_sha != candidate_source_sha or ci_tree != candidate_tree:
+        raise ReleaseCandidateError("CI and release readiness validated different source content")
 
     return ReleaseCandidate(
         schema_version=1,
@@ -481,8 +560,17 @@ def select_release_candidate(
         workflow_path=WORKFLOW_PATH,
         workflow_run_id=run_id,
         workflow_run_attempt=run_attempt,
+        artifact_workflow_run_attempt=artifact_producer_attempt,
+        installer_smoke_workflow_run_attempt=readiness_job_attempts["Install and start prepared package"],
         ci_workflow_run_id=ci_run_id,
         ci_workflow_run_attempt=ci_run_attempt,
+        ci_artifact_workflow_run_attempt=ci_job_attempts[CI_VALIDATION_JOB_NAME],
+        ci_candidate_source_sha=ci_source_sha,
+        ci_candidate_source_tree=ci_tree,
+        ci_artifact_id=_integer(ci_artifact.get("id"), "CI validation artifact id"),
+        ci_artifact_name=ci_artifact_name,
+        ci_artifact_digest=_string(ci_artifact.get("digest"), "CI validation artifact digest"),
+        ci_artifact_expires_at=_string(ci_artifact.get("expires_at"), "CI validation artifact expiry"),
         artifact_id=_integer(artifact.get("id"), "artifact id"),
         artifact_name=artifact_name,
         artifact_digest=_string(artifact.get("digest"), "artifact digest"),
@@ -517,6 +605,8 @@ def _load_candidate(path: Path) -> ReleaseCandidate:
         "pull_request_base_sha",
         "candidate_source_sha",
         "candidate_source_tree",
+        "ci_candidate_source_sha",
+        "ci_candidate_source_tree",
         "release_commit_sha",
         "release_commit_tree",
     ):
@@ -525,8 +615,12 @@ def _load_candidate(path: Path) -> ReleaseCandidate:
         "pull_request_number",
         "workflow_run_id",
         "workflow_run_attempt",
+        "artifact_workflow_run_attempt",
+        "installer_smoke_workflow_run_attempt",
         "ci_workflow_run_id",
         "ci_workflow_run_attempt",
+        "ci_artifact_workflow_run_attempt",
+        "ci_artifact_id",
         "artifact_id",
     ):
         _integer(getattr(candidate, field_name), f"selected candidate {field_name}")
@@ -536,6 +630,10 @@ def _load_candidate(path: Path) -> ReleaseCandidate:
         raise ReleaseCandidateError("selected candidate pull request head branch is invalid")
     if not ARTIFACT_DIGEST_PATTERN.fullmatch(candidate.artifact_digest):
         raise ReleaseCandidateError("selected candidate artifact digest is invalid")
+    if not candidate.ci_artifact_name or not candidate.ci_artifact_expires_at:
+        raise ReleaseCandidateError("selected candidate CI artifact identity is invalid")
+    if not ARTIFACT_DIGEST_PATTERN.fullmatch(candidate.ci_artifact_digest):
+        raise ReleaseCandidateError("selected candidate CI artifact digest is invalid")
     return candidate
 
 
@@ -653,13 +751,68 @@ def verify_preparation_binding(candidate_path: Path, preparation_path: Path) -> 
         "pull_request_head_branch": candidate.pull_request_head_branch,
         "workflow_path": candidate.workflow_path,
         "workflow_run_id": candidate.workflow_run_id,
-        "workflow_run_attempt": candidate.workflow_run_attempt,
+        "workflow_run_attempt": candidate.artifact_workflow_run_attempt,
     }
     producer = preparation.get("producer")
     if not isinstance(producer, dict):
         raise ReleaseCandidateError("release preparation has no producer identity")
     if producer != expected:
         raise ReleaseCandidateError("release preparation producer does not match the selected workflow run")
+
+
+def write_ci_validation_identity(
+    path: Path,
+    repository: str,
+    pull_request_number: int,
+    pull_request_head_sha: str,
+    pull_request_base_sha: str,
+    pull_request_head_branch: str,
+    source_sha: str,
+    source_tree: str,
+    workflow_run_id: int,
+    workflow_run_attempt: int,
+) -> None:
+    if not REPOSITORY_PATTERN.fullmatch(repository):
+        raise ReleaseCandidateError("CI validation repository is invalid")
+    record = {
+        "schema_version": 1,
+        "repository": repository,
+        "event_name": "pull_request",
+        "pull_request_number": _integer(pull_request_number, "CI pull request number"),
+        "pull_request_head_sha": _sha(pull_request_head_sha, "CI pull request head SHA"),
+        "pull_request_base_sha": _sha(pull_request_base_sha, "CI pull request base SHA"),
+        "pull_request_head_branch": _string(pull_request_head_branch, "CI pull request head branch"),
+        "source_sha": _sha(source_sha, "CI source SHA"),
+        "source_tree": _sha(source_tree, "CI source tree"),
+        "workflow_path": CI_WORKFLOW_PATH,
+        "workflow_run_id": _integer(workflow_run_id, "CI workflow run id"),
+        "workflow_run_attempt": _integer(workflow_run_attempt, "CI workflow run attempt"),
+    }
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def verify_ci_validation_binding(candidate_path: Path, identity_path: Path) -> None:
+    candidate = _load_candidate(candidate_path)
+    try:
+        actual = json.loads(identity_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseCandidateError(f"could not read CI validation identity: {exc}") from exc
+    expected = {
+        "schema_version": 1,
+        "repository": candidate.repository,
+        "event_name": "pull_request",
+        "pull_request_number": candidate.pull_request_number,
+        "pull_request_head_sha": candidate.pull_request_head_sha,
+        "pull_request_base_sha": candidate.pull_request_base_sha,
+        "pull_request_head_branch": candidate.pull_request_head_branch,
+        "source_sha": candidate.ci_candidate_source_sha,
+        "source_tree": candidate.ci_candidate_source_tree,
+        "workflow_path": CI_WORKFLOW_PATH,
+        "workflow_run_id": candidate.ci_workflow_run_id,
+        "workflow_run_attempt": candidate.ci_artifact_workflow_run_attempt,
+    }
+    if actual != expected:
+        raise ReleaseCandidateError("CI validation identity does not match the selected source")
 
 
 def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: str) -> None:
@@ -686,8 +839,17 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "workflow_path": candidate.get("workflow_path"),
         "workflow_run_id": candidate.get("workflow_run_id"),
         "workflow_run_attempt": candidate.get("workflow_run_attempt"),
+        "artifact_workflow_run_attempt": candidate.get("artifact_workflow_run_attempt"),
+        "installer_smoke_workflow_run_attempt": candidate.get("installer_smoke_workflow_run_attempt"),
         "ci_workflow_run_id": candidate.get("ci_workflow_run_id"),
         "ci_workflow_run_attempt": candidate.get("ci_workflow_run_attempt"),
+        "ci_artifact_workflow_run_attempt": candidate.get("ci_artifact_workflow_run_attempt"),
+        "ci_candidate_source_sha": candidate.get("ci_candidate_source_sha"),
+        "ci_candidate_source_tree": candidate.get("ci_candidate_source_tree"),
+        "ci_artifact_id": candidate.get("ci_artifact_id"),
+        "ci_artifact_name": candidate.get("ci_artifact_name"),
+        "ci_artifact_digest": candidate.get("ci_artifact_digest"),
+        "ci_artifact_expires_at": candidate.get("ci_artifact_expires_at"),
         "artifact_id": candidate.get("artifact_id"),
         "artifact_name": candidate.get("artifact_name"),
         "artifact_digest": candidate.get("artifact_digest"),
@@ -701,6 +863,8 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "release_commit_tree",
         "candidate_source_sha",
         "candidate_source_tree",
+        "ci_candidate_source_sha",
+        "ci_candidate_source_tree",
         "pull_request_head_sha",
         "pull_request_head_branch",
         "pull_request_base_sha",
@@ -708,6 +872,9 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "artifact_name",
         "artifact_digest",
         "artifact_expires_at",
+        "ci_artifact_name",
+        "ci_artifact_digest",
+        "ci_artifact_expires_at",
     )
     if any(not isinstance(record[key], str) or not record[key] for key in required_strings):
         raise ReleaseCandidateError("selected candidate is missing required identity fields")
@@ -715,8 +882,12 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "pull_request_number",
         "workflow_run_id",
         "workflow_run_attempt",
+        "artifact_workflow_run_attempt",
+        "installer_smoke_workflow_run_attempt",
         "ci_workflow_run_id",
         "ci_workflow_run_attempt",
+        "ci_artifact_workflow_run_attempt",
+        "ci_artifact_id",
         "artifact_id",
     )
     for key in required_integers:
@@ -767,6 +938,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     preparation = subparsers.add_parser("verify-preparation")
     preparation.add_argument("--candidate", type=Path, required=True)
     preparation.add_argument("--preparation", type=Path, required=True)
+    ci_record = subparsers.add_parser("write-ci-validation")
+    ci_record.add_argument("--repository", required=True)
+    ci_record.add_argument("--pull-request-number", type=int, required=True)
+    ci_record.add_argument("--pull-request-head-sha", required=True)
+    ci_record.add_argument("--pull-request-base-sha", required=True)
+    ci_record.add_argument("--pull-request-head-branch", required=True)
+    ci_record.add_argument("--source-sha", required=True)
+    ci_record.add_argument("--source-tree", required=True)
+    ci_record.add_argument("--workflow-run-id", type=int, required=True)
+    ci_record.add_argument("--workflow-run-attempt", type=int, required=True)
+    ci_record.add_argument("--output", type=Path, required=True)
+    ci_verify = subparsers.add_parser("verify-ci-validation")
+    ci_verify.add_argument("--candidate", type=Path, required=True)
+    ci_verify.add_argument("--identity", type=Path, required=True)
     record = subparsers.add_parser("write-promotion")
     record.add_argument("--candidate", type=Path, required=True)
     record.add_argument("--installer-sha256", required=True)
@@ -821,6 +1006,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
         elif args.command == "verify-preparation":
             verify_preparation_binding(args.candidate, args.preparation)
+        elif args.command == "write-ci-validation":
+            write_ci_validation_identity(
+                args.output,
+                args.repository,
+                args.pull_request_number,
+                args.pull_request_head_sha,
+                args.pull_request_base_sha,
+                args.pull_request_head_branch,
+                args.source_sha,
+                args.source_tree,
+                args.workflow_run_id,
+                args.workflow_run_attempt,
+            )
+        elif args.command == "verify-ci-validation":
+            verify_ci_validation_binding(args.candidate, args.identity)
         elif args.command == "write-promotion":
             write_promotion_record(args.output, args.candidate, args.installer_sha256)
         else:

@@ -3804,20 +3804,23 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(sidebar.width(), 300)
         self.assertEqual(self.app._codex_chat.snapshot.thread_id, "thread-249")
 
-        self.assertTrue(QMetaObject.invokeMethod(window, "openEditorScreen"))
+        self.assertTrue(window.setProperty("activeOverlay", "editor"))
         self.app.processEvents()
+        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
 
-        self.assertTrue(QMetaObject.invokeMethod(window, "closeEditorScreen"))
-        self.assertTrue(QMetaObject.invokeMethod(window, "openShortModeScreen"))
+        self.assertTrue(window.setProperty("activeOverlay", "short"))
         self.app.processEvents()
+        self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
 
-        self.assertTrue(QMetaObject.invokeMethod(window, "closeShortModeScreen"))
+        self.assertTrue(window.setProperty("activeOverlay", ""))
         self.app.processEvents()
+        self.assertFalse(self._quick_item(window, "shortModePage").isVisible())
+        self.assertTrue(self._quick_item(window, "mainWorkspace").isVisible())
         unauthenticated = CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated")
         self.app._codex_chat._snapshot = unauthenticated
         self.app._on_codex_chat_state(unauthenticated)

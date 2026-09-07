@@ -32,6 +32,7 @@ class RuntimeContractTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "release-prepare.yml").read_text(encoding="utf-8")
 
         self.assertIn("Reconstruct locked CPU runtime in a fresh environment", workflow)
+        self.assertIn("choco install ffmpeg", workflow)
         self.assertIn("--require-hashes", workflow)
         self.assertIn("verify-runtime", workflow)
 

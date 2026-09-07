@@ -11,6 +11,11 @@ on:
         description: "Strict vX.Y.Z version embedded in the package"
         required: true
         type: string
+      require_signature:
+        description: "Refuse a formal release candidate unless trusted Authenticode signing is configured"
+        required: false
+        default: false
+        type: boolean
     outputs:
       artifact_name:
         value: ${{ jobs.readiness.outputs.artifact_name }}
@@ -186,6 +191,23 @@ jobs:
           --directory "${{ runner.temp }}/subtitle-edit-bay-release"
           --expected-version "${{ needs.validate.outputs.app_version }}"
           --expected-source-sha "${{ inputs.source_sha }}"
+      - name: Verify launcher runtime and version resources
+        id: binary
+        shell: pwsh
+        run: >-
+          ./release-tools/scripts/verify_windows_binary.ps1
+          -Path "${{ github.workspace }}/source/dist/SubtitleEditBayLauncher.exe"
+          -ExpectedVersion "${{ needs.validate.outputs.app_version }}"
+          -ExpectedProductName "Subtitle Edit Bay"
+          -ExpectedPublisher "Subtitle Edit Bay"
+          -CheckDependencies
+      - name: Refuse unsigned formal release candidates
+        id: signing
+        if: inputs.require_signature
+        shell: pwsh
+        run: >-
+          throw "Trusted Authenticode signing provider/certificate is not configured.
+          Formal release candidates remain blocked; do not publish unsigned artifacts."
       - name: Upload prepared installer
         id: upload
         uses: actions/upload-artifact@v6

@@ -127,6 +127,26 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Installed VERSION mismatch", smoke)
         self.assertIn("engine.rootObjects()", smoke)
 
+    def test_launcher_is_self_contained_versioned_and_signature_ready(self) -> None:
+        launcher = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
+        verifier = (ROOT / "scripts" / "verify_windows_binary.ps1").read_text(encoding="utf-8-sig")
+        signer = (ROOT / "scripts" / "sign_windows_artifacts.ps1").read_text(encoding="utf-8-sig")
+        updater = (ROOT / "scripts" / "apply_installer_update.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertIn("/MT", launcher)
+        self.assertIn("VERSIONINFO", launcher)
+        self.assertIn('VALUE "ProductName"', launcher)
+        self.assertIn("verify_windows_binary.ps1", launcher)
+        self.assertIn("dumpbin.exe", verifier)
+        self.assertIn("API-MS-WIN-CRT-", verifier)
+        self.assertIn("Get-AuthenticodeSignature", verifier)
+        self.assertIn("TimeStamperCertificate", verifier)
+        self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", signer)
+        self.assertIn("EphemeralKeySet", signer)
+        self.assertIn("Set-AuthenticodeSignature", signer)
+        self.assertIn("Assert-InstallerPublisher", updater)
+        self.assertIn("TimeStamperCertificate", updater)
+
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
         triggers = workflow["on"]
@@ -190,6 +210,17 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("-attempt-$GITHUB_RUN_ATTEMPT", validation_command)
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
+        self.assertEqual(preparation["on"]["workflow_call"]["inputs"]["require_signature"]["default"], False)
+        binary = step_by_id(preparation, "build", "binary")
+        self.assertIn("verify_windows_binary.ps1", str(binary["run"]))
+        signing = step_by_id(preparation, "build", "signing")
+        self.assertEqual(signing["if"], "inputs.require_signature")
+        self.assertIn("unsigned", str(signing["run"]).lower())
+        readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
+        self.assertEqual(
+            readiness["jobs"]["prepare"]["with"]["require_signature"],
+            "${{ needs.classify.outputs.kind == 'release' }}",
+        )
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
         self.assertIn("release-promotion.json", published_assets)

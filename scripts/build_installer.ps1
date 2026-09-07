@@ -75,7 +75,7 @@ $launcherBuildScript = Join-Path $projectRoot "scripts\build_launcher.ps1"
 if (Test-Path -LiteralPath $launcherBuildScript -PathType Leaf) {
     & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcherBuildScript `
         -OutputPath (Join-Path $projectRoot "dist\SubtitleEditBayLauncher.exe") `
-        -AllowMissingCompiler
+        -Version $Version
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher build failed with exit code $LASTEXITCODE."
     }

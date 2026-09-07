@@ -17,6 +17,9 @@ directory, or the `INNO_SETUP_COMPILER` environment variable. It does not instal
 or download build dependencies.
 
 The installer build also attempts to compile `launcher/SubtitleEditBayLauncher.c`
+with the static MSVC runtime and embedded product/version resources. Release binaries
+must additionally satisfy `docs/WINDOWS_BINARY_TRUST.md`; an unsigned formal release is
+not an allowed fallback.
 with Visual C++ `cl.exe`. The native launcher resolves its own installation
 directory before invoking `scripts/launch.ps1`. If `cl.exe` is unavailable, the
 build remains compatible and the installed shortcut falls back to Windows

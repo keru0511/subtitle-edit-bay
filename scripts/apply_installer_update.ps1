@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory = $true)][string]$RestartExecutable,
     [Parameter(Mandatory = $true)][string]$ExpectedVersion,
     [Parameter(Mandatory = $true)][string]$ExpectedSha256,
+    [string]$ExpectedPublisher,
     [Parameter(Mandatory = $true)][string]$ResultPath
 )
 
@@ -122,6 +123,24 @@ function Get-PackageSha256 {
     }
 }
 
+function Assert-InstallerPublisher {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Publisher
+    )
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate) {
+        throw "Installer Authenticode signature is not valid: $($signature.Status)"
+    }
+    if ($signature.SignerCertificate.Subject -notlike "*$Publisher*") {
+        throw "Installer publisher does not match the expected publisher."
+    }
+    if (-not $signature.TimeStamperCertificate) {
+        throw "Installer Authenticode signature has no trusted timestamp."
+    }
+}
+
 function Resolve-RestartCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -200,6 +219,9 @@ try {
     $actualHash = Get-PackageSha256 -Path $PackagePath
     if ($actualHash -ne $ExpectedSha256.ToLowerInvariant()) {
         throw "Installer package checksum does not match."
+    }
+    if ($ExpectedPublisher) {
+        Assert-InstallerPublisher -Path $PackagePath -Publisher $ExpectedPublisher
     }
 
     $recoveryRoot = New-RecoverySnapshot -Root $InstallRoot

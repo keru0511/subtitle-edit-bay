@@ -63,6 +63,7 @@ jobs:
     with:
       source_sha: ${{ github.sha }}
       release_version: ${{ needs.classify.outputs.release_version }}
+      require_signature: ${{ needs.classify.outputs.kind == 'release' }}
 
   readiness:
     name: Release readiness

@@ -103,6 +103,8 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertIn("Hidden", command)
         self.assertIn("-ParentPid", command)
         self.assertIn("-ExpectedSha256", command)
+        publisher_index = command.index("-ExpectedPublisher")
+        self.assertEqual(command[publisher_index + 1], "Subtitle Edit Bay")
         restart_index = command.index("-RestartExecutable")
         self.assertEqual(Path(command[restart_index + 1]), tmp_path / "SubtitleEditBayLauncher.exe")
         self.assertNotIn(str(tmp_path / "SubtitleEditBay.exe"), command)
@@ -112,13 +114,24 @@ class UpdateManagerTests(unittest.TestCase):
             "tag_name": "v1.2.3",
             "body": "notes",
             "assets": [
-                {"name": "SubtitleEditBay-Setup.exe", "size": 42, "browser_download_url": "https://example.test/setup.exe"},
-                {"name": "SubtitleEditBay-Setup.exe.sha256", "browser_download_url": "https://example.test/setup.exe.sha256"},
-                {"name": "SubtitleEditBay-Setup.exe.manifest.json", "browser_download_url": "https://example.test/setup.exe.manifest.json"},
+                {
+                    "name": "SubtitleEditBay-Setup.exe",
+                    "size": 42,
+                    "browser_download_url": "https://example.test/setup.exe",
+                },
+                {
+                    "name": "SubtitleEditBay-Setup.exe.sha256",
+                    "browser_download_url": "https://example.test/setup.exe.sha256",
+                },
+                {
+                    "name": "SubtitleEditBay-Setup.exe.manifest.json",
+                    "browser_download_url": "https://example.test/setup.exe.manifest.json",
+                },
             ],
         }
-        with patch("src.updater.resolve_application_version", return_value="v1.0.0"), patch(
-            "src.updater.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(payload).encode("utf-8"))
+        with (
+            patch("src.updater.resolve_application_version", return_value="v1.0.0"),
+            patch("src.updater.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(payload).encode("utf-8"))),
         ):
             info = updater.fetch_latest_release(Path("."))
         self.assertEqual(info.package_type, "installer")

@@ -21,6 +21,8 @@
 
 PRの準備処理は `contents: read` だけで動き、タグやReleaseを作りません。`pull_request_target` や公開用資格情報も使いません。
 
+Windows launcherの静的CRT、version resource、import dependency、Authenticode署名とtimestampの契約は [Windows binary trust contract](WINDOWS_BINARY_TRUST.md) を参照してください。信頼済みsigning providerが未構成の間、VERSION-only候補はunsigned artifactを保存せず明示的に停止します。
+
 ### v0.4.8で検出したGUIテスト失敗
 
 失敗したRelease runは911件を1つのPythonプロセスで一括実行し、通常CIは分類済みグループを別プロセスで実行していました。`start.call_args` が `None` になった2件はReleaseで同じ順序のとき再現し、通常CI方式では成功したため、アプリ処理の削除やテストskipではなく、実行単位を通常CIと共通の `run_ci_tests.py` に統一しました。さらにRelease環境にもFFmpegとffprobeを明示的に導入し、Qtのoffscreen／software環境変数を通常CIと揃えています。

@@ -32,16 +32,17 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 公開処理は `release-prepare.yml` を再実行しません。マージ前の `Release readiness` が作成し、別runnerでインストール・起動確認したartifactを次の順で昇格します。
 
 1. 実際のマージSHAに対応する、マージ済みのVERSION-only PRを固定する
-2. そのPRの最終head/baseに対する最新の完了済み `Release readiness` runを特定する。最新runが失敗・キャンセルなら過去の成功runへ戻らない
-3. run/attemptの必須7ジョブがすべて成功したこと、同一repository由来であること、artifact ID/digestが一意で未失効であることをGitHub APIで確認する
-4. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
-5. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する
-6. 対象の実マージSHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
-7. 検証済みのinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
+2. そのPRの最終head/baseに対する未完了を含む最新の `Release readiness` runを特定する。APIのPR対応がマージ後に空でもhead branch/SHA、repository、workflow、候補commitの親/treeで結び、最新runが未完了・失敗・キャンセルなら過去の成功runへ戻らない
+3. readiness run/attemptの必須7ジョブに加え、同じ最終headの最新の通常CI run/attemptで品質、portable/Qt/FFmpeg、Windows runtime、launcher、FFmpeg 6、installer smokeがすべて成功したことをGitHub APIで確認する
+4. artifact ID/digestが一意で未失効であることを確認し、APIから取得したZIP全体のSHA-256をdigestと照合してから展開する
+5. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
+6. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する
+7. 対象の実マージSHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
+8. 検証済みのinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
 
 この処理はテスト、依存解決、installer build、install/startを行いません。候補選択と照合の詳細は [リリース候補昇格契約](release-candidate-promotion.md) を参照してください。
 
-既存Releaseの再実行では、公開済みReleaseのタグ検索に加えて、認証付きRelease一覧をページ送りしてdraftも検索します。既存assetは全ファイルを同じ候補とbyte単位で照合します。公開済みかつ全assetが同一なら何も上書きせず成功します。draftは既存assetがすべて同一の場合だけ、同じ候補から不足assetを補って正式公開します。異なるasset、公開済みReleaseの欠落、候補不明、公開状態を確認できない場合は停止します。`--clobber` は使いません。
+同じworkflow runの全job再実行では、保存済みの昇格判断artifactをdigest検証して再利用し、候補runとartifact IDを変えず、同名artifactを再アップロードしません。既存Releaseの再実行では、公開済みReleaseのタグ検索に加えて、認証付きRelease一覧をページ送りしてdraftも検索します。既存assetは全ファイルを同じ候補とbyte単位で照合します。公開済みかつ全assetが同一なら何も上書きせず成功します。draftは既存assetがすべて同一の場合だけ、同じ候補から不足assetを補って正式公開します。異なるasset、公開済みReleaseの欠落、候補不明、公開状態を確認できない場合は停止します。`--clobber` は使いません。
 
 タグとGitHub Releaseの衝突確認では、不存在だけを新規公開可能と判定します。通信障害、認証エラー、APIエラーなどで状態を確認できない場合は、衝突なしとは扱わず準備または公開を停止します。
 

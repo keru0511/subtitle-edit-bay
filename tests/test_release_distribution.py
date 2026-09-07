@@ -4,6 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -19,9 +20,14 @@ from scripts.release_contract import (
     verify_release_artifacts,
 )
 from scripts.release_candidate import (
+    REQUIRED_CI_JOB_NAMES,
     REQUIRED_JOB_NAMES,
+    RELEASE_ARTIFACT_FILES,
     ReleaseCandidateError,
+    extract_verified_artifact,
+    resolve_release_candidate,
     select_release_candidate,
+    verify_preparation_binding,
     verify_promotion_record,
     write_promotion_record,
 )
@@ -109,6 +115,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[string]$ProjectRoot", build)
         self.assertIn("source_sha", package)
         self.assertIn("release-preparation.json", package)
+        self.assertIn("pull_request_number", package)
+        self.assertIn("workflow_run_id", package)
         self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
         self.assertIn("engine.rootObjects()", smoke)
@@ -182,10 +190,17 @@ class ReleaseDistributionTests(unittest.TestCase):
 
         candidate = workflow["jobs"]["candidate"]
         self.assertNotIn("release-prepare.yml", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
-        self.assertIn("release_candidate.py select", str(step_by_id(workflow, "candidate", "select")["run"]))
+        select_command = str(step_by_id(workflow, "candidate", "select")["run"])
+        self.assertIn("release_candidate.py resolve", select_command)
+        self.assertIn("--decision-artifact-name", select_command)
         download = step_by_id(workflow, "candidate", "download")
-        self.assertEqual(download["with"]["run-id"], "${{ steps.select.outputs.workflow_run_id }}")
-        self.assertEqual(download["with"]["artifact-ids"], "${{ steps.select.outputs.artifact_id }}")
+        download_command = str(download["run"])
+        self.assertIn("release_candidate.py download-artifact", download_command)
+        self.assertIn('--artifact-id "${{ steps.select.outputs.artifact_id }}"', download_command)
+        self.assertIn('--artifact-digest "${{ steps.select.outputs.artifact_digest }}"', download_command)
+        self.assertNotIn("actions/download-artifact", str(download))
+        upload = next(step for step in candidate["steps"] if step.get("name") == "Upload promotion record")
+        self.assertEqual(upload["if"], "steps.select.outputs.decision_reused != 'true'")
         self.assertNotIn("continue-on-error", candidate)
 
     def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
@@ -204,6 +219,12 @@ class ReleaseDistributionTests(unittest.TestCase):
         verify = str(step_by_id(workflow, "publish", "verify")["run"])
         self.assertIn("verify-artifacts", verify)
         self.assertIn("verify-promotion", verify)
+        candidate_download = str(step_by_id(workflow, "publish", "download")["run"])
+        self.assertIn("release_candidate.py download-artifact", candidate_download)
+        decision_download = next(
+            step for step in publish["steps"] if step.get("name") == "Download frozen promotion decision"
+        )
+        self.assertIn("download-run-artifact", str(decision_download["run"]))
         self.assertIn('cmp "dist/$asset" "existing-release/$asset"', command)
         self.assertLess(command.index("cmp"), command.index("--draft=false"))
         self.assertIn('[[ "${#missing[@]}" -eq 0 ]]', command)
@@ -539,11 +560,16 @@ class ReleaseCandidateTests(unittest.TestCase):
         self,
         *,
         run_conclusion: str = "success",
+        run_status: str = "completed",
         job_conclusions: dict[str, str] | None = None,
+        ci_job_conclusions: dict[str, str] | None = None,
         artifact_expired: bool = False,
         candidate_tree: str | None = None,
         candidate_parents: tuple[str, ...] | None = None,
         include_older_success: bool = False,
+        include_newer_in_progress: bool = False,
+        empty_pull_requests: bool = False,
+        contradictory_pull_requests: bool = False,
     ) -> MagicMock:
         api = MagicMock()
         api.repository = "owner/repo"
@@ -552,26 +578,51 @@ class ReleaseCandidateTests(unittest.TestCase):
             "merged": True,
             "merged_at": "2026-09-07T00:00:00Z",
             "merge_commit_sha": self.RELEASE_SHA,
-            "head": {"sha": self.HEAD_SHA, "repo": {"full_name": "owner/repo"}},
+            "head": {
+                "sha": self.HEAD_SHA,
+                "ref": "release/v1.2.3",
+                "repo": {"full_name": "owner/repo"},
+            },
             "base": {"sha": self.BASE_SHA, "ref": "main"},
         }
         latest_run = {
             "id": 200,
             "run_attempt": 2,
             "created_at": "2026-09-07T02:00:00Z",
-            "status": "completed",
+            "status": run_status,
             "conclusion": run_conclusion,
             "event": "pull_request",
             "path": ".github/workflows/release-readiness.yml",
             "head_sha": self.HEAD_SHA,
+            "head_branch": "release/v1.2.3",
             "head_repository": {"full_name": "owner/repo"},
-            "pull_requests": [{"number": 42}],
+            "pull_requests": (
+                [{"number": 99}] if contradictory_pull_requests else [] if empty_pull_requests else [{"number": 42}]
+            ),
         }
-        runs = [latest_run]
+        readiness_runs = [latest_run]
         if include_older_success:
-            older = dict(latest_run, id=100, run_attempt=1, created_at="2026-09-07T01:00:00Z", conclusion="success")
-            runs.append(older)
-        jobs = [
+            older = dict(
+                latest_run,
+                id=100,
+                run_attempt=1,
+                created_at="2026-09-07T01:00:00Z",
+                status="completed",
+                conclusion="success",
+            )
+            readiness_runs.append(older)
+        if include_newer_in_progress:
+            readiness_runs.append(
+                dict(
+                    latest_run,
+                    id=250,
+                    run_attempt=1,
+                    created_at="2026-09-07T03:00:00Z",
+                    status="in_progress",
+                    conclusion=None,
+                )
+            )
+        readiness_jobs = [
             {
                 "name": (
                     f"Prepare merge candidate / {name}"
@@ -583,6 +634,23 @@ class ReleaseCandidateTests(unittest.TestCase):
                 "run_attempt": 2,
             }
             for name in REQUIRED_JOB_NAMES
+        ]
+        ci_run = dict(
+            latest_run,
+            id=201,
+            run_attempt=1,
+            path=".github/workflows/ci.yml",
+            status="completed",
+            conclusion="success",
+        )
+        ci_jobs = [
+            {
+                "name": name,
+                "status": "completed",
+                "conclusion": (ci_job_conclusions or {}).get(name, "success"),
+                "run_attempt": 1,
+            }
+            for name in REQUIRED_CI_JOB_NAMES
         ]
         artifact = {
             "id": 300,
@@ -613,10 +681,14 @@ class ReleaseCandidateTests(unittest.TestCase):
                 return [pull]
             if path.endswith("/pulls/42/files"):
                 return [{"filename": "VERSION"}]
-            if path.endswith("/runs"):
-                return runs
+            if path.endswith("/release-readiness.yml/runs"):
+                return readiness_runs
+            if path.endswith("/ci.yml/runs"):
+                return [ci_run]
             if path.endswith("/runs/200/jobs"):
-                return jobs
+                return readiness_jobs
+            if path.endswith("/runs/201/jobs"):
+                return ci_jobs
             if path.endswith("/runs/200/artifacts"):
                 return [artifact]
             raise AssertionError(path)
@@ -634,13 +706,52 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.assertEqual(candidate.candidate_source_tree, candidate.release_commit_tree)
         self.assertEqual(candidate.workflow_run_id, 200)
         self.assertEqual(candidate.workflow_run_attempt, 2)
+        self.assertEqual(candidate.ci_workflow_run_id, 201)
+        self.assertEqual(candidate.ci_workflow_run_attempt, 1)
         self.assertEqual(candidate.artifact_id, 300)
+
+    def test_accepts_cleared_post_merge_pull_association_with_full_identity(self) -> None:
+        candidate = select_release_candidate(
+            self._api(empty_pull_requests=True),
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+
+        self.assertEqual(candidate.pull_request_number, 42)
+
+    def test_rejects_contradictory_nonempty_pull_association(self) -> None:
+        with self.assertRaisesRegex(ReleaseCandidateError, "no release-readiness.yml run"):
+            select_release_candidate(
+                self._api(contradictory_pull_requests=True),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
 
     def test_does_not_fall_back_when_latest_matching_run_failed(self) -> None:
         api = self._api(run_conclusion="failure", include_older_success=True)
 
         with self.assertRaisesRegex(ReleaseCandidateError, "latest matching.*did not succeed"):
             select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+
+    def test_does_not_fall_back_when_latest_matching_run_is_in_progress(self) -> None:
+        api = self._api(include_newer_in_progress=True)
+
+        with self.assertRaisesRegex(ReleaseCandidateError, "in_progress/None"):
+            select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+        readiness_queries = [
+            call.kwargs["query"]
+            for call in api.pages.call_args_list
+            if call.args and str(call.args[0]).endswith("/release-readiness.yml/runs")
+        ]
+        self.assertEqual(readiness_queries, [{"event": "pull_request"}])
+
+    def test_rejects_failed_required_normal_ci_job(self) -> None:
+        with self.assertRaisesRegex(ReleaseCandidateError, "Windows runtime tests"):
+            select_release_candidate(
+                self._api(ci_job_conclusions={"Windows runtime tests": "failure"}),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
 
     def test_rejects_missing_verification_stale_head_tree_and_expiry(self) -> None:
         cases = (
@@ -669,6 +780,99 @@ class ReleaseCandidateTests(unittest.TestCase):
             actual.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
                 verify_promotion_record(actual, expected)
+
+    def test_generated_preparation_is_bound_to_pr_and_readiness_run(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        producer = {
+            "repository": candidate.repository,
+            "event_name": "pull_request",
+            "pull_request_number": candidate.pull_request_number,
+            "pull_request_head_sha": candidate.pull_request_head_sha,
+            "pull_request_base_sha": candidate.pull_request_base_sha,
+            "pull_request_head_branch": candidate.pull_request_head_branch,
+            "workflow_path": candidate.workflow_path,
+            "workflow_run_id": candidate.workflow_run_id,
+            "workflow_run_attempt": candidate.workflow_run_attempt,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            preparation_path = directory / "release-preparation.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+            verify_preparation_binding(candidate_path, preparation_path)
+            producer["workflow_run_id"] = 999
+            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+
+            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_archive_digest_rejects_self_consistent_replacement(self) -> None:
+        def write_archive(path: Path, installer: bytes) -> None:
+            installer_digest = hashlib.sha256(installer).hexdigest()
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(INSTALLER_NAME, installer)
+                archive.writestr(CHECKSUM_NAME, f"{installer_digest}  {INSTALLER_NAME}")
+                archive.writestr(MANIFEST_NAME, json.dumps({"sha256": installer_digest}))
+                archive.writestr(PREPARATION_NAME, json.dumps({"sha256": installer_digest}))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            archive_path = directory / "candidate.zip"
+            write_archive(archive_path, b"approved installer")
+            approved_digest = f"sha256:{hashlib.sha256(archive_path.read_bytes()).hexdigest()}"
+            write_archive(archive_path, b"replacement installer")
+
+            with self.assertRaisesRegex(ReleaseCandidateError, "archive digest mismatch"):
+                extract_verified_artifact(
+                    archive_path,
+                    directory / "dist",
+                    approved_digest,
+                    RELEASE_ARTIFACT_FILES,
+                )
+
+    def test_rerun_reuses_saved_immutable_promotion_decision(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "selected-candidate.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            promotion_path = directory / "release-promotion.json"
+            write_promotion_record(promotion_path, candidate_path, "1" * 64)
+            archive_path = directory / "decision.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.write(candidate_path, candidate_path.name)
+                archive.write(promotion_path, promotion_path.name)
+            archive_bytes = archive_path.read_bytes()
+            archive_digest = f"sha256:{hashlib.sha256(archive_bytes).hexdigest()}"
+            api = MagicMock()
+            api.repository = "owner/repo"
+            api.pages.return_value = [
+                {
+                    "id": 400,
+                    "name": "release-promotion-decision",
+                    "digest": archive_digest,
+                    "expired": False,
+                }
+            ]
+
+            def download(_artifact_id: int, destination: Path, _digest: str) -> None:
+                destination.write_bytes(archive_bytes)
+
+            api.download_artifact.side_effect = download
+            restored, reused = resolve_release_candidate(
+                api,
+                self.RELEASE_SHA,
+                "v1.2.3",
+                500,
+                "release-promotion-decision",
+                directory / "restored",
+                directory / "restored-candidate.json",
+            )
+
+            self.assertTrue(reused)
+            self.assertEqual(restored, candidate)
+            api.pages.assert_called_once()
 
 
 class ReleaseArtifactContractTests(unittest.TestCase):

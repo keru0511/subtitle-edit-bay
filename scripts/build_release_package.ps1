@@ -10,6 +10,23 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
 
+    [Parameter(Mandatory = $true)]
+    [string]$ProducerRepository,
+
+    [Parameter(Mandatory = $true)]
+    [long]$ProducerWorkflowRunId,
+
+    [Parameter(Mandatory = $true)]
+    [int]$ProducerWorkflowRunAttempt,
+
+    [int]$PullRequestNumber = 0,
+
+    [string]$PullRequestHeadSha = "",
+
+    [string]$PullRequestBaseSha = "",
+
+    [string]$PullRequestHeadBranch = "",
+
     [string]$SourceDirectory = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -53,6 +70,17 @@ $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowe
     artifact_name = "subtitle-edit-bay-$appVersion-windows-installer-$($SourceSha.ToLowerInvariant())"
     asset_name = "SubtitleEditBay-Setup.exe"
     sha256 = $hash
+    producer = @{
+        repository = $ProducerRepository
+        event_name = $env:GITHUB_EVENT_NAME
+        pull_request_number = $PullRequestNumber
+        pull_request_head_sha = $PullRequestHeadSha.ToLowerInvariant()
+        pull_request_base_sha = $PullRequestBaseSha.ToLowerInvariant()
+        pull_request_head_branch = $PullRequestHeadBranch
+        workflow_path = ".github/workflows/release-readiness.yml"
+        workflow_run_id = $ProducerWorkflowRunId
+        workflow_run_attempt = $ProducerWorkflowRunAttempt
+    }
 } | ConvertTo-Json -Depth 5 | Set-Content `
     -LiteralPath (Join-Path $releaseDirectory "release-preparation.json") `
     -Encoding utf8

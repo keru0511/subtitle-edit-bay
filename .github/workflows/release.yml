@@ -35,6 +35,8 @@ jobs:
       candidate_source_sha: ${{ steps.select.outputs.candidate_source_sha }}
       workflow_run_id: ${{ steps.select.outputs.workflow_run_id }}
       workflow_run_attempt: ${{ steps.select.outputs.workflow_run_attempt }}
+      ci_workflow_run_id: ${{ steps.select.outputs.ci_workflow_run_id }}
+      ci_workflow_run_attempt: ${{ steps.select.outputs.ci_workflow_run_attempt }}
       pull_request_number: ${{ steps.select.outputs.pull_request_number }}
       installer_sha256: ${{ steps.verify.outputs.installer_sha256 }}
       promotion_artifact_name: ${{ steps.context.outputs.name }}
@@ -50,28 +52,40 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-      - name: Select the final matching readiness artifact
+      - name: Fix promotion decision identity
+        id: context
+        shell: bash
+        run: echo "name=release-promotion-${{ inputs.release_commit_sha }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Select or restore the final matching candidate
         id: select
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          python release-tools/scripts/release_candidate.py select
+          python release-tools/scripts/release_candidate.py resolve
           --repository "$GITHUB_REPOSITORY"
           --release-commit-sha "${{ inputs.release_commit_sha }}"
           --release-version "${{ inputs.release_version }}"
+          --current-run-id "${{ github.run_id }}"
+          --decision-artifact-name "${{ steps.context.outputs.name }}"
+          --decision-directory saved-promotion
           --output selected-candidate.json
           --github-output "$GITHUB_OUTPUT"
       - name: Download the selected artifact by immutable identity
         id: download
-        uses: actions/download-artifact@v7
-        with:
-          repository: ${{ github.repository }}
-          run-id: ${{ steps.select.outputs.workflow_run_id }}
-          artifact-ids: ${{ steps.select.outputs.artifact_id }}
-          github-token: ${{ github.token }}
-          path: dist
-          merge-multiple: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ steps.select.outputs.artifact_id }}"
+          --artifact-digest "${{ steps.select.outputs.artifact_digest }}"
+          --destination dist
+          --expected-file SubtitleEditBay-Setup.exe
+          --expected-file SubtitleEditBay-Setup.exe.sha256
+          --expected-file SubtitleEditBay-Setup.exe.manifest.json
+          --expected-file release-preparation.json
       - name: Verify candidate bytes and provenance
         id: verify
         shell: bash
@@ -83,17 +97,25 @@ jobs:
             --directory dist \
             --expected-version "${{ inputs.release_version }}" \
             --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+          python release-tools/scripts/release_candidate.py verify-preparation \
+            --candidate selected-candidate.json \
+            --preparation dist/release-preparation.json
           installer_sha256="$(sha256sum dist/SubtitleEditBay-Setup.exe | awk '{print $1}')"
           echo "installer_sha256=$installer_sha256" >> "$GITHUB_OUTPUT"
           python release-tools/scripts/release_candidate.py write-promotion \
             --candidate selected-candidate.json \
             --installer-sha256 "$installer_sha256" \
-            --output release-promotion.json
-      - name: Preserve immutable promotion decision
-        id: context
-        shell: bash
-        run: echo "name=release-promotion-${{ inputs.release_commit_sha }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+            --output expected-release-promotion.json
+          if [[ "${{ steps.select.outputs.decision_reused }}" == "true" ]]; then
+            python release-tools/scripts/release_candidate.py verify-promotion \
+              --actual saved-promotion/release-promotion.json \
+              --expected expected-release-promotion.json
+            cp saved-promotion/release-promotion.json release-promotion.json
+          else
+            mv expected-release-promotion.json release-promotion.json
+          fi
       - name: Upload promotion record
+        if: steps.select.outputs.decision_reused != 'true'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.context.outputs.name }}
@@ -163,19 +185,31 @@ jobs:
           python-version: "3.10"
       - name: Download selected candidate bytes
         id: download
-        uses: actions/download-artifact@v7
-        with:
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.candidate.outputs.workflow_run_id }}
-          artifact-ids: ${{ needs.candidate.outputs.artifact_id }}
-          github-token: ${{ github.token }}
-          path: dist
-          merge-multiple: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ needs.candidate.outputs.artifact_id }}"
+          --artifact-digest "${{ needs.candidate.outputs.artifact_digest }}"
+          --destination dist
+          --expected-file SubtitleEditBay-Setup.exe
+          --expected-file SubtitleEditBay-Setup.exe.sha256
+          --expected-file SubtitleEditBay-Setup.exe.manifest.json
+          --expected-file release-preparation.json
       - name: Download frozen promotion decision
-        uses: actions/download-artifact@v7
-        with:
-          name: ${{ needs.candidate.outputs.promotion_artifact_name }}
-          path: promotion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-run-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "${{ github.run_id }}"
+          --artifact-name "${{ needs.candidate.outputs.promotion_artifact_name }}"
+          --destination promotion
+          --expected-file selected-candidate.json
+          --expected-file release-promotion.json
       - name: Verify selected installer again
         id: verify
         shell: bash
@@ -188,6 +222,9 @@ jobs:
             --directory dist \
             --expected-version "${{ inputs.release_version }}" \
             --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+          python release-tools/scripts/release_candidate.py verify-preparation \
+            --candidate promotion/selected-candidate.json \
+            --preparation dist/release-preparation.json
           actual_sha256="$(sha256sum dist/SubtitleEditBay-Setup.exe | awk '{print $1}')"
           [[ "$actual_sha256" == "$INSTALLER_SHA256" ]] || { echo "Installer changed after candidate verification." >&2; exit 1; }
           python release-tools/scripts/release_candidate.py write-promotion \

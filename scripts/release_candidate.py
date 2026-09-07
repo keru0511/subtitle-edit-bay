@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Sequence
 
 
@@ -17,7 +21,8 @@ REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 ARTIFACT_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 WORKFLOW_PATH = ".github/workflows/release-readiness.yml"
-REQUIRED_JOB_NAMES = (
+CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+REQUIRED_READINESS_JOB_NAMES = (
     "Classify merge candidate",
     "Validate source and version",
     "Release tests on Linux",
@@ -26,12 +31,42 @@ REQUIRED_JOB_NAMES = (
     "Preparation result",
     "Release readiness",
 )
+REQUIRED_CI_JOB_NAMES = (
+    "Python quality checks",
+    "Portable, Qt, and FFmpeg tests",
+    "Windows runtime tests",
+    "Windows launcher tests",
+    "FFmpeg 6 compatibility",
+    "Windows installer smoke",
+)
+# Kept as the public compatibility name used by existing contract tests.
+REQUIRED_JOB_NAMES = REQUIRED_READINESS_JOB_NAMES
 PER_PAGE = 100
 MAX_PAGES = 100
+MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 4 * 1024 * 1024 * 1024
+RELEASE_ARTIFACT_FILES = (
+    "SubtitleEditBay-Setup.exe",
+    "SubtitleEditBay-Setup.exe.sha256",
+    "SubtitleEditBay-Setup.exe.manifest.json",
+    "release-preparation.json",
+)
+DECISION_ARTIFACT_FILES = ("selected-candidate.json", "release-promotion.json")
 
 
 class ReleaseCandidateError(RuntimeError):
     """Raised when a prepared artifact cannot be promoted safely."""
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        redirected = super().redirect_request(request, fp, code, msg, headers, newurl)
+        if (
+            redirected is not None
+            and urllib.parse.urlsplit(request.full_url).netloc != urllib.parse.urlsplit(newurl).netloc
+        ):
+            redirected.remove_header("Authorization")
+        return redirected
 
 
 @dataclass(frozen=True)
@@ -40,6 +75,7 @@ class ReleaseCandidate:
     repository: str
     pull_request_number: int
     pull_request_head_sha: str
+    pull_request_head_branch: str
     pull_request_base_sha: str
     candidate_source_sha: str
     candidate_source_tree: str
@@ -49,6 +85,8 @@ class ReleaseCandidate:
     workflow_path: str
     workflow_run_id: int
     workflow_run_attempt: int
+    ci_workflow_run_id: int
+    ci_workflow_run_attempt: int
     artifact_id: int
     artifact_name: str
     artifact_digest: str
@@ -79,7 +117,7 @@ class GitHubApi:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=30) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             raise ReleaseCandidateError(f"GitHub API request failed with HTTP {exc.code}: {url}") from exc
@@ -104,6 +142,107 @@ class GitHubApi:
             if len(items) < PER_PAGE:
                 return collected
         raise ReleaseCandidateError(f"GitHub API pagination exceeded {MAX_PAGES} pages: {path}")
+
+    def download_artifact(self, artifact_id: int, destination: Path, expected_digest: str) -> None:
+        artifact_id = _integer(artifact_id, "artifact id")
+        if not ARTIFACT_DIGEST_PATTERN.fullmatch(expected_digest):
+            raise ReleaseCandidateError("artifact digest must be a GitHub SHA-256 digest")
+        url = f"{self.api_url}/repos/{self.repository}/actions/artifacts/{artifact_id}/zip"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self.token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "subtitle-edit-bay-release-candidate",
+            },
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with (
+                urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=60) as response,
+                destination.open("wb") as output,
+            ):
+                digest = hashlib.sha256()
+                total = 0
+                while chunk := response.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_ARCHIVE_BYTES:
+                        raise ReleaseCandidateError("artifact archive exceeds the size limit")
+                    digest.update(chunk)
+                    output.write(chunk)
+        except urllib.error.HTTPError as exc:
+            raise ReleaseCandidateError(f"artifact download failed with HTTP {exc.code}: {url}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise ReleaseCandidateError(f"artifact download failed: {url}: {exc}") from exc
+        actual_digest = f"sha256:{digest.hexdigest()}"
+        if actual_digest != expected_digest:
+            destination.unlink(missing_ok=True)
+            raise ReleaseCandidateError(
+                f"artifact archive digest mismatch: expected {expected_digest}, got {actual_digest}"
+            )
+
+
+def extract_verified_artifact(
+    archive_path: Path,
+    destination: Path,
+    expected_digest: str,
+    expected_files: Sequence[str],
+) -> None:
+    if not ARTIFACT_DIGEST_PATTERN.fullmatch(expected_digest):
+        raise ReleaseCandidateError("artifact digest must be a GitHub SHA-256 digest")
+    try:
+        digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ReleaseCandidateError(f"could not read artifact archive: {exc}") from exc
+    if f"sha256:{digest}" != expected_digest:
+        raise ReleaseCandidateError("artifact archive digest mismatch")
+    expected = set(expected_files)
+    if len(expected) != len(expected_files) or not expected:
+        raise ReleaseCandidateError("expected artifact file set must be non-empty and unique")
+    destination.mkdir(parents=True, exist_ok=False)
+    seen: set[str] = set()
+    extracted_size = 0
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                member_path = PurePosixPath(member.filename)
+                mode = member.external_attr >> 16
+                if (
+                    member_path.is_absolute()
+                    or ".." in member_path.parts
+                    or len(member_path.parts) != 1
+                    or member.filename in seen
+                    or (mode & 0o170000) == 0o120000
+                ):
+                    raise ReleaseCandidateError(f"unsafe artifact archive member: {member.filename}")
+                seen.add(member.filename)
+                extracted_size += member.file_size
+                if extracted_size > MAX_EXTRACTED_BYTES:
+                    raise ReleaseCandidateError("artifact extracted contents exceed the size limit")
+                with archive.open(member) as source, (destination / member.filename).open("wb") as output:
+                    shutil.copyfileobj(source, output)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ReleaseCandidateError(f"could not extract artifact archive: {exc}") from exc
+    if seen != expected:
+        raise ReleaseCandidateError(
+            f"artifact file set mismatch: missing={sorted(expected - seen)!r} unexpected={sorted(seen - expected)!r}"
+        )
+
+
+def download_verified_artifact(
+    api: GitHubApi,
+    artifact_id: int,
+    artifact_digest: str,
+    destination: Path,
+    expected_files: Sequence[str],
+) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        archive_path = Path(temp_dir) / "artifact.zip"
+        api.download_artifact(artifact_id, archive_path, artifact_digest)
+        extract_verified_artifact(archive_path, destination, artifact_digest, expected_files)
 
 
 def _object(value: object, context: str) -> dict[str, object]:
@@ -146,9 +285,7 @@ def _matching_pull_request(api: GitHubApi, release_commit_sha: str) -> dict[str,
         if pull.get("merge_commit_sha") == release_commit_sha:
             matches.append(pull)
     if len(matches) != 1:
-        raise ReleaseCandidateError(
-            f"release commit must map to exactly one merged pull request; found {len(matches)}"
-        )
+        raise ReleaseCandidateError(f"release commit must map to exactly one merged pull request; found {len(matches)}")
     number = _integer(matches[0].get("number"), "pull request number")
     pull = _object(api.get(f"/repos/{api.repository}/pulls/{number}"), "pull request")
     if pull.get("merged") is not True or pull.get("merge_commit_sha") != release_commit_sha:
@@ -174,42 +311,60 @@ def _commit_identity(api: GitHubApi, sha: str, context: str) -> tuple[str, tuple
     if not isinstance(parents_value, list):
         raise ReleaseCandidateError(f"{context} parents must be an array")
     parents = tuple(
-        _sha(_object(parent, f"{context} parent").get("sha"), f"{context} parent SHA")
-        for parent in parents_value
+        _sha(_object(parent, f"{context} parent").get("sha"), f"{context} parent SHA") for parent in parents_value
     )
     return tree_sha, parents
 
 
-def _run_matches_pull(run: dict[str, object], pull_number: int, head_sha: str, repository: str) -> bool:
+def _run_matches_pull(
+    run: dict[str, object],
+    pull_number: int,
+    head_sha: str,
+    head_branch: str,
+    repository: str,
+    workflow_path: str,
+) -> bool:
     pulls = run.get("pull_requests")
     if not isinstance(pulls, list):
         return False
     numbers = {value.get("number") for value in pulls if isinstance(value, dict)}
+    # GitHub may clear this association after merge. A non-empty contradictory
+    # association is rejected; an empty list is bound through immutable head,
+    # branch, repository, workflow and (later) candidate commit/tree identity.
+    pull_association_matches = not pulls or pull_number in numbers
     head_repository = run.get("head_repository")
     return (
-        pull_number in numbers
+        pull_association_matches
         and run.get("event") == "pull_request"
-        and run.get("path") == WORKFLOW_PATH
+        and run.get("path") == workflow_path
         and run.get("head_sha") == head_sha
+        and run.get("head_branch") == head_branch
         and isinstance(head_repository, dict)
         and head_repository.get("full_name") == repository
-        and run.get("status") == "completed"
     )
 
 
-def _latest_candidate_run(api: GitHubApi, pull_number: int, head_sha: str) -> dict[str, object]:
+def _latest_workflow_run(
+    api: GitHubApi,
+    pull_number: int,
+    head_sha: str,
+    head_branch: str,
+    workflow_path: str,
+) -> dict[str, object]:
+    workflow_name = workflow_path.rsplit("/", 1)[-1]
     runs = api.pages(
-        f"/repos/{api.repository}/actions/workflows/release-readiness.yml/runs",
+        f"/repos/{api.repository}/actions/workflows/{workflow_name}/runs",
         key="workflow_runs",
-        query={"event": "pull_request", "status": "completed"},
+        query={"event": "pull_request"},
     )
     matches = [
         _object(run, "workflow run")
         for run in runs
-        if isinstance(run, dict) and _run_matches_pull(run, pull_number, head_sha, api.repository)
+        if isinstance(run, dict)
+        and _run_matches_pull(run, pull_number, head_sha, head_branch, api.repository, workflow_path)
     ]
     if not matches:
-        raise ReleaseCandidateError("no completed Release readiness run matches the approved pull request head")
+        raise ReleaseCandidateError(f"no {workflow_name} run matches the approved pull request head")
     matches.sort(
         key=lambda run: (
             _string(run.get("created_at"), "workflow run created_at"),
@@ -218,21 +373,26 @@ def _latest_candidate_run(api: GitHubApi, pull_number: int, head_sha: str) -> di
         reverse=True,
     )
     latest = matches[0]
-    if latest.get("conclusion") != "success":
+    if latest.get("status") != "completed" or latest.get("conclusion") != "success":
         raise ReleaseCandidateError(
-            f"latest matching Release readiness run did not succeed: {latest.get('conclusion')}"
+            f"latest matching {workflow_name} run did not succeed: {latest.get('status')}/{latest.get('conclusion')}"
         )
     return latest
 
 
-def _require_successful_jobs(api: GitHubApi, run_id: int, run_attempt: int) -> None:
+def _require_successful_jobs(
+    api: GitHubApi,
+    run_id: int,
+    run_attempt: int,
+    required_job_names: Sequence[str],
+) -> None:
     jobs = api.pages(
         f"/repos/{api.repository}/actions/runs/{run_id}/jobs",
         key="jobs",
         query={"filter": "latest"},
     )
     job_objects = [_object(job, "workflow job") for job in jobs]
-    for required_name in REQUIRED_JOB_NAMES:
+    for required_name in required_job_names:
         matches = [
             job
             for job in job_objects
@@ -251,9 +411,7 @@ def _require_successful_jobs(api: GitHubApi, run_id: int, run_attempt: int) -> N
 
 def _candidate_artifact(api: GitHubApi, run_id: int, release_version: str) -> dict[str, object]:
     version = release_version.removeprefix("v")
-    name_pattern = re.compile(
-        rf"^subtitle-edit-bay-{re.escape(version)}-windows-installer-([0-9a-f]{{40}})$"
-    )
+    name_pattern = re.compile(rf"^subtitle-edit-bay-{re.escape(version)}-windows-installer-([0-9a-f]{{40}})$")
     artifacts = api.pages(f"/repos/{api.repository}/actions/runs/{run_id}/artifacts", key="artifacts")
     matches = []
     for value in artifacts:
@@ -262,9 +420,7 @@ def _candidate_artifact(api: GitHubApi, run_id: int, release_version: str) -> di
         if isinstance(name, str) and name_pattern.fullmatch(name):
             matches.append(artifact)
     if len(matches) != 1:
-        raise ReleaseCandidateError(
-            f"matching prepared artifact must be unique; found {len(matches)}"
-        )
+        raise ReleaseCandidateError(f"matching prepared artifact must be unique; found {len(matches)}")
     artifact = matches[0]
     if artifact.get("expired") is not False:
         raise ReleaseCandidateError("prepared artifact is expired or has an unknown expiry state")
@@ -287,13 +443,18 @@ def select_release_candidate(
     pull = _matching_pull_request(api, release_commit_sha)
     pull_number = _integer(pull.get("number"), "pull request number")
     head_sha = _sha(_nested(pull, "head", "sha"), "pull request head SHA")
+    head_branch = _string(_nested(pull, "head", "ref"), "pull request head branch")
     base_sha = _sha(_nested(pull, "base", "sha"), "pull request base SHA")
     _require_version_only(api, pull_number)
 
-    run = _latest_candidate_run(api, pull_number, head_sha)
+    run = _latest_workflow_run(api, pull_number, head_sha, head_branch, WORKFLOW_PATH)
     run_id = _integer(run.get("id"), "workflow run id")
     run_attempt = _integer(run.get("run_attempt"), "workflow run attempt")
-    _require_successful_jobs(api, run_id, run_attempt)
+    _require_successful_jobs(api, run_id, run_attempt, REQUIRED_READINESS_JOB_NAMES)
+    ci_run = _latest_workflow_run(api, pull_number, head_sha, head_branch, CI_WORKFLOW_PATH)
+    ci_run_id = _integer(ci_run.get("id"), "CI workflow run id")
+    ci_run_attempt = _integer(ci_run.get("run_attempt"), "CI workflow run attempt")
+    _require_successful_jobs(api, ci_run_id, ci_run_attempt, REQUIRED_CI_JOB_NAMES)
     artifact = _candidate_artifact(api, run_id, release_version)
     artifact_name = _string(artifact.get("name"), "artifact name")
     candidate_source_sha = _sha(artifact_name.rsplit("-", 1)[-1], "candidate source SHA")
@@ -310,6 +471,7 @@ def select_release_candidate(
         repository=api.repository,
         pull_request_number=pull_number,
         pull_request_head_sha=head_sha,
+        pull_request_head_branch=head_branch,
         pull_request_base_sha=base_sha,
         candidate_source_sha=candidate_source_sha,
         candidate_source_tree=candidate_tree,
@@ -319,6 +481,8 @@ def select_release_candidate(
         workflow_path=WORKFLOW_PATH,
         workflow_run_id=run_id,
         workflow_run_attempt=run_attempt,
+        ci_workflow_run_id=ci_run_id,
+        ci_workflow_run_attempt=ci_run_attempt,
         artifact_id=_integer(artifact.get("id"), "artifact id"),
         artifact_name=artifact_name,
         artifact_digest=_string(artifact.get("digest"), "artifact digest"),
@@ -331,6 +495,171 @@ def write_github_outputs(path: Path, candidate: ReleaseCandidate) -> None:
     with path.open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={value}\n")
+
+
+def _load_candidate(path: Path) -> ReleaseCandidate:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseCandidateError(f"could not read selected candidate: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != set(ReleaseCandidate.__dataclass_fields__):
+        raise ReleaseCandidateError("selected candidate has an unknown schema or field set")
+    try:
+        candidate = ReleaseCandidate(**payload)
+    except TypeError as exc:
+        raise ReleaseCandidateError(f"selected candidate is malformed: {exc}") from exc
+    if candidate.schema_version != 1:
+        raise ReleaseCandidateError("selected candidate has an unknown schema")
+    if not REPOSITORY_PATTERN.fullmatch(candidate.repository):
+        raise ReleaseCandidateError("selected candidate repository is invalid")
+    for field_name in (
+        "pull_request_head_sha",
+        "pull_request_base_sha",
+        "candidate_source_sha",
+        "candidate_source_tree",
+        "release_commit_sha",
+        "release_commit_tree",
+    ):
+        _sha(getattr(candidate, field_name), f"selected candidate {field_name}")
+    for field_name in (
+        "pull_request_number",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "ci_workflow_run_id",
+        "ci_workflow_run_attempt",
+        "artifact_id",
+    ):
+        _integer(getattr(candidate, field_name), f"selected candidate {field_name}")
+    if candidate.workflow_path != WORKFLOW_PATH:
+        raise ReleaseCandidateError("selected candidate workflow path is invalid")
+    if not candidate.pull_request_head_branch:
+        raise ReleaseCandidateError("selected candidate pull request head branch is invalid")
+    if not ARTIFACT_DIGEST_PATTERN.fullmatch(candidate.artifact_digest):
+        raise ReleaseCandidateError("selected candidate artifact digest is invalid")
+    return candidate
+
+
+def _artifact_by_name(
+    api: GitHubApi,
+    run_id: int,
+    artifact_name: str,
+    *,
+    allow_missing: bool,
+) -> dict[str, object] | None:
+    artifacts = api.pages(f"/repos/{api.repository}/actions/runs/{run_id}/artifacts", key="artifacts")
+    matches = [
+        _object(artifact, "workflow artifact")
+        for artifact in artifacts
+        if isinstance(artifact, dict) and artifact.get("name") == artifact_name
+    ]
+    if not matches and allow_missing:
+        return None
+    if len(matches) != 1:
+        raise ReleaseCandidateError(
+            f"artifact {artifact_name!r} must appear exactly once in run {run_id}; found {len(matches)}"
+        )
+    artifact = matches[0]
+    if artifact.get("expired") is not False:
+        raise ReleaseCandidateError(f"artifact {artifact_name!r} is expired or has unknown expiry state")
+    digest = _string(artifact.get("digest"), "artifact digest")
+    if not ARTIFACT_DIGEST_PATTERN.fullmatch(digest):
+        raise ReleaseCandidateError("artifact digest must be a GitHub SHA-256 digest")
+    return artifact
+
+
+def resolve_release_candidate(
+    api: GitHubApi,
+    release_commit_sha: str,
+    release_version: str,
+    current_run_id: int,
+    decision_artifact_name: str,
+    decision_directory: Path,
+    output: Path,
+) -> tuple[ReleaseCandidate, bool]:
+    existing = _artifact_by_name(
+        api,
+        current_run_id,
+        decision_artifact_name,
+        allow_missing=True,
+    )
+    if existing is None:
+        candidate = select_release_candidate(api, release_commit_sha, release_version)
+        output.write_text(json.dumps(asdict(candidate), indent=2) + "\n", encoding="utf-8")
+        return candidate, False
+
+    download_verified_artifact(
+        api,
+        _integer(existing.get("id"), "decision artifact id"),
+        _string(existing.get("digest"), "decision artifact digest"),
+        decision_directory,
+        DECISION_ARTIFACT_FILES,
+    )
+    stored_path = decision_directory / "selected-candidate.json"
+    candidate = _load_candidate(stored_path)
+    if (
+        candidate.repository != api.repository
+        or candidate.release_commit_sha != release_commit_sha
+        or candidate.release_version != release_version
+    ):
+        raise ReleaseCandidateError("saved promotion decision does not match this release request")
+    promotion_path = decision_directory / "release-promotion.json"
+    try:
+        promotion = json.loads(promotion_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseCandidateError(f"could not read saved promotion record: {exc}") from exc
+    if not isinstance(promotion, dict):
+        raise ReleaseCandidateError("saved promotion record must be an object")
+    installer_sha256 = _string(promotion.get("installer_sha256"), "saved installer SHA-256")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        expected = Path(temp_dir) / "release-promotion.json"
+        write_promotion_record(expected, stored_path, installer_sha256)
+        verify_promotion_record(promotion_path, expected)
+    shutil.copyfile(stored_path, output)
+    return candidate, True
+
+
+def download_named_run_artifact(
+    api: GitHubApi,
+    run_id: int,
+    artifact_name: str,
+    destination: Path,
+    expected_files: Sequence[str],
+) -> None:
+    artifact = _artifact_by_name(api, run_id, artifact_name, allow_missing=False)
+    assert artifact is not None
+    download_verified_artifact(
+        api,
+        _integer(artifact.get("id"), "artifact id"),
+        _string(artifact.get("digest"), "artifact digest"),
+        destination,
+        expected_files,
+    )
+
+
+def verify_preparation_binding(candidate_path: Path, preparation_path: Path) -> None:
+    candidate = _load_candidate(candidate_path)
+    try:
+        preparation = json.loads(preparation_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseCandidateError(f"could not read preparation identity: {exc}") from exc
+    if not isinstance(preparation, dict):
+        raise ReleaseCandidateError("release preparation must be an object")
+    expected = {
+        "repository": candidate.repository,
+        "event_name": "pull_request",
+        "pull_request_number": candidate.pull_request_number,
+        "pull_request_head_sha": candidate.pull_request_head_sha,
+        "pull_request_base_sha": candidate.pull_request_base_sha,
+        "pull_request_head_branch": candidate.pull_request_head_branch,
+        "workflow_path": candidate.workflow_path,
+        "workflow_run_id": candidate.workflow_run_id,
+        "workflow_run_attempt": candidate.workflow_run_attempt,
+    }
+    producer = preparation.get("producer")
+    if not isinstance(producer, dict):
+        raise ReleaseCandidateError("release preparation has no producer identity")
+    if producer != expected:
+        raise ReleaseCandidateError("release preparation producer does not match the selected workflow run")
 
 
 def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: str) -> None:
@@ -352,10 +681,13 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "candidate_source_tree": candidate.get("candidate_source_tree"),
         "pull_request_number": candidate.get("pull_request_number"),
         "pull_request_head_sha": candidate.get("pull_request_head_sha"),
+        "pull_request_head_branch": candidate.get("pull_request_head_branch"),
         "pull_request_base_sha": candidate.get("pull_request_base_sha"),
         "workflow_path": candidate.get("workflow_path"),
         "workflow_run_id": candidate.get("workflow_run_id"),
         "workflow_run_attempt": candidate.get("workflow_run_attempt"),
+        "ci_workflow_run_id": candidate.get("ci_workflow_run_id"),
+        "ci_workflow_run_attempt": candidate.get("ci_workflow_run_attempt"),
         "artifact_id": candidate.get("artifact_id"),
         "artifact_name": candidate.get("artifact_name"),
         "artifact_digest": candidate.get("artifact_digest"),
@@ -370,6 +702,7 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "candidate_source_sha",
         "candidate_source_tree",
         "pull_request_head_sha",
+        "pull_request_head_branch",
         "pull_request_base_sha",
         "workflow_path",
         "artifact_name",
@@ -378,6 +711,16 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
     )
     if any(not isinstance(record[key], str) or not record[key] for key in required_strings):
         raise ReleaseCandidateError("selected candidate is missing required identity fields")
+    required_integers = (
+        "pull_request_number",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "ci_workflow_run_id",
+        "ci_workflow_run_attempt",
+        "artifact_id",
+    )
+    for key in required_integers:
+        _integer(record[key], f"selected candidate {key}")
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -400,6 +743,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     select.add_argument("--release-version", required=True)
     select.add_argument("--output", type=Path, required=True)
     select.add_argument("--github-output", type=Path, required=True)
+    resolve = subparsers.add_parser("resolve")
+    resolve.add_argument("--repository", required=True)
+    resolve.add_argument("--release-commit-sha", required=True)
+    resolve.add_argument("--release-version", required=True)
+    resolve.add_argument("--current-run-id", type=int, required=True)
+    resolve.add_argument("--decision-artifact-name", required=True)
+    resolve.add_argument("--decision-directory", type=Path, required=True)
+    resolve.add_argument("--output", type=Path, required=True)
+    resolve.add_argument("--github-output", type=Path, required=True)
+    download = subparsers.add_parser("download-artifact")
+    download.add_argument("--repository", required=True)
+    download.add_argument("--artifact-id", type=int, required=True)
+    download.add_argument("--artifact-digest", required=True)
+    download.add_argument("--destination", type=Path, required=True)
+    download.add_argument("--expected-file", action="append", required=True)
+    named = subparsers.add_parser("download-run-artifact")
+    named.add_argument("--repository", required=True)
+    named.add_argument("--run-id", type=int, required=True)
+    named.add_argument("--artifact-name", required=True)
+    named.add_argument("--destination", type=Path, required=True)
+    named.add_argument("--expected-file", action="append", required=True)
+    preparation = subparsers.add_parser("verify-preparation")
+    preparation.add_argument("--candidate", type=Path, required=True)
+    preparation.add_argument("--preparation", type=Path, required=True)
     record = subparsers.add_parser("write-promotion")
     record.add_argument("--candidate", type=Path, required=True)
     record.add_argument("--installer-sha256", required=True)
@@ -413,15 +780,47 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        if args.command == "select":
+        if args.command in {"select", "resolve", "download-artifact", "download-run-artifact"}:
             api = GitHubApi(
                 args.repository,
                 os.environ.get("GH_TOKEN", ""),
                 os.environ.get("GITHUB_API_URL", "https://api.github.com"),
             )
-            candidate = select_release_candidate(api, args.release_commit_sha, args.release_version)
-            args.output.write_text(json.dumps(asdict(candidate), indent=2) + "\n", encoding="utf-8")
-            write_github_outputs(args.github_output, candidate)
+            if args.command == "select":
+                candidate = select_release_candidate(api, args.release_commit_sha, args.release_version)
+                args.output.write_text(json.dumps(asdict(candidate), indent=2) + "\n", encoding="utf-8")
+                write_github_outputs(args.github_output, candidate)
+            elif args.command == "resolve":
+                candidate, reused = resolve_release_candidate(
+                    api,
+                    args.release_commit_sha,
+                    args.release_version,
+                    args.current_run_id,
+                    args.decision_artifact_name,
+                    args.decision_directory,
+                    args.output,
+                )
+                write_github_outputs(args.github_output, candidate)
+                with args.github_output.open("a", encoding="utf-8") as output:
+                    output.write(f"decision_reused={str(reused).lower()}\n")
+            elif args.command == "download-artifact":
+                download_verified_artifact(
+                    api,
+                    args.artifact_id,
+                    args.artifact_digest,
+                    args.destination,
+                    args.expected_file,
+                )
+            else:
+                download_named_run_artifact(
+                    api,
+                    args.run_id,
+                    args.artifact_name,
+                    args.destination,
+                    args.expected_file,
+                )
+        elif args.command == "verify-preparation":
+            verify_preparation_binding(args.candidate, args.preparation)
         elif args.command == "write-promotion":
             write_promotion_record(args.output, args.candidate, args.installer_sha256)
         else:

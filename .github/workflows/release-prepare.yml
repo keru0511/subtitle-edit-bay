@@ -157,11 +157,26 @@ jobs:
       - name: Build release package
         id: package
         shell: pwsh
+        env:
+          PRODUCER_REPOSITORY: ${{ github.repository }}
+          PRODUCER_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          PRODUCER_WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PULL_REQUEST_HEAD_BRANCH: ${{ github.event.pull_request.head.ref || '' }}
         run: >-
           ./release-tools/scripts/build_release_package.ps1
           -ReleaseVersion "${{ inputs.release_version }}"
           -SourceSha "${{ inputs.source_sha }}"
           -OutputDirectory "${{ runner.temp }}/subtitle-edit-bay-release"
+          -ProducerRepository "$env:PRODUCER_REPOSITORY"
+          -ProducerWorkflowRunId "$env:PRODUCER_WORKFLOW_RUN_ID"
+          -ProducerWorkflowRunAttempt "$env:PRODUCER_WORKFLOW_RUN_ATTEMPT"
+          -PullRequestNumber "$env:PULL_REQUEST_NUMBER"
+          -PullRequestHeadSha "$env:PULL_REQUEST_HEAD_SHA"
+          -PullRequestBaseSha "$env:PULL_REQUEST_BASE_SHA"
+          -PullRequestHeadBranch "$env:PULL_REQUEST_HEAD_BRANCH"
           -SourceDirectory "${{ github.workspace }}/source"
       - name: Verify release package
         id: verify

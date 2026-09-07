@@ -262,6 +262,10 @@ class GuiPerformanceWorkflowContractTests(unittest.TestCase):
         self.assertIn("--repetition-index", benchmark_commands)
         self.assertIn("--segment-count 10000", benchmark_commands)
         self.assertIn("--no-enforce-contracts", benchmark_commands)
+        self.assertIn(
+            'Copy-Item scripts/gui_performance_report.py "$referenceRoot/scripts/gui_performance_report.py"',
+            benchmark_commands,
+        )
         self.assertEqual(set(aggregate["needs"]), {"prepare", "benchmark"})
         self.assertIn("always()", aggregate["if"])
         aggregate_commands = "\n".join(str(step.get("run", "")) for step in aggregate["steps"])

@@ -4486,13 +4486,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         rail = self._quick_item(window, "editorModeRail")
         chat_panel = self._quick_item(window, "codexChatPanel")
-        main_player = self._quick_item(window, "mainWorkspacePlayer")
+        main_player = self.gui.find_object(window, "mainWorkspacePlayer", QMediaPlayer)
 
         self.assertIsNone(rail.findChild(QObject, "shortModeOpenButton"))
         self._click(window, self._quick_item(window, "shortModeOpenButton"))
 
         short_page = self._quick_item(window, "shortModePage")
-        short_player = self._quick_item(window, "shortPreviewPlayer")
+        short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
         self.assertTrue(short_page.property("visible"))
         self.assertEqual(short_page.property("workspaceKind"), "short-artifact")
         self.assertEqual(window.property("currentWorkspace"), "short-artifact")

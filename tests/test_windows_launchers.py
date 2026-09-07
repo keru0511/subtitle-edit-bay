@@ -359,7 +359,12 @@ class WindowsLauncherTests(unittest.TestCase):
             environment["Path"] = inherited_path
 
             def run_launcher(
-                *, device: str, python: Path, pythonw: Path = gui, use_default_config: bool = False
+                *,
+                device: str,
+                python: Path,
+                pythonw: Path = gui,
+                use_default_config: bool = False,
+                expected_returncode: int = 0,
             ) -> None:
                 setup_marker.unlink(missing_ok=True)
                 gui_marker.unlink(missing_ok=True)
@@ -400,7 +405,7 @@ class WindowsLauncherTests(unittest.TestCase):
                     errors="replace",
                     timeout=15,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
 
             run_launcher(device="cuda", python=unavailable_python)
             deadline = time.monotonic() + 5
@@ -443,7 +448,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 "raise SystemExit(23)\n",
                 encoding="utf-8",
             )
-            run_launcher(device="cpu", python=unavailable_python)
+            run_launcher(device="cpu", python=unavailable_python, expected_returncode=23)
             self.assertFalse(setup_marker.exists())
             self.assertFalse(gui_marker.exists())
             self.assertIn(

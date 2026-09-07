@@ -2050,6 +2050,7 @@ ApplicationWindow {
                 objectName: "sourceSettingsScrollView"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                contentHeight: sourceSettingsContent.implicitHeight
                 clip: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical: ScrollBar {

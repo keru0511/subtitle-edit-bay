@@ -40,6 +40,14 @@ Codexからアプリ機能を利用するときは、`src/codex_actions.py` の�
 
 `GuiActionBackend` はAction typeごとの固定handler mapだけを持ちます。inspectは不要なlocal pathを除いたsnapshotを返し、executeはGUIと同じ `startTranscription`、`startHighlightAnalysis`、`renderVideo`、`renderShortVideo` を呼びます。jobの進捗・停止・完了状態は既存GUI backendと `ProcessingProgress` が引き続き正本です。
 
+### 長時間job
+
+`start_transcription`、`start_highlight_analysis`、`render_normal`、`render_short` は、開始結果にjob種別、進捗率、追跡用 `inspect_processing_state`、停止用 `cancel_processing` を返します。字幕プレビューの再生成は `rebuild_subtitle_preview` で既存の同期処理を呼び、完了済みResultを返します。
+
+`inspect_processing_state` はGUIから開始した処理も含め、工程、進捗率、現在内容、停止可否を既存trackerから取得します。完了・失敗・中断後も `terminal_result` を返すため、Codex切断中に終了しても再接続後に結果を判断できます。`cancel_processing` は既存の停止経路だけを使用し、対象jobが既に変わった場合は拒否します。失敗Resultから同じActionを自動再実行する処理はありません。
+
+既存字幕がある文字起こしではGUIと同じ `transcribeProject` を使用します。`replace` は信頼済みscopeで明示確認済みの場合だけ実行でき、`merge` は既存字幕を保持する既存統合経路へ進みます。最終renderや既存出力の上書きにも同じ確認契約を適用します。
+
 音量・timeline Proposalなど後続のdomain Issueは、新しいbackend handlerをこの固定mapへ明示登録し、`ACTION_DEFINITIONS` の引数契約とdomain validatorを追加します。反射的な `getattr` や自由形式method名には拡張しません。
 
 ## Result

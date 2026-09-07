@@ -38,6 +38,10 @@ foreach ($path in @(
     "start.bat",
     "update.bat",
     "requirements.txt",
+    "scripts\runtime_contract.py",
+    "runtime\runtime-contract.json",
+    "runtime\requirements-windows-cpu.lock",
+    "runtime\requirements-windows-cu128.lock",
     "VERSION"
 )) {
     $candidate = Join-Path $installDir $path

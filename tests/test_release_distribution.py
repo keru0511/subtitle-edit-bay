@@ -554,7 +554,16 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
+                        "scripts/runtime_contract.py",
+                        "runtime/runtime-contract.json",
+                        "runtime/requirements-windows-cpu.lock",
+                        "runtime/requirements-windows-cu128.lock",
                     ],
+                    "runtime_contract": {
+                        "contract_sha256": "1" * 64,
+                        "cpu_lock_sha256": "2" * 64,
+                        "cu128_lock_sha256": "3" * 64,
+                    },
                 }
             ),
             encoding="utf-8",
@@ -630,6 +639,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             ({"asset_name": "other.exe"}, "asset_name mismatch"),
             ({"sha256": "0" * 64}, "sha256 mismatch"),
             ({"required_files": ["VERSION"]}, "required_files is incomplete"),
+            ({"runtime_contract": {}}, "runtime_contract hashes are incomplete"),
         )
 
         for changes, message in mutations:

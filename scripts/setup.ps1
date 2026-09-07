@@ -158,9 +158,11 @@ if ($ProbeNvidiaStatusOnly) {
 Write-Host "Subtitle Edit Bay setup"
 Write-Host "This can take a while because WhisperX and PyTorch are large."
 
+$runtimeContractPath = "runtime\runtime-contract.json"
+$runtimeContract = Get-Content -LiteralPath $runtimeContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $python = Find-Python310
 if (-not $python) {
-    Install-WithWinget -PackageId "Python.Python.3.10" -DisplayName "Python 3.10"
+    Install-WithWinget -PackageId $runtimeContract.python.winget_package -DisplayName "Python 3.10"
     $python = Find-Python310
 }
 if (-not $python) {
@@ -168,9 +170,13 @@ if (-not $python) {
 }
 Write-Host "Python: $python"
 
+& $python "scripts\runtime_contract.py" validate --root "."
+if ($LASTEXITCODE -ne 0) { throw "The bundled runtime contract or lock file is invalid." }
+& $python "scripts\runtime_contract.py" verify-python --root "."
+if ($LASTEXITCODE -ne 0) { throw "The detected Python does not satisfy the release runtime contract." }
 $ffmpegDirectory = Find-FFmpegDirectory
 if (-not $ffmpegDirectory) {
-    Install-WithWinget -PackageId "Gyan.FFmpeg" -DisplayName "FFmpeg"
+    Install-WithWinget -PackageId $runtimeContract.ffmpeg.winget_package -DisplayName "FFmpeg"
     $ffmpegDirectory = Find-FFmpegDirectory
 }
 if (-not $ffmpegDirectory) {
@@ -180,6 +186,8 @@ $env:PATH = "$ffmpegDirectory;$env:PATH"
 New-Item -ItemType Directory -Path ".local" -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path (Resolve-Path ".local") "ffmpeg_path.txt"), $ffmpegDirectory, (New-Object Text.UTF8Encoding($false)))
 Write-Host "FFmpeg: $ffmpegDirectory"
+& $python "scripts\runtime_contract.py" verify-tools --root "."
+if ($LASTEXITCODE -ne 0) { throw "FFmpeg or ffprobe does not satisfy the release runtime contract." }
 
 $shellArchitectureBits = [IntPtr]::Size * 8
 $nvidiaSmiPath = Find-NvidiaSmi
@@ -213,60 +221,36 @@ if ($nvidiaGpuAvailable) {
     Write-Host "NVIDIA GPU: not found"
 }
 
-if (-not (Test-Path -LiteralPath ".venv\Scripts\python.exe")) {
-    Write-Host "Creating the private Python environment..."
-    & $python -m venv ".venv"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not create .venv."
-    }
+$runtimeProfile = if ($nvidiaGpuAvailable) { "cu128" } else { "cpu" }
+$profileContract = $runtimeContract.profiles.$runtimeProfile
+$runtimeLock = [string]$profileContract.lock_file
+$stagingVenv = ".venv.staging"
+$backupVenv = ".venv.previous"
+$stagingManifest = ".local\runtime-manifest.staging.json"
+if (Test-Path -LiteralPath $stagingVenv) { Remove-Item -LiteralPath $stagingVenv -Recurse -Force }
+
+Write-Host "Building the $runtimeProfile runtime from $runtimeLock..."
+& $python -m venv $stagingVenv
+if ($LASTEXITCODE -ne 0) { throw "Could not create the staging Python environment." }
+$stagingPython = (Resolve-Path "$stagingVenv\Scripts\python.exe").Path
+& $stagingPython -m pip install "pip==$($runtimeContract.python.pip_version)"
+if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
+$pipArguments = @(
+    "-m", "pip", "install", "--require-hashes", "--only-binary=:all:",
+    "--index-url", [string]$profileContract.index_url
+)
+if ($profileContract.extra_index_url) {
+    $pipArguments += @("--extra-index-url", [string]$profileContract.extra_index_url)
 }
+$pipArguments += @("-r", $runtimeLock)
+& $stagingPython @pipArguments
+if ($LASTEXITCODE -ne 0) { throw "Locked runtime installation failed. The existing runtime was not changed." }
+& $stagingPython -m pip check
+if ($LASTEXITCODE -ne 0) { throw "Locked runtime dependency verification failed. The existing runtime was not changed." }
+& $stagingPython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $stagingManifest
+if ($LASTEXITCODE -ne 0) { throw "Runtime contract verification failed. The existing runtime was not changed." }
 
-$venvPython = (Resolve-Path ".venv\Scripts\python.exe").Path
-Write-Host "Updating pip..."
-& $venvPython -m pip install --upgrade pip
-if ($LASTEXITCODE -ne 0) { throw "pip update failed." }
-
-Write-Host "Installing Subtitle Edit Bay dependencies..."
-& $venvPython -m pip install -r "requirements.txt"
-if ($LASTEXITCODE -ne 0) { throw "requirements.txt installation failed." }
-
-$whisperXVersion = "3.8.6"
-$torchVersion = "2.8.0"
-$torchVisionVersion = "0.23.0"
-$torchAudioVersion = "2.8.0"
-$cudaTorchIndex = "https://download.pytorch.org/whl/cu128"
-
-if ($nvidiaGpuAvailable) {
-    $cudaAlreadyAvailable = & $venvPython -c "import importlib.util; has_torch = importlib.util.find_spec('torch') is not None; print('true' if has_torch and __import__('torch').cuda.is_available() else 'false')"
-    $torchPackages = @(
-        "torch==$torchVersion",
-        "torchvision==$torchVisionVersion",
-        "torchaudio==$torchAudioVersion"
-    )
-    $pipArguments = @(
-        "-m",
-        "pip",
-        "install"
-    ) + $torchPackages + @(
-        "--index-url",
-        $cudaTorchIndex
-    )
-    if ($cudaAlreadyAvailable.Trim() -ne "true") {
-        Write-Host "CPU-only PyTorch detected. Replacing it with the CUDA build..."
-        $pipArguments += @("--force-reinstall", "--no-deps")
-    } else {
-        Write-Host "CUDA-enabled PyTorch detected. Verifying pinned versions..."
-    }
-
-    & $venvPython @pipArguments
-    if ($LASTEXITCODE -ne 0) { throw "CUDA-enabled PyTorch installation failed." }
-}
-
-Write-Host "Installing WhisperX $whisperXVersion..."
-& $venvPython -m pip install "whisperx==$whisperXVersion"
-if ($LASTEXITCODE -ne 0) { throw "WhisperX installation failed." }
-
-$torchRuntimeJson = & $venvPython -c "import json, torch; available = torch.cuda.is_available(); print(json.dumps({'version': torch.__version__, 'cuda_runtime': torch.version.cuda, 'cuda_available': available, 'device_name': torch.cuda.get_device_name(0) if available else ''}))"
+$torchRuntimeJson = & $stagingPython -c "import json, torch; available = torch.cuda.is_available(); print(json.dumps({'version': torch.__version__, 'cuda_runtime': torch.version.cuda, 'cuda_available': available, 'device_name': torch.cuda.get_device_name(0) if available else ''}))"
 if ($LASTEXITCODE -ne 0 -or -not $torchRuntimeJson) { throw "PyTorch verification failed." }
 $torchRuntime = ($torchRuntimeJson | Select-Object -Last 1) | ConvertFrom-Json
 $cudaAvailable = [bool]$torchRuntime.cuda_available
@@ -280,6 +264,24 @@ if ($cudaAvailable -and $torchRuntime.device_name) {
 if ($nvidiaGpuAvailable -and -not $cudaAvailable) {
     throw "An NVIDIA GPU was detected, but CUDA-enabled PyTorch is unavailable. Re-run setup.bat after checking the NVIDIA driver and network connection."
 }
+
+if (Test-Path -LiteralPath $backupVenv) { Remove-Item -LiteralPath $backupVenv -Recurse -Force }
+$hadExistingRuntime = Test-Path -LiteralPath ".venv"
+try {
+    if ($hadExistingRuntime) { Move-Item -LiteralPath ".venv" -Destination $backupVenv }
+    Move-Item -LiteralPath $stagingVenv -Destination ".venv"
+    Move-Item -LiteralPath $stagingManifest -Destination ".local\runtime-manifest.json" -Force
+    if (Test-Path -LiteralPath $backupVenv) { Remove-Item -LiteralPath $backupVenv -Recurse -Force }
+} catch {
+    if (Test-Path -LiteralPath $backupVenv) {
+        if (Test-Path -LiteralPath ".venv") { Remove-Item -LiteralPath ".venv" -Recurse -Force }
+        Move-Item -LiteralPath $backupVenv -Destination ".venv"
+    } elseif (-not $hadExistingRuntime -and (Test-Path -LiteralPath ".venv")) {
+        Remove-Item -LiteralPath ".venv" -Recurse -Force
+    }
+    throw
+}
+$venvPython = (Resolve-Path ".venv\Scripts\python.exe").Path
 
 $configPath = ".gui\runtime_config.json"
 $configChanged = $false

@@ -62,6 +62,7 @@
         "test_release_distribution",
         "test_render_ass_extra",
         "test_runtime_config",
+        "test_runtime_contract",
         "test_runtime_dependencies",
         "test_runtime_settings",
         "test_short_video",

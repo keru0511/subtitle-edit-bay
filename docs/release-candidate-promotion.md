@@ -14,14 +14,17 @@
 - PRの変更ファイルが `VERSION` の1件だけで、最終head/baseが確定している
 - 最終headに対応する未完了を含む最新の `release-readiness.yml` のpull_request runであり、そのrunが成功完了している。マージ後にAPIの `pull_requests` が空になっても、repository、workflow、head branch/SHA、最終base/head、候補commitの親とtreeでPRとの対応を確認する
 - 分類、Linuxテスト、Windows build、install/start、準備集約、readiness集約について、各ジョブの最新実行が成功している。失敗ジョブだけの再実行では、準備runの最新attemptと、成功済みbuild・install/startのattemptを分けて記録する
-- 同じ最終headに対応する未完了を含む最新の通常CI runが成功完了し、品質、portable/Qt/FFmpeg、Windows runtime、launcher、FFmpeg 6、installer smokeの各最新実行が成功している
+- 同じ最終headに対応する未完了を含む最新の通常CI runが成功完了し、分類、品質、Windows runtime、launcher、FFmpeg 6の各最新実行が成功している。通常CIのportable/Qt/FFmpegとinstaller smokeはRelease readinessへ委譲した証拠としてskipされている
 - 通常CIが実際にcheckoutした仮マージSHA/treeとhead/baseを、全必須ジョブ成功後のidentity artifactに保存する。そのSHA、親、treeがRelease readiness候補と一致する
+- CI identityの検証プロファイルが `release-candidate-v1`、委譲先が `.github/workflows/release-readiness.yml` である
 - version、候補SHA、build attemptを含むartifactが1件だけ存在し、artifact ID、GitHub SHA-256 digest、期限を取得でき、未失効である
 - 候補SHAが最終base/headを親に持つ仮マージcommitで、候補treeと公開commitのtreeが一致する
 
 候補の `candidate_source_sha` とタグを付ける `release_commit_sha` は別に保存する。候補のmanifestや準備記録を正式マージSHAへ書き換えない。準備runの最新attempt、artifact生成attempt、install/start attempt、通常CIのrun/attemptと検証対象SHA/tree、artifact ID/digest、PR、installer checksumは `release-promotion.json` に記録する。
 
 最新の該当runが待機中、実行中、失敗、キャンセル、skipの場合、古い成功runへフォールバックしない。PR更新、base/head不一致、tree不一致、fork、未知のjob構成、重複artifact、digest欠落、期限切れ、APIエラーも公開不可とする。artifactはGitHub APIからZIPを取得し、展開前にZIP全体のSHA-256をAPIのdigestと一致させる。
+
+検証の実行責務とカバレッジ対応表は [PR検証の実行責務](validation-ownership.md) を正本とする。
 
 ## 信頼境界
 

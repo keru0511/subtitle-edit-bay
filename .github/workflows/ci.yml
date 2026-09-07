@@ -15,6 +15,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify-validation:
+    name: Classify validation ownership
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      requires_preparation: ${{ steps.classify.outputs.requires_preparation }}
+    steps:
+      - name: Check out merge candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select the single validation owner
+        id: classify
+        shell: bash
+        run: >-
+          python scripts/release_readiness.py classify
+          --base-sha "${{ github.event.pull_request.base.sha }}"
+          --source-sha "${{ github.sha }}"
+          --github-output "$GITHUB_OUTPUT"
+
   python-quality:
     name: Python quality checks
     runs-on: ubuntu-latest
@@ -54,6 +77,11 @@ jobs:
 
   portable-tests:
     name: Portable, Qt, and FFmpeg tests
+    needs: classify-validation
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+      needs.classify-validation.outputs.requires_preparation == 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -310,6 +338,11 @@ jobs:
 
   windows-installer-smoke:
     name: Windows installer smoke
+    needs: classify-validation
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+      needs.classify-validation.outputs.requires_preparation == 'false')
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -369,8 +402,9 @@ jobs:
 
   validation-result:
     name: CI validation result
-    if: github.event_name == 'pull_request'
+    if: always() && github.event_name == 'pull_request'
     needs:
+      - classify-validation
       - python-quality
       - portable-tests
       - windows-tests
@@ -386,6 +420,17 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Enforce validation ownership and results
+        run: >-
+          python scripts/release_readiness.py assert-ci-validation
+          --requires-preparation "${{ needs.classify-validation.outputs.requires_preparation }}"
+          --classify-result "${{ needs.classify-validation.result }}"
+          --required-result "${{ needs.python-quality.result }}"
+          --required-result "${{ needs.windows-tests.result }}"
+          --required-result "${{ needs.windows-launcher-tests.result }}"
+          --required-result "${{ needs.ffmpeg6-compat.result }}"
+          --delegated-result "${{ needs.portable-tests.result }}"
+          --delegated-result "${{ needs.windows-installer-smoke.result }}"
       - name: Record validated source identity
         shell: bash
         env:
@@ -393,6 +438,8 @@ jobs:
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PULL_REQUEST_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          VALIDATION_PROFILE: ${{ needs.classify-validation.outputs.requires_preparation == 'true' && 'release-candidate-v1' || 'standard-v1' }}
+          DELEGATED_WORKFLOW: ${{ needs.classify-validation.outputs.requires_preparation == 'true' && '.github/workflows/release-readiness.yml' || 'none' }}
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse HEAD)"
@@ -408,6 +455,8 @@ jobs:
             --source-tree "$source_tree" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --validation-profile "$VALIDATION_PROFILE" \
+            --delegated-workflow "$DELEGATED_WORKFLOW" \
             --output ci-validation-identity.json
       - name: Upload immutable CI validation identity
         uses: actions/upload-artifact@v6

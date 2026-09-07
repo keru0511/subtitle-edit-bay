@@ -31,6 +31,20 @@ RELEASE_INFRASTRUCTURE_FILES = {
     "tests/ci_test_groups.json",
 }
 
+CI_RELEASE_CANDIDATE_PROFILE = "release-candidate-v1"
+CI_STANDARD_PROFILE = "standard-v1"
+CI_ALWAYS_REQUIRED_JOB_NAMES = (
+    "Classify validation ownership",
+    "Python quality checks",
+    "Windows runtime tests",
+    "Windows launcher tests",
+    "FFmpeg 6 compatibility",
+)
+CI_DELEGATED_JOB_NAMES = (
+    "Portable, Qt, and FFmpeg tests",
+    "Windows installer smoke",
+)
+
 
 class ReleaseReadinessError(ValueError):
     """Raised when a release candidate does not satisfy the release policy."""
@@ -167,6 +181,27 @@ def assert_preparation_results(results: Sequence[str]) -> None:
         raise ReleaseReadinessError("preparation stage failed or skipped: " + ", ".join(unsuccessful))
 
 
+def assert_ci_validation_results(
+    requires_preparation: bool,
+    classify_result: str,
+    always_required_results: Sequence[str],
+    delegated_results: Sequence[str],
+) -> None:
+    if classify_result != "success":
+        raise ReleaseReadinessError("CI validation ownership classification did not succeed")
+    if len(always_required_results) != len(CI_ALWAYS_REQUIRED_JOB_NAMES) - 1:
+        raise ReleaseReadinessError("CI validation has an unexpected required-job result count")
+    failed = [result for result in always_required_results if result != "success"]
+    if failed:
+        raise ReleaseReadinessError("required CI validation failed or skipped: " + ", ".join(failed))
+    if len(delegated_results) != len(CI_DELEGATED_JOB_NAMES):
+        raise ReleaseReadinessError("CI validation has an unexpected delegated-job result count")
+    expected = "skipped" if requires_preparation else "success"
+    unexpected = [result for result in delegated_results if result != expected]
+    if unexpected:
+        raise ReleaseReadinessError(f"CI delegated validation must be {expected}: " + ", ".join(unexpected))
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Classify and aggregate release readiness checks.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -181,6 +216,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     readiness.add_argument("--prepare-result", required=True)
     preparation = subparsers.add_parser("assert-preparation")
     preparation.add_argument("--result", action="append", required=True)
+    ci_validation = subparsers.add_parser("assert-ci-validation")
+    ci_validation.add_argument("--requires-preparation", required=True, choices=("true", "false"))
+    ci_validation.add_argument("--classify-result", required=True)
+    ci_validation.add_argument("--required-result", action="append", required=True)
+    ci_validation.add_argument("--delegated-result", action="append", required=True)
     return parser.parse_args(argv)
 
 
@@ -199,8 +239,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.requires_preparation == "true",
                 args.prepare_result,
             )
-        else:
+        elif args.command == "assert-preparation":
             assert_preparation_results(args.result)
+        else:
+            assert_ci_validation_results(
+                args.requires_preparation == "true",
+                args.classify_result,
+                args.required_result,
+                args.delegated_result,
+            )
     except (ReleaseReadinessError, ReleaseContractError) as exc:
         print(f"Release readiness error: {exc}", file=sys.stderr)
         return 2

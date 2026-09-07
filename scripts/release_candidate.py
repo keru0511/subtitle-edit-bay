@@ -16,6 +16,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Sequence
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.release_readiness import (
+    CI_ALWAYS_REQUIRED_JOB_NAMES,
+    CI_DELEGATED_JOB_NAMES,
+    CI_RELEASE_CANDIDATE_PROFILE,
+)
+
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -31,15 +41,9 @@ REQUIRED_READINESS_JOB_NAMES = (
     "Preparation result",
     "Release readiness",
 )
-REQUIRED_CI_JOB_NAMES = (
-    "Python quality checks",
-    "Portable, Qt, and FFmpeg tests",
-    "Windows runtime tests",
-    "Windows launcher tests",
-    "FFmpeg 6 compatibility",
-    "Windows installer smoke",
-)
+REQUIRED_CI_JOB_NAMES = CI_ALWAYS_REQUIRED_JOB_NAMES
 CI_VALIDATION_JOB_NAME = "CI validation result"
+CI_IDENTITY_SCHEMA_VERSION = 2
 # Kept as the public compatibility name used by existing contract tests.
 REQUIRED_JOB_NAMES = REQUIRED_READINESS_JOB_NAMES
 PER_PAGE = 100
@@ -396,6 +400,7 @@ def _require_successful_jobs(
     run_id: int,
     run_attempt: int,
     required_job_names: Sequence[str],
+    expected_conclusion: str = "success",
 ) -> dict[str, int]:
     jobs = api.pages(
         f"/repos/{api.repository}/actions/runs/{run_id}/jobs",
@@ -424,8 +429,12 @@ def _require_successful_jobs(
             attempts[attempt] = job
         job_attempt = max(attempts)
         job = attempts[job_attempt]
-        if job.get("conclusion") != "success" or job.get("status") != "completed":
-            raise ReleaseCandidateError(f"required workflow job did not succeed: {required_name}")
+        if job.get("conclusion") != expected_conclusion or job.get("status") != "completed":
+            if expected_conclusion == "success":
+                raise ReleaseCandidateError(f"required workflow job did not succeed: {required_name}")
+            raise ReleaseCandidateError(
+                f"required workflow job did not finish as {expected_conclusion}: {required_name}"
+            )
         successful_attempts[required_name] = job_attempt
     return successful_attempts
 
@@ -517,6 +526,13 @@ def select_release_candidate(
         ci_run_id,
         ci_run_attempt,
         (*REQUIRED_CI_JOB_NAMES, CI_VALIDATION_JOB_NAME),
+    )
+    _require_successful_jobs(
+        api,
+        ci_run_id,
+        ci_run_attempt,
+        CI_DELEGATED_JOB_NAMES,
+        expected_conclusion="skipped",
     )
     artifact_producer_attempt = readiness_job_attempts["Build and verify Windows installer"]
     artifact = _candidate_artifact(api, run_id, release_version, artifact_producer_attempt)
@@ -771,11 +787,13 @@ def write_ci_validation_identity(
     source_tree: str,
     workflow_run_id: int,
     workflow_run_attempt: int,
+    validation_profile: str = CI_RELEASE_CANDIDATE_PROFILE,
+    delegated_workflow: str = WORKFLOW_PATH,
 ) -> None:
     if not REPOSITORY_PATTERN.fullmatch(repository):
         raise ReleaseCandidateError("CI validation repository is invalid")
     record = {
-        "schema_version": 1,
+        "schema_version": CI_IDENTITY_SCHEMA_VERSION,
         "repository": repository,
         "event_name": "pull_request",
         "pull_request_number": _integer(pull_request_number, "CI pull request number"),
@@ -787,6 +805,8 @@ def write_ci_validation_identity(
         "workflow_path": CI_WORKFLOW_PATH,
         "workflow_run_id": _integer(workflow_run_id, "CI workflow run id"),
         "workflow_run_attempt": _integer(workflow_run_attempt, "CI workflow run attempt"),
+        "validation_profile": _string(validation_profile, "CI validation profile"),
+        "delegated_workflow": _string(delegated_workflow, "CI delegated workflow"),
     }
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -798,7 +818,7 @@ def verify_ci_validation_binding(candidate_path: Path, identity_path: Path) -> N
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read CI validation identity: {exc}") from exc
     expected = {
-        "schema_version": 1,
+        "schema_version": CI_IDENTITY_SCHEMA_VERSION,
         "repository": candidate.repository,
         "event_name": "pull_request",
         "pull_request_number": candidate.pull_request_number,
@@ -810,6 +830,8 @@ def verify_ci_validation_binding(candidate_path: Path, identity_path: Path) -> N
         "workflow_path": CI_WORKFLOW_PATH,
         "workflow_run_id": candidate.ci_workflow_run_id,
         "workflow_run_attempt": candidate.ci_artifact_workflow_run_attempt,
+        "validation_profile": CI_RELEASE_CANDIDATE_PROFILE,
+        "delegated_workflow": WORKFLOW_PATH,
     }
     if actual != expected:
         raise ReleaseCandidateError("CI validation identity does not match the selected source")
@@ -948,6 +970,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ci_record.add_argument("--source-tree", required=True)
     ci_record.add_argument("--workflow-run-id", type=int, required=True)
     ci_record.add_argument("--workflow-run-attempt", type=int, required=True)
+    ci_record.add_argument("--validation-profile", required=True)
+    ci_record.add_argument("--delegated-workflow", required=True)
     ci_record.add_argument("--output", type=Path, required=True)
     ci_verify = subparsers.add_parser("verify-ci-validation")
     ci_verify.add_argument("--candidate", type=Path, required=True)
@@ -1018,6 +1042,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.source_tree,
                 args.workflow_run_id,
                 args.workflow_run_attempt,
+                args.validation_profile,
+                args.delegated_workflow,
             )
         elif args.command == "verify-ci-validation":
             verify_ci_validation_binding(args.candidate, args.identity)

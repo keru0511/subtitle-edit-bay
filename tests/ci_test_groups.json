@@ -32,6 +32,7 @@
         "test_burn_subs",
         "test_channel_presets",
         "test_ci_test_groups",
+        "test_codex_actions",
         "test_codex_app_server_client",
         "test_codex_edit_proposal",
         "test_codex_highlight_ranker",

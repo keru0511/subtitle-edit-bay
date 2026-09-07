@@ -179,6 +179,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertEqual(reusable_release["needs"], "prepare")
         self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
         self.assertEqual(reusable_release["with"]["tag"], "${{ needs.prepare.outputs.tag }}")
+        self.assertNotIn("secrets", reusable_release)
 
     def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

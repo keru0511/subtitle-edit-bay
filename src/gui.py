@@ -42,6 +42,11 @@ from .audio_mixer import (
     reconcile_audio_mix,
     reset_audio_mix,
 )
+from .audio_mix_proposal import (
+    AudioMixProposalError,
+    apply_audio_mix_proposal,
+    build_audio_mix_proposal,
+)
 from .audio_preview_cache import (
     AudioPreviewCacheResult,
     AudioPreviewCacheStats,
@@ -369,6 +374,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexStateChanged = Signal()
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
+    audioMixProposalChanged = Signal()
     codexChatChanged = Signal()
     codexCallbackRequested = Signal(object)
     highlightCandidatesChanged = Signal()
@@ -508,6 +514,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_download_cancel = threading.Event()
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
         self._codex_proposal: dict[str, Any] | None = None
+        self._audio_mix_proposal: dict[str, Any] | None = None
         self._codex_current_time: float | None = None
         self.codexCallbackRequested.connect(
             self._run_codex_callback,
@@ -689,6 +696,10 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property("QVariantMap", notify=codexProposalChanged)
     def codexProposal(self) -> dict[str, Any]:
         return dict(self._codex_proposal or {})
+
+    @Property("QVariantMap", notify=audioMixProposalChanged)
+    def audioMixProposal(self) -> dict[str, Any]:
+        return deepcopy(self._audio_mix_proposal or {})
 
     @Property("QStringList", constant=True)
     def codexScopes(self) -> list[str]:
@@ -2238,6 +2249,9 @@ class EditBayBackend(LegacyEditBayBackend):
             self.saveProject()
         self._reset_transcription_integration_state()
         self._project = None
+        if self._audio_mix_proposal is not None:
+            self._audio_mix_proposal = None
+            self.audioMixProposalChanged.emit()
         self._project_path = ""
         self._project_dirty = False
         self._undo_stack.clear()
@@ -2417,6 +2431,63 @@ class EditBayBackend(LegacyEditBayBackend):
         self._notify_audio_mixer_preview(structure_changed=True)
         self._mark_project_dirty()
         self._set_status("音量ミキサーを既定値へ戻しました", "EDIT")
+
+    @Slot(str, int, result="QVariantMap")
+    def proposeAudioMix(self, intent: str, revision: int) -> dict[str, Any]:
+        if self._project is None or self._running or revision != self._project_revision:
+            return {}
+        try:
+            proposal = build_audio_mix_proposal(
+                intent,
+                self._project.get("audio_mix", {}).get("channels", []),
+                project_revision=self._project_revision,
+            )
+        except AudioMixProposalError as error:
+            self._set_status(f"音量ミキサー変更案を作成できません: {error}", "CHECK")
+            return {}
+        self._audio_mix_proposal = proposal
+        self.audioMixProposalChanged.emit()
+        self._set_status("音量ミキサー変更案を確認できます", "CODEX")
+        return deepcopy(proposal)
+
+    @Slot("QVariantList", bool, result=bool)
+    def applyAudioMixProposal(
+        self,
+        selected_operation_ids: list[Any] | None = None,
+        confirm_silence: bool = False,
+    ) -> bool:
+        if self._project is None or self._running or self._audio_mix_proposal is None:
+            return False
+        before = deepcopy(self._project.get("audio_mix", {}))
+        try:
+            updated, _changed_ids = apply_audio_mix_proposal(
+                before,
+                self._audio_mix_proposal,
+                current_revision=self._project_revision,
+                selected_operation_ids=(
+                    None if selected_operation_ids is None else {str(item) for item in selected_operation_ids}
+                ),
+                allow_silence=bool(confirm_silence),
+            )
+        except AudioMixProposalError as error:
+            self._set_status(f"音量ミキサー変更案を適用できません: {error}", "CHECK")
+            return False
+        self._push_history({"kind": "audio_mix", "before": before, "after": deepcopy(updated)})
+        self._project["audio_mix"] = updated
+        self.projectDataChanged.emit()
+        self._notify_audio_mixer_preview(structure_changed=True)
+        self._mark_project_dirty()
+        self._audio_mix_proposal = None
+        self.audioMixProposalChanged.emit()
+        self._set_status("選択した音量ミキサー変更を適用しました", "EDIT")
+        return True
+
+    @Slot()
+    def discardAudioMixProposal(self) -> None:
+        if self._audio_mix_proposal is not None:
+            self._audio_mix_proposal = None
+            self.audioMixProposalChanged.emit()
+        self._set_status("音量ミキサー変更案を破棄しました", "EDIT")
 
     @Slot(str)
     def loadProject(self, path: str) -> None:
@@ -2776,6 +2847,12 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         if entry.get("kind") == "timeline":
             self._replace_timeline(deepcopy(entry.get(state, {})))
+            return
+        if entry.get("kind") == "audio_mix":
+            self._project["audio_mix"] = deepcopy(entry.get(state, {}))
+            self.projectDataChanged.emit()
+            self._notify_audio_mixer_preview(structure_changed=True)
+            self._mark_project_dirty()
             return
         affected_ids = {
             str(item["id"])

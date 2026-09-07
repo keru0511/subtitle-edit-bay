@@ -26,6 +26,7 @@
         "test_ass_template",
         "test_assemble_video",
         "test_audio_auto_mix",
+        "test_audio_mix_proposal",
         "test_audio_mixer",
         "test_audio_preview_cache",
         "test_batch",

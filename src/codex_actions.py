@@ -6,6 +6,8 @@ from enum import Enum
 import math
 from typing import Any, Callable, Mapping, Protocol
 
+from .audio_mix_proposal import build_audio_mix_context
+
 ACTION_SCHEMA_VERSION = 1
 
 
@@ -425,6 +427,7 @@ class GuiActionBackend:
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
+            "propose_audio_mix": self._propose_audio,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
@@ -481,11 +484,14 @@ class GuiActionBackend:
         return HandlerResult("subtitle state inspected", state={"segments": safe})
 
     def _inspect_audio(self, _args: Mapping[str, Any]) -> HandlerResult:
-        safe_fields = {"id", "label", "kind", "enabled", "volume_percent", "delay_seconds"}
-        channels = [
-            {key: value for key, value in item.items() if key in safe_fields} for item in self._gui.audioMixerChannels
-        ]
-        return HandlerResult("audio mix state inspected", state={"channels": channels})
+        context = build_audio_mix_context(
+            self._gui.audioMixerChannels,
+            preview_levels=self._gui.audioPreviewLevels,
+            master_level=float(self._gui.audioMasterLevel),
+            limiter_reduction_db=float(self._gui.audioLimiterReductionDb),
+            playhead_seconds=float(self._gui.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+        )
+        return HandlerResult("audio mix state inspected", state=context)
 
     def _inspect_timeline(self, _args: Mapping[str, Any]) -> HandlerResult:
         return HandlerResult("timeline state inspected", state=deepcopy(dict(self._gui.cutTimeline)))
@@ -545,6 +551,16 @@ class GuiActionBackend:
         if not self._gui._codex_session.running:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
+
+    def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
+        proposal = self._gui.proposeAudioMix(str(args["intent"]), revision)
+        if not proposal:
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be created")
+        return HandlerResult(
+            "audio mix proposal is waiting for explicit apply",
+            state={"status": "waiting_approval"},
+            proposal=proposal,
+        )
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

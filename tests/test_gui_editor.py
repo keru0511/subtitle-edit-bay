@@ -1471,6 +1471,31 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app._project["audio_mix"]["customized"])
         self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
 
+    def test_audio_mix_proposal_applies_selected_change_to_preview_and_history(self) -> None:
+        self._load_project()
+        self.app._project_dirty = False
+        before_revision = self.app._project_revision
+        before = self.app.audioMixerChannels[1]["volume_percent"]
+
+        proposal = self.app.proposeAudioMix("音声を上げて", before_revision)
+
+        self.assertTrue(proposal["operations"])
+        self.assertEqual(self.app.audioMixerChannels[1]["volume_percent"], before)
+        operation = next(
+            item for item in proposal["operations"] if item["channel_id"] == self.app.audioMixerChannels[1]["id"]
+        )
+        self.assertTrue(self.app.applyAudioMixProposal([operation["id"]], False))
+        self.app.autosave_timer.stop()
+        self.assertGreater(self.app.audioMixerChannels[1]["volume_percent"], before)
+        self.assertTrue(self.app._project_dirty)
+        self.assertEqual(self.app._project_revision, before_revision + 1)
+        self.assertEqual(self.app.audioMixProposal, {})
+        self.assertEqual(self.app._undo_stack[-1]["kind"], "audio_mix")
+
+        self.app.undoEdit()
+        self.app.autosave_timer.stop()
+        self.assertEqual(self.app.audioMixerChannels[1]["volume_percent"], before)
+
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()
 

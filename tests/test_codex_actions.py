@@ -270,6 +270,10 @@ class GuiActionBackendTests(unittest.TestCase):
             }
             subtitleSegments = _project["segments"]
             audioMixerChannels = [{"id": "bgm", "enabled": True, "volume_percent": 70, "path": "C:/private/bgm.wav"}]
+            audioPreviewLevels = {"bgm": 0.4}
+            audioMasterLevel = 0.4
+            audioLimiterReductionDb = 0.0
+            editorPlayhead = {"sourcePositionMs": 1200}
             highlightAnalysisState = "idle"
 
         backend = GuiActionBackend(GuiStub())
@@ -278,8 +282,34 @@ class GuiActionBackendTests(unittest.TestCase):
 
         self.assertNotIn("path", subtitle["segments"][0])
         self.assertNotIn("path", audio["channels"][0])
+        self.assertEqual(audio["channels"][0]["preview_level"], 0.4)
         with self.assertRaisesRegex(ActionRejected, "no backend handler"):
             backend.inspect("save_project", {})
+
+    def test_audio_proposal_uses_fixed_gui_handler_and_does_not_apply(self) -> None:
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+
+            def __init__(self) -> None:
+                self.applied = False
+
+            def proposeAudioMix(self, intent: str, revision: int) -> dict[str, Any]:
+                return {
+                    "summary": intent,
+                    "base_revision": revision,
+                    "operations": [{"id": "audio-001", "type": "update_audio_channel"}],
+                }
+
+        gui = GuiStub()
+        backend = GuiActionBackend(gui)
+        result = backend.propose("propose_audio_mix", {"intent": "BGMを下げて"}, 4)
+
+        self.assertEqual(result.state, {"status": "waiting_approval"})
+        self.assertEqual(result.proposal["base_revision"], 4)
+        self.assertFalse(gui.applied)
 
 
 if __name__ == "__main__":

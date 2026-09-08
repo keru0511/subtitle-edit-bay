@@ -321,6 +321,26 @@ class CodexTimelineProposalTests(unittest.TestCase):
         with self.assertRaisesRegex(TimelineProposalError, "unsupported normal operation"):
             TimelineProposal.from_json(payload)
 
+    def test_parser_rejects_non_string_text_and_irrelevant_operation_fields(self) -> None:
+        state = project()
+        payload = proposal(
+            "normal",
+            state,
+            [{"id": "clear", "type": "clear_cuts", "clip_id": "ignored"}],
+        )
+
+        with self.assertRaisesRegex(TimelineProposalError, "clear_cuts.*clip_id"):
+            TimelineProposal.from_json(payload)
+
+        payload["operations"] = [{"id": "clear", "type": "clear_cuts", "reason": ["invalid"]}]
+        with self.assertRaisesRegex(TimelineProposalError, "reason must be a string"):
+            TimelineProposal.from_json(payload)
+
+        payload["operations"] = [{"id": "clear", "type": "clear_cuts"}]
+        payload["summary"] = {"text": "invalid"}
+        with self.assertRaisesRegex(TimelineProposalError, "summary must be a string"):
+            TimelineProposal.from_json(payload)
+
 
 if __name__ == "__main__":
     unittest.main()

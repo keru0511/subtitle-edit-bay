@@ -50,6 +50,20 @@ OPERATION_FIELDS = {
     "highlight_candidate_id",
     "target_seconds",
 }
+OPERATION_FIELDS_BY_TYPE = {
+    "add_cut": {"source_start", "source_end"},
+    "remove_range": {"source_start", "source_end"},
+    "restore_cut": {"cut_id"},
+    "restore_range": {"source_start", "source_end"},
+    "update_cut_range": {"cut_id", "source_start", "source_end"},
+    "clear_cuts": set(),
+    "add_clip_by_range": {"clip_id", "source_start", "source_end"},
+    "remove_clip": {"clip_id"},
+    "move_clip": {"clip_id", "before_clip_id"},
+    "update_clip_range": {"clip_id", "source_start", "source_end"},
+    "use_highlight_candidate": {"clip_id", "highlight_candidate_id"},
+    "set_short_duration_target": {"target_seconds"},
+}
 SAFE_SEGMENT_FIELDS = {"id", "start", "end", "text", "speaker"}
 SAFE_SELECTION_FIELDS = {"basis", "sourcePositionMs", "outputPositionMs", "segment_id"}
 MIN_SHORT_CLIP_SECONDS = 0.05
@@ -125,7 +139,15 @@ class TimelineProposalOperation:
         allowed = NORMAL_OPERATION_TYPES if target == "normal" else SHORT_OPERATION_TYPES
         if not isinstance(operation_type, str) or operation_type not in allowed:
             raise TimelineProposalError(f"unsupported {target} operation type: {operation_type!r}")
+        _reject_unknown(
+            payload,
+            {"id", "type", "reason"} | OPERATION_FIELDS_BY_TYPE[operation_type],
+            f"operations[{index}] {operation_type}",
+        )
         operation_id = _required_id(payload, "id", index)
+        reason = payload.get("reason", "")
+        if not isinstance(reason, str):
+            raise TimelineProposalError(f"operations[{index}].reason must be a string")
         cut_id = ""
         clip_id = ""
         before_clip_id = ""
@@ -162,7 +184,7 @@ class TimelineProposalOperation:
         return cls(
             id=operation_id,
             type=operation_type,
-            reason=str(payload.get("reason", "")),
+            reason=reason,
             cut_id=cut_id,
             clip_id=clip_id,
             before_clip_id=before_clip_id,
@@ -223,8 +245,11 @@ class TimelineProposal:
         warnings = payload.get("warnings", [])
         if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
             raise TimelineProposalError("proposal.warnings must be an array of strings")
+        summary = payload.get("summary")
+        if not isinstance(summary, str):
+            raise TimelineProposalError("proposal.summary must be a string")
         return cls(
-            summary=str(payload.get("summary", "")),
+            summary=summary,
             target=target,
             operations=operations,
             base_revision=base_revision,
@@ -337,9 +362,7 @@ def build_timeline_proposal_context(
         "segments": segments,
         "highlight_candidates": safe_highlights,
         "selection": {
-            key: deepcopy(value)
-            for key, value in dict(selection or {}).items()
-            if key in SAFE_SELECTION_FIELDS
+            key: deepcopy(value) for key, value in dict(selection or {}).items() if key in SAFE_SELECTION_FIELDS
         },
     }
 

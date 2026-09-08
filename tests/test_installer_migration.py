@@ -221,6 +221,7 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn('Parameters: "--setup {code:SetupParameters}"', installer)
         self.assertNotIn(r'Filename: "{app}\setup.bat"', installer)
         self.assertIn("CommandLineToArgvW", launcher)
+        self.assertLess(launcher.index("#include <windows.h>"), launcher.index("#include <shellapi.h>"))
         self.assertIn('L"SUBTITLE_EDIT_BAY_MIGRATION_SOURCE"', launcher)
         self.assertIn('L"SUBTITLE_EDIT_BAY_SKIP_RUNTIME_CONFIG"', launcher)
         self.assertIn('L"SUBTITLE_EDIT_BAY_SKIP_SPEAKER_COLORS"', launcher)

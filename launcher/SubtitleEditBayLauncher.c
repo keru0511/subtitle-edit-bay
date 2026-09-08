@@ -1,8 +1,8 @@
 #define UNICODE
 #define _UNICODE
 
-#include <shellapi.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <wchar.h>
 
 static void show_error(const wchar_t *message) {

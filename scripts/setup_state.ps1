@@ -1,5 +1,3 @@
-Set-StrictMode -Version 2.0
-
 function Get-SetupMutexName {
     param([Parameter(Mandatory = $true)][string]$ProjectRoot)
     $normalized = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd([char[]] "\\/").ToUpperInvariant()

@@ -163,9 +163,7 @@ def build_completion_plan(
             )
         )
     if "audio" in ordered_scope and not bool(current_state.get("audio_reviewed")):
-        steps.append(
-            PlanStep("audio_review", "audio", "propose", "propose_audio_mix", {"intent": "完成品質に調整"})
-        )
+        steps.append(PlanStep("audio_review", "audio", "propose", "propose_audio_mix", {"intent": "完成品質に調整"}))
     if "timeline" in ordered_scope and not bool(current_state.get("timeline_reviewed")):
         steps.append(
             PlanStep(

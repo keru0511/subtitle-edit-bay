@@ -22,6 +22,7 @@ RELEASE_INFRASTRUCTURE_PREFIXES = (
 RELEASE_INFRASTRUCTURE_FILES = {
     "scripts/build_installer.ps1",
     "scripts/build_release_package.ps1",
+    "scripts/release_candidate.py",
     "scripts/release_contract.py",
     "scripts/release_readiness.py",
     "scripts/release_state.py",

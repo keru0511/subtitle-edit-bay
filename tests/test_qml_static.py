@@ -94,6 +94,7 @@ class QmlStaticTests(unittest.TestCase):
         )
         self.assertIn("root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0", workflow)
         self.assertIn("readonly property int codexDrawerHeaderInset", workflow)
+        self.assertIn("readonly property int codexDrawerBodyInset", workflow)
         self.assertIn("readonly property int codexInteractiveRightInset", workflow)
         self.assertIn("visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)", workflow)
         self.assertNotIn(
@@ -104,6 +105,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "codexDrawerToggle"', workflow)
         self.assertIn('objectName: "codexDrawerCloseButton"', sidebar)
         self.assertIn("anchors.rightMargin: root.codexInteractiveRightInset + 12", workflow)
+        self.assertIn("Layout.rightMargin: root.codexDrawerBodyInset", workflow)
         self.assertIn("visible: !root.codexAuthenticated", workflow)
         self.assertIn("chatPanel.expanded = true", sidebar)
 

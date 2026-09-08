@@ -72,6 +72,8 @@ ApplicationWindow {
     readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
         ? (root.codexDrawerOpen ? 310 : 104) : 0
+    readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
+        && root.codexDrawerOpen ? 310 : 0
     readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0
         ? root.codexSidebarWidth + 10 : 0
     readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
@@ -1898,6 +1900,7 @@ ApplicationWindow {
                 id: processingProgressOverlay
                 objectName: "processingProgressOverlay"
                 Layout.fillWidth: true
+                Layout.rightMargin: root.codexDrawerBodyInset
                 Layout.preferredHeight: visible ? progressPanel.implicitHeight : 0
                 Layout.minimumHeight: visible ? progressPanel.implicitHeight : 0
                 implicitHeight: progressPanel.implicitHeight

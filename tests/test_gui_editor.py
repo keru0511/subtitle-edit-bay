@@ -3476,6 +3476,41 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
+    def test_main_progress_stop_stays_clickable_beside_codex_drawer(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+
+        self.app._processing_progress.start("render")
+        self.app._running = True
+        self.app.progressDetailsChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.activeJobChanged.emit()
+        self.app.processEvents()
+
+        self.assertEqual(window.property("activeOverlay"), "")
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        progress = self._quick_item(window, "processingProgressOverlay")
+        self.assertTrue(sidebar.isVisible())
+        self.assertTrue(progress.isVisible())
+        progress_right = progress.mapToScene(QPointF(progress.width(), 0)).x()
+        sidebar_left = sidebar.mapToScene(QPointF(0, 0)).x()
+        self.assertLessEqual(progress_right, sidebar_left)
+
+        progress_panel = self._quick_item(window, "processingProgressPanel")
+        process_stop = self._quick_visual_item(progress_panel, "processingProgressStopButton")
+        self.assertTrue(process_stop.isVisible())
+        with patch.object(self.app, "cancelProcessing") as stop_process:
+            self._click(window, process_stop)
+        stop_process.assert_called_once_with()
+
     def test_short_mode_keeps_progress_controls_visible_during_export(self) -> None:
         self._load_project()
         _, window = self._load_qml()

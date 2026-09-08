@@ -233,6 +233,7 @@ $candidateManifest = ".local\runtime-manifest.$runtimeGeneration.json"
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 $runtimeActivationCommitted = $false
 trap {
+    $setupError = $_
     if (-not $runtimeActivationCommitted) {
         foreach ($uncommittedPath in @($candidateManifest, $runtimeVenv)) {
             if (-not (Test-Path -LiteralPath $uncommittedPath)) { continue }
@@ -243,7 +244,7 @@ trap {
             }
         }
     }
-    throw
+    throw $setupError
 }
 
 $previousRuntime = $null
@@ -312,7 +313,7 @@ $verifyActivatedRuntime = {
     if ($LASTEXITCODE -ne 0) { throw "Python dependency verification failed after runtime activation." }
     & $runtimePython -c "from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict(); print(status.to_dict())"
     if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed after runtime activation." }
-}
+}.GetNewClosure()
 Set-ActiveRuntimeGeneration `
     -NewRuntimeDirectory $runtimeVenv `
     -CandidateManifestPath $candidateManifest `

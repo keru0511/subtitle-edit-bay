@@ -173,6 +173,10 @@ jobs:
           & $runtimePython -m pip install --require-hashes --index-url $contract.profiles.cpu.index_url -r source/runtime/requirements-windows-cpu.lock
           & $runtimePython -m pip check
           & $runtimePython source/scripts/runtime_contract.py verify-runtime --root source --profile cpu --manifest-output "${{ runner.temp }}/runtime-manifest.json"
+      - name: Set up x64 MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Ensure Inno Setup compiler
         shell: pwsh
         run: |

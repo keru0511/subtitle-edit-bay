@@ -1,4 +1,4 @@
-﻿#ifndef SourceRoot
+#ifndef SourceRoot
   #error SourceRoot must be defined by scripts/build_installer.ps1
 #endif
 
@@ -77,12 +77,13 @@ Source: "{#SourceRoot}\src\*"; DestDir: "{app}\src"; Excludes: "__pycache__\*,*\
 Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_colors.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_activation.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\setup_state.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_contract.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\apply_installer_update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\validate_runtime.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\installer\launch.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "{#SourceRoot}\dist\SubtitleEditBayLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceRoot}\dist\SubtitleEditBayLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\runtime\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\setup.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -93,14 +94,14 @@ Source: "{#SourceRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Subtitle Edit Bay"; Filename: "{code:LauncherExecutable}"; Parameters: "{code:LauncherParameters}"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"
-Name: "{group}\初回セットアップ・修復"; Filename: "{app}\setup.bat"; WorkingDir: "{app}"; Comment: "依存関係をセットアップまたは修復します"
-Name: "{group}\アップデート"; Filename: "{app}\update.bat"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを更新します"
+Name: "{group}\Subtitle Edit Bay"; Filename: "{app}\SubtitleEditBayLauncher.exe"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"
+Name: "{group}\初回セットアップ・修復"; Filename: "{app}\SubtitleEditBayLauncher.exe"; Parameters: "--setup"; WorkingDir: "{app}"; Comment: "依存関係をセットアップまたは修復します"
+Name: "{group}\アップデート"; Filename: "{app}\SubtitleEditBayLauncher.exe"; Parameters: "--update"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを更新します"
 Name: "{group}\アンインストール"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Subtitle Edit Bay"; Filename: "{code:LauncherExecutable}"; Parameters: "{code:LauncherParameters}"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"; Tasks: desktopicon
+Name: "{autodesktop}\Subtitle Edit Bay"; Filename: "{app}\SubtitleEditBayLauncher.exe"; WorkingDir: "{app}"; Comment: "Subtitle Edit Bayを起動します"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\setup.bat"; Description: "初回セットアップを実行する（インターネット接続が必要です）"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent shellexec; Tasks: initialsetup
+Filename: "{app}\SubtitleEditBayLauncher.exe"; Parameters: "--setup"; Description: "初回セットアップを実行する（インターネット接続が必要です）"; WorkingDir: "{app}"; Flags: postinstall skipifsilent; Tasks: initialsetup
 ; Silent GUI updates intentionally skip the optional task above. The update
 ; helper always runs scripts\setup.ps1 inside its application/runtime transaction.
 
@@ -114,22 +115,6 @@ Type: filesandordirs; Name: "{app}\.local\runtimes"
 Type: files; Name: "{app}\VERSION"
 
 [Code]
-function LauncherExecutable(Param: String): String;
-begin
-  if FileExists(ExpandConstant('{app}\SubtitleEditBayLauncher.exe')) then
-    Result := ExpandConstant('{app}\SubtitleEditBayLauncher.exe')
-  else
-    Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
-end;
-
-function LauncherParameters(Param: String): String;
-begin
-  if FileExists(ExpandConstant('{app}\SubtitleEditBayLauncher.exe')) then
-    Result := ''
-  else
-    Result := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + ExpandConstant('{app}\scripts\launch.ps1') + '"';
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then

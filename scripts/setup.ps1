@@ -1,8 +1,10 @@
 param(
     [switch]$ProbeNvidiaOnly,
     [switch]$ProbeNvidiaStatusOnly,
+    [switch]$ProbeCpuInstallArgumentsOnly,
     [string]$NvidiaSmiSearchRoot = "",
-    [string]$NvidiaSmiOverride = ""
+    [string]$NvidiaSmiOverride = "",
+    [string]$SetupTestHook = $env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK
 )
 
 # Windows PowerShell 5.1 turns text written to stderr by native programs into
@@ -13,6 +15,7 @@ $PSDefaultParameterValues["*:ErrorAction"] = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 $projectRoot = (Get-Location).Path
 . (Join-Path $PSScriptRoot "runtime_activation.ps1")
+. (Join-Path $PSScriptRoot "setup_state.ps1")
 
 function Find-Python310 {
     $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
@@ -134,6 +137,20 @@ function Get-NvidiaGpuProbe {
     }
 }
 
+function Get-RuntimePipArguments {
+    param(
+        [Parameter(Mandatory = $true)]$ProfileContract,
+        [Parameter(Mandatory = $true)][string]$RuntimeLock
+    )
+    $arguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$ProfileContract.index_url)
+    $extraIndexProperty = $ProfileContract.PSObject.Properties["extra_index_url"]
+    if ($extraIndexProperty -and $extraIndexProperty.Value) {
+        $arguments += @("--extra-index-url", [string]$extraIndexProperty.Value)
+    }
+    $arguments += @("-r", $RuntimeLock)
+    return $arguments
+}
+
 if ($ProbeNvidiaOnly) {
     $probePath = Find-NvidiaSmi -WindowsRoot $NvidiaSmiSearchRoot
     if ($probePath) {
@@ -157,8 +174,39 @@ if ($ProbeNvidiaStatusOnly) {
     exit 0
 }
 
+if ($ProbeCpuInstallArgumentsOnly) {
+    $probeContract = Get-Content -LiteralPath "runtime\runtime-contract.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    $probeProfile = $probeContract.profiles.cpu
+    Write-Output (Get-RuntimePipArguments -ProfileContract $probeProfile -RuntimeLock ([string]$probeProfile.lock_file) | ConvertTo-Json -Compress)
+    exit 0
+}
+
+$setupLease = Enter-SetupMutex -ProjectRoot $projectRoot
+if (-not $setupLease.Acquired) {
+    $setupLease.Mutex.Dispose()
+    Write-Host "Setup is already running for this installation."
+    exit 32
+}
+$runtimeActivationCommitted = $false
+$uncommittedRuntimePaths = @()
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Starting setup"
+trap {
+    $setupError = $_
+    if (-not $runtimeActivationCommitted) {
+        foreach ($uncommittedPath in $uncommittedRuntimePaths) {
+            if (-not (Test-Path -LiteralPath $uncommittedPath)) { continue }
+            try { Remove-Item -LiteralPath $uncommittedPath -Recurse -Force }
+            catch { Write-Warning ("Could not remove uncommitted runtime data at " + $uncommittedPath + ": " + $_) }
+        }
+    }
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "failed" -Stage "Setup failed" -Message $setupError.Exception.Message
+    Exit-SetupMutex -Lease $setupLease
+    exit 1
+}
+
 Write-Host "Subtitle Edit Bay setup"
 Write-Host "This can take a while because WhisperX and PyTorch are large."
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Checking system requirements"
 
 $runtimeContractPath = "runtime\runtime-contract.json"
 $runtimeContract = Get-Content -LiteralPath $runtimeContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -235,21 +283,7 @@ New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 $runtimeVenvFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $runtimeVenv))
 $activeManifestFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $activeManifest))
 $candidateManifestFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $candidateManifest))
-$runtimeActivationCommitted = $false
-trap {
-    $setupError = $_
-    if (-not $runtimeActivationCommitted) {
-        foreach ($uncommittedPath in @($candidateManifest, $runtimeVenv)) {
-            if (-not (Test-Path -LiteralPath $uncommittedPath)) { continue }
-            try {
-                Remove-Item -LiteralPath $uncommittedPath -Recurse -Force
-            } catch {
-                Write-Warning "Could not remove uncommitted runtime data at ${uncommittedPath}: $_"
-            }
-        }
-    }
-    throw $setupError
-}
+$uncommittedRuntimePaths = @($candidateManifest, $runtimeVenv)
 
 $previousRuntime = $null
 if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
@@ -268,18 +302,23 @@ if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
 }
 
 Write-Host "Building the $runtimeProfile runtime from $runtimeLock..."
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Building the pinned runtime"
+if ($SetupTestHook) {
+    $hookPath = [IO.Path]::GetFullPath($SetupTestHook)
+    if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf)) { throw "The setup test hook is missing: $hookPath" }
+    $hookPowerShell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    & $hookPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $hookPath -Phase "BeforeRuntimeBuild" -RuntimeDirectory $runtimeVenvFull -ProjectRoot $projectRoot -RuntimeProfile $runtimeProfile
+    if ($LASTEXITCODE -ne 0) { throw "Setup test hook failed with exit code $LASTEXITCODE." }
+}
 & $python -m venv $runtimeVenv
 if ($LASTEXITCODE -ne 0) { throw "Could not create the new Python runtime generation." }
 $runtimePython = (Resolve-Path "$runtimeVenv\Scripts\python.exe").Path
 & $runtimePython -m pip install "pip==$($runtimeContract.python.pip_version)"
 if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
-$pipArguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$profileContract.index_url)
-if ($profileContract.extra_index_url) {
-    $pipArguments += @("--extra-index-url", [string]$profileContract.extra_index_url)
-}
-$pipArguments += @("-r", $runtimeLock)
+$pipArguments = Get-RuntimePipArguments -ProfileContract $profileContract -RuntimeLock $runtimeLock
 & $runtimePython @pipArguments
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime installation failed. The existing runtime was not changed." }
+if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw "The runtime Python executable was not created." }
 & $runtimePython -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime dependency verification failed. The existing runtime was not changed." }
 & $runtimePython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $candidateManifest
@@ -378,3 +417,11 @@ if ($cudaAvailable) {
     Write-Host "CUDA: unavailable. The first-run preset was configured for CPU and libx264."
 }
 Write-Host "Setup verification passed."
+Write-SetupStatus -ProjectRoot $projectRoot -Status "success" -Stage "Setup completed" -Details @{
+    python = $venvPython
+    cuda_available = $cudaAvailable
+    cuda_runtime = $cudaRuntime
+    device_name = [string]$torchRuntime.device_name
+    ffmpeg_directory = $ffmpegDirectory
+}
+Exit-SetupMutex -Lease $setupLease

@@ -11,8 +11,23 @@ static void show_error(const wchar_t *message) {
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show_command) {
     (void)instance;
     (void)previous;
-    (void)command_line;
     (void)show_command;
+
+    const wchar_t *powershell_arguments = L"";
+    if (command_line != NULL && command_line[0] != L'\0') {
+        if (wcscmp(command_line, L"--setup") == 0) {
+            powershell_arguments = L" -Action Setup";
+        } else if (wcscmp(command_line, L"--update") == 0) {
+            powershell_arguments = L" -Action Update";
+        } else if (wcscmp(command_line, L"--probe-setup") == 0) {
+            powershell_arguments = L" -ProbeSetupStateOnly";
+        } else if (wcscmp(command_line, L"--probe-setup-running") == 0) {
+            powershell_arguments = L" -ProbeSetupRunningOnly";
+        } else {
+            show_error(L"不明な起動オプションです。");
+            return 2;
+        }
+    }
 
     wchar_t module_path[32768];
     DWORD length = GetModuleFileNameW(NULL, module_path, (DWORD)(sizeof(module_path) / sizeof(module_path[0])));
@@ -45,9 +60,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     if (swprintf_s(
             command,
             sizeof(command) / sizeof(command[0]),
-            L"\"%s\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%s\"",
+            L"\"%s\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%s\"%s",
             system_directory,
-            script_path) < 0) {
+            script_path,
+            powershell_arguments) < 0) {
         show_error(L"起動コマンドが長すぎます。");
         return 2;
     }

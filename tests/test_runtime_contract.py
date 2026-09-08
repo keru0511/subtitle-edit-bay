@@ -16,6 +16,7 @@ class RuntimeContractTests(unittest.TestCase):
     def test_contract_imports_real_whisperx_processing_entrypoints(self) -> None:
         contract = RUNTIME_CONTRACT.load_contract(ROOT)
 
+        self.assertEqual(contract["critical_imports"][0], "typing_extensions")
         self.assertIn("whisperx.asr", contract["critical_imports"])
         self.assertIn("whisperx.alignment", contract["critical_imports"])
 

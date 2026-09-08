@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    def test_gui_initializes_typing_extensions_before_pyside(self) -> None:
+        gui = (ROOT / "src" / "gui.py").read_text(encoding="utf-8")
+
+        self.assertLess(gui.index("from typing_extensions import Self"), gui.index("from PySide6.QtCore import"))
+
     def _require_windows_git(self) -> str:
         executable = shutil.which("git.exe")
         if executable:

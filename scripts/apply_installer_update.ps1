@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$PackagePath,
     [Parameter(Mandatory = $true)][int]$ParentPid,
     [Parameter(Mandatory = $true)][string]$InstallRoot,
@@ -100,19 +100,35 @@ function Restore-RecoverySnapshot {
 function Move-RuntimeToRecovery {
     param([Parameter(Mandatory = $true)][string]$SnapshotRoot)
     $runtime = Join-Path $InstallRoot ".venv"
-    if (-not (Test-Path -LiteralPath $runtime -PathType Container)) { return $false }
-    $runtimeRecovery = Join-Path $SnapshotRoot "runtime\.venv"
-    New-Item -ItemType Directory -Path (Split-Path -Parent $runtimeRecovery) -Force | Out-Null
-    Move-Item -LiteralPath $runtime -Destination $runtimeRecovery
-    return $true
+    if (-not (Test-Path -LiteralPath $runtime)) {
+        return @{ Evacuated = $false; WasJunction = $false; Target = "" }
+    }
+    $item = Get-Item -LiteralPath $runtime -Force
+    $isJunction = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isJunction) {
+        $target = $item.Target
+        Remove-Item -LiteralPath $runtime -Force
+        return @{ Evacuated = $true; WasJunction = $true; Target = $target }
+    } else {
+        $runtimeRecovery = Join-Path $SnapshotRoot "runtime\.venv"
+        New-Item -ItemType Directory -Path (Split-Path -Parent $runtimeRecovery) -Force | Out-Null
+        Move-Item -LiteralPath $runtime -Destination $runtimeRecovery
+        return @{ Evacuated = $true; WasJunction = $false; Target = "" }
+    }
 }
 
 function New-RuntimeStateSnapshot {
     param([Parameter(Mandatory = $true)][string]$SnapshotRoot)
     $stateRoot = Join-Path $SnapshotRoot "runtime-state"
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+    $stateFiles = @(
+        ".gui\runtime_config.json",
+        ".local\ffmpeg_path.txt",
+        ".local\runtime-manifest.json",
+        ".local\setup-status.json"
+    )
     $entries = @{}
-    foreach ($relative in @(".gui\runtime_config.json", ".local\ffmpeg_path.txt")) {
+    foreach ($relative in $stateFiles) {
         $source = Join-Path $InstallRoot $relative
         $entries[$relative] = Test-Path -LiteralPath $source -PathType Leaf
         if ($entries[$relative]) {
@@ -131,13 +147,27 @@ function New-RuntimeStateSnapshot {
 function Restore-RuntimeState {
     param([Parameter(Mandatory = $true)][string]$SnapshotRoot)
     $stateRoot = Join-Path $SnapshotRoot "runtime-state"
-    $entries = Get-Content -LiteralPath (Join-Path $stateRoot "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    foreach ($relative in @(".gui\runtime_config.json", ".local\ffmpeg_path.txt")) {
+    $manifestPath = Join-Path $stateRoot "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return }
+    $entries = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $stateFiles = @(
+        ".gui\runtime_config.json",
+        ".local\ffmpeg_path.txt",
+        ".local\runtime-manifest.json",
+        ".local\setup-status.json"
+    )
+    foreach ($relative in $stateFiles) {
         $destination = Join-Path $InstallRoot $relative
-        $wasPresent = [bool]($entries.PSObject.Properties[$relative].Value)
+        $wasPresent = $false
+        if ($entries.PSObject.Properties[$relative]) {
+            $wasPresent = [bool]($entries.PSObject.Properties[$relative].Value)
+        }
         if ($wasPresent) {
-            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-            Copy-Item -LiteralPath (Join-Path $stateRoot $relative) -Destination $destination -Force
+            $source = Join-Path $stateRoot $relative
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+                Copy-Item -LiteralPath $source -Destination $destination -Force
+            }
         } elseif (Test-Path -LiteralPath $destination) {
             Remove-Item -LiteralPath $destination -Force
         }
@@ -145,10 +175,37 @@ function Restore-RuntimeState {
 }
 
 function Restore-Runtime {
-    param([string]$SnapshotRoot, [bool]$HadRuntime)
+    param([string]$SnapshotRoot, [hashtable]$RuntimeInfo)
+    if (-not $RuntimeInfo -or -not $RuntimeInfo.Evacuated) {
+        return
+    }
     $runtime = Join-Path $InstallRoot ".venv"
-    if (Test-Path -LiteralPath $runtime) { Remove-Item -LiteralPath $runtime -Recurse -Force }
-    if ($HadRuntime) {
+    if (Test-Path -LiteralPath $runtime) {
+        $item = Get-Item -LiteralPath $runtime -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Remove-Item -LiteralPath $runtime -Force
+        } else {
+            Remove-Item -LiteralPath $runtime -Recurse -Force
+        }
+    }
+    if ($RuntimeInfo.WasJunction) {
+        $manifestPath = Join-Path $InstallRoot ".local\runtime-manifest.json"
+        $targetDir = $null
+        if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+            try {
+                $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($manifest.runtime_directory) {
+                    $targetDir = [IO.Path]::GetFullPath((Join-Path $InstallRoot ([string]$manifest.runtime_directory)))
+                }
+            } catch { }
+        }
+        if (-not $targetDir -and $RuntimeInfo.Target) {
+            $targetDir = $RuntimeInfo.Target
+        }
+        if ($targetDir -and (Test-Path -LiteralPath $targetDir -PathType Container)) {
+            New-Item -ItemType Junction -Path $runtime -Target $targetDir -Force | Out-Null
+        }
+    } else {
         $runtimeRecovery = Join-Path $SnapshotRoot "runtime\.venv"
         if (-not (Test-Path -LiteralPath $runtimeRecovery -PathType Container)) { throw "Runtime recovery directory is missing." }
         Move-Item -LiteralPath $runtimeRecovery -Destination $runtime
@@ -245,7 +302,7 @@ function Invoke-RuntimeSetup {
     $powerShell = (Get-Command "powershell.exe" -ErrorAction Stop).Source
     $stderrLog = "$setupLog.stderr"
     $setup = Start-Process -FilePath $powerShell -ArgumentList @(
-        "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ('"' + $setupScript + '"')
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ('"' + $setupScript + '"'), "-KeepPreviousRuntime"
     ) -WorkingDirectory $InstallRoot -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $setupLog -RedirectStandardError $stderrLog
     if (Test-Path -LiteralPath $stderrLog) {
         Add-Content -LiteralPath $setupLog -Value (Get-Content -LiteralPath $stderrLog -Raw -ErrorAction SilentlyContinue) -Encoding UTF8
@@ -264,7 +321,7 @@ function Invoke-RuntimeValidation {
 
 $oldVersion = "development"
 $recoveryRoot = ""
-$hadRuntime = $false
+$runtimeInfo = @{ Evacuated = $false; WasJunction = $false; Target = "" }
 $processIds = @(Get-UpdateProcessIds -RootPid $ParentPid)
 try {
     $InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
@@ -281,7 +338,7 @@ try {
     Write-StepLog "creating application and runtime recovery point"
     $recoveryRoot = New-RecoverySnapshot -Root $InstallRoot
     New-RuntimeStateSnapshot -SnapshotRoot $recoveryRoot
-    $hadRuntime = Move-RuntimeToRecovery -SnapshotRoot $recoveryRoot
+    $runtimeInfo = Move-RuntimeToRecovery -SnapshotRoot $recoveryRoot
     $installerArguments = @(
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS",
         ('/DIR="' + $InstallRoot + '"'), ('/LOG="' + $installerLog + '"')
@@ -301,8 +358,33 @@ try {
     Write-StepLog "validation passed; starting the post-update launcher"
     Start-RestartCommand -Command $restartCommand
     Write-StepLog "launcher started; committing transaction"
-    if ($recoveryRoot -and (Test-Path -LiteralPath $recoveryRoot)) { Remove-Item -LiteralPath $recoveryRoot -Recurse -Force }
+    # Commit transaction BEFORE any cleanup: failures in cleanup must never rollback the running new version.
     Write-UpdateResult @{ status = "success"; old_version = $oldVersion; new_version = $newVersion; restart_mode = $restartCommand.Mode; process_ids = $processIds }
+
+    # Post-commit cleanup: failures are logged as warnings and never trigger rollback.
+    try {
+        if ($recoveryRoot -and (Test-Path -LiteralPath $recoveryRoot)) {
+            Remove-Item -LiteralPath $recoveryRoot -Recurse -Force
+        }
+        $activeManifestPath = Join-Path $InstallRoot ".local\runtime-manifest.json"
+        if (Test-Path -LiteralPath $activeManifestPath -PathType Leaf) {
+            $m = Get-Content -LiteralPath $activeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($m.runtime_directory) {
+                $activeRuntimeDir = [IO.Path]::GetFullPath((Join-Path $InstallRoot ([string]$m.runtime_directory)))
+                $runtimesRoot = Join-Path $InstallRoot ".local\runtimes"
+                if (Test-Path -LiteralPath $runtimesRoot -PathType Container) {
+                    foreach ($dir in @(Get-ChildItem -LiteralPath $runtimesRoot -Directory)) {
+                        if ($dir.FullName -ne $activeRuntimeDir) {
+                            Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        Write-StepLog "post-commit cleanup warning: $_"
+        Write-Warning "Update succeeded, but post-commit cleanup encountered an error: $_"
+    }
     exit 0
 }
 catch {
@@ -313,9 +395,36 @@ catch {
     $rollbackRestarted = $false
     if ($recoveryRoot -and (Test-Path -LiteralPath $recoveryRoot)) {
         try {
+            $candidateNewRuntime = $null
+            $currentManifestPath = Join-Path $InstallRoot ".local\runtime-manifest.json"
+            if (Test-Path -LiteralPath $currentManifestPath -PathType Leaf) {
+                try {
+                    $cm = Get-Content -LiteralPath $currentManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($cm.runtime_directory) {
+                        $candidateNewRuntime = [IO.Path]::GetFullPath((Join-Path $InstallRoot ([string]$cm.runtime_directory)))
+                    }
+                } catch { }
+            }
+
             Restore-RecoverySnapshot -SnapshotRoot $recoveryRoot
-            Restore-Runtime -SnapshotRoot $recoveryRoot -HadRuntime $hadRuntime
             Restore-RuntimeState -SnapshotRoot $recoveryRoot
+            Restore-Runtime -SnapshotRoot $recoveryRoot -RuntimeInfo $runtimeInfo
+
+            if ($candidateNewRuntime -and (Test-Path -LiteralPath $candidateNewRuntime -PathType Container)) {
+                $restoredActive = $null
+                if (Test-Path -LiteralPath $currentManifestPath -PathType Leaf) {
+                    try {
+                        $rm = Get-Content -LiteralPath $currentManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                        if ($rm.runtime_directory) {
+                            $restoredActive = [IO.Path]::GetFullPath((Join-Path $InstallRoot ([string]$rm.runtime_directory)))
+                        }
+                    } catch { }
+                }
+                if ($candidateNewRuntime -ne $restoredActive) {
+                    Remove-Item -LiteralPath $candidateNewRuntime -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+
             $restoredVersion = Get-Content -LiteralPath (Join-Path $InstallRoot "VERSION") -Raw -Encoding UTF8
             if ($restoredVersion.Trim().TrimStart('v') -ne $oldVersion.Trim().TrimStart('v')) { throw "Restored VERSION does not match the previous version." }
             $rollbackRestored = $true

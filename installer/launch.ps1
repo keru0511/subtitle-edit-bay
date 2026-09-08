@@ -238,8 +238,20 @@ if (Test-Path -LiteralPath $ffmpegPathFile -PathType Leaf) {
 $env:PYTHONUTF8 = "1"
 $errorLog = Join-Path $logs "latest-launch-error.log"
 try {
-    $process = Start-Process -FilePath $pythonw -ArgumentList @("-m", "src.gui") -WorkingDirectory $projectRoot -RedirectStandardError $errorLog -PassThru -Wait
-    if ($process.ExitCode -ne 0) { Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"; exit $process.ExitCode }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $pythonw
+    $psi.Arguments = "-m src.gui"
+    $psi.WorkingDirectory = $projectRoot
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($psi)
+    while (-not $process.HasExited) {
+        Start-Sleep -Milliseconds 100
+    }
+    $exitCode = $process.ExitCode
+    $stderrText = $process.StandardError.ReadToEnd()
+    Set-Content -LiteralPath $errorLog -Value $stderrText -Encoding UTF8
+    if ($exitCode -ne 0) { Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"; exit $exitCode }
 } catch {
     $_ | Out-String | Set-Content -LiteralPath $errorLog -Encoding UTF8
     Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"

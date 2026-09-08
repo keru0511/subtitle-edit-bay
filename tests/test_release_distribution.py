@@ -95,16 +95,34 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("初回セットアップ・修復", definition)
         self.assertIn("アップデート", definition)
         self.assertIn("アンインストール", definition)
-        self.assertIn("-WindowStyle Hidden", definition)
+        self.assertNotIn("skipifsourcedoesntexist", definition)
+        self.assertNotIn("LauncherExecutable", definition)
+        self.assertIn(r'Filename: "{app}\SubtitleEditBayLauncher.exe"', definition)
+        self.assertIn('Parameters: "--setup"', definition)
+        self.assertIn('Parameters: "--update"', definition)
+        self.assertNotIn(r'Filename: "{app}\setup.bat"', definition)
+        self.assertNotIn(r'Filename: "{app}\update.bat"', definition)
         self.assertIn("Resolve-ActiveRuntimeDirectory", launcher)
         self.assertIn('Join-Path $runtimeDirectory "Scripts\\pythonw.exe"', launcher)
         self.assertIn("latest-launch-error.log", launcher)
         self.assertIn(r'Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs"', launcher)
         self.assertNotIn(r'Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"', launcher)
-        self.assertIn("setup.bat", launcher)
+        self.assertNotIn("setup.bat", launcher)
+        self.assertNotIn("update.bat", launcher)
+        self.assertIn("-WindowStyle Hidden", launcher)
+        self.assertIn("Wait-ForSetup", launcher)
         self.assertIn("Test-CudaRepairRequired", launcher)
         self.assertIn("torch.cuda.is_available()", launcher)
         self.assertIn("GPU環境の修復", launcher)
+        self.assertIn("Test-SetupComplete", launcher)
+        self.assertIn("setup-status.json", launcher)
+        self.assertIn('[string]$status.status -ne "success"', launcher)
+
+        setup = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn('-Status "running"', setup)
+        self.assertIn('-Status "failed"', setup)
+        self.assertIn('-Status "success"', setup)
+        self.assertIn("Enter-SetupMutex", setup)
 
     def test_build_script_has_stable_release_contract(self) -> None:
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
@@ -129,8 +147,28 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("scripts\\setup.ps1", smoke)
         self.assertIn("runtime-manifest.json", smoke)
         self.assertIn("Scripts\\pip.exe", smoke)
-        self.assertNotIn("pip install -r", smoke)
-        self.assertIn("engine.rootObjects()", smoke)
+        self.assertIn('"SubtitleEditBayLauncher.exe"', smoke)
+        self.assertIn('Start-Process -FilePath $launcher', smoke)
+        self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
+        self.assertIn('"--probe-setup"', smoke)
+        self.assertNotIn("installed-gui-smoke.py", smoke)
+        self.assertIn("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", smoke)
+        self.assertNotIn("SUBTITLE_EDIT_BAY_SETUP_PROVIDER", smoke)
+        self.assertIn("Normal launch did not report the setup failure", smoke)
+        self.assertIn('if ($failed.status -ne "failed"', smoke)
+        self.assertNotIn('status = "success"', smoke)
+
+    def test_installer_requires_x64_native_launcher(self) -> None:
+        build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
+        launcher_build = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
+        manifest_build = (ROOT / "scripts" / "build_release_package.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertNotIn("AllowMissingCompiler", build)
+        self.assertNotIn("AllowMissingCompiler", launcher_build)
+        self.assertIn("/MACHINE:X64", launcher_build)
+        self.assertIn("user32.lib", launcher_build)
+        self.assertIn("Launcher build did not produce the required executable", build)
+        self.assertIn('"SubtitleEditBayLauncher.exe"', manifest_build)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -1134,10 +1172,13 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                     "asset_name": INSTALLER_NAME,
                     "sha256": digest,
                     "required_files": [
+                        "SubtitleEditBayLauncher.exe",
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
                         "scripts/runtime_activation.ps1",
+                        "scripts/setup.ps1",
+                        "scripts/setup_state.ps1",
                         "scripts/runtime_contract.py",
                         "runtime/runtime-contract.json",
                         "runtime/requirements-windows-cpu.lock",

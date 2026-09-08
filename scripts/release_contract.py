@@ -14,9 +14,13 @@ CHECKSUM_NAME = f"{INSTALLER_NAME}.sha256"
 MANIFEST_NAME = f"{INSTALLER_NAME}.manifest.json"
 PREPARATION_NAME = "release-preparation.json"
 REQUIRED_INSTALLED_FILES = {
+    "SubtitleEditBayLauncher.exe",
     "VERSION",
     "scripts/launch.ps1",
     "scripts/apply_installer_update.ps1",
+    "scripts/runtime_activation.ps1",
+    "scripts/setup.ps1",
+    "scripts/setup_state.ps1",
     "scripts/runtime_contract.py",
     "runtime/runtime-contract.json",
     "runtime/requirements-windows-cpu.lock",

@@ -4405,6 +4405,17 @@ def main() -> None:
         component="qml",
         stage="READY",
     )
+    smoke_result_path = os.environ.get("SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT", "").strip()
+    if smoke_result_path:
+        smoke_result = {
+            **resolve_application_info(),
+            "qmlLoaded": True,
+            "entrypoint": "SubtitleEditBayLauncher.exe",
+        }
+        Path(smoke_result_path).write_text(
+            json.dumps(smoke_result, ensure_ascii=False), encoding="utf-8"
+        )
+        QTimer.singleShot(0, app.quit)
     app.aboutToQuit.connect(
         lambda: app._record_log(
             "アプリケーションを終了します",

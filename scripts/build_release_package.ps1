@@ -60,10 +60,13 @@ $cudaLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/
     asset_name = "SubtitleEditBay-Setup.exe"
     sha256 = $hash
     required_files = @(
+        "SubtitleEditBayLauncher.exe",
         "VERSION",
         "scripts/launch.ps1",
         "scripts/apply_installer_update.ps1",
         "scripts/runtime_activation.ps1",
+        "scripts/setup.ps1",
+        "scripts/setup_state.ps1",
         "scripts/runtime_contract.py",
         "runtime/runtime-contract.json",
         "runtime/requirements-windows-cpu.lock",

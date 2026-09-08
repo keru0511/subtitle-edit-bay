@@ -52,6 +52,7 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.rightMargin: shortRoot.mainRoot ? shortRoot.mainRoot.codexDrawerHeaderInset : 0
             spacing: 12
             ColumnLayout {
                 Layout.fillWidth: true

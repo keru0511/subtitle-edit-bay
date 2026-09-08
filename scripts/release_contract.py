@@ -21,6 +21,7 @@ REQUIRED_INSTALLED_FILES = {
     "scripts/runtime_activation.ps1",
     "scripts/setup.ps1",
     "scripts/setup_state.ps1",
+    "scripts/validate_runtime.ps1",
     "scripts/runtime_contract.py",
     "runtime/runtime-contract.json",
     "runtime/requirements-windows-cpu.lock",

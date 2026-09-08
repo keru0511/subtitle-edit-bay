@@ -14,7 +14,7 @@ class RuntimeActivationTests(unittest.TestCase):
     def _run(self, root: Path, body: str) -> subprocess.CompletedProcess[str]:
         script = root / "activate-test.ps1"
         helper = str(ROOT / "scripts" / "runtime_activation.ps1").replace("'", "''")
-        script.write_text(f". '{helper}'\n{body}", encoding="utf-8")
+        script.write_text(f". '{helper}'\n{body}", encoding="utf-8-sig")
         return subprocess.run(
             [
                 shutil.which("powershell.exe") or "powershell.exe",

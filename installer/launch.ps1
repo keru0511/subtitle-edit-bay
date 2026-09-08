@@ -238,8 +238,25 @@ if (Test-Path -LiteralPath $ffmpegPathFile -PathType Leaf) {
 $env:PYTHONUTF8 = "1"
 $errorLog = Join-Path $logs "latest-launch-error.log"
 try {
-    $process = Start-Process -FilePath $pythonw -ArgumentList @("-m", "src.gui") -WorkingDirectory $projectRoot -RedirectStandardError $errorLog -PassThru -Wait
-    if ($process.ExitCode -ne 0) { Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"; exit $process.ExitCode }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $pythonw
+    $psi.Arguments = "-m src.gui"
+    $psi.WorkingDirectory = $projectRoot
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($psi)
+    # Begin draining stderr before waiting. Waiting first can deadlock when the
+    # child fills the redirected pipe and blocks while this launcher waits for
+    # that same child to exit.
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    while (-not $process.HasExited) {
+        Start-Sleep -Milliseconds 100
+    }
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+    $stderrText = $stderrTask.GetAwaiter().GetResult()
+    [IO.File]::WriteAllText($errorLog, $stderrText, [Text.UTF8Encoding]::new($false))
+    if ($exitCode -ne 0) { Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"; exit $exitCode }
 } catch {
     $_ | Out-String | Set-Content -LiteralPath $errorLog -Encoding UTF8
     Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"

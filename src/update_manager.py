@@ -212,7 +212,6 @@ def build_installer_helper_command(
     result_path: Path,
 ) -> list[str]:
     helper = project_root / "scripts" / "apply_installer_update.ps1"
-    restart_executable = project_root / "SubtitleEditBayLauncher.exe"
     if sys.platform == "win32":
         powershell = "powershell.exe"
         return [
@@ -232,8 +231,6 @@ def build_installer_helper_command(
             str(os.getpid()),
             "-InstallRoot",
             str(project_root),
-            "-RestartExecutable",
-            str(restart_executable),
             "-ExpectedVersion",
             expected_version,
             "-ExpectedSha256",

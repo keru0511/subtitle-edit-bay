@@ -1,7 +1,4 @@
-param(
-    [string]$OutputPath = "dist\SubtitleEditBayLauncher.exe",
-    [switch]$AllowMissingCompiler
-)
+param([string]$OutputPath = "dist\SubtitleEditBayLauncher.exe")
 
 $ErrorActionPreference = "Stop"
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -19,11 +16,7 @@ if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
 
 $compiler = Get-Command cl.exe -ErrorAction SilentlyContinue
 if (-not $compiler) {
-    if ($AllowMissingCompiler) {
-        Write-Warning "cl.exe was not found. The installer will use the PowerShell launcher fallback."
-        exit 0
-    }
-    throw "Visual C++ cl.exe was not found. Run from a Visual Studio Developer PowerShell or use -AllowMissingCompiler."
+    throw "Visual C++ cl.exe was not found. Run from a Visual Studio Developer PowerShell."
 }
 
 $outputDirectory = Split-Path -Parent $resolvedOutputPath
@@ -32,7 +25,7 @@ $objectDirectory = Join-Path ([IO.Path]::GetTempPath()) ("subtitle-edit-bay-laun
 New-Item -ItemType Directory -Path $objectDirectory -Force | Out-Null
 try {
     Push-Location $objectDirectory
-    & $compiler.Source /nologo /O2 /W4 /DUNICODE /D_UNICODE $sourcePath /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS
+    & $compiler.Source /nologo /O2 /W4 $sourcePath /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS /MACHINE:X64 user32.lib shell32.lib
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher compilation failed with exit code $LASTEXITCODE."
     }

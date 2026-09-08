@@ -82,6 +82,33 @@ class QmlStaticTests(unittest.TestCase):
             panel,
         )
 
+    def test_common_codex_sidebar_only_reserves_width_when_authenticated(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        sidebar = (COMPONENTS_ROOT / "CodexSidebarContainer.qml").read_text(encoding="utf-8")
+
+        self.assertEqual(workflow.count("CodexSidebarContainer {"), 1)
+        self.assertIn('objectName: "commonCodexSidebar"', workflow)
+        self.assertIn(
+            'root.appBackend.codexAuthState === "authenticated"',
+            workflow,
+        )
+        self.assertIn("root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0", workflow)
+        self.assertIn("readonly property int codexDrawerHeaderInset", workflow)
+        self.assertIn("readonly property int codexDrawerBodyInset", workflow)
+        self.assertIn("readonly property int codexInteractiveRightInset", workflow)
+        self.assertIn("visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)", workflow)
+        self.assertNotIn(
+            "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode\n        }",
+            workflow,
+        )
+        self.assertIn('objectName: "codexLoginRoute"', workflow)
+        self.assertIn('objectName: "codexDrawerToggle"', workflow)
+        self.assertIn('objectName: "codexDrawerCloseButton"', sidebar)
+        self.assertIn("anchors.rightMargin: root.codexInteractiveRightInset + 12", workflow)
+        self.assertIn("Layout.rightMargin: root.codexDrawerBodyInset", workflow)
+        self.assertIn("visible: !root.codexAuthenticated", workflow)
+        self.assertIn("chatPanel.expanded = true", sidebar)
+
     def test_user_facing_copy_avoids_internal_terms(self) -> None:
         qml_by_area = {
             "codex edit": (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8"),

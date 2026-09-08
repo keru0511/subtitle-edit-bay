@@ -19,6 +19,8 @@
     "numpy",
     "PySide6.QtCore",
     "whisperx",
+    "whisperx.asr",
+    "whisperx.alignment",
     "torch",
     "src.runtime_dependencies"
   ],

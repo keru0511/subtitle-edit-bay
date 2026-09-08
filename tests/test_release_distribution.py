@@ -125,6 +125,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[int]$ProducerWorkflowRunAttempt = 0", package)
         self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
+        self.assertIn("scripts\\setup.ps1", smoke)
+        self.assertIn("runtime-manifest.json", smoke)
+        self.assertIn("Scripts\\pip.exe", smoke)
+        self.assertNotIn("pip install -r", smoke)
         self.assertIn("engine.rootObjects()", smoke)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
@@ -1132,6 +1136,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
+                        "scripts/runtime_activation.ps1",
                         "scripts/runtime_contract.py",
                         "runtime/runtime-contract.json",
                         "runtime/requirements-windows-cpu.lock",
@@ -1427,4 +1432,3 @@ class ReleaseStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

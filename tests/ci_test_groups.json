@@ -134,6 +134,7 @@
     },
     "windows-launcher-runtime": {
       "modules": [
+        "test_runtime_activation",
         "test_windows_launchers"
       ],
       "selectors": []

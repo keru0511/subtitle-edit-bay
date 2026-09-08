@@ -63,6 +63,7 @@ $cudaLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/
         "VERSION",
         "scripts/launch.ps1",
         "scripts/apply_installer_update.ps1",
+        "scripts/runtime_activation.ps1",
         "scripts/runtime_contract.py",
         "runtime/runtime-contract.json",
         "runtime/requirements-windows-cpu.lock",
@@ -97,4 +98,3 @@ $cudaLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/
 } | ConvertTo-Json -Depth 5 | Set-Content `
     -LiteralPath (Join-Path $releaseDirectory "release-preparation.json") `
     -Encoding utf8
-

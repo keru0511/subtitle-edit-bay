@@ -261,13 +261,19 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
         self.assertIn("runtime\\runtime-contract.json", setup)
         self.assertIn("--require-hashes", setup)
-        self.assertIn(".venv.staging", setup)
+        self.assertIn(".local\\runtimes", setup)
+        self.assertNotIn("Move-Item -LiteralPath $stagingVenv", setup)
+        self.assertIn("Set-ActiveRuntimeGeneration", setup)
         self.assertIn("runtime-manifest.json", setup)
         self.assertIn("verify-tools", setup)
         self.assertNotIn('pip install -r "requirements.txt"', setup)
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+
+        launch = (ROOT / "installer" / "launch.ps1").read_text(encoding="utf-8")
+        self.assertIn("Resolve-ActiveRuntimeDirectory", launch)
+        self.assertIn("runtime_directory", launch)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:

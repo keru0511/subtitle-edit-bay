@@ -13,6 +13,12 @@ SPEC.loader.exec_module(RUNTIME_CONTRACT)
 
 
 class RuntimeContractTests(unittest.TestCase):
+    def test_contract_imports_real_whisperx_processing_entrypoints(self) -> None:
+        contract = RUNTIME_CONTRACT.load_contract(ROOT)
+
+        self.assertIn("whisperx.asr", contract["critical_imports"])
+        self.assertIn("whisperx.alignment", contract["critical_imports"])
+
     def test_release_profiles_lock_the_complete_hashed_graph(self) -> None:
         profiles = RUNTIME_CONTRACT.validate_contract(ROOT)
 

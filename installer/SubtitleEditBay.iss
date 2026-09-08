@@ -76,6 +76,7 @@ Name: "{app}\out"
 Source: "{#SourceRoot}\src\*"; DestDir: "{app}\src"; Excludes: "__pycache__\*,*\__pycache__\*,*.pyc,*.pyo"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_colors.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\runtime_activation.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_contract.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\apply_installer_update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -106,6 +107,7 @@ Filename: "{app}\setup.bat"; Description: "初回セットアップを実行す�
 Type: filesandordirs; Name: "{app}\.venv"
 Type: filesandordirs; Name: "{app}\.venv.staging"
 Type: filesandordirs; Name: "{app}\.venv.previous"
+Type: filesandordirs; Name: "{app}\.local\runtimes"
 Type: files; Name: "{app}\VERSION"
 
 [Code]

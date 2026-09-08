@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference = "Continue"
 $PSDefaultParameterValues["*:ErrorAction"] = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
+. (Join-Path $PSScriptRoot "runtime_activation.ps1")
 
 function Find-Python310 {
     $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
@@ -224,30 +225,70 @@ if ($nvidiaGpuAvailable) {
 $runtimeProfile = if ($nvidiaGpuAvailable) { "cu128" } else { "cpu" }
 $profileContract = $runtimeContract.profiles.$runtimeProfile
 $runtimeLock = [string]$profileContract.lock_file
-$stagingVenv = ".venv.staging"
-$backupVenv = ".venv.previous"
-$stagingManifest = ".local\runtime-manifest.staging.json"
-if (Test-Path -LiteralPath $stagingVenv) { Remove-Item -LiteralPath $stagingVenv -Recurse -Force }
+$runtimeRoot = ".local\runtimes"
+$runtimeGeneration = "runtime-$runtimeProfile-$([Guid]::NewGuid().ToString('N'))"
+$runtimeVenv = Join-Path $runtimeRoot $runtimeGeneration
+$activeManifest = ".local\runtime-manifest.json"
+$candidateManifest = ".local\runtime-manifest.$runtimeGeneration.json"
+New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+$runtimeActivationCommitted = $false
+trap {
+    if (-not $runtimeActivationCommitted) {
+        foreach ($uncommittedPath in @($candidateManifest, $runtimeVenv)) {
+            if (-not (Test-Path -LiteralPath $uncommittedPath)) { continue }
+            try {
+                Remove-Item -LiteralPath $uncommittedPath -Recurse -Force
+            } catch {
+                Write-Warning "Could not remove uncommitted runtime data at ${uncommittedPath}: $_"
+            }
+        }
+    }
+    throw
+}
+
+$previousRuntime = $null
+if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
+    try {
+        $previousRecord = Get-Content -LiteralPath $activeManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($previousRecord.runtime_directory) {
+            $candidatePreviousRuntime = [IO.Path]::GetFullPath((Join-Path (Get-Location) ([string]$previousRecord.runtime_directory)))
+            $runtimeRootFull = [IO.Path]::GetFullPath((Join-Path (Get-Location) $runtimeRoot))
+            if ($candidatePreviousRuntime.StartsWith($runtimeRootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                $previousRuntime = $candidatePreviousRuntime
+            }
+        }
+    } catch {
+        throw "The active runtime manifest is invalid. Repair it or remove .local\runtime-manifest.json before setup: $_"
+    }
+}
 
 Write-Host "Building the $runtimeProfile runtime from $runtimeLock..."
-& $python -m venv $stagingVenv
-if ($LASTEXITCODE -ne 0) { throw "Could not create the staging Python environment." }
-$stagingPython = (Resolve-Path "$stagingVenv\Scripts\python.exe").Path
-& $stagingPython -m pip install "pip==$($runtimeContract.python.pip_version)"
+& $python -m venv $runtimeVenv
+if ($LASTEXITCODE -ne 0) { throw "Could not create the new Python runtime generation." }
+$runtimePython = (Resolve-Path "$runtimeVenv\Scripts\python.exe").Path
+& $runtimePython -m pip install "pip==$($runtimeContract.python.pip_version)"
 if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
 $pipArguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$profileContract.index_url)
 if ($profileContract.extra_index_url) {
     $pipArguments += @("--extra-index-url", [string]$profileContract.extra_index_url)
 }
 $pipArguments += @("-r", $runtimeLock)
-& $stagingPython @pipArguments
+& $runtimePython @pipArguments
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime installation failed. The existing runtime was not changed." }
-& $stagingPython -m pip check
+& $runtimePython -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime dependency verification failed. The existing runtime was not changed." }
-& $stagingPython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $stagingManifest
+& $runtimePython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $candidateManifest
 if ($LASTEXITCODE -ne 0) { throw "Runtime contract verification failed. The existing runtime was not changed." }
 
-$torchRuntimeJson = & $stagingPython -c "import json, torch; available = torch.cuda.is_available(); print(json.dumps({'version': torch.__version__, 'cuda_runtime': torch.version.cuda, 'cuda_available': available, 'device_name': torch.cuda.get_device_name(0) if available else ''}))"
+$manifestRecord = Get-Content -LiteralPath $candidateManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+$manifestRecord | Add-Member -NotePropertyName runtime_directory -NotePropertyValue $runtimeVenv
+[IO.File]::WriteAllText(
+    [IO.Path]::GetFullPath($candidateManifest),
+    ($manifestRecord | ConvertTo-Json -Depth 10) + [Environment]::NewLine,
+    (New-Object Text.UTF8Encoding($false))
+)
+
+$torchRuntimeJson = & $runtimePython -c "import json, torch; available = torch.cuda.is_available(); print(json.dumps({'version': torch.__version__, 'cuda_runtime': torch.version.cuda, 'cuda_available': available, 'device_name': torch.cuda.get_device_name(0) if available else ''}))"
 if ($LASTEXITCODE -ne 0 -or -not $torchRuntimeJson) { throw "PyTorch verification failed." }
 $torchRuntime = ($torchRuntimeJson | Select-Object -Last 1) | ConvertFrom-Json
 $cudaAvailable = [bool]$torchRuntime.cuda_available
@@ -262,23 +303,40 @@ if ($nvidiaGpuAvailable -and -not $cudaAvailable) {
     throw "An NVIDIA GPU was detected, but CUDA-enabled PyTorch is unavailable. Re-run setup.bat after checking the NVIDIA driver and network connection."
 }
 
-if (Test-Path -LiteralPath $backupVenv) { Remove-Item -LiteralPath $backupVenv -Recurse -Force }
-$hadExistingRuntime = Test-Path -LiteralPath ".venv"
-try {
-    if ($hadExistingRuntime) { Move-Item -LiteralPath ".venv" -Destination $backupVenv }
-    Move-Item -LiteralPath $stagingVenv -Destination ".venv"
-    Move-Item -LiteralPath $stagingManifest -Destination ".local\runtime-manifest.json" -Force
-    if (Test-Path -LiteralPath $backupVenv) { Remove-Item -LiteralPath $backupVenv -Recurse -Force }
-} catch {
-    if (Test-Path -LiteralPath $backupVenv) {
-        if (Test-Path -LiteralPath ".venv") { Remove-Item -LiteralPath ".venv" -Recurse -Force }
-        Move-Item -LiteralPath $backupVenv -Destination ".venv"
-    } elseif (-not $hadExistingRuntime -and (Test-Path -LiteralPath ".venv")) {
-        Remove-Item -LiteralPath ".venv" -Recurse -Force
-    }
-    throw
+$cleanupDirectories = @()
+if ($previousRuntime -and $previousRuntime -ne [IO.Path]::GetFullPath($runtimeVenv)) {
+    $cleanupDirectories += $previousRuntime
 }
-$venvPython = (Resolve-Path ".venv\Scripts\python.exe").Path
+$verifyActivatedRuntime = {
+    & $runtimePython -m pip check
+    if ($LASTEXITCODE -ne 0) { throw "Python dependency verification failed after runtime activation." }
+    & $runtimePython -c "from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict(); print(status.to_dict())"
+    if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed after runtime activation." }
+}
+Set-ActiveRuntimeGeneration `
+    -NewRuntimeDirectory $runtimeVenv `
+    -CandidateManifestPath $candidateManifest `
+    -ActiveManifestPath $activeManifest `
+    -VerifyScript $verifyActivatedRuntime `
+    -CleanupDirectories $cleanupDirectories
+$runtimeActivationCommitted = $true
+$venvPython = $runtimePython
+
+# Keep the documented .venv command path as a compatibility junction. It is
+# not the activation mechanism; launch.ps1 resolves the committed manifest.
+try {
+    if (Test-Path -LiteralPath ".venv") {
+        $legacyRuntime = Get-Item -LiteralPath ".venv" -Force
+        if ($legacyRuntime.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Remove-Item -LiteralPath ".venv" -Force
+        } else {
+            Remove-Item -LiteralPath ".venv" -Recurse -Force
+        }
+    }
+    New-Item -ItemType Junction -Path ".venv" -Target ([IO.Path]::GetFullPath($runtimeVenv)) | Out-Null
+} catch {
+    Write-Warning "The active runtime is valid, but the optional .venv compatibility junction could not be refreshed: $_"
+}
 
 $configPath = ".gui\runtime_config.json"
 $configChanged = $false
@@ -308,12 +366,6 @@ if ($configChanged) {
 if (-not (Test-Path -LiteralPath "assets\speaker_colors.json")) {
     Copy-Item -LiteralPath "assets\speaker_colors.example.json" -Destination "assets\speaker_colors.json"
 }
-
-& $venvPython -m pip check
-if ($LASTEXITCODE -ne 0) { throw "Python dependency verification failed." }
-
-& $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict(); print(status.to_dict())"
-if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed." }
 
 if ($cudaAvailable) {
     Write-Host "CUDA: available"

@@ -6,13 +6,16 @@ Windows の配布版は `runtime/runtime-contract.json` を契約の起点とし
 
 ## 再現と修復
 
-`setup.ps1` は GPU を検出してプロファイルを選び、対応する lock を `--require-hashes` で新しい
-`.venv.staging` にインストールします。全パッケージの版、主要 module の
-実 import、FFmpeg/ffprobe、CUDA を検証してから既存 `.venv` と入れ替えます。途中で失敗した場合、既存の
-実行環境は維持されます。
+`setup.ps1` は GPU を検出してプロファイルを選び、対応する lock を `--require-hashes` で
+`.local/runtimes/<generation>` の最終利用パスへインストールします。venv自体は移動しません。全パッケージの版、
+`whisperx.asr` / `whisperx.alignment` を含む実処理moduleのimport、FFmpeg/ffprobe、CUDAを検証してから、
+active manifestを原子的に切り替えます。切替前または切替後の最終検証で失敗した場合は、以前のmanifestと
+実行環境を維持します。切替確定後の旧世代削除に失敗した場合は、新環境を巻き戻さず警告だけを出します。
 
-成功時は `.local/runtime-manifest.json` に、アプリ版、プロファイル、Python、全パッケージ、PyTorch/CUDA、
+成功時は `.local/runtime-manifest.json` にactive世代の相対パス、アプリ版、プロファイル、Python、全パッケージ、PyTorch/CUDA、
 GPU、FFmpeg/ffprobe、使用した lock と SHA-256 を記録します。GUI の診断情報もこの manifest を表示します。
+ランチャーはこのmanifestから起動先を解決します。`.venv` は手動コマンドとの互換性のためのjunctionであり、
+環境切替の正本ではありません。
 
 ## lock の更新
 

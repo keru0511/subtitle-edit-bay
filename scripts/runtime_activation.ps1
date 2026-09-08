@@ -40,7 +40,11 @@ function Set-ActiveRuntimeGeneration {
         if ($published -and -not $committed) {
             try {
                 if ($hadActiveManifest -and (Test-Path -LiteralPath $previousManifest -PathType Leaf)) {
-                    [IO.File]::Replace($previousManifest, $activeManifest, $null, $true)
+                    $failedManifest = Join-Path $manifestDirectory ("runtime-manifest.failed-{0}.json" -f [Guid]::NewGuid().ToString("N"))
+                    [IO.File]::Replace($previousManifest, $activeManifest, $failedManifest, $true)
+                    if (Test-Path -LiteralPath $failedManifest -PathType Leaf) {
+                        Remove-Item -LiteralPath $failedManifest -Force
+                    }
                 } elseif (-not $hadActiveManifest -and (Test-Path -LiteralPath $activeManifest -PathType Leaf)) {
                     Remove-Item -LiteralPath $activeManifest -Force
                 }

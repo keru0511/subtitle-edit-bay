@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference = "Continue"
 $PSDefaultParameterValues["*:ErrorAction"] = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
+$projectRoot = (Get-Location).Path
 . (Join-Path $PSScriptRoot "runtime_activation.ps1")
 
 function Find-Python310 {
@@ -231,6 +232,9 @@ $runtimeVenv = Join-Path $runtimeRoot $runtimeGeneration
 $activeManifest = ".local\runtime-manifest.json"
 $candidateManifest = ".local\runtime-manifest.$runtimeGeneration.json"
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+$runtimeVenvFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $runtimeVenv))
+$activeManifestFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $activeManifest))
+$candidateManifestFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $candidateManifest))
 $runtimeActivationCommitted = $false
 trap {
     $setupError = $_
@@ -252,8 +256,8 @@ if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
     try {
         $previousRecord = Get-Content -LiteralPath $activeManifest -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($previousRecord.runtime_directory) {
-            $candidatePreviousRuntime = [IO.Path]::GetFullPath((Join-Path (Get-Location) ([string]$previousRecord.runtime_directory)))
-            $runtimeRootFull = [IO.Path]::GetFullPath((Join-Path (Get-Location) $runtimeRoot))
+            $candidatePreviousRuntime = [IO.Path]::GetFullPath((Join-Path $projectRoot ([string]$previousRecord.runtime_directory)))
+            $runtimeRootFull = [IO.Path]::GetFullPath((Join-Path $projectRoot $runtimeRoot))
             if ($candidatePreviousRuntime.StartsWith($runtimeRootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
                 $previousRuntime = $candidatePreviousRuntime
             }
@@ -284,7 +288,7 @@ if ($LASTEXITCODE -ne 0) { throw "Runtime contract verification failed. The exis
 $manifestRecord = Get-Content -LiteralPath $candidateManifest -Raw -Encoding UTF8 | ConvertFrom-Json
 $manifestRecord | Add-Member -NotePropertyName runtime_directory -NotePropertyValue $runtimeVenv
 [IO.File]::WriteAllText(
-    [IO.Path]::GetFullPath($candidateManifest),
+    $candidateManifestFull,
     ($manifestRecord | ConvertTo-Json -Depth 10) + [Environment]::NewLine,
     (New-Object Text.UTF8Encoding($false))
 )
@@ -305,7 +309,7 @@ if ($nvidiaGpuAvailable -and -not $cudaAvailable) {
 }
 
 $cleanupDirectories = @()
-if ($previousRuntime -and $previousRuntime -ne [IO.Path]::GetFullPath($runtimeVenv)) {
+if ($previousRuntime -and $previousRuntime -ne $runtimeVenvFull) {
     $cleanupDirectories += $previousRuntime
 }
 $verifyActivatedRuntime = {
@@ -315,9 +319,9 @@ $verifyActivatedRuntime = {
     if ($LASTEXITCODE -ne 0) { throw "Runtime dependency verification failed after runtime activation." }
 }.GetNewClosure()
 Set-ActiveRuntimeGeneration `
-    -NewRuntimeDirectory $runtimeVenv `
-    -CandidateManifestPath $candidateManifest `
-    -ActiveManifestPath $activeManifest `
+    -NewRuntimeDirectory $runtimeVenvFull `
+    -CandidateManifestPath $candidateManifestFull `
+    -ActiveManifestPath $activeManifestFull `
     -VerifyScript $verifyActivatedRuntime `
     -CleanupDirectories $cleanupDirectories
 $runtimeActivationCommitted = $true
@@ -334,7 +338,7 @@ try {
             Remove-Item -LiteralPath ".venv" -Recurse -Force
         }
     }
-    New-Item -ItemType Junction -Path ".venv" -Target ([IO.Path]::GetFullPath($runtimeVenv)) | Out-Null
+    New-Item -ItemType Junction -Path ".venv" -Target $runtimeVenvFull | Out-Null
 } catch {
     Write-Warning "The active runtime is valid, but the optional .venv compatibility junction could not be refreshed: $_"
 }

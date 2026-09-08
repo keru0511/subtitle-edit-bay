@@ -275,10 +275,48 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+        self.assertIn('$ProfileContract.PSObject.Properties["extra_index_url"]', setup)
+        self.assertNotIn("$profileContract.extra_index_url", setup)
+        setup_state = (ROOT / "scripts" / "setup_state.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("Set-StrictMode", setup_state)
 
         launch = (ROOT / "installer" / "launch.ps1").read_text(encoding="utf-8")
         self.assertIn("Resolve-ActiveRuntimeDirectory", launch)
         self.assertIn("runtime_directory", launch)
+        self.assertIn("Show-SetupFailure", launch)
+        self.assertEqual(launch.count("Show-SetupFailure; exit $exitCode"), 2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_cpu_install_arguments_allow_missing_optional_extra_index_without_test_hook(self) -> None:
+        powershell = self._require_windows_powershell()
+        environment = os.environ.copy()
+        environment.pop("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", None)
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "scripts" / "setup.ps1"),
+                "-ProbeCpuInstallArgumentsOnly",
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertIn("--require-hashes", arguments)
+        self.assertIn("--index-url", arguments)
+        self.assertIn("-r", arguments)
+        self.assertNotIn("--extra-index-url", arguments)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:

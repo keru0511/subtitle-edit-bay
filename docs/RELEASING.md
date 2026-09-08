@@ -21,7 +21,7 @@
 
 PRの準備処理は `contents: read` だけで動き、タグやReleaseを作りません。`pull_request_target` や公開用資格情報も使いません。
 
-リリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmpegとinstaller smokeをskipし、同じ仮マージに対する実行責務をRelease readinessへ一本化します。通常CI固有のquality、Windows runtime、launcher、FFmpeg 6互換は引き続き必須です。分類失敗、必要ジョブの失敗・キャンセル・予期しないskip、または委譲対象の重複実行は集約で拒否します。対応表は [PR検証の実行責務](validation-ownership.md) を参照してください。
+main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmpegとinstaller smokeをskipし、同じ仮マージに対する実行責務をRelease readinessへ一本化します。Release readinessが起動しない非main向けPRでは委譲せず、通常CIが全検証を実行します。通常CI固有のquality、Windows runtime、launcher、FFmpeg 6互換は引き続き必須です。分類失敗、必要ジョブの失敗・キャンセル・予期しないskip、または委譲対象の重複実行は集約で拒否します。対応表は [PR検証の実行責務](validation-ownership.md) を参照してください。
 
 ### v0.4.8で検出したGUIテスト失敗
 

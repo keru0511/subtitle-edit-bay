@@ -118,18 +118,12 @@ def aggregate_shards(
             raise ReportValidationError(f"provenance mismatch in {path}")
         key = (kind, repetition, source_attempt)
         if key in candidates:
-            raise ReportValidationError(
-                f"duplicate {kind} repetition {repetition} in attempt {source_attempt}"
-            )
+            raise ReportValidationError(f"duplicate {kind} repetition {repetition} in attempt {source_attempt}")
         runs = report.get("runs")
         expected_segments = expected["segment_counts"]
         if not isinstance(runs, list) or len(runs) != len(expected_segments):
             raise ReportValidationError(f"unexpected raw run count in {path}")
-        actual_pairs = [
-            (run.get("segment_count"), run.get("repetition"))
-            for run in runs
-            if isinstance(run, dict)
-        ]
+        actual_pairs = [(run.get("segment_count"), run.get("repetition")) for run in runs if isinstance(run, dict)]
         expected_pairs = [(segment_count, repetition) for segment_count in expected_segments]
         if sorted(actual_pairs) != sorted(expected_pairs):
             raise ReportValidationError(f"raw run coverage mismatch in {path}")
@@ -139,19 +133,12 @@ def aggregate_shards(
             scenarios = run.get("scenarios")
             if not isinstance(scenarios, list):
                 raise ReportValidationError(f"missing raw scenarios in {path}")
-            if not all(
-                isinstance(item, dict) and isinstance(item.get("name"), str)
-                for item in scenarios
-            ):
+            if not all(isinstance(item, dict) and isinstance(item.get("name"), str) for item in scenarios):
                 raise ReportValidationError(f"invalid raw scenario in {path}")
             scenario_names = [item["name"] for item in scenarios]
-            if len(scenario_names) != len(SCENARIO_NAMES) or set(scenario_names) != set(
-                SCENARIO_NAMES
-            ):
+            if len(scenario_names) != len(SCENARIO_NAMES) or set(scenario_names) != set(SCENARIO_NAMES):
                 raise ReportValidationError(f"raw scenario coverage mismatch in {path}")
-            if not isinstance(run.get("contracts"), list) or not isinstance(
-                run.get("contracts_passed"), bool
-            ):
+            if not isinstance(run.get("contracts"), list) or not isinstance(run.get("contracts_passed"), bool):
                 raise ReportValidationError(f"invalid contract results in {path}")
             if kind == "current" and not run["contracts_passed"]:
                 raise ReportValidationError(f"current revision contract failure in {path}")
@@ -165,8 +152,7 @@ def aggregate_shards(
         complete_attempts = sorted(
             attempt
             for attempt in range(1, int(run_attempt) + 1)
-            if ("current", repetition, attempt) in candidates
-            and ("baseline", repetition, attempt) in candidates
+            if ("current", repetition, attempt) in candidates and ("baseline", repetition, attempt) in candidates
         )
         if not complete_attempts:
             raise ReportValidationError(f"missing complete shard pair for repetition {repetition}")
@@ -189,8 +175,7 @@ def aggregate_shards(
                 "run_id": run_id,
                 "run_attempt": run_attempt,
                 "source_attempts_by_repetition": {
-                    str(repetition): source_attempts[repetition]
-                    for repetition in range(1, repetitions + 1)
+                    str(repetition): source_attempts[repetition] for repetition in range(1, repetitions + 1)
                 },
             },
             "configuration": {
@@ -199,8 +184,7 @@ def aggregate_shards(
                 "repetition_indices": list(range(1, repetitions + 1)),
             },
             "environments_by_repetition": {
-                str(repetition): reports[(kind, repetition)]["environment"]
-                for repetition in range(1, repetitions + 1)
+                str(repetition): reports[(kind, repetition)]["environment"] for repetition in range(1, repetitions + 1)
             },
             "runs": sorted(runs, key=lambda run: (int(run["segment_count"]), int(run["repetition"]))),
             "summary": aggregate_runs(runs),

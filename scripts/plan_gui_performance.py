@@ -58,9 +58,7 @@ def resolve_commit(revision: str, *, repository: Path) -> str:
         errors="replace",
     )
     resolved = completed.stdout.strip()
-    invalid_hash = len(resolved) != 40 or any(
-        character not in "0123456789abcdef" for character in resolved
-    )
+    invalid_hash = len(resolved) != 40 or any(character not in "0123456789abcdef" for character in resolved)
     if completed.returncode != 0 or invalid_hash:
         raise ValueError("compare_ref does not resolve to a commit")
     return resolved

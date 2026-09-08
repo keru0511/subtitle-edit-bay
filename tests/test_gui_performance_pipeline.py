@@ -100,9 +100,7 @@ class GuiPerformanceInputPlanTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_args(["--repetitions", "2", "--repetition-index", "1"])
             with self.assertRaises(SystemExit):
-                parse_args(
-                    ["--repetitions", "1", "--repetition-index", "4", "--total-repetitions", "3"]
-                )
+                parse_args(["--repetitions", "1", "--repetition-index", "4", "--total-repetitions", "3"])
 
 
 class GuiPerformanceAggregationTests(unittest.TestCase):
@@ -200,9 +198,7 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
         for report in reports:
             if report["revision_label"] == CURRENT_SHA:
                 for run in report["runs"]:
-                    run["scenarios"] = [
-                        {"name": name, **scenario(20.0)} for name in SCENARIO_NAMES
-                    ]
+                    run["scenarios"] = [{"name": name, **scenario(20.0)} for name in SCENARIO_NAMES]
         current, baseline = self.aggregate(reports)
         current_path = self.root / "current.json"
         baseline_path = self.root / "baseline.json"

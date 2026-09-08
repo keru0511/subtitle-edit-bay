@@ -49,53 +49,26 @@ def aggregate_runs(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
         scenarios: dict[str, Any] = {}
         for scenario_name in SCENARIO_NAMES:
             samples = [
-                next(
-                    scenario
-                    for scenario in run["scenarios"]
-                    if scenario["name"] == scenario_name
-                )
+                next(scenario for scenario in run["scenarios"] if scenario["name"] == scenario_name)
                 for run in fixture_runs
             ]
-            call_names = sorted(
-                {
-                    call_name
-                    for sample in samples
-                    for call_name in sample["python_qml_calls"]
-                }
-            )
+            call_names = sorted({call_name for sample in samples for call_name in sample["python_qml_calls"]})
             diagnostic_names = sorted(
-                {
-                    diagnostic_name
-                    for sample in samples
-                    for diagnostic_name in sample["diagnostic_counts"]
-                }
+                {diagnostic_name for sample in samples for diagnostic_name in sample["diagnostic_counts"]}
             )
             scenarios[scenario_name] = {
-                "action_elapsed_ms": _nearest_rank_summary(
-                    [float(sample["action_elapsed_ms"]) for sample in samples]
-                ),
+                "action_elapsed_ms": _nearest_rank_summary([float(sample["action_elapsed_ms"]) for sample in samples]),
                 "settled_elapsed_ms": _nearest_rank_summary(
                     [float(sample["settled_elapsed_ms"]) for sample in samples]
                 ),
                 "event_loop_p95_ms": _nearest_rank_summary(
-                    [
-                        float(sample["event_loop_latency_ms"]["p95_ms"])
-                        for sample in samples
-                    ]
+                    [float(sample["event_loop_latency_ms"]["p95_ms"]) for sample in samples]
                 ),
                 "event_loop_max_ms": _nearest_rank_summary(
-                    [
-                        float(sample["event_loop_latency_ms"]["max_ms"])
-                        for sample in samples
-                    ]
+                    [float(sample["event_loop_latency_ms"]["max_ms"]) for sample in samples]
                 ),
                 "ui_playhead_lag_p95_ms": _nearest_rank_summary(
-                    [
-                        float(
-                            sample.get("ui_playhead_lag_ms", {}).get("p95_ms", 0.0)
-                        )
-                        for sample in samples
-                    ]
+                    [float(sample.get("ui_playhead_lag_ms", {}).get("p95_ms", 0.0)) for sample in samples]
                 ),
                 "peak_rss_bytes": _nearest_rank_summary(
                     [float(sample["peak_rss_bytes"]) for sample in samples],
@@ -103,41 +76,24 @@ def aggregate_runs(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 ),
                 "python_qml_calls": {
                     call_name: _nearest_rank_summary(
-                        [
-                            float(sample["python_qml_calls"].get(call_name, 0))
-                            for sample in samples
-                        ],
+                        [float(sample["python_qml_calls"].get(call_name, 0)) for sample in samples],
                         digits=0,
                     )
                     for call_name in call_names
                 },
                 "diagnostic_counts": {
                     diagnostic_name: _nearest_rank_summary(
-                        [
-                            float(
-                                sample["diagnostic_counts"].get(diagnostic_name, 0)
-                            )
-                            for sample in samples
-                        ],
+                        [float(sample["diagnostic_counts"].get(diagnostic_name, 0)) for sample in samples],
                         digits=0,
                     )
                     for diagnostic_name in diagnostic_names
                 },
             }
         contracts: dict[str, Any] = {}
-        contract_names = sorted(
-            {
-                contract["name"]
-                for run in fixture_runs
-                for contract in run["contracts"]
-            }
-        )
+        contract_names = sorted({contract["name"] for run in fixture_runs for contract in run["contracts"]})
         for contract_name in contract_names:
             matching = [
-                contract
-                for run in fixture_runs
-                for contract in run["contracts"]
-                if contract["name"] == contract_name
+                contract for run in fixture_runs for contract in run["contracts"] if contract["name"] == contract_name
             ]
             contracts[contract_name] = {
                 "passed": all(bool(contract["passed"]) for contract in matching),

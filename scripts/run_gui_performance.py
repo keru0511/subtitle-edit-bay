@@ -139,11 +139,7 @@ def _run_controller(args: argparse.Namespace) -> int:
     contract_failure = False
     for segment_count, project_path in project_paths.items():
         for local_repetition in range(1, args.repetitions + 1):
-            repetition = (
-                args.repetition_index
-                if args.repetition_index is not None
-                else local_repetition
-            )
+            repetition = args.repetition_index if args.repetition_index is not None else local_repetition
             worker_output = worker_dir / f"{segment_count}-{repetition}.json"
             completed = subprocess.run(
                 _worker_command(

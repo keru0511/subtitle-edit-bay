@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Launch", "Setup", "Update")]
     [string]$Action = "Launch",
     [switch]$ProbeSetupStateOnly,

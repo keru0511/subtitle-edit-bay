@@ -167,7 +167,7 @@ if (-not $setupLease.Acquired) {
 }
 $runtimeActivationCommitted = $false
 $uncommittedRuntimePaths = @()
-Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "セットアップを開始しています"
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Starting setup"
 trap {
     $setupError = $_
     if (-not $runtimeActivationCommitted) {
@@ -177,14 +177,14 @@ trap {
             catch { Write-Warning ("Could not remove uncommitted runtime data at " + $uncommittedPath + ": " + $_) }
         }
     }
-    Write-SetupStatus -ProjectRoot $projectRoot -Status "failed" -Stage "セットアップに失敗しました" -Message $setupError.Exception.Message
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "failed" -Stage "Setup failed" -Message $setupError.Exception.Message
     Exit-SetupMutex -Lease $setupLease
     exit 1
 }
 
 Write-Host "Subtitle Edit Bay setup"
 Write-Host "This can take a while because WhisperX and PyTorch are large."
-Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "システム要件を確認しています"
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Checking system requirements"
 
 $runtimeContractPath = "runtime\runtime-contract.json"
 $runtimeContract = Get-Content -LiteralPath $runtimeContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -280,7 +280,7 @@ if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
 }
 
 Write-Host "Building the $runtimeProfile runtime from $runtimeLock..."
-Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "固定済みruntimeを構築しています"
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Building the pinned runtime"
 if ($DependencyProvider) {
     $providerPath = [IO.Path]::GetFullPath($DependencyProvider)
     if (-not (Test-Path -LiteralPath $providerPath -PathType Leaf)) { throw "The dependency provider is missing: $providerPath" }
@@ -405,7 +405,7 @@ if ($cudaAvailable) {
     Write-Host "CUDA: unavailable. The first-run preset was configured for CPU and libx264."
 }
 Write-Host "Setup verification passed."
-Write-SetupStatus -ProjectRoot $projectRoot -Status "success" -Stage "セットアップが完了しました" -Details @{
+Write-SetupStatus -ProjectRoot $projectRoot -Status "success" -Stage "Setup completed" -Details @{
     python = $venvPython
     cuda_available = $cudaAvailable
     cuda_runtime = $cudaRuntime

@@ -1,4 +1,4 @@
-#ifndef SourceRoot
+﻿#ifndef SourceRoot
   #error SourceRoot must be defined by scripts/build_installer.ps1
 #endif
 

@@ -30,66 +30,55 @@ $installedVersion = (Get-Content -LiteralPath (Join-Path $installDir "VERSION") 
 if ($installedVersion -ne $expectedInstalledVersion) { throw "Installed VERSION mismatch: expected=$expectedInstalledVersion actual=$installedVersion" }
 
 $launcher = Join-Path $installDir "SubtitleEditBayLauncher.exe"
-$providerPath = Join-Path $testRoot "installer-e2e-dependency-provider.ps1"
-$providerCount = Join-Path $testRoot "installer-e2e-provider-count.txt"
-$providerStarted = Join-Path $testRoot "installer-e2e-provider-started.txt"
-$providerGate = Join-Path $testRoot "installer-e2e-provider-gate.txt"
+$hookPath = Join-Path $testRoot "installer-e2e-setup-hook.ps1"
+$hookCount = Join-Path $testRoot "installer-e2e-hook-count.txt"
+$hookStarted = Join-Path $testRoot "installer-e2e-hook-started.txt"
+$hookGate = Join-Path $testRoot "installer-e2e-hook-gate.txt"
+$messageProbe = Join-Path $testRoot "installer-e2e-messages.jsonl"
 $smokeResult = Join-Path $testRoot "installed-gui-smoke.json"
-$provider = @'
+$hook = @'
 param(
+    [Parameter(Mandatory = $true)][string]$Phase,
     [Parameter(Mandatory = $true)][string]$RuntimeDirectory,
-    [Parameter(Mandatory = $true)][string]$CandidateManifestPath,
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [Parameter(Mandatory = $true)][string]$RuntimeProfile
 )
-Add-Content -LiteralPath $env:SUBTITLE_EDIT_BAY_PROVIDER_COUNT -Value "run" -Encoding ascii
-[IO.File]::WriteAllText($env:SUBTITLE_EDIT_BAY_PROVIDER_STARTED, "started")
-if ($env:SUBTITLE_EDIT_BAY_PROVIDER_MODE -eq "wait") {
+if ($Phase -ne "BeforeRuntimeBuild") { throw "Unexpected setup test hook phase: $Phase" }
+Add-Content -LiteralPath $env:SUBTITLE_EDIT_BAY_HOOK_COUNT -Value "run" -Encoding ascii
+[IO.File]::WriteAllText($env:SUBTITLE_EDIT_BAY_HOOK_STARTED, "started")
+if ($env:SUBTITLE_EDIT_BAY_HOOK_MODE -eq "wait") {
     $deadline = [DateTime]::UtcNow.AddMinutes(2)
-    while (-not (Test-Path -LiteralPath $env:SUBTITLE_EDIT_BAY_PROVIDER_GATE)) {
-        if ([DateTime]::UtcNow -gt $deadline) { throw "Timed out waiting for the E2E provider gate." }
+    while (-not (Test-Path -LiteralPath $env:SUBTITLE_EDIT_BAY_HOOK_GATE)) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw "Timed out waiting for the E2E setup hook gate." }
         Start-Sleep -Milliseconds 100
     }
 }
-if ($env:SUBTITLE_EDIT_BAY_PROVIDER_MODE -eq "fail") {
-    Write-Error "Synthetic dependency provider failure"
+if ($env:SUBTITLE_EDIT_BAY_HOOK_MODE -eq "fail") {
+    Write-Error "Synthetic setup hook failure"
     exit 17
 }
-python -m venv $RuntimeDirectory
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-$runtimePython = Join-Path $RuntimeDirectory "Scripts\python.exe"
-$contract = Get-Content -LiteralPath (Join-Path $ProjectRoot "runtime\runtime-contract.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-$profile = $contract.profiles.$RuntimeProfile
-& $runtimePython -m pip install "pip==$($contract.python.pip_version)"
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-$pipArguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$profile.index_url)
-if ($profile.extra_index_url) { $pipArguments += @("--extra-index-url", [string]$profile.extra_index_url) }
-$pipArguments += @("-r", (Join-Path $ProjectRoot ([string]$profile.lock_file)))
-& $runtimePython @pipArguments
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $runtimePython (Join-Path $ProjectRoot "scripts\runtime_contract.py") verify-runtime --root $ProjectRoot --profile $RuntimeProfile --manifest-output $CandidateManifestPath
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 '@
-[IO.File]::WriteAllText($providerPath, $provider, (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($hookPath, $hook, (New-Object Text.UTF8Encoding($false)))
 
-$env:SUBTITLE_EDIT_BAY_SETUP_PROVIDER = $providerPath
-$env:SUBTITLE_EDIT_BAY_PROVIDER_COUNT = $providerCount
-$env:SUBTITLE_EDIT_BAY_PROVIDER_STARTED = $providerStarted
-$env:SUBTITLE_EDIT_BAY_PROVIDER_GATE = $providerGate
-$env:SUBTITLE_EDIT_BAY_PROVIDER_MODE = "wait"
+$env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK = $hookPath
+$env:SUBTITLE_EDIT_BAY_HOOK_COUNT = $hookCount
+$env:SUBTITLE_EDIT_BAY_HOOK_STARTED = $hookStarted
+$env:SUBTITLE_EDIT_BAY_HOOK_GATE = $hookGate
+$env:SUBTITLE_EDIT_BAY_HOOK_MODE = "wait"
 $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES = "1"
+$env:SUBTITLE_EDIT_BAY_MESSAGE_PROBE = $messageProbe
 $env:SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT = $smokeResult
 try {
-    # Product EXE -> launch.ps1 -> real setup.ps1. Keep the provider paused,
+    # Product EXE -> launch.ps1 -> real setup.ps1. Keep the pre-build hook paused,
     # then prove normal launch and an explicit repair both attach to that one
-    # setup instead of starting another dependency build.
+    # setup instead of starting another production dependency build.
     $first = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -PassThru
     $deadline = [DateTime]::UtcNow.AddMinutes(2)
-    while (-not (Test-Path -LiteralPath $providerStarted) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
-    if (-not (Test-Path -LiteralPath $providerStarted)) {
+    while (-not (Test-Path -LiteralPath $hookStarted) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path -LiteralPath $hookStarted)) {
         Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup.log") -ErrorAction SilentlyContinue
         Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup-error.log") -ErrorAction SilentlyContinue
-        throw "The real setup path did not reach the dependency provider."
+        throw "The real setup path did not reach the pre-build hook."
     }
     $runningStatus = Get-Content -LiteralPath (Join-Path $installDir ".local\setup-status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($runningStatus.status -ne "running" -or -not $runningStatus.process_id) { throw "The real setup did not publish its running state." }
@@ -98,15 +87,15 @@ try {
     $second = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -PassThru
     $normal = Start-Process -FilePath $launcher -WorkingDirectory $installDir -PassThru
     Start-Sleep -Seconds 2
-    $runsBeforeRelease = @(Get-Content -LiteralPath $providerCount).Count
+    $runsBeforeRelease = @(Get-Content -LiteralPath $hookCount).Count
     if ($runsBeforeRelease -ne 1) { throw "Concurrent product launches started $runsBeforeRelease dependency builds." }
-    [IO.File]::WriteAllText($providerGate, "continue")
+    [IO.File]::WriteAllText($hookGate, "continue")
     foreach ($process in @($first, $second, $normal)) {
         $process.WaitForExit()
         if ($process.ExitCode -ne 0) { throw "Concurrent product path exited with code $($process.ExitCode)." }
     }
-    $providerRuns = @(Get-Content -LiteralPath $providerCount).Count
-    if ($providerRuns -ne 1) { throw "Expected one dependency build, found $providerRuns." }
+    $hookRuns = @(Get-Content -LiteralPath $hookCount).Count
+    if ($hookRuns -ne 1) { throw "Expected one production dependency build, found $hookRuns." }
     $stoppedProbe = Start-Process -FilePath $launcher -ArgumentList "--probe-setup-running" -WorkingDirectory $installDir -Wait -PassThru
     if ($stoppedProbe.ExitCode -ne 3) { throw "The setup lock was not released after completion." }
 
@@ -131,26 +120,33 @@ try {
     # Failure is also driven through the product EXE and real setup. setup.ps1,
     # not the test, must persist failed; normal launch must repair rather than
     # starting the GUI from the previously active runtime.
-    Remove-Item -LiteralPath $providerStarted -Force
-    $env:SUBTITLE_EDIT_BAY_PROVIDER_MODE = "fail"
+    Remove-Item -LiteralPath $hookStarted -Force
+    $env:SUBTITLE_EDIT_BAY_HOOK_MODE = "fail"
     $repair = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -Wait -PassThru
     if ($repair.ExitCode -eq 0) {
         Get-Content -LiteralPath (Join-Path $installDir ".local\setup-status.json") -ErrorAction SilentlyContinue
         Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup.log") -ErrorAction SilentlyContinue
         Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup-error.log") -ErrorAction SilentlyContinue
-        throw "The failing provider was accepted."
+        throw "The failing setup hook was accepted."
     }
     $failed = Get-Content -LiteralPath (Join-Path $installDir ".local\setup-status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($failed.status -ne "failed" -or $failed.message -notmatch "provider") { throw "Setup did not persist the provider failure." }
+    if ($failed.status -ne "failed" -or $failed.message -notmatch "hook") { throw "Setup did not persist the injected failure." }
     Remove-Item -LiteralPath $smokeResult -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $messageProbe -Force -ErrorAction SilentlyContinue
     $failedLaunch = Start-Process -FilePath $launcher -WorkingDirectory $installDir -Wait -PassThru
     if ($failedLaunch.ExitCode -eq 0) { throw "Normal launch accepted a failed setup." }
     if (Test-Path -LiteralPath $smokeResult) { throw "GUI started after setup failure." }
+    if (-not (Test-Path -LiteralPath $messageProbe -PathType Leaf)) { throw "Normal launch did not report the setup failure." }
+    $messages = @(Get-Content -LiteralPath $messageProbe -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
+    $failureMessage = $messages | Select-Object -Last 1
+    if (-not $failureMessage -or $failureMessage.title -notmatch "Subtitle Edit Bay" -or $failureMessage.message -notmatch [regex]::Escape((Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup.log")) -or $failureMessage.message -notmatch "--setup") {
+        throw "Normal launch setup failure did not include the reason, log, and retry guidance."
+    }
 } finally {
     foreach ($name in @(
-        "SUBTITLE_EDIT_BAY_SETUP_PROVIDER", "SUBTITLE_EDIT_BAY_PROVIDER_COUNT",
-        "SUBTITLE_EDIT_BAY_PROVIDER_STARTED", "SUBTITLE_EDIT_BAY_PROVIDER_GATE",
-        "SUBTITLE_EDIT_BAY_PROVIDER_MODE", "SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES",
-        "SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT"
+        "SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", "SUBTITLE_EDIT_BAY_HOOK_COUNT",
+        "SUBTITLE_EDIT_BAY_HOOK_STARTED", "SUBTITLE_EDIT_BAY_HOOK_GATE",
+        "SUBTITLE_EDIT_BAY_HOOK_MODE", "SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES",
+        "SUBTITLE_EDIT_BAY_MESSAGE_PROBE", "SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT"
     )) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 }

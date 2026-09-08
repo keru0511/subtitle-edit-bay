@@ -1,0 +1,10 @@
+# Runtime roots for the released Windows application. The two lock profiles
+# are generated from this file; do not install this input directly.
+budoux==0.7.0
+Janome==0.5.0
+numpy==2.2.6
+PySide6==6.8.3
+whisperx==3.8.6
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0

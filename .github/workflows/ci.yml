@@ -366,6 +366,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Set up x64 MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Ensure Inno Setup compiler
         shell: pwsh
         run: |

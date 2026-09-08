@@ -14,9 +14,17 @@ CHECKSUM_NAME = f"{INSTALLER_NAME}.sha256"
 MANIFEST_NAME = f"{INSTALLER_NAME}.manifest.json"
 PREPARATION_NAME = "release-preparation.json"
 REQUIRED_INSTALLED_FILES = {
+    "SubtitleEditBayLauncher.exe",
     "VERSION",
     "scripts/launch.ps1",
     "scripts/apply_installer_update.ps1",
+    "scripts/runtime_activation.ps1",
+    "scripts/setup.ps1",
+    "scripts/setup_state.ps1",
+    "scripts/runtime_contract.py",
+    "runtime/runtime-contract.json",
+    "runtime/requirements-windows-cpu.lock",
+    "runtime/requirements-windows-cu128.lock",
 }
 VERSION_PATTERN = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 TAG_PATTERN = re.compile(r"^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$")
@@ -154,6 +162,14 @@ def verify_release_artifacts(
     missing_required_files = sorted(REQUIRED_INSTALLED_FILES - set(required_files))
     if missing_required_files:
         raise ReleaseContractError("manifest required_files is incomplete: " + ", ".join(missing_required_files))
+    runtime_contract = manifest.get("runtime_contract")
+    runtime_hash_names = ("contract_sha256", "cpu_lock_sha256", "cu128_lock_sha256")
+    if not isinstance(runtime_contract, dict) or any(
+        not isinstance(runtime_contract.get(name), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", runtime_contract[name])
+        for name in runtime_hash_names
+    ):
+        raise ReleaseContractError("manifest runtime_contract hashes are incomplete")
     return actual_digest
 
 

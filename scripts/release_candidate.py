@@ -64,6 +64,12 @@ class ReleaseCandidateError(RuntimeError):
     """Raised when a prepared artifact cannot be promoted safely."""
 
 
+@dataclass(frozen=True)
+class SuccessfulJobHistory:
+    latest_attempt: int
+    successful_attempts: tuple[int, ...]
+
+
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         redirected = super().redirect_request(request, fp, code, msg, headers, newurl)
@@ -401,14 +407,14 @@ def _require_successful_jobs(
     run_attempt: int,
     required_job_names: Sequence[str],
     expected_conclusion: str = "success",
-) -> dict[str, int]:
+) -> dict[str, SuccessfulJobHistory]:
     jobs = api.pages(
         f"/repos/{api.repository}/actions/runs/{run_id}/jobs",
         key="jobs",
         query={"filter": "all"},
     )
     job_objects = [_object(job, "workflow job") for job in jobs]
-    successful_attempts: dict[str, int] = {}
+    successful_jobs: dict[str, SuccessfulJobHistory] = {}
     for required_name in required_job_names:
         matches = [
             job
@@ -435,38 +441,55 @@ def _require_successful_jobs(
             raise ReleaseCandidateError(
                 f"required workflow job did not finish as {expected_conclusion}: {required_name}"
             )
-        successful_attempts[required_name] = job_attempt
-    return successful_attempts
+        successful_attempts = tuple(
+            sorted(
+                attempt
+                for attempt, attempted_job in attempts.items()
+                if attempted_job.get("conclusion") == expected_conclusion
+                and attempted_job.get("status") == "completed"
+            )
+        )
+        successful_jobs[required_name] = SuccessfulJobHistory(job_attempt, successful_attempts)
+    return successful_jobs
 
 
 def _candidate_artifact(
     api: GitHubApi,
     run_id: int,
     release_version: str,
-    producer_attempt: int,
-) -> dict[str, object]:
+    run_attempt: int,
+) -> tuple[dict[str, object], int, str]:
     version = release_version.removeprefix("v")
     name_pattern = re.compile(
         rf"^subtitle-edit-bay-{re.escape(version)}-windows-installer-"
-        rf"([0-9a-f]{{40}})-attempt-{producer_attempt}$"
+        rf"([0-9a-f]{{40}})-attempt-([1-9][0-9]*)$"
     )
     artifacts = api.pages(f"/repos/{api.repository}/actions/runs/{run_id}/artifacts", key="artifacts")
-    matches = []
+    matches: list[tuple[int, str, dict[str, object]]] = []
     for value in artifacts:
         artifact = _object(value, "workflow artifact")
         name = artifact.get("name")
-        if isinstance(name, str) and name_pattern.fullmatch(name):
-            matches.append(artifact)
-    if len(matches) != 1:
-        raise ReleaseCandidateError(f"matching prepared artifact must be unique; found {len(matches)}")
-    artifact = matches[0]
+        match = name_pattern.fullmatch(name) if isinstance(name, str) else None
+        if match is None:
+            continue
+        producer_attempt = _integer(int(match.group(2)), "artifact producer attempt")
+        if producer_attempt > run_attempt:
+            raise ReleaseCandidateError("prepared artifact has a future producer attempt")
+        matches.append((producer_attempt, match.group(1), artifact))
+    if not matches:
+        raise ReleaseCandidateError("matching prepared artifact must be unique; found 0")
+    producer_attempt = max(attempt for attempt, _, _ in matches)
+    latest = [match for match in matches if match[0] == producer_attempt]
+    if len(latest) != 1:
+        raise ReleaseCandidateError(f"matching prepared artifact must be unique; found {len(latest)}")
+    _, source_sha, artifact = latest[0]
     if artifact.get("expired") is not False:
         raise ReleaseCandidateError("prepared artifact is expired or has an unknown expiry state")
     digest = _string(artifact.get("digest"), "artifact digest")
     if not ARTIFACT_DIGEST_PATTERN.fullmatch(digest):
         raise ReleaseCandidateError("artifact digest must be a GitHub SHA-256 digest")
     _string(artifact.get("expires_at"), "artifact expiry")
-    return artifact
+    return artifact, producer_attempt, source_sha
 
 
 def _ci_identity_artifact(api: GitHubApi, run_id: int, producer_attempt: int) -> dict[str, object]:
@@ -534,17 +557,24 @@ def select_release_candidate(
         CI_DELEGATED_JOB_NAMES,
         expected_conclusion="skipped",
     )
-    artifact_producer_attempt = readiness_job_attempts["Build and verify Windows installer"]
-    artifact = _candidate_artifact(api, run_id, release_version, artifact_producer_attempt)
-    artifact_name = _string(artifact.get("name"), "artifact name")
-    candidate_source_sha = _sha(
-        artifact_name.split("-attempt-", 1)[0].rsplit("-", 1)[-1],
-        "candidate source SHA",
+    artifact, artifact_producer_attempt, artifact_source_sha = _candidate_artifact(
+        api,
+        run_id,
+        release_version,
+        run_attempt,
     )
+    build_history = readiness_job_attempts["Build and verify Windows installer"]
+    if artifact_producer_attempt not in build_history.successful_attempts:
+        raise ReleaseCandidateError("prepared artifact has no successful build job in its producer attempt")
+    smoke_history = readiness_job_attempts["Install and start prepared package"]
+    if not any(attempt >= artifact_producer_attempt for attempt in smoke_history.successful_attempts):
+        raise ReleaseCandidateError("prepared artifact has no successful install/start confirmation")
+    artifact_name = _string(artifact.get("name"), "artifact name")
+    candidate_source_sha = _sha(artifact_source_sha, "candidate source SHA")
     ci_artifact = _ci_identity_artifact(
         api,
         ci_run_id,
-        ci_job_attempts[CI_VALIDATION_JOB_NAME],
+        ci_job_attempts[CI_VALIDATION_JOB_NAME].latest_attempt,
     )
     ci_artifact_name = _string(ci_artifact.get("name"), "CI validation artifact name")
     ci_source_sha = _sha(ci_artifact_name.split("-attempt-", 1)[0].rsplit("-", 1)[-1], "CI source SHA")
@@ -577,10 +607,10 @@ def select_release_candidate(
         workflow_run_id=run_id,
         workflow_run_attempt=run_attempt,
         artifact_workflow_run_attempt=artifact_producer_attempt,
-        installer_smoke_workflow_run_attempt=readiness_job_attempts["Install and start prepared package"],
+        installer_smoke_workflow_run_attempt=smoke_history.latest_attempt,
         ci_workflow_run_id=ci_run_id,
         ci_workflow_run_attempt=ci_run_attempt,
-        ci_artifact_workflow_run_attempt=ci_job_attempts[CI_VALIDATION_JOB_NAME],
+        ci_artifact_workflow_run_attempt=ci_job_attempts[CI_VALIDATION_JOB_NAME].latest_attempt,
         ci_candidate_source_sha=ci_source_sha,
         ci_candidate_source_tree=ci_tree,
         ci_artifact_id=_integer(ci_artifact.get("id"), "CI validation artifact id"),

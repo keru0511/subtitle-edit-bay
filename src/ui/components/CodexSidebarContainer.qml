@@ -6,6 +6,8 @@ Rectangle {
 
     property var backend
     property bool wasAuthenticated: false
+    property bool drawerMode: false
+    signal closeRequested()
 
     objectName: "codexChatSidebarContainer"
     radius: 12
@@ -23,14 +25,24 @@ Rectangle {
         anchors.margins: 14
         spacing: 8
 
-        Text {
-            objectName: "codexChatSidebarTitle"
-            Layout.maximumHeight: implicitHeight
-            text: "Codex"
-            color: "#F4F1E8"
-            font.family: "Yu Gothic UI"
-            font.pixelSize: 15
-            font.weight: Font.Bold
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                objectName: "codexChatSidebarTitle"
+                Layout.fillWidth: true
+                Layout.maximumHeight: implicitHeight
+                text: "Codex"
+                color: "#F4F1E8"
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 15
+                font.weight: Font.Bold
+            }
+            SmallButton {
+                objectName: "codexDrawerCloseButton"
+                visible: sidebar.drawerMode
+                text: "閉じる"
+                onClicked: sidebar.closeRequested()
+            }
         }
         Text {
             objectName: "codexChatSidebarSubtitle"

@@ -70,6 +70,12 @@ ApplicationWindow {
         && root.appBackend.codexAuthState === "authenticated"
     readonly property bool codexSidebarOverlay: root.width < 1400
     readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0
+    readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
+        ? (root.codexDrawerOpen ? 310 : 104) : 0
+    readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0
+        ? root.codexSidebarWidth + 10 : 0
+    readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
+        + root.codexDrawerHeaderInset
     property bool codexDrawerOpen: true
     property bool previousCodexAuthenticated: false
     onEditorModeChanged: {
@@ -1078,7 +1084,7 @@ ApplicationWindow {
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 20
-            anchors.rightMargin: 20
+            anchors.rightMargin: 20 + root.codexDrawerHeaderInset
             spacing: 14
             ColumnLayout {
                 spacing: 0
@@ -1546,7 +1552,7 @@ ApplicationWindow {
         anchors.leftMargin: 12
         anchors.topMargin: 12
         anchors.bottomMargin: 12
-        anchors.rightMargin: root.codexSidebarWidth + 22
+        anchors.rightMargin: root.codexWorkspaceRightInset + 12
         spacing: 10
 
         Rectangle {
@@ -2230,7 +2236,7 @@ ApplicationWindow {
         id: mixerPage
         objectName: "mixerPage"
         anchors.fill: parent
-        anchors.rightMargin: root.codexSidebarWidth + (root.codexAuthenticated ? 10 : 0)
+        anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.mixerMode
         z: 100
         color: "#0D1210"
@@ -2459,7 +2465,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 64
                         Layout.leftMargin: 18
-                        Layout.rightMargin: 14
+                        Layout.rightMargin: 14 + root.codexDrawerHeaderInset
                         spacing: 10
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -2794,7 +2800,7 @@ ApplicationWindow {
         id: editorPage
         objectName: "editorPage"
         anchors.fill: parent
-        anchors.rightMargin: root.codexSidebarWidth + (root.codexAuthenticated ? 10 : 0)
+        anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.editorMode
         z: 100
         color: "#0D1210"
@@ -2848,7 +2854,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     spacing: 0
             RowLayout {
-                Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
+                Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10 + root.codexDrawerHeaderInset; spacing: 8
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
                 Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
@@ -3132,7 +3138,7 @@ ApplicationWindow {
         id: shortModePage
         objectName: "shortModePage"
         anchors.fill: parent
-        anchors.rightMargin: root.codexSidebarWidth + (root.codexAuthenticated ? 10 : 0)
+        anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.shortMode
         z: 100
         color: "#0D1210"
@@ -3161,6 +3167,8 @@ ApplicationWindow {
         visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)
         z: 600
         backend: root.appBackend
+        drawerMode: root.codexSidebarOverlay
+        onCloseRequested: root.codexDrawerOpen = false
     }
 
     SmallButton {
@@ -3170,7 +3178,7 @@ ApplicationWindow {
         anchors.margins: 12
         width: 86
         height: 34
-        visible: root.codexAuthenticated && root.codexSidebarOverlay
+        visible: root.codexAuthenticated && root.codexSidebarOverlay && !root.codexDrawerOpen
         z: 650
         text: root.codexDrawerOpen ? "Codexを閉じる" : "Codexを開く"
         onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
@@ -3211,7 +3219,7 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.leftMargin: 12
-        anchors.rightMargin: 12
+        anchors.rightMargin: root.codexInteractiveRightInset + 12
         anchors.bottomMargin: 12
         z: 700
         color: "transparent"

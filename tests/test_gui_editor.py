@@ -3835,6 +3835,93 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(sidebar.width(), 0)
         self.assertTrue(login_route.isVisible())
 
+    def test_codex_drawer_does_not_block_back_navigation_at_minimum_width(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self.app.processEvents()
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        self.assertTrue(sidebar.isVisible())
+        self._click(window, self._quick_item(window, "codexDrawerCloseButton"))
+        self.assertFalse(sidebar.isVisible())
+        self.assertTrue(self._quick_item(window, "codexDrawerToggle").isVisible())
+
+        editor_back = self._quick_item(window, "editorBackButton")
+        self._click(window, editor_back)
+        self.assertFalse(self._quick_item(window, "editorPage").isVisible())
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self._click(window, self._quick_item(window, "codexDrawerToggle"))
+        self.assertTrue(sidebar.isVisible())
+        self.assertFalse(self._quick_item(window, "codexDrawerToggle").isVisible())
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        self.assertFalse(self._quick_item(window, "editorPage").isVisible())
+
+    def test_progress_and_codex_controls_remain_clickable_together(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        self.app._processing_progress.start("render_short")
+        self.app._running = True
+        self.app.progressDetailsChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.activeJobChanged.emit()
+        self.app.processEvents()
+
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        progress = self._quick_item(window, "processingProgressModeOverlay")
+        self.assertTrue(sidebar.isVisible())
+        self.assertTrue(progress.isVisible())
+        progress_right = progress.mapToScene(QPointF(progress.width(), 0)).x()
+        sidebar_left = sidebar.mapToScene(QPointF(0, 0)).x()
+        self.assertLessEqual(progress_right, sidebar_left)
+
+        chat_input = self._quick_item(window, "codexChatInput")
+        chat_send = self._quick_item(window, "codexChatSendButton")
+        chat_input.setProperty("text", "進捗中も送信できる")
+        self.app.processEvents()
+        with patch.object(self.app, "sendCodexChatMessage") as send:
+            self._click(window, chat_send)
+        send.assert_called_once_with("進捗中も送信できる")
+
+        streaming = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+            chat_state="streaming",
+            messages=({"role": "assistant", "text": "応答中", "status": "streaming"},),
+        )
+        self.app._codex_chat._snapshot = streaming
+        self.app._on_codex_chat_state(streaming)
+        self.app.processEvents()
+        with patch.object(self.app, "stopCodexChat") as stop_chat:
+            self._click(window, self._quick_item(window, "codexChatStopButton"))
+        stop_chat.assert_called_once_with()
+
+        progress_panel = self._quick_item(window, "processingProgressModePanel")
+        process_stop = self._quick_visual_item(progress_panel, "processingProgressStopButton")
+        with patch.object(self.app, "cancelProcessing") as stop_process:
+            self._click(window, process_stop)
+        stop_process.assert_called_once_with()
+
     def test_codex_model_persistence_does_not_replace_workflow_status(self) -> None:
         self.app._settings["codex_model"] = ""
         self.app._status = "文字起こしを実行しています"

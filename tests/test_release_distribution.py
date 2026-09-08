@@ -4,6 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -17,6 +18,21 @@ from scripts.release_contract import (
     ReleaseContractError,
     validate_source_version,
     verify_release_artifacts,
+)
+from scripts.release_candidate import (
+    CI_VALIDATION_JOB_NAME,
+    REQUIRED_CI_JOB_NAMES,
+    REQUIRED_JOB_NAMES,
+    RELEASE_ARTIFACT_FILES,
+    ReleaseCandidateError,
+    extract_verified_artifact,
+    resolve_release_candidate,
+    select_release_candidate,
+    verify_ci_validation_binding,
+    verify_preparation_binding,
+    verify_promotion_record,
+    write_ci_validation_identity,
+    write_promotion_record,
 )
 from scripts.release_readiness import (
     ReleaseReadinessError,
@@ -38,7 +54,6 @@ from tests.workflow_contracts import (
     job_ancestors,
     load_workflow,
     step_by_id,
-    validate_step_command,
     validate_publish_gate,
     validate_publish_permissions,
     validate_step_order,
@@ -50,6 +65,7 @@ RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 RELEASE_REQUEST_WORKFLOW = ROOT / ".github" / "workflows" / "release-request.yml"
 RELEASE_PREPARE_WORKFLOW = ROOT / ".github" / "workflows" / "release-prepare.yml"
 RELEASE_READINESS_WORKFLOW = ROOT / ".github" / "workflows" / "release-readiness.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_ASSET_NAMES = {
     INSTALLER_NAME,
     CHECKSUM_NAME,
@@ -103,6 +119,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[string]$ProjectRoot", build)
         self.assertIn("source_sha", package)
         self.assertIn("release-preparation.json", package)
+        self.assertIn("pull_request_number", package)
+        self.assertIn("workflow_run_id", package)
+        self.assertIn("[long]$ProducerWorkflowRunId = 0", package)
+        self.assertIn("[int]$ProducerWorkflowRunAttempt = 0", package)
         self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
         self.assertIn("engine.rootObjects()", smoke)
@@ -112,11 +132,11 @@ class ReleaseDistributionTests(unittest.TestCase):
         triggers = workflow["on"]
 
         self.assertEqual(set(triggers), {"workflow_call"})
-        self.assertEqual(set(triggers["workflow_call"]["inputs"]), {"source_sha", "release_version"})
+        self.assertEqual(set(triggers["workflow_call"]["inputs"]), {"release_commit_sha", "release_version"})
         validate_publish_gate(
             workflow,
             publish_job="publish",
-            required_gates=("prepare", "tag"),
+            required_gates=("candidate", "tag"),
         )
         self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertEqual(workflow["jobs"]["tag"]["permissions"], {"contents": "write"})
@@ -125,8 +145,12 @@ class ReleaseDistributionTests(unittest.TestCase):
             {"actions": "read", "contents": "write"},
         )
         graph = build_job_graph(workflow)
-        self.assertTrue({"prepare", "tag"}.issubset(job_ancestors(graph, "publish")))
-        self.assertEqual(workflow["jobs"]["prepare"]["uses"], "./.github/workflows/release-prepare.yml")
+        self.assertTrue({"candidate", "tag"}.issubset(job_ancestors(graph, "publish")))
+        self.assertNotIn("prepare", workflow["jobs"])
+        self.assertEqual(
+            workflow["jobs"]["candidate"]["permissions"],
+            {"actions": "read", "contents": "read", "pull-requests": "read"},
+        )
 
     def test_release_entrypoint_passes_exact_source_and_version(self) -> None:
         release = load_workflow(RELEASE_WORKFLOW)
@@ -135,10 +159,13 @@ class ReleaseDistributionTests(unittest.TestCase):
 
         self.assertEqual(
             release["concurrency"]["group"],
-            "release-${{ inputs.release_version }}-${{ inputs.source_sha }}",
+            "release-${{ inputs.release_version }}-${{ inputs.release_commit_sha }}",
         )
         self.assertEqual(reusable_release["uses"], "./.github/workflows/release.yml")
-        self.assertEqual(reusable_release["with"]["source_sha"], "${{ needs.validate.outputs.source_sha }}")
+        self.assertEqual(
+            reusable_release["with"]["release_commit_sha"],
+            "${{ needs.validate.outputs.source_sha }}",
+        )
         self.assertEqual(
             reusable_release["with"]["release_version"],
             "${{ needs.validate.outputs.release_version }}",
@@ -159,12 +186,73 @@ class ReleaseDistributionTests(unittest.TestCase):
         )
         upload = step_by_id(preparation, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
+        validation_command = str(step_by_id(preparation, "validate", "contract")["run"])
+        self.assertNotIn("artifact_name", validation_command)
+        identity_command = str(step_by_id(preparation, "build", "identity")["run"])
+        self.assertIn("-attempt-$env:GITHUB_RUN_ATTEMPT", identity_command)
+        self.assertEqual(upload["with"]["name"], "${{ steps.identity.outputs.artifact_name }}")
+        smoke_download = step_by_id(preparation, "smoke", "download")
+        self.assertEqual(smoke_download["with"]["artifact-ids"], "${{ needs.build.outputs.artifact_id }}")
+        self.assertEqual(
+            preparation["jobs"]["readiness"]["outputs"]["artifact_name"],
+            "${{ needs.build.outputs.artifact_name }}",
+        )
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
+        self.assertIn("release-promotion.json", published_assets)
         self.assertNotIn("--clobber", published_assets)
-        self.assertIn("cmp dist/SubtitleEditBay-Setup.exe.sha256", published_assets)
+        self.assertIn('cmp "dist/$asset" "existing-release/$asset"', published_assets)
+
+        candidate = workflow["jobs"]["candidate"]
+        self.assertNotIn("release-prepare.yml", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+        select_command = str(step_by_id(workflow, "candidate", "select")["run"])
+        self.assertIn("release_candidate.py resolve", select_command)
+        self.assertIn("--decision-artifact-name", select_command)
+        download = step_by_id(workflow, "candidate", "download")
+        download_command = str(download["run"])
+        self.assertIn("release_candidate.py download-artifact", download_command)
+        self.assertIn('--artifact-id "${{ steps.select.outputs.artifact_id }}"', download_command)
+        self.assertIn('--artifact-digest "${{ steps.select.outputs.artifact_digest }}"', download_command)
+        self.assertNotIn("actions/download-artifact", str(download))
+        upload = next(step for step in candidate["steps"] if step.get("name") == "Upload promotion record")
+        self.assertEqual(upload["if"], "steps.select.outputs.decision_reused != 'true'")
+        self.assertNotIn("continue-on-error", candidate)
+
+        ci_download = next(
+            step for step in candidate["steps"] if step.get("name") == "Download the CI validation identity"
+        )
+        self.assertIn('--artifact-id "${{ steps.select.outputs.ci_artifact_id }}"', str(ci_download["run"]))
+        self.assertIn(
+            '--artifact-digest "${{ steps.select.outputs.ci_artifact_digest }}"',
+            str(ci_download["run"]),
+        )
+
+    def test_normal_ci_records_the_exact_validated_merge_identity(self) -> None:
+        workflow = load_workflow(CI_WORKFLOW)
+        result = workflow["jobs"]["validation-result"]
+
+        self.assertEqual(result["name"], "CI validation result")
+        self.assertEqual(
+            set(result["needs"]),
+            {
+                "python-quality",
+                "portable-tests",
+                "windows-tests",
+                "windows-launcher-tests",
+                "ffmpeg6-compat",
+                "windows-installer-smoke",
+            },
+        )
+        record = next(step for step in result["steps"] if step.get("name") == "Record validated source identity")
+        command = str(record["run"])
+        self.assertIn("write-ci-validation", command)
+        self.assertIn("git rev-parse HEAD", command)
+        self.assertIn("git rev-parse 'HEAD^{tree}'", command)
+        self.assertIn("--pull-request-base-sha", command)
+        upload = next(step for step in result["steps"] if step.get("name") == "Upload immutable CI validation identity")
+        self.assertIn("${{ github.sha }}-attempt-${{ github.run_attempt }}", upload["with"]["name"])
 
     def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -179,8 +267,19 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn('steps.state.outputs.action }}" == "publish-draft"', command)
         self.assertIn('gh release edit "$RELEASE_VERSION"', command)
         self.assertIn("--draft=false", command)
-        self.assertLess(command.index("verify-artifacts"), command.index("--draft=false"))
-        self.assertLess(command.index("cmp dist/SubtitleEditBay-Setup.exe.sha256"), command.index("--draft=false"))
+        verify = str(step_by_id(workflow, "publish", "verify")["run"])
+        self.assertIn("verify-artifacts", verify)
+        self.assertIn("verify-promotion", verify)
+        candidate_download = str(step_by_id(workflow, "publish", "download")["run"])
+        self.assertIn("release_candidate.py download-artifact", candidate_download)
+        decision_download = next(
+            step for step in publish["steps"] if step.get("name") == "Download frozen promotion decision"
+        )
+        self.assertIn("download-run-artifact", str(decision_download["run"]))
+        self.assertIn('cmp "dist/$asset" "existing-release/$asset"', command)
+        self.assertLess(command.index("cmp"), command.index("--draft=false"))
+        self.assertIn('[[ "${#missing[@]}" -eq 0 ]]', command)
+        self.assertIn("gh release upload", command)
         self.assertNotIn("--clobber", command)
         self.assertIn("release_state.py assert-published", str(published["run"]))
         self.assertEqual(publish["steps"][-1]["id"], "published")
@@ -491,40 +590,519 @@ class WorkflowContractHelperTests(unittest.TestCase):
                 )
 
     def test_release_contract_commands_cannot_mask_failures_or_change_inputs(self) -> None:
-        mutations = []
+        workflow = load_workflow(RELEASE_WORKFLOW)
+        command = str(step_by_id(workflow, "publish", "verify")["run"])
 
-        wrong_artifact_version = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(wrong_artifact_version, "publish", "verify")["run"] = (
-            "python scripts/release_contract.py verify-artifacts --directory dist --expected-version 0.0.0"
-        )
-        mutations.append((wrong_artifact_version, "publish", "verify", "bash"))
+        self.assertIn('--expected-version "${{ inputs.release_version }}"', command)
+        self.assertIn('--expected-source-sha "$CANDIDATE_SOURCE_SHA"', command)
+        self.assertIn('[[ "$actual_sha256" == "$INSTALLER_SHA256" ]]', command)
+        self.assertNotIn("|| true", command)
+        self.assertEqual(step_by_id(workflow, "publish", "verify")["shell"], "bash")
 
-        custom_shell = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(custom_shell, "publish", "verify")["shell"] = "bash {0}"
-        mutations.append((custom_shell, "publish", "verify", "bash"))
 
-        expected_tokens = {
-            "verify": (
-                "python",
-                "scripts/release_contract.py",
-                "verify-artifacts",
-                "--directory",
-                "dist",
-                "--expected-version",
-                "${{ inputs.release_version }}",
-                "--expected-source-sha",
-                "${{ inputs.source_sha }}",
+class ReleaseCandidateTests(unittest.TestCase):
+    RELEASE_SHA = "d" * 40
+    CANDIDATE_SHA = "c" * 40
+    HEAD_SHA = "b" * 40
+    BASE_SHA = "a" * 40
+    TREE_SHA = "e" * 40
+
+    def _api(
+        self,
+        *,
+        run_conclusion: str = "success",
+        run_status: str = "completed",
+        job_conclusions: dict[str, str] | None = None,
+        ci_job_conclusions: dict[str, str] | None = None,
+        readiness_job_attempts: dict[str, int] | None = None,
+        artifact_attempt: int | None = None,
+        additional_artifact_attempts: tuple[int, ...] = (),
+        include_inherited_success_records: bool = False,
+        artifact_expired: bool = False,
+        candidate_tree: str | None = None,
+        candidate_parents: tuple[str, ...] | None = None,
+        ci_source_sha: str | None = None,
+        ci_source_tree: str | None = None,
+        ci_source_parents: tuple[str, ...] | None = None,
+        include_older_success: bool = False,
+        include_newer_in_progress: bool = False,
+        include_failed_test_attempt: bool = False,
+        empty_pull_requests: bool = False,
+        contradictory_pull_requests: bool = False,
+    ) -> MagicMock:
+        api = MagicMock()
+        api.repository = "owner/repo"
+        pull = {
+            "number": 42,
+            "merged": True,
+            "merged_at": "2026-09-07T00:00:00Z",
+            "merge_commit_sha": self.RELEASE_SHA,
+            "head": {
+                "sha": self.HEAD_SHA,
+                "ref": "release/v1.2.3",
+                "repo": {"full_name": "owner/repo"},
+            },
+            "base": {"sha": self.BASE_SHA, "ref": "main"},
+        }
+        latest_run = {
+            "id": 200,
+            "run_attempt": 2,
+            "created_at": "2026-09-07T02:00:00Z",
+            "status": run_status,
+            "conclusion": run_conclusion,
+            "event": "pull_request",
+            "path": ".github/workflows/release-readiness.yml",
+            "head_sha": self.HEAD_SHA,
+            "head_branch": "release/v1.2.3",
+            "head_repository": {"full_name": "owner/repo"},
+            "pull_requests": (
+                [{"number": 99}] if contradictory_pull_requests else [] if empty_pull_requests else [{"number": 42}]
             ),
         }
-        for workflow, job_id, step_id, shell in mutations:
-            with self.subTest(job_id=job_id, step_id=step_id), self.assertRaises(WorkflowContractError):
-                validate_step_command(
-                    workflow,
-                    job_id,
-                    step_id,
-                    expected_shell=shell,
-                    expected_tokens=expected_tokens[step_id],
+        readiness_runs = [latest_run]
+        if include_older_success:
+            older = dict(
+                latest_run,
+                id=100,
+                run_attempt=1,
+                created_at="2026-09-07T01:00:00Z",
+                status="completed",
+                conclusion="success",
+            )
+            readiness_runs.append(older)
+        if include_newer_in_progress:
+            readiness_runs.append(
+                dict(
+                    latest_run,
+                    id=250,
+                    run_attempt=1,
+                    created_at="2026-09-07T03:00:00Z",
+                    status="in_progress",
+                    conclusion=None,
                 )
+            )
+        readiness_jobs = [
+            {
+                "name": (
+                    f"Prepare merge candidate / {name}"
+                    if name not in {"Classify merge candidate", "Release readiness"}
+                    else name
+                ),
+                "status": "completed",
+                "conclusion": (job_conclusions or {}).get(name, "success"),
+                "run_attempt": (readiness_job_attempts or {}).get(name, 2),
+            }
+            for name in REQUIRED_JOB_NAMES
+        ]
+        if include_failed_test_attempt:
+            readiness_jobs.append(
+                {
+                    "name": "Prepare merge candidate / Release tests on Linux",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "run_attempt": 1,
+                }
+            )
+        if include_inherited_success_records:
+            for inherited_name in (
+                "Build and verify Windows installer",
+                "Install and start prepared package",
+            ):
+                readiness_jobs.append(
+                    {
+                        "name": f"Prepare merge candidate / {inherited_name}",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "run_attempt": 1,
+                        "started_at": "2026-09-07T01:15:00Z",
+                        "completed_at": "2026-09-07T01:45:00Z",
+                    }
+                )
+                for job in readiness_jobs:
+                    if job["name"].endswith(inherited_name):
+                        job.setdefault("started_at", "2026-09-07T01:15:00Z")
+                        job.setdefault("completed_at", "2026-09-07T01:45:00Z")
+        ci_run = dict(
+            latest_run,
+            id=201,
+            run_attempt=1,
+            path=".github/workflows/ci.yml",
+            status="completed",
+            conclusion="success",
+        )
+        ci_jobs = [
+            {
+                "name": name,
+                "status": "completed",
+                "conclusion": (ci_job_conclusions or {}).get(name, "success"),
+                "run_attempt": 1,
+            }
+            for name in (*REQUIRED_CI_JOB_NAMES, CI_VALIDATION_JOB_NAME)
+        ]
+        artifact = {
+            "id": 300,
+            "name": (
+                f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
+                "-attempt-"
+                f"{artifact_attempt or (readiness_job_attempts or {}).get('Build and verify Windows installer', 2)}"
+            ),
+            "digest": "sha256:" + "f" * 64,
+            "expired": artifact_expired,
+            "expires_at": "2026-09-21T00:00:00Z",
+        }
+        prepared_artifacts = [artifact]
+        for prior_artifact_attempt in additional_artifact_attempts:
+            prepared_artifacts.append(
+                dict(
+                    artifact,
+                    id=300 + prior_artifact_attempt,
+                    name=(
+                        f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
+                        f"-attempt-{prior_artifact_attempt}"
+                    ),
+                )
+            )
+        selected_ci_source_sha = ci_source_sha or self.CANDIDATE_SHA
+        ci_artifact = {
+            "id": 301,
+            "name": f"ci-validation-identity-{selected_ci_source_sha}-attempt-1",
+            "digest": "sha256:" + "1" * 64,
+            "expired": False,
+            "expires_at": "2026-09-21T00:00:00Z",
+        }
+
+        def get(path: str, query: dict[str, object] | None = None) -> object:
+            if path.endswith("/pulls/42"):
+                return pull
+            if path.endswith(f"/git/commits/{self.CANDIDATE_SHA}"):
+                return {
+                    "tree": {"sha": candidate_tree or self.TREE_SHA},
+                    "parents": [{"sha": sha} for sha in (candidate_parents or (self.BASE_SHA, self.HEAD_SHA))],
+                }
+            if ci_source_sha and path.endswith(f"/git/commits/{ci_source_sha}"):
+                return {
+                    "tree": {"sha": ci_source_tree or self.TREE_SHA},
+                    "parents": [{"sha": sha} for sha in (ci_source_parents or (self.BASE_SHA, self.HEAD_SHA))],
+                }
+            if path.endswith(f"/git/commits/{self.RELEASE_SHA}"):
+                return {"tree": {"sha": self.TREE_SHA}, "parents": [{"sha": self.BASE_SHA}]}
+            raise AssertionError(path)
+
+        def pages(
+            path: str,
+            key: str | None = None,
+            query: dict[str, object] | None = None,
+        ) -> list[object]:
+            if path.endswith(f"/commits/{self.RELEASE_SHA}/pulls"):
+                return [pull]
+            if path.endswith("/pulls/42/files"):
+                return [{"filename": "VERSION"}]
+            if path.endswith("/release-readiness.yml/runs"):
+                return readiness_runs
+            if path.endswith("/ci.yml/runs"):
+                return [ci_run]
+            if path.endswith("/runs/200/jobs"):
+                return readiness_jobs
+            if path.endswith("/runs/201/jobs"):
+                return ci_jobs
+            if path.endswith("/runs/200/artifacts"):
+                return prepared_artifacts
+            if path.endswith("/runs/201/artifacts"):
+                return [ci_artifact]
+            raise AssertionError(path)
+
+        api.get.side_effect = get
+        api.pages.side_effect = pages
+        return api
+
+    def test_selects_exact_successful_candidate_and_records_distinct_release_commit(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+
+        self.assertEqual(candidate.pull_request_number, 42)
+        self.assertEqual(candidate.candidate_source_sha, self.CANDIDATE_SHA)
+        self.assertEqual(candidate.release_commit_sha, self.RELEASE_SHA)
+        self.assertEqual(candidate.candidate_source_tree, candidate.release_commit_tree)
+        self.assertEqual(candidate.workflow_run_id, 200)
+        self.assertEqual(candidate.workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 2)
+        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 2)
+        self.assertEqual(candidate.ci_workflow_run_id, 201)
+        self.assertEqual(candidate.ci_workflow_run_attempt, 1)
+        self.assertEqual(candidate.ci_candidate_source_sha, self.CANDIDATE_SHA)
+        self.assertEqual(candidate.ci_candidate_source_tree, self.TREE_SHA)
+        self.assertEqual(candidate.ci_artifact_id, 301)
+        self.assertEqual(candidate.artifact_id, 300)
+
+    def test_accepts_cleared_post_merge_pull_association_with_full_identity(self) -> None:
+        candidate = select_release_candidate(
+            self._api(empty_pull_requests=True),
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+
+        self.assertEqual(candidate.pull_request_number, 42)
+
+    def test_rejects_contradictory_nonempty_pull_association(self) -> None:
+        with self.assertRaisesRegex(ReleaseCandidateError, "no release-readiness.yml run"):
+            select_release_candidate(
+                self._api(contradictory_pull_requests=True),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
+
+    def test_does_not_fall_back_when_latest_matching_run_failed(self) -> None:
+        api = self._api(run_conclusion="failure", include_older_success=True)
+
+        with self.assertRaisesRegex(ReleaseCandidateError, "latest matching.*did not succeed"):
+            select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+
+    def test_does_not_fall_back_when_latest_matching_run_is_in_progress(self) -> None:
+        api = self._api(include_newer_in_progress=True)
+
+        with self.assertRaisesRegex(ReleaseCandidateError, "in_progress/None"):
+            select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+        readiness_queries = [
+            call.kwargs["query"]
+            for call in api.pages.call_args_list
+            if call.args and str(call.args[0]).endswith("/release-readiness.yml/runs")
+        ]
+        self.assertEqual(readiness_queries, [{"event": "pull_request"}])
+
+    def test_rejects_failed_required_normal_ci_job(self) -> None:
+        with self.assertRaisesRegex(ReleaseCandidateError, "Windows runtime tests"):
+            select_release_candidate(
+                self._api(ci_job_conclusions={"Windows runtime tests": "failure"}),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
+
+    def test_rejects_ci_that_validated_same_head_against_an_old_base(self) -> None:
+        old_ci_sha = "f" * 40
+        with self.assertRaisesRegex(ReleaseCandidateError, "CI source is not the final merge"):
+            select_release_candidate(
+                self._api(
+                    ci_source_sha=old_ci_sha,
+                    ci_source_tree="9" * 40,
+                    ci_source_parents=("8" * 40, self.HEAD_SHA),
+                ),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
+
+    def test_rejects_missing_verification_stale_head_tree_and_expiry(self) -> None:
+        cases = (
+            (self._api(job_conclusions={"Install and start prepared package": "skipped"}), "did not succeed"),
+            (self._api(candidate_parents=(self.BASE_SHA, "f" * 40)), "final tested merge"),
+            (self._api(candidate_tree="f" * 40), "source trees differ"),
+            (self._api(artifact_expired=True), "expired"),
+        )
+        for api, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ReleaseCandidateError, message):
+                select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
+
+    def test_promotion_record_is_stable_and_detects_mismatch(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            expected = directory / "expected.json"
+            actual = directory / "actual.json"
+            write_promotion_record(expected, candidate_path, "1" * 64)
+            write_promotion_record(actual, candidate_path, "1" * 64)
+            verify_promotion_record(actual, expected)
+            payload = json.loads(actual.read_text(encoding="utf-8"))
+            payload["installer_sha256"] = "2" * 64
+            actual.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                verify_promotion_record(actual, expected)
+
+    def test_generated_preparation_is_bound_to_pr_and_readiness_run(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        producer = {
+            "repository": candidate.repository,
+            "event_name": "pull_request",
+            "pull_request_number": candidate.pull_request_number,
+            "pull_request_head_sha": candidate.pull_request_head_sha,
+            "pull_request_base_sha": candidate.pull_request_base_sha,
+            "pull_request_head_branch": candidate.pull_request_head_branch,
+            "workflow_path": candidate.workflow_path,
+            "workflow_run_id": candidate.workflow_run_id,
+            "workflow_run_attempt": candidate.artifact_workflow_run_attempt,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            preparation_path = directory / "release-preparation.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+            verify_preparation_binding(candidate_path, preparation_path)
+            producer["workflow_run_id"] = 999
+            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+
+            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_partial_rerun_reuses_successful_build_artifact_from_prior_attempt(self) -> None:
+        prior_attempt_jobs = {
+            "Classify merge candidate": 1,
+            "Validate source and version": 1,
+        }
+        api = self._api(
+            readiness_job_attempts=prior_attempt_jobs,
+            artifact_attempt=1,
+            include_inherited_success_records=True,
+            include_failed_test_attempt=True,
+        )
+        candidate = select_release_candidate(
+            api,
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+        self.assertEqual(candidate.workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 1)
+        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_id, 300)
+        self.assertTrue(candidate.artifact_name.endswith("-attempt-1"))
+        job_queries = [
+            call.kwargs["query"]
+            for call in api.pages.call_args_list
+            if call.args and str(call.args[0]).endswith("/jobs")
+        ]
+        self.assertEqual(job_queries, [{"filter": "all"}, {"filter": "all"}])
+
+        producer = {
+            "repository": candidate.repository,
+            "event_name": "pull_request",
+            "pull_request_number": candidate.pull_request_number,
+            "pull_request_head_sha": candidate.pull_request_head_sha,
+            "pull_request_base_sha": candidate.pull_request_base_sha,
+            "pull_request_head_branch": candidate.pull_request_head_branch,
+            "workflow_path": candidate.workflow_path,
+            "workflow_run_id": candidate.workflow_run_id,
+            "workflow_run_attempt": 1,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            preparation_path = directory / "release-preparation.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+
+            verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_build_only_rerun_selects_the_new_artifact_created_by_build(self) -> None:
+        candidate = select_release_candidate(
+            self._api(
+                readiness_job_attempts={
+                    "Classify merge candidate": 1,
+                    "Validate source and version": 1,
+                },
+                artifact_attempt=2,
+                additional_artifact_attempts=(1,),
+                include_inherited_success_records=True,
+            ),
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_id, 300)
+        self.assertTrue(candidate.artifact_name.endswith("-attempt-2"))
+
+    def test_ci_identity_record_must_match_selected_merge_content(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            identity_path = directory / "ci-validation-identity.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            write_ci_validation_identity(
+                identity_path,
+                candidate.repository,
+                candidate.pull_request_number,
+                candidate.pull_request_head_sha,
+                candidate.pull_request_base_sha,
+                candidate.pull_request_head_branch,
+                candidate.ci_candidate_source_sha,
+                candidate.ci_candidate_source_tree,
+                candidate.ci_workflow_run_id,
+                candidate.ci_artifact_workflow_run_attempt,
+            )
+            verify_ci_validation_binding(candidate_path, identity_path)
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            identity["pull_request_base_sha"] = "9" * 40
+            identity_path.write_text(json.dumps(identity), encoding="utf-8")
+
+            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                verify_ci_validation_binding(candidate_path, identity_path)
+
+    def test_archive_digest_rejects_self_consistent_replacement(self) -> None:
+        def write_archive(path: Path, installer: bytes) -> None:
+            installer_digest = hashlib.sha256(installer).hexdigest()
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(INSTALLER_NAME, installer)
+                archive.writestr(CHECKSUM_NAME, f"{installer_digest}  {INSTALLER_NAME}")
+                archive.writestr(MANIFEST_NAME, json.dumps({"sha256": installer_digest}))
+                archive.writestr(PREPARATION_NAME, json.dumps({"sha256": installer_digest}))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            archive_path = directory / "candidate.zip"
+            write_archive(archive_path, b"approved installer")
+            approved_digest = f"sha256:{hashlib.sha256(archive_path.read_bytes()).hexdigest()}"
+            write_archive(archive_path, b"replacement installer")
+
+            with self.assertRaisesRegex(ReleaseCandidateError, "archive digest mismatch"):
+                extract_verified_artifact(
+                    archive_path,
+                    directory / "dist",
+                    approved_digest,
+                    RELEASE_ARTIFACT_FILES,
+                )
+
+    def test_rerun_reuses_saved_immutable_promotion_decision(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "selected-candidate.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            promotion_path = directory / "release-promotion.json"
+            write_promotion_record(promotion_path, candidate_path, "1" * 64)
+            archive_path = directory / "decision.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.write(candidate_path, candidate_path.name)
+                archive.write(promotion_path, promotion_path.name)
+            archive_bytes = archive_path.read_bytes()
+            archive_digest = f"sha256:{hashlib.sha256(archive_bytes).hexdigest()}"
+            api = MagicMock()
+            api.repository = "owner/repo"
+            api.pages.return_value = [
+                {
+                    "id": 400,
+                    "name": "release-promotion-decision",
+                    "digest": archive_digest,
+                    "expired": False,
+                }
+            ]
+
+            def download(_artifact_id: int, destination: Path, _digest: str) -> None:
+                destination.write_bytes(archive_bytes)
+
+            api.download_artifact.side_effect = download
+            restored, reused = resolve_release_candidate(
+                api,
+                self.RELEASE_SHA,
+                "v1.2.3",
+                500,
+                "release-promotion-decision",
+                directory / "restored",
+                directory / "restored-candidate.json",
+            )
+
+            self.assertTrue(reused)
+            self.assertEqual(restored, candidate)
+            api.pages.assert_called_once()
 
 
 class ReleaseArtifactContractTests(unittest.TestCase):
@@ -690,10 +1268,12 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
         self.assertFalse(result.requires_preparation)
 
     def test_release_infrastructure_change_is_prepared_without_publishing(self) -> None:
-        result = classify_values((".github/workflows/release.yml",), "v1.2.3", "v1.2.3")
+        for changed_file in (".github/workflows/release.yml", "scripts/release_candidate.py"):
+            with self.subTest(changed_file=changed_file):
+                result = classify_values((changed_file,), "v1.2.3", "v1.2.3")
 
-        self.assertEqual(result.kind, "infrastructure")
-        self.assertTrue(result.requires_preparation)
+                self.assertEqual(result.kind, "infrastructure")
+                self.assertTrue(result.requires_preparation)
 
     def test_invalid_release_changes_fail_instead_of_becoming_normal(self) -> None:
         cases = (
@@ -847,3 +1427,4 @@ class ReleaseStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

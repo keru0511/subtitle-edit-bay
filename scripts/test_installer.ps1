@@ -130,7 +130,12 @@ try {
     Remove-Item -LiteralPath $providerStarted -Force
     $env:SUBTITLE_EDIT_BAY_PROVIDER_MODE = "fail"
     $repair = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -Wait -PassThru
-    if ($repair.ExitCode -eq 0) { throw "The failing provider was accepted." }
+    if ($repair.ExitCode -eq 0) {
+        Get-Content -LiteralPath (Join-Path $installDir ".local\setup-status.json") -ErrorAction SilentlyContinue
+        Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup.log") -ErrorAction SilentlyContinue
+        Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup-error.log") -ErrorAction SilentlyContinue
+        throw "The failing provider was accepted."
+    }
     $failed = Get-Content -LiteralPath (Join-Path $installDir ".local\setup-status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($failed.status -ne "failed" -or $failed.message -notmatch "provider") { throw "Setup did not persist the provider failure." }
     Remove-Item -LiteralPath $smokeResult -Force -ErrorAction SilentlyContinue

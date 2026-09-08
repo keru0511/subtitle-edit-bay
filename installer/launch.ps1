@@ -179,8 +179,10 @@ if ($ProbeCudaRepairOnly) {
 if ($ProbeSetupRunningOnly) { if (Test-SetupMutexHeld -ProjectRoot $projectRoot) { exit 0 }; exit 3 }
 if ($ProbeSetupStateOnly) { if (Test-SetupComplete) { exit 0 }; exit 3 }
 if ($Action -eq "Setup") {
-    $exitCode = Invoke-Setup
-    if ($exitCode -eq 0) { Show-Message "セットアップが完了しました。Subtitle Edit Bayを起動できます。" }
+    $exitCode = [int](@(Invoke-Setup)[-1])
+    $completed = Test-SetupComplete
+    if ($exitCode -eq 0 -and -not $completed) { $exitCode = 1 }
+    if ($exitCode -eq 0 -and $completed) { Show-Message "セットアップが完了しました。Subtitle Edit Bayを起動できます。" }
     else {
         $status = Read-SetupStatus
         $reason = if ($status -and $status.message) { [string]$status.message } else { "詳細はセットアップログを確認してください。" }
@@ -195,7 +197,8 @@ if ($Action -eq "Update") {
     exit $process.ExitCode
 }
 if (-not (Test-SetupComplete)) {
-    $exitCode = Invoke-Setup
+    $exitCode = [int](@(Invoke-Setup)[-1])
+    if ($exitCode -eq 0 -and -not (Test-SetupComplete)) { $exitCode = 1 }
     if ($exitCode -ne 0) { exit $exitCode }
     if ($SetupExecutableOverride) { exit 0 }
 }
@@ -207,7 +210,8 @@ $python = if ($PythonOverride) { [IO.Path]::GetFullPath($PythonOverride) } else 
 $cudaRepairRequired = Test-CudaRepairRequired -Root $projectRoot -PythonPath $python
 if ($cudaRepairRequired) {
     Show-Message "GPU設定に必要なCUDA runtimeを修復します。" "Subtitle Edit Bay - GPU環境の修復"
-    $exitCode = Invoke-Setup
+    $exitCode = [int](@(Invoke-Setup)[-1])
+    if ($exitCode -eq 0 -and -not (Test-SetupComplete)) { $exitCode = 1 }
     if ($exitCode -ne 0) { exit $exitCode }
     if ($SetupExecutableOverride) { exit 0 }
     $runtimeDirectory = Resolve-ActiveRuntimeDirectory -Root $projectRoot

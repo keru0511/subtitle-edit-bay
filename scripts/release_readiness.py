@@ -142,11 +142,23 @@ def classify_changes(base_sha: str, source_sha: str) -> Classification:
     return classify_values(changed_files, base_version, source_version)
 
 
-def write_github_outputs(path: Path, classification: Classification) -> None:
+def delegates_to_readiness(classification: Classification, event_name: str, base_ref: str) -> bool:
+    return classification.requires_preparation and event_name == "pull_request" and base_ref == "main"
+
+
+def write_github_outputs(
+    path: Path,
+    classification: Classification,
+    event_name: str = "",
+    base_ref: str = "",
+) -> None:
     values = {
         "kind": classification.kind,
         "release_version": classification.release_version,
         "requires_preparation": str(classification.requires_preparation).lower(),
+        "delegates_to_readiness": str(
+            delegates_to_readiness(classification, event_name, base_ref)
+        ).lower(),
         "changed_files_json": json.dumps(classification.changed_files, ensure_ascii=False),
     }
     with path.open("a", encoding="utf-8") as output:
@@ -183,12 +195,15 @@ def assert_preparation_results(results: Sequence[str]) -> None:
 
 def assert_ci_validation_results(
     requires_preparation: bool,
+    delegates_to_readiness: bool,
     classify_result: str,
     always_required_results: Sequence[str],
     delegated_results: Sequence[str],
 ) -> None:
     if classify_result != "success":
         raise ReleaseReadinessError("CI validation ownership classification did not succeed")
+    if delegates_to_readiness and not requires_preparation:
+        raise ReleaseReadinessError("CI validation cannot delegate a normal change")
     if len(always_required_results) != len(CI_ALWAYS_REQUIRED_JOB_NAMES) - 1:
         raise ReleaseReadinessError("CI validation has an unexpected required-job result count")
     failed = [result for result in always_required_results if result != "success"]
@@ -196,7 +211,7 @@ def assert_ci_validation_results(
         raise ReleaseReadinessError("required CI validation failed or skipped: " + ", ".join(failed))
     if len(delegated_results) != len(CI_DELEGATED_JOB_NAMES):
         raise ReleaseReadinessError("CI validation has an unexpected delegated-job result count")
-    expected = "skipped" if requires_preparation else "success"
+    expected = "skipped" if delegates_to_readiness else "success"
     unexpected = [result for result in delegated_results if result != expected]
     if unexpected:
         raise ReleaseReadinessError(f"CI delegated validation must be {expected}: " + ", ".join(unexpected))
@@ -209,6 +224,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     classify.add_argument("--base-sha", required=True)
     classify.add_argument("--source-sha", required=True)
     classify.add_argument("--github-output", type=Path)
+    classify.add_argument("--event-name", default="")
+    classify.add_argument("--base-ref", default="")
     readiness = subparsers.add_parser("assert-readiness")
     readiness.add_argument("--kind", required=True)
     readiness.add_argument("--classify-result", required=True)
@@ -218,6 +235,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     preparation.add_argument("--result", action="append", required=True)
     ci_validation = subparsers.add_parser("assert-ci-validation")
     ci_validation.add_argument("--requires-preparation", required=True, choices=("true", "false"))
+    ci_validation.add_argument("--delegates-to-readiness", required=True, choices=("true", "false"))
     ci_validation.add_argument("--classify-result", required=True)
     ci_validation.add_argument("--required-result", action="append", required=True)
     ci_validation.add_argument("--delegated-result", action="append", required=True)
@@ -231,7 +249,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             classification = classify_changes(args.base_sha, args.source_sha)
             print(json.dumps(asdict(classification), ensure_ascii=False))
             if args.github_output:
-                write_github_outputs(args.github_output, classification)
+                write_github_outputs(args.github_output, classification, args.event_name, args.base_ref)
         elif args.command == "assert-readiness":
             assert_readiness_result(
                 args.kind,
@@ -244,6 +262,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             assert_ci_validation_results(
                 args.requires_preparation == "true",
+                args.delegates_to_readiness == "true",
                 args.classify_result,
                 args.required_result,
                 args.delegated_result,

@@ -448,7 +448,12 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertTrue(setup_marker.is_file())
             self.assertFalse(gui_marker.exists())
 
-            run_launcher(device="cpu", python=unavailable_python, pythonw=root / "missing pythonw.exe")
+            run_launcher(
+                device="cpu",
+                python=unavailable_python,
+                pythonw=root / "missing pythonw.exe",
+                expected_returncode=1,
+            )
             deadline = time.monotonic() + 5
             while not setup_marker.exists() and time.monotonic() < deadline:
                 time.sleep(0.05)

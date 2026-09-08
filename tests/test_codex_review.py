@@ -7,9 +7,11 @@ from src.codex_review import ReviewResult, build_review_context, review_context
 
 
 def gui_stub(*, revision: int = 7, segments: list[dict] | None = None) -> SimpleNamespace:
-    project_segments = segments if segments is not None else [
-        {"id": "s1", "start": 0.0, "end": 2.0, "text": "読みやすい字幕", "speaker": "A"}
-    ]
+    project_segments = (
+        segments
+        if segments is not None
+        else [{"id": "s1", "start": 0.0, "end": 2.0, "text": "読みやすい字幕", "speaker": "A"}]
+    )
     dependencies = SimpleNamespace(ffmpeg=True, ffprobe=True, whisperx=True, cuda=False, nvenc=False)
     return SimpleNamespace(
         _project_revision=revision,
@@ -22,7 +24,14 @@ def gui_stub(*, revision: int = 7, segments: list[dict] | None = None) -> Simple
         _dependencies=dependencies,
         subtitleSegments=project_segments,
         audioMixerChannels=[
-            {"id": "voice", "kind": "voice", "label": "声", "enabled": True, "volume_percent": 100, "path": "C:/secret/voice.wav"}
+            {
+                "id": "voice",
+                "kind": "voice",
+                "label": "声",
+                "enabled": True,
+                "volume_percent": 100,
+                "path": "C:/secret/voice.wav",
+            }
         ],
         audioPreviewLevels={"voice": 0.4},
         audioMasterLevel=0.4,

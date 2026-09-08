@@ -95,10 +95,7 @@ def build_review_context(gui: Any, *, subtitle_chunk_size: int = 200) -> dict[st
     project = gui._project
     segments = list(gui.subtitleSegments) if project is not None else []
     safe_audio_fields = ("id", "kind", "label", "enabled", "muted", "solo", "volume_percent")
-    audio = [
-        {key: channel[key] for key in safe_audio_fields if key in channel}
-        for channel in gui.audioMixerChannels
-    ]
+    audio = [{key: channel[key] for key in safe_audio_fields if key in channel} for channel in gui.audioMixerChannels]
     capabilities = dict(gui.actionCapabilities)
     dependencies = gui._dependencies
     short_settings = dict(gui.shortVideoSettings)
@@ -109,11 +106,7 @@ def build_review_context(gui: Any, *, subtitle_chunk_size: int = 200) -> dict[st
         if key in short_settings
     }
     if bgm:
-        safe_short_settings["bgm"] = {
-            key: bgm[key]
-            for key in ("volume", "in", "out", "start")
-            if key in bgm
-        }
+        safe_short_settings["bgm"] = {key: bgm[key] for key in ("volume", "in", "out", "start") if key in bgm}
     context = {
         "project_revision": revision,
         "project": {
@@ -198,13 +191,20 @@ def review_context(context: Mapping[str, Any]) -> ReviewResult:
         volume = float(channel.get("volume_percent", 100.0))
         if volume < 25.0:
             findings.append(
-                _finding("audio", "warning", {"channel_ids": [str(channel.get("id", ""))]}, "音量が極端に小さいトラックがあります")
+                _finding(
+                    "audio",
+                    "warning",
+                    {"channel_ids": [str(channel.get("id", ""))]},
+                    "音量が極端に小さいトラックがあります",
+                )
             )
     if float(audio["limiter_reduction_db"]) >= 6.0:
         findings.append(_finding("audio", "warning", {}, "リミッターの減衰が大きすぎます"))
 
     if not context["timeline_available"]:
-        findings.append(_finding("timeline", "suggestion", {}, "通常動画カット機能を利用できません", route_available=False))
+        findings.append(
+            _finding("timeline", "suggestion", {}, "通常動画カット機能を利用できません", route_available=False)
+        )
     short = context["short"]
     if short["settings"].get("enabled") and not short["clips"]:
         findings.append(_finding("short", "blocking", {}, "ショート動画にクリップがありません"))

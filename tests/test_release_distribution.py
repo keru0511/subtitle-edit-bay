@@ -187,7 +187,16 @@ class ReleaseDistributionTests(unittest.TestCase):
         upload = step_by_id(preparation, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
         validation_command = str(step_by_id(preparation, "validate", "contract")["run"])
-        self.assertIn("-attempt-$GITHUB_RUN_ATTEMPT", validation_command)
+        self.assertNotIn("artifact_name", validation_command)
+        identity_command = str(step_by_id(preparation, "build", "identity")["run"])
+        self.assertIn("-attempt-$env:GITHUB_RUN_ATTEMPT", identity_command)
+        self.assertEqual(upload["with"]["name"], "${{ steps.identity.outputs.artifact_name }}")
+        smoke_download = step_by_id(preparation, "smoke", "download")
+        self.assertEqual(smoke_download["with"]["artifact-ids"], "${{ needs.build.outputs.artifact_id }}")
+        self.assertEqual(
+            preparation["jobs"]["readiness"]["outputs"]["artifact_name"],
+            "${{ needs.build.outputs.artifact_name }}",
+        )
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
@@ -606,6 +615,9 @@ class ReleaseCandidateTests(unittest.TestCase):
         job_conclusions: dict[str, str] | None = None,
         ci_job_conclusions: dict[str, str] | None = None,
         readiness_job_attempts: dict[str, int] | None = None,
+        artifact_attempt: int | None = None,
+        additional_artifact_attempts: tuple[int, ...] = (),
+        include_inherited_success_records: bool = False,
         artifact_expired: bool = False,
         candidate_tree: str | None = None,
         candidate_parents: tuple[str, ...] | None = None,
@@ -691,6 +703,25 @@ class ReleaseCandidateTests(unittest.TestCase):
                     "run_attempt": 1,
                 }
             )
+        if include_inherited_success_records:
+            for inherited_name in (
+                "Build and verify Windows installer",
+                "Install and start prepared package",
+            ):
+                readiness_jobs.append(
+                    {
+                        "name": f"Prepare merge candidate / {inherited_name}",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "run_attempt": 1,
+                        "started_at": "2026-09-07T01:15:00Z",
+                        "completed_at": "2026-09-07T01:45:00Z",
+                    }
+                )
+                for job in readiness_jobs:
+                    if job["name"].endswith(inherited_name):
+                        job.setdefault("started_at", "2026-09-07T01:15:00Z")
+                        job.setdefault("completed_at", "2026-09-07T01:45:00Z")
         ci_run = dict(
             latest_run,
             id=201,
@@ -712,12 +743,25 @@ class ReleaseCandidateTests(unittest.TestCase):
             "id": 300,
             "name": (
                 f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
-                f"-attempt-{(readiness_job_attempts or {}).get('Build and verify Windows installer', 2)}"
+                "-attempt-"
+                f"{artifact_attempt or (readiness_job_attempts or {}).get('Build and verify Windows installer', 2)}"
             ),
             "digest": "sha256:" + "f" * 64,
             "expired": artifact_expired,
             "expires_at": "2026-09-21T00:00:00Z",
         }
+        prepared_artifacts = [artifact]
+        for prior_artifact_attempt in additional_artifact_attempts:
+            prepared_artifacts.append(
+                dict(
+                    artifact,
+                    id=300 + prior_artifact_attempt,
+                    name=(
+                        f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
+                        f"-attempt-{prior_artifact_attempt}"
+                    ),
+                )
+            )
         selected_ci_source_sha = ci_source_sha or self.CANDIDATE_SHA
         ci_artifact = {
             "id": 301,
@@ -762,7 +806,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             if path.endswith("/runs/201/jobs"):
                 return ci_jobs
             if path.endswith("/runs/200/artifacts"):
-                return [artifact]
+                return prepared_artifacts
             if path.endswith("/runs/201/artifacts"):
                 return [ci_artifact]
             raise AssertionError(path)
@@ -903,11 +947,11 @@ class ReleaseCandidateTests(unittest.TestCase):
         prior_attempt_jobs = {
             "Classify merge candidate": 1,
             "Validate source and version": 1,
-            "Build and verify Windows installer": 1,
-            "Install and start prepared package": 1,
         }
         api = self._api(
             readiness_job_attempts=prior_attempt_jobs,
+            artifact_attempt=1,
+            include_inherited_success_records=True,
             include_failed_test_attempt=True,
         )
         candidate = select_release_candidate(
@@ -917,7 +961,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         )
         self.assertEqual(candidate.workflow_run_attempt, 2)
         self.assertEqual(candidate.artifact_workflow_run_attempt, 1)
-        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 1)
+        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 2)
         self.assertEqual(candidate.artifact_id, 300)
         self.assertTrue(candidate.artifact_name.endswith("-attempt-1"))
         job_queries = [
@@ -946,6 +990,25 @@ class ReleaseCandidateTests(unittest.TestCase):
             preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
 
             verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_build_only_rerun_selects_the_new_artifact_created_by_build(self) -> None:
+        candidate = select_release_candidate(
+            self._api(
+                readiness_job_attempts={
+                    "Classify merge candidate": 1,
+                    "Validate source and version": 1,
+                },
+                artifact_attempt=2,
+                additional_artifact_attempts=(1,),
+                include_inherited_success_records=True,
+            ),
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_id, 300)
+        self.assertTrue(candidate.artifact_name.endswith("-attempt-2"))
 
     def test_ci_identity_record_must_match_selected_merge_content(self) -> None:
         candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")

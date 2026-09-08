@@ -1,9 +1,10 @@
 param(
     [switch]$ProbeNvidiaOnly,
     [switch]$ProbeNvidiaStatusOnly,
+    [switch]$ProbeCpuInstallArgumentsOnly,
     [string]$NvidiaSmiSearchRoot = "",
     [string]$NvidiaSmiOverride = "",
-    [string]$DependencyProvider = $env:SUBTITLE_EDIT_BAY_SETUP_PROVIDER
+    [string]$SetupTestHook = $env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK
 )
 
 # Windows PowerShell 5.1 turns text written to stderr by native programs into
@@ -136,6 +137,20 @@ function Get-NvidiaGpuProbe {
     }
 }
 
+function Get-RuntimePipArguments {
+    param(
+        [Parameter(Mandatory = $true)]$ProfileContract,
+        [Parameter(Mandatory = $true)][string]$RuntimeLock
+    )
+    $arguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$ProfileContract.index_url)
+    $extraIndexProperty = $ProfileContract.PSObject.Properties["extra_index_url"]
+    if ($extraIndexProperty -and $extraIndexProperty.Value) {
+        $arguments += @("--extra-index-url", [string]$extraIndexProperty.Value)
+    }
+    $arguments += @("-r", $RuntimeLock)
+    return $arguments
+}
+
 if ($ProbeNvidiaOnly) {
     $probePath = Find-NvidiaSmi -WindowsRoot $NvidiaSmiSearchRoot
     if ($probePath) {
@@ -156,6 +171,13 @@ if ($ProbeNvidiaStatusOnly) {
     if ($probeResult.State -eq "execution_failed") {
         exit 2
     }
+    exit 0
+}
+
+if ($ProbeCpuInstallArgumentsOnly) {
+    $probeContract = Get-Content -LiteralPath "runtime\runtime-contract.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    $probeProfile = $probeContract.profiles.cpu
+    Write-Output (Get-RuntimePipArguments -ProfileContract $probeProfile -RuntimeLock ([string]$probeProfile.lock_file) | ConvertTo-Json -Compress)
     exit 0
 }
 
@@ -281,36 +303,26 @@ if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
 
 Write-Host "Building the $runtimeProfile runtime from $runtimeLock..."
 Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Building the pinned runtime"
-if ($DependencyProvider) {
-    $providerPath = [IO.Path]::GetFullPath($DependencyProvider)
-    if (-not (Test-Path -LiteralPath $providerPath -PathType Leaf)) { throw "The dependency provider is missing: $providerPath" }
-    $providerPowerShell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    & $providerPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $providerPath -RuntimeDirectory $runtimeVenvFull -CandidateManifestPath $candidateManifestFull -ProjectRoot $projectRoot -RuntimeProfile $runtimeProfile
-    if ($LASTEXITCODE -ne 0) { throw "Dependency provider failed with exit code $LASTEXITCODE." }
-    $runtimePython = Join-Path $runtimeVenvFull "Scripts\python.exe"
-} else {
-    & $python -m venv $runtimeVenv
-    if ($LASTEXITCODE -ne 0) { throw "Could not create the new Python runtime generation." }
-    $runtimePython = (Resolve-Path "$runtimeVenv\Scripts\python.exe").Path
-    & $runtimePython -m pip install "pip==$($runtimeContract.python.pip_version)"
-    if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
-    $pipArguments = @("-m", "pip", "install", "--require-hashes", "--index-url", [string]$profileContract.index_url)
-    if ($profileContract.extra_index_url) { $pipArguments += @("--extra-index-url", [string]$profileContract.extra_index_url) }
-    $pipArguments += @("-r", $runtimeLock)
-    & $runtimePython @pipArguments
-    if ($LASTEXITCODE -ne 0) { throw "Locked runtime installation failed. The existing runtime was not changed." }
+if ($SetupTestHook) {
+    $hookPath = [IO.Path]::GetFullPath($SetupTestHook)
+    if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf)) { throw "The setup test hook is missing: $hookPath" }
+    $hookPowerShell = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    & $hookPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $hookPath -Phase "BeforeRuntimeBuild" -RuntimeDirectory $runtimeVenvFull -ProjectRoot $projectRoot -RuntimeProfile $runtimeProfile
+    if ($LASTEXITCODE -ne 0) { throw "Setup test hook failed with exit code $LASTEXITCODE." }
 }
-if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw "The dependency provider did not create the runtime Python executable." }
+& $python -m venv $runtimeVenv
+if ($LASTEXITCODE -ne 0) { throw "Could not create the new Python runtime generation." }
+$runtimePython = (Resolve-Path "$runtimeVenv\Scripts\python.exe").Path
+& $runtimePython -m pip install "pip==$($runtimeContract.python.pip_version)"
+if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
+$pipArguments = Get-RuntimePipArguments -ProfileContract $profileContract -RuntimeLock $runtimeLock
+& $runtimePython @pipArguments
+if ($LASTEXITCODE -ne 0) { throw "Locked runtime installation failed. The existing runtime was not changed." }
+if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw "The runtime Python executable was not created." }
 & $runtimePython -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime dependency verification failed. The existing runtime was not changed." }
-if ($DependencyProvider) {
-    & $runtimePython -c "import PySide6; from src.runtime_dependencies import check_runtime_dependencies; status = check_runtime_dependencies(); assert status.ready, status.to_dict()"
-    if ($LASTEXITCODE -ne 0) { throw "Dependency provider runtime verification failed. The existing runtime was not changed." }
-    if (-not (Test-Path -LiteralPath $candidateManifest -PathType Leaf)) { throw "The dependency provider did not write its candidate manifest." }
-} else {
-    & $runtimePython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $candidateManifest
-    if ($LASTEXITCODE -ne 0) { throw "Runtime contract verification failed. The existing runtime was not changed." }
-}
+& $runtimePython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $candidateManifest
+if ($LASTEXITCODE -ne 0) { throw "Runtime contract verification failed. The existing runtime was not changed." }
 
 $manifestRecord = Get-Content -LiteralPath $candidateManifest -Raw -Encoding UTF8 | ConvertFrom-Json
 $manifestRecord | Add-Member -NotePropertyName runtime_directory -NotePropertyValue $runtimeVenv

@@ -3,12 +3,14 @@ param(
     [string]$ExpectedVersion,
     [string]$ExpectedProductName,
     [string]$ExpectedPublisher,
+    [string]$ExpectedSignerSubject,
     [switch]$CheckDependencies,
     [switch]$RequireSignature,
     [switch]$RequireTimestamp
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot/windows_signing_identity.ps1"
 $binary = Get-Item -LiteralPath $Path -ErrorAction Stop
 if ($binary.Extension -ne ".exe") {
     throw "Windows binary must be an .exe file: $Path"
@@ -47,9 +49,10 @@ if ($RequireSignature) {
     if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate) {
         throw "Authenticode signature is not valid: $($signature.Status) $($signature.StatusMessage)"
     }
-    if ($ExpectedPublisher -and $signature.SignerCertificate.Subject -notlike "*$ExpectedPublisher*") {
-        throw "Authenticode signer does not match the expected publisher."
+    if (-not $ExpectedSignerSubject) {
+        throw "ExpectedSignerSubject is required when Authenticode signature verification is enabled."
     }
+    Assert-ExactCertificateSubject -Certificate $signature.SignerCertificate -ExpectedSubject $ExpectedSignerSubject
     if ($RequireTimestamp -and -not $signature.TimeStamperCertificate) {
         throw "Authenticode signature does not contain a trusted timestamp."
     }

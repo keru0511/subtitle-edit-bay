@@ -1,10 +1,11 @@
 param(
     [Parameter(Mandatory = $true)][string[]]$Path,
-    [Parameter(Mandatory = $true)][string]$ExpectedPublisher,
+    [Parameter(Mandatory = $true)][string]$ExpectedSignerSubject,
     [string]$TimestampServer = "http://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot/windows_signing_identity.ps1"
 $encodedCertificate = $env:WINDOWS_SIGNING_CERTIFICATE_BASE64
 $certificatePassword = $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD
 if (-not $encodedCertificate -or -not $certificatePassword) {
@@ -21,9 +22,7 @@ try {
     if (-not $certificate.HasPrivateKey) {
         throw "Windows signing certificate has no private key."
     }
-    if ($certificate.Subject -notlike "*$ExpectedPublisher*") {
-        throw "Windows signing certificate does not match the expected publisher."
-    }
+    Assert-ExactCertificateSubject -Certificate $certificate -ExpectedSubject $ExpectedSignerSubject
     foreach ($candidate in $Path) {
         $resolved = (Resolve-Path -LiteralPath $candidate).Path
         $result = Set-AuthenticodeSignature `
@@ -36,7 +35,7 @@ try {
         }
         & "$PSScriptRoot/verify_windows_binary.ps1" `
             -Path $resolved `
-            -ExpectedPublisher $ExpectedPublisher `
+            -ExpectedSignerSubject $ExpectedSignerSubject `
             -RequireSignature `
             -RequireTimestamp
         if ($LASTEXITCODE -ne 0) {

@@ -35,11 +35,14 @@ from scripts.release_candidate import (
     write_promotion_record,
 )
 from scripts.release_readiness import (
+    CI_DELEGATED_JOB_NAMES,
     ReleaseReadinessError,
+    assert_ci_validation_results,
     assert_preparation_results,
     assert_readiness_result,
     classify_changes,
     classify_values,
+    delegates_to_readiness,
 )
 from scripts.release_state import (
     GitHubReleaseState,
@@ -95,15 +98,34 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("初回セットアップ・修復", definition)
         self.assertIn("アップデート", definition)
         self.assertIn("アンインストール", definition)
-        self.assertIn("-WindowStyle Hidden", definition)
-        self.assertIn(r".venv\Scripts\pythonw.exe", launcher)
+        self.assertNotIn("skipifsourcedoesntexist", definition)
+        self.assertNotIn("LauncherExecutable", definition)
+        self.assertIn(r'Filename: "{app}\SubtitleEditBayLauncher.exe"', definition)
+        self.assertIn('Parameters: "--setup"', definition)
+        self.assertIn('Parameters: "--update"', definition)
+        self.assertNotIn(r'Filename: "{app}\setup.bat"', definition)
+        self.assertNotIn(r'Filename: "{app}\update.bat"', definition)
+        self.assertIn("Resolve-ActiveRuntimeDirectory", launcher)
+        self.assertIn('Join-Path $runtimeDirectory "Scripts\\pythonw.exe"', launcher)
         self.assertIn("latest-launch-error.log", launcher)
         self.assertIn(r'Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs"', launcher)
         self.assertNotIn(r'Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"', launcher)
-        self.assertIn("setup.bat", launcher)
+        self.assertNotIn("setup.bat", launcher)
+        self.assertNotIn("update.bat", launcher)
+        self.assertIn("-WindowStyle Hidden", launcher)
+        self.assertIn("Wait-ForSetup", launcher)
         self.assertIn("Test-CudaRepairRequired", launcher)
         self.assertIn("torch.cuda.is_available()", launcher)
         self.assertIn("GPU環境の修復", launcher)
+        self.assertIn("Test-SetupComplete", launcher)
+        self.assertIn("setup-status.json", launcher)
+        self.assertIn('[string]$status.status -ne "success"', launcher)
+
+        setup = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn('-Status "running"', setup)
+        self.assertIn('-Status "failed"', setup)
+        self.assertIn('-Status "success"', setup)
+        self.assertIn("Enter-SetupMutex", setup)
 
     def test_build_script_has_stable_release_contract(self) -> None:
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
@@ -125,13 +147,38 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[int]$ProducerWorkflowRunAttempt = 0", package)
         self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
-        self.assertIn("engine.rootObjects()", smoke)
+        self.assertIn("scripts\\setup.ps1", smoke)
+        self.assertIn("runtime-manifest.json", smoke)
+        self.assertIn("Scripts\\pip.exe", smoke)
+        self.assertIn('"SubtitleEditBayLauncher.exe"', smoke)
+        self.assertIn('Start-Process -FilePath $launcher', smoke)
+        self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
+        self.assertIn('"--probe-setup"', smoke)
+        self.assertNotIn("installed-gui-smoke.py", smoke)
+        self.assertIn("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", smoke)
+        self.assertNotIn("SUBTITLE_EDIT_BAY_SETUP_PROVIDER", smoke)
+        self.assertIn("Normal launch did not report the setup failure", smoke)
+        self.assertIn('if ($failed.status -ne "failed"', smoke)
+        self.assertNotIn('status = "success"', smoke)
+
+    def test_installer_requires_x64_native_launcher(self) -> None:
+        build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
+        launcher_build = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
+        manifest_build = (ROOT / "scripts" / "build_release_package.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertNotIn("AllowMissingCompiler", build)
+        self.assertNotIn("AllowMissingCompiler", launcher_build)
+        self.assertIn("/MACHINE:X64", launcher_build)
+        self.assertIn("user32.lib", launcher_build)
+        self.assertIn("Launcher build did not produce the required executable", build)
+        self.assertIn('"SubtitleEditBayLauncher.exe"', manifest_build)
 
     def test_launcher_is_self_contained_versioned_and_signature_ready(self) -> None:
         launcher = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
         verifier = (ROOT / "scripts" / "verify_windows_binary.ps1").read_text(encoding="utf-8-sig")
         signer = (ROOT / "scripts" / "sign_windows_artifacts.ps1").read_text(encoding="utf-8-sig")
         updater = (ROOT / "scripts" / "apply_installer_update.ps1").read_text(encoding="utf-8-sig")
+        identity = (ROOT / "scripts" / "windows_signing_identity.ps1").read_text(encoding="utf-8-sig")
 
         self.assertIn("/MT", launcher)
         self.assertIn("user32.lib", launcher)
@@ -147,6 +194,11 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Set-AuthenticodeSignature", signer)
         self.assertIn("Assert-InstallerPublisher", updater)
         self.assertIn("TimeStamperCertificate", updater)
+        self.assertNotIn("-notlike", verifier + signer + updater)
+        self.assertIn("X500DistinguishedName", identity)
+        self.assertIn("SubjectName.RawData", identity)
+        self.assertIn("StringComparison]::Ordinal", identity)
+        self.assertEqual((verifier + signer + updater).count("Assert-ExactCertificateSubject"), 3)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -208,7 +260,16 @@ class ReleaseDistributionTests(unittest.TestCase):
         upload = step_by_id(preparation, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
         validation_command = str(step_by_id(preparation, "validate", "contract")["run"])
-        self.assertIn("-attempt-$GITHUB_RUN_ATTEMPT", validation_command)
+        self.assertNotIn("artifact_name", validation_command)
+        identity_command = str(step_by_id(preparation, "build", "identity")["run"])
+        self.assertIn("-attempt-$env:GITHUB_RUN_ATTEMPT", identity_command)
+        self.assertEqual(upload["with"]["name"], "${{ steps.identity.outputs.artifact_name }}")
+        smoke_download = step_by_id(preparation, "smoke", "download")
+        self.assertEqual(smoke_download["with"]["artifact-ids"], "${{ needs.build.outputs.artifact_id }}")
+        self.assertEqual(
+            preparation["jobs"]["readiness"]["outputs"]["artifact_name"],
+            "${{ needs.build.outputs.artifact_name }}",
+        )
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         self.assertEqual(preparation["on"]["workflow_call"]["inputs"]["require_signature"]["default"], False)
@@ -260,6 +321,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertEqual(
             set(result["needs"]),
             {
+                "classify-validation",
                 "python-quality",
                 "portable-tests",
                 "windows-tests",
@@ -274,8 +336,37 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("git rev-parse HEAD", command)
         self.assertIn("git rev-parse 'HEAD^{tree}'", command)
         self.assertIn("--pull-request-base-sha", command)
+        self.assertIn("--validation-profile", command)
+        self.assertIn("--delegated-workflow", command)
+        self.assertIn("delegates_to_readiness == 'true'", record["env"]["VALIDATION_PROFILE"])
+        self.assertIn("delegates_to_readiness == 'true'", record["env"]["DELEGATED_WORKFLOW"])
         upload = next(step for step in result["steps"] if step.get("name") == "Upload immutable CI validation identity")
         self.assertIn("${{ github.sha }}-attempt-${{ github.run_attempt }}", upload["with"]["name"])
+
+    def test_release_candidate_validation_has_one_owner_for_duplicate_jobs(self) -> None:
+        workflow = load_workflow(CI_WORKFLOW)
+        classify = workflow["jobs"]["classify-validation"]
+        self.assertIn("delegates_to_readiness", classify["outputs"])
+        classify_command = str(classify["steps"][-1]["run"])
+        self.assertIn("--event-name", classify_command)
+        self.assertIn("--base-ref", classify_command)
+        for job_id in ("portable-tests", "windows-installer-smoke"):
+            job = workflow["jobs"][job_id]
+            self.assertEqual(job["needs"], "classify-validation")
+            condition = str(job["if"])
+            self.assertIn("!cancelled()", condition)
+            self.assertNotIn("always()", condition)
+            self.assertIn("delegates_to_readiness != 'true'", condition)
+
+        aggregate = next(
+            step
+            for step in workflow["jobs"]["validation-result"]["steps"]
+            if step.get("name") == "Enforce validation ownership and results"
+        )
+        self.assertIn("assert-ci-validation", str(aggregate["run"]))
+        self.assertIn("--delegates-to-readiness", str(aggregate["run"]))
+        readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
+        self.assertEqual(readiness["jobs"]["prepare"]["uses"], "./.github/workflows/release-prepare.yml")
 
     def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -638,6 +729,9 @@ class ReleaseCandidateTests(unittest.TestCase):
         job_conclusions: dict[str, str] | None = None,
         ci_job_conclusions: dict[str, str] | None = None,
         readiness_job_attempts: dict[str, int] | None = None,
+        artifact_attempt: int | None = None,
+        additional_artifact_attempts: tuple[int, ...] = (),
+        include_inherited_success_records: bool = False,
         artifact_expired: bool = False,
         candidate_tree: str | None = None,
         candidate_parents: tuple[str, ...] | None = None,
@@ -723,6 +817,25 @@ class ReleaseCandidateTests(unittest.TestCase):
                     "run_attempt": 1,
                 }
             )
+        if include_inherited_success_records:
+            for inherited_name in (
+                "Build and verify Windows installer",
+                "Install and start prepared package",
+            ):
+                readiness_jobs.append(
+                    {
+                        "name": f"Prepare merge candidate / {inherited_name}",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "run_attempt": 1,
+                        "started_at": "2026-09-07T01:15:00Z",
+                        "completed_at": "2026-09-07T01:45:00Z",
+                    }
+                )
+                for job in readiness_jobs:
+                    if job["name"].endswith(inherited_name):
+                        job.setdefault("started_at", "2026-09-07T01:15:00Z")
+                        job.setdefault("completed_at", "2026-09-07T01:45:00Z")
         ci_run = dict(
             latest_run,
             id=201,
@@ -740,16 +853,38 @@ class ReleaseCandidateTests(unittest.TestCase):
             }
             for name in (*REQUIRED_CI_JOB_NAMES, CI_VALIDATION_JOB_NAME)
         ]
+        ci_jobs.extend(
+            {
+                "name": name,
+                "status": "completed",
+                "conclusion": (ci_job_conclusions or {}).get(name, "skipped"),
+                "run_attempt": 1,
+            }
+            for name in CI_DELEGATED_JOB_NAMES
+        )
         artifact = {
             "id": 300,
             "name": (
                 f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
-                f"-attempt-{(readiness_job_attempts or {}).get('Build and verify Windows installer', 2)}"
+                "-attempt-"
+                f"{artifact_attempt or (readiness_job_attempts or {}).get('Build and verify Windows installer', 2)}"
             ),
             "digest": "sha256:" + "f" * 64,
             "expired": artifact_expired,
             "expires_at": "2026-09-21T00:00:00Z",
         }
+        prepared_artifacts = [artifact]
+        for prior_artifact_attempt in additional_artifact_attempts:
+            prepared_artifacts.append(
+                dict(
+                    artifact,
+                    id=300 + prior_artifact_attempt,
+                    name=(
+                        f"subtitle-edit-bay-1.2.3-windows-installer-{self.CANDIDATE_SHA}"
+                        f"-attempt-{prior_artifact_attempt}"
+                    ),
+                )
+            )
         selected_ci_source_sha = ci_source_sha or self.CANDIDATE_SHA
         ci_artifact = {
             "id": 301,
@@ -794,7 +929,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             if path.endswith("/runs/201/jobs"):
                 return ci_jobs
             if path.endswith("/runs/200/artifacts"):
-                return [artifact]
+                return prepared_artifacts
             if path.endswith("/runs/201/artifacts"):
                 return [ci_artifact]
             raise AssertionError(path)
@@ -860,6 +995,14 @@ class ReleaseCandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseCandidateError, "Windows runtime tests"):
             select_release_candidate(
                 self._api(ci_job_conclusions={"Windows runtime tests": "failure"}),
+                self.RELEASE_SHA,
+                "v1.2.3",
+            )
+
+    def test_rejects_duplicate_ci_execution_for_release_candidate(self) -> None:
+        with self.assertRaisesRegex(ReleaseCandidateError, "finish as skipped"):
+            select_release_candidate(
+                self._api(ci_job_conclusions={"Portable, Qt, and FFmpeg tests": "success"}),
                 self.RELEASE_SHA,
                 "v1.2.3",
             )
@@ -935,11 +1078,11 @@ class ReleaseCandidateTests(unittest.TestCase):
         prior_attempt_jobs = {
             "Classify merge candidate": 1,
             "Validate source and version": 1,
-            "Build and verify Windows installer": 1,
-            "Install and start prepared package": 1,
         }
         api = self._api(
             readiness_job_attempts=prior_attempt_jobs,
+            artifact_attempt=1,
+            include_inherited_success_records=True,
             include_failed_test_attempt=True,
         )
         candidate = select_release_candidate(
@@ -949,7 +1092,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         )
         self.assertEqual(candidate.workflow_run_attempt, 2)
         self.assertEqual(candidate.artifact_workflow_run_attempt, 1)
-        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 1)
+        self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 2)
         self.assertEqual(candidate.artifact_id, 300)
         self.assertTrue(candidate.artifact_name.endswith("-attempt-1"))
         job_queries = [
@@ -957,7 +1100,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             for call in api.pages.call_args_list
             if call.args and str(call.args[0]).endswith("/jobs")
         ]
-        self.assertEqual(job_queries, [{"filter": "all"}, {"filter": "all"}])
+        self.assertEqual(job_queries, [{"filter": "all"}, {"filter": "all"}, {"filter": "all"}])
 
         producer = {
             "repository": candidate.repository,
@@ -978,6 +1121,25 @@ class ReleaseCandidateTests(unittest.TestCase):
             preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
 
             verify_preparation_binding(candidate_path, preparation_path)
+
+    def test_build_only_rerun_selects_the_new_artifact_created_by_build(self) -> None:
+        candidate = select_release_candidate(
+            self._api(
+                readiness_job_attempts={
+                    "Classify merge candidate": 1,
+                    "Validate source and version": 1,
+                },
+                artifact_attempt=2,
+                additional_artifact_attempts=(1,),
+                include_inherited_success_records=True,
+            ),
+            self.RELEASE_SHA,
+            "v1.2.3",
+        )
+
+        self.assertEqual(candidate.artifact_workflow_run_attempt, 2)
+        self.assertEqual(candidate.artifact_id, 300)
+        self.assertTrue(candidate.artifact_name.endswith("-attempt-2"))
 
     def test_ci_identity_record_must_match_selected_merge_content(self) -> None:
         candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
@@ -1000,11 +1162,20 @@ class ReleaseCandidateTests(unittest.TestCase):
             )
             verify_ci_validation_binding(candidate_path, identity_path)
             identity = json.loads(identity_path.read_text(encoding="utf-8"))
-            identity["pull_request_base_sha"] = "9" * 40
-            identity_path.write_text(json.dumps(identity), encoding="utf-8")
-
-            with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
-                verify_ci_validation_binding(candidate_path, identity_path)
+            self.assertEqual(identity["schema_version"], 2)
+            self.assertEqual(identity["validation_profile"], "release-candidate-v1")
+            self.assertEqual(identity["delegated_workflow"], ".github/workflows/release-readiness.yml")
+            for field, replacement in (
+                ("pull_request_base_sha", "9" * 40),
+                ("validation_profile", "standard-v1"),
+                ("delegated_workflow", "none"),
+            ):
+                with self.subTest(field=field):
+                    changed = dict(identity)
+                    changed[field] = replacement
+                    identity_path.write_text(json.dumps(changed), encoding="utf-8")
+                    with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
+                        verify_ci_validation_binding(candidate_path, identity_path)
 
     def test_archive_digest_rejects_self_consistent_replacement(self) -> None:
         def write_archive(path: Path, installer: bytes) -> None:
@@ -1098,10 +1269,24 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                     "asset_name": INSTALLER_NAME,
                     "sha256": digest,
                     "required_files": [
+                        "SubtitleEditBayLauncher.exe",
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
+                        "scripts/windows_signing_identity.ps1",
+                        "scripts/runtime_activation.ps1",
+                        "scripts/setup.ps1",
+                        "scripts/setup_state.ps1",
+                        "scripts/runtime_contract.py",
+                        "runtime/runtime-contract.json",
+                        "runtime/requirements-windows-cpu.lock",
+                        "runtime/requirements-windows-cu128.lock",
                     ],
+                    "runtime_contract": {
+                        "contract_sha256": "1" * 64,
+                        "cpu_lock_sha256": "2" * 64,
+                        "cu128_lock_sha256": "3" * 64,
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1177,6 +1362,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             ({"asset_name": "other.exe"}, "asset_name mismatch"),
             ({"sha256": "0" * 64}, "sha256 mismatch"),
             ({"required_files": ["VERSION"]}, "required_files is incomplete"),
+            ({"runtime_contract": {}}, "runtime_contract hashes are incomplete"),
         )
 
         for changes, message in mutations:
@@ -1234,6 +1420,17 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
                 self.assertEqual(result.kind, "infrastructure")
                 self.assertTrue(result.requires_preparation)
 
+    def test_ci_delegates_only_for_main_pull_requests_with_preparation(self) -> None:
+        normal = classify_values(("src/gui.py",), "v1.2.3", "v1.2.3")
+        infrastructure = classify_values(("scripts/release_candidate.py",), "v1.2.3", "v1.2.3")
+        release = classify_values(("VERSION",), "v1.2.3", "v1.2.4")
+
+        self.assertFalse(delegates_to_readiness(normal, "pull_request", "main"))
+        self.assertTrue(delegates_to_readiness(infrastructure, "pull_request", "main"))
+        self.assertTrue(delegates_to_readiness(release, "pull_request", "main"))
+        self.assertFalse(delegates_to_readiness(infrastructure, "pull_request", "stack-base"))
+        self.assertFalse(delegates_to_readiness(infrastructure, "push", "main"))
+
     def test_invalid_release_changes_fail_instead_of_becoming_normal(self) -> None:
         cases = (
             (("VERSION", "src/gui.py"), "v1.2.3", "v1.2.4", "must change only VERSION"),
@@ -1290,6 +1487,23 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
         for bad_result in ("failure", "cancelled", "skipped"):
             with self.subTest(result=bad_result), self.assertRaises(ReleaseReadinessError):
                 assert_preparation_results(("success", bad_result, "success", "success"))
+
+    def test_ci_aggregate_enforces_execution_ownership(self) -> None:
+        required = ("success",) * 4
+        assert_ci_validation_results(True, True, "success", required, ("skipped", "skipped"))
+        assert_ci_validation_results(True, False, "success", required, ("success", "success"))
+        assert_ci_validation_results(False, False, "success", required, ("success", "success"))
+
+        failures = (
+            (True, True, "failure", required, ("skipped", "skipped")),
+            (True, True, "success", required, ("success", "skipped")),
+            (True, False, "success", required, ("skipped", "success")),
+            (False, True, "success", required, ("skipped", "skipped")),
+            (False, False, "success", ("success", "failure", "success", "success"), ("success", "success")),
+        )
+        for values in failures:
+            with self.subTest(values=values), self.assertRaises(ReleaseReadinessError):
+                assert_ci_validation_results(*values)
 
 
 class ReleaseStateTests(unittest.TestCase):

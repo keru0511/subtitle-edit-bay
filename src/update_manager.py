@@ -26,7 +26,7 @@ class UpdateDownloadCancelled(UpdatePackageError):
 
 
 ProgressCallback = Callable[[int, int, float], None]
-EXPECTED_WINDOWS_PUBLISHER = "Subtitle Edit Bay"
+EXPECTED_WINDOWS_SIGNER_SUBJECT = "CN=Subtitle Edit Bay"
 
 
 def update_download_directory(project_root: Path) -> Path:
@@ -213,7 +213,7 @@ def build_installer_helper_command(
     expected_version: str,
     expected_sha256: str,
     result_path: Path,
-    expected_publisher: str = EXPECTED_WINDOWS_PUBLISHER,
+    expected_signer_subject: str = EXPECTED_WINDOWS_SIGNER_SUBJECT,
 ) -> list[str]:
     helper = project_root / "scripts" / "apply_installer_update.ps1"
     restart_executable = project_root / "SubtitleEditBayLauncher.exe"
@@ -242,8 +242,8 @@ def build_installer_helper_command(
             expected_version,
             "-ExpectedSha256",
             expected_sha256,
-            "-ExpectedPublisher",
-            expected_publisher,
+            "-ExpectedSignerSubject",
+            expected_signer_subject,
             "-ResultPath",
             str(result_path),
         ]

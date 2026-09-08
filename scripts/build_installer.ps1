@@ -72,13 +72,18 @@ $outputBaseFilename = [IO.Path]::GetFileNameWithoutExtension($resolvedOutputPath
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 
 $launcherBuildScript = Join-Path $projectRoot "scripts\build_launcher.ps1"
-if (Test-Path -LiteralPath $launcherBuildScript -PathType Leaf) {
-    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcherBuildScript `
-        -OutputPath (Join-Path $projectRoot "dist\SubtitleEditBayLauncher.exe") `
-        -Version $Version
-    if ($LASTEXITCODE -ne 0) {
-        throw "Launcher build failed with exit code $LASTEXITCODE."
-    }
+if (-not (Test-Path -LiteralPath $launcherBuildScript -PathType Leaf)) {
+    throw "Launcher build script is missing: $launcherBuildScript"
+}
+$launcherPath = Join-Path $projectRoot "dist\SubtitleEditBayLauncher.exe"
+& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcherBuildScript `
+    -OutputPath $launcherPath `
+    -Version $Version
+if ($LASTEXITCODE -ne 0) {
+    throw "Launcher build failed with exit code $LASTEXITCODE."
+}
+if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+    throw "Launcher build did not produce the required executable: $launcherPath"
 }
 
 $versionCore = ($Version -split '[-+]')[0]

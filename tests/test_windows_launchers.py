@@ -16,6 +16,38 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_signer_subject_identity_rejects_a_containing_subject(self) -> None:
+        powershell = self._require_windows_powershell()
+        helper = ROOT / "scripts" / "windows_signing_identity.ps1"
+        escaped_helper = str(helper).replace("'", "''")
+        command = (
+            f". '{escaped_helper}'; "
+            "$trusted = [PSCustomObject]@{ SubjectName = "
+            "[Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Subtitle Edit Bay') }; "
+            "Assert-ExactCertificateSubject -Certificate $trusted -ExpectedSubject 'CN=Subtitle Edit Bay'; "
+            "$containing = [PSCustomObject]@{ SubjectName = "
+            "[Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Untrusted Subtitle Edit Bay') }; "
+            "$rejected = $false; try { Assert-ExactCertificateSubject -Certificate $containing "
+            "-ExpectedSubject 'CN=Subtitle Edit Bay' } catch { $rejected = $true }; "
+            "if (-not $rejected) { throw 'Containing signer subject was accepted.' }"
+        )
+        result = subprocess.run(
+            [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_gui_initializes_typing_extensions_before_pyside(self) -> None:
+        gui = (ROOT / "src" / "gui.py").read_text(encoding="utf-8")
+
+        self.assertLess(gui.index("from typing_extensions import Self"), gui.index("from PySide6.QtCore import"))
+
     def _require_windows_git(self) -> str:
         executable = shutil.which("git.exe")
         if executable:
@@ -245,8 +277,8 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn(r"Sysnative\WindowsPowerShell\v1.0\powershell.exe", launcher)
         self.assertIn(r"System32\WindowsPowerShell\v1.0\powershell.exe", launcher)
         self.assertIn('"%POWERSHELL_EXE%"', launcher)
-        self.assertIn('"Python.Python.3.10"', setup)
-        self.assertIn('"Gyan.FFmpeg"', setup)
+        self.assertIn("$runtimeContract.python.winget_package", setup)
+        self.assertIn("$runtimeContract.ffmpeg.winget_package", setup)
         self.assertIn("-m pip install", setup)
         self.assertIn("check_runtime_dependencies", setup)
         self.assertIn('Get-Command "nvidia-smi.exe"', setup)
@@ -259,14 +291,59 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("PyTorch CUDA runtime:", setup)
         self.assertIn("PyTorch CUDA available:", setup)
         self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
-        self.assertIn("https://download.pytorch.org/whl/cu128", setup)
-        self.assertIn('$whisperXVersion = "3.8.6"', setup)
-        self.assertIn('$torchVersion = "2.8.0"', setup)
-        self.assertIn("--force-reinstall", setup)
-        self.assertIn("--no-deps", setup)
+        self.assertIn("runtime\\runtime-contract.json", setup)
+        self.assertIn("--require-hashes", setup)
+        self.assertIn(".local\\runtimes", setup)
+        self.assertNotIn("Move-Item -LiteralPath $stagingVenv", setup)
+        self.assertIn("Set-ActiveRuntimeGeneration", setup)
+        self.assertIn("runtime-manifest.json", setup)
+        self.assertIn("verify-tools", setup)
+        self.assertNotIn('pip install -r "requirements.txt"', setup)
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+        self.assertIn('$ProfileContract.PSObject.Properties["extra_index_url"]', setup)
+        self.assertNotIn("$profileContract.extra_index_url", setup)
+        setup_state = (ROOT / "scripts" / "setup_state.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("Set-StrictMode", setup_state)
+
+        launch = (ROOT / "installer" / "launch.ps1").read_text(encoding="utf-8")
+        self.assertIn("Resolve-ActiveRuntimeDirectory", launch)
+        self.assertIn("runtime_directory", launch)
+        self.assertIn("Show-SetupFailure", launch)
+        self.assertEqual(launch.count("Show-SetupFailure; exit $exitCode"), 2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_cpu_install_arguments_allow_missing_optional_extra_index_without_test_hook(self) -> None:
+        powershell = self._require_windows_powershell()
+        environment = os.environ.copy()
+        environment.pop("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", None)
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "scripts" / "setup.ps1"),
+                "-ProbeCpuInstallArgumentsOnly",
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertIn("--require-hashes", arguments)
+        self.assertIn("--index-url", arguments)
+        self.assertIn("-r", arguments)
+        self.assertNotIn("--extra-index-url", arguments)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
@@ -326,10 +403,17 @@ class WindowsLauncherTests(unittest.TestCase):
             scripts.mkdir(parents=True)
             launch_script = scripts / "launch.ps1"
             shutil.copy2(ROOT / "installer" / "launch.ps1", launch_script)
+            shutil.copy2(ROOT / "scripts" / "setup_state.ps1", scripts / "setup_state.ps1")
             outside = Path(temp_dir) / "unrelated working directory"
             outside.mkdir()
             config_path = root / ".gui" / "runtime_config.json"
             config_path.parent.mkdir(parents=True)
+            (root / "VERSION").write_text("1.2.3\n", encoding="ascii")
+            (root / ".local").mkdir()
+            (root / ".local" / "setup-status.json").write_text(
+                json.dumps({"schema_version": 1, "status": "success", "app_version": "1.2.3"}),
+                encoding="utf-8",
+            )
             (root / "assets").mkdir()
             (root / "src").mkdir()
             (root / "src" / "__init__.py").write_text("", encoding="ascii")
@@ -353,7 +437,12 @@ class WindowsLauncherTests(unittest.TestCase):
             environment["Path"] = inherited_path
 
             def run_launcher(
-                *, device: str, python: Path, pythonw: Path = gui, use_default_config: bool = False
+                *,
+                device: str,
+                python: Path,
+                pythonw: Path = gui,
+                use_default_config: bool = False,
+                expected_returncode: int = 0,
             ) -> None:
                 setup_marker.unlink(missing_ok=True)
                 gui_marker.unlink(missing_ok=True)
@@ -394,7 +483,7 @@ class WindowsLauncherTests(unittest.TestCase):
                     errors="replace",
                     timeout=15,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
 
             run_launcher(device="cuda", python=unavailable_python)
             deadline = time.monotonic() + 5
@@ -424,7 +513,12 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertTrue(setup_marker.is_file())
             self.assertFalse(gui_marker.exists())
 
-            run_launcher(device="cpu", python=unavailable_python, pythonw=root / "missing pythonw.exe")
+            run_launcher(
+                device="cpu",
+                python=unavailable_python,
+                pythonw=root / "missing pythonw.exe",
+                expected_returncode=1,
+            )
             deadline = time.monotonic() + 5
             while not setup_marker.exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
@@ -437,7 +531,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 "raise SystemExit(23)\n",
                 encoding="utf-8",
             )
-            run_launcher(device="cpu", python=unavailable_python)
+            run_launcher(device="cpu", python=unavailable_python, expected_returncode=23)
             self.assertFalse(setup_marker.exists())
             self.assertFalse(gui_marker.exists())
             self.assertIn(

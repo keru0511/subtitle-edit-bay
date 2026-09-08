@@ -4,8 +4,7 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')]
     [string]$Version,
     [string]$Publisher = "Subtitle Edit Bay",
-    [string]$IconPath,
-    [switch]$AllowMissingCompiler
+    [string]$IconPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,11 +52,7 @@ if (-not $compiler) {
     $compiler = Get-Command cl.exe -ErrorAction SilentlyContinue
 }
 if (-not $compiler) {
-    if ($AllowMissingCompiler) {
-        Write-Warning "cl.exe was not found. The installer will use the PowerShell launcher fallback."
-        exit 0
-    }
-    throw "Visual C++ cl.exe was not found. Run from a Visual Studio Developer PowerShell or use -AllowMissingCompiler."
+    throw "Visual C++ cl.exe was not found. Run from a Visual Studio Developer PowerShell."
 }
 
 $resourceCompiler = Get-Command rc.exe -ErrorAction SilentlyContinue
@@ -111,7 +106,7 @@ try {
         throw "Launcher resource compilation failed with exit code $LASTEXITCODE."
     }
     # /MT makes the launcher independent of the separately installed VC runtime.
-    & $compiler.Source /nologo /O2 /W4 /MT $sourcePath SubtitleEditBayLauncher.res user32.lib /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS
+    & $compiler.Source /nologo /O2 /W4 /MT $sourcePath SubtitleEditBayLauncher.res user32.lib /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS /MACHINE:X64
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher compilation failed with exit code $LASTEXITCODE."
     }

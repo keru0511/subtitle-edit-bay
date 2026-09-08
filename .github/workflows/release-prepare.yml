@@ -34,7 +34,6 @@ jobs:
     timeout-minutes: 10
     outputs:
       app_version: ${{ steps.contract.outputs.app_version }}
-      artifact_name: ${{ steps.contract.outputs.artifact_name }}
     steps:
       - name: Check out preparation tools
         uses: actions/checkout@v6
@@ -64,7 +63,6 @@ jobs:
             --release-version "$RELEASE_VERSION" --version-file source/VERSION
           app_version="${RELEASE_VERSION#v}"
           echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=subtitle-edit-bay-$app_version-windows-installer-$SOURCE_SHA-attempt-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   test:
     name: Release tests on Linux
@@ -125,8 +123,10 @@ jobs:
     name: Build and verify Windows installer
     needs: validate
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      workflow_run_attempt: ${{ steps.identity.outputs.workflow_run_attempt }}
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     steps:
@@ -148,6 +148,40 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
+      - name: Fix build artifact identity
+        id: identity
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.validate.outputs.app_version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          $artifactName = "subtitle-edit-bay-$env:APP_VERSION-windows-installer-$env:SOURCE_SHA-attempt-$env:GITHUB_RUN_ATTEMPT"
+          "artifact_name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "workflow_run_attempt=$env:GITHUB_RUN_ATTEMPT" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Install FFmpeg runtime
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg installation failed." }
+          ffmpeg -version
+          ffprobe -version
+      - name: Reconstruct locked CPU runtime in a fresh environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          python source/scripts/runtime_contract.py validate --root source
+          $contract = Get-Content source/runtime/runtime-contract.json -Raw | ConvertFrom-Json
+          python -m venv "${{ runner.temp }}/release-runtime"
+          $runtimePython = "${{ runner.temp }}/release-runtime/Scripts/python.exe"
+          & $runtimePython -m pip install "pip==$($contract.python.pip_version)"
+          & $runtimePython -m pip install --require-hashes --index-url $contract.profiles.cpu.index_url -r source/runtime/requirements-windows-cpu.lock
+          & $runtimePython -m pip check
+          & $runtimePython source/scripts/runtime_contract.py verify-runtime --root source --profile cpu --manifest-output "${{ runner.temp }}/runtime-manifest.json"
+      - name: Set up x64 MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Ensure Inno Setup compiler
         shell: pwsh
         run: |
@@ -212,7 +246,7 @@ jobs:
         id: upload
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.validate.outputs.artifact_name }}
+          name: ${{ steps.identity.outputs.artifact_name }}
           path: |
             ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe
             ${{ runner.temp }}/subtitle-edit-bay-release/SubtitleEditBay-Setup.exe.sha256
@@ -228,7 +262,7 @@ jobs:
       - validate
       - build
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       PYTHONUTF8: "1"
       QT_QPA_PLATFORM: offscreen
@@ -248,11 +282,18 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
+      - name: Install FFmpeg runtime
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg installation failed." }
+          ffmpeg -version
+          ffprobe -version
       - name: Download prepared installer
         id: download
         uses: actions/download-artifact@v7
         with:
-          name: ${{ needs.validate.outputs.artifact_name }}
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: ${{ runner.temp }}/subtitle-edit-bay-release
       - name: Install and start prepared application
         id: install
@@ -273,7 +314,7 @@ jobs:
       - smoke
     runs-on: ubuntu-latest
     outputs:
-      artifact_name: ${{ needs.validate.outputs.artifact_name }}
+      artifact_name: ${{ needs.build.outputs.artifact_name }}
       artifact_id: ${{ needs.build.outputs.artifact_id }}
       artifact_digest: ${{ needs.build.outputs.artifact_digest }}
     steps:
@@ -296,7 +337,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_VERSION: ${{ inputs.release_version }}
-          ARTIFACT_NAME: ${{ needs.validate.outputs.artifact_name }}
+          ARTIFACT_NAME: ${{ needs.build.outputs.artifact_name }}
           ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
           ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact_digest }}
         run: |

@@ -5,12 +5,13 @@ param(
     [Parameter(Mandatory = $true)][string]$RestartExecutable,
     [Parameter(Mandatory = $true)][string]$ExpectedVersion,
     [Parameter(Mandatory = $true)][string]$ExpectedSha256,
-    [string]$ExpectedPublisher,
+    [string]$ExpectedSignerSubject,
     [Parameter(Mandatory = $true)][string]$ResultPath
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+. "$PSScriptRoot/windows_signing_identity.ps1"
 
 function Write-UpdateResult {
     param([Parameter(Mandatory = $true)][hashtable]$Result)
@@ -126,16 +127,14 @@ function Get-PackageSha256 {
 function Assert-InstallerPublisher {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Publisher
+        [Parameter(Mandatory = $true)][string]$SignerSubject
     )
 
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate) {
         throw "Installer Authenticode signature is not valid: $($signature.Status)"
     }
-    if ($signature.SignerCertificate.Subject -notlike "*$Publisher*") {
-        throw "Installer publisher does not match the expected publisher."
-    }
+    Assert-ExactCertificateSubject -Certificate $signature.SignerCertificate -ExpectedSubject $SignerSubject
     if (-not $signature.TimeStamperCertificate) {
         throw "Installer Authenticode signature has no trusted timestamp."
     }
@@ -220,8 +219,8 @@ try {
     if ($actualHash -ne $ExpectedSha256.ToLowerInvariant()) {
         throw "Installer package checksum does not match."
     }
-    if ($ExpectedPublisher) {
-        Assert-InstallerPublisher -Path $PackagePath -Publisher $ExpectedPublisher
+    if ($ExpectedSignerSubject) {
+        Assert-InstallerPublisher -Path $PackagePath -SignerSubject $ExpectedSignerSubject
     }
 
     $recoveryRoot = New-RecoverySnapshot -Root $InstallRoot

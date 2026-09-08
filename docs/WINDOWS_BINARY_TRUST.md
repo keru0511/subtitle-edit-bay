@@ -8,13 +8,13 @@ The resource compiler accepts an explicit `.ico` path. An approved product icon 
 
 ## Authenticode contract
 
-Formal distribution requires SHA-256 Authenticode signatures on both the launcher before it is packed and the final installer, plus a trusted timestamp and the expected publisher subject. `sign_windows_artifacts.ps1` loads a base64 PFX and password from process environment only, requests a timestamp, and immediately verifies signer and timestamp. It does not write the certificate to the workspace or artifact.
+Formal distribution requires SHA-256 Authenticode signatures on both the launcher before it is packed and the final installer, plus a trusted timestamp and an exact trusted X.500 signer subject. The subject is converted to its encoded distinguished-name identity and compared with ordinal equality; display-name substring matching is forbidden. `sign_windows_artifacts.ps1` loads a base64 PFX and password from process environment only, requests a timestamp, and immediately verifies signer and timestamp. It does not write the certificate to the workspace or artifact.
 
-`verify_windows_binary.ps1 -RequireSignature -RequireTimestamp` and the updater-side `Assert-InstallerPublisher` implement independent verification. The GUI update helper checks checksum first, then signer subject and timestamp, before snapshot creation or process execution.
+`verify_windows_binary.ps1 -RequireSignature -RequireTimestamp -ExpectedSignerSubject <full-DN>` and the updater-side `Assert-InstallerPublisher` use the same exact-subject helper. The GUI update helper checks checksum first, then signer subject and timestamp, before snapshot creation or process execution.
 
 ## Trust boundary and current blocker
 
-PR-controlled workflows must not receive a repository signing key. The current pre-merge artifact promotion architecture therefore cannot safely consume a normal repository secret: a same-repository PR can modify the workflow or signing script before secret use. No managed signing provider, certificate subject, protected signing environment or OIDC policy has been selected or provisioned.
+PR-controlled workflows must not receive a repository signing key. The current pre-merge artifact promotion architecture therefore cannot safely consume a normal repository secret: a same-repository PR can modify the workflow or signing script before secret use. The client trust policy currently pins the complete subject `CN=Subtitle Edit Bay`; no matching certificate, managed signing provider, protected signing environment or OIDC policy has been provisioned.
 
 Until that trust boundary is supplied, VERSION-only release preparation sets `require_signature: true` and fails before artifact upload with an explicit configuration error. Infrastructure PRs can still exercise unsigned build, runtime dependency and resource checks, but an unsigned formal candidate cannot become publishable.
 

@@ -42,6 +42,7 @@ from scripts.release_readiness import (
     assert_readiness_result,
     classify_changes,
     classify_values,
+    delegates_to_readiness,
 )
 from scripts.release_state import (
     GitHubReleaseState,
@@ -299,15 +300,25 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("--pull-request-base-sha", command)
         self.assertIn("--validation-profile", command)
         self.assertIn("--delegated-workflow", command)
+        self.assertIn("delegates_to_readiness == 'true'", record["env"]["VALIDATION_PROFILE"])
+        self.assertIn("delegates_to_readiness == 'true'", record["env"]["DELEGATED_WORKFLOW"])
         upload = next(step for step in result["steps"] if step.get("name") == "Upload immutable CI validation identity")
         self.assertIn("${{ github.sha }}-attempt-${{ github.run_attempt }}", upload["with"]["name"])
 
     def test_release_candidate_validation_has_one_owner_for_duplicate_jobs(self) -> None:
         workflow = load_workflow(CI_WORKFLOW)
+        classify = workflow["jobs"]["classify-validation"]
+        self.assertIn("delegates_to_readiness", classify["outputs"])
+        classify_command = str(classify["steps"][-1]["run"])
+        self.assertIn("--event-name", classify_command)
+        self.assertIn("--base-ref", classify_command)
         for job_id in ("portable-tests", "windows-installer-smoke"):
             job = workflow["jobs"][job_id]
             self.assertEqual(job["needs"], "classify-validation")
-            self.assertIn("requires_preparation == 'false'", str(job["if"]))
+            condition = str(job["if"])
+            self.assertIn("!cancelled()", condition)
+            self.assertNotIn("always()", condition)
+            self.assertIn("delegates_to_readiness != 'true'", condition)
 
         aggregate = next(
             step
@@ -315,6 +326,7 @@ class ReleaseDistributionTests(unittest.TestCase):
             if step.get("name") == "Enforce validation ownership and results"
         )
         self.assertIn("assert-ci-validation", str(aggregate["run"]))
+        self.assertIn("--delegates-to-readiness", str(aggregate["run"]))
         readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
         self.assertEqual(readiness["jobs"]["prepare"]["uses"], "./.github/workflows/release-prepare.yml")
 
@@ -1369,6 +1381,17 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
                 self.assertEqual(result.kind, "infrastructure")
                 self.assertTrue(result.requires_preparation)
 
+    def test_ci_delegates_only_for_main_pull_requests_with_preparation(self) -> None:
+        normal = classify_values(("src/gui.py",), "v1.2.3", "v1.2.3")
+        infrastructure = classify_values(("scripts/release_candidate.py",), "v1.2.3", "v1.2.3")
+        release = classify_values(("VERSION",), "v1.2.3", "v1.2.4")
+
+        self.assertFalse(delegates_to_readiness(normal, "pull_request", "main"))
+        self.assertTrue(delegates_to_readiness(infrastructure, "pull_request", "main"))
+        self.assertTrue(delegates_to_readiness(release, "pull_request", "main"))
+        self.assertFalse(delegates_to_readiness(infrastructure, "pull_request", "stack-base"))
+        self.assertFalse(delegates_to_readiness(infrastructure, "push", "main"))
+
     def test_invalid_release_changes_fail_instead_of_becoming_normal(self) -> None:
         cases = (
             (("VERSION", "src/gui.py"), "v1.2.3", "v1.2.4", "must change only VERSION"),
@@ -1428,14 +1451,16 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
 
     def test_ci_aggregate_enforces_execution_ownership(self) -> None:
         required = ("success",) * 4
-        assert_ci_validation_results(True, "success", required, ("skipped", "skipped"))
-        assert_ci_validation_results(False, "success", required, ("success", "success"))
+        assert_ci_validation_results(True, True, "success", required, ("skipped", "skipped"))
+        assert_ci_validation_results(True, False, "success", required, ("success", "success"))
+        assert_ci_validation_results(False, False, "success", required, ("success", "success"))
 
         failures = (
-            (True, "failure", required, ("skipped", "skipped")),
-            (True, "success", required, ("success", "skipped")),
-            (False, "success", required, ("skipped", "success")),
-            (False, "success", ("success", "failure", "success", "success"), ("success", "success")),
+            (True, True, "failure", required, ("skipped", "skipped")),
+            (True, True, "success", required, ("success", "skipped")),
+            (True, False, "success", required, ("skipped", "success")),
+            (False, True, "success", required, ("skipped", "skipped")),
+            (False, False, "success", ("success", "failure", "success", "success"), ("success", "success")),
         )
         for values in failures:
             with self.subTest(values=values), self.assertRaises(ReleaseReadinessError):

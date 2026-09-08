@@ -1,4 +1,4 @@
-﻿#ifndef SourceRoot
+#ifndef SourceRoot
   #error SourceRoot must be defined by scripts/build_installer.ps1
 #endif
 
@@ -76,11 +76,15 @@ Name: "{app}\out"
 Source: "{#SourceRoot}\src\*"; DestDir: "{app}\src"; Excludes: "__pycache__\*,*\__pycache__\*,*.pyc,*.pyo"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_colors.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\runtime_activation.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\setup_state.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\runtime_contract.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\apply_installer_update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\installer\launch.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\dist\SubtitleEditBayLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceRoot}\runtime\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\setup.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\start.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\update.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -102,6 +106,9 @@ Filename: "{app}\SubtitleEditBayLauncher.exe"; Parameters: "--setup"; Descriptio
 ; The virtual environment is generated and can be safely recreated. User settings,
 ; custom speaker colours, imported videos, exports and update backups are retained.
 Type: filesandordirs; Name: "{app}\.venv"
+Type: filesandordirs; Name: "{app}\.venv.staging"
+Type: filesandordirs; Name: "{app}\.venv.previous"
+Type: filesandordirs; Name: "{app}\.local\runtimes"
 Type: files; Name: "{app}\VERSION"
 
 [Code]

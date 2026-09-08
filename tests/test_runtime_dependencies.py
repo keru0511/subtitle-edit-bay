@@ -1,5 +1,8 @@
+import json
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -15,12 +18,12 @@ from src.runtime_dependencies import (
 class RuntimeDependencyTests(unittest.TestCase):
     @mock.patch("src.runtime_dependencies._ffmpeg_nvenc_available", return_value=True)
     @mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=True)
-    @mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=object())
+    @mock.patch("src.runtime_dependencies._module_importable", return_value=True)
     @mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe")
     def test_check_runtime_dependencies_reports_ready(
         self,
         _which: mock.Mock,
-        _find_spec: mock.Mock,
+        _importable: mock.Mock,
         _cuda: mock.Mock,
         nvenc: mock.Mock,
     ) -> None:
@@ -103,6 +106,24 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertTrue(diagnostic["cuda_available"])
         self.assertEqual(diagnostic["cuda_device"], "NVIDIA GeForce RTX 4070")
         self.assertEqual(run.call_args.args[0], ["ffmpeg.exe", "-version"])
+
+    @mock.patch("src.runtime_dependencies.importlib.import_module", side_effect=OSError("broken DLL"))
+    @mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=False)
+    @mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe")
+    def test_broken_whisperx_import_is_not_reported_as_ready(
+        self, _which: mock.Mock, _cuda: mock.Mock, _import: mock.Mock
+    ) -> None:
+        self.assertFalse(check_runtime_dependencies().whisperx)
+
+    @mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=None)
+    def test_runtime_diagnostic_includes_saved_manifest(self, _find_spec: mock.Mock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".local").mkdir()
+            expected = {"profile": "cpu", "lock_sha256": "a" * 64}
+            (root / ".local" / "runtime-manifest.json").write_text(json.dumps(expected), encoding="utf-8")
+
+            self.assertEqual(runtime_diagnostic_info(root)["runtime_manifest"], expected)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
-﻿param(
+param(
     [ValidateSet("Launch", "Setup", "Update")]
     [string]$Action = "Launch",
     [switch]$ProbeSetupStateOnly,
+    [switch]$ProbeSetupRunningOnly,
     [switch]$ProbeCudaRepairOnly,
     [switch]$SuppressMessages,
     [string]$ProjectRootOverride = "",
@@ -12,62 +13,48 @@
 )
 
 $ErrorActionPreference = "Stop"
+$projectRoot = if ($ProjectRootOverride) { [IO.Path]::GetFullPath($ProjectRootOverride) } else { [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)) }
+$setupStateScript = Join-Path $PSScriptRoot "setup_state.ps1"
+if (-not (Test-Path -LiteralPath $setupStateScript -PathType Leaf)) { throw "The setup state helper is missing: $setupStateScript" }
+. $setupStateScript
+$statusPath = Join-Path $projectRoot ".local\setup-status.json"
+$logs = if ($LogDirectoryOverride) { [IO.Path]::GetFullPath($LogDirectoryOverride) } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs" } else { Join-Path $projectRoot ".local\logs" }
+New-Item -ItemType Directory -Path $logs -Force | Out-Null
 
-$projectRoot = if ($ProjectRootOverride) {
-    [IO.Path]::GetFullPath($ProjectRootOverride)
-} else {
-    [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+function Resolve-ActiveRuntimeDirectory {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $manifestPath = Join-Path $Root ".local\runtime-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $null }
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $manifest.runtime_directory) { throw "runtime_directory is missing" }
+        $resolved = [IO.Path]::GetFullPath((Join-Path $Root ([string]$manifest.runtime_directory)))
+        $allowedRoot = [IO.Path]::GetFullPath((Join-Path $Root ".local\runtimes"))
+        if (-not $resolved.StartsWith($allowedRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "runtime_directory is outside .local\runtimes" }
+        return $resolved
+    } catch { throw "The active runtime manifest is invalid: $_" }
 }
-$pythonw = if ($PythonwOverride) {
-    [IO.Path]::GetFullPath($PythonwOverride)
-} else {
-    Join-Path $projectRoot ".venv\Scripts\pythonw.exe"
+
+function Read-SetupStatus {
+    if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) { return $null }
+    try { return Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
 }
-$python = if ($PythonOverride) {
-    [IO.Path]::GetFullPath($PythonOverride)
-} else {
-    Join-Path $projectRoot ".venv\Scripts\python.exe"
-}
-$setupExecutable = if ($SetupExecutableOverride) {
-    [IO.Path]::GetFullPath($SetupExecutableOverride)
-} else {
-    Join-Path $projectRoot "setup.bat"
-}
-$updateExecutable = Join-Path $projectRoot "update.bat"
 
 function Test-SetupComplete {
-    $statusPath = Join-Path $projectRoot ".local\setup-status.json"
     $versionPath = Join-Path $projectRoot "VERSION"
-    if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $pythonw -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $statusPath -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $versionPath -PathType Leaf)) { return $false }
-    try {
-        $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $version = (Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8).Trim()
-        return [string]$status.status -eq "success" -and [string]$status.app_version -eq $version
-    } catch { return $false }
-}
-
-if ($ProbeSetupStateOnly) {
-    if (Test-SetupComplete) { exit 0 }
-    exit 3
-}
-if ($Action -eq "Setup") {
-    $process = Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot -Wait -PassThru
-    exit $process.ExitCode
-}
-if ($Action -eq "Update") {
-    $process = Start-Process -FilePath $updateExecutable -WorkingDirectory $projectRoot -Wait -PassThru
-    exit $process.ExitCode
+    $status = Read-SetupStatus
+    if (-not $status -or -not (Test-Path -LiteralPath $versionPath -PathType Leaf)) { return $false }
+    $version = (Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8).Trim()
+    if ([string]$status.status -ne "success" -or [string]$status.app_version -ne $version) { return $false }
+    if ($PythonOverride -and $PythonwOverride) {
+        return (Test-Path -LiteralPath $PythonOverride -PathType Leaf) -and (Test-Path -LiteralPath $PythonwOverride -PathType Leaf)
+    }
+    try { $runtime = Resolve-ActiveRuntimeDirectory -Root $projectRoot } catch { return $false }
+    return $runtime -and (Test-Path -LiteralPath (Join-Path $runtime "Scripts\python.exe") -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $runtime "Scripts\pythonw.exe") -PathType Leaf)
 }
 
 function Show-Message {
-    param(
-        [Parameter(Mandatory = $true)][string]$Message,
-        [string]$Title = "Subtitle Edit Bay"
-    )
-
+    param([Parameter(Mandatory = $true)][string]$Message, [string]$Title = "Subtitle Edit Bay")
     if (-not $SuppressMessages -and $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES -ne "1") {
         Add-Type -AssemblyName PresentationFramework
         [System.Windows.MessageBox]::Show($Message, $Title) | Out-Null
@@ -75,91 +62,167 @@ function Show-Message {
 }
 
 function Test-CudaRepairRequired {
-    param(
-        [Parameter(Mandatory = $true)][string]$Root,
-        [Parameter(Mandatory = $true)][string]$PythonPath
-    )
-
+    param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$PythonPath)
     $configPath = Join-Path $Root ".gui\runtime_config.json"
-    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-        $configPath = Join-Path $Root "assets\runtime_config.json"
-    }
-    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-        return $false
-    }
-
-    try {
-        $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([string]$config.shared.device -ne "cuda") {
-            return $false
-        }
-    } catch {
-        return $false
-    }
-
-    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
-        return $true
-    }
-
-    try {
-        & $PythonPath -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" *> $null
-        return $LASTEXITCODE -ne 0
-    } catch {
-        return $true
-    }
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { $configPath = Join-Path $Root "assets\runtime_config.json" }
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { return $false }
+    try { $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json; if ([string]$config.shared.device -ne "cuda") { return $false } } catch { return $false }
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { return $true }
+    try { & $PythonPath -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" *> $null; return $LASTEXITCODE -ne 0 } catch { return $true }
 }
+
+function Wait-ForSetup {
+    param(
+        [Diagnostics.Process]$Process,
+        [string]$Title = "Subtitle Edit Bay - セットアップ",
+        [string]$InitialMessage = "セットアップを実行しています。完了までお待ちください。",
+        [switch]$IgnoreSetupStatus
+    )
+    if ($SuppressMessages -or $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES -eq "1") {
+        while ((Test-SetupMutexHeld -ProjectRoot $projectRoot) -or ($Process -and -not $Process.HasExited)) { Start-Sleep -Milliseconds 100 }
+        if ($Process) { $Process.WaitForExit() }
+        return
+    }
+    Add-Type -AssemblyName PresentationFramework
+    $window = New-Object Windows.Window
+    $window.Title = $Title
+    $window.Width = 520
+    $window.Height = 190
+    $window.WindowStartupLocation = "CenterScreen"
+    $panel = New-Object Windows.Controls.StackPanel
+    $panel.Margin = 20
+    $message = New-Object Windows.Controls.TextBlock
+    $message.TextWrapping = "Wrap"
+    $message.Text = $InitialMessage
+    $progress = New-Object Windows.Controls.ProgressBar
+    $progress.IsIndeterminate = $true
+    $progress.Height = 18
+    $progress.Margin = "0,18,0,12"
+    $logText = New-Object Windows.Controls.TextBlock
+    $logText.Text = "ログ: $(Join-Path $logs 'setup.log')"
+    [void]$panel.Children.Add($message)
+    [void]$panel.Children.Add($progress)
+    [void]$panel.Children.Add($logText)
+    $window.Content = $panel
+    $timer = New-Object Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $timer.Add_Tick({
+        if (-not $IgnoreSetupStatus) {
+            $status = Read-SetupStatus
+            if ($status -and $status.stage) { $message.Text = [string]$status.stage }
+        }
+        if (-not (Test-SetupMutexHeld -ProjectRoot $projectRoot) -and (-not $Process -or $Process.HasExited)) {
+            $timer.Stop()
+            $window.Close()
+        }
+    })
+    $timer.Start()
+    [void]$window.ShowDialog()
+    if ($Process) { $Process.WaitForExit() }
+}
+
+function Start-HiddenPowerShell {
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+    $systemPowerShell = Join-Path ([Environment]::GetFolderPath("System")) "WindowsPowerShell\v1.0\powershell.exe"
+    $stdout = Join-Path $logs "$([IO.Path]::GetFileNameWithoutExtension($ScriptPath)).log"
+    $stderr = Join-Path $logs "$([IO.Path]::GetFileNameWithoutExtension($ScriptPath))-error.log"
+    $arguments = @("-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $ScriptPath))
+    return Start-Process -FilePath $systemPowerShell -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+}
+
+function Invoke-Setup {
+    if (Test-SetupMutexHeld -ProjectRoot $projectRoot) {
+        Wait-ForSetup
+        if (Test-SetupComplete) { return 0 } else { return 1 }
+    }
+    $startLease = Enter-SetupStartMutex -ProjectRoot $projectRoot
+    if (-not $startLease.Acquired) {
+        $startLease.Mutex.Dispose()
+        throw "Timed out while coordinating setup startup."
+    }
+    try {
+        if (Test-SetupMutexHeld -ProjectRoot $projectRoot) {
+            Wait-ForSetup
+            if (Test-SetupComplete) { return 0 } else { return 1 }
+        }
+        $process = if ($SetupExecutableOverride) {
+            Start-Process -FilePath ([IO.Path]::GetFullPath($SetupExecutableOverride)) -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+        } else {
+            Start-HiddenPowerShell -ScriptPath (Join-Path $projectRoot "scripts\setup.ps1")
+        }
+        $startDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-SetupMutexHeld -ProjectRoot $projectRoot) -and -not $process.HasExited -and [DateTime]::UtcNow -lt $startDeadline) {
+            Start-Sleep -Milliseconds 50
+        }
+    } finally {
+        Exit-SetupMutex -Lease $startLease
+    }
+    Wait-ForSetup -Process $process
+    if ($process.ExitCode -eq 32) {
+        Wait-ForSetup
+        if (Test-SetupComplete) { return 0 } else { return 1 }
+    }
+    return $process.ExitCode
+}
+
+if ($ProbeCudaRepairOnly) {
+    $probePython = if ($PythonOverride) { [IO.Path]::GetFullPath($PythonOverride) } else {
+        $probeRuntime = Resolve-ActiveRuntimeDirectory -Root $projectRoot
+        if ($probeRuntime) { Join-Path $probeRuntime "Scripts\python.exe" } else { "" }
+    }
+    Write-Output (Test-CudaRepairRequired -Root $projectRoot -PythonPath $probePython).ToString().ToLowerInvariant()
+    exit 0
+}
+if ($ProbeSetupRunningOnly) { if (Test-SetupMutexHeld -ProjectRoot $projectRoot) { exit 0 }; exit 3 }
+if ($ProbeSetupStateOnly) { if (Test-SetupComplete) { exit 0 }; exit 3 }
+if ($Action -eq "Setup") {
+    $exitCode = Invoke-Setup
+    if ($exitCode -eq 0) { Show-Message "セットアップが完了しました。Subtitle Edit Bayを起動できます。" }
+    else {
+        $status = Read-SetupStatus
+        $reason = if ($status -and $status.message) { [string]$status.message } else { "詳細はセットアップログを確認してください。" }
+        Show-Message "セットアップに失敗しました。$([Environment]::NewLine)$([Environment]::NewLine)$reason$([Environment]::NewLine)$([Environment]::NewLine)ログ: $(Join-Path $logs 'setup.log')" "Subtitle Edit Bay - セットアップエラー"
+    }
+    exit $exitCode
+}
+if ($Action -eq "Update") {
+    $process = Start-HiddenPowerShell -ScriptPath (Join-Path $projectRoot "scripts\update.ps1")
+    Wait-ForSetup -Process $process -Title "Subtitle Edit Bay - アップデート" -InitialMessage "アップデートを実行しています。完了までお待ちください。" -IgnoreSetupStatus
+    if ($process.ExitCode -eq 0) { Show-Message "アップデートが完了しました。" } else { Show-Message "アップデートに失敗しました。ログを確認してください。" "Subtitle Edit Bay - アップデートエラー" }
+    exit $process.ExitCode
+}
+if (-not (Test-SetupComplete)) {
+    $exitCode = Invoke-Setup
+    if ($exitCode -ne 0) { exit $exitCode }
+    if ($SetupExecutableOverride) { exit 0 }
+}
+
+$runtimeDirectory = Resolve-ActiveRuntimeDirectory -Root $projectRoot
+$pythonw = if ($PythonwOverride) { [IO.Path]::GetFullPath($PythonwOverride) } else { Join-Path $runtimeDirectory "Scripts\pythonw.exe" }
+$python = if ($PythonOverride) { [IO.Path]::GetFullPath($PythonOverride) } else { Join-Path $runtimeDirectory "Scripts\python.exe" }
 
 $cudaRepairRequired = Test-CudaRepairRequired -Root $projectRoot -PythonPath $python
-if ($ProbeCudaRepairOnly) {
-    Write-Output $cudaRepairRequired.ToString().ToLowerInvariant()
-    exit 0
-}
-
-if (-not (Test-SetupComplete)) {
-    Show-Message "初回セットアップが必要です。セットアップ画面を開きます。"
-    Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot
-    exit 0
-}
-
 if ($cudaRepairRequired) {
-    Show-Message "GPU設定が選択されていますが、CUDA対応PyTorchが利用できません。`n`n実行環境の修復セットアップを開きます。完了後にアプリをもう一度起動してください。" "Subtitle Edit Bay - GPU環境の修復"
-    Start-Process -FilePath $setupExecutable -WorkingDirectory $projectRoot
-    exit 0
+    Show-Message "GPU設定に必要なCUDA runtimeを修復します。" "Subtitle Edit Bay - GPU環境の修復"
+    $exitCode = Invoke-Setup
+    if ($exitCode -ne 0) { exit $exitCode }
+    if ($SetupExecutableOverride) { exit 0 }
+    $runtimeDirectory = Resolve-ActiveRuntimeDirectory -Root $projectRoot
+    $pythonw = Join-Path $runtimeDirectory "Scripts\pythonw.exe"
 }
 
 $ffmpegPathFile = Join-Path $projectRoot ".local\ffmpeg_path.txt"
 if (Test-Path -LiteralPath $ffmpegPathFile -PathType Leaf) {
     $ffmpegDirectory = (Get-Content -LiteralPath $ffmpegPathFile -Raw -Encoding UTF8).Trim()
-    if ($ffmpegDirectory -and (Test-Path -LiteralPath $ffmpegDirectory -PathType Container)) {
-        $env:PATH = "$ffmpegDirectory;$env:PATH"
-    }
+    if ($ffmpegDirectory -and (Test-Path -LiteralPath $ffmpegDirectory -PathType Container)) { $env:PATH = "$ffmpegDirectory;$env:PATH" }
 }
-
 $env:PYTHONUTF8 = "1"
-$logDirectory = if ($LogDirectoryOverride) {
-    [IO.Path]::GetFullPath($LogDirectoryOverride)
-} else {
-    Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs"
-}
-New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
-$errorLog = Join-Path $logDirectory "latest-launch-error.log"
-
+$errorLog = Join-Path $logs "latest-launch-error.log"
 try {
-    $process = Start-Process `
-        -FilePath $pythonw `
-        -ArgumentList @("-m", "src.gui") `
-        -WorkingDirectory $projectRoot `
-        -RedirectStandardError $errorLog `
-        -PassThru `
-        -Wait
-
-    if ($process.ExitCode -ne 0) {
-        Show-Message "アプリを起動できませんでした。`n`n初回セットアップ・修復を実行してください。`n診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"
-        exit $process.ExitCode
-    }
-}
-catch {
+    $process = Start-Process -FilePath $pythonw -ArgumentList @("-m", "src.gui") -WorkingDirectory $projectRoot -RedirectStandardError $errorLog -PassThru -Wait
+    if ($process.ExitCode -ne 0) { Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"; exit $process.ExitCode }
+} catch {
     $_ | Out-String | Set-Content -LiteralPath $errorLog -Encoding UTF8
-    Show-Message "アプリを起動できませんでした。`n`n初回セットアップ・修復を実行してください。`n診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"
+    Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"
     exit 1
 }

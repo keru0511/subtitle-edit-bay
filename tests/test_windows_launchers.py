@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    def test_gui_initializes_typing_extensions_before_pyside(self) -> None:
+        gui = (ROOT / "src" / "gui.py").read_text(encoding="utf-8")
+
+        self.assertLess(gui.index("from typing_extensions import Self"), gui.index("from PySide6.QtCore import"))
+
     def _require_windows_git(self) -> str:
         executable = shutil.which("git.exe")
         if executable:
@@ -245,8 +250,8 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn(r"Sysnative\WindowsPowerShell\v1.0\powershell.exe", launcher)
         self.assertIn(r"System32\WindowsPowerShell\v1.0\powershell.exe", launcher)
         self.assertIn('"%POWERSHELL_EXE%"', launcher)
-        self.assertIn('"Python.Python.3.10"', setup)
-        self.assertIn('"Gyan.FFmpeg"', setup)
+        self.assertIn("$runtimeContract.python.winget_package", setup)
+        self.assertIn("$runtimeContract.ffmpeg.winget_package", setup)
         self.assertIn("-m pip install", setup)
         self.assertIn("check_runtime_dependencies", setup)
         self.assertIn('Get-Command "nvidia-smi.exe"', setup)
@@ -259,14 +264,21 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("PyTorch CUDA runtime:", setup)
         self.assertIn("PyTorch CUDA available:", setup)
         self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
-        self.assertIn("https://download.pytorch.org/whl/cu128", setup)
-        self.assertIn('$whisperXVersion = "3.8.6"', setup)
-        self.assertIn('$torchVersion = "2.8.0"', setup)
-        self.assertIn("--force-reinstall", setup)
-        self.assertIn("--no-deps", setup)
+        self.assertIn("runtime\\runtime-contract.json", setup)
+        self.assertIn("--require-hashes", setup)
+        self.assertIn(".local\\runtimes", setup)
+        self.assertNotIn("Move-Item -LiteralPath $stagingVenv", setup)
+        self.assertIn("Set-ActiveRuntimeGeneration", setup)
+        self.assertIn("runtime-manifest.json", setup)
+        self.assertIn("verify-tools", setup)
+        self.assertNotIn('pip install -r "requirements.txt"', setup)
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+
+        launch = (ROOT / "installer" / "launch.ps1").read_text(encoding="utf-8")
+        self.assertIn("Resolve-ActiveRuntimeDirectory", launch)
+        self.assertIn("runtime_directory", launch)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
@@ -326,6 +338,7 @@ class WindowsLauncherTests(unittest.TestCase):
             scripts.mkdir(parents=True)
             launch_script = scripts / "launch.ps1"
             shutil.copy2(ROOT / "installer" / "launch.ps1", launch_script)
+            shutil.copy2(ROOT / "scripts" / "setup_state.ps1", scripts / "setup_state.ps1")
             outside = Path(temp_dir) / "unrelated working directory"
             outside.mkdir()
             config_path = root / ".gui" / "runtime_config.json"

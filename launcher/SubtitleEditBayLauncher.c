@@ -21,6 +21,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
             powershell_arguments = L" -Action Update";
         } else if (wcscmp(command_line, L"--probe-setup") == 0) {
             powershell_arguments = L" -ProbeSetupStateOnly";
+        } else if (wcscmp(command_line, L"--probe-setup-running") == 0) {
+            powershell_arguments = L" -ProbeSetupRunningOnly";
         } else {
             show_error(L"不明な起動オプションです。");
             return 2;

@@ -371,3 +371,53 @@ jobs:
               -InstallerPath (Join-Path $env:RUNNER_TEMP "subtitle-edit-bay-release\SubtitleEditBay-Setup.exe") `
               -ExpectedVersion $releaseVersion `
               -InstallDirectory (Join-Path $env:RUNNER_TEMP "SubtitleEditBayInstalled")
+
+  validation-result:
+    name: CI validation result
+    if: github.event_name == 'pull_request'
+    needs:
+      - python-quality
+      - portable-tests
+      - windows-tests
+      - windows-launcher-tests
+      - ffmpeg6-compat
+      - windows-installer-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out validated merge candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Record validated source identity
+        shell: bash
+        env:
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" == "$GITHUB_SHA" ]] || { echo "CI checkout does not match GITHUB_SHA." >&2; exit 1; }
+          python scripts/release_candidate.py write-ci-validation \
+            --repository "$GITHUB_REPOSITORY" \
+            --pull-request-number "$PULL_REQUEST_NUMBER" \
+            --pull-request-head-sha "$PULL_REQUEST_HEAD_SHA" \
+            --pull-request-base-sha "$PULL_REQUEST_BASE_SHA" \
+            --pull-request-head-branch "$PULL_REQUEST_HEAD_BRANCH" \
+            --source-sha "$source_sha" \
+            --source-tree "$source_tree" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output ci-validation-identity.json
+      - name: Upload immutable CI validation identity
+        uses: actions/upload-artifact@v6
+        with:
+          name: ci-validation-identity-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: ci-validation-identity.json
+          if-no-files-found: error
+          retention-days: 14

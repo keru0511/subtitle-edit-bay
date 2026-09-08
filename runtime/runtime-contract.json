@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "setup_schema_version": 2,
+  "python": {
+    "major_minor": "3.10",
+    "minimum": "3.10.0",
+    "maximum_exclusive": "3.11.0",
+    "winget_package": "Python.Python.3.10",
+    "pip_version": "26.2.1"
+  },
+  "ffmpeg": {
+    "minimum_major": 6,
+    "maximum_major_exclusive": 10,
+    "winget_package": "Gyan.FFmpeg"
+  },
+  "critical_imports": [
+    "typing_extensions",
+    "budoux",
+    "janome",
+    "numpy",
+    "PySide6.QtCore",
+    "whisperx",
+    "whisperx.asr",
+    "whisperx.alignment",
+    "torch",
+    "src.runtime_dependencies"
+  ],
+  "profiles": {
+    "cpu": {
+      "lock_file": "runtime/requirements-windows-cpu.lock",
+      "index_url": "https://pypi.org/simple",
+      "torch_version": "2.8.0",
+      "cuda_build": "none"
+    },
+    "cu128": {
+      "lock_file": "runtime/requirements-windows-cu128.lock",
+      "index_url": "https://download.pytorch.org/whl/cu128",
+      "extra_index_url": "https://pypi.org/simple",
+      "torch_version": "2.8.0+cu128",
+      "cuda_build": "12.8"
+    }
+  }
+}

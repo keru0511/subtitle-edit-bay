@@ -20,4 +20,3 @@
 clip、transition、縦横比等のショート構成は編集プロジェクトに保存し、完成動画の出力先とは分離します。`ショート動画を書き出す` を実行した時点で出力先を検証し、通常動画と共通のFFmpeg依存確認、NVENC/CPU選択、progress/停止/失敗境界を利用します。書き出し中も `currentEditMode` やclip編集状態を別のrender modeへ変更しません。
 
 Codexチャットの認証・thread・streaming状態は既存の単一backendを共有します。ワークスペース横断でサイドバーを常設する最終レイアウトは #249 が所有します。
-

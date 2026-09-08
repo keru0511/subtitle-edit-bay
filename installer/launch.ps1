@@ -15,15 +15,40 @@ $projectRoot = if ($ProjectRootOverride) {
 } else {
     [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 }
+
+function Resolve-ActiveRuntimeDirectory {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $manifestPath = Join-Path $Root ".local\runtime-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return (Join-Path $Root ".venv")
+    }
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $manifest.runtime_directory) {
+            throw "runtime_directory is missing"
+        }
+        $resolved = [IO.Path]::GetFullPath((Join-Path $Root ([string]$manifest.runtime_directory)))
+        $allowedRoot = [IO.Path]::GetFullPath((Join-Path $Root ".local\runtimes"))
+        if (-not $resolved.StartsWith($allowedRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "runtime_directory is outside .local\runtimes"
+        }
+        return $resolved
+    } catch {
+        throw "The active runtime manifest is invalid: $_"
+    }
+}
+
+$runtimeDirectory = Resolve-ActiveRuntimeDirectory -Root $projectRoot
 $pythonw = if ($PythonwOverride) {
     [IO.Path]::GetFullPath($PythonwOverride)
 } else {
-    Join-Path $projectRoot ".venv\Scripts\pythonw.exe"
+    Join-Path $runtimeDirectory "Scripts\pythonw.exe"
 }
 $python = if ($PythonOverride) {
     [IO.Path]::GetFullPath($PythonOverride)
 } else {
-    Join-Path $projectRoot ".venv\Scripts\python.exe"
+    Join-Path $runtimeDirectory "Scripts\python.exe"
 }
 $setupExecutable = if ($SetupExecutableOverride) {
     [IO.Path]::GetFullPath($SetupExecutableOverride)

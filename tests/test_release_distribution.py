@@ -96,7 +96,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("アップデート", definition)
         self.assertIn("アンインストール", definition)
         self.assertIn("-WindowStyle Hidden", definition)
-        self.assertIn(r".venv\Scripts\pythonw.exe", launcher)
+        self.assertIn("Resolve-ActiveRuntimeDirectory", launcher)
+        self.assertIn('Join-Path $runtimeDirectory "Scripts\\pythonw.exe"', launcher)
         self.assertIn("latest-launch-error.log", launcher)
         self.assertIn(r'Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs"', launcher)
         self.assertNotIn(r'Join-Path $env:LOCALAPPDATA "SubtitleEditBay\logs"', launcher)
@@ -125,6 +126,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[int]$ProducerWorkflowRunAttempt = 0", package)
         self.assertIn("$ExpectedVersion.Substring(1)", smoke)
         self.assertIn("Installed VERSION mismatch", smoke)
+        self.assertIn("scripts\\setup.ps1", smoke)
+        self.assertIn("runtime-manifest.json", smoke)
+        self.assertIn("Scripts\\pip.exe", smoke)
+        self.assertNotIn("pip install -r", smoke)
         self.assertIn("engine.rootObjects()", smoke)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
@@ -1132,7 +1137,17 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
+                        "scripts/runtime_activation.ps1",
+                        "scripts/runtime_contract.py",
+                        "runtime/runtime-contract.json",
+                        "runtime/requirements-windows-cpu.lock",
+                        "runtime/requirements-windows-cu128.lock",
                     ],
+                    "runtime_contract": {
+                        "contract_sha256": "1" * 64,
+                        "cpu_lock_sha256": "2" * 64,
+                        "cu128_lock_sha256": "3" * 64,
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1208,6 +1223,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             ({"asset_name": "other.exe"}, "asset_name mismatch"),
             ({"sha256": "0" * 64}, "sha256 mismatch"),
             ({"required_files": ["VERSION"]}, "required_files is incomplete"),
+            ({"runtime_contract": {}}, "runtime_contract hashes are incomplete"),
         )
 
         for changes, message in mutations:

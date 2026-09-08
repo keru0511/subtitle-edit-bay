@@ -38,6 +38,11 @@ foreach ($path in @(
     "start.bat",
     "update.bat",
     "requirements.txt",
+    "scripts\runtime_activation.ps1",
+    "scripts\runtime_contract.py",
+    "runtime\runtime-contract.json",
+    "runtime\requirements-windows-cpu.lock",
+    "runtime\requirements-windows-cu128.lock",
     "VERSION"
 )) {
     $candidate = Join-Path $installDir $path
@@ -51,10 +56,33 @@ if ($installedVersion -ne $expectedInstalledVersion) {
     throw "Installed VERSION mismatch: expected=$expectedInstalledVersion actual=$installedVersion"
 }
 
-$venvPython = Join-Path $installDir ".venv\Scripts\python.exe"
-python -m venv (Join-Path $installDir ".venv")
-& $venvPython -m pip install --upgrade pip
-& $venvPython -m pip install -r (Join-Path $installDir "requirements.txt")
+$setupScript = Join-Path $installDir "scripts\setup.ps1"
+Push-Location $installDir
+try {
+    & $setupScript
+    if ($LASTEXITCODE -ne 0) { throw "Installed setup exited with code $LASTEXITCODE." }
+} finally {
+    Pop-Location
+}
+
+$runtimeManifestPath = Join-Path $installDir ".local\runtime-manifest.json"
+if (-not (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf)) {
+    throw "Installed setup did not publish an active runtime manifest."
+}
+$runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not $runtimeManifest.runtime_directory) {
+    throw "Installed runtime manifest has no runtime_directory."
+}
+$runtimeDirectory = [IO.Path]::GetFullPath((Join-Path $installDir ([string]$runtimeManifest.runtime_directory)))
+$venvPython = Join-Path $runtimeDirectory "Scripts\python.exe"
+$venvPip = Join-Path $runtimeDirectory "Scripts\pip.exe"
+foreach ($runtimeCommand in @($venvPython, $venvPip)) {
+    if (-not (Test-Path -LiteralPath $runtimeCommand -PathType Leaf)) {
+        throw "Installed runtime command is missing: $runtimeCommand"
+    }
+}
+& $venvPip --version
+if ($LASTEXITCODE -ne 0) { throw "Installed runtime pip command is not relocatable-safe." }
 
 $smokeScript = Join-Path ([IO.Path]::GetDirectoryName($installDir)) "installed-gui-smoke.py"
 @'
@@ -84,6 +112,7 @@ if exit_code != 0:
 Push-Location $installDir
 try {
     & $venvPython $smokeScript
+    if ($LASTEXITCODE -ne 0) { throw "Installed GUI smoke exited with code $LASTEXITCODE." }
 }
 finally {
     Pop-Location

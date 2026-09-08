@@ -45,6 +45,9 @@ if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
 }
 
 $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$runtimeContractHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/runtime-contract.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+$cpuLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/requirements-windows-cpu.lock") -Algorithm SHA256).Hash.ToLowerInvariant()
+$cudaLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/requirements-windows-cu128.lock") -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  SubtitleEditBay-Setup.exe" | Set-Content `
     -LiteralPath "$installerPath.sha256" `
     -Encoding ascii `
@@ -56,7 +59,21 @@ $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowe
     source_sha = $SourceSha.ToLowerInvariant()
     asset_name = "SubtitleEditBay-Setup.exe"
     sha256 = $hash
-    required_files = @("VERSION", "scripts/launch.ps1", "scripts/apply_installer_update.ps1")
+    required_files = @(
+        "VERSION",
+        "scripts/launch.ps1",
+        "scripts/apply_installer_update.ps1",
+        "scripts/runtime_activation.ps1",
+        "scripts/runtime_contract.py",
+        "runtime/runtime-contract.json",
+        "runtime/requirements-windows-cpu.lock",
+        "runtime/requirements-windows-cu128.lock"
+    )
+    runtime_contract = @{
+        contract_sha256 = $runtimeContractHash
+        cpu_lock_sha256 = $cpuLockHash
+        cu128_lock_sha256 = $cudaLockHash
+    }
 } | ConvertTo-Json -Depth 5 | Set-Content `
     -LiteralPath "$installerPath.manifest.json" `
     -Encoding utf8

@@ -1297,6 +1297,9 @@ class WindowsLauncherTests(unittest.TestCase):
             update_result = json.loads((base / "update-result.json").read_text(encoding="utf-8"))
             self.assertIn(parent.pid, update_result["process_ids"])
             self.assertTrue((install / ".venv" / "new-runtime.txt").is_file())
+            self._wait_for_path(restart_marker)
+            self.assertTrue(restart_marker.is_file(), update_result)
+            time.sleep(0.5)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_helper_rolls_back_runtime_validation_failure_and_restarts_old_version(self) -> None:

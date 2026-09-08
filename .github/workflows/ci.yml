@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       requires_preparation: ${{ steps.classify.outputs.requires_preparation }}
+      delegates_to_readiness: ${{ steps.classify.outputs.delegates_to_readiness }}
     steps:
       - name: Check out merge candidate
         uses: actions/checkout@v6
@@ -36,6 +37,8 @@ jobs:
           python scripts/release_readiness.py classify
           --base-sha "${{ github.event.pull_request.base.sha }}"
           --source-sha "${{ github.sha }}"
+          --event-name "${{ github.event_name }}"
+          --base-ref "${{ github.event.pull_request.base.ref }}"
           --github-output "$GITHUB_OUTPUT"
 
   python-quality:
@@ -79,9 +82,9 @@ jobs:
     name: Portable, Qt, and FFmpeg tests
     needs: classify-validation
     if: >-
-      always() &&
+      !cancelled() &&
       (github.event_name != 'pull_request' ||
-      needs.classify-validation.outputs.requires_preparation == 'false')
+      needs.classify-validation.outputs.delegates_to_readiness != 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -340,9 +343,9 @@ jobs:
     name: Windows installer smoke
     needs: classify-validation
     if: >-
-      always() &&
+      !cancelled() &&
       (github.event_name != 'pull_request' ||
-      needs.classify-validation.outputs.requires_preparation == 'false')
+      needs.classify-validation.outputs.delegates_to_readiness != 'true')
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -429,6 +432,7 @@ jobs:
         run: >-
           python scripts/release_readiness.py assert-ci-validation
           --requires-preparation "${{ needs.classify-validation.outputs.requires_preparation }}"
+          --delegates-to-readiness "${{ needs.classify-validation.outputs.delegates_to_readiness }}"
           --classify-result "${{ needs.classify-validation.result }}"
           --required-result "${{ needs.python-quality.result }}"
           --required-result "${{ needs.windows-tests.result }}"
@@ -443,8 +447,8 @@ jobs:
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PULL_REQUEST_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-          VALIDATION_PROFILE: ${{ needs.classify-validation.outputs.requires_preparation == 'true' && 'release-candidate-v1' || 'standard-v1' }}
-          DELEGATED_WORKFLOW: ${{ needs.classify-validation.outputs.requires_preparation == 'true' && '.github/workflows/release-readiness.yml' || 'none' }}
+          VALIDATION_PROFILE: ${{ needs.classify-validation.outputs.delegates_to_readiness == 'true' && 'release-candidate-v1' || 'standard-v1' }}
+          DELEGATED_WORKFLOW: ${{ needs.classify-validation.outputs.delegates_to_readiness == 'true' && '.github/workflows/release-readiness.yml' || 'none' }}
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse HEAD)"

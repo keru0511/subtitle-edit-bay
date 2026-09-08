@@ -3853,7 +3853,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
 
-        self.assertTrue(window.setProperty("activeOverlay", "short"))
+        self.assertTrue(window.setProperty("currentWorkspace", "short-artifact"))
         self.app.processEvents()
         self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
         self.assertTrue(sidebar.isVisible())

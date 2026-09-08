@@ -21,6 +21,8 @@
 
 PRの準備処理は `contents: read` だけで動き、タグやReleaseを作りません。`pull_request_target` や公開用資格情報も使いません。
 
+main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmpegとinstaller smokeをskipし、同じ仮マージに対する実行責務をRelease readinessへ一本化します。Release readinessが起動しない非main向けPRでは委譲せず、通常CIが全検証を実行します。通常CI固有のquality、Windows runtime、launcher、FFmpeg 6互換は引き続き必須です。分類失敗、必要ジョブの失敗・キャンセル・予期しないskip、または委譲対象の重複実行は集約で拒否します。対応表は [PR検証の実行責務](validation-ownership.md) を参照してください。
+
 ### v0.4.8で検出したGUIテスト失敗
 
 失敗したRelease runは911件を1つのPythonプロセスで一括実行し、通常CIは分類済みグループを別プロセスで実行していました。`start.call_args` が `None` になった2件はReleaseで同じ順序のとき再現し、通常CI方式では成功したため、アプリ処理の削除やテストskipではなく、実行単位を通常CIと共通の `run_ci_tests.py` に統一しました。さらにRelease環境にもFFmpegとffprobeを明示的に導入し、Qtのoffscreen／software環境変数を通常CIと揃えています。
@@ -34,7 +36,7 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 1. 実際のマージSHAに対応する、マージ済みのVERSION-only PRを固定する
 2. そのPRの最終head/baseに対する未完了を含む最新の `Release readiness` runを特定する。APIのPR対応がマージ後に空でもhead branch/SHA、repository、workflow、候補commitの親/treeで結び、最新runが未完了・失敗・キャンセルなら過去の成功runへ戻らない
 3. readinessの必須7ジョブについて各ジョブの最新実行が成功したことを確認する。失敗jobだけの再実行では、準備runの最新attemptと、artifactを生成したbuild attempt、同じartifactを確認したinstall/start attemptを分けて保持する
-4. 同じ最終headの最新の通常CIで必須6ジョブが成功したことに加え、成功後に保存した仮マージSHA/tree/head/baseのidentity artifactがRelease readiness候補と一致することを確認する
+4. 同じ最終headの最新の通常CIで分類・quality・Windows runtime・launcher・FFmpeg 6が成功し、Release readinessへ委譲した2ジョブがskipされたことに加え、成功後に保存した検証プロファイルと仮マージSHA/tree/head/baseのidentity artifactがRelease readiness候補と一致することを確認する
 5. build attemptを含むartifact名、ID、digestが一意で未失効であることを確認し、APIから取得したZIP全体のSHA-256をdigestと照合してから展開する
 6. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
 7. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する

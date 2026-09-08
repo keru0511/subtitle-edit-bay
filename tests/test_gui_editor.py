@@ -3859,6 +3859,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
 
+        self.assertTrue(window.setProperty("currentWorkspace", "normal-video"))
         self.assertTrue(window.setProperty("activeOverlay", ""))
         self.app.processEvents()
         self.assertFalse(self._quick_item(window, "shortModePage").isVisible())

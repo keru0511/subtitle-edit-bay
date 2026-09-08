@@ -152,7 +152,9 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
         self.assertIn('"--probe-setup"', smoke)
         self.assertNotIn("installed-gui-smoke.py", smoke)
-        self.assertIn("SUBTITLE_EDIT_BAY_SETUP_PROVIDER", smoke)
+        self.assertIn("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", smoke)
+        self.assertNotIn("SUBTITLE_EDIT_BAY_SETUP_PROVIDER", smoke)
+        self.assertIn("Normal launch did not report the setup failure", smoke)
         self.assertIn('if ($failed.status -ne "failed"', smoke)
         self.assertNotIn('status = "success"', smoke)
 

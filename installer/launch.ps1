@@ -245,12 +245,17 @@ try {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardError = $true
     $process = [System.Diagnostics.Process]::Start($psi)
+    # Begin draining stderr before waiting. Waiting first can deadlock when the
+    # child fills the redirected pipe and blocks while this launcher waits for
+    # that same child to exit.
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     while (-not $process.HasExited) {
         Start-Sleep -Milliseconds 100
     }
+    $process.WaitForExit()
     $exitCode = $process.ExitCode
-    $stderrText = $process.StandardError.ReadToEnd()
-    Set-Content -LiteralPath $errorLog -Value $stderrText -Encoding UTF8
+    $stderrText = $stderrTask.GetAwaiter().GetResult()
+    [IO.File]::WriteAllText($errorLog, $stderrText, [Text.UTF8Encoding]::new($false))
     if ($exitCode -ne 0) { Show-Message "アプリを起動できませんでした。診断ログ: $errorLog" "Subtitle Edit Bay - 起動エラー"; exit $exitCode }
 } catch {
     $_ | Out-String | Set-Content -LiteralPath $errorLog -Encoding UTF8

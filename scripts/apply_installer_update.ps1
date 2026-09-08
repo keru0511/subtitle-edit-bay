@@ -4,7 +4,12 @@
     [Parameter(Mandatory = $true)][string]$InstallRoot,
     [Parameter(Mandatory = $true)][string]$ExpectedVersion,
     [Parameter(Mandatory = $true)][string]$ExpectedSha256,
-    [Parameter(Mandatory = $true)][string]$ResultPath
+    [Parameter(Mandatory = $true)][string]$ResultPath,
+    [Parameter(DontShow = $true)]
+    [ValidateSet("", "runtime-state-snapshot", "runtime-evacuation", "post-commit-cleanup")]
+    [string]$TestFaultPoint = "",
+    [Parameter(DontShow = $true)]
+    [string]$TestFaultMarkerPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +27,16 @@ $setupLog = Join-Path $logRoot "setup-$correlationId.log"
 function Write-StepLog {
     param([Parameter(Mandatory = $true)][string]$Message)
     Add-Content -LiteralPath $helperLog -Value ("{0:o} {1}" -f (Get-Date), $Message) -Encoding UTF8
+}
+
+function Invoke-TestFault {
+    param([Parameter(Mandatory = $true)][string]$Point)
+    if (-not $TestFaultPoint -or $TestFaultPoint -ne $Point) { return }
+    if (-not $TestFaultMarkerPath) { throw "A marker path is required for test fault injection." }
+    $markerParent = Split-Path -Parent $TestFaultMarkerPath
+    if ($markerParent) { New-Item -ItemType Directory -Path $markerParent -Force | Out-Null }
+    [IO.File]::WriteAllText($TestFaultMarkerPath, $Point, [Text.UTF8Encoding]::new($false))
+    throw "Injected update test fault: $Point"
 }
 
 function Write-UpdateResult {
@@ -113,7 +128,18 @@ function Move-RuntimeToRecovery {
         $runtimeRecovery = Join-Path $SnapshotRoot "runtime\.venv"
         New-Item -ItemType Directory -Path (Split-Path -Parent $runtimeRecovery) -Force | Out-Null
         Move-Item -LiteralPath $runtime -Destination $runtimeRecovery
-        return @{ Evacuated = $true; WasJunction = $false; Target = "" }
+        try {
+            Invoke-TestFault -Point "runtime-evacuation"
+            return @{ Evacuated = $true; WasJunction = $false; Target = "" }
+        } catch {
+            # The caller cannot receive RuntimeInfo until this function returns.
+            # Restore an evacuation that failed mid-operation here so the outer
+            # rollback never mistakes the old runtime for an untouched one.
+            if (-not (Test-Path -LiteralPath $runtime) -and (Test-Path -LiteralPath $runtimeRecovery -PathType Container)) {
+                Move-Item -LiteralPath $runtimeRecovery -Destination $runtime
+            }
+            throw
+        }
     }
 }
 
@@ -136,6 +162,9 @@ function New-RuntimeStateSnapshot {
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
             Copy-Item -LiteralPath $source -Destination $destination -Force
         }
+        # Exercise a failure after snapshotting has begun, rather than before
+        # the transaction or checksum verification.
+        Invoke-TestFault -Point "runtime-state-snapshot"
     }
     [IO.File]::WriteAllText(
         (Join-Path $stateRoot "manifest.json"),
@@ -364,6 +393,12 @@ try {
     # Post-commit cleanup: failures are logged as warnings and never trigger rollback.
     try {
         if ($recoveryRoot -and (Test-Path -LiteralPath $recoveryRoot)) {
+            if ($TestFaultPoint -eq "post-commit-cleanup") {
+                $partialCleanupTarget = Get-ChildItem -LiteralPath $recoveryRoot -File -Recurse | Select-Object -First 1
+                if (-not $partialCleanupTarget) { throw "Recovery point did not contain a cleanup target." }
+                Remove-Item -LiteralPath $partialCleanupTarget.FullName -Force
+                Invoke-TestFault -Point "post-commit-cleanup"
+            }
             Remove-Item -LiteralPath $recoveryRoot -Recurse -Force
         }
         $activeManifestPath = Join-Path $InstallRoot ".local\runtime-manifest.json"

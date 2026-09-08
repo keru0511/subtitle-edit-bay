@@ -89,31 +89,38 @@ class WindowsLauncherTests(unittest.TestCase):
         parent_pid: int = -1,
         expected_version: str = "v9.9.9",
         expected_sha256: str | None = None,
+        test_fault_point: str | None = None,
+        test_fault_marker: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         digest = expected_sha256 or hashlib.sha256(package.read_bytes()).hexdigest()
+        arguments = [
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT / "scripts" / "apply_installer_update.ps1"),
+            "-PackagePath",
+            str(package),
+            "-ParentPid",
+            str(parent_pid),
+            "-InstallRoot",
+            str(install),
+            "-ExpectedVersion",
+            expected_version,
+            "-ExpectedSha256",
+            digest,
+            "-ResultPath",
+            str(result_path),
+        ]
+        if test_fault_point:
+            arguments.extend(["-TestFaultPoint", test_fault_point])
+        if test_fault_marker:
+            arguments.extend(["-TestFaultMarkerPath", str(test_fault_marker)])
         return subprocess.run(
-            [
-                powershell,
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "apply_installer_update.ps1"),
-                "-PackagePath",
-                str(package),
-                "-ParentPid",
-                str(parent_pid),
-                "-InstallRoot",
-                str(install),
-                "-ExpectedVersion",
-                expected_version,
-                "-ExpectedSha256",
-                digest,
-                "-ResultPath",
-                str(result_path),
-            ],
+            arguments,
             cwd=install,
             capture_output=True,
             text=True,
@@ -1433,6 +1440,8 @@ class WindowsLauncherTests(unittest.TestCase):
                 "import subprocess, sys\n"
                 f"p = subprocess.Popen([r'{powershell}', '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', r'{escaped_helper}'], cwd=r'{escaped_temp}', stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)\n"
                 f"open(r'{escaped_pid_marker}', 'w', encoding='utf-8').write(str(p.pid))\n"
+                "sys.stderr.write('large-stderr-start\\n' + ('x' * 262144) + '\\nlarge-stderr-end\\n')\n"
+                "sys.stderr.flush()\n"
                 "sys.exit(0)\n",
                 encoding="utf-8",
             )
@@ -1440,6 +1449,7 @@ class WindowsLauncherTests(unittest.TestCase):
             shutil.copy2(ROOT / "scripts" / "setup_state.ps1", scripts / "setup_state.ps1")
 
             started = time.monotonic()
+            helper_was_running = False
             try:
                 result = subprocess.run(
                     [
@@ -1458,6 +1468,8 @@ class WindowsLauncherTests(unittest.TestCase):
                         sys.executable,
                         "-PythonOverride",
                         sys.executable,
+                        "-LogDirectoryOverride",
+                        str(install / ".local" / "logs"),
                     ],
                     cwd=install,
                     capture_output=True,
@@ -1466,6 +1478,13 @@ class WindowsLauncherTests(unittest.TestCase):
                     errors="replace",
                     timeout=8,
                 )
+                self._wait_for_path(pid_marker)
+                self.assertTrue(pid_marker.is_file(), result.stdout + result.stderr)
+                helper_pid = int(pid_marker.read_text(encoding="utf-8").strip())
+                check = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {helper_pid}"], capture_output=True, text=True
+                )
+                helper_was_running = str(helper_pid) in check.stdout
             finally:
                 if pid_marker.is_file():
                     try:
@@ -1481,9 +1500,15 @@ class WindowsLauncherTests(unittest.TestCase):
             elapsed = time.monotonic() - started
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertLess(elapsed, 6.0, "launch.ps1 waited for child process")
+            self.assertTrue(helper_was_running, "GUI child update helper did not survive launcher exit")
+            launch_log = install / ".local" / "logs" / "latest-launch-error.log"
+            stderr_text = launch_log.read_text(encoding="utf-8", errors="replace")
+            self.assertIn("large-stderr-start", stderr_text)
+            self.assertIn("large-stderr-end", stderr_text)
+            self.assertGreater(len(stderr_text), 262144)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
-    def test_installer_helper_pre_evacuation_failure_preserves_unmodified_runtime(self) -> None:
+    def test_installer_helper_snapshot_and_evacuation_failures_preserve_old_runtime(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -1492,23 +1517,47 @@ class WindowsLauncherTests(unittest.TestCase):
             self._seed_installer_distribution(install, restart_marker)
             runtime = install / ".venv"
             (runtime / "intact-marker.txt").write_text("must remain intact", encoding="utf-8")
+            setup_status = install / ".local" / "setup-status.json"
+            setup_status.parent.mkdir()
+            setup_status.write_text(
+                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                encoding="utf-8",
+            )
 
             fake_installer = base / "fake-installer.cmd"
             fake_installer.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
-            result_path = base / "update-result.json"
-            result = self._run_installer_update(
-                powershell=powershell,
-                package=fake_installer,
-                install=install,
-                result_path=result_path,
-                expected_sha256="0" * 64,
-            )
+            for fault_point in ("runtime-state-snapshot", "runtime-evacuation"):
+                with self.subTest(fault_point=fault_point):
+                    marker = base / f"{fault_point}.reached"
+                    result_path = base / f"{fault_point}-result.json"
+                    restart_marker.unlink(missing_ok=True)
+                    result = self._run_installer_update(
+                        powershell=powershell,
+                        package=fake_installer,
+                        install=install,
+                        result_path=result_path,
+                        test_fault_point=fault_point,
+                        test_fault_marker=marker,
+                    )
 
-            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self._wait_for_path(restart_marker)
-            self.assertTrue((runtime / "intact-marker.txt").is_file())
-            self.assertEqual((runtime / "intact-marker.txt").read_text(encoding="utf-8"), "must remain intact")
-            time.sleep(0.5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(marker.read_text(encoding="utf-8"), fault_point)
+                    update_result = json.loads(result_path.read_text(encoding="utf-8"))
+                    self.assertEqual(update_result["status"], "rollback", update_result)
+                    self.assertTrue(update_result["rollback_restored"], update_result)
+                    self.assertIn(f"Injected update test fault: {fault_point}", update_result["message"])
+                    self._wait_for_path(restart_marker)
+                    self.assertTrue((runtime / "intact-marker.txt").is_file())
+                    self.assertEqual(
+                        (runtime / "intact-marker.txt").read_text(encoding="utf-8"),
+                        "must remain intact",
+                    )
+                    self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+                    self.assertEqual(
+                        json.loads(setup_status.read_text(encoding="utf-8"))["app_version"],
+                        "v0.1.0",
+                    )
+                    time.sleep(0.2)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_helper_post_commit_cleanup_failure_preserves_new_version(self) -> None:
@@ -1528,19 +1577,27 @@ class WindowsLauncherTests(unittest.TestCase):
                 "exit 0\n",
             )
             result_path = base / "update-result.json"
+            fault_marker = base / "post-commit-cleanup.reached"
             result = self._run_installer_update(
                 powershell=powershell,
                 package=fake_installer,
                 install=install,
                 result_path=result_path,
+                test_fault_point="post-commit-cleanup",
+                test_fault_marker=fault_marker,
             )
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self._wait_for_path(restart_marker)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(update_result["status"], "success", update_result)
+            self.assertEqual(fault_marker.read_text(encoding="utf-8"), "post-commit-cleanup")
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "new app")
+            helper_log = Path(update_result["log"]).read_text(encoding="utf-8", errors="replace")
+            self.assertIn("post-commit cleanup warning", helper_log)
+            recovery_points = list((install / ".local" / "update-recovery").iterdir())
+            self.assertEqual(len(recovery_points), 1, recovery_points)
             time.sleep(0.5)
 
 

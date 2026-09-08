@@ -58,10 +58,29 @@ function Test-SetupComplete {
 
 function Show-Message {
     param([Parameter(Mandatory = $true)][string]$Message, [string]$Title = "Subtitle Edit Bay")
+    if ($env:SUBTITLE_EDIT_BAY_MESSAGE_PROBE) {
+        $probePath = [IO.Path]::GetFullPath($env:SUBTITLE_EDIT_BAY_MESSAGE_PROBE)
+        $probeDirectory = Split-Path -Parent $probePath
+        if ($probeDirectory) { New-Item -ItemType Directory -Path $probeDirectory -Force | Out-Null }
+        $record = [ordered]@{ title = $Title; message = $Message } | ConvertTo-Json -Compress
+        Add-Content -LiteralPath $probePath -Value $record -Encoding UTF8
+    }
     if (-not $SuppressMessages -and $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES -ne "1") {
         Add-Type -AssemblyName PresentationFramework
         [System.Windows.MessageBox]::Show($Message, $Title) | Out-Null
     }
+}
+
+function Show-SetupFailure {
+    $status = Read-SetupStatus
+    $reason = if ($status -and $status.message) { [string]$status.message } else { "詳細はセットアップログを確認してください。" }
+    Show-Message "セットアップに失敗しました。$([Environment]::NewLine)$([Environment]::NewLine)$reason$([Environment]::NewLine)$([Environment]::NewLine)ログ: $(Join-Path $logs 'setup.log')$([Environment]::NewLine)$([Environment]::NewLine)「初回セットアップ・修復」または --setup で再試行してください。" "Subtitle Edit Bay - セットアップエラー"
+}
+
+function Get-VerifiedSetupExitCode {
+    param([Parameter(Mandatory = $true)][int]$ExitCode)
+    if ($ExitCode -eq 0 -and -not (Test-SetupComplete)) { return 1 }
+    return $ExitCode
 }
 
 function Test-CudaRepairRequired {
@@ -179,15 +198,10 @@ if ($ProbeCudaRepairOnly) {
 if ($ProbeSetupRunningOnly) { if (Test-SetupMutexHeld -ProjectRoot $projectRoot) { exit 0 }; exit 3 }
 if ($ProbeSetupStateOnly) { if (Test-SetupComplete) { exit 0 }; exit 3 }
 if ($Action -eq "Setup") {
-    $exitCode = [int](@(Invoke-Setup)[-1])
+    $exitCode = Get-VerifiedSetupExitCode -ExitCode ([int](@(Invoke-Setup)[-1]))
     $completed = Test-SetupComplete
-    if ($exitCode -eq 0 -and -not $completed) { $exitCode = 1 }
     if ($exitCode -eq 0 -and $completed) { Show-Message "セットアップが完了しました。Subtitle Edit Bayを起動できます。" }
-    else {
-        $status = Read-SetupStatus
-        $reason = if ($status -and $status.message) { [string]$status.message } else { "詳細はセットアップログを確認してください。" }
-        Show-Message "セットアップに失敗しました。$([Environment]::NewLine)$([Environment]::NewLine)$reason$([Environment]::NewLine)$([Environment]::NewLine)ログ: $(Join-Path $logs 'setup.log')" "Subtitle Edit Bay - セットアップエラー"
-    }
+    else { Show-SetupFailure }
     exit $exitCode
 }
 if ($Action -eq "Update") {
@@ -197,9 +211,8 @@ if ($Action -eq "Update") {
     exit $process.ExitCode
 }
 if (-not (Test-SetupComplete)) {
-    $exitCode = [int](@(Invoke-Setup)[-1])
-    if ($exitCode -eq 0 -and -not (Test-SetupComplete)) { $exitCode = 1 }
-    if ($exitCode -ne 0) { exit $exitCode }
+    $exitCode = Get-VerifiedSetupExitCode -ExitCode ([int](@(Invoke-Setup)[-1]))
+    if ($exitCode -ne 0) { Show-SetupFailure; exit $exitCode }
     if ($SetupExecutableOverride) { exit 0 }
 }
 
@@ -210,9 +223,8 @@ $python = if ($PythonOverride) { [IO.Path]::GetFullPath($PythonOverride) } else 
 $cudaRepairRequired = Test-CudaRepairRequired -Root $projectRoot -PythonPath $python
 if ($cudaRepairRequired) {
     Show-Message "GPU設定に必要なCUDA runtimeを修復します。" "Subtitle Edit Bay - GPU環境の修復"
-    $exitCode = [int](@(Invoke-Setup)[-1])
-    if ($exitCode -eq 0 -and -not (Test-SetupComplete)) { $exitCode = 1 }
-    if ($exitCode -ne 0) { exit $exitCode }
+    $exitCode = Get-VerifiedSetupExitCode -ExitCode ([int](@(Invoke-Setup)[-1]))
+    if ($exitCode -ne 0) { Show-SetupFailure; exit $exitCode }
     if ($SetupExecutableOverride) { exit 0 }
     $runtimeDirectory = Resolve-ActiveRuntimeDirectory -Root $projectRoot
     $pythonw = Join-Path $runtimeDirectory "Scripts\pythonw.exe"

@@ -15,6 +15,9 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = if ($ProjectRootOverride) { [IO.Path]::GetFullPath($ProjectRootOverride) } else { [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)) }
 $setupStateScript = Join-Path $PSScriptRoot "setup_state.ps1"
+if (-not (Test-Path -LiteralPath $setupStateScript -PathType Leaf)) {
+    $setupStateScript = Join-Path (Split-Path -Parent $PSScriptRoot) "scripts\setup_state.ps1"
+}
 if (-not (Test-Path -LiteralPath $setupStateScript -PathType Leaf)) { throw "The setup state helper is missing: $setupStateScript" }
 . $setupStateScript
 $statusPath = Join-Path $projectRoot ".local\setup-status.json"

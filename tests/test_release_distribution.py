@@ -151,7 +151,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("runtime-manifest.json", smoke)
         self.assertIn("Scripts\\pip.exe", smoke)
         self.assertIn('"SubtitleEditBayLauncher.exe"', smoke)
-        self.assertIn('Start-Process -FilePath $launcher', smoke)
+        self.assertIn("Start-Process -FilePath $launcher", smoke)
         self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
         self.assertIn('"--probe-setup"', smoke)
         self.assertNotIn("installed-gui-smoke.py", smoke)
@@ -194,7 +194,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Set-AuthenticodeSignature", signer)
         self.assertIn("Assert-InstallerPublisher", updater)
         self.assertIn("TimeStamperCertificate", updater)
-        self.assertNotIn("-notlike", verifier + signer + updater)
+        publisher_check = updater[
+            updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")
+        ]
+        self.assertNotIn("-notlike", verifier + signer + identity + publisher_check)
         self.assertIn("X500DistinguishedName", identity)
         self.assertIn("SubjectName.RawData", identity)
         self.assertIn("StringComparison]::Ordinal", identity)
@@ -1274,6 +1277,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
                         "scripts/windows_signing_identity.ps1",
+                        "scripts/validate_runtime.ps1",
                         "scripts/runtime_activation.ps1",
                         "scripts/setup.ps1",
                         "scripts/setup_state.ps1",

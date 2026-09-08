@@ -105,8 +105,9 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertIn("-ExpectedSha256", command)
         subject_index = command.index("-ExpectedSignerSubject")
         self.assertEqual(command[subject_index + 1], "CN=Subtitle Edit Bay")
-        restart_index = command.index("-RestartExecutable")
-        self.assertEqual(Path(command[restart_index + 1]), tmp_path / "SubtitleEditBayLauncher.exe")
+        self.assertNotIn("-RestartExecutable", command)
+        install_index = command.index("-InstallRoot")
+        self.assertEqual(Path(command[install_index + 1]), tmp_path)
         self.assertNotIn(str(tmp_path / "SubtitleEditBay.exe"), command)
 
     def test_release_asset_metadata_selects_installer_and_checksum(self):

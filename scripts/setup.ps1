@@ -1,10 +1,11 @@
-param(
+﻿param(
     [switch]$ProbeNvidiaOnly,
     [switch]$ProbeNvidiaStatusOnly,
     [switch]$ProbeCpuInstallArgumentsOnly,
     [string]$NvidiaSmiSearchRoot = "",
     [string]$NvidiaSmiOverride = "",
-    [string]$SetupTestHook = $env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK
+    [string]$SetupTestHook = $env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK,
+    [switch]$KeepPreviousRuntime
 )
 
 # Windows PowerShell 5.1 turns text written to stderr by native programs into
@@ -348,7 +349,7 @@ if ($nvidiaGpuAvailable -and -not $cudaAvailable) {
 }
 
 $cleanupDirectories = @()
-if ($previousRuntime -and $previousRuntime -ne $runtimeVenvFull) {
+if (-not $KeepPreviousRuntime -and $previousRuntime -and $previousRuntime -ne $runtimeVenvFull) {
     $cleanupDirectories += $previousRuntime
 }
 $verifyActivatedRuntime = {

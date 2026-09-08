@@ -1,4 +1,4 @@
-﻿#ifndef SourceRoot
+#ifndef SourceRoot
   #error SourceRoot must be defined by scripts/build_installer.ps1
 #endif
 
@@ -82,6 +82,7 @@ Source: "{#SourceRoot}\scripts\runtime_contract.py"; DestDir: "{app}\scripts"; F
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\apply_installer_update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\windows_signing_identity.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\validate_runtime.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\installer\launch.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\dist\SubtitleEditBayLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
@@ -102,6 +103,8 @@ Name: "{autodesktop}\Subtitle Edit Bay"; Filename: "{app}\SubtitleEditBayLaunche
 
 [Run]
 Filename: "{app}\SubtitleEditBayLauncher.exe"; Parameters: "--setup"; Description: "初回セットアップを実行する（インターネット接続が必要です）"; WorkingDir: "{app}"; Flags: postinstall skipifsilent; Tasks: initialsetup
+; Silent GUI updates intentionally skip the optional task above. The update
+; helper always runs scripts\setup.ps1 inside its application/runtime transaction.
 
 [UninstallDelete]
 ; The virtual environment is generated and can be safely recreated. User settings,

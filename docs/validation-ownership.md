@@ -8,15 +8,17 @@
 
 | PR種別 | 通常CIが実行 | Release readinessが実行 | CIでskip必須 |
 | --- | --- | --- | --- |
-| 通常PR | quality、Linux portable/Qt/FFmpeg、Windows runtime/launcher/FFmpeg 6、installer build/install | 分類のみ | なし |
-| VERSION-onlyリリースPR | quality、Windows runtime/launcher/FFmpeg 6 | Linux portable/Qt/FFmpeg、installer build、独立runnerでinstall/start | Linux portable/Qt/FFmpeg、installer smoke |
-| リリース基盤変更PR | quality、Windows runtime/launcher/FFmpeg 6 | Linux portable/Qt/FFmpeg、installer build、独立runnerでinstall/start | Linux portable/Qt/FFmpeg、installer smoke |
+| main向け通常PR | quality、Linux portable/Qt/FFmpeg、Windows runtime/launcher/FFmpeg 6、installer build/install | 分類のみ | なし |
+| main向けVERSION-only／基盤変更PR | quality、Windows runtime/launcher/FFmpeg 6 | Linux portable/Qt/FFmpeg、installer build、独立runnerでinstall/start | Linux portable/Qt/FFmpeg、installer smoke |
+| 非main向けPR（基盤変更を含む） | quality、Linux portable/Qt/FFmpeg、Windows runtime/launcher/FFmpeg 6、installer build/install | 起動しない | なし |
 
-リリース候補のCI identity schema v2は `validation_profile: release-candidate-v1` と `delegated_workflow: .github/workflows/release-readiness.yml` を記録する。公開側は通常CIの固有ジョブが成功し、委譲対象ジョブがskipされ、Release readiness側の対応ジョブが成功した場合だけ、この分割された検証グラフを1つの完了結果として扱う。未知schemaや別プロファイルは拒否する。
+委譲は `requires_preparation` に加えて、イベントがpull requestでbaseがmainの場合だけ有効にする。リリース候補のCI identity schema v2は `validation_profile: release-candidate-v1` と `delegated_workflow: .github/workflows/release-readiness.yml` を記録する。非main向けPRは `standard-v1` / `none` とする。公開側は通常CIの固有ジョブが成功し、委譲対象ジョブがskipされ、Release readiness側の対応ジョブが成功した場合だけ、この分割された検証グラフを1つの完了結果として扱う。未知schemaや別プロファイルは拒否する。
 
 ## 更新・再実行
 
-分類、head/base、仮マージSHA/treeは同じ候補に固定する。PR更新やbase更新後は新しいrunが必要で、古い成功結果へ戻らない。分類失敗時は委譲対象を通常CIで代替実行せず、集約も失敗する。
+分類、head/base、仮マージSHA/treeは同じ候補に固定する。PR更新やbase更新後は新しいrunが必要で、古い成功結果へ戻らない。分類失敗時は集約を失敗させ、identityを発行しない。
+
+重い実行ジョブは、分類jobのskipや失敗から必要な検証を回収できる条件にしつつ、run自体のキャンセルには従う。集約jobだけが `always()` を使い、実行ジョブは `!cancelled()` を使う。
 
 失敗ジョブだけを再実行した場合は、各ジョブの最新attemptを確認する。Release readinessで既に成功したbuildとinstall/startは生成attemptを保持し、生成済みartifactを変更しない。
 

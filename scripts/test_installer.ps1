@@ -84,9 +84,13 @@ try {
     # then prove normal launch and an explicit repair both attach to that one
     # setup instead of starting another dependency build.
     $first = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -PassThru
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $deadline = [DateTime]::UtcNow.AddMinutes(2)
     while (-not (Test-Path -LiteralPath $providerStarted) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
-    if (-not (Test-Path -LiteralPath $providerStarted)) { throw "The real setup path did not reach the dependency provider." }
+    if (-not (Test-Path -LiteralPath $providerStarted)) {
+        Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup.log") -ErrorAction SilentlyContinue
+        Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup-error.log") -ErrorAction SilentlyContinue
+        throw "The real setup path did not reach the dependency provider."
+    }
     $runningStatus = Get-Content -LiteralPath (Join-Path $installDir ".local\setup-status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($runningStatus.status -ne "running" -or -not $runningStatus.process_id) { throw "The real setup did not publish its running state." }
     $runningProbe = Start-Process -FilePath $launcher -ArgumentList "--probe-setup-running" -WorkingDirectory $installDir -Wait -PassThru

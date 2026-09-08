@@ -16,6 +16,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
+# PySide6 exposes typing.Self on Python 3.10. Initialize the optional backport
+# first so PyTorch keeps its compatible Self implementation when WhisperX is
+# installed. Lightweight development/test environments may omit it.
+try:
+    from typing_extensions import Self as _TypingSelf  # noqa: F401
+except ImportError:  # pragma: no cover - release runtimes always lock it
+    _TypingSelf = None  # type: ignore[assignment]
+
 from PySide6.QtCore import (
     Property,
     QAbstractListModel,

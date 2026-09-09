@@ -4,6 +4,7 @@
     [Parameter(Mandatory = $true)][string]$InstallRoot,
     [Parameter(Mandatory = $true)][string]$ExpectedVersion,
     [Parameter(Mandatory = $true)][string]$ExpectedSha256,
+    [string]$ExpectedSignerSubject,
     [Parameter(Mandatory = $true)][string]$ResultPath,
     [Parameter(DontShow = $true)]
     [ValidateSet("", "runtime-state-snapshot", "runtime-evacuation", "post-commit-cleanup")]
@@ -14,6 +15,7 @@
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+. "$PSScriptRoot/windows_signing_identity.ps1"
 $correlationId = [Guid]::NewGuid().ToString("N")
 $logRoot = Join-Path (Split-Path -Parent $ResultPath) "logs"
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
@@ -297,6 +299,22 @@ function Wait-ForInstallLocks {
     }
 }
 
+function Assert-InstallerPublisher {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$SignerSubject
+    )
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate) {
+        throw "Installer Authenticode signature is not valid: $($signature.Status)"
+    }
+    Assert-ExactCertificateSubject -Certificate $signature.SignerCertificate -ExpectedSubject $SignerSubject
+    if (-not $signature.TimeStamperCertificate) {
+        throw "Installer Authenticode signature has no trusted timestamp."
+    }
+}
+
 function Resolve-RestartCommand {
     param([Parameter(Mandatory = $true)][string]$Root)
     foreach ($name in @("SubtitleEditBayLauncher.exe", "SubtitleEditBay.exe")) {
@@ -363,6 +381,9 @@ try {
     Wait-ForInstallLocks
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) { throw "Downloaded installer package is missing." }
     if ((Get-PackageSha256 -Path $PackagePath) -ne $ExpectedSha256.ToLowerInvariant()) { throw "Installer package checksum does not match." }
+    if ($ExpectedSignerSubject) {
+        Assert-InstallerPublisher -Path $PackagePath -SignerSubject $ExpectedSignerSubject
+    }
 
     Write-StepLog "creating application and runtime recovery point"
     $recoveryRoot = New-RecoverySnapshot -Root $InstallRoot

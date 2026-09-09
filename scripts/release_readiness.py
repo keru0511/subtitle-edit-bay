@@ -22,6 +22,9 @@ RELEASE_INFRASTRUCTURE_PREFIXES = (
 RELEASE_INFRASTRUCTURE_FILES = {
     "scripts/build_installer.ps1",
     "scripts/build_release_package.ps1",
+    "scripts/sign_windows_artifacts.ps1",
+    "scripts/verify_windows_binary.ps1",
+    "scripts/windows_signing_identity.ps1",
     "scripts/release_candidate.py",
     "scripts/release_contract.py",
     "scripts/release_readiness.py",

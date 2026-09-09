@@ -68,6 +68,7 @@ from .gui_codex_state import (
     build_codex_context,
 )
 from .codex_app_server_client import CodexAppServerClient
+from .codex_actions import ActionResult, ActionScope, build_gui_action_dispatcher
 from .codex_runtime import detect_codex
 from .gui_codex_chat_state import (
     CodexChatController,
@@ -87,7 +88,13 @@ from .editor_workspace import (
     build_edit_mode_capabilities,
 )
 from .gui_state import build_gui_transcribe_command
-from .workflow_actions import ActionCapability, prepare_render_request, render_capability, transcription_capability
+from .workflow_actions import (
+    ActionCapability,
+    prepare_render_request,
+    render_capability,
+    render_output_path,
+    transcription_capability,
+)
 from .media_probe import probe_media_duration
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
@@ -520,6 +527,7 @@ class EditBayBackend(LegacyEditBayBackend):
             on_proposal=self._on_codex_proposal,
             callback_dispatcher=self._dispatch_codex_callback,
         )
+        self._codex_actions = build_gui_action_dispatcher(self)
         self._last_codex_login_url = ""
         self._last_codex_log_state: tuple[object, ...] | None = None
         self._codex_chat = CodexChatController(
@@ -3817,6 +3825,26 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_proposal = None
         self.codexProposalChanged.emit()
         self._set_status("Codex編集案を破棄しました", "EDIT")
+
+    def dispatch_codex_action(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        trusted_scope: ActionScope,
+    ) -> ActionResult:
+        """Dispatch an Action with scope authorization created outside Codex output."""
+
+        return self._codex_actions.dispatch(payload, trusted_scope=trusted_scope)
+
+    def codex_render_output_exists(self, *, short: bool) -> bool:
+        """Check overwrite policy using the same output resolver as GUI render."""
+
+        if self._project is None or not self._project_path:
+            return False
+        try:
+            return render_output_path(self._project_path, self._project, short=short).exists()
+        except ValueError:
+            return False
 
     def _on_codex_state(self, _snapshot: CodexSessionSnapshot) -> None:
         self.codexStateChanged.emit()

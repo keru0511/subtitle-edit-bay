@@ -5199,6 +5199,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_followup_transcription_preserves_project_settings_for_merge_and_replace(self) -> None:
         project_path = self._load_project()
+        self.assertTrue(self.app.addCut(10.0, 12.0))
         project = self.app._project
         assert project is not None
         project["audio_mix"] = {
@@ -5264,6 +5265,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                     saved = load_project(custom_project_path)
                     self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
                     self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                    self.assertEqual(saved["timeline"], preserved["timeline"])
                     self.assertEqual(saved["short_video"], preserved["short_video"])
                     self.assertEqual(saved["transcription"], {"engine": "new-engine"})
                     expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}

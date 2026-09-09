@@ -151,7 +151,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("runtime-manifest.json", smoke)
         self.assertIn("Scripts\\pip.exe", smoke)
         self.assertIn('"SubtitleEditBayLauncher.exe"', smoke)
-        self.assertIn('Start-Process -FilePath $launcher', smoke)
+        self.assertIn("Start-Process -FilePath $launcher", smoke)
         self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
         self.assertIn('"--probe-setup"', smoke)
         self.assertNotIn("installed-gui-smoke.py", smoke)
@@ -172,6 +172,37 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("user32.lib", launcher_build)
         self.assertIn("Launcher build did not produce the required executable", build)
         self.assertIn('"SubtitleEditBayLauncher.exe"', manifest_build)
+
+    def test_launcher_is_self_contained_versioned_and_signature_ready(self) -> None:
+        launcher = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
+        verifier = (ROOT / "scripts" / "verify_windows_binary.ps1").read_text(encoding="utf-8-sig")
+        signer = (ROOT / "scripts" / "sign_windows_artifacts.ps1").read_text(encoding="utf-8-sig")
+        updater = (ROOT / "scripts" / "apply_installer_update.ps1").read_text(encoding="utf-8-sig")
+        identity = (ROOT / "scripts" / "windows_signing_identity.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertIn("/MT", launcher)
+        self.assertIn("user32.lib", launcher)
+        self.assertIn("VERSIONINFO", launcher)
+        self.assertIn('VALUE "ProductName"', launcher)
+        self.assertIn("verify_windows_binary.ps1", launcher)
+        self.assertIn("dumpbin.exe", verifier)
+        self.assertIn("API-MS-WIN-CRT-", verifier)
+        self.assertIn("Get-AuthenticodeSignature", verifier)
+        self.assertIn("TimeStamperCertificate", verifier)
+        self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", signer)
+        self.assertIn("EphemeralKeySet", signer)
+        self.assertIn("Set-AuthenticodeSignature", signer)
+        self.assertNotIn("$LASTEXITCODE", signer)
+        self.assertIn("Assert-InstallerPublisher", updater)
+        self.assertIn("TimeStamperCertificate", updater)
+        publisher_check = updater[
+            updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")
+        ]
+        self.assertNotIn("-notlike", verifier + signer + identity + publisher_check)
+        self.assertIn("X500DistinguishedName", identity)
+        self.assertIn("SubjectName.RawData", identity)
+        self.assertIn("StringComparison]::Ordinal", identity)
+        self.assertEqual((verifier + signer + updater).count("Assert-ExactCertificateSubject"), 3)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
         workflow = load_workflow(RELEASE_WORKFLOW)
@@ -245,6 +276,17 @@ class ReleaseDistributionTests(unittest.TestCase):
         )
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
+        self.assertEqual(preparation["on"]["workflow_call"]["inputs"]["require_signature"]["default"], False)
+        binary = step_by_id(preparation, "build", "binary")
+        self.assertIn("verify_windows_binary.ps1", str(binary["run"]))
+        signing = step_by_id(preparation, "build", "signing")
+        self.assertEqual(signing["if"], "inputs.require_signature")
+        self.assertIn("unsigned", str(signing["run"]).lower())
+        readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
+        self.assertEqual(
+            readiness["jobs"]["prepare"]["with"]["require_signature"],
+            "${{ needs.classify.outputs.kind == 'release' }}",
+        )
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
         self.assertIn("release-promotion.json", published_assets)
@@ -1235,7 +1277,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "VERSION",
                         "scripts/launch.ps1",
                         "scripts/apply_installer_update.ps1",
-                        "scripts/setup.ps1",
+                        "scripts/windows_signing_identity.ps1",
                         "scripts/validate_runtime.ps1",
                         "scripts/runtime_activation.ps1",
                         "scripts/setup.ps1",

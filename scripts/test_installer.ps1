@@ -19,7 +19,7 @@ if ($install.ExitCode -ne 0) {
 foreach ($path in @(
     "SubtitleEditBayLauncher.exe", "src\gui.py", "src\ui\Main.qml", "scripts\launch.ps1",
     "scripts\setup.ps1", "scripts\setup_state.ps1", "scripts\runtime_activation.ps1",
-    "scripts\runtime_contract.py", "runtime\runtime-contract.json",
+    "scripts\runtime_contract.py", "scripts\windows_signing_identity.ps1", "runtime\runtime-contract.json",
     "runtime\requirements-windows-cpu.lock", "runtime\requirements-windows-cu128.lock", "VERSION"
 )) {
     $candidate = Join-Path $installDir $path

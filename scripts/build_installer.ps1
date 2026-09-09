@@ -77,7 +77,8 @@ if (-not (Test-Path -LiteralPath $launcherBuildScript -PathType Leaf)) {
 }
 $launcherPath = Join-Path $projectRoot "dist\SubtitleEditBayLauncher.exe"
 & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcherBuildScript `
-    -OutputPath $launcherPath
+    -OutputPath $launcherPath `
+    -Version $Version
 if ($LASTEXITCODE -ne 0) {
     throw "Launcher build failed with exit code $LASTEXITCODE."
 }

@@ -64,6 +64,27 @@ class RuntimeConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "reference_audio"):
                 load_runtime_config(config_path)
 
+    def test_schema_preserves_supported_null_transcription_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "runtime_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "shared": {"language": None, "vad_onset": None, "vad_offset": None},
+                        "pipeline": {"min_speakers": None, "max_speakers": None},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = load_runtime_config(config_path)
+
+            self.assertIsNone(loaded["shared"]["language"])
+            self.assertIsNone(loaded["shared"]["vad_onset"])
+            self.assertIsNone(loaded["shared"]["vad_offset"])
+            self.assertIsNone(loaded["pipeline"]["min_speakers"])
+            self.assertIsNone(loaded["pipeline"]["max_speakers"])
+
     def test_default_craig_config_contains_audio_postprocess_settings(self) -> None:
         loaded = load_command_runtime_config("craig_pipeline")
 

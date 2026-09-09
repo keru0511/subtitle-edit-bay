@@ -211,6 +211,56 @@ class InstallerMigrationTests(unittest.TestCase):
                     self.assertEqual(effective["device"], "cpu")
                     self.assertEqual(effective["compute_type"], "int8")
 
+    def test_migration_preserves_nullable_transcription_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, _destination = self._workspaces(Path(temporary))
+            old_path = source / ".gui" / "runtime_config.json"
+            old_path.write_text(
+                json.dumps(
+                    {
+                        "shared": {"language": None, "vad_onset": None, "vad_offset": None},
+                        "pipeline": {"min_speakers": None, "max_speakers": None},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            migrated, _adjusted = validated_runtime_config(
+                old_path,
+                RuntimeCapabilities(cuda=False, nvenc=False),
+            )
+
+            self.assertIsNone(migrated["shared"]["language"])
+            self.assertIsNone(migrated["shared"]["vad_onset"])
+            self.assertIsNone(migrated["shared"]["vad_offset"])
+            self.assertIsNone(migrated["pipeline"]["min_speakers"])
+            self.assertIsNone(migrated["pipeline"]["max_speakers"])
+
+    def test_migration_replaces_every_nvenc_codec_without_nvenc(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, _destination = self._workspaces(Path(temporary))
+            old_path = source / ".gui" / "runtime_config.json"
+            old_path.write_text(
+                json.dumps(
+                    {
+                        "shared": {"video_codec": "hevc_nvenc"},
+                        "pipeline": {"video_codec": "h264_nvenc"},
+                        "craig_pipeline": {"video_codec": "hevc_nvenc"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            migrated, adjusted = validated_runtime_config(
+                old_path,
+                RuntimeCapabilities(cuda=False, nvenc=False),
+            )
+
+            for section in ("shared", "pipeline", "craig_pipeline"):
+                with self.subTest(section=section):
+                    self.assertEqual(migrated[section]["video_codec"], "libx264")
+            self.assertTrue(any("hevc_nvenc -> libx264" in item for item in adjusted))
+
     def test_invalid_speaker_colors_fail_before_any_destination_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
@@ -359,6 +409,7 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn('$migrationArguments += "--skip-speaker-colors"', setup)
         self.assertIn('$migrationArguments += "--skip-workspace-reference"', setup)
         self.assertIn('Name: "legacymigration"', installer)
+        self.assertIn('Flags: unchecked checkedonce', installer)
         self.assertIn("WizardIsTaskSelected('legacymigration')", installer)
         self.assertIn('--migration-source "', installer)
         self.assertIn("--skip-runtime-config", installer)

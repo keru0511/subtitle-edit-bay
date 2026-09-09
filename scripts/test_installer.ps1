@@ -55,6 +55,23 @@ if ([IO.Path]::GetFullPath([string]$pendingProbe.source) -ne [IO.Path]::GetFullP
     throw "Setup changed the Japanese migration source while reloading it."
 }
 
+# Inno Setup remembers task selections for a stable AppId. A later silent
+# application update without migration arguments must not restore the one-shot
+# migration task and fail because LEGACYWORKSPACE is absent.
+$migrationUpdateLog = Join-Path $testRoot "subtitle-edit-bay-migration-update.log"
+$migrationUpdate = Start-Process -FilePath $installer -ArgumentList @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$migrationInstallDir",
+    "/LOG=$migrationUpdateLog"
+) -Wait -PassThru
+if ($migrationUpdate.ExitCode -ne 0) {
+    Get-Content -LiteralPath $migrationUpdateLog -ErrorAction SilentlyContinue
+    throw "Silent update restored the one-shot migration task and failed with code $($migrationUpdate.ExitCode)."
+}
+$pendingAfterUpdate = Get-Content -LiteralPath $pendingMigrationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([IO.Path]::GetFullPath([string]$pendingAfterUpdate.source) -ne [IO.Path]::GetFullPath($migrationSource)) {
+    throw "Silent update changed the pending migration request."
+}
+
 # A junction alias for the destination must fail before the Installer writes
 # product files or setup has a chance to mutate the legacy runtime.
 $junctionDestination = Join-Path $testRoot "junction-destination"

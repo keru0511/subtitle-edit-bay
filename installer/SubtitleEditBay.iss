@@ -66,7 +66,7 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 [Tasks]
 Name: "desktopicon"; Description: "デスクトップにショートカットを作成する"; GroupDescription: "追加アイコン:"; Flags: checkedonce
 Name: "initialsetup"; Description: "インストール完了後に初回セットアップを実行する"; GroupDescription: "初回セットアップ:"; Flags: checkedonce
-Name: "legacymigration"; Description: "BAT/ZIP版の設定とworkspace参照を引き継ぐ"; GroupDescription: "旧版からの移行:"; Flags: unchecked
+Name: "legacymigration"; Description: "BAT/ZIP版の設定とworkspace参照を引き継ぐ"; GroupDescription: "旧版からの移行:"; Flags: unchecked checkedonce
 
 [Dirs]
 Name: "{app}\video_import"

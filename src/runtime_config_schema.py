@@ -8,7 +8,9 @@ STRING = "string"
 NULLABLE_STRING = "nullable_string"
 BOOLEAN = "boolean"
 INTEGER = "integer"
+NULLABLE_INTEGER = "nullable_integer"
 NUMBER = "number"
+NULLABLE_NUMBER = "nullable_number"
 STRING_ARRAY = "string_array"
 OBJECT = "object"
 
@@ -22,9 +24,9 @@ COMMON_RUNTIME_SETTINGS: dict[str, str] = {
     "model": STRING,
     "device": STRING,
     "compute_type": STRING,
-    "language": STRING,
-    "vad_onset": NUMBER,
-    "vad_offset": NUMBER,
+    "language": NULLABLE_STRING,
+    "vad_onset": NULLABLE_NUMBER,
+    "vad_offset": NULLABLE_NUMBER,
     "skip_existing_transcripts": BOOLEAN,
     "width": INTEGER,
     "height": INTEGER,
@@ -78,8 +80,8 @@ COMMAND_SETTINGS: dict[str, str] = {
     "export_root": STRING,
     "audio_track": STRING_ARRAY,
     "diarize_track": STRING_ARRAY,
-    "min_speakers": INTEGER,
-    "max_speakers": INTEGER,
+    "min_speakers": NULLABLE_INTEGER,
+    "max_speakers": NULLABLE_INTEGER,
     "track_color": STRING_ARRAY,
     "op_file": STRING,
     "ed_file": STRING,
@@ -104,8 +106,12 @@ def _validate_value(value: object, kind: str, path: str) -> None:
         valid = isinstance(value, bool)
     elif kind == INTEGER:
         valid = isinstance(value, int) and not isinstance(value, bool)
+    elif kind == NULLABLE_INTEGER:
+        valid = value is None or (isinstance(value, int) and not isinstance(value, bool))
     elif kind == NUMBER:
         valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+    elif kind == NULLABLE_NUMBER:
+        valid = value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
     elif kind == STRING_ARRAY:
         valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
     elif kind == OBJECT:

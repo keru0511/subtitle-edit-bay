@@ -148,9 +148,10 @@ def validated_runtime_config(
                 adjusted.append(f"{section_name}.device/compute_type -> cpu/int8")
     if not capabilities.nvenc:
         for section_name, section in migrated.items():
-            if isinstance(section, dict) and section.get("video_codec") == "h264_nvenc":
+            video_codec = section.get("video_codec") if isinstance(section, dict) else None
+            if isinstance(video_codec, str) and video_codec.endswith("_nvenc"):
                 section["video_codec"] = "libx264"
-                adjusted.append(f"{section_name}.video_codec=h264_nvenc -> libx264")
+                adjusted.append(f"{section_name}.video_codec={video_codec} -> libx264")
     return migrated, tuple(adjusted)
 
 

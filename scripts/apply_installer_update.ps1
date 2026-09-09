@@ -391,6 +391,7 @@ try {
     $runtimeInfo = Move-RuntimeToRecovery -SnapshotRoot $recoveryRoot
     $installerArguments = @(
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS",
+        "/MERGETASKS=!legacymigration",
         ('/DIR="' + $InstallRoot + '"'), ('/LOG="' + $installerLog + '"')
     )
     Write-StepLog "starting installer with explicit install root"

@@ -497,7 +497,9 @@ if (-not $cudaAvailable) {
         $configChanged = $true
         Write-Host "Runtime config: changed unavailable CUDA selection to cpu/int8."
     }
-    if (-not $nvidiaGpuAvailable -and $config.craig_pipeline.video_codec -eq "h264_nvenc") {
+    if (-not $nvidiaGpuAvailable -and
+        $config.craig_pipeline.video_codec -is [string] -and
+        $config.craig_pipeline.video_codec.EndsWith("_nvenc", [StringComparison]::OrdinalIgnoreCase)) {
         $config.craig_pipeline.video_codec = "libx264"
         $configChanged = $true
     }

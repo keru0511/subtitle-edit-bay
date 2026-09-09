@@ -194,6 +194,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Set-AuthenticodeSignature", signer)
         self.assertNotIn("$LASTEXITCODE", signer)
         self.assertIn("Assert-InstallerPublisher", updater)
+        self.assertIn('"/MERGETASKS=!legacymigration"', updater)
         self.assertIn("TimeStamperCertificate", updater)
         publisher_check = updater[
             updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")

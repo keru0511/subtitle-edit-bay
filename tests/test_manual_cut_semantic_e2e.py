@@ -11,6 +11,7 @@ from src.subtitle_workflow import render_project_video
 from tests.media_test_utils import (
     FrameRegion,
     MediaSegment,
+    assert_frame_difference_absent,
     assert_frame_difference_present,
     compare_rgb_frames,
     create_lavfi_av_fixture,
@@ -28,6 +29,8 @@ CUT_START_SECONDS = 1.0
 CUT_END_SECONDS = 2.0
 DURATION_TOLERANCE_SECONDS = 1 / FIXTURE_FPS + 0.03
 SUBTITLE_REGION = FrameRegion(x=20, y=80, width=280, height=90)
+VIDEO_COLOR_REGION = FrameRegion(x=0, y=0, width=320, height=60)
+SUBTITLE_BOUNDARY_GUARD_SECONDS = 3 / FIXTURE_FPS
 # These checkpoints are fixture facts, deliberately not calculated through
 # VideoTimeline's source/output mapping API. Each tuple is
 # (label, output midpoint, source midpoint, dominant RGB channel, tone).
@@ -220,8 +223,8 @@ class ManualCutSemanticE2ETests(unittest.TestCase):
     def test_output_frames_follow_the_independent_source_keep_sequence(self) -> None:
         for label, output_time, source_time, dominant_channel, _frequency in EXPECTED_KEEP_SEQUENCE:
             with self.subTest(clip=label, output_time=output_time, source_time=source_time):
-                frame = extract_rgb_frame(self.control, output_time, probe=self.control_probe)
-                actual_rgb = mean_rgb(frame)
+                frame = extract_rgb_frame(self.output, output_time, probe=self.output_probe)
+                actual_rgb = mean_rgb(frame, VIDEO_COLOR_REGION)
                 other_channels = [value for index, value in enumerate(actual_rgb) if index != dominant_channel]
                 self.assertGreater(
                     actual_rgb[dominant_channel],
@@ -247,7 +250,7 @@ class ManualCutSemanticE2ETests(unittest.TestCase):
         for label, output_time, source_time, _dominant_channel, expected_frequency in EXPECTED_KEEP_SEQUENCE:
             measurements = {
                 frequency: measure_audio_level(
-                    self.control,
+                    self.output,
                     frequency_hz=frequency,
                     bandwidth_hz=35,
                     start_seconds=output_time - 0.25,
@@ -290,10 +293,10 @@ class ManualCutSemanticE2ETests(unittest.TestCase):
                 self.assertIn(start, dialogue)
                 self.assertIn(end, dialogue)
 
-        for text, output_time, source_time in (
-            ("BEFORE CUT", 0.5, 0.5),
-            ("AFTER CUT", 1.5, 2.5),
-            ("TAIL", 2.5, 3.5),
+        for text, start_time, end_time, output_time, source_time in (
+            ("BEFORE CUT", 0.2, 0.8, 0.5, 0.5),
+            ("AFTER CUT", 1.2, 1.8, 1.5, 2.5),
+            ("TAIL", 2.2, 2.8, 2.5, 3.5),
         ):
             with self.subTest(text=text, output_time=output_time, source_time=source_time):
                 difference = compare_rgb_frames(
@@ -312,6 +315,23 @@ class ManualCutSemanticE2ETests(unittest.TestCase):
                     # expected cross-platform antialiasing range.
                     minimum_mean_delta=0.3,
                 )
+            for boundary, absent_time in (
+                ("before", start_time - SUBTITLE_BOUNDARY_GUARD_SECONDS),
+                ("after", end_time + SUBTITLE_BOUNDARY_GUARD_SECONDS),
+            ):
+                with self.subTest(text=text, boundary=boundary, output_time=absent_time):
+                    difference = compare_rgb_frames(
+                        extract_rgb_frame(self.control, absent_time, probe=self.control_probe),
+                        extract_rgb_frame(self.output, absent_time, probe=self.output_probe),
+                        region=SUBTITLE_REGION,
+                    )
+                    assert_frame_difference_absent(
+                        difference,
+                        context=(
+                            f"retimed subtitle {text!r} {boundary} display interval: "
+                            f"output_time={absent_time:.3f}s"
+                        ),
+                    )
 
 
 if __name__ == "__main__":

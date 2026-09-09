@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .color_config import normalize_rgb_color
+from .runtime_config_schema import validate_runtime_config_payload
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .transcription_dictionary import TranscriptionDictionaryError, load_transcription_dictionary
 
@@ -93,35 +94,8 @@ def _contains_secret(value: object) -> bool:
     return False
 
 
-def _validate_like_template(value: object, template: object, path: str) -> object:
-    if isinstance(template, dict):
-        if not isinstance(value, dict):
-            raise MigrationError(f"runtime config value must be an object: {path}")
-        result: dict[str, object] = {}
-        for key, child in value.items():
-            if key not in template:
-                continue
-            result[key] = _validate_like_template(child, template[key], f"{path}.{key}")
-        return result
-    if isinstance(template, bool):
-        if not isinstance(value, bool):
-            raise MigrationError(f"runtime config value must be boolean: {path}")
-    elif isinstance(template, int):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise MigrationError(f"runtime config value must be integer: {path}")
-    elif isinstance(template, float):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise MigrationError(f"runtime config value must be numeric: {path}")
-    elif isinstance(template, str) and not isinstance(value, str):
-        raise MigrationError(f"runtime config value must be string: {path}")
-    elif isinstance(template, list) and not isinstance(value, list):
-        raise MigrationError(f"runtime config value must be an array: {path}")
-    return value
-
-
 def validated_runtime_config(
     source_path: str | Path,
-    template_path: str | Path,
     capabilities: RuntimeCapabilities,
 ) -> tuple[dict[str, Any], tuple[str, ...]]:
     path = Path(source_path)
@@ -130,9 +104,10 @@ def validated_runtime_config(
     source = _load_object(path)
     if _contains_secret(source):
         raise MigrationError("runtime config contains a secret-like key and cannot be migrated")
-    template = _load_object(Path(template_path))
-    migrated = _validate_like_template(source, template, "runtime_config")
-    assert isinstance(migrated, dict)
+    try:
+        migrated = validate_runtime_config_payload(source, discard_unknown=True)
+    except ValueError as exc:
+        raise MigrationError(str(exc)) from exc
     adjusted: list[str] = []
 
     old_craig = source.get("craig_pipeline")
@@ -200,8 +175,21 @@ def validated_speaker_colors(source_path: str | Path) -> dict[str, Any]:
 def _write_json_atomic(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.restore.tmp")
+    try:
+        temporary.write_bytes(payload)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _directory_size(path: Path) -> int:
@@ -227,6 +215,76 @@ def _workspace_references(source: Path) -> tuple[str, ...]:
         if item.is_file() and item.name.endswith(PROJECT_FILE_SUFFIXES):
             references.append(str(item))
     return tuple(sorted(references))
+
+
+def _normalized_path_key(value: str | Path) -> str:
+    return str(_resolved(value)).casefold()
+
+
+def _merged_workspace_registry(path: Path, source: Path, references: Sequence[str]) -> dict[str, Any]:
+    workspaces: dict[str, dict[str, Any]] = {}
+    if path.exists():
+        if path.is_symlink() or not path.is_file():
+            raise MigrationError(f"legacy workspace registry must be a regular file: {path}")
+        payload = _load_object(path)
+        if payload.get("schema_version") != MIGRATION_SCHEMA_VERSION:
+            raise MigrationError(f"unsupported legacy workspace registry schema: {path}")
+        entries = payload.get("workspaces")
+        if not isinstance(entries, list):
+            raise MigrationError(f"legacy workspace registry must contain an array: {path}")
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise MigrationError(f"invalid legacy workspace entry: {path}")
+            resources = entry.get("resources")
+            if not isinstance(resources, list) or not all(isinstance(item, str) for item in resources):
+                raise MigrationError(f"invalid legacy workspace resources: {path}")
+            normalized_path = str(_resolved(entry["path"]))
+            workspaces[_normalized_path_key(normalized_path)] = {
+                "path": normalized_path,
+                "resources": sorted({str(_resolved(item)) for item in resources}),
+            }
+    normalized_source = str(source)
+    workspaces[_normalized_path_key(normalized_source)] = {
+        "path": normalized_source,
+        "resources": sorted({str(_resolved(item)) for item in references}),
+    }
+    return {
+        "schema_version": MIGRATION_SCHEMA_VERSION,
+        "workspaces": [workspaces[key] for key in sorted(workspaces)],
+    }
+
+
+def _snapshot_targets(paths: Sequence[Path]) -> tuple[dict[Path, bytes | None], tuple[Path, ...]]:
+    snapshots: dict[Path, bytes | None] = {}
+    parent_candidates: set[Path] = set()
+    for path in paths:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise MigrationError(f"migration target must be a regular file: {path}")
+        snapshots[path] = path.read_bytes() if path.exists() else None
+        parent = path.parent
+        while not parent.exists():
+            parent_candidates.add(parent)
+            parent = parent.parent
+    return snapshots, tuple(sorted(parent_candidates, key=lambda item: len(item.parts), reverse=True))
+
+
+def _restore_targets(snapshots: Mapping[Path, bytes | None], created_parents: Sequence[Path]) -> None:
+    failures: list[str] = []
+    for path, original in reversed(tuple(snapshots.items())):
+        try:
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                _write_bytes_atomic(path, original)
+        except OSError as exc:
+            failures.append(f"{path}: {exc}")
+    for parent in created_parents:
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+    if failures:
+        raise MigrationError("migration rollback failed: " + "; ".join(failures))
 
 
 def _cleanup_blockers(source: Path, references: Sequence[str]) -> tuple[str, ...]:
@@ -259,11 +317,7 @@ def migrate_legacy_workspace(
         if new_config.exists() and not options.overwrite:
             preserved.append(str(new_config))
         else:
-            prepared_config, changes = validated_runtime_config(
-                old_config,
-                destination_path / "assets" / "runtime_config.json",
-                capabilities,
-            )
+            prepared_config, changes = validated_runtime_config(old_config, capabilities)
             adjusted.extend(changes)
     elif options.runtime_config and old_config.is_symlink():
         raise MigrationError(f"runtime config must not be a symbolic link: {old_config}")
@@ -277,24 +331,13 @@ def migrate_legacy_workspace(
         else:
             prepared_colors = validated_speaker_colors(old_colors)
 
-    # Validate every selected input before committing any destination change.
-    if prepared_config is not None:
-        _write_json_atomic(new_config, prepared_config)
-        copied.append(str(new_config))
-    if prepared_colors is not None:
-        _write_json_atomic(new_colors, prepared_colors)
-        copied.append(str(new_colors))
-
+    # Complete all reads, validation, enumeration and merge preparation before
+    # changing the destination. The writes below form one rollback boundary.
     references = _workspace_references(source_path) if options.workspace_reference else ()
+    workspace_path = destination_path / ".gui" / "legacy_workspaces.json"
+    workspace_payload: dict[str, Any] | None = None
     if references:
-        _write_json_atomic(
-            destination_path / ".gui" / "legacy_workspaces.json",
-            {
-                "schema_version": MIGRATION_SCHEMA_VERSION,
-                "workspaces": [{"path": str(source_path), "resources": list(references)}],
-            },
-        )
-        copied.append(str(destination_path / ".gui" / "legacy_workspaces.json"))
+        workspace_payload = _merged_workspace_registry(workspace_path, source_path, references)
 
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     result = MigrationResult(
@@ -311,7 +354,29 @@ def migrate_legacy_workspace(
         completed_at=timestamp,
     )
     record_name = timestamp.replace(":", "").replace("-", "")
-    _write_json_atomic(destination_path / ".local" / "migration" / f"migration-{record_name}.json", asdict(result))
+    record_path = destination_path / ".local" / "migration" / f"migration-{record_name}.json"
+    writes: list[tuple[Path, object]] = []
+    if prepared_config is not None:
+        writes.append((new_config, prepared_config))
+        copied.append(str(new_config))
+    if prepared_colors is not None:
+        writes.append((new_colors, prepared_colors))
+        copied.append(str(new_colors))
+    if workspace_payload is not None:
+        writes.append((workspace_path, workspace_payload))
+        copied.append(str(workspace_path))
+    result = MigrationResult(**{**asdict(result), "copied": tuple(copied)})
+    writes.append((record_path, asdict(result)))
+    snapshots, created_parents = _snapshot_targets([path for path, _payload in writes])
+    try:
+        for path, payload in writes:
+            _write_json_atomic(path, payload)
+    except Exception as exc:
+        try:
+            _restore_targets(snapshots, created_parents)
+        except MigrationError as rollback_exc:
+            raise MigrationError(f"migration failed and rollback was incomplete: {rollback_exc}") from exc
+        raise MigrationError(f"migration changes were rolled back: {exc}") from exc
     return result
 
 

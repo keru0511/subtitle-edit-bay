@@ -41,6 +41,29 @@ class RuntimeConfigTests(unittest.TestCase):
             self.assertEqual(loaded["compute_type"], "float16")
             self.assertEqual(loaded["video_codec"], "h264_nvenc")
 
+    def test_shared_schema_accepts_gui_model_and_rejects_invalid_nullable_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "runtime_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "shared": {"codex_model": "gpt-fast"},
+                        "craig_pipeline": {"reference_audio": None},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_runtime_config(config_path)
+            self.assertEqual(loaded["shared"]["codex_model"], "gpt-fast")
+            self.assertIsNone(loaded["craig_pipeline"]["reference_audio"])
+
+            config_path.write_text(
+                json.dumps({"craig_pipeline": {"reference_audio": {}}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SystemExit, "reference_audio"):
+                load_runtime_config(config_path)
+
     def test_default_craig_config_contains_audio_postprocess_settings(self) -> None:
         loaded = load_command_runtime_config("craig_pipeline")
 

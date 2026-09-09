@@ -21,12 +21,21 @@ CLIの`--overwrite`でのみ行えます。移行結果は
 capabilityに合わせて補正した設定、旧workspace内の参照中データ、旧`.venv`の概算容量が
 含まれます。
 
+移行元、選択した項目はインストール時に`.local/migration/pending-request.json`へ保存されます。
+初回setupを延期した場合やruntime構築が途中で失敗した場合も、「初回セットアップ・修復」から
+同じ要求を再利用します。この保留要求は移行が成功した後にだけ削除されます。
+
+設定・話者色・workspace一覧・監査記録は1つの移行transactionとして反映します。途中の保存に
+失敗した場合は、上書き前の内容を含めて開始前の状態へ戻します。複数の旧workspaceを移行した場合、
+登録済みworkspaceを維持して追記し、同じworkspaceの再実行では重複を作りません。
+
 ## capability補正
 
 - CUDAを実際に利用できない場合、`device=cuda`は`cpu/int8`へ補正します。
 - NVENC encode probeが失敗した場合、`h264_nvenc`は`libx264`へ補正します。
 - 現行schemaに存在しない古いkeyは取り込みません。
 - 値の型が現行schemaと異なる場合、移行全体を失敗させます。
+- schemaはアプリの設定loaderと共有し、既定値JSONの掲載有無や`null`値から型を推測しません。
 
 補正は新しいInstaller側だけに適用し、旧設定を書き換えません。
 

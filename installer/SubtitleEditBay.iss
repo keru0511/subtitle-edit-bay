@@ -158,12 +158,27 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   LegacyPath: String;
+  InstallPath: String;
 begin
   Result := True;
   if (CurPageID <> MigrationComponentsPage.ID) or not WizardIsTaskSelected('legacymigration') then
     Exit;
 
   LegacyPath := LegacyWorkspacePage.Values[0];
+  InstallPath := ExpandConstant('{app}');
+  if CompareText(
+    RemoveBackslashUnlessRoot(ExpandFileName(LegacyPath)),
+    RemoveBackslashUnlessRoot(ExpandFileName(InstallPath))
+  ) = 0 then
+  begin
+    MsgBox(
+      '移行元にはインストール先とは異なる旧BAT/ZIP版フォルダーを指定してください。インストールはまだ開始されていません。',
+      mbError,
+      MB_OK
+    );
+    Result := False;
+    Exit;
+  end;
   if (LegacyPath = '') or
     not FileExists(AddBackslash(LegacyPath) + 'setup.bat') or
     not FileExists(AddBackslash(LegacyPath) + 'start.bat') or
@@ -176,6 +191,42 @@ begin
     );
     Result := False;
   end;
+end;
+
+function JsonEscape(Value: String): String;
+begin
+  Result := StringChangeEx(Value, '\', '\\', True);
+  Result := StringChangeEx(Result, '"', '\"', True);
+end;
+
+function JsonBoolean(Value: Boolean): String;
+begin
+  if Value then
+    Result := 'true'
+  else
+    Result := 'false';
+end;
+
+procedure SavePendingMigrationRequest;
+var
+  PendingDirectory: String;
+  PendingPath: String;
+  Payload: String;
+begin
+  PendingDirectory := ExpandConstant('{app}\.local\migration');
+  PendingPath := PendingDirectory + '\pending-request.json';
+  if WizardIsTaskSelected('legacymigration') then
+  begin
+    ForceDirectories(PendingDirectory);
+    Payload := '{"schema_version":1,"source":"' + JsonEscape(ExpandFileName(LegacyWorkspacePage.Values[0])) +
+      '","skip_runtime_config":' + JsonBoolean(not MigrationComponentsPage.Values[0]) +
+      ',"skip_speaker_colors":' + JsonBoolean(not MigrationComponentsPage.Values[1]) +
+      ',"skip_workspace_reference":' + JsonBoolean(not MigrationComponentsPage.Values[2]) + '}';
+    if not SaveStringToFile(PendingPath, Payload + #13#10, False) then
+      RaiseException('保留中の移行要求を保存できませんでした。セットアップは開始されていません。');
+  end
+  else if not WizardSilent then
+    DeleteFile(PendingPath);
 end;
 
 function SetupParameters(Param: String): String;
@@ -196,5 +247,8 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
+    SavePendingMigrationRequest;
     SaveStringToFile(ExpandConstant('{app}\VERSION'), '{#AppVersion}' + #13#10, False);
+  end;
 end;

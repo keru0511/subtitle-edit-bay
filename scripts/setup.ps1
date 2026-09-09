@@ -2,12 +2,14 @@
     [switch]$ProbeNvidiaOnly,
     [switch]$ProbeNvidiaStatusOnly,
     [switch]$ProbeCpuInstallArgumentsOnly,
+    [switch]$ProbePendingMigrationOnly,
     [string]$NvidiaSmiSearchRoot = "",
     [string]$NvidiaSmiOverride = "",
     [string]$MigrationSource = $env:SUBTITLE_EDIT_BAY_MIGRATION_SOURCE,
     [switch]$SkipRuntimeConfig = ($env:SUBTITLE_EDIT_BAY_SKIP_RUNTIME_CONFIG -eq "1"),
     [switch]$SkipSpeakerColors = ($env:SUBTITLE_EDIT_BAY_SKIP_SPEAKER_COLORS -eq "1"),
     [switch]$SkipWorkspaceReference = ($env:SUBTITLE_EDIT_BAY_SKIP_WORKSPACE_REFERENCE -eq "1"),
+    [string]$PendingMigrationRequestPath = "",
     [string]$SetupTestHook = $env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK,
     [switch]$KeepPreviousRuntime
 )
@@ -183,6 +185,70 @@ if ($ProbeCpuInstallArgumentsOnly) {
     $probeContract = Get-Content -LiteralPath "runtime\runtime-contract.json" -Raw -Encoding UTF8 | ConvertFrom-Json
     $probeProfile = $probeContract.profiles.cpu
     Write-Output (Get-RuntimePipArguments -ProfileContract $probeProfile -RuntimeLock ([string]$probeProfile.lock_file) | ConvertTo-Json -Compress)
+    exit 0
+}
+
+$pendingMigrationPath = if ($PendingMigrationRequestPath) {
+    [IO.Path]::GetFullPath($PendingMigrationRequestPath)
+} else {
+    Join-Path $projectRoot ".local\migration\pending-request.json"
+}
+$pendingMigration = $null
+if (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf) {
+    try {
+        $pendingMigration = Get-Content -LiteralPath $pendingMigrationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($pendingMigration.schema_version -ne 1 -or -not $pendingMigration.source) {
+            throw "unsupported or incomplete pending migration request"
+        }
+    } catch {
+        throw "The pending migration request is invalid. Cancel it or reinstall before setup: $_"
+    }
+}
+if (-not $MigrationSource -and $pendingMigration) {
+    $MigrationSource = [string]$pendingMigration.source
+    $SkipRuntimeConfig = [bool]$pendingMigration.skip_runtime_config
+    $SkipSpeakerColors = [bool]$pendingMigration.skip_speaker_colors
+    $SkipWorkspaceReference = [bool]$pendingMigration.skip_workspace_reference
+}
+
+$clearPendingMigrationOnSuccess = $false
+if ($MigrationSource) {
+    # This guard deliberately runs before the mutex status, dependency install,
+    # runtime generation or compatibility junction can change the destination.
+    try {
+        $resolvedMigrationSource = [IO.Path]::GetFullPath($MigrationSource)
+        $resolvedDestination = [IO.Path]::GetFullPath($projectRoot)
+    } catch {
+        throw "The migration source path is invalid: $_"
+    }
+    if ($resolvedMigrationSource.TrimEnd('\', '/') -eq $resolvedDestination.TrimEnd('\', '/')) {
+        throw "The migration source and installation destination must be different. No setup changes were made."
+    }
+    if (-not (Test-Path -LiteralPath $resolvedMigrationSource -PathType Container) -or
+        -not (Test-Path -LiteralPath (Join-Path $resolvedMigrationSource "setup.bat") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $resolvedMigrationSource "start.bat") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $resolvedMigrationSource "src") -PathType Container)) {
+        throw "The migration source is not a BAT/ZIP Subtitle Edit Bay workspace. No setup changes were made."
+    }
+    $MigrationSource = $resolvedMigrationSource
+    if ($pendingMigration) {
+        try {
+            $pendingSource = [IO.Path]::GetFullPath([string]$pendingMigration.source)
+            $clearPendingMigrationOnSuccess =
+                $pendingSource.TrimEnd('\', '/') -eq $resolvedMigrationSource.TrimEnd('\', '/')
+        } catch {
+            $clearPendingMigrationOnSuccess = $false
+        }
+    }
+}
+if ($ProbePendingMigrationOnly) {
+    Write-Output (@{
+        source = $MigrationSource
+        skip_runtime_config = [bool]$SkipRuntimeConfig
+        skip_speaker_colors = [bool]$SkipSpeakerColors
+        skip_workspace_reference = [bool]$SkipWorkspaceReference
+        pending_request_preserved = (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf)
+    } | ConvertTo-Json -Compress)
     exit 0
 }
 
@@ -407,6 +473,9 @@ if ($MigrationSource) {
     & $venvPython @migrationArguments
     if ($LASTEXITCODE -ne 0) {
         throw "BAT/ZIP workspace migration failed. The old workspace was not modified."
+    }
+    if ($clearPendingMigrationOnSuccess -and (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $pendingMigrationPath -Force
     }
 }
 

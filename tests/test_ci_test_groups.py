@@ -85,6 +85,16 @@ class CiTestGroupManifestTests(unittest.TestCase):
             [
                 "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests."
                 "test_normalize_reaches_the_configured_ebu_r128_target",
+                "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."
+                "test_final_duration_matches_the_output_timeline",
+                "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."
+                "test_output_audio_follows_the_same_keep_sequence_as_video",
+                "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."
+                "test_output_frames_follow_the_independent_source_keep_sequence",
+                "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."
+                "test_removed_audio_frequency_is_absent_while_kept_frequencies_remain",
+                "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."
+                "test_subtitle_is_dropped_or_retimed_and_visible_at_output_time",
                 "tests.test_media_semantic_e2e.MediaCommandDiagnosticTests."
                 "test_timeout_terminates_descendant_processes",
                 "tests.test_media_semantic_e2e.MediaSemanticE2ETests."
@@ -101,6 +111,7 @@ class CiTestGroupManifestTests(unittest.TestCase):
             ],
         )
         self.assertIn("test_audio_mix_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
+        self.assertIn("test_manual_cut_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_media_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
 

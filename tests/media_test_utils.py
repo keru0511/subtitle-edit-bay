@@ -72,6 +72,8 @@ class AudioLevelMeasurement:
     path: Path
     frequency_hz: int | None
     bandwidth_hz: int | None
+    start_seconds: float
+    duration_seconds: float | None
     mean_volume_db: float
     max_volume_db: float
     command: tuple[str, ...]
@@ -83,8 +85,13 @@ class AudioLevelMeasurement:
             if self.frequency_hz is not None
             else "frequency=broadband"
         )
+        interval = (
+            f"start={self.start_seconds:.3f}s, duration={self.duration_seconds:.3f}s"
+            if self.duration_seconds is not None
+            else f"start={self.start_seconds:.3f}s, duration=remaining"
+        )
         return (
-            f"path={self.path}, {band}, mean_volume={self.mean_volume_db:.2f}dB, "
+            f"path={self.path}, {band}, {interval}, mean_volume={self.mean_volume_db:.2f}dB, "
             f"max_volume={self.max_volume_db:.2f}dB\n"
             f"command: {subprocess.list2cmdline(list(self.command))}\n"
             f"ffmpeg stderr:\n{self.stderr or '(empty)'}"
@@ -503,15 +510,25 @@ def measure_audio_level(
     *,
     frequency_hz: int | None = None,
     bandwidth_hz: int = 80,
+    start_seconds: float = 0.0,
+    duration_seconds: float | None = None,
 ) -> AudioLevelMeasurement:
     require_media_tools()
     if frequency_hz is not None and (frequency_hz <= 0 or bandwidth_hz <= 0):
         raise ValueError("Band frequency and bandwidth must be positive.")
-    audio_filter = "volumedetect"
+    if start_seconds < 0 or not math.isfinite(start_seconds):
+        raise ValueError("Audio measurement start must be finite and non-negative.")
+    if duration_seconds is not None and (duration_seconds <= 0 or not math.isfinite(duration_seconds)):
+        raise ValueError("Audio measurement duration must be finite and positive.")
+    audio_filters = [f"atrim=start={start_seconds:g}"]
+    if duration_seconds is not None:
+        audio_filters[0] += f":duration={duration_seconds:g}"
+    audio_filters.append("asetpts=PTS-STARTPTS")
     resolved_bandwidth: int | None = None
     if frequency_hz is not None:
         resolved_bandwidth = bandwidth_hz
-        audio_filter = f"bandpass=frequency={frequency_hz}:width_type=h:width={bandwidth_hz},volumedetect"
+        audio_filters.append(f"bandpass=frequency={frequency_hz}:width_type=h:width={bandwidth_hz}")
+    audio_filters.append("volumedetect")
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -522,7 +539,7 @@ def measure_audio_level(
         "0:a:0",
         "-vn",
         "-af",
-        audio_filter,
+        ",".join(audio_filters),
         "-f",
         "null",
         os.devnull,
@@ -532,7 +549,8 @@ def measure_audio_level(
         context=(
             f"measure audio level: path={path}, "
             f"frequency={f'{frequency_hz}Hz' if frequency_hz is not None else 'broadband'}, "
-            f"bandwidth={resolved_bandwidth}Hz"
+            f"bandwidth={resolved_bandwidth}Hz, start={start_seconds:g}s, "
+            f"duration={duration_seconds if duration_seconds is not None else 'remaining'}s"
         ),
     )
     mean_matches = re.findall(r"mean_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
@@ -549,6 +567,8 @@ def measure_audio_level(
         path=path,
         frequency_hz=frequency_hz,
         bandwidth_hz=resolved_bandwidth,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
         mean_volume_db=_parse_decibel_value(mean_matches[-1]),
         max_volume_db=_parse_decibel_value(max_matches[-1]),
         command=tuple(command),

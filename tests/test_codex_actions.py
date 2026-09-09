@@ -285,6 +285,46 @@ class CodexActionTests(unittest.TestCase):
 
 
 class GuiActionBackendTests(unittest.TestCase):
+    def test_subtitle_proposal_processing_state_does_not_reuse_normal_job_progress(self) -> None:
+        class SessionSnapshot:
+            state = "running"
+
+        class Session:
+            running = True
+            snapshot = SessionSnapshot()
+
+        class ProcessingProgress:
+            def __init__(self, status: str, value: float) -> None:
+                self.status = status
+                self.value = value
+
+            @staticmethod
+            def as_list() -> list[dict[str, Any]]:
+                return [{"id": "encode", "status": "completed"}]
+
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+            _codex_session = Session()
+
+            def __init__(self, normal_status: str, normal_progress: float) -> None:
+                self._processing_progress = ProcessingProgress(normal_status, normal_progress)
+
+        for normal_status, normal_progress in (("idle", 0.0), ("completed", 1.0)):
+            with self.subTest(normal_status=normal_status):
+                state = GuiActionBackend(GuiStub(normal_status, normal_progress)).inspect(
+                    "inspect_processing_state", {}
+                ).state
+
+                self.assertEqual(state["active_job"], "subtitle_proposal")
+                self.assertTrue(state["running"])
+                self.assertEqual(state["status"], "running")
+                self.assertIsNone(state["progress"])
+                self.assertFalse(state["progress_known"])
+                self.assertEqual(state["steps"], [])
+
     def test_transcription_delegates_merge_and_replace_to_gui_integration(self) -> None:
         class GuiStub:
             _project_revision = 4

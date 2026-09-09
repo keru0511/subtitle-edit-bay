@@ -497,17 +497,28 @@ class GuiActionBackend:
         return HandlerResult("timeline state inspected", state=deepcopy(dict(self._gui.cutTimeline)))
 
     def _inspect_processing(self, _args: Mapping[str, Any]) -> HandlerResult:
-        if self.active_job == "highlight_analysis":
+        active_job = self.active_job
+        if active_job == "highlight_analysis":
             state = {
-                "active_job": self.active_job,
+                "active_job": active_job,
                 "running": True,
                 "progress": float(self._gui.highlightAnalysisProgress),
                 "status": str(self._gui.highlightAnalysisState),
                 "steps": [],
             }
+        elif active_job == "subtitle_proposal":
+            snapshot = self._gui._codex_session.snapshot
+            state = {
+                "active_job": active_job,
+                "running": bool(self._gui._codex_session.running),
+                "progress": None,
+                "progress_known": False,
+                "status": str(snapshot.state),
+                "steps": [],
+            }
         else:
             state = {
-                "active_job": self.active_job,
+                "active_job": active_job,
                 "running": bool(self._gui._running),
                 "progress": float(self._gui._processing_progress.value),
                 "status": str(self._gui._processing_progress.status),

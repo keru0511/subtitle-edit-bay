@@ -24,10 +24,14 @@ capabilityに合わせて補正した設定、旧workspace内の参照中デー�
 移行元、選択した項目はインストール時に`.local/migration/pending-request.json`へ保存されます。
 初回setupを延期した場合やruntime構築が途中で失敗した場合も、「初回セットアップ・修復」から
 同じ要求を再利用します。この保留要求は移行が成功した後にだけ削除されます。
+保留要求はInstallerがUTF-8 JSONとして保存するため、日本語を含む旧workspaceパスも再試行時に
+同じ値で読み込まれます。
 
 設定・話者色・workspace一覧・監査記録は1つの移行transactionとして反映します。途中の保存に
 失敗した場合は、上書き前の内容を含めて開始前の状態へ戻します。複数の旧workspaceを移行した場合、
 登録済みworkspaceを維持して追記し、同じworkspaceの再実行では重複を作りません。
+移行元とインストール先はjunctionを含むリンク先の最終パスで比較し、同じ実体ならファイル配置や
+runtime構築を始める前に拒否します。
 
 ## capability補正
 

@@ -79,6 +79,7 @@ Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_co
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_activation.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\setup_state.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\windows_path_identity.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_contract.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\apply_installer_update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -117,9 +118,75 @@ Type: filesandordirs; Name: "{app}\.local\runtimes"
 Type: files; Name: "{app}\VERSION"
 
 [Code]
+const
+  FILE_SHARE_READ = $00000001;
+  FILE_SHARE_WRITE = $00000002;
+  FILE_SHARE_DELETE = $00000004;
+  OPEN_EXISTING = 3;
+  FILE_FLAG_BACKUP_SEMANTICS = $02000000;
+  INVALID_HANDLE_VALUE = -1;
+
+function CreateFile(
+  FileName: String; DesiredAccess, ShareMode, SecurityAttributes,
+  CreationDisposition, FlagsAndAttributes, TemplateFile: LongWord
+): Integer;
+  external 'CreateFileW@kernel32.dll stdcall';
+function GetFinalPathNameByHandle(
+  FileHandle: Integer; FilePath: String; FilePathLength, Flags: LongWord
+): LongWord;
+  external 'GetFinalPathNameByHandleW@kernel32.dll stdcall';
+function CloseHandle(Handle: Integer): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
 var
   LegacyWorkspacePage: TInputDirWizardPage;
   MigrationComponentsPage: TInputOptionWizardPage;
+
+function FinalDirectoryPath(Path: String): String;
+var
+  DirectoryHandle: Integer;
+  Buffer: String;
+  Length: LongWord;
+  ExpandedPath: String;
+  ParentPath: String;
+begin
+  ExpandedPath := RemoveBackslashUnlessRoot(ExpandFileName(Path));
+  if not DirExists(ExpandedPath) then
+  begin
+    ParentPath := ExtractFileDir(ExpandedPath);
+    if CompareText(ParentPath, ExpandedPath) = 0 then
+      RaiseException('フォルダーの実体を確認できません: ' + Path);
+    Result := AddBackslash(FinalDirectoryPath(ParentPath)) + ExtractFileName(ExpandedPath);
+    Exit;
+  end;
+  DirectoryHandle := CreateFile(
+    ExpandedPath,
+    0,
+    FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE,
+    0,
+    OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS,
+    0
+  );
+  if DirectoryHandle = INVALID_HANDLE_VALUE then
+    RaiseException('フォルダーの実体を確認できません: ' + Path);
+  try
+    SetLength(Buffer, 32768);
+    Length := GetFinalPathNameByHandle(DirectoryHandle, Buffer, 32768, 0);
+    if (Length = 0) or (Length >= 32768) then
+      RaiseException('フォルダーの最終パスを確認できません: ' + Path);
+    SetLength(Buffer, Length);
+    if CompareText(Copy(Buffer, 1, 8), '\\?\UNC\') = 0 then
+      Result := '\\' + Copy(Buffer, 9, Length - 8)
+    else if CompareText(Copy(Buffer, 1, 4), '\\?\') = 0 then
+      Result := Copy(Buffer, 5, Length - 4)
+    else
+      Result := Buffer;
+    Result := RemoveBackslashUnlessRoot(Result);
+  finally
+    CloseHandle(DirectoryHandle);
+  end;
+end;
 
 procedure InitializeWizard;
 begin
@@ -132,6 +199,7 @@ begin
     ''
   );
   LegacyWorkspacePage.Add('旧BAT/ZIP版フォルダー:');
+  LegacyWorkspacePage.Values[0] := ExpandConstant('{param:LEGACYWORKSPACE|}');
 
   MigrationComponentsPage := CreateInputOptionPage(
     LegacyWorkspacePage.ID,
@@ -155,42 +223,46 @@ begin
     not WizardIsTaskSelected('legacymigration');
 end;
 
-function NextButtonClick(CurPageID: Integer): Boolean;
+function MigrationSourceError: String;
 var
   LegacyPath: String;
   InstallPath: String;
 begin
-  Result := True;
-  if (CurPageID <> MigrationComponentsPage.ID) or not WizardIsTaskSelected('legacymigration') then
+  Result := '';
+  if not WizardIsTaskSelected('legacymigration') then
     Exit;
-
   LegacyPath := LegacyWorkspacePage.Values[0];
-  InstallPath := ExpandConstant('{app}');
-  if CompareText(
-    RemoveBackslashUnlessRoot(ExpandFileName(LegacyPath)),
-    RemoveBackslashUnlessRoot(ExpandFileName(InstallPath))
-  ) = 0 then
-  begin
-    MsgBox(
-      '移行元にはインストール先とは異なる旧BAT/ZIP版フォルダーを指定してください。インストールはまだ開始されていません。',
-      mbError,
-      MB_OK
-    );
-    Result := False;
-    Exit;
-  end;
   if (LegacyPath = '') or
     not FileExists(AddBackslash(LegacyPath) + 'setup.bat') or
     not FileExists(AddBackslash(LegacyPath) + 'start.bat') or
     not DirExists(AddBackslash(LegacyPath) + 'src') then
   begin
-    MsgBox(
-      'setup.bat、start.bat、srcフォルダーを含む旧Subtitle Edit Bayフォルダーを指定してください。',
-      mbError,
-      MB_OK
-    );
+    Result := 'setup.bat、start.bat、srcフォルダーを含む旧Subtitle Edit Bayフォルダーを指定してください。';
+    Exit;
+  end;
+  InstallPath := ExpandConstant('{app}');
+  if CompareText(FinalDirectoryPath(LegacyPath), FinalDirectoryPath(InstallPath)) = 0 then
+    Result := '移行元にはインストール先とは異なる旧BAT/ZIP版フォルダーを指定してください。インストールはまだ開始されていません。';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ValidationError: String;
+begin
+  Result := True;
+  if (CurPageID <> MigrationComponentsPage.ID) or not WizardIsTaskSelected('legacymigration') then
+    Exit;
+  ValidationError := MigrationSourceError;
+  if ValidationError <> '' then
+  begin
+    MsgBox(ValidationError, mbError, MB_OK);
     Result := False;
   end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := MigrationSourceError;
 end;
 
 function JsonEscape(Value: String): String;
@@ -223,7 +295,7 @@ begin
       '","skip_runtime_config":' + JsonBoolean(not MigrationComponentsPage.Values[0]) +
       ',"skip_speaker_colors":' + JsonBoolean(not MigrationComponentsPage.Values[1]) +
       ',"skip_workspace_reference":' + JsonBoolean(not MigrationComponentsPage.Values[2]) + '}';
-    if not SaveStringToFile(PendingPath, Payload + #13#10, False) then
+    if not SaveStringToUTF8File(PendingPath, Payload + #13#10, False) then
       RaiseException('保留中の移行要求を保存できませんでした。セットアップは開始されていません。');
   end
   else if not WizardSilent then

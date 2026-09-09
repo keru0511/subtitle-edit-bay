@@ -19,7 +19,7 @@ if ($install.ExitCode -ne 0) {
 foreach ($path in @(
     "SubtitleEditBayLauncher.exe", "src\gui.py", "src\ui\Main.qml", "scripts\launch.ps1",
     "scripts\setup.ps1", "scripts\setup_state.ps1", "scripts\runtime_activation.ps1",
-    "scripts\runtime_contract.py", "scripts\windows_signing_identity.ps1", "runtime\runtime-contract.json",
+    "scripts\runtime_contract.py", "scripts\windows_path_identity.ps1", "scripts\windows_signing_identity.ps1", "runtime\runtime-contract.json",
     "runtime\requirements-windows-cpu.lock", "runtime\requirements-windows-cu128.lock", "VERSION"
 )) {
     $candidate = Join-Path $installDir $path
@@ -28,6 +28,50 @@ foreach ($path in @(
 $expectedInstalledVersion = $ExpectedVersion.Substring(1)
 $installedVersion = (Get-Content -LiteralPath (Join-Path $installDir "VERSION") -Raw).Trim()
 if ($installedVersion -ne $expectedInstalledVersion) { throw "Installed VERSION mismatch: expected=$expectedInstalledVersion actual=$installedVersion" }
+
+# Exercise the Installer-owned persistence path with non-ASCII data. The repair
+# setup must consume exactly the UTF-8 request written by Inno Setup.
+$migrationSource = Join-Path $testRoot "旧ワークスペース"
+$migrationInstallDir = Join-Path $testRoot "migration-probe-install"
+New-Item -ItemType Directory -Path (Join-Path $migrationSource "src") -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $migrationSource "setup.bat"), "setup")
+[IO.File]::WriteAllText((Join-Path $migrationSource "start.bat"), "start")
+$migrationInstall = Start-Process -FilePath $installer -ArgumentList @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$migrationInstallDir",
+    "/TASKS=legacymigration", "/LEGACYWORKSPACE=$migrationSource"
+) -Wait -PassThru
+if ($migrationInstall.ExitCode -ne 0) { throw "Installer UTF-8 migration probe failed with code $($migrationInstall.ExitCode)." }
+$pendingMigrationPath = Join-Path $migrationInstallDir ".local\migration\pending-request.json"
+$pendingMigration = Get-Content -LiteralPath $pendingMigrationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([IO.Path]::GetFullPath([string]$pendingMigration.source) -ne [IO.Path]::GetFullPath($migrationSource)) {
+    throw "Installer did not preserve the Japanese migration source as UTF-8."
+}
+$powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$pendingProbeOutput = & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
+    (Join-Path $migrationInstallDir "scripts\setup.ps1") -ProbePendingMigrationOnly
+if ($LASTEXITCODE -ne 0) { throw "Setup could not reload the Installer-owned pending migration request." }
+$pendingProbe = ($pendingProbeOutput | Select-Object -Last 1) | ConvertFrom-Json
+if ([IO.Path]::GetFullPath([string]$pendingProbe.source) -ne [IO.Path]::GetFullPath($migrationSource)) {
+    throw "Setup changed the Japanese migration source while reloading it."
+}
+
+# A junction alias for the destination must fail before the Installer writes
+# product files or setup has a chance to mutate the legacy runtime.
+$junctionDestination = Join-Path $testRoot "junction-destination"
+$junctionAlias = Join-Path $testRoot "junction-source-alias"
+New-Item -ItemType Directory -Path (Join-Path $junctionDestination "src") -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $junctionDestination "setup.bat"), "legacy-setup")
+[IO.File]::WriteAllText((Join-Path $junctionDestination "start.bat"), "legacy-start")
+$legacySentinel = Join-Path $junctionDestination "legacy-sentinel.txt"
+[IO.File]::WriteAllText($legacySentinel, "unchanged")
+New-Item -ItemType Junction -Path $junctionAlias -Target $junctionDestination | Out-Null
+$junctionInstall = Start-Process -FilePath $installer -ArgumentList @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$junctionDestination",
+    "/TASKS=legacymigration", "/LEGACYWORKSPACE=$junctionAlias"
+) -Wait -PassThru
+if ($junctionInstall.ExitCode -eq 0) { throw "Installer accepted its destination through a junction alias." }
+if ((Get-Content -LiteralPath $legacySentinel -Raw) -ne "unchanged") { throw "Installer changed legacy data before junction rejection." }
+if (Test-Path -LiteralPath (Join-Path $junctionDestination "src\gui.py")) { throw "Installer copied product files before junction rejection." }
 
 $launcher = Join-Path $installDir "SubtitleEditBayLauncher.exe"
 $hookPath = Join-Path $testRoot "installer-e2e-setup-hook.ps1"

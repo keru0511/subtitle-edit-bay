@@ -131,10 +131,21 @@ def validated_runtime_config(
         migrated.setdefault("craig_pipeline", {})["transcription_context"] = context
 
     shared = migrated.get("shared")
-    if isinstance(shared, dict) and not capabilities.cuda and shared.get("device") == "cuda":
-        shared["device"] = "cpu"
-        shared["compute_type"] = "int8"
-        adjusted.append("shared.device=cuda -> cpu/int8")
+    if not capabilities.cuda:
+        shared_device = shared.get("device", "cpu") if isinstance(shared, dict) else "cpu"
+        for section_name, section in migrated.items():
+            if not isinstance(section, dict):
+                continue
+            effective_device = section.get("device", shared_device)
+            changed = False
+            if effective_device == "cuda":
+                section["device"] = "cpu"
+                changed = True
+            if section.get("compute_type") == "float16" and effective_device in ("cuda", "cpu"):
+                section["compute_type"] = "int8"
+                changed = True
+            if changed:
+                adjusted.append(f"{section_name}.device/compute_type -> cpu/int8")
     if not capabilities.nvenc:
         for section_name, section in migrated.items():
             if isinstance(section, dict) and section.get("video_codec") == "h264_nvenc":

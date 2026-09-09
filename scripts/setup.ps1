@@ -23,6 +23,7 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 $projectRoot = (Get-Location).Path
 . (Join-Path $PSScriptRoot "runtime_activation.ps1")
 . (Join-Path $PSScriptRoot "setup_state.ps1")
+. (Join-Path $PSScriptRoot "windows_path_identity.ps1")
 
 function Find-Python310 {
     $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
@@ -216,8 +217,8 @@ if ($MigrationSource) {
     # This guard deliberately runs before the mutex status, dependency install,
     # runtime generation or compatibility junction can change the destination.
     try {
-        $resolvedMigrationSource = [IO.Path]::GetFullPath($MigrationSource)
-        $resolvedDestination = [IO.Path]::GetFullPath($projectRoot)
+        $resolvedMigrationSource = Resolve-FinalDirectoryPath -Path $MigrationSource
+        $resolvedDestination = Resolve-FinalDirectoryPath -Path $projectRoot
     } catch {
         throw "The migration source path is invalid: $_"
     }
@@ -233,7 +234,7 @@ if ($MigrationSource) {
     $MigrationSource = $resolvedMigrationSource
     if ($pendingMigration) {
         try {
-            $pendingSource = [IO.Path]::GetFullPath([string]$pendingMigration.source)
+            $pendingSource = Resolve-FinalDirectoryPath -Path ([string]$pendingMigration.source)
             $clearPendingMigrationOnSuccess =
                 $pendingSource.TrimEnd('\', '/') -eq $resolvedMigrationSource.TrimEnd('\', '/')
         } catch {

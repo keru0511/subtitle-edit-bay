@@ -18,6 +18,7 @@ from src.installer_migration import (
     migrate_legacy_workspace,
     validated_runtime_config,
 )
+from src.runtime_config import load_command_runtime_config
 
 
 class InstallerMigrationTests(unittest.TestCase):
@@ -181,6 +182,35 @@ class InstallerMigrationTests(unittest.TestCase):
             with self.assertRaisesRegex(MigrationError, "reference_audio"):
                 validated_runtime_config(old_path, RuntimeCapabilities(cuda=False, nvenc=False))
 
+    def test_cpu_migration_corrects_effective_settings_for_every_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, _destination = self._workspaces(root)
+            old_path = source / ".gui" / "runtime_config.json"
+            old_path.write_text(
+                json.dumps(
+                    {
+                        "shared": {"device": "cuda", "compute_type": "float16"},
+                        "pipeline": {"device": "cuda", "compute_type": "float16"},
+                        "batch": {"compute_type": "float16"},
+                        "craig_pipeline": {"device": "cuda", "compute_type": "float16"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            migrated, _adjusted = validated_runtime_config(
+                old_path,
+                RuntimeCapabilities(cuda=False, nvenc=False),
+            )
+            migrated_path = root / "migrated.json"
+            migrated_path.write_text(json.dumps(migrated), encoding="utf-8")
+
+            for command in ("pipeline", "batch", "craig_pipeline"):
+                with self.subTest(command=command):
+                    effective = load_command_runtime_config(command, migrated_path)
+                    self.assertEqual(effective["device"], "cpu")
+                    self.assertEqual(effective["compute_type"], "int8")
+
     def test_invalid_speaker_colors_fail_before_any_destination_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
@@ -336,9 +366,12 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn("--skip-workspace-reference", installer)
         self.assertIn("function NextButtonClick", installer)
         self.assertIn("CompareText(", installer)
-        self.assertIn("RemoveBackslashUnlessRoot(ExpandFileName(InstallPath))", installer)
+        self.assertIn("GetFinalPathNameByHandle", installer)
+        self.assertIn("FinalDirectoryPath(LegacyPath)", installer)
+        self.assertIn("FinalDirectoryPath(InstallPath)", installer)
         self.assertIn("not FileExists(AddBackslash(LegacyPath) + 'setup.bat')", installer)
         self.assertIn("procedure SavePendingMigrationRequest", installer)
+        self.assertIn("SaveStringToUTF8File(PendingPath", installer)
         self.assertIn("pending-request.json", installer)
         self.assertIn("skip_workspace_reference", installer)
         self.assertLess(
@@ -346,6 +379,7 @@ class InstallerMigrationTests(unittest.TestCase):
             installer.index("procedure CurStepChanged"),
         )
         self.assertIn("Remove-Item -LiteralPath $pendingMigrationPath", setup)
+        self.assertIn("Resolve-FinalDirectoryPath -Path $MigrationSource", setup)
         self.assertIn(r'Filename: "{app}\SubtitleEditBayLauncher.exe"', installer)
         self.assertIn('Parameters: "--setup {code:SetupParameters}"', installer)
         self.assertNotIn(r'Filename: "{app}\setup.bat"', installer)
@@ -444,28 +478,44 @@ class InstallerMigrationTests(unittest.TestCase):
             repository / "setup.bat",
         ]
         before = {path: path.read_bytes() if path.exists() else None for path in protected}
-        completed = subprocess.run(
-            [
-                powershell,
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(repository / "scripts" / "setup.ps1"),
-                "-ProbePendingMigrationOnly",
-                "-MigrationSource",
-                str(repository),
-            ],
-            cwd=repository,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("must be different", completed.stderr + completed.stdout)
-        after = {path: path.read_bytes() if path.exists() else None for path in protected}
-        self.assertEqual(after, before)
+        with tempfile.TemporaryDirectory() as temporary:
+            junction = Path(temporary) / "repository-alias"
+            created = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(repository)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr + created.stdout)
+            try:
+                completed = subprocess.run(
+                    [
+                        powershell,
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(repository / "scripts" / "setup.ps1"),
+                        "-ProbePendingMigrationOnly",
+                        "-MigrationSource",
+                        str(junction),
+                    ],
+                    cwd=repository,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn("must be different", completed.stderr + completed.stdout)
+                after = {path: path.read_bytes() if path.exists() else None for path in protected}
+                self.assertEqual(after, before)
+            finally:
+                subprocess.run(
+                    ["cmd.exe", "/d", "/c", "rmdir", str(junction)],
+                    capture_output=True,
+                    check=False,
+                )
 
 
 if __name__ == "__main__":

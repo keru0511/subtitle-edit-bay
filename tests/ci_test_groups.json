@@ -144,7 +144,10 @@
         "test_runtime_activation",
         "test_windows_launchers"
       ],
-      "selectors": []
+      "selectors": [
+        "tests.test_installer_migration.InstallerMigrationTests.test_pending_request_is_reused_before_runtime_setup",
+        "tests.test_installer_migration.InstallerMigrationTests.test_setup_rejects_destination_as_source_before_mutating_state"
+      ]
     },
     "windows-runtime": {
       "modules": [

@@ -18,6 +18,7 @@ REQUIRED_INSTALLED_FILES = {
     "VERSION",
     "scripts/launch.ps1",
     "scripts/apply_installer_update.ps1",
+    "scripts/windows_signing_identity.ps1",
     "scripts/runtime_activation.ps1",
     "scripts/setup.ps1",
     "scripts/setup_state.ps1",

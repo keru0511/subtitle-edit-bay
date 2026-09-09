@@ -285,6 +285,7 @@ var
   PendingDirectory: String;
   PendingPath: String;
   Payload: String;
+  Lines: TArrayOfString;
 begin
   PendingDirectory := ExpandConstant('{app}\.local\migration');
   PendingPath := PendingDirectory + '\pending-request.json';
@@ -295,7 +296,9 @@ begin
       '","skip_runtime_config":' + JsonBoolean(not MigrationComponentsPage.Values[0]) +
       ',"skip_speaker_colors":' + JsonBoolean(not MigrationComponentsPage.Values[1]) +
       ',"skip_workspace_reference":' + JsonBoolean(not MigrationComponentsPage.Values[2]) + '}';
-    if not SaveStringToUTF8File(PendingPath, Payload + #13#10, False) then
+    SetArrayLength(Lines, 1);
+    Lines[0] := Payload;
+    if not SaveStringsToUTF8FileWithoutBOM(PendingPath, Lines, False) then
       RaiseException('保留中の移行要求を保存できませんでした。セットアップは開始されていません。');
   end
   else if not WizardSilent then

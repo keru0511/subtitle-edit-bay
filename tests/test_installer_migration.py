@@ -371,7 +371,7 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn("FinalDirectoryPath(InstallPath)", installer)
         self.assertIn("not FileExists(AddBackslash(LegacyPath) + 'setup.bat')", installer)
         self.assertIn("procedure SavePendingMigrationRequest", installer)
-        self.assertIn("SaveStringToUTF8File(PendingPath", installer)
+        self.assertIn("SaveStringsToUTF8FileWithoutBOM(PendingPath", installer)
         self.assertIn("pending-request.json", installer)
         self.assertIn("skip_workspace_reference", installer)
         self.assertLess(

@@ -507,7 +507,7 @@ class InstallerMigrationTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertNotEqual(completed.returncode, 0)
-                self.assertIn("must be different", completed.stderr + completed.stdout)
+                self.assertIn("MIGRATION_PREFLIGHT_REJECTED same_directory", completed.stderr + completed.stdout)
                 after = {path: path.read_bytes() if path.exists() else None for path in protected}
                 self.assertEqual(after, before)
             finally:

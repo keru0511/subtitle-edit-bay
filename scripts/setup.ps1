@@ -223,6 +223,7 @@ if ($MigrationSource) {
         throw "The migration source path is invalid: $_"
     }
     if ($resolvedMigrationSource.TrimEnd('\', '/') -eq $resolvedDestination.TrimEnd('\', '/')) {
+        Write-Output "MIGRATION_PREFLIGHT_REJECTED same_directory"
         throw "The migration source and installation destination must be different. No setup changes were made."
     }
     if (-not (Test-Path -LiteralPath $resolvedMigrationSource -PathType Container) -or

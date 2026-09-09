@@ -353,10 +353,13 @@ class ActionDispatcher:
             return
         if request.project_revision is None:
             raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "project_revision is required")
+        if scope.project_revision is None:
+            raise ActionRejected(
+                ActionErrorCode.STALE_REVISION,
+                "trusted action scope is not bound to a project revision",
+            )
         current = self._backend.current_revision
-        if request.project_revision != current or (
-            scope.project_revision is not None and scope.project_revision != current
-        ):
+        if request.project_revision != current or scope.project_revision != current:
             raise ActionRejected(ActionErrorCode.STALE_REVISION, "project revision is stale")
 
     @staticmethod
@@ -443,6 +446,9 @@ class GuiActionBackend:
             return str(self._gui._active_job or "processing")
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
+        codex_session = getattr(self._gui, "_codex_session", None)
+        if codex_session is not None and bool(codex_session.running):
+            return "subtitle_proposal"
         return ""
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
@@ -536,6 +542,8 @@ class GuiActionBackend:
         )
 
     def _propose_subtitle(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
+        if bool(self._gui._codex_session.running):
+            raise ActionRejected(ActionErrorCode.JOB_CONFLICT, "a subtitle proposal is already being generated")
         self._gui.startCodexEdit(
             str(args["intent"]),
             str(args["selection_scope"]),
@@ -553,7 +561,7 @@ class GuiActionBackend:
                 ActionErrorCode.PRECONDITION_FAILED,
                 str(capabilities.get("transcriptionReason") or "transcription is unavailable"),
             )
-        self._gui.startTranscription(dict(self._gui.settings), args["mode"] == "replace")
+        self._gui.transcribeProject(dict(self._gui.settings), str(args["mode"]))
         self._require_started_job("transcribe")
         return HandlerResult("transcription started", job={"type": "transcribe", "status": "running"})
 

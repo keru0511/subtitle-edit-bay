@@ -192,6 +192,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", signer)
         self.assertIn("EphemeralKeySet", signer)
         self.assertIn("Set-AuthenticodeSignature", signer)
+        self.assertNotIn("$LASTEXITCODE", signer)
         self.assertIn("Assert-InstallerPublisher", updater)
         self.assertIn("TimeStamperCertificate", updater)
         publisher_check = updater[

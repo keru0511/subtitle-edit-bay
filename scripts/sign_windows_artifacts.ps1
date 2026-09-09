@@ -38,9 +38,6 @@ try {
             -ExpectedSignerSubject $ExpectedSignerSubject `
             -RequireSignature `
             -RequireTimestamp
-        if ($LASTEXITCODE -ne 0) {
-            throw "Signed binary verification failed for $resolved."
-        }
     }
 }
 finally {

@@ -17,6 +17,82 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class WindowsLauncherTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_signing_uses_verifier_exceptions_not_stale_last_exit_code(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            binary = root / "signed-candidate.exe"
+            binary.write_bytes(b"test binary")
+            harness = root / "signing-contract.ps1"
+            signer = str(ROOT / "scripts" / "sign_windows_artifacts.ps1").replace("'", "''")
+            escaped_binary = str(binary).replace("'", "''")
+            harness.write_text(
+                "$ErrorActionPreference = 'Stop'\n"
+                "$rsa = [Security.Cryptography.RSA]::Create(2048)\n"
+                "$subject = [Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Subtitle Edit Bay')\n"
+                "$request = [Security.Cryptography.X509Certificates.CertificateRequest]::new("
+                "$subject, $rsa, [Security.Cryptography.HashAlgorithmName]::SHA256, "
+                "[Security.Cryptography.RSASignaturePadding]::Pkcs1)\n"
+                "$now = [DateTimeOffset]::Now\n"
+                "$global:testCertificate = $request.CreateSelfSigned($now.AddDays(-1), $now.AddDays(1))\n"
+                "$password = 'test-only-password'\n"
+                "$env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = [Convert]::ToBase64String("
+                "$global:testCertificate.Export([Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $password))\n"
+                "$env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $password\n"
+                "function global:Set-AuthenticodeSignature {\n"
+                "    param($LiteralPath, $Certificate, $HashAlgorithm, $TimestampServer)\n"
+                "    [PSCustomObject]@{ Status = 'Valid'; StatusMessage = '' }\n"
+                "}\n"
+                "function global:Get-AuthenticodeSignature {\n"
+                "    param($LiteralPath)\n"
+                "    [PSCustomObject]@{ Status = 'Valid'; StatusMessage = ''; "
+                "SignerCertificate = $global:testCertificate; TimeStamperCertificate = [PSCustomObject]@{} }\n"
+                "}\n"
+                "try {\n"
+                "    foreach ($priorExitCode in @($null, 0, 23)) {\n"
+                "        $global:LASTEXITCODE = $priorExitCode\n"
+                f"        & '{signer}' -Path '{escaped_binary}' -ExpectedSignerSubject 'CN=Subtitle Edit Bay'\n"
+                "    }\n"
+                "    function global:Get-AuthenticodeSignature { throw 'synthetic verification failure' }\n"
+                "    $verificationFailed = $false\n"
+                "    try {\n"
+                f"        & '{signer}' -Path '{escaped_binary}' -ExpectedSignerSubject 'CN=Subtitle Edit Bay'\n"
+                "    } catch {\n"
+                "        if ($_.Exception.Message -like '*synthetic verification failure*') { "
+                "$verificationFailed = $true } else { throw }\n"
+                "    }\n"
+                "    if (-not $verificationFailed) { throw 'Verifier exception did not propagate.' }\n"
+                "} finally {\n"
+                "    $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = $null\n"
+                "    $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $null\n"
+                "    if ($global:testCertificate) { $global:testCertificate.Dispose() }\n"
+                "    if ($rsa) { $rsa.Dispose() }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(harness),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_signer_subject_identity_rejects_a_containing_subject(self) -> None:
         powershell = self._require_windows_powershell()
         helper = ROOT / "scripts" / "windows_signing_identity.ps1"

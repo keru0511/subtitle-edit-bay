@@ -34,6 +34,7 @@
         "test_ci_test_groups",
         "test_codex_actions",
         "test_codex_app_server_client",
+        "test_codex_chat_routing",
         "test_codex_edit_proposal",
         "test_codex_highlight_ranker",
         "test_codex_runtime",

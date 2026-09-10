@@ -69,6 +69,7 @@ from .gui_codex_state import (
 )
 from .codex_app_server_client import CodexAppServerClient
 from .codex_actions import ActionResult, ActionScope, build_gui_action_dispatcher
+from .codex_chat_routing import route_subtitle_chat_request
 from .codex_runtime import detect_codex
 from .gui_codex_chat_state import (
     CodexChatController,
@@ -3664,6 +3665,10 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def logoutCodex(self) -> None:
+        if self._codex_session.running:
+            self._codex_session.stop()
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
         self._codex_chat.logout()
 
     @Slot()
@@ -3677,15 +3682,76 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_chat.select_model(model)
 
     @Slot(str)
-    def sendCodexChatMessage(self, message: str) -> None:
-        self._codex_chat.send_message(message)
+    @Slot(str, str, float, float)
+    def sendCodexChatMessage(
+        self,
+        message: str,
+        requested_scope: str = "auto",
+        range_start: float = 0.0,
+        range_end: float = 0.0,
+    ) -> None:
+        route = route_subtitle_chat_request(
+            message,
+            requested_scope,
+            project_loaded=self._project is not None,
+            has_selection=self._selected_segment_index >= 0,
+            current_time=float(self.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        if route is None:
+            self._codex_chat.send_message(message)
+            return
+        if not self._codex_chat.begin_proposal(message):
+            return
+        if route.scope == "unavailable":
+            self._codex_chat.fail_proposal("字幕を編集するには、先に編集プロジェクトを開いてください。")
+            return
+        if route.scope == "current":
+            self._codex_current_time = float(self.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0
+        scope_id = f"chat-subtitle-{uuid4().hex}"
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "kind": "propose",
+            "type": "propose_subtitle_edit",
+            "args": {
+                "intent": str(message).strip(),
+                "selection_scope": route.scope,
+            },
+            "scope_id": scope_id,
+            "project_revision": self._project_revision,
+        }
+        if route.scope == "time_range":
+            payload["args"].update(
+                {"range_start": route.range_start, "range_end": route.range_end}
+            )
+        result = self.dispatch_codex_action(
+            payload,
+            trusted_scope=ActionScope(
+                id=scope_id,
+                allowed_actions=frozenset({"propose_subtitle_edit"}),
+                project_revision=self._project_revision,
+            ),
+        )
+        if result.status.value != "success":
+            self._codex_chat.fail_proposal(
+                result.message or "字幕の変更案を開始できませんでした。"
+            )
 
     @Slot()
     def stopCodexChat(self) -> None:
-        self._codex_chat.interrupt()
+        if self._codex_session.running:
+            self._codex_session.stop()
+            self._codex_chat.fail_proposal("", cancelled=True)
+        else:
+            self._codex_chat.interrupt()
 
     @Slot()
     def startNewCodexChat(self) -> None:
+        if self._codex_session.running:
+            self._codex_session.stop()
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
         self._codex_chat.new_chat()
 
     def _queue_codex_system_log(self, message: object, *, severity: str = "INFO") -> None:
@@ -3850,6 +3916,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.codexStateChanged.emit()
         self.codexMessageChanged.emit()
         if self._codex_session.snapshot.error:
+            self._codex_chat.fail_proposal(self._codex_session.snapshot.error)
             self._set_status(self._codex_session.snapshot.error, "ERROR")
 
     def _on_codex_message(self, _message: str) -> None:
@@ -3858,10 +3925,14 @@ class EditBayBackend(LegacyEditBayBackend):
     def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
         self._codex_proposal = dict(proposal)
         self.codexProposalChanged.emit()
+        self._codex_chat.complete_proposal(str(proposal.get("summary", "")))
         self._set_status("Codex編集案を確認できます", "CODEX")
 
     def _on_codex_chat_state(self, snapshot: CodexChatSnapshot) -> None:
         self.codexChatChanged.emit()
+        if snapshot.connection_state == "disconnected" and self._codex_session.running:
+            self._codex_session.stop()
+            self._codex_chat.fail_proposal("Codexとの接続が切れたため、変更案の作成を停止しました。")
         log_state: tuple[object, ...] = (
             snapshot.connection_state,
             snapshot.auth_state,

@@ -31,6 +31,7 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_actions import ActionResult, ActionStatus
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
@@ -3813,6 +3814,38 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.status, "ショート動画を書き出しています")
         self.assertEqual(self.app.stage, "ENCODE")
 
+    def test_subtitle_chat_uses_the_typed_proposal_path_instead_of_plain_codex(self) -> None:
+        self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+
+        with (
+            patch.object(self.app._codex_chat, "send_message") as plain_chat,
+            patch.object(
+                self.app,
+                "dispatch_codex_action",
+                return_value=ActionResult(status=ActionStatus.SUCCESS),
+            ) as dispatch,
+        ):
+            self.app.sendCodexChatMessage("字幕を編集して", "auto", 0.0, 0.0)
+
+        plain_chat.assert_not_called()
+        dispatch.assert_called_once()
+        payload = dispatch.call_args.args[0]
+        trusted_scope = dispatch.call_args.kwargs["trusted_scope"]
+        self.assertEqual(payload["kind"], "propose")
+        self.assertEqual(payload["type"], "propose_subtitle_edit")
+        self.assertEqual(payload["args"]["selection_scope"], "selected")
+        self.assertEqual(trusted_scope.allowed_actions, frozenset({"propose_subtitle_edit"}))
+        self.assertEqual(
+            self.app._codex_chat.snapshot.messages[-1]["content_type"],
+            "subtitle_proposal",
+        )
+
     def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -3935,7 +3968,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         with patch.object(self.app, "sendCodexChatMessage") as send:
             self._click(window, chat_send)
-        send.assert_called_once_with("進捗中も送信できる")
+        send.assert_called_once_with("進捗中も送信できる", "auto", 0.0, 0.0)
 
         streaming = CodexChatSnapshot(
             connection_state="ready",

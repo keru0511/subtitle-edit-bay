@@ -21,6 +21,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "TimeField.qml",
     COMPONENTS_ROOT / "ProcessingProgressPanel.qml",
     COMPONENTS_ROOT / "CodexChatPanel.qml",
+    COMPONENTS_ROOT / "CodexEditPanel.qml",
     COMPONENTS_ROOT / "CodexSidebarContainer.qml",
     COMPONENTS_ROOT / "EditorModeRail.qml",
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
@@ -81,6 +82,10 @@ class QmlStaticTests(unittest.TestCase):
             "書き込みは禁止されていますが、Codexはローカルファイルを読み取る場合があります。",
             panel,
         )
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        self.assertIn('objectName: "codexChatProposalCard"', panel)
+        self.assertIn('objectName: "codexChatEditScope"', panel)
+        self.assertNotIn('objectName: "codexEditPanel"', workflow)
 
     def test_common_codex_sidebar_only_reserves_width_when_authenticated(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
@@ -119,7 +124,7 @@ class QmlStaticTests(unittest.TestCase):
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
         }
         required_copy = {
-            "codex edit": ("提案を作成",),
+            "codex edit": ("字幕編集の提案", "選択した変更を適用"),
             "highlight": ("見どころを探す", "ショートに追加", "候補から外す"),
             "dictionary": ("この辞書を文字起こしに使用", "すべて選択", "選択解除"),
             "workflow": (

@@ -111,6 +111,7 @@
     },
     "qt-gui": {
       "modules": [
+        "test_gui_backend_metaobject",
         "test_gui_editor",
         "test_gui_test_harness",
         "test_qml_static",

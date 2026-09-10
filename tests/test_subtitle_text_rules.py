@@ -11,16 +11,24 @@ def segment(
     *,
     speaker: str = "Oz",
     source_track: str = "craig:oz",
+    source_file: str = "",
+    source_stream_id: str = "",
+    words: list[dict] | None = None,
 ) -> dict:
-    return {
+    result = {
         "start": start,
         "end": start + 1.0,
         "text": text,
         "speaker": speaker,
         "source_track": source_track,
         "source_speaker": speaker,
-        "words": [{"word": text, "start": start, "end": start + 0.8}],
+        "words": words if words is not None else [{"word": text, "start": start, "end": start + 0.8}],
     }
+    if source_file:
+        result["source_file"] = source_file
+    if source_stream_id:
+        result["source_stream_id"] = source_stream_id
+    return result
 
 
 class SubtitleTextRuleTests(unittest.TestCase):
@@ -41,7 +49,7 @@ class SubtitleTextRuleTests(unittest.TestCase):
         self.assertEqual(original[1]["words"][0]["word"], "。○○なんだけど")
 
     def test_moves_all_supported_leading_closing_punctuation(self) -> None:
-        punctuation = "、。！？!?，．,."
+        punctuation = "、。！？!?"
 
         repaired = reattach_leading_punctuation(
             [segment("前の字幕", 0.0), segment(punctuation + "次の字幕", 1.0)]
@@ -49,6 +57,17 @@ class SubtitleTextRuleTests(unittest.TestCase):
 
         self.assertEqual(repaired[0]["text"], "前の字幕" + punctuation)
         self.assertEqual(repaired[1]["text"], "次の字幕")
+
+    def test_does_not_move_ascii_period_or_comma(self) -> None:
+        repaired = reattach_leading_punctuation(
+            [
+                segment("Built with", 0.0),
+                segment(".NET 9", 1.0),
+                segment(", literally", 2.0),
+            ]
+        )
+
+        self.assertEqual([item["text"] for item in repaired], ["Built with", ".NET 9", ", literally"])
 
     def test_removes_a_punctuation_only_caption_after_reattaching_it(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -66,6 +85,26 @@ class SubtitleTextRuleTests(unittest.TestCase):
         )
 
         self.assertEqual([item["text"] for item in repaired], ["Ozの字幕", "。別話者"])
+
+    def test_does_not_cross_unique_sources_with_the_same_file_name_and_track(self) -> None:
+        repaired = reattach_leading_punctuation(
+            [
+                segment(
+                    "最初の音声",
+                    0.0,
+                    source_file="1-speaker.flac",
+                    source_stream_id="audio-first",
+                ),
+                segment(
+                    "。別の音声",
+                    1.0,
+                    source_file="1-speaker.flac",
+                    source_stream_id="audio-second",
+                ),
+            ]
+        )
+
+        self.assertEqual([item["text"] for item in repaired], ["最初の音声", "。別の音声"])
 
     def test_can_reattach_across_diarized_speakers_on_the_same_track(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -90,6 +129,24 @@ class SubtitleTextRuleTests(unittest.TestCase):
         repaired = reattach_leading_punctuation([segment("。最初の字幕", 0.0)])
 
         self.assertEqual(repaired[0]["text"], "。最初の字幕")
+
+    def test_does_not_remove_later_word_punctuation_when_the_leading_mark_is_unaligned(self) -> None:
+        repaired = reattach_leading_punctuation(
+            [
+                segment("前", 0.0),
+                segment(
+                    "。次。",
+                    1.0,
+                    words=[
+                        {"word": "次", "start": 1.0, "end": 1.5},
+                        {"word": "。", "start": 1.5, "end": 2.0},
+                    ],
+                ),
+            ]
+        )
+
+        self.assertEqual(repaired[1]["text"], "次。")
+        self.assertEqual("".join(word["word"] for word in repaired[1]["words"]), "次。")
 
 
 if __name__ == "__main__":

@@ -3,13 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 
-LEADING_CLOSING_PUNCTUATION = frozenset("、。！？!?，．,.")
+LEADING_CLOSING_PUNCTUATION = frozenset("、。！？!?")
 
 
 def _stream_key(segment: dict[str, Any]) -> tuple[str, str, str]:
+    source_stream_id = str(segment.get("source_stream_id") or "")
     source_file = str(segment.get("source_file") or "")
     source_track = str(segment.get("source_track") or "")
     speaker = str(segment.get("source_speaker") or segment.get("speaker") or "")
+    if source_stream_id:
+        return "source_stream", source_stream_id, ""
     if source_file or source_track:
         return "source", source_file, source_track
     return "speaker", speaker, ""
@@ -47,36 +50,46 @@ def _append_to_last_aligned_word(segment: dict[str, Any], punctuation: str) -> N
             return
 
 
-def _remove_from_leading_aligned_words(segment: dict[str, Any], count: int) -> None:
+def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str) -> None:
     words = segment.get("words")
-    if not isinstance(words, list) or count <= 0:
+    if not isinstance(words, list) or not punctuation:
         return
 
-    remaining = count
+    remaining = punctuation
     cleaned: list[Any] = []
-    for word in words:
+    for index, word in enumerate(words):
+        if not remaining:
+            cleaned.extend(words[index:])
+            segment["words"] = cleaned
+            return
         if not isinstance(word, dict):
-            cleaned.append(word)
-            continue
+            return
 
         value = str(word.get("word", ""))
         leading_space_count = len(value) - len(value.lstrip())
         leading_space = value[:leading_space_count]
         body = value[leading_space_count:]
+        if not body:
+            cleaned.append(word)
+            continue
+
         removed = 0
-        while remaining > 0 and removed < len(body) and body[removed] in LEADING_CLOSING_PUNCTUATION:
+        while remaining and removed < len(body) and body[removed] == remaining[0]:
             removed += 1
-            remaining -= 1
+            remaining = remaining[1:]
 
         if removed:
             updated = dict(word)
             updated["word"] = leading_space + body[removed:]
             if str(updated["word"]).strip():
                 cleaned.append(updated)
+                if remaining:
+                    return
             continue
-        cleaned.append(word)
+        return
 
-    segment["words"] = cleaned
+    if not remaining:
+        segment["words"] = cleaned
 
 
 def reattach_leading_punctuation(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -107,7 +120,7 @@ def reattach_leading_punctuation(segments: list[dict[str, Any]]) -> list[dict[st
         if punctuation and previous is not None:
             previous["text"] = str(previous.get("text", "")).rstrip() + punctuation
             _append_to_last_aligned_word(previous, punctuation)
-            _remove_from_leading_aligned_words(segment, len(punctuation))
+            _remove_from_leading_aligned_words(segment, punctuation)
             text = text[len(punctuation):].lstrip()
             if not text:
                 removed_indices.add(index)

@@ -39,6 +39,7 @@ GAME_TERMS = [
 ]
 CASUAL_MARKERS = ["www", "やば", "うわ", "まじ", "えっ", "あの", "これ", "それ", "いや", "ねえ", "かな", "だよ", "じゃん"]
 SHORT_REACTION_MARKERS = ["!", "！", "?", "？", "w", "W", "笑", "うわ", "えっ", "まじ", "やば"]
+EMPHASIS_MARKERS = ("!", "！", "?", "？")
 TRACK_DEFAULT_MAP = {"0:a:1": {None: "Oz"}, "0:a:3": {None: "Guest"}}
 DISCORD_TRACK = "0:a:3"
 DISCORD_COLORS = ["A", "B", "C"]
@@ -200,6 +201,9 @@ def refine_segments(
     refined: list[dict] = []
     filtered: list[dict] = []
     for segment in reattach_leading_punctuation(segments):
+        text = str(segment.get("text", ""))
+        if is_short_reaction(text) and any(marker in text for marker in EMPHASIS_MARKERS):
+            segment["emphasis"] = "shout"
         segment_filtered, segment_reasons = is_non_speech_candidate(segment["text"], segment["source_track"])
         split_parts = split_segment(
             segment,
@@ -244,7 +248,7 @@ def merge_transcripts(
                     "end": float(segment["end"]),
                     "speaker": speaker,
                     "text": text,
-                    "emphasis": "shout" if is_short_reaction(text) and any(mark in text for mark in ["!", "！", "?", "？"]) else segment.get("emphasis", "normal"),
+                    "emphasis": segment.get("emphasis", "normal"),
                     "position": "bottom",
                     "layout_row": 0,
                     "max_width": max_width_for_speaker(speaker),

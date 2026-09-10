@@ -111,7 +111,37 @@ class CraigPipelineTests(unittest.TestCase):
             self.assertEqual(len(segments), 1)
             self.assertEqual(segments[0]["speaker"], "Oz")
             self.assertEqual(segments[0]["source_file"], "1-speaker-a.flac")
+            self.assertTrue(segments[0]["source_stream_id"].startswith("audio-"))
             self.assertAlmostEqual(float(segments[0]["start"]), 1.25)
+
+    def test_build_craig_segments_uses_unique_source_ids_for_matching_file_names(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transcript_path = root / "transcript.json"
+            transcript_path.write_text(
+                json.dumps({"segments": [{"start": 0.0, "end": 1.0, "text": "字幕"}]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            first = build_craig_segments_for_transcript(
+                str(root / "a" / "1-speaker-a.flac"),
+                str(transcript_path),
+                {"speaker-a": "Oz"},
+                0.0,
+            )
+            second = build_craig_segments_for_transcript(
+                str(root / "b" / "1-speaker-a.flac"),
+                str(transcript_path),
+                {"speaker-a": "Oz"},
+                0.0,
+            )
+
+            self.assertEqual(first[0]["source_file"], second[0]["source_file"])
+            self.assertEqual(first[0]["source_track"], second[0]["source_track"])
+            self.assertNotEqual(first[0]["source_stream_id"], second[0]["source_stream_id"])
 
     def test_resolve_alignment_honors_explicit_track(self) -> None:
         import src.craig_pipeline as craig_pipeline

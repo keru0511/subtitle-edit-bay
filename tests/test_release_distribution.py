@@ -167,6 +167,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Get-CimInstance Win32_Process", smoke)
         self.assertIn("taskkill.exe /PID", smoke)
         self.assertIn("SILENT_MIGRATION_REJECTION", installer)
+        self.assertIn("if WizardSilent then", installer)
+        self.assertIn("validation runs again in PrepareToInstall", installer)
         self.assertIn("PostMessage(WizardForm.Handle, $0010, 0, 0)", installer)
         self.assertIn("Silent junction rejection did not record", smoke)
         self.assertIn("Normal launch did not report the setup failure", smoke)

@@ -255,8 +255,15 @@ begin
   ValidationError := MigrationSourceError;
   if ValidationError <> '' then
   begin
-    MsgBox(ValidationError, mbError, MB_OK);
-    Result := False;
+    if WizardSilent then
+      { Do not block a silent run with the interactive page error. The same
+        validation runs again in PrepareToInstall and terminates Setup. }
+      Result := True
+    else
+    begin
+      MsgBox(ValidationError, mbError, MB_OK);
+      Result := False;
+    end;
   end;
 end;
 

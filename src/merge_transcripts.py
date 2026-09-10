@@ -9,6 +9,7 @@ from .subtitle_packer import (
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
     pack_segment_pages,
 )
+from .subtitle_text_rules import reattach_leading_punctuation
 
 BOTTOM_MAX_WIDTH = 28
 OZ_MAX_WIDTH = 28
@@ -198,7 +199,7 @@ def refine_segments(
 ) -> tuple[list[dict], list[dict]]:
     refined: list[dict] = []
     filtered: list[dict] = []
-    for segment in segments:
+    for segment in reattach_leading_punctuation(segments):
         segment_filtered, segment_reasons = is_non_speech_candidate(segment["text"], segment["source_track"])
         split_parts = split_segment(
             segment,

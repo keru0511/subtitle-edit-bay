@@ -16,7 +16,7 @@ from src.burn_subs import (
     run_ffmpeg_burn,
     temporary_ass_path,
 )
-from src.merge_transcripts import assign_bottom_rows, merge_transcripts, speaker_for_track, split_segment
+from src.merge_transcripts import assign_bottom_rows, merge_transcripts, refine_segments, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
 from src.render_ass import (
@@ -1017,6 +1017,35 @@ class RenderAssTests(unittest.TestCase):
         parts = split_segment(segment)
         self.assertGreater(len(parts), 3)
         self.assertTrue(all((part["end"] - part["start"]) <= 3.6 for part in parts))
+
+    def test_refine_segments_reattaches_period_with_real_layout(self) -> None:
+        segments = [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "text": "○○だよね",
+                "speaker": "Oz",
+                "source_track": "craig:oz",
+                "source_speaker": "oz",
+                "max_width": 28,
+                "words": [{"word": "○○だよね", "start": 0.0, "end": 0.8}],
+            },
+            {
+                "start": 1.0,
+                "end": 2.0,
+                "text": "。○○なんだけど",
+                "speaker": "Oz",
+                "source_track": "craig:oz",
+                "source_speaker": "oz",
+                "max_width": 28,
+                "words": [{"word": "。○○なんだけど", "start": 1.0, "end": 1.8}],
+            },
+        ]
+
+        refined, filtered = refine_segments(segments)
+
+        self.assertEqual([item["text"] for item in refined], ["○○だよね。", "○○なんだけど"])
+        self.assertEqual(filtered, [])
 
     def test_split_segment_uses_word_timing_when_available(self) -> None:
         segment = {

@@ -263,6 +263,15 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := MigrationSourceError;
+  if (Result <> '') and WizardSilent then
+  begin
+    { A non-empty result leaves silent Setup waiting on the preparing page.
+      Queue a close so the result is first recorded as a preparation failure;
+      Inno Setup then exits with ecPrepareToInstallFailed without a dialog. }
+    Log('SILENT_MIGRATION_REJECTION: ' + Result);
+    if not PostMessage(WizardForm.Handle, $0010, 0, 0) then
+      RaiseException('Failed to terminate Setup after silent migration validation failure.');
+  end;
 end;
 
 function JsonEscape(Value: String): String;

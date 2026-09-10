@@ -131,6 +131,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
         package = (ROOT / "scripts" / "build_release_package.ps1").read_text(encoding="utf-8-sig")
         smoke = (ROOT / "scripts" / "test_installer.ps1").read_text(encoding="utf-8-sig")
+        installer = (ROOT / "installer" / "SubtitleEditBay.iss").read_text(encoding="utf-8-sig")
 
         self.assertIn("[string]$Version", build)
         self.assertIn("[string]$OutputPath", build)
@@ -165,6 +166,9 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("INSTALLER_DIAGNOSTICS", smoke)
         self.assertIn("Get-CimInstance Win32_Process", smoke)
         self.assertIn("taskkill.exe /PID", smoke)
+        self.assertIn("SILENT_MIGRATION_REJECTION", installer)
+        self.assertIn("PostMessage(WizardForm.Handle, $0010, 0, 0)", installer)
+        self.assertIn("Silent junction rejection did not record", smoke)
         self.assertIn("Normal launch did not report the setup failure", smoke)
         self.assertIn('if ($failed.status -ne "failed"', smoke)
         self.assertNotIn('status = "success"', smoke)

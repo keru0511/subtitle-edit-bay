@@ -148,6 +148,10 @@ $junctionInstall = Invoke-InstallerScenario -Name "junction-rejection" -LogPath 
     "/TASKS=legacymigration", "/LEGACYWORKSPACE=$junctionAlias", "/LOG=$junctionInstallLog"
 )
 if ($junctionInstall.ExitCode -eq 0) { throw "Installer accepted its destination through a junction alias." }
+$junctionLogText = Get-Content -LiteralPath $junctionInstallLog -Raw -ErrorAction Stop
+if ($junctionLogText -notmatch "SILENT_MIGRATION_REJECTION") {
+    throw "Silent junction rejection did not record its pre-install validation failure."
+}
 if ((Get-Content -LiteralPath $legacySentinel -Raw) -ne "unchanged") { throw "Installer changed legacy data before junction rejection." }
 if (Test-Path -LiteralPath (Join-Path $junctionDestination "src\gui.py")) { throw "Installer copied product files before junction rejection." }
 

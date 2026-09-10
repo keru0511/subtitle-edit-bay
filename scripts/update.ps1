@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$ArchiveUrl = "",
     [string]$ReleaseApiUrlOverride = "",
     [string]$ReleaseArchiveBaseUrlOverride = ""
@@ -184,7 +184,7 @@ function Update-GitCheckout {
     }
 
     Write-Host "Updating Git checkout..."
-    & git -C $projectRoot pull --ff-only
+    & git -C $projectRoot pull --no-rebase --ff-only
     if ($LASTEXITCODE -ne 0) {
         throw "git pull failed. Check the remote URL, authentication, and current branch, then try again."
     }

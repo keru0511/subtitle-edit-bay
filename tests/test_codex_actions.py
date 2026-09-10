@@ -222,6 +222,7 @@ class CodexActionTests(unittest.TestCase):
         confirmed_scope = ActionScope(
             "request-1",
             frozenset({"start_transcription"}),
+            project_revision=7,
             confirmed_actions=frozenset({"start_transcription"}),
         )
         confirmed = self.dispatcher.dispatch(
@@ -232,6 +233,33 @@ class CodexActionTests(unittest.TestCase):
         self.assertEqual(unconfirmed.code, "confirmation_required")
         self.assertEqual(confirmed.status.value, "success")
         self.assertEqual(confirmed.job["id"], "job-1")
+
+    def test_current_action_rejects_unbound_or_reused_confirmation_scope(self) -> None:
+        unbound = ActionScope(
+            "request-1",
+            frozenset({"start_transcription"}),
+            confirmed_actions=frozenset({"start_transcription"}),
+        )
+        missing_revision = self.dispatcher.dispatch(
+            request("execute", "start_transcription", {"mode": "replace"}, revision=7),
+            trusted_scope=unbound,
+        )
+
+        confirmed_at_seven = ActionScope(
+            "request-1",
+            frozenset({"start_transcription"}),
+            project_revision=7,
+            confirmed_actions=frozenset({"start_transcription"}),
+        )
+        self.backend.current_revision = 8
+        reused_after_edit = self.dispatcher.dispatch(
+            request("execute", "start_transcription", {"mode": "replace"}, revision=8),
+            trusted_scope=confirmed_at_seven,
+        )
+
+        self.assertEqual(missing_revision.code, "stale_revision")
+        self.assertEqual(reused_after_edit.code, "stale_revision")
+        self.assertEqual(self.backend.calls, [])
 
     def test_non_destructive_execute_returns_existing_job_reference(self) -> None:
         result = self.dispatcher.dispatch(
@@ -257,6 +285,114 @@ class CodexActionTests(unittest.TestCase):
 
 
 class GuiActionBackendTests(unittest.TestCase):
+    def test_subtitle_proposal_processing_state_does_not_reuse_normal_job_progress(self) -> None:
+        class SessionSnapshot:
+            state = "running"
+
+        class Session:
+            running = True
+            snapshot = SessionSnapshot()
+
+        class ProcessingProgress:
+            def __init__(self, status: str, value: float) -> None:
+                self.status = status
+                self.value = value
+
+            @staticmethod
+            def as_list() -> list[dict[str, Any]]:
+                return [{"id": "encode", "status": "completed"}]
+
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+            _codex_session = Session()
+
+            def __init__(self, normal_status: str, normal_progress: float) -> None:
+                self._processing_progress = ProcessingProgress(normal_status, normal_progress)
+
+        for normal_status, normal_progress in (("idle", 0.0), ("completed", 1.0)):
+            with self.subTest(normal_status=normal_status):
+                state = GuiActionBackend(GuiStub(normal_status, normal_progress)).inspect(
+                    "inspect_processing_state", {}
+                ).state
+
+                self.assertEqual(state["active_job"], "subtitle_proposal")
+                self.assertTrue(state["running"])
+                self.assertEqual(state["status"], "running")
+                self.assertIsNone(state["progress"])
+                self.assertFalse(state["progress_known"])
+                self.assertEqual(state["steps"], [])
+
+    def test_transcription_delegates_merge_and_replace_to_gui_integration(self) -> None:
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+            actionCapabilities = {"canTranscribe": True}
+            settings = {"device": "cpu"}
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[dict[str, Any], str]] = []
+
+            def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+                self.calls.append((settings, mode))
+                self._running = True
+                self._active_job = "transcribe"
+
+            def startTranscription(self, *_args: object) -> None:
+                raise AssertionError("Codex action bypassed transcribeProject")
+
+        for mode in ("merge", "replace"):
+            with self.subTest(mode=mode):
+                gui = GuiStub()
+                result = GuiActionBackend(gui).execute("start_transcription", {"mode": mode})
+
+                self.assertEqual(gui.calls, [({"device": "cpu"}, mode)])
+                self.assertEqual(result.job, {"type": "transcribe", "status": "running"})
+
+    def test_running_subtitle_proposal_rejects_new_request_without_restarting(self) -> None:
+        class Session:
+            running = True
+
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+            _codex_session = Session()
+
+            def __init__(self) -> None:
+                self.start_calls = 0
+
+            def startCodexEdit(self, *_args: object) -> None:
+                self.start_calls += 1
+
+        gui = GuiStub()
+        backend = GuiActionBackend(gui)
+        dispatcher = ActionDispatcher(backend)
+        scope = ActionScope(
+            "proposal-request",
+            frozenset({"propose_subtitle_edit"}),
+            project_revision=4,
+        )
+        result = dispatcher.dispatch(
+            request(
+                "propose",
+                "propose_subtitle_edit",
+                {"intent": "別の修正", "selection_scope": "all"},
+                revision=4,
+                scope_id="proposal-request",
+            ),
+            trusted_scope=scope,
+        )
+
+        self.assertEqual(result.code, "job_conflict")
+        self.assertEqual(gui.start_calls, 0)
+        self.assertTrue(gui._codex_session.running)
+
     def test_inspect_filters_local_paths_and_unknown_dispatch_is_rejected(self) -> None:
         class GuiStub:
             _project_revision = 4

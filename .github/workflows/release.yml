@@ -1,10 +1,10 @@
-name: Release Windows installer
+name: Promote verified Windows installer
 
 on:
   workflow_call:
     inputs:
-      source_sha:
-        description: "Exact approved commit to publish"
+      release_commit_sha:
+        description: "Exact approved merge commit to tag"
         required: true
         type: string
       release_version:
@@ -13,68 +13,37 @@ on:
         type: string
 
 concurrency:
-  group: release-${{ inputs.release_version }}-${{ inputs.source_sha }}
+  group: release-${{ inputs.release_version }}-${{ inputs.release_commit_sha }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  prepare:
-    name: Revalidate and prepare approved source
-    uses: ./.github/workflows/release-prepare.yml
-    with:
-      source_sha: ${{ inputs.source_sha }}
-      release_version: ${{ inputs.release_version }}
-
-  tag:
-    name: Create immutable release tag
-    needs: prepare
+  candidate:
+    name: Select and verify approved candidate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Check out exact source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 0
-      - name: Create or verify annotated tag
-        id: tag
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: |
-          set -euo pipefail
-          existing_tag="$(git ls-remote origin "refs/tags/$RELEASE_VERSION" | awk '{print $1}')"
-          existing_target="$(git ls-remote origin "refs/tags/$RELEASE_VERSION^{}" | awk '{print $1}')"
-          if [[ -n "$existing_tag" ]]; then
-            [[ -n "$existing_target" ]] || { echo "Existing release tag is not annotated." >&2; exit 1; }
-            [[ "$existing_target" == "$SOURCE_SHA" ]] || {
-              echo "Existing tag points to a different commit: $existing_target" >&2
-              exit 1
-            }
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$RELEASE_VERSION" "$SOURCE_SHA" -m "Release $RELEASE_VERSION"
-          git push origin "refs/tags/$RELEASE_VERSION"
-
-  publish:
-    name: Publish GitHub Release
-    needs:
-      - prepare
-      - tag
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: read
-      contents: write
+      contents: read
+      pull-requests: read
+    outputs:
+      artifact_id: ${{ steps.select.outputs.artifact_id }}
+      artifact_name: ${{ steps.select.outputs.artifact_name }}
+      artifact_digest: ${{ steps.select.outputs.artifact_digest }}
+      candidate_source_sha: ${{ steps.select.outputs.candidate_source_sha }}
+      workflow_run_id: ${{ steps.select.outputs.workflow_run_id }}
+      workflow_run_attempt: ${{ steps.select.outputs.workflow_run_attempt }}
+      ci_workflow_run_id: ${{ steps.select.outputs.ci_workflow_run_id }}
+      ci_workflow_run_attempt: ${{ steps.select.outputs.ci_workflow_run_attempt }}
+      ci_artifact_id: ${{ steps.select.outputs.ci_artifact_id }}
+      ci_artifact_digest: ${{ steps.select.outputs.ci_artifact_digest }}
+      pull_request_number: ${{ steps.select.outputs.pull_request_number }}
+      installer_sha256: ${{ steps.verify.outputs.installer_sha256 }}
+      promotion_artifact_name: ${{ steps.context.outputs.name }}
     steps:
-      - name: Check out publication tools
+      - name: Check out trusted publication tools
         uses: actions/checkout@v6
         with:
           ref: ${{ job.workflow_sha }}
@@ -85,20 +54,217 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-      - name: Download prepared installer
+      - name: Fix promotion decision identity
+        id: context
+        shell: bash
+        run: echo "name=release-promotion-${{ inputs.release_commit_sha }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Select or restore the final matching candidate
+        id: select
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py resolve
+          --repository "$GITHUB_REPOSITORY"
+          --release-commit-sha "${{ inputs.release_commit_sha }}"
+          --release-version "${{ inputs.release_version }}"
+          --current-run-id "${{ github.run_id }}"
+          --decision-artifact-name "${{ steps.context.outputs.name }}"
+          --decision-directory saved-promotion
+          --output selected-candidate.json
+          --github-output "$GITHUB_OUTPUT"
+      - name: Download the selected artifact by immutable identity
         id: download
-        uses: actions/download-artifact@v7
-        with:
-          name: ${{ needs.prepare.outputs.artifact_name }}
-          path: dist
-      - name: Verify prepared installer again
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ steps.select.outputs.artifact_id }}"
+          --artifact-digest "${{ steps.select.outputs.artifact_digest }}"
+          --destination dist
+          --expected-file SubtitleEditBay-Setup.exe
+          --expected-file SubtitleEditBay-Setup.exe.sha256
+          --expected-file SubtitleEditBay-Setup.exe.manifest.json
+          --expected-file release-preparation.json
+      - name: Download the CI validation identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ steps.select.outputs.ci_artifact_id }}"
+          --artifact-digest "${{ steps.select.outputs.ci_artifact_digest }}"
+          --destination ci-identity
+          --expected-file ci-validation-identity.json
+      - name: Verify candidate bytes and provenance
         id: verify
         shell: bash
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ steps.select.outputs.candidate_source_sha }}
+        run: |
+          set -euo pipefail
+          python release-tools/scripts/release_contract.py verify-artifacts \
+            --directory dist \
+            --expected-version "${{ inputs.release_version }}" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+          python release-tools/scripts/release_candidate.py verify-preparation \
+            --candidate selected-candidate.json \
+            --preparation dist/release-preparation.json
+          python release-tools/scripts/release_candidate.py verify-ci-validation \
+            --candidate selected-candidate.json \
+            --identity ci-identity/ci-validation-identity.json
+          installer_sha256="$(sha256sum dist/SubtitleEditBay-Setup.exe | awk '{print $1}')"
+          echo "installer_sha256=$installer_sha256" >> "$GITHUB_OUTPUT"
+          python release-tools/scripts/release_candidate.py write-promotion \
+            --candidate selected-candidate.json \
+            --installer-sha256 "$installer_sha256" \
+            --output expected-release-promotion.json
+          if [[ "${{ steps.select.outputs.decision_reused }}" == "true" ]]; then
+            python release-tools/scripts/release_candidate.py verify-promotion \
+              --actual saved-promotion/release-promotion.json \
+              --expected expected-release-promotion.json
+            cp saved-promotion/release-promotion.json release-promotion.json
+          else
+            mv expected-release-promotion.json release-promotion.json
+          fi
+      - name: Upload promotion record
+        if: steps.select.outputs.decision_reused != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.context.outputs.name }}
+          path: |
+            selected-candidate.json
+            release-promotion.json
+          if-no-files-found: error
+          retention-days: 14
+
+  tag:
+    name: Create immutable release tag
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_commit_sha }}
+          fetch-depth: 0
+      - name: Create or verify annotated tag
+        id: tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          RELEASE_COMMIT_SHA: ${{ inputs.release_commit_sha }}
+        run: |
+          set -euo pipefail
+          existing_tag="$(git ls-remote origin "refs/tags/$RELEASE_VERSION" | awk '{print $1}')"
+          existing_target="$(git ls-remote origin "refs/tags/$RELEASE_VERSION^{}" | awk '{print $1}')"
+          if [[ -n "$existing_tag" ]]; then
+            [[ -n "$existing_target" ]] || { echo "Existing release tag is not annotated." >&2; exit 1; }
+            [[ "$existing_target" == "$RELEASE_COMMIT_SHA" ]] || {
+              echo "Existing tag points to a different commit: $existing_target" >&2
+              exit 1
+            }
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$RELEASE_VERSION" "$RELEASE_COMMIT_SHA" -m "Release $RELEASE_VERSION"
+          git push origin "refs/tags/$RELEASE_VERSION"
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - candidate
+      - tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out trusted publication tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: release-tools
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Download selected candidate bytes
+        id: download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
-          python release-tools/scripts/release_contract.py verify-artifacts
-          --directory dist
-          --expected-version "${{ inputs.release_version }}"
-          --expected-source-sha "${{ inputs.source_sha }}"
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ needs.candidate.outputs.artifact_id }}"
+          --artifact-digest "${{ needs.candidate.outputs.artifact_digest }}"
+          --destination dist
+          --expected-file SubtitleEditBay-Setup.exe
+          --expected-file SubtitleEditBay-Setup.exe.sha256
+          --expected-file SubtitleEditBay-Setup.exe.manifest.json
+          --expected-file release-preparation.json
+      - name: Download frozen promotion decision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-run-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "${{ github.run_id }}"
+          --artifact-name "${{ needs.candidate.outputs.promotion_artifact_name }}"
+          --destination promotion
+          --expected-file selected-candidate.json
+          --expected-file release-promotion.json
+      - name: Download frozen CI validation identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python release-tools/scripts/release_candidate.py download-artifact
+          --repository "$GITHUB_REPOSITORY"
+          --artifact-id "${{ needs.candidate.outputs.ci_artifact_id }}"
+          --artifact-digest "${{ needs.candidate.outputs.ci_artifact_digest }}"
+          --destination ci-identity
+          --expected-file ci-validation-identity.json
+      - name: Verify selected installer again
+        id: verify
+        shell: bash
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ needs.candidate.outputs.candidate_source_sha }}
+          INSTALLER_SHA256: ${{ needs.candidate.outputs.installer_sha256 }}
+        run: |
+          set -euo pipefail
+          python release-tools/scripts/release_contract.py verify-artifacts \
+            --directory dist \
+            --expected-version "${{ inputs.release_version }}" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+          python release-tools/scripts/release_candidate.py verify-preparation \
+            --candidate promotion/selected-candidate.json \
+            --preparation dist/release-preparation.json
+          python release-tools/scripts/release_candidate.py verify-ci-validation \
+            --candidate promotion/selected-candidate.json \
+            --identity ci-identity/ci-validation-identity.json
+          actual_sha256="$(sha256sum dist/SubtitleEditBay-Setup.exe | awk '{print $1}')"
+          [[ "$actual_sha256" == "$INSTALLER_SHA256" ]] || { echo "Installer changed after candidate verification." >&2; exit 1; }
+          python release-tools/scripts/release_candidate.py write-promotion \
+            --candidate promotion/selected-candidate.json \
+            --installer-sha256 "$actual_sha256" \
+            --output expected-release-promotion.json
+          python release-tools/scripts/release_candidate.py verify-promotion \
+            --actual promotion/release-promotion.json \
+            --expected expected-release-promotion.json
+          cp promotion/release-promotion.json dist/release-promotion.json
       - name: Inspect existing GitHub Release
         id: state
         shell: bash
@@ -115,37 +281,58 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           assets=(
-            "dist/SubtitleEditBay-Setup.exe"
-            "dist/SubtitleEditBay-Setup.exe.sha256"
-            "dist/SubtitleEditBay-Setup.exe.manifest.json"
-            "dist/release-preparation.json"
+            "SubtitleEditBay-Setup.exe"
+            "SubtitleEditBay-Setup.exe.sha256"
+            "SubtitleEditBay-Setup.exe.manifest.json"
+            "release-preparation.json"
+            "release-promotion.json"
           )
-          if [[ "${{ steps.state.outputs.action }}" != "create" ]]; then
+          asset_paths=()
+          for asset in "${assets[@]}"; do asset_paths+=("dist/$asset"); done
+          if [[ "${{ steps.state.outputs.action }}" == "create" ]]; then
+            gh release create "$RELEASE_VERSION" "${asset_paths[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Subtitle Edit Bay ${RELEASE_VERSION#v}" \
+              --generate-notes
+          else
             mkdir existing-release
-            gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir existing-release
-            python release-tools/scripts/release_contract.py verify-artifacts \
-              --directory existing-release \
-              --expected-version "${RELEASE_VERSION#v}" \
-              --expected-source-sha "$SOURCE_SHA"
-            cmp dist/SubtitleEditBay-Setup.exe.sha256 existing-release/SubtitleEditBay-Setup.exe.sha256
+            gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' > existing-assets.txt
+            mapfile -t existing_asset_names < existing-assets.txt
+            for existing_asset in "${existing_asset_names[@]}"; do
+              expected=false
+              for asset in "${assets[@]}"; do
+                if [[ "$existing_asset" == "$asset" ]]; then expected=true; break; fi
+              done
+              [[ "$expected" == true ]] || { echo "Release has unexpected asset: $existing_asset" >&2; exit 1; }
+            done
+            if [[ "${#existing_asset_names[@]}" -gt 0 ]]; then
+              gh release download "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir existing-release
+            fi
+            missing=()
+            for asset in "${assets[@]}"; do
+              if [[ -f "existing-release/$asset" ]]; then
+                cmp "dist/$asset" "existing-release/$asset"
+              else
+                missing+=("dist/$asset")
+              fi
+            done
             if [[ "${{ steps.state.outputs.action }}" == "reuse" ]]; then
+              [[ "${#missing[@]}" -eq 0 ]] || { echo "Published release is missing required assets." >&2; exit 1; }
               echo "An identical published release already exists; no assets were overwritten."
             elif [[ "${{ steps.state.outputs.action }}" == "publish-draft" ]]; then
+              if [[ "${#missing[@]}" -gt 0 ]]; then
+                gh release upload "$RELEASE_VERSION" "${missing[@]}" --repo "$GITHUB_REPOSITORY"
+              fi
               gh release edit "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
             else
               echo "Unexpected existing release action: ${{ steps.state.outputs.action }}" >&2
               exit 1
             fi
-          else
-            gh release create "$RELEASE_VERSION" "${assets[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --title "Subtitle Edit Bay ${RELEASE_VERSION#v}" \
-              --generate-notes
           fi
       - name: Require published GitHub Release
         id: published

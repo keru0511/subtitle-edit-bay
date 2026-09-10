@@ -80,12 +80,13 @@ jobs:
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
   release:
-    name: Prepare and publish exact merge
+    name: Promote candidate for exact merge
     needs: validate
     uses: ./.github/workflows/release.yml
     permissions:
       actions: read
       contents: write
+      pull-requests: read
     with:
-      source_sha: ${{ needs.validate.outputs.source_sha }}
+      release_commit_sha: ${{ needs.validate.outputs.source_sha }}
       release_version: ${{ needs.validate.outputs.release_version }}

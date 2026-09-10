@@ -16,6 +16,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
+# PySide6 exposes typing.Self on Python 3.10. Initialize the optional backport
+# first so PyTorch keeps its compatible Self implementation when WhisperX is
+# installed. Lightweight development/test environments may omit it.
+try:
+    from typing_extensions import Self as _TypingSelf  # noqa: F401
+except ImportError:  # pragma: no cover - release runtimes always lock it
+    _TypingSelf = None  # type: ignore[assignment]
+
 from PySide6.QtCore import (
     Property,
     QAbstractListModel,
@@ -72,7 +80,7 @@ from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
-from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
+from .gui_base import APP_TITLE, LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
 from .editor_workspace import (
     EditModeCapabilities,
@@ -4496,6 +4504,17 @@ def main() -> None:
         component="qml",
         stage="READY",
     )
+    smoke_result_path = os.environ.get("SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT", "").strip()
+    if smoke_result_path:
+        smoke_result = {
+            **resolve_application_info(),
+            "qmlLoaded": True,
+            "entrypoint": "SubtitleEditBayLauncher.exe",
+        }
+        Path(smoke_result_path).write_text(
+            json.dumps(smoke_result, ensure_ascii=False), encoding="utf-8"
+        )
+        QTimer.singleShot(0, app.quit)
     app.aboutToQuit.connect(
         lambda: app._record_log(
             "アプリケーションを終了します",

@@ -3476,6 +3476,41 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
+    def test_main_progress_stop_stays_clickable_beside_codex_drawer(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+
+        self.app._processing_progress.start("render")
+        self.app._running = True
+        self.app.progressDetailsChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.activeJobChanged.emit()
+        self.app.processEvents()
+
+        self.assertEqual(window.property("activeOverlay"), "")
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        progress = self._quick_item(window, "processingProgressOverlay")
+        self.assertTrue(sidebar.isVisible())
+        self.assertTrue(progress.isVisible())
+        progress_right = progress.mapToScene(QPointF(progress.width(), 0)).x()
+        sidebar_left = sidebar.mapToScene(QPointF(0, 0)).x()
+        self.assertLessEqual(progress_right, sidebar_left)
+
+        progress_panel = self._quick_item(window, "processingProgressPanel")
+        process_stop = self._quick_visual_item(progress_panel, "processingProgressStopButton")
+        self.assertTrue(process_stop.isVisible())
+        with patch.object(self.app, "cancelProcessing") as stop_process:
+            self._click(window, process_stop)
+        stop_process.assert_called_once_with()
+
     def test_short_mode_keeps_progress_controls_visible_during_export(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -3777,6 +3812,150 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertEqual(self.app.status, "ショート動画を書き出しています")
         self.assertEqual(self.app.stage, "ENCODE")
+
+    def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        login_route = self._quick_item(window, "codexLoginRoute")
+
+        self.assertFalse(sidebar.isVisible())
+        self.assertTrue(login_route.isVisible())
+
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+            thread_id="thread-249",
+            selected_model="gpt-test",
+            messages=({"role": "user", "text": "keep this conversation"},),
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self.app.processEvents()
+
+        self.assertTrue(sidebar.isVisible())
+        self.assertFalse(login_route.isVisible())
+        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(self.app._codex_chat.snapshot.thread_id, "thread-249")
+
+        self.assertTrue(window.setProperty("activeOverlay", "editor"))
+        self.app.processEvents()
+        editor_page = self._quick_item(window, "editorPage")
+        editor_back = self._quick_item(window, "editorBackButton")
+        self.assertTrue(editor_page.isVisible())
+        self.assertLess(
+            login_route.mapToScene(QPointF(0, 0)).x(),
+            editor_back.mapToScene(QPointF(0, 0)).x(),
+        )
+        self.assertTrue(sidebar.isVisible())
+        self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
+        self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
+
+        self.assertTrue(window.setProperty("activeOverlay", "short"))
+        self.app.processEvents()
+        self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
+        self.assertTrue(sidebar.isVisible())
+        self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
+
+        self.assertTrue(window.setProperty("activeOverlay", ""))
+        self.app.processEvents()
+        self.assertFalse(self._quick_item(window, "shortModePage").isVisible())
+        self.assertTrue(self._quick_item(window, "mainWorkspace").isVisible())
+        unauthenticated = CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated")
+        self.app._codex_chat._snapshot = unauthenticated
+        self.app._on_codex_chat_state(unauthenticated)
+        self.app.processEvents()
+        self.assertFalse(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 0)
+        self.assertTrue(login_route.isVisible())
+
+    def test_codex_drawer_does_not_block_back_navigation_at_minimum_width(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self.app.processEvents()
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        self.assertTrue(sidebar.isVisible())
+        self._click(window, self._quick_item(window, "codexDrawerCloseButton"))
+        self.assertFalse(sidebar.isVisible())
+        self.assertTrue(self._quick_item(window, "codexDrawerToggle").isVisible())
+
+        editor_back = self._quick_item(window, "editorBackButton")
+        self._click(window, editor_back)
+        self.assertFalse(self._quick_item(window, "editorPage").isVisible())
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self._click(window, self._quick_item(window, "codexDrawerToggle"))
+        self.assertTrue(sidebar.isVisible())
+        self.assertFalse(self._quick_item(window, "codexDrawerToggle").isVisible())
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        self.assertFalse(self._quick_item(window, "editorPage").isVisible())
+
+    def test_progress_and_codex_controls_remain_clickable_together(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        self.app._processing_progress.start("render_short")
+        self.app._running = True
+        self.app.progressDetailsChanged.emit()
+        self.app.runningChanged.emit()
+        self.app.activeJobChanged.emit()
+        self.app.processEvents()
+
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        progress = self._quick_item(window, "processingProgressModeOverlay")
+        self.assertTrue(sidebar.isVisible())
+        self.assertTrue(progress.isVisible())
+        progress_right = progress.mapToScene(QPointF(progress.width(), 0)).x()
+        sidebar_left = sidebar.mapToScene(QPointF(0, 0)).x()
+        self.assertLessEqual(progress_right, sidebar_left)
+
+        chat_input = self._quick_item(window, "codexChatInput")
+        chat_send = self._quick_item(window, "codexChatSendButton")
+        chat_input.setProperty("text", "進捗中も送信できる")
+        self.app.processEvents()
+        with patch.object(self.app, "sendCodexChatMessage") as send:
+            self._click(window, chat_send)
+        send.assert_called_once_with("進捗中も送信できる")
+
+        streaming = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+            chat_state="streaming",
+            messages=({"role": "assistant", "text": "応答中", "status": "streaming"},),
+        )
+        self.app._codex_chat._snapshot = streaming
+        self.app._on_codex_chat_state(streaming)
+        self.app.processEvents()
+        with patch.object(self.app, "stopCodexChat") as stop_chat:
+            self._click(window, self._quick_item(window, "codexChatStopButton"))
+        stop_chat.assert_called_once_with()
+
+        progress_panel = self._quick_item(window, "processingProgressModePanel")
+        process_stop = self._quick_visual_item(progress_panel, "processingProgressStopButton")
+        with patch.object(self.app, "cancelProcessing") as stop_process:
+            self._click(window, process_stop)
+        stop_process.assert_called_once_with()
 
     def test_codex_model_persistence_does_not_replace_workflow_status(self) -> None:
         self.app._settings["codex_model"] = ""
@@ -5020,6 +5199,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_followup_transcription_preserves_project_settings_for_merge_and_replace(self) -> None:
         project_path = self._load_project()
+        self.assertTrue(self.app.addCut(10.0, 12.0))
         project = self.app._project
         assert project is not None
         project["audio_mix"] = {
@@ -5085,6 +5265,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                     saved = load_project(custom_project_path)
                     self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
                     self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                    self.assertEqual(saved["timeline"], preserved["timeline"])
                     self.assertEqual(saved["short_video"], preserved["short_video"])
                     self.assertEqual(saved["transcription"], {"engine": "new-engine"})
                     expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}

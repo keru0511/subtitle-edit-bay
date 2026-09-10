@@ -16,6 +16,114 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_signing_uses_verifier_exceptions_not_stale_last_exit_code(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            binary = root / "signed-candidate.exe"
+            binary.write_bytes(b"test binary")
+            harness = root / "signing-contract.ps1"
+            signer = str(ROOT / "scripts" / "sign_windows_artifacts.ps1").replace("'", "''")
+            escaped_binary = str(binary).replace("'", "''")
+            harness.write_text(
+                "$ErrorActionPreference = 'Stop'\n"
+                "$rsa = [Security.Cryptography.RSA]::Create(2048)\n"
+                "$subject = [Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Subtitle Edit Bay')\n"
+                "$request = [Security.Cryptography.X509Certificates.CertificateRequest]::new("
+                "$subject, $rsa, [Security.Cryptography.HashAlgorithmName]::SHA256, "
+                "[Security.Cryptography.RSASignaturePadding]::Pkcs1)\n"
+                "$now = [DateTimeOffset]::Now\n"
+                "$global:testCertificate = $request.CreateSelfSigned($now.AddDays(-1), $now.AddDays(1))\n"
+                "$password = 'test-only-password'\n"
+                "$env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = [Convert]::ToBase64String("
+                "$global:testCertificate.Export([Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $password))\n"
+                "$env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $password\n"
+                "function global:Set-AuthenticodeSignature {\n"
+                "    param($LiteralPath, $Certificate, $HashAlgorithm, $TimestampServer)\n"
+                "    [PSCustomObject]@{ Status = 'Valid'; StatusMessage = '' }\n"
+                "}\n"
+                "function global:Get-AuthenticodeSignature {\n"
+                "    param($LiteralPath)\n"
+                "    [PSCustomObject]@{ Status = 'Valid'; StatusMessage = ''; "
+                "SignerCertificate = $global:testCertificate; TimeStamperCertificate = [PSCustomObject]@{} }\n"
+                "}\n"
+                "try {\n"
+                "    foreach ($priorExitCode in @($null, 0, 23)) {\n"
+                "        $global:LASTEXITCODE = $priorExitCode\n"
+                f"        & '{signer}' -Path '{escaped_binary}' -ExpectedSignerSubject 'CN=Subtitle Edit Bay'\n"
+                "    }\n"
+                "    function global:Get-AuthenticodeSignature { throw 'synthetic verification failure' }\n"
+                "    $verificationFailed = $false\n"
+                "    try {\n"
+                f"        & '{signer}' -Path '{escaped_binary}' -ExpectedSignerSubject 'CN=Subtitle Edit Bay'\n"
+                "    } catch {\n"
+                "        if ($_.Exception.Message -like '*synthetic verification failure*') { "
+                "$verificationFailed = $true } else { throw }\n"
+                "    }\n"
+                "    if (-not $verificationFailed) { throw 'Verifier exception did not propagate.' }\n"
+                "} finally {\n"
+                "    $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 = $null\n"
+                "    $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $null\n"
+                "    if ($global:testCertificate) { $global:testCertificate.Dispose() }\n"
+                "    if ($rsa) { $rsa.Dispose() }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(harness),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_signer_subject_identity_rejects_a_containing_subject(self) -> None:
+        powershell = self._require_windows_powershell()
+        helper = ROOT / "scripts" / "windows_signing_identity.ps1"
+        escaped_helper = str(helper).replace("'", "''")
+        command = (
+            f". '{escaped_helper}'; "
+            "$trusted = [PSCustomObject]@{ SubjectName = "
+            "[Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Subtitle Edit Bay') }; "
+            "Assert-ExactCertificateSubject -Certificate $trusted -ExpectedSubject 'CN=Subtitle Edit Bay'; "
+            "$containing = [PSCustomObject]@{ SubjectName = "
+            "[Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Untrusted Subtitle Edit Bay') }; "
+            "$rejected = $false; try { Assert-ExactCertificateSubject -Certificate $containing "
+            "-ExpectedSubject 'CN=Subtitle Edit Bay' } catch { $rejected = $true }; "
+            "if (-not $rejected) { throw 'Containing signer subject was accepted.' }"
+        )
+        result = subprocess.run(
+            [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_gui_initializes_typing_extensions_before_pyside(self) -> None:
+        gui = (ROOT / "src" / "gui.py").read_text(encoding="utf-8")
+
+        self.assertLess(gui.index("from typing_extensions import Self"), gui.index("from PySide6.QtCore import"))
+
     def _require_windows_git(self) -> str:
         executable = shutil.which("git.exe")
         if executable:
@@ -40,12 +148,25 @@ class WindowsLauncherTests(unittest.TestCase):
                 return str(candidate.resolve())
         self.fail("Windows PowerShell is required")
 
-    def _seed_installer_distribution(self, install: Path) -> None:
+    def _seed_installer_distribution(self, install: Path, restart_marker: Path) -> None:
         (install / "scripts").mkdir(parents=True)
         (install / "src").mkdir()
         (install / ".gui").mkdir()
+        (install / ".venv").mkdir()
         (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
-        (install / "scripts" / "launch.ps1").write_text("old launcher", encoding="utf-8")
+        escaped_marker = str(restart_marker).replace("'", "''")
+        (install / "scripts" / "launch.ps1").write_text(
+            f"[IO.File]::WriteAllText('{escaped_marker}', 'started') # old launcher\n",
+            encoding="utf-8",
+        )
+        (install / "scripts" / "setup.ps1").write_text(
+            "New-Item -ItemType Directory -Path '.venv' -Force | Out-Null\n"
+            "[IO.File]::WriteAllText('.venv\\new-runtime.txt', 'new runtime')\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        (install / "scripts" / "validate_runtime.ps1").write_text("exit 0\n", encoding="utf-8")
+        (install / ".venv" / "old-runtime.txt").write_text("old runtime", encoding="utf-8")
         (install / "src" / "app.py").write_text("old app", encoding="utf-8")
         (install / ".gui" / "runtime_config.json").write_text("old gui", encoding="utf-8")
 
@@ -67,37 +188,42 @@ class WindowsLauncherTests(unittest.TestCase):
         powershell: str,
         package: Path,
         install: Path,
-        restart_executable: Path,
         result_path: Path,
+        parent_pid: int = -1,
         expected_version: str = "v9.9.9",
         expected_sha256: str | None = None,
+        test_fault_point: str | None = None,
+        test_fault_marker: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         digest = expected_sha256 or hashlib.sha256(package.read_bytes()).hexdigest()
+        arguments = [
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT / "scripts" / "apply_installer_update.ps1"),
+            "-PackagePath",
+            str(package),
+            "-ParentPid",
+            str(parent_pid),
+            "-InstallRoot",
+            str(install),
+            "-ExpectedVersion",
+            expected_version,
+            "-ExpectedSha256",
+            digest,
+            "-ResultPath",
+            str(result_path),
+        ]
+        if test_fault_point:
+            arguments.extend(["-TestFaultPoint", test_fault_point])
+        if test_fault_marker:
+            arguments.extend(["-TestFaultMarkerPath", str(test_fault_marker)])
         return subprocess.run(
-            [
-                powershell,
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "apply_installer_update.ps1"),
-                "-PackagePath",
-                str(package),
-                "-ParentPid",
-                "-1",
-                "-InstallRoot",
-                str(install),
-                "-RestartExecutable",
-                str(restart_executable),
-                "-ExpectedVersion",
-                expected_version,
-                "-ExpectedSha256",
-                digest,
-                "-ResultPath",
-                str(result_path),
-            ],
+            arguments,
             cwd=install,
             capture_output=True,
             text=True,
@@ -106,12 +232,10 @@ class WindowsLauncherTests(unittest.TestCase):
             timeout=30,
         )
 
-    def _write_restart_command(self, command: Path, marker: Path) -> None:
-        escaped_marker = str(marker).replace("%", "%%")
-        command.write_text(
-            f'@echo off\r\n> "{escaped_marker}" echo started\r\nexit /b 0\r\n',
-            encoding="utf-8",
-        )
+    def _wait_for_path(self, path: Path, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
 
     def _run_git(self, git: str, *arguments: str | Path, cwd: Path) -> str:
         result = subprocess.run(
@@ -245,8 +369,8 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn(r"Sysnative\WindowsPowerShell\v1.0\powershell.exe", launcher)
         self.assertIn(r"System32\WindowsPowerShell\v1.0\powershell.exe", launcher)
         self.assertIn('"%POWERSHELL_EXE%"', launcher)
-        self.assertIn('"Python.Python.3.10"', setup)
-        self.assertIn('"Gyan.FFmpeg"', setup)
+        self.assertIn("$runtimeContract.python.winget_package", setup)
+        self.assertIn("$runtimeContract.ffmpeg.winget_package", setup)
         self.assertIn("-m pip install", setup)
         self.assertIn("check_runtime_dependencies", setup)
         self.assertIn('Get-Command "nvidia-smi.exe"', setup)
@@ -259,14 +383,59 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertIn("PyTorch CUDA runtime:", setup)
         self.assertIn("PyTorch CUDA available:", setup)
         self.assertIn("changed unavailable CUDA selection to cpu/int8", setup)
-        self.assertIn("https://download.pytorch.org/whl/cu128", setup)
-        self.assertIn('$whisperXVersion = "3.8.6"', setup)
-        self.assertIn('$torchVersion = "2.8.0"', setup)
-        self.assertIn("--force-reinstall", setup)
-        self.assertIn("--no-deps", setup)
+        self.assertIn("runtime\\runtime-contract.json", setup)
+        self.assertIn("--require-hashes", setup)
+        self.assertIn(".local\\runtimes", setup)
+        self.assertNotIn("Move-Item -LiteralPath $stagingVenv", setup)
+        self.assertIn("Set-ActiveRuntimeGeneration", setup)
+        self.assertIn("runtime-manifest.json", setup)
+        self.assertIn("verify-tools", setup)
+        self.assertNotIn('pip install -r "requirements.txt"', setup)
         self.assertIn("-m pip check", setup)
         self.assertIn('$ErrorActionPreference = "Continue"', setup)
         self.assertIn('$PSDefaultParameterValues["*:ErrorAction"] = "Stop"', setup)
+        self.assertIn('$ProfileContract.PSObject.Properties["extra_index_url"]', setup)
+        self.assertNotIn("$profileContract.extra_index_url", setup)
+        setup_state = (ROOT / "scripts" / "setup_state.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("Set-StrictMode", setup_state)
+
+        launch = (ROOT / "installer" / "launch.ps1").read_text(encoding="utf-8")
+        self.assertIn("Resolve-ActiveRuntimeDirectory", launch)
+        self.assertIn("runtime_directory", launch)
+        self.assertIn("Show-SetupFailure", launch)
+        self.assertEqual(launch.count("Show-SetupFailure; exit $exitCode"), 2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_cpu_install_arguments_allow_missing_optional_extra_index_without_test_hook(self) -> None:
+        powershell = self._require_windows_powershell()
+        environment = os.environ.copy()
+        environment.pop("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", None)
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "scripts" / "setup.ps1"),
+                "-ProbeCpuInstallArgumentsOnly",
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertIn("--require-hashes", arguments)
+        self.assertIn("--index-url", arguments)
+        self.assertIn("-r", arguments)
+        self.assertNotIn("--extra-index-url", arguments)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
@@ -326,10 +495,17 @@ class WindowsLauncherTests(unittest.TestCase):
             scripts.mkdir(parents=True)
             launch_script = scripts / "launch.ps1"
             shutil.copy2(ROOT / "installer" / "launch.ps1", launch_script)
+            shutil.copy2(ROOT / "scripts" / "setup_state.ps1", scripts / "setup_state.ps1")
             outside = Path(temp_dir) / "unrelated working directory"
             outside.mkdir()
             config_path = root / ".gui" / "runtime_config.json"
             config_path.parent.mkdir(parents=True)
+            (root / "VERSION").write_text("1.2.3\n", encoding="ascii")
+            (root / ".local").mkdir()
+            (root / ".local" / "setup-status.json").write_text(
+                json.dumps({"schema_version": 1, "status": "success", "app_version": "1.2.3"}),
+                encoding="utf-8",
+            )
             (root / "assets").mkdir()
             (root / "src").mkdir()
             (root / "src" / "__init__.py").write_text("", encoding="ascii")
@@ -353,7 +529,12 @@ class WindowsLauncherTests(unittest.TestCase):
             environment["Path"] = inherited_path
 
             def run_launcher(
-                *, device: str, python: Path, pythonw: Path = gui, use_default_config: bool = False
+                *,
+                device: str,
+                python: Path,
+                pythonw: Path = gui,
+                use_default_config: bool = False,
+                expected_returncode: int = 0,
             ) -> None:
                 setup_marker.unlink(missing_ok=True)
                 gui_marker.unlink(missing_ok=True)
@@ -394,7 +575,7 @@ class WindowsLauncherTests(unittest.TestCase):
                     errors="replace",
                     timeout=15,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
 
             run_launcher(device="cuda", python=unavailable_python)
             deadline = time.monotonic() + 5
@@ -424,7 +605,12 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertTrue(setup_marker.is_file())
             self.assertFalse(gui_marker.exists())
 
-            run_launcher(device="cpu", python=unavailable_python, pythonw=root / "missing pythonw.exe")
+            run_launcher(
+                device="cpu",
+                python=unavailable_python,
+                pythonw=root / "missing pythonw.exe",
+                expected_returncode=1,
+            )
             deadline = time.monotonic() + 5
             while not setup_marker.exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
@@ -437,7 +623,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 "raise SystemExit(23)\n",
                 encoding="utf-8",
             )
-            run_launcher(device="cpu", python=unavailable_python)
+            run_launcher(device="cpu", python=unavailable_python, expected_returncode=23)
             self.assertFalse(setup_marker.exists())
             self.assertFalse(gui_marker.exists())
             self.assertIn(
@@ -985,17 +1171,17 @@ class WindowsLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             install = base / "Subtitle Edit Bay"
-            self._seed_installer_distribution(install)
             restart_marker = base / "restart-marker.txt"
-            restart_executable = install / "restart.cmd"
-            self._write_restart_command(restart_executable, restart_marker)
+            self._seed_installer_distribution(install, restart_marker)
+            escaped_restart_marker = str(restart_marker).replace("'", "''")
 
             fake_installer = self._write_fake_installer(
                 base,
                 powershell,
                 "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'installer-arguments.txt'), ($args -join \"`n\"))\n"
                 "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
-                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), 'new launcher')\n"
+                f"[IO.File]::WriteAllText((Join-Path $root 'scripts\\launch.ps1'), \"[IO.File]::WriteAllText('{escaped_restart_marker}', 'started')\")\n"
                 "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
                 "[IO.File]::WriteAllText((Join-Path $root 'src\\new.py'), 'new file')\n"
                 "exit 0\n",
@@ -1005,7 +1191,6 @@ class WindowsLauncherTests(unittest.TestCase):
                 powershell=powershell,
                 package=fake_installer,
                 install=install,
-                restart_executable=restart_executable,
                 result_path=result_path,
             )
 
@@ -1015,7 +1200,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 time.sleep(0.05)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9")
-            self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "new launcher")
+            self.assertIn("WriteAllText", (install / "scripts" / "launch.ps1").read_text(encoding="utf-8"))
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "new app")
             self.assertEqual((install / "src" / "new.py").read_text(encoding="utf-8"), "new file")
             self.assertEqual((install / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
@@ -1023,8 +1208,16 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertEqual(update_result["status"], "success", update_result)
             self.assertEqual(update_result["old_version"], "v0.1.0", update_result)
             self.assertEqual(update_result["new_version"], "v9.9.9", update_result)
-            self.assertEqual(update_result["restart_mode"], "native", update_result)
-            self.assertEqual(Path(update_result["log"]).resolve(), result_path.resolve())
+            self.assertEqual(update_result["restart_mode"], "powershell", update_result)
+            installer_arguments = (install / "installer-arguments.txt").read_text(encoding="utf-8")
+            self.assertIn("/DIR=", installer_arguments)
+            self.assertIn(str(install), installer_arguments)
+            self.assertIn("/LOG=", installer_arguments)
+            self.assertTrue(Path(update_result["log"]).is_file())
+            self.assertTrue(Path(update_result["setup_log"]).is_file())
+            self.assertNotEqual(Path(update_result["log"]).resolve(), result_path.resolve())
+            self.assertTrue((install / ".venv" / "new-runtime.txt").is_file())
+            self.assertFalse((install / ".venv" / "old-runtime.txt").exists())
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_installer_helper_rejects_checksum_before_starting_installer(self) -> None:
@@ -1032,11 +1225,9 @@ class WindowsLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             install = base / "distribution"
-            self._seed_installer_distribution(install)
             installer_marker = base / "installer-started.txt"
             restart_marker = base / "restart-marker.txt"
-            restart_executable = install / "restart.cmd"
-            self._write_restart_command(restart_executable, restart_marker)
+            self._seed_installer_distribution(install, restart_marker)
 
             escaped_marker = str(installer_marker).replace("%", "%%")
             fake_installer = base / "fake-installer.cmd"
@@ -1049,7 +1240,6 @@ class WindowsLauncherTests(unittest.TestCase):
                 powershell=powershell,
                 package=fake_installer,
                 install=install,
-                restart_executable=restart_executable,
                 result_path=result_path,
                 expected_sha256="0" * 64,
             )
@@ -1057,7 +1247,8 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertFalse(installer_marker.exists(), update_result)
-            self.assertFalse(restart_marker.exists(), update_result)
+            self._wait_for_path(restart_marker)
+            self.assertTrue(restart_marker.exists(), update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertNotEqual(update_result["status"], "success", update_result)
@@ -1069,10 +1260,8 @@ class WindowsLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             install = base / "distribution"
-            self._seed_installer_distribution(install)
             restart_marker = base / "restart-marker.txt"
-            restart_executable = install / "restart.cmd"
-            self._write_restart_command(restart_executable, restart_marker)
+            self._seed_installer_distribution(install, restart_marker)
 
             fake_installer = self._write_fake_installer(
                 base,
@@ -1089,20 +1278,23 @@ class WindowsLauncherTests(unittest.TestCase):
                 powershell=powershell,
                 package=fake_installer,
                 install=install,
-                restart_executable=restart_executable,
                 result_path=result_path,
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertFalse(restart_marker.exists(), update_result)
+            self._wait_for_path(restart_marker)
+            self.assertTrue(restart_marker.exists(), update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
-            self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "old launcher")
+            self.assertIn("old launcher", (install / "scripts" / "launch.ps1").read_text(encoding="utf-8"))
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertFalse((install / "src" / "new.py").exists())
             self.assertEqual((install / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
             self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertTrue(update_result["rollback_restored"])
+            self.assertTrue(update_result["rollback_restarted"])
+            self.assertTrue((install / ".venv" / "old-runtime.txt").is_file())
+            self.assertFalse((install / ".venv" / "new-runtime.txt").exists())
             self.assertIn("does not match v9.9.9", update_result["message"])
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
@@ -1111,10 +1303,8 @@ class WindowsLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             install = base / "distribution"
-            self._seed_installer_distribution(install)
             restart_marker = base / "restart-marker.txt"
-            restart_executable = install / "restart.cmd"
-            self._write_restart_command(restart_executable, restart_marker)
+            self._seed_installer_distribution(install, restart_marker)
 
             fake_installer = self._write_fake_installer(
                 base,
@@ -1131,21 +1321,387 @@ class WindowsLauncherTests(unittest.TestCase):
                 powershell=powershell,
                 package=fake_installer,
                 install=install,
-                restart_executable=restart_executable,
                 result_path=result_path,
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             update_result = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertFalse(restart_marker.exists(), update_result)
+            self._wait_for_path(restart_marker)
+            self.assertTrue(restart_marker.exists(), update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
-            self.assertEqual((install / "scripts" / "launch.ps1").read_text(encoding="utf-8"), "old launcher")
+            self.assertIn("old launcher", (install / "scripts" / "launch.ps1").read_text(encoding="utf-8"))
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertFalse((install / "src" / "new.py").exists())
             self.assertEqual((install / ".gui" / "runtime_config.json").read_text(encoding="utf-8"), "old gui")
             self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertTrue(update_result["rollback_restored"])
+            self.assertTrue(update_result["rollback_restarted"])
+            self.assertTrue((install / ".venv" / "old-runtime.txt").is_file())
             self.assertIn("Installer exited with code 1", update_result["message"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_waits_for_parent_and_runtime_file_lock(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            restart_marker = base / "restart-marker.txt"
+            self._seed_installer_distribution(install, restart_marker)
+            locked_runtime = install / ".venv" / "Scripts" / "python.exe"
+            locked_runtime.parent.mkdir()
+            locked_runtime.write_bytes(b"locked runtime")
+            lock_marker = base / "lock-ready.txt"
+            lock_script = base / "hold-runtime.ps1"
+            lock_script.write_text(
+                "param([string]$Path, [string]$Marker)\n"
+                "$stream = [IO.File]::Open($Path, 'Open', 'Read', 'None')\n"
+                "[IO.File]::WriteAllText($Marker, 'ready')\n"
+                "Start-Sleep -Milliseconds 1200\n"
+                "$stream.Dispose()\n",
+                encoding="utf-8",
+            )
+            holder = subprocess.Popen(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(lock_script),
+                    "-Path",
+                    str(locked_runtime),
+                    "-Marker",
+                    str(lock_marker),
+                ]
+            )
+            deadline = time.monotonic() + 5
+            while not lock_marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(lock_marker.exists())
+            parent = subprocess.Popen(
+                [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Milliseconds 500"]
+            )
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
+                "exit 0\n",
+            )
+            started = time.monotonic()
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                result_path=base / "update-result.json",
+                parent_pid=parent.pid,
+            )
+            elapsed = time.monotonic() - started
+            parent.wait(timeout=5)
+            holder.wait(timeout=5)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertGreaterEqual(elapsed, 0.8)
+            update_result = json.loads((base / "update-result.json").read_text(encoding="utf-8"))
+            self.assertIn(parent.pid, update_result["process_ids"])
+            self.assertTrue((install / ".venv" / "new-runtime.txt").is_file())
+            self._wait_for_path(restart_marker)
+            self.assertTrue(restart_marker.is_file(), update_result)
+            time.sleep(0.5)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_rolls_back_runtime_validation_failure_and_restarts_old_version(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            restart_marker = base / "restart-marker.txt"
+            self._seed_installer_distribution(install, restart_marker)
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\validate_runtime.ps1'), 'exit 9')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
+                "exit 0\n",
+            )
+            result_path = base / "update-result.json"
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                result_path=result_path,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self._wait_for_path(restart_marker)
+            self.assertEqual(update_result["status"], "rollback", update_result)
+            self.assertTrue(update_result["rollback_restarted"], update_result)
+            self.assertTrue(restart_marker.exists(), update_result)
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
+            self.assertTrue((install / ".venv" / "old-runtime.txt").is_file())
+            self.assertFalse((install / ".venv" / "new-runtime.txt").exists())
+            self.assertTrue(Path(update_result["log"]).is_file())
+            self.assertTrue(Path(update_result["setup_log"]).is_file())
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_generation_runtime_rollback_restores_old_generation_and_manifest(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            restart_marker = base / "restart-marker.txt"
+            self._seed_installer_distribution(install, restart_marker)
+
+            old_runtime = install / ".local" / "runtimes" / "gen-old"
+            (old_runtime / "Scripts").mkdir(parents=True)
+            (old_runtime / "old-marker.txt").write_text("old runtime gen", encoding="utf-8")
+            (old_runtime / "Scripts" / "python.exe").write_bytes(b"old python")
+            active_manifest = install / ".local" / "runtime-manifest.json"
+            active_manifest.write_text(
+                json.dumps({"runtime_directory": ".local/runtimes/gen-old"}) + "\n",
+                encoding="utf-8",
+            )
+            setup_status = install / ".local" / "setup-status.json"
+            setup_status.write_text(
+                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                encoding="utf-8",
+            )
+            shutil.rmtree(install / ".venv")
+            subprocess.run(
+                ["cmd.exe", "/c", "mklink", "/J", str(install / ".venv"), str(old_runtime)],
+                check=True,
+                capture_output=True,
+            )
+
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
+                "$newRuntime = Join-Path $root '.local\\runtimes\\gen-new'\n"
+                "New-Item -ItemType Directory -Path (Join-Path $newRuntime 'Scripts') -Force | Out-Null\n"
+                "[IO.File]::WriteAllText((Join-Path $newRuntime 'new-marker.txt'), 'new runtime gen')\n"
+                "[IO.File]::WriteAllText((Join-Path $root '.local\\runtime-manifest.json'), '{\"runtime_directory\":\".local/runtimes/gen-new\"}`n')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'scripts\\validate_runtime.ps1'), 'exit 1')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
+                "exit 0\n",
+            )
+            result_path = base / "update-result.json"
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                result_path=result_path,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self._wait_for_path(restart_marker)
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual(update_result["status"], "rollback", update_result)
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+            self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
+            restored_manifest = json.loads(active_manifest.read_text(encoding="utf-8"))
+            self.assertEqual(restored_manifest["runtime_directory"], ".local/runtimes/gen-old")
+            restored_status = json.loads(setup_status.read_text(encoding="utf-8"))
+            self.assertEqual(restored_status["app_version"], "v0.1.0")
+            self.assertTrue((install / ".venv" / "old-marker.txt").is_file())
+            self.assertFalse((install / ".local" / "runtimes" / "gen-new").exists())
+            self.assertTrue(restart_marker.is_file(), update_result)
+            time.sleep(0.5)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_launch_script_gui_process_exit_does_not_wait_for_child_update_helper(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            scripts = install / "scripts"
+            scripts.mkdir(parents=True)
+            (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
+            (install / ".local").mkdir()
+            (install / ".local" / "setup-status.json").write_text(
+                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                encoding="utf-8",
+            )
+            pid_marker = base / "helper.pid"
+            mock_helper = base / "mock-helper.ps1"
+            mock_helper.write_text(
+                "Start-Sleep -Seconds 30\n",
+                encoding="utf-8",
+            )
+            escaped_helper = str(mock_helper).replace("\\", "\\\\")
+            escaped_temp = str(tempfile.gettempdir()).replace("\\", "\\\\")
+            escaped_pid_marker = str(pid_marker).replace("\\", "\\\\")
+            (install / "src").mkdir(parents=True)
+            (install / "src" / "gui.py").write_text(
+                "import subprocess, sys\n"
+                f"p = subprocess.Popen([r'{powershell}', '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', r'{escaped_helper}'], cwd=r'{escaped_temp}', stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)\n"
+                f"open(r'{escaped_pid_marker}', 'w', encoding='utf-8').write(str(p.pid))\n"
+                "sys.stderr.write('large-stderr-start\\n' + ('x' * 262144) + '\\nlarge-stderr-end\\n')\n"
+                "sys.stderr.flush()\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+            shutil.copy2(ROOT / "installer" / "launch.ps1", scripts / "launch.ps1")
+            shutil.copy2(ROOT / "scripts" / "setup_state.ps1", scripts / "setup_state.ps1")
+
+            started = time.monotonic()
+            helper_was_running = False
+            try:
+                result = subprocess.run(
+                    [
+                        powershell,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(scripts / "launch.ps1"),
+                        "-SuppressMessages",
+                        "-ProjectRootOverride",
+                        str(install),
+                        "-PythonwOverride",
+                        sys.executable,
+                        "-PythonOverride",
+                        sys.executable,
+                        "-LogDirectoryOverride",
+                        str(install / ".local" / "logs"),
+                    ],
+                    cwd=install,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=8,
+                )
+                self._wait_for_path(pid_marker)
+                self.assertTrue(pid_marker.is_file(), result.stdout + result.stderr)
+                helper_pid = int(pid_marker.read_text(encoding="utf-8").strip())
+                check = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {helper_pid}"], capture_output=True, text=True
+                )
+                helper_was_running = str(helper_pid) in check.stdout
+            finally:
+                if pid_marker.is_file():
+                    try:
+                        helper_pid = int(pid_marker.read_text(encoding="utf-8").strip())
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(helper_pid)], capture_output=True)
+                        for _ in range(50):
+                            check = subprocess.run(["tasklist", "/FI", f"PID eq {helper_pid}"], capture_output=True, text=True)
+                            if str(helper_pid) not in check.stdout:
+                                break
+                            time.sleep(0.1)
+                    except Exception:
+                        pass
+            elapsed = time.monotonic() - started
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertLess(elapsed, 6.0, "launch.ps1 waited for child process")
+            self.assertTrue(helper_was_running, "GUI child update helper did not survive launcher exit")
+            launch_log = install / ".local" / "logs" / "latest-launch-error.log"
+            stderr_text = launch_log.read_text(encoding="utf-8", errors="replace")
+            self.assertIn("large-stderr-start", stderr_text)
+            self.assertIn("large-stderr-end", stderr_text)
+            self.assertGreater(len(stderr_text), 262144)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_snapshot_and_evacuation_failures_preserve_old_runtime(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            restart_marker = base / "restart-marker.txt"
+            self._seed_installer_distribution(install, restart_marker)
+            runtime = install / ".venv"
+            (runtime / "intact-marker.txt").write_text("must remain intact", encoding="utf-8")
+            setup_status = install / ".local" / "setup-status.json"
+            setup_status.parent.mkdir()
+            setup_status.write_text(
+                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                encoding="utf-8",
+            )
+
+            fake_installer = base / "fake-installer.cmd"
+            fake_installer.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+            for fault_point in ("runtime-state-snapshot", "runtime-evacuation"):
+                with self.subTest(fault_point=fault_point):
+                    marker = base / f"{fault_point}.reached"
+                    result_path = base / f"{fault_point}-result.json"
+                    restart_marker.unlink(missing_ok=True)
+                    result = self._run_installer_update(
+                        powershell=powershell,
+                        package=fake_installer,
+                        install=install,
+                        result_path=result_path,
+                        test_fault_point=fault_point,
+                        test_fault_marker=marker,
+                    )
+
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(marker.read_text(encoding="utf-8"), fault_point)
+                    update_result = json.loads(result_path.read_text(encoding="utf-8"))
+                    self.assertEqual(update_result["status"], "rollback", update_result)
+                    self.assertTrue(update_result["rollback_restored"], update_result)
+                    self.assertIn(f"Injected update test fault: {fault_point}", update_result["message"])
+                    self._wait_for_path(restart_marker)
+                    self.assertTrue((runtime / "intact-marker.txt").is_file())
+                    self.assertEqual(
+                        (runtime / "intact-marker.txt").read_text(encoding="utf-8"),
+                        "must remain intact",
+                    )
+                    self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
+                    self.assertEqual(
+                        json.loads(setup_status.read_text(encoding="utf-8"))["app_version"],
+                        "v0.1.0",
+                    )
+                    time.sleep(0.2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_installer_helper_post_commit_cleanup_failure_preserves_new_version(self) -> None:
+        powershell = self._require_windows_powershell()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            install = base / "distribution"
+            restart_marker = base / "restart-marker.txt"
+            self._seed_installer_distribution(install, restart_marker)
+
+            fake_installer = self._write_fake_installer(
+                base,
+                powershell,
+                "$root = (Get-Location).Path\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'VERSION'), 'v9.9.9')\n"
+                "[IO.File]::WriteAllText((Join-Path $root 'src\\app.py'), 'new app')\n"
+                "exit 0\n",
+            )
+            result_path = base / "update-result.json"
+            fault_marker = base / "post-commit-cleanup.reached"
+            result = self._run_installer_update(
+                powershell=powershell,
+                package=fake_installer,
+                install=install,
+                result_path=result_path,
+                test_fault_point="post-commit-cleanup",
+                test_fault_marker=fault_marker,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self._wait_for_path(restart_marker)
+            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual(update_result["status"], "success", update_result)
+            self.assertEqual(fault_marker.read_text(encoding="utf-8"), "post-commit-cleanup")
+            self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9")
+            self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "new app")
+            helper_log = Path(update_result["log"]).read_text(encoding="utf-8", errors="replace")
+            self.assertIn("post-commit cleanup warning", helper_log)
+            recovery_points = list((install / ".local" / "update-recovery").iterdir())
+            self.assertEqual(len(recovery_points), 1, recovery_points)
+            time.sleep(0.5)
 
 
 if __name__ == "__main__":

@@ -93,6 +93,28 @@ function Test-CudaRepairRequired {
     try { & $PythonPath -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" *> $null; return $LASTEXITCODE -ne 0 } catch { return $true }
 }
 
+function Get-RecentLogLines {
+    param([string]$Path, [int]$Count = 5)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+            $queue = New-Object System.Collections.Generic.Queue[string]
+            while (-not $reader.EndOfStream) {
+                $line = $reader.ReadLine()
+                if ($line -ne $null -and $line.Trim().Length -gt 0) {
+                    $queue.Enqueue($line.Trim())
+                    if ($queue.Count -gt $Count) { [void]$queue.Dequeue() }
+                }
+            }
+            return ($queue.ToArray() -join [Environment]::NewLine)
+        } finally {
+            $stream.Dispose()
+        }
+    } catch { return "" }
+}
+
 function Wait-ForSetup {
     param(
         [Diagnostics.Process]$Process,
@@ -108,30 +130,69 @@ function Wait-ForSetup {
     Add-Type -AssemblyName PresentationFramework
     $window = New-Object Windows.Window
     $window.Title = $Title
-    $window.Width = 520
-    $window.Height = 190
+    $window.Width = 620
+    $window.Height = 330
     $window.WindowStartupLocation = "CenterScreen"
+    $window.ResizeMode = "NoResize"
     $panel = New-Object Windows.Controls.StackPanel
     $panel.Margin = 20
+
     $message = New-Object Windows.Controls.TextBlock
+    $message.FontSize = 13
+    $message.FontWeight = [Windows.FontWeights]::Bold
     $message.TextWrapping = "Wrap"
     $message.Text = $InitialMessage
+
+    $hint = New-Object Windows.Controls.TextBlock
+    $hint.FontSize = 11
+    $hint.Foreground = [Windows.Media.Brushes]::Gray
+    $hint.Margin = "0,4,0,0"
+    $hint.Text = "※初回はAIモデル・PyTorch等のダウンロード（約2〜3GB）のため、数分〜十数分かかります。"
+
     $progress = New-Object Windows.Controls.ProgressBar
     $progress.IsIndeterminate = $true
-    $progress.Height = 18
-    $progress.Margin = "0,18,0,12"
+    $progress.Height = 16
+    $progress.Margin = "0,14,0,10"
+
+    $logBox = New-Object Windows.Controls.TextBox
+    $logBox.Height = 90
+    $logBox.IsReadOnly = $true
+    $logBox.TextWrapping = "Wrap"
+    $logBox.VerticalScrollBarVisibility = "Auto"
+    $logBox.FontFamily = New-Object Windows.Media.FontFamily("Consolas, MS Gothic")
+    $logBox.FontSize = 11
+    $logBox.Background = [Windows.Media.BrushConverter]::new().ConvertFromString("#F8F9FA")
+    $logBox.BorderBrush = [Windows.Media.BrushConverter]::new().ConvertFromString("#D0D5DD")
+    $logBox.Padding = 6
+    $logBox.Text = "処理を開始しています..."
+
+    $logFile = if ($IgnoreSetupStatus) { Join-Path $logs 'update.log' } else { Join-Path $logs 'setup.log' }
     $logText = New-Object Windows.Controls.TextBlock
-    $logText.Text = "ログ: $(Join-Path $logs 'setup.log')"
+    $logText.FontSize = 10
+    $logText.Foreground = [Windows.Media.Brushes]::Gray
+    $logText.Margin = "0,8,0,0"
+    $logText.Text = "詳細ログ: $logFile"
+
     [void]$panel.Children.Add($message)
+    [void]$panel.Children.Add($hint)
     [void]$panel.Children.Add($progress)
+    [void]$panel.Children.Add($logBox)
     [void]$panel.Children.Add($logText)
     $window.Content = $panel
+
     $timer = New-Object Windows.Threading.DispatcherTimer
-    $timer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $timer.Interval = [TimeSpan]::FromMilliseconds(300)
     $timer.Add_Tick({
         if (-not $IgnoreSetupStatus) {
             $status = Read-SetupStatus
             if ($status -and $status.stage) { $message.Text = [string]$status.stage }
+        }
+        $recent = Get-RecentLogLines -Path $logFile -Count 5
+        if ($recent) {
+            if ($logBox.Text -ne $recent) {
+                $logBox.Text = $recent
+                $logBox.ScrollToEnd()
+            }
         }
         if (-not (Test-SetupMutexHeld -ProjectRoot $projectRoot) -and (-not $Process -or $Process.HasExited)) {
             $timer.Stop()

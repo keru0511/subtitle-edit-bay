@@ -4,6 +4,18 @@ from src.codex_chat_routing import route_subtitle_chat_request
 
 
 class SubtitleChatRoutingTests(unittest.TestCase):
+    def test_direct_subtitle_edit_request_is_routed_to_a_proposal(self) -> None:
+        route = route_subtitle_chat_request(
+            "字幕を編集して",
+            "auto",
+            project_loaded=True,
+            has_selection=True,
+            current_time=3.0,
+        )
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route.scope, "selected")
+
     def test_normal_chat_is_not_routed_to_subtitle_proposal(self) -> None:
         route = route_subtitle_chat_request(
             "この動画の内容を要約して",

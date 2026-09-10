@@ -6,7 +6,7 @@ import re
 
 _SUBTITLE_WORD = re.compile(r"字幕|テロップ|caption|subtitle", re.IGNORECASE)
 _EDIT_WORD = re.compile(
-    r"短く|長く|直して|修正|変更|書き換|整え|自然に|読みやす|校正|翻訳|追加|挿入|削除|消して|分割|結合|まとめ|置換",
+    r"編集|短く|長く|直して|修正|変更|調整|訂正|書き換|整え|自然に|読みやす|校正|翻訳|追加|挿入|削除|消して|分割|結合|まとめ|置換",
     re.IGNORECASE,
 )
 _ALL_SUBTITLES = re.compile(

@@ -85,6 +85,19 @@ class RuntimeConfigTests(unittest.TestCase):
             self.assertIsNone(loaded["pipeline"]["min_speakers"])
             self.assertIsNone(loaded["pipeline"]["max_speakers"])
 
+    def test_schema_preserves_null_optional_clips(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "runtime_config.json"
+            config_path.write_text(
+                json.dumps({"batch": {"op_file": None, "ed_file": None}}),
+                encoding="utf-8",
+            )
+
+            loaded = load_command_runtime_config("batch", config_path)
+
+            self.assertIsNone(loaded["op_file"])
+            self.assertIsNone(loaded["ed_file"])
+
     def test_default_craig_config_contains_audio_postprocess_settings(self) -> None:
         loaded = load_command_runtime_config("craig_pipeline")
 

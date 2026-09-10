@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .color_config import normalize_rgb_color
-from .runtime_config_schema import validate_runtime_config_payload
+from .runtime_config_schema import MIGRATED_WORKSPACE_PATH_SETTINGS, validate_runtime_config_payload
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .transcription_dictionary import TranscriptionDictionaryError, load_transcription_dictionary
 
@@ -109,6 +109,21 @@ def validated_runtime_config(
     except ValueError as exc:
         raise MigrationError(str(exc)) from exc
     adjusted: list[str] = []
+
+    legacy_root = path.parent.parent.resolve()
+    for section_name, section in migrated.items():
+        if not isinstance(section, dict):
+            continue
+        for key in MIGRATED_WORKSPACE_PATH_SETTINGS:
+            value = section.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            configured_path = Path(value).expanduser()
+            if configured_path.is_absolute():
+                continue
+            resolved_path = (legacy_root / configured_path).resolve()
+            section[key] = str(resolved_path)
+            adjusted.append(f"{section_name}.{key}={value} -> {resolved_path}")
 
     old_craig = source.get("craig_pipeline")
     if isinstance(old_craig, dict) and "transcription_context" in old_craig:
@@ -280,6 +295,18 @@ def _snapshot_targets(paths: Sequence[Path]) -> tuple[dict[Path, bytes | None], 
     return snapshots, tuple(sorted(parent_candidates, key=lambda item: len(item.parts), reverse=True))
 
 
+def _require_targets_within_destination(destination: Path, paths: Sequence[Path]) -> None:
+    destination_key = os.path.normcase(str(destination.resolve()))
+    for path in paths:
+        resolved_key = os.path.normcase(str(path.resolve()))
+        try:
+            common = os.path.commonpath((destination_key, resolved_key))
+        except ValueError as exc:
+            raise MigrationError(f"migration target resolves outside destination: {path}") from exc
+        if common != destination_key:
+            raise MigrationError(f"migration target resolves outside destination: {path} -> {path.resolve()}")
+
+
 def _restore_targets(snapshots: Mapping[Path, bytes | None], created_parents: Sequence[Path]) -> None:
     failures: list[str] = []
     for path, original in reversed(tuple(snapshots.items())):
@@ -322,8 +349,18 @@ def migrate_legacy_workspace(
     preserved: list[str] = []
     adjusted: list[str] = []
 
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    record_name = timestamp.replace(":", "").replace("-", "")
+
     old_config = source_path / ".gui" / "runtime_config.json"
     new_config = destination_path / ".gui" / "runtime_config.json"
+    old_colors = source_path / "assets" / "speaker_colors.json"
+    new_colors = destination_path / "assets" / "speaker_colors.json"
+    workspace_path = destination_path / ".gui" / "legacy_workspaces.json"
+    record_path = destination_path / ".local" / "migration" / f"migration-{record_name}.json"
+    possible_targets = (new_config, new_colors, workspace_path, record_path)
+    _require_targets_within_destination(destination_path, possible_targets)
+
     prepared_config: dict[str, Any] | None = None
     if options.runtime_config and old_config.is_file() and not old_config.is_symlink():
         if new_config.exists() and not options.overwrite:
@@ -334,8 +371,6 @@ def migrate_legacy_workspace(
     elif options.runtime_config and old_config.is_symlink():
         raise MigrationError(f"runtime config must not be a symbolic link: {old_config}")
 
-    old_colors = source_path / "assets" / "speaker_colors.json"
-    new_colors = destination_path / "assets" / "speaker_colors.json"
     prepared_colors: dict[str, Any] | None = None
     if options.speaker_colors and old_colors.is_file():
         if new_colors.exists() and not options.overwrite:
@@ -346,12 +381,10 @@ def migrate_legacy_workspace(
     # Complete all reads, validation, enumeration and merge preparation before
     # changing the destination. The writes below form one rollback boundary.
     references = _workspace_references(source_path) if options.workspace_reference else ()
-    workspace_path = destination_path / ".gui" / "legacy_workspaces.json"
     workspace_payload: dict[str, Any] | None = None
     if references:
         workspace_payload = _merged_workspace_registry(workspace_path, source_path, references)
 
-    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     result = MigrationResult(
         schema_version=MIGRATION_SCHEMA_VERSION,
         source=str(source_path),
@@ -365,8 +398,6 @@ def migrate_legacy_workspace(
         reclaimable_venv_bytes=_directory_size(source_path / ".venv"),
         completed_at=timestamp,
     )
-    record_name = timestamp.replace(":", "").replace("-", "")
-    record_path = destination_path / ".local" / "migration" / f"migration-{record_name}.json"
     writes: list[tuple[Path, object]] = []
     if prepared_config is not None:
         writes.append((new_config, prepared_config))
@@ -379,9 +410,11 @@ def migrate_legacy_workspace(
         copied.append(str(workspace_path))
     result = MigrationResult(**{**asdict(result), "copied": tuple(copied)})
     writes.append((record_path, asdict(result)))
+    _require_targets_within_destination(destination_path, [path for path, _payload in writes])
     snapshots, created_parents = _snapshot_targets([path for path, _payload in writes])
     try:
         for path, payload in writes:
+            _require_targets_within_destination(destination_path, (path,))
             _write_json_atomic(path, payload)
     except Exception as exc:
         try:

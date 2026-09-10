@@ -261,6 +261,109 @@ class InstallerMigrationTests(unittest.TestCase):
                     self.assertEqual(migrated[section]["video_codec"], "libx264")
             self.assertTrue(any("hevc_nvenc -> libx264" in item for item in adjusted))
 
+    def test_migration_anchors_relative_media_paths_to_legacy_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspaces(Path(temporary))
+            media = source / "video_import" / "clip.mp4"
+            op = source / "video_import" / "op.mp4"
+            media.parent.mkdir(exist_ok=True)
+            media.write_bytes(b"media")
+            op.write_bytes(b"op")
+            old_path = source / ".gui" / "runtime_config.json"
+            old_path.write_text(
+                json.dumps(
+                    {
+                        "batch": {
+                            "input_dir": "video_import",
+                            "output_dir": "video_export",
+                            "input_root": "video_import",
+                            "export_root": "video_export",
+                            "op_file": "video_import/op.mp4",
+                            "ed_file": None,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            migrate_legacy_workspace(
+                source,
+                destination,
+                capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
+            )
+
+            migrated_path = destination / ".gui" / "runtime_config.json"
+            effective = load_command_runtime_config("batch", migrated_path)
+            self.assertEqual(Path(effective["input_dir"]), source / "video_import")
+            self.assertEqual(Path(effective["output_dir"]), source / "video_export")
+            self.assertEqual(Path(effective["input_root"]), source / "video_import")
+            self.assertEqual(Path(effective["export_root"]), source / "video_export")
+            self.assertEqual(Path(effective["op_file"]), op)
+            self.assertTrue(Path(effective["op_file"]).is_file())
+            self.assertIsNone(effective["ed_file"])
+            self.assertNotEqual(Path(effective["input_dir"]), destination / "video_import")
+
+    def test_destination_parent_symlink_cannot_write_into_legacy_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspaces(Path(temporary))
+            media = source / "video_import" / "clip.mp4"
+            media.parent.mkdir()
+            media.write_bytes(b"media")
+            old_config = source / ".gui" / "runtime_config.json"
+            old_config.write_text(json.dumps({"shared": {"language": "ja"}}), encoding="utf-8")
+            old_before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+            gui_link = destination / ".gui"
+            try:
+                gui_link.symlink_to(source / ".gui", target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+
+            with self.assertRaisesRegex(MigrationError, "outside destination"):
+                migrate_legacy_workspace(
+                    source,
+                    destination,
+                    capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
+                )
+
+            old_after = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+            self.assertEqual(old_after, old_before)
+            self.assertFalse((source / ".gui" / "legacy_workspaces.json").exists())
+
+    @unittest.skipUnless(os.name == "nt", "destination junction verification is Windows-only")
+    def test_destination_parent_junction_cannot_write_into_legacy_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspaces(Path(temporary))
+            media = source / "video_import" / "clip.mp4"
+            media.parent.mkdir()
+            media.write_bytes(b"media")
+            old_config = source / ".gui" / "runtime_config.json"
+            old_config.write_text(json.dumps({"shared": {"language": "ja"}}), encoding="utf-8")
+            old_before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+            gui_junction = destination / ".gui"
+            created = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(gui_junction), str(source / ".gui")],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr + created.stdout)
+            try:
+                with self.assertRaisesRegex(MigrationError, "outside destination"):
+                    migrate_legacy_workspace(
+                        source,
+                        destination,
+                        capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
+                    )
+                old_after = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+                self.assertEqual(old_after, old_before)
+                self.assertFalse((source / ".gui" / "legacy_workspaces.json").exists())
+            finally:
+                subprocess.run(
+                    ["cmd.exe", "/d", "/c", "rmdir", str(gui_junction)],
+                    capture_output=True,
+                    check=False,
+                )
+
     def test_invalid_speaker_colors_fail_before_any_destination_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))

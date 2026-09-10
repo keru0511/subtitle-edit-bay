@@ -83,10 +83,18 @@ COMMAND_SETTINGS: dict[str, str] = {
     "min_speakers": NULLABLE_INTEGER,
     "max_speakers": NULLABLE_INTEGER,
     "track_color": STRING_ARRAY,
-    "op_file": STRING,
-    "ed_file": STRING,
+    "op_file": NULLABLE_STRING,
+    "ed_file": NULLABLE_STRING,
     "transcription_context": OBJECT,
 }
+
+# Relative values for these persisted settings are interpreted from the
+# process working directory. During legacy migration that directory changes
+# from the BAT/ZIP workspace to the Installer root, so migration must anchor
+# them to the legacy workspace first.
+MIGRATED_WORKSPACE_PATH_SETTINGS = frozenset(
+    {"input_dir", "input_root", "output_dir", "export_root", "op_file", "ed_file"}
+)
 
 RUNTIME_CONFIG_SCHEMA: dict[str, dict[str, str]] = {
     "shared": dict(COMMON_RUNTIME_SETTINGS),

@@ -145,6 +145,7 @@
         "test_windows_launchers"
       ],
       "selectors": [
+        "tests.test_installer_migration.InstallerMigrationTests.test_destination_parent_junction_cannot_write_into_legacy_workspace",
         "tests.test_installer_migration.InstallerMigrationTests.test_pending_request_is_reused_before_runtime_setup",
         "tests.test_installer_migration.InstallerMigrationTests.test_setup_rejects_destination_as_source_before_mutating_state"
       ]

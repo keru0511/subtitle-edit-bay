@@ -285,7 +285,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
         self.assertEqual(
             readiness["jobs"]["prepare"]["with"]["require_signature"],
-            "${{ needs.classify.outputs.kind == 'release' }}",
+            False,
         )
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))

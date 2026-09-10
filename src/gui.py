@@ -79,7 +79,7 @@ from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
-from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
+from .gui_base import APP_TITLE, LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
 from .editor_workspace import (
     EditModeCapabilities,

@@ -54,7 +54,15 @@ from .application_info import (
 APP_TITLE = "Subtitle Edit Bay"
 
 
-class EditBayBackend(QApplication):
+class LegacyEditBayBackend(QApplication):
+    """Provide the original workflow backend under a distinct Qt class name.
+
+    PySide uses the Python class name when it builds a QMetaObject.  The
+    extended backend in ``src.gui`` must therefore not share this class name;
+    otherwise its additional signals, properties, and slots are omitted from
+    the QML-visible meta-object.
+    """
+
     sourceSelectionChanged = Signal()
     dependenciesChanged = Signal()
     speakersChanged = Signal()
@@ -837,9 +845,15 @@ class EditBayBackend(QApplication):
         self._alignment_executor.shutdown(wait=False, cancel_futures=True)
 
 
+# Keep the former import surface for callers that still use ``gui_base``
+# directly.  The aliased class retains the distinct ``LegacyEditBayBackend``
+# name required by PySide's meta-object builder.
+EditBayBackend = LegacyEditBayBackend
+
+
 def main() -> None:
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
-    app = EditBayBackend(sys.argv)
+    app = LegacyEditBayBackend(sys.argv)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("backend", app)
     qml_path = Path(__file__).resolve().parent / "ui" / "Main.qml"

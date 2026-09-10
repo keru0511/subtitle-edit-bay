@@ -190,7 +190,7 @@ if (-not $setupLease.Acquired) {
 }
 $runtimeActivationCommitted = $false
 $uncommittedRuntimePaths = @()
-Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Starting setup"
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "セットアップを開始しています..."
 trap {
     $setupError = $_
     if (-not $runtimeActivationCommitted) {
@@ -200,19 +200,20 @@ trap {
             catch { Write-Warning ("Could not remove uncommitted runtime data at " + $uncommittedPath + ": " + $_) }
         }
     }
-    Write-SetupStatus -ProjectRoot $projectRoot -Status "failed" -Stage "Setup failed" -Message $setupError.Exception.Message
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "failed" -Stage "セットアップに失敗しました" -Message $setupError.Exception.Message
     Exit-SetupMutex -Lease $setupLease
     exit 1
 }
 
 Write-Host "Subtitle Edit Bay setup"
 Write-Host "This can take a while because WhisperX and PyTorch are large."
-Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Checking system requirements"
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "1/5: システム要件を確認中 (Python, FFmpeg, GPU)..."
 
 $runtimeContractPath = "runtime\runtime-contract.json"
 $runtimeContract = Get-Content -LiteralPath $runtimeContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $python = Find-Python310
 if (-not $python) {
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Python 3.10 を自動インストール中..."
     Install-WithWinget -PackageId $runtimeContract.python.winget_package -DisplayName "Python 3.10"
     $python = Find-Python310
 }
@@ -227,6 +228,7 @@ if ($LASTEXITCODE -ne 0) { throw "The bundled runtime contract or lock file is i
 if ($LASTEXITCODE -ne 0) { throw "The detected Python does not satisfy the release runtime contract." }
 $ffmpegDirectory = Find-FFmpegDirectory
 if (-not $ffmpegDirectory) {
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "FFmpeg を自動インストール中..."
     Install-WithWinget -PackageId $runtimeContract.ffmpeg.winget_package -DisplayName "FFmpeg"
     $ffmpegDirectory = Find-FFmpegDirectory
 }
@@ -303,7 +305,7 @@ if (Test-Path -LiteralPath $activeManifest -PathType Leaf) {
 }
 
 Write-Host "Building the $runtimeProfile runtime from $runtimeLock..."
-Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "Building the pinned runtime"
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "2/5: 専用のPython仮想環境を作成中..."
 if ($SetupTestHook) {
     $hookPath = [IO.Path]::GetFullPath($SetupTestHook)
     if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf)) { throw "The setup test hook is missing: $hookPath" }
@@ -314,12 +316,15 @@ if ($SetupTestHook) {
 & $python -m venv $runtimeVenv
 if ($LASTEXITCODE -ne 0) { throw "Could not create the new Python runtime generation." }
 $runtimePython = (Resolve-Path "$runtimeVenv\Scripts\python.exe").Path
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "3/5: パッケージマネージャー (pip) を準備中..."
 & $runtimePython -m pip install "pip==$($runtimeContract.python.pip_version)"
 if ($LASTEXITCODE -ne 0) { throw "Pinned pip installation failed." }
 $pipArguments = Get-RuntimePipArguments -ProfileContract $profileContract -RuntimeLock $runtimeLock
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "4/5: AI・動画処理ライブラリ群をダウンロード・インストール中（数分〜十数分かかります）..."
 & $runtimePython @pipArguments
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime installation failed. The existing runtime was not changed." }
 if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw "The runtime Python executable was not created." }
+Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "5/5: インストール済みライブラリの整合性と動作を検証中..."
 & $runtimePython -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Locked runtime dependency verification failed. The existing runtime was not changed." }
 & $runtimePython "scripts\runtime_contract.py" verify-runtime --root "." --profile $runtimeProfile --manifest-output $candidateManifest
@@ -418,7 +423,7 @@ if ($cudaAvailable) {
     Write-Host "CUDA: unavailable. The first-run preset was configured for CPU and libx264."
 }
 Write-Host "Setup verification passed."
-Write-SetupStatus -ProjectRoot $projectRoot -Status "success" -Stage "Setup completed" -Details @{
+Write-SetupStatus -ProjectRoot $projectRoot -Status "success" -Stage "セットアップが完了しました" -Details @{
     python = $venvPython
     cuda_available = $cudaAvailable
     cuda_runtime = $cudaRuntime

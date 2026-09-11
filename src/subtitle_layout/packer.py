@@ -1,63 +1,14 @@
+"""Re-export the subtitle layout surface for migrated callers.
+
+The layout rules, tokenizer factories, and scoring helpers live in the
+``subtitle_layout`` submodules and are imported directly by ``subtitle_packer``.
+This module keeps the ``subtitle_layout.packer`` import path stable while the
+remaining packer functions still live in ``subtitle_packer``.
+"""
+
 from __future__ import annotations
 
-from typing import Final
-
 from .. import subtitle_packer as legacy_packer
-from . import rules, scoring, tokenize
-
-_RULE_BINDINGS: Final = (
-    "MAX_LINES",
-    "ELLIPSIS",
-    "STRONG_BREAK_CHARS",
-    "SOFT_BREAK_CHARS",
-    "LEADING_AVOID_CHARS",
-    "TRAILING_AVOID_CHARS",
-    "RIGHT_BOUNDARY_AVOID_WORDS",
-    "LEFT_BOUNDARY_AVOID_WORDS",
-    "CLAUSE_BREAK_TOKENS",
-    "LEADING_BOUNDARY_PENALTIES",
-)
-_TOKENIZER_FACTORY_BINDINGS: Final = (
-    "create_budoux_parser",
-    "create_janome_tokenizer",
-)
-_SCORING_HELPER_BINDINGS: Final = (
-    "display_width",
-    "text_width",
-    "duration_pressure",
-    "timing_balance_penalty",
-    "char_bucket",
-    "connected_char_penalty",
-    "is_protected_inline_split",
-    "chunk_boundaries",
-    "clause_break_bonus",
-    "leading_boundary_penalty",
-)
-
-
-def apply_layout_modules() -> None:
-    """Bind the legacy packer to extracted layout helpers.
-
-    The public functions still live in ``subtitle_packer`` during this migration,
-    but global lookups inside those functions should resolve through the extracted
-    layout boundary before the scoring/rules split continues. The legacy
-    ``require_japanese_layout_tools`` wrapper intentionally remains in place so
-    existing tests and callers can still patch ``src.subtitle_packer.create_*``.
-
-    ``score_break`` and natural boundary functions remain as compatibility shells
-    for now because existing callers patch legacy names such as
-    ``src.subtitle_packer.candidate_kind_bonus`` and
-    ``src.subtitle_packer.create_budoux_parser``.
-    """
-    for name in _RULE_BINDINGS:
-        setattr(legacy_packer, name, getattr(rules, name))
-    for name in _TOKENIZER_FACTORY_BINDINGS:
-        setattr(legacy_packer, name, getattr(tokenize, name))
-    for name in _SCORING_HELPER_BINDINGS:
-        setattr(legacy_packer, name, getattr(scoring, name))
-
-
-apply_layout_modules()
 
 MAX_LINES = legacy_packer.MAX_LINES
 ELLIPSIS = legacy_packer.ELLIPSIS

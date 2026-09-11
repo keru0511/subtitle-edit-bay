@@ -1,76 +1,35 @@
 from __future__ import annotations
 
-import unicodedata
 from functools import lru_cache
 
 from .models import SubtitleEvent
-
-MAX_LINES = 2
-ELLIPSIS = "\u2026"
-STRONG_BREAK_CHARS = set("\u3002\uff01\uff1f!?")
-SOFT_BREAK_CHARS = set("\u3001,")
-LEADING_AVOID_CHARS = set("\u3001\u3002\uff01\uff1f!?)]}\u300d\u300f\uff09\u3011\u3041\u3043\u3045\u3047\u3049\u3063\u3083\u3085\u3087\u30a1\u30a3\u30a5\u30a7\u30a9\u30c3\u30e3\u30e5\u30e7\u30fc")
-TRAILING_AVOID_CHARS = set("\uff08([{")
-RIGHT_BOUNDARY_AVOID_WORDS = {
-    "\u304c", "\u3092", "\u306b", "\u3067", "\u3068", "\u3078", "\u306e", "\u306f", "\u3082", "\u3084",
-    "\u306d", "\u3088", "\u306a", "\u305e", "\u3055", "\u304b", "\u3057", "\u3066", "\u3060", "\u3067\u3059", "\u307e\u3059",
-    "\u3055\u3093", "\u304f\u3093", "\u3061\u3083\u3093",
-}
-LEFT_BOUNDARY_AVOID_WORDS = {
-    "\u304c", "\u3092", "\u306b", "\u3067", "\u3068", "\u3078", "\u306e", "\u306f", "\u3082", "\u3084",
-    "\u306d", "\u3088", "\u306a", "\u305e", "\u3055", "\u304b", "\u3057", "\u3066", "\u3060",
-}
-CLAUSE_BREAK_TOKENS = (
-    "\u3067\u3082",
-    "\u3060\u3051\u3069",
-    "\u3051\u3069",
-    "\u3060\u304b\u3089",
-    "\u306a\u306e\u3067",
-    "\u3060\u304c",
-    "\u3057\u304b\u3057",
-    "\u305d\u3057\u3066",
-    "\u305d\u308c\u3067",
-    "\u305f\u3060",
-    "\u305f\u3060\u3057",
-    "\u3042\u3068",
-    "\u3058\u3083\u3042",
-    "\u304b\u3089",
-    "\u306e\u3067",
-    "\u306e\u306b",
-    "\u3068\u304b",
-    "\u3063\u3066",
+from .subtitle_layout.rules import (
+    CLAUSE_BREAK_TOKENS,
+    ELLIPSIS,
+    LEADING_AVOID_CHARS,
+    LEADING_BOUNDARY_PENALTIES,
+    LEFT_BOUNDARY_AVOID_WORDS,
+    MAX_LINES,
+    RIGHT_BOUNDARY_AVOID_WORDS,
+    SOFT_BREAK_CHARS,
+    STRONG_BREAK_CHARS,
+    TRAILING_AVOID_CHARS,
 )
-LEADING_BOUNDARY_PENALTIES = {
-    "\u3055\u3093": 14,
-    "\u304f\u3093": 14,
-    "\u3061\u3083\u3093": 14,
-    "\u304c": 10,
-    "\u3092": 10,
-    "\u306b": 10,
-    "\u3067": 8,
-    "\u3068": 8,
-    "\u306e": 8,
-    "\u306f": 10,
-    "\u3082": 8,
-    "\u3066": 8,
-    "\u3060": 8,
-}
-try:
-    import budoux  # type: ignore
-except ImportError:
-    budoux = None
-
-try:
-    from janome.tokenizer import Tokenizer as JanomeTokenizer  # type: ignore
-except ImportError:
-    JanomeTokenizer = None
-
-
-@lru_cache(maxsize=1)
-def create_budoux_parser():
-    if budoux is None:
-        return None
-    return budoux.load_default_japanese_parser()
+from .subtitle_layout.scoring import (
+    TARGET_READING_SPEED,
+    TIMING_BALANCE_WEIGHT,
+    char_bucket,
+    chunk_boundaries,
+    clause_break_bonus,
+    connected_char_penalty,
+    display_width,
+    duration_pressure,
+    is_protected_inline_split,
+    leading_boundary_penalty,
+    text_width,
+    timing_balance_penalty,
+)
+from .subtitle_layout.tokenize import create_budoux_parser, create_janome_tokenizer
 
 
 def parse_budoux_chunks(text: str) -> list[str]:
@@ -79,13 +38,6 @@ def parse_budoux_chunks(text: str) -> list[str]:
         return [text] if text else []
     chunks = [chunk for chunk in parser.parse(text) if chunk]
     return chunks or [text]
-
-
-@lru_cache(maxsize=1)
-def create_janome_tokenizer():
-    if JanomeTokenizer is None:
-        return None
-    return JanomeTokenizer()
 
 
 def parse_morpheme_chunks(text: str) -> list[str]:
@@ -104,81 +56,6 @@ def require_japanese_layout_tools() -> None:
         )
 
 
-def display_width(char: str) -> int:
-    return 2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1
-
-
-@lru_cache(maxsize=16384)
-def text_width(text: str) -> int:
-    return sum(display_width(char) for char in text)
-
-
-def duration_pressure(total_width: int, display_duration: float | None) -> float:
-    if display_duration is None or display_duration <= 0:
-        return 0.0
-    reading_speed = total_width / max(display_duration, 0.01)
-    return max(0.0, reading_speed - TARGET_READING_SPEED)
-
-
-def timing_balance_penalty(left_width: int, right_width: int, display_duration: float | None) -> int:
-    pressure = duration_pressure(left_width + right_width, display_duration)
-    if pressure <= 0:
-        return 0
-    return round(abs(left_width - right_width) * pressure * TIMING_BALANCE_WEIGHT)
-
-
-def char_bucket(char: str) -> str:
-    codepoint = ord(char)
-    if 0x3040 <= codepoint <= 0x309F:
-        return "hiragana"
-    if 0x30A0 <= codepoint <= 0x30FF:
-        return "katakana"
-    if 0x4E00 <= codepoint <= 0x9FFF:
-        return "kanji"
-    if char.isdigit():
-        return "digit"
-    if char.isascii() and char.isalpha():
-        return "latin"
-    return "other"
-
-
-def connected_char_penalty(previous_char: str, next_char: str) -> int:
-    if not previous_char or not next_char:
-        return 0
-
-    previous_bucket = char_bucket(previous_char)
-    next_bucket = char_bucket(next_char)
-    if previous_bucket == next_bucket == "hiragana" and previous_char == "\u3093":
-        return 4
-    if previous_bucket == next_bucket and previous_bucket in {"latin", "digit"}:
-        return 40
-    if previous_bucket == next_bucket and previous_bucket in {"hiragana", "katakana"}:
-        return 12
-    if {previous_bucket, next_bucket} <= {"hiragana", "katakana"}:
-        return 8
-    if previous_bucket == next_bucket == "kanji":
-        return 14
-    if previous_bucket == "kanji" and next_bucket == "hiragana":
-        return 14
-    if previous_bucket == "hiragana" and next_bucket == "kanji":
-        return 8
-    return 0
-
-
-def is_protected_inline_split(previous_char: str, next_char: str) -> bool:
-    return bool(previous_char and next_char and previous_char.isascii() and next_char.isascii() and previous_char.isalnum() and next_char.isalnum())
-
-
-def chunk_boundaries(text: str, chunks: list[str]) -> set[int]:
-    boundaries: set[int] = set()
-    cursor = 0
-    for chunk in chunks:
-        cursor += len(chunk)
-        if 0 < cursor < len(text):
-            boundaries.add(cursor)
-    return boundaries
-
-
 @lru_cache(maxsize=4096)
 def budoux_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, parse_budoux_chunks(text))
@@ -188,23 +65,6 @@ def budoux_boundaries(text: str) -> set[int]:
 def morpheme_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, parse_morpheme_chunks(text))
 
-
-def clause_break_bonus(text: str, break_index: int) -> int:
-    left = text[:break_index].rstrip()
-    for token in CLAUSE_BREAK_TOKENS:
-        if left.endswith(token):
-            return -6
-    return 0
-
-
-def leading_boundary_penalty(text: str, break_index: int) -> int:
-    right = text[break_index:].lstrip()
-    if not right:
-        return 0
-    for token, penalty in LEADING_BOUNDARY_PENALTIES.items():
-        if right.startswith(token):
-            return penalty
-    return 0
 
 def candidate_kind_bonus(text: str, break_index: int) -> int:
     bonus = 0
@@ -502,8 +362,6 @@ TARGET_MAX_DURATION = 2.8
 ABSOLUTE_MAX_DURATION = 3.6
 DEFAULT_PAGE_WIDTH = 28
 MAX_UNIT_WIDTH = DEFAULT_PAGE_WIDTH * MAX_LINES
-TARGET_READING_SPEED = 14.0
-TIMING_BALANCE_WEIGHT = 1.4
 MAX_ALIGNED_CHARACTER_DURATION_SECONDS = 0.65
 DEFAULT_SUBTITLE_MAX_GAP_SECONDS = 0.32
 DEFAULT_SUBTITLE_END_PADDING_SECONDS = 0.08

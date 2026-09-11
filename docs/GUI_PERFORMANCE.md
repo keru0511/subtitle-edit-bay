@@ -76,10 +76,17 @@ python scripts/compare_gui_performance.py `
 ## CIとbaseline運用
 
 - 通常の`CI`では`tests/test_gui_large_project_performance.py`でfixtureの再現性とレポート診断を、`tests/test_gui_editor.py`で3,000件のListView virtualizationと編集画面でのMediaPlayer再利用を、時間閾値なしで検証します。
-- `GUI performance` workflowはWindowsで実動画を再生し、JSONを30日間Artifactとして保存します。QML・GUI・計測コードが変わるPRと手動実行が対象です。
-- workflowは既定で#302適用前の`b600e90`を別worktreeへ展開し、PR側と同じfixture・同じ計測ハーネス・同じrunnerで3,000件の比較値を取得します。現在側は3,000件と10,000件を測定します。delegate数はrevision固有の`objectName`ではなく、両版に存在するQML propertyの組み合わせで識別します。
+- `GUI performance` workflowは反復番号ごとのWindows matrixを最大3並列で実行し、JSONを30日間Artifactとして保存します。各shardは現行版の3,000件・10,000件と比較版の3,000件を直列に測定するため、比較ペアは必ず同じrunner、依存関係、ハーネスを使います。同じrunner内でGUI測定を同時実行しません。
+- workflowは既定で#302適用前の`b600e90`を別worktreeへ展開します。各shardは`--repetitions 1`で実行しますが、JSONには全体の反復番号、予定反復数、現行版・比較版・ハーネスのSHA、run ID、run attempt、Python・PySide6・FFmpeg・runner環境を記録します。
+- 最終jobは全shardの生データを再集計し、反復・シナリオの欠落や重複、不正JSON、SHA・入力・環境・run attemptの不一致を拒否してから既存の絶対上限・相対比較を適用します。matrix jobの失敗、キャンセル、予期しないskipは、残ったartifactが正常でも最終checkを成功させません。
 - 通常のPRでは時間差をレポートだけに残し、不安定なrunner時間でマージを止めません。基準runnerで連続3回以上の分布を確認した後、手動実行の`fail_on_regression`を有効にして予算変更を検証します。
 - baselineを更新する際は、workflow run URL、commit SHA、Windows image、Python・PySide6・FFmpegバージョン、各回のJSONを残します。異なるrunnerや依存バージョンの結果を同じbaselineとして混ぜません。
+
+### Artifactと再実行
+
+shard artifact名は`run_id`、`run_attempt`、反復番号を含み、統合artifactもrun attemptごとに分離されます。GitHub Actionsで失敗したmatrix jobだけを再実行した場合、最終jobは同じrunから各反復の最新の完全な現行版・比較版ペアを選びます。これにより成功済みshardを再測定せず利用でき、片側だけの不完全なattempt、別run・SHA・入力の結果、同じattemptの重複サンプルは拒否されます。個別JSONから判定せず、`Integrated benchmark gate`と`gui-performance-integrated-*`を確認してください。
+
+並列化の効果を評価するときは、同じ現行SHA、比較SHA、入力で直列版とmatrix版をそれぞれ3回以上実行し、workflow経過時間、queue待ち、各shard、準備・集約時間、総runner時間、p50・最大値とばらつきをPRへ記録します。Windows runnerの混雑やsetup重複で総runner時間が増えるため、待ち時間だけでなく通常CIへの影響も確認して`max-parallel`を調整します。
 
 ### #302前後の比較
 

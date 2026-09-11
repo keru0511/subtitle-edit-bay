@@ -84,6 +84,7 @@
         "test_subtitle_project_layout",
         "test_subtitle_project_safety",
         "test_subtitle_review",
+        "test_subtitle_text_rules",
         "test_subtitle_workflow_context_cli",
         "test_subtitle_workflow_cut",
         "test_subtitle_workflow_runtime_settings",

@@ -25,6 +25,7 @@ from tests.gui_performance_scenarios import (
     _comparison_qml_message_allowlist,
     _main_preview_contract_passed,
     _playback_follow_contract_passed,
+    _short_workspace_active,
     _short_visual_update_contract_passed,
 )
 
@@ -191,6 +192,19 @@ class GuiTestHarnessTests(unittest.TestCase):
         legacy_allowlist = _comparison_qml_message_allowlist(PRE_302_REFERENCE_REVISION)
         self.assertEqual(len(legacy_allowlist), 2)
         self.assertTrue(all(allowed.reason for allowed in legacy_allowlist))
+
+    def test_short_workspace_state_supports_current_and_reference_contracts(self) -> None:
+        current = QObject()
+        current.setProperty("currentWorkspace", "normal-video")
+        self.assertFalse(_short_workspace_active(current))
+        current.setProperty("currentWorkspace", "short-artifact")
+        self.assertTrue(_short_workspace_active(current))
+
+        reference = QObject()
+        reference.setProperty("activeOverlay", "")
+        self.assertFalse(_short_workspace_active(reference))
+        reference.setProperty("activeOverlay", "short")
+        self.assertTrue(_short_workspace_active(reference))
 
     def test_duration_summary_and_event_loop_probe(self) -> None:
         summary = summarize_durations_ms(range(1, 21))

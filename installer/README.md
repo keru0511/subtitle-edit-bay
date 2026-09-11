@@ -1,5 +1,8 @@
 # Windows installer
 
+BAT/ZIP版からの移行方針とcleanup手順は
+[`docs/INSTALLER_MIGRATION.md`](../docs/INSTALLER_MIGRATION.md)を参照してください。
+
 `SubtitleEditBay.iss` packages the source distribution as a per-user Windows
 installer. It deliberately does not package `.venv`, `.gui`, `.local`, imported
 videos, exports, or generated output.
@@ -16,14 +19,14 @@ The build script locates `ISCC.exe` from `PATH`, the standard Inno Setup install
 directory, or the `INNO_SETUP_COMPILER` environment variable. It does not install
 or download build dependencies.
 
-The installer build also attempts to compile `launcher/SubtitleEditBayLauncher.c`
-with Visual C++ `cl.exe`. The native launcher resolves its own installation
-directory before invoking `scripts/launch.ps1`. If `cl.exe` is unavailable, the
-build remains compatible and the installed shortcut falls back to Windows
-PowerShell. To build the native launcher explicitly, run:
+The installer build compiles `launcher/SubtitleEditBayLauncher.c` with the static
+MSVC runtime and embedded product/version resources. `cl.exe` and `rc.exe` are
+required; a missing native compiler is a build failure. Release binaries must
+additionally satisfy `docs/WINDOWS_BINARY_TRUST.md`; an unsigned formal release is
+not an allowed fallback. To build the native launcher explicitly, run:
 
 ```powershell
-pwsh -File scripts/build_launcher.ps1
+pwsh -File scripts/build_launcher.ps1 -Version 1.0.0
 ```
 
 The launcher never uses the current working directory to find the application,

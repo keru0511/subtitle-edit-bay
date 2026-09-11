@@ -99,6 +99,15 @@ def _peak_resident_set_bytes() -> int:
     return int(counters.PeakWorkingSetSize) if succeeded else 0
 
 
+def _short_workspace_active(window: QObject) -> bool:
+    """Read both the current workspace contract and the pre-#302 overlay contract."""
+
+    workspace = window.property("currentWorkspace")
+    if workspace is not None:
+        return workspace == "short-artifact"
+    return window.property("activeOverlay") == "short"
+
+
 def _variant(value: object) -> object:
     to_variant = getattr(value, "toVariant", None)
     return to_variant() if callable(to_variant) else value
@@ -1090,7 +1099,7 @@ class GuiPerformanceScenarioRunner:
         )
 
     def _open_short_mode(self) -> None:
-        if self._window().property("activeOverlay") == "short":
+        if _short_workspace_active(self._window()):
             return
         self.harness.click(
             self._window(),
@@ -1118,7 +1127,7 @@ class GuiPerformanceScenarioRunner:
         self.harness.wait(100)
         self.harness.click(self._window(), back)
         self.harness.wait_until(
-            lambda: self._window().property("activeOverlay") != "short",
+            lambda: not _short_workspace_active(self._window()),
             description="short mode to close",
             timeout_ms=5_000,
         )

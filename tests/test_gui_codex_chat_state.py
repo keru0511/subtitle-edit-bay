@@ -168,6 +168,28 @@ def wait_for(predicate, timeout: float = 2.0) -> None:
 
 
 class CodexChatControllerTests(unittest.TestCase):
+    def test_subtitle_proposal_is_recorded_in_the_shared_conversation(self) -> None:
+        client = FakeChatClient()
+        client.authenticated = True
+        controller = CodexChatController(
+            client_factory=lambda: client,
+            workspace_root=Path.cwd(),
+        )
+        try:
+            controller.connect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            self.assertTrue(controller.begin_proposal("字幕を短くして"))
+            self.assertEqual(controller.snapshot.chat_state, "sending")
+            self.assertEqual(controller.snapshot.messages[-1]["content_type"], "subtitle_proposal")
+
+            controller.complete_proposal("1件の変更案です")
+            self.assertEqual(controller.snapshot.chat_state, "idle")
+            self.assertEqual(controller.snapshot.messages[-1]["text"], "1件の変更案です")
+            self.assertEqual(controller.snapshot.messages[-1]["status"], "completed")
+            self.assertEqual(client.turn_params, {})
+        finally:
+            controller.shutdown()
+
     def test_login_states_models_and_model_persistence(self) -> None:
         client = FakeChatClient()
         selected_models: list[str] = []

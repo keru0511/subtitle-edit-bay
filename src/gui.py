@@ -16,6 +16,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
+# PySide6 exposes typing.Self on Python 3.10. Initialize the optional backport
+# first so PyTorch keeps its compatible Self implementation when WhisperX is
+# installed. Lightweight development/test environments may omit it.
+try:
+    from typing_extensions import Self as _TypingSelf  # noqa: F401
+except ImportError:  # pragma: no cover - release runtimes always lock it
+    _TypingSelf = None  # type: ignore[assignment]
+
 from PySide6.QtCore import (
     Property,
     QAbstractListModel,
@@ -60,6 +68,8 @@ from .gui_codex_state import (
     build_codex_context,
 )
 from .codex_app_server_client import CodexAppServerClient
+from .codex_actions import ActionResult, ActionScope, build_gui_action_dispatcher
+from .codex_chat_routing import route_subtitle_chat_request
 from .codex_runtime import detect_codex
 from .gui_codex_chat_state import (
     CodexChatController,
@@ -70,7 +80,7 @@ from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
-from .gui_base import APP_TITLE, EditBayBackend as LegacyEditBayBackend
+from .gui_base import APP_TITLE, LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
 from .editor_workspace import (
     EditModeCapabilities,
@@ -79,7 +89,13 @@ from .editor_workspace import (
     build_edit_mode_capabilities,
 )
 from .gui_state import build_gui_transcribe_command
-from .workflow_actions import ActionCapability, prepare_render_request, render_capability, transcription_capability
+from .workflow_actions import (
+    ActionCapability,
+    prepare_render_request,
+    render_capability,
+    render_output_path,
+    transcription_capability,
+)
 from .media_probe import probe_media_duration
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
@@ -512,6 +528,7 @@ class EditBayBackend(LegacyEditBayBackend):
             on_proposal=self._on_codex_proposal,
             callback_dispatcher=self._dispatch_codex_callback,
         )
+        self._codex_actions = build_gui_action_dispatcher(self)
         self._last_codex_login_url = ""
         self._last_codex_log_state: tuple[object, ...] | None = None
         self._codex_chat = CodexChatController(
@@ -792,6 +809,7 @@ class EditBayBackend(LegacyEditBayBackend):
         section = self._short_video_section()
         return {
             "enabled": bool(section.get("enabled", False)),
+            "time_basis": str(section.get("time_basis", "source")),
             "output": deepcopy(section.get("output", {})),
             "global_fit": str(section.get("global_fit", "cover")),
             "global_background_color": str(section.get("global_background_color", "000000")),
@@ -910,6 +928,7 @@ class EditBayBackend(LegacyEditBayBackend):
             "short_video",
             {
                 "enabled": False,
+                "time_basis": "source",
                 "output": {"width": 1080, "height": 1920, "fps": 30},
                 "global_fit": "cover",
                 "global_background_color": "000000",
@@ -922,6 +941,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if not isinstance(section, dict):
             section = self._project["short_video"] = {
                 "enabled": False,
+                "time_basis": "source",
                 "output": {"width": 1080, "height": 1920, "fps": 30},
                 "global_fit": "cover",
                 "global_background_color": "000000",
@@ -3648,6 +3668,10 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def logoutCodex(self) -> None:
+        if self._codex_session.running:
+            self._codex_session.stop()
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
         self._codex_chat.logout()
 
     @Slot()
@@ -3661,15 +3685,76 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_chat.select_model(model)
 
     @Slot(str)
-    def sendCodexChatMessage(self, message: str) -> None:
-        self._codex_chat.send_message(message)
+    @Slot(str, str, float, float)
+    def sendCodexChatMessage(
+        self,
+        message: str,
+        requested_scope: str = "auto",
+        range_start: float = 0.0,
+        range_end: float = 0.0,
+    ) -> None:
+        route = route_subtitle_chat_request(
+            message,
+            requested_scope,
+            project_loaded=self._project is not None,
+            has_selection=self._selected_segment_index >= 0,
+            current_time=float(self.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        if route is None:
+            self._codex_chat.send_message(message)
+            return
+        if not self._codex_chat.begin_proposal(message):
+            return
+        if route.scope == "unavailable":
+            self._codex_chat.fail_proposal("字幕を編集するには、先に編集プロジェクトを開いてください。")
+            return
+        if route.scope == "current":
+            self._codex_current_time = float(self.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0
+        scope_id = f"chat-subtitle-{uuid4().hex}"
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "kind": "propose",
+            "type": "propose_subtitle_edit",
+            "args": {
+                "intent": str(message).strip(),
+                "selection_scope": route.scope,
+            },
+            "scope_id": scope_id,
+            "project_revision": self._project_revision,
+        }
+        if route.scope == "time_range":
+            payload["args"].update(
+                {"range_start": route.range_start, "range_end": route.range_end}
+            )
+        result = self.dispatch_codex_action(
+            payload,
+            trusted_scope=ActionScope(
+                id=scope_id,
+                allowed_actions=frozenset({"propose_subtitle_edit"}),
+                project_revision=self._project_revision,
+            ),
+        )
+        if result.status.value != "success":
+            self._codex_chat.fail_proposal(
+                result.message or "字幕の変更案を開始できませんでした。"
+            )
 
     @Slot()
     def stopCodexChat(self) -> None:
-        self._codex_chat.interrupt()
+        if self._codex_session.running:
+            self._codex_session.stop()
+            self._codex_chat.fail_proposal("", cancelled=True)
+        else:
+            self._codex_chat.interrupt()
 
     @Slot()
     def startNewCodexChat(self) -> None:
+        if self._codex_session.running:
+            self._codex_session.stop()
+        self._codex_proposal = None
+        self.codexProposalChanged.emit()
         self._codex_chat.new_chat()
 
     def _queue_codex_system_log(self, message: object, *, severity: str = "INFO") -> None:
@@ -3810,10 +3895,31 @@ class EditBayBackend(LegacyEditBayBackend):
         self.codexProposalChanged.emit()
         self._set_status("Codex編集案を破棄しました", "EDIT")
 
+    def dispatch_codex_action(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        trusted_scope: ActionScope,
+    ) -> ActionResult:
+        """Dispatch an Action with scope authorization created outside Codex output."""
+
+        return self._codex_actions.dispatch(payload, trusted_scope=trusted_scope)
+
+    def codex_render_output_exists(self, *, short: bool) -> bool:
+        """Check overwrite policy using the same output resolver as GUI render."""
+
+        if self._project is None or not self._project_path:
+            return False
+        try:
+            return render_output_path(self._project_path, self._project, short=short).exists()
+        except ValueError:
+            return False
+
     def _on_codex_state(self, _snapshot: CodexSessionSnapshot) -> None:
         self.codexStateChanged.emit()
         self.codexMessageChanged.emit()
         if self._codex_session.snapshot.error:
+            self._codex_chat.fail_proposal(self._codex_session.snapshot.error)
             self._set_status(self._codex_session.snapshot.error, "ERROR")
 
     def _on_codex_message(self, _message: str) -> None:
@@ -3822,10 +3928,14 @@ class EditBayBackend(LegacyEditBayBackend):
     def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
         self._codex_proposal = dict(proposal)
         self.codexProposalChanged.emit()
+        self._codex_chat.complete_proposal(str(proposal.get("summary", "")))
         self._set_status("Codex編集案を確認できます", "CODEX")
 
     def _on_codex_chat_state(self, snapshot: CodexChatSnapshot) -> None:
         self.codexChatChanged.emit()
+        if snapshot.connection_state == "disconnected" and self._codex_session.running:
+            self._codex_session.stop()
+            self._codex_chat.fail_proposal("Codexとの接続が切れたため、変更案の作成を停止しました。")
         log_state: tuple[object, ...] = (
             snapshot.connection_state,
             snapshot.auth_state,
@@ -4397,6 +4507,17 @@ def main() -> None:
         component="qml",
         stage="READY",
     )
+    smoke_result_path = os.environ.get("SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT", "").strip()
+    if smoke_result_path:
+        smoke_result = {
+            **resolve_application_info(),
+            "qmlLoaded": True,
+            "entrypoint": "SubtitleEditBayLauncher.exe",
+        }
+        Path(smoke_result_path).write_text(
+            json.dumps(smoke_result, ensure_ascii=False), encoding="utf-8"
+        )
+        QTimer.singleShot(0, app.quit)
     app.aboutToQuit.connect(
         lambda: app._record_log(
             "アプリケーションを終了します",

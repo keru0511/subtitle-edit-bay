@@ -33,7 +33,9 @@
         "test_burn_subs",
         "test_channel_presets",
         "test_ci_test_groups",
+        "test_codex_actions",
         "test_codex_app_server_client",
+        "test_codex_chat_routing",
         "test_codex_edit_proposal",
         "test_codex_highlight_ranker",
         "test_codex_runtime",
@@ -52,6 +54,7 @@
         "test_highlight_candidates",
         "test_highlight_preferences",
         "test_highlight_visual_signals",
+        "test_installer_migration",
         "test_media_probe",
         "test_merge_transcripts",
         "test_multi_source_short_video",
@@ -63,6 +66,7 @@
         "test_release_distribution",
         "test_render_ass_extra",
         "test_runtime_config",
+        "test_runtime_contract",
         "test_runtime_dependencies",
         "test_runtime_settings",
         "test_short_video",
@@ -110,6 +114,7 @@
     },
     "qt-gui": {
       "modules": [
+        "test_gui_backend_metaobject",
         "test_gui_editor",
         "test_gui_test_harness",
         "test_qml_static",
@@ -123,6 +128,11 @@
       ],
       "selectors": [
         "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests.test_normalize_reaches_the_configured_ebu_r128_target",
+        "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests.test_final_duration_matches_the_output_timeline",
+        "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests.test_output_audio_follows_the_same_keep_sequence_as_video",
+        "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests.test_output_frames_follow_the_independent_source_keep_sequence",
+        "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests.test_removed_audio_frequency_is_absent_while_kept_frequencies_remain",
+        "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests.test_subtitle_is_dropped_or_retimed_and_visible_at_output_time",
         "tests.test_media_semantic_e2e.MediaCommandDiagnosticTests.test_timeout_terminates_descendant_processes",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_cpu_fallback_produces_compatible_h264_with_audio",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_fixture_has_distinct_deterministic_time_bands",
@@ -138,9 +148,14 @@
     },
     "windows-launcher-runtime": {
       "modules": [
+        "test_runtime_activation",
         "test_windows_launchers"
       ],
-      "selectors": []
+      "selectors": [
+        "tests.test_installer_migration.InstallerMigrationTests.test_destination_parent_junction_cannot_write_into_legacy_workspace",
+        "tests.test_installer_migration.InstallerMigrationTests.test_pending_request_is_reused_before_runtime_setup",
+        "tests.test_installer_migration.InstallerMigrationTests.test_setup_rejects_destination_as_source_before_mutating_state"
+      ]
     },
     "windows-runtime": {
       "modules": [

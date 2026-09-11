@@ -21,6 +21,10 @@
 
 PRの準備処理は `contents: read` だけで動き、タグやReleaseを作りません。`pull_request_target` や公開用資格情報も使いません。
 
+Windows launcherの静的CRT、version resource、import dependency、Authenticode署名とtimestampの契約は [Windows binary trust contract](WINDOWS_BINARY_TRUST.md) を参照してください。信頼済みsigning providerが未構成の間、VERSION-only候補はunsigned artifactを保存せず明示的に停止します。
+
+main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmpegとinstaller smokeをskipし、同じ仮マージに対する実行責務をRelease readinessへ一本化します。Release readinessが起動しない非main向けPRでは委譲せず、通常CIが全検証を実行します。通常CI固有のquality、Windows runtime、launcher、FFmpeg 6互換は引き続き必須です。分類失敗、必要ジョブの失敗・キャンセル・予期しないskip、または委譲対象の重複実行は集約で拒否します。対応表は [PR検証の実行責務](validation-ownership.md) を参照してください。
+
 ### v0.4.8で検出したGUIテスト失敗
 
 失敗したRelease runは911件を1つのPythonプロセスで一括実行し、通常CIは分類済みグループを別プロセスで実行していました。`start.call_args` が `None` になった2件はReleaseで同じ順序のとき再現し、通常CI方式では成功したため、アプリ処理の削除やテストskipではなく、実行単位を通常CIと共通の `run_ci_tests.py` に統一しました。さらにRelease環境にもFFmpegとffprobeを明示的に導入し、Qtのoffscreen／software環境変数を通常CIと揃えています。
@@ -29,13 +33,21 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 
 リリースPRをマージすると `release-request.yml` が、そのpushイベントの実際のマージSHAとVERSIONを固定します。待機中に `main` が進んでも対象を最新HEADへ差し替えません。
 
-公開処理は `release-prepare.yml` をもう一度呼び、テスト、正式版インストーラー構築、成果物検証、インストール・起動確認がすべて成功した後にだけ、次を行います。
+公開処理は `release-prepare.yml` を再実行しません。マージ前の `Release readiness` が作成し、別runnerでインストール・起動確認したartifactを次の順で昇格します。
 
-1. 対象SHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
-2. 準備済みartifactを再検証する
-3. GitHub Releaseを作り、インストーラー、SHA-256、manifest、`release-preparation.json` を添付する
+1. 実際のマージSHAに対応する、マージ済みのVERSION-only PRを固定する
+2. そのPRの最終head/baseに対する未完了を含む最新の `Release readiness` runを特定する。APIのPR対応がマージ後に空でもhead branch/SHA、repository、workflow、候補commitの親/treeで結び、最新runが未完了・失敗・キャンセルなら過去の成功runへ戻らない
+3. readinessの必須7ジョブについて各ジョブの最新実行が成功したことを確認する。失敗jobだけの再実行では、準備runの最新attemptと、artifactを生成したbuild attempt、同じartifactを確認したinstall/start attemptを分けて保持する
+4. 同じ最終headの最新の通常CIで分類・quality・Windows runtime・launcher・FFmpeg 6が成功し、Release readinessへ委譲した2ジョブがskipされたことに加え、成功後に保存した検証プロファイルと仮マージSHA/tree/head/baseのidentity artifactがRelease readiness候補と一致することを確認する
+5. build attemptを含むartifact名、ID、digestが一意で未失効であることを確認し、APIから取得したZIP全体のSHA-256をdigestと照合してから展開する
+6. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
+7. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する
+8. 対象の実マージSHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
+9. 検証済みのinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
 
-既存Releaseの再実行では、公開済みReleaseのタグ検索に加えて、認証付きRelease一覧をページ送りしてdraftも検索します。その後assetをダウンロードしてSHAと対象コミットを照合します。公開済みかつ同一なら何も上書きせず成功します。draftかつ同一なら正式公開し、異なる場合や公開状態を確認できない場合は停止します。`--clobber` は使いません。
+この処理はテスト、依存解決、installer build、install/startを行いません。候補選択と照合の詳細は [リリース候補昇格契約](release-candidate-promotion.md) を参照してください。
+
+同じworkflow runの全job再実行では、保存済みの昇格判断artifactをdigest検証して再利用し、候補runとartifact IDを変えず、同名artifactを再アップロードしません。既存Releaseの再実行では、公開済みReleaseのタグ検索に加えて、認証付きRelease一覧をページ送りしてdraftも検索します。既存assetは全ファイルを同じ候補とbyte単位で照合します。公開済みかつ全assetが同一なら何も上書きせず成功します。draftは既存assetがすべて同一の場合だけ、同じ候補から不足assetを補って正式公開します。異なるasset、公開済みReleaseの欠落、候補不明、公開状態を確認できない場合は停止します。`--clobber` は使いません。
 
 タグとGitHub Releaseの衝突確認では、不存在だけを新規公開可能と判定します。通信障害、認証エラー、APIエラーなどで状態を確認できない場合は、衝突なしとは扱わず準備または公開を停止します。
 
@@ -44,7 +56,9 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 - `source_sha`: 既に `main` に含まれる、VERSIONだけを変更したコミットの完全な40桁SHA
 - `release_version`: そのコミットのVERSIONと同じ `vX.Y.Z`
 
-この経路も共通準備処理を迂回しません。直接タグpushを公開入口にするWorkflowはありません。
+この経路も指定したマージに対応する同じ候補artifactを再取得して昇格します。候補を再buildせず、別runや別SHAへ切り替えません。直接タグpushを公開入口にするWorkflowはありません。
+
+候補artifactの保持期間は14日です。不在・期限切れ・記録不整合の場合、公開Workflowは停止します。承認済み内容を再準備する場合は、同じ内容でも新しい候補として必要検証を完了し、対応する公開承認を改めて確認してください。公開処理内での自動再準備は行いません。
 
 ## 必須チェック設定
 
@@ -60,9 +74,9 @@ Workflow追加だけではマージを制限できません。`main` のRuleset�
 
 ## リリース後の確認
 
-1. `Release from merged version` と、その中の共通準備・公開ジョブが成功していることを確認する
+1. `Release from merged version` の候補選択・照合・公開ジョブが成功していることを確認する
 2. 対象タグがマージSHAを指すことを確認する
-3. Assetsに `SubtitleEditBay-Setup.exe`、同名の `.sha256` と `.manifest.json`、`release-preparation.json` があることを確認する
+3. Assetsに `SubtitleEditBay-Setup.exe`、同名の `.sha256` と `.manifest.json`、`release-preparation.json`、`release-promotion.json` があることを確認する
 4. [直接ダウンロードURL](https://github.com/keru0511/subtitle-edit-bay/releases/latest/download/SubtitleEditBay-Setup.exe)から取得できることを確認する
 
 公開時のGitHub通信障害などは再実行で復旧します。ソース修正が必要なら既存タグは動かさず、パッチ番号を上げた新しいVERSION-only PRを作成します。

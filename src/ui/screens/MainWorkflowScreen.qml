@@ -45,6 +45,9 @@ ApplicationWindow {
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
+    // A short is a derived artifact workspace, not a normal-video edit mode
+    // or a transient editor overlay.
+    property string currentWorkspace: "normal-video"
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
     property string selectedCutId: ""
@@ -65,7 +68,21 @@ ApplicationWindow {
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
-    readonly property bool shortMode: root.activeOverlay === "short"
+    readonly property bool shortWorkspaceActive: root.currentWorkspace === "short-artifact"
+    readonly property bool codexAuthenticated: root.appBackend
+        && root.appBackend.codexAuthState === "authenticated"
+    readonly property bool codexSidebarOverlay: root.width < 1400
+    readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0
+    readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
+        ? (root.codexDrawerOpen ? 310 : 104) : 0
+    readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
+        && root.codexDrawerOpen ? 310 : 0
+    readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0
+        ? root.codexSidebarWidth + 10 : 0
+    readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
+        + root.codexDrawerHeaderInset
+    property bool codexDrawerOpen: true
+    property bool previousCodexAuthenticated: false
     onEditorModeChanged: {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
@@ -530,18 +547,18 @@ ApplicationWindow {
         root.activeOverlay = ""
     }
 
-    function openShortModeScreen() {
+    function openShortWorkspace() {
         if (root.appBackend.running)
             return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
-        root.activeOverlay = "short"
+        root.currentWorkspace = "short-artifact"
     }
 
-    function closeShortModeScreen() {
-        root.activeOverlay = ""
+    function closeShortWorkspace() {
+        root.currentWorkspace = "normal-video"
         mainPlayer.position = root.editorPositionCache
     }
 
@@ -1065,14 +1082,14 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode ? 0 : 62
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
+        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive ? 0 : 62
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortWorkspaceActive
         color: "#101512"
         border.color: root.border
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 20
-            anchors.rightMargin: 20
+            anchors.rightMargin: 20 + root.codexDrawerHeaderInset
             spacing: 14
             ColumnLayout {
                 spacing: 0
@@ -1517,6 +1534,12 @@ ApplicationWindow {
         function onEditorPlayheadChanged() {
             root.syncSharedPlayerToPlayhead()
         }
+
+        function onCodexChatChanged() {
+            if (root.codexAuthenticated && !root.previousCodexAuthenticated)
+                root.codexDrawerOpen = true
+            root.previousCodexAuthenticated = root.codexAuthenticated
+        }
     }
 
     Timer {
@@ -1529,9 +1552,12 @@ ApplicationWindow {
     RowLayout {
         id: mainWorkspace
         objectName: "mainWorkspace"
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortWorkspaceActive
         anchors.fill: parent
-        anchors.margins: 12
+        anchors.leftMargin: 12
+        anchors.topMargin: 12
+        anchors.bottomMargin: 12
+        anchors.rightMargin: root.codexWorkspaceRightInset + 12
         spacing: 10
 
         Rectangle {
@@ -1716,7 +1742,7 @@ ApplicationWindow {
                 onStartTranscriptionRequested: root.requestTranscription()
                 onEditorRequested: root.openEditorScreen()
                 onMixerRequested: root.openMixerScreen()
-                onShortModeRequested: root.openShortModeScreen()
+                onShortModeRequested: root.openShortWorkspace()
                 onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
                 onSaveOrStopRequested: {
                     if (!root.appBackend.running)
@@ -1877,6 +1903,7 @@ ApplicationWindow {
                 id: processingProgressOverlay
                 objectName: "processingProgressOverlay"
                 Layout.fillWidth: true
+                Layout.rightMargin: root.codexDrawerBodyInset
                 Layout.preferredHeight: visible ? progressPanel.implicitHeight : 0
                 Layout.minimumHeight: visible ? progressPanel.implicitHeight : 0
                 implicitHeight: progressPanel.implicitHeight
@@ -1960,13 +1987,6 @@ ApplicationWindow {
             }
         }
 
-        CodexSidebarContainer {
-            Layout.preferredWidth: 300
-            Layout.minimumWidth: 280
-            Layout.fillHeight: true
-            backend: root.appBackend
-            visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
-        }
     }
 
   Dialog {
@@ -2222,6 +2242,7 @@ ApplicationWindow {
         id: mixerPage
         objectName: "mixerPage"
         anchors.fill: parent
+        anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.mixerMode
         z: 100
         color: "#0D1210"
@@ -2450,7 +2471,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 64
                         Layout.leftMargin: 18
-                        Layout.rightMargin: 14
+                        Layout.rightMargin: 14 + root.codexDrawerHeaderInset
                         spacing: 10
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -2785,6 +2806,7 @@ ApplicationWindow {
         id: editorPage
         objectName: "editorPage"
         anchors.fill: parent
+        anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.editorMode
         z: 100
         color: "#0D1210"
@@ -2838,7 +2860,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     spacing: 0
             RowLayout {
-                Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10; spacing: 8
+                Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10 + root.codexDrawerHeaderInset; spacing: 8
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
                 Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
@@ -2961,14 +2983,6 @@ ApplicationWindow {
                             PanelTitle { text: "字幕一覧" }
                             Item { Layout.fillWidth: true }
                             Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
-                        }
-                        CodexEditPanel {
-                            id: codexEditPanel
-                            objectName: "codexEditPanel"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: implicitHeight
-                            backend: root.appBackend
-                            currentTime: mainPlayer.position / 1000
                         }
                         ListView {
                             id: captionTable
@@ -3122,20 +3136,78 @@ ApplicationWindow {
         id: shortModePage
         objectName: "shortModePage"
         anchors.fill: parent
-        visible: root.shortMode
+        property string workspaceKind: "short-artifact"
+        anchors.rightMargin: root.codexWorkspaceRightInset
+        visible: root.shortWorkspaceActive
         z: 100
         color: "#0D1210"
         border.color: "#46564E"
         focus: visible
-        Keys.onEscapePressed: root.closeShortModeScreen()
+        Keys.onEscapePressed: root.closeShortWorkspace()
         onVisibleChanged: if (visible) forceActiveFocus()
 
         Loader {
             id: shortModeLoader
             anchors.fill: parent
-            active: root.shortMode
+            active: root.shortWorkspaceActive
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
+        }
+    }
+
+    CodexSidebarContainer {
+        id: codexSidebar
+        objectName: "commonCodexSidebar"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        width: root.codexAuthenticated ? 300 : 0
+        visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)
+        z: 600
+        backend: root.appBackend
+        drawerMode: root.codexSidebarOverlay
+        onCloseRequested: root.codexDrawerOpen = false
+    }
+
+    SmallButton {
+        objectName: "codexDrawerToggle"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        width: 86
+        height: 34
+        visible: root.codexAuthenticated && root.codexSidebarOverlay && !root.codexDrawerOpen
+        z: 650
+        text: root.codexDrawerOpen ? "Codexを閉じる" : "Codexを開く"
+        onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
+    }
+
+    SmallButton {
+        id: codexLoginRoute
+        objectName: "codexLoginRoute"
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.margins: 12
+        width: text === "ブラウザを開く" ? 116 : 92
+        height: 34
+        visible: !root.codexAuthenticated
+        z: 650
+        text: root.appBackend && root.appBackend.codexAuthState === "login_pending"
+            ? "ブラウザを開く"
+            : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0
+                ? "再接続" : "Codexログイン")
+        enabled: root.appBackend
+            && root.appBackend.codexConnectionState !== "connecting"
+            && root.appBackend.codexAuthState !== "checking"
+            && root.appBackend.codexAuthState !== "logging_in"
+        onClicked: {
+            if (root.appBackend.codexAuthState === "login_pending")
+                root.appBackend.openCodexLoginPage()
+            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
+                root.appBackend.reconnectCodexChat()
+            else
+                root.appBackend.startCodexLogin()
         }
     }
 
@@ -3146,13 +3218,13 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.leftMargin: 12
-        anchors.rightMargin: 12
+        anchors.rightMargin: root.codexInteractiveRightInset + 12
         anchors.bottomMargin: 12
         z: 700
         color: "transparent"
         visible: root.appBackend
             && root.appBackend.progressVisible
-            && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode)
+            && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive)
         height: modeProgressPanel.implicitHeight
 
         ProcessingProgressPanel {
@@ -3212,6 +3284,7 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        root.previousCodexAuthenticated = root.codexAuthenticated
         root.syncSettings()
     }
     onClosing: function(close) {

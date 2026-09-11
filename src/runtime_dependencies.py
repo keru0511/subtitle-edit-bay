@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -42,13 +45,13 @@ def check_runtime_dependencies(*, probe_nvenc: bool = False) -> RuntimeDependenc
     return RuntimeDependencyStatus(
         ffmpeg=ffmpeg_path is not None,
         ffprobe=shutil.which("ffprobe") is not None,
-        whisperx=importlib.util.find_spec("whisperx") is not None,
+        whisperx=_module_importable("whisperx"),
         cuda=_torch_cuda_available(),
         nvenc=probe_nvenc and _ffmpeg_nvenc_available(ffmpeg_path),
     )
 
 
-def runtime_diagnostic_info() -> dict[str, object]:
+def runtime_diagnostic_info(project_root: Path | None = None) -> dict[str, object]:
     info: dict[str, object] = {
         "python": sys.version.split()[0],
         "platform": sys.platform,
@@ -57,6 +60,13 @@ def runtime_diagnostic_info() -> dict[str, object]:
         "pytorch_cuda_build": "none",
         "cuda_available": False,
     }
+    manifest_path = (project_root or Path(__file__).resolve().parents[1]) / ".local" / "runtime-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if isinstance(manifest, dict):
+            info["runtime_manifest"] = manifest
+    except (OSError, json.JSONDecodeError):
+        pass
     if importlib.util.find_spec("torch") is None:
         return info
     try:
@@ -74,6 +84,14 @@ def runtime_diagnostic_info() -> dict[str, object]:
         except (OSError, RuntimeError):
             pass
     return info
+
+
+def _module_importable(name: str) -> bool:
+    try:
+        importlib.import_module(name)
+    except (ImportError, OSError, RuntimeError):
+        return False
+    return True
 
 
 def _ffmpeg_version(ffmpeg_path: str | None) -> str:

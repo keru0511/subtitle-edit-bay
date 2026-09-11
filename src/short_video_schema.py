@@ -10,6 +10,7 @@ DEFAULT_SHORT_FPS = 30
 SHORT_VIDEO_SCHEMA_VERSION = 2
 VALID_FIT_MODES = ("cover", "contain", "blur")
 VALID_TRANSITION_TYPES = ("crossfade", "fade", "cut")
+SHORT_VIDEO_TIME_BASIS = "source"
 
 
 class ShortVideoError(ValueError):
@@ -164,6 +165,10 @@ class ShortVideoClip:
 @dataclass(frozen=True)
 class ShortVideo:
     enabled: bool = False
+    # Short clips always address the original source media.  The normal-video
+    # cut/output timeline is a different artifact and must not be mixed into
+    # this workspace implicitly.
+    time_basis: str = SHORT_VIDEO_TIME_BASIS
     output: ShortVideoOutput = field(default_factory=ShortVideoOutput)
     global_fit: str = "cover"
     global_background_color: str = "000000"
@@ -192,6 +197,12 @@ class ShortVideo:
         if not isinstance(payload, dict):
             raise ShortVideoError("short_video must be an object")
         enabled = bool(payload.get("enabled", False))
+        time_basis = str(payload.get("time_basis", SHORT_VIDEO_TIME_BASIS)).lower()
+        if time_basis != SHORT_VIDEO_TIME_BASIS:
+            raise ShortVideoError(
+                "short_video.time_basis must be 'source'; output-timeline clips "
+                "require an explicit conversion"
+            )
         try:
             schema_version = int(payload.get("schema_version", 1))
         except (TypeError, ValueError) as error:
@@ -232,6 +243,7 @@ class ShortVideo:
                 raise ShortVideoError(f"short_video.clips[{index}] must be an object")
         return cls(
             enabled=enabled,
+            time_basis=time_basis,
             output=output,
             global_fit=global_fit,
             global_background_color=global_background_color,
@@ -245,6 +257,7 @@ class ShortVideo:
         return {
             "schema_version": SHORT_VIDEO_SCHEMA_VERSION,
             "enabled": self.enabled,
+            "time_basis": self.time_basis,
             "output": self.output.to_json(),
             "global_fit": self.global_fit,
             "global_background_color": self.global_background_color,

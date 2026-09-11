@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
-import QtMultimedia
 import "../components"
 
 Item {
@@ -11,7 +9,9 @@ Item {
     anchors.fill: parent
 
     property var mainRoot: null
+    // qmllint disable unqualified
     property var appBackend: backend
+    // qmllint enable unqualified
     property int currentClipIndex: 0
 
     function clampCurrentClipIndex() {
@@ -52,15 +52,25 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.rightMargin: shortRoot.mainRoot ? shortRoot.mainRoot.codexDrawerHeaderInset : 0
             spacing: 12
-            Text {
-                text: "ショート動画作成"
-                color: "#E8EFEA"
-                font.family: "Yu Gothic UI"
-                font.pixelSize: 18
-                font.weight: Font.Bold
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Text {
+                    text: "ショート用ワークスペース"
+                    color: "#E8EFEA"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 18
+                    font.weight: Font.Bold
+                }
+                Text {
+                    text: "通常動画から派生する別成果物を編集します"
+                    color: "#8E9B94"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 9
+                }
             }
-            Item { Layout.fillWidth: true }
             Button {
                 id: exportButton
                 objectName: "shortModeExportButton"
@@ -68,7 +78,9 @@ Item {
                 enabled: shortRoot.appBackend && (shortRoot.appBackend.actionCapabilities.canRenderShort || shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput)
                 ToolTip.visible: hovered && !enabled
                 ToolTip.text: shortRoot.appBackend ? shortRoot.appBackend.actionCapabilities.shortRenderReason : ""
-                text: shortRoot.appBackend && shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput ? "出力先を選んで書き出す" : "書き出す"
+                text: shortRoot.appBackend && shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput
+                    ? "出力先を選んでショート動画を書き出す"
+                    : "ショート動画を書き出す"
                 onClicked: {
                     shortRoot.appBackend.renderShortVideo()
                 }
@@ -91,8 +103,8 @@ Item {
                 objectName: "shortModeBackButton"
                 implicitHeight: 32
                 enabled: shortRoot.mainRoot !== null && !shortRoot.appBackend.running
-                text: "メインへ戻る"
-                onClicked: shortRoot.mainRoot.closeShortModeScreen()
+                text: "通常動画編集へ戻る"
+                onClicked: shortRoot.mainRoot.closeShortWorkspace()
                 contentItem: Text {
                     text: shortModeBackButton.text
                     color: shortModeBackButton.enabled ? "#F4F1E8" : "#59635D"
@@ -117,27 +129,26 @@ Item {
             Layout.fillHeight: true
             spacing: 20
 
-            ShortModePreview {
-                id: shortPreview
-                objectName: "shortModePreview"
-                Layout.fillHeight: true
-                Layout.preferredWidth: parent ? parent.height * 9 / 16 : 540
-                Layout.maximumWidth: 540
-                Layout.minimumWidth: 200
-                appBackend: shortRoot.appBackend
-                clipData: shortRoot.currentClip()
-            }
-
             ColumnLayout {
-                Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 14
+                Layout.preferredWidth: 340
+                Layout.minimumWidth: 280
+                Layout.maximumWidth: 380
+                spacing: 12
+
+                Text {
+                    text: "クリップ"
+                    color: "#E8EFEA"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                }
 
                 HighlightCandidateList {
                     id: highlightCandidates
                     objectName: "highlightCandidateList"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 250
+                    Layout.preferredHeight: 220
                     appBackend: shortRoot.appBackend
                     onPreviewRequested: function (seconds) { shortPreview.previewAt(seconds) }
                 }
@@ -151,7 +162,63 @@ Item {
                     selectedIndex: shortRoot.currentClipIndex
                     onSelected: function (index) { shortRoot.currentClipIndex = index }
                 }
+            }
 
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 8
+
+                Text {
+                    text: "ショートプレビュー"
+                    color: "#E8EFEA"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                }
+
+                ShortModePreview {
+                    id: shortPreview
+                    objectName: "shortModePreview"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumWidth: 220
+                    appBackend: shortRoot.appBackend
+                    clipData: shortRoot.currentClip()
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillHeight: true
+                Layout.preferredWidth: 300
+                Layout.minimumWidth: 260
+                Layout.maximumWidth: 340
+                spacing: 8
+
+                Text {
+                    text: "ショート設定"
+                    color: "#E8EFEA"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                }
+                Rectangle {
+                    objectName: "shortWorkspaceTimeBasis"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    radius: 7
+                    color: "#171E1A"
+                    border.color: "#2A3530"
+                    Text {
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        text: "素材時間: 元ソース動画を基準にします\n通常動画のカット後時間とは混在しません"
+                        color: "#8E9B94"
+                        font.family: "Yu Gothic UI"
+                        font.pixelSize: 9
+                        wrapMode: Text.Wrap
+                    }
+                }
                 ShortModeSettingsPanel {
                     id: settingsPanel
                     objectName: "shortModeSettingsPanel"

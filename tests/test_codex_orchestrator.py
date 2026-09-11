@@ -20,6 +20,7 @@ from src.codex_orchestrator import (
     PlanError,
     PlanState,
     PlanStateStore,
+    PlanStep,
     build_completion_plan,
     completion_scope_for_request,
     plan_state_path,
@@ -59,6 +60,8 @@ class ReviewBackend:
     def __init__(self) -> None:
         self.current_revision = 4
         self.active_job = ""
+        self.active_job_id = ""
+        self.job_sequence = 0
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
         self.reviews: list[dict[str, Any]] = []
         self.project_state: dict[str, Any] = {
@@ -85,7 +88,10 @@ class ReviewBackend:
             payload["project_revision"] = self.current_revision
             return HandlerResult("project reviewed", state={"review_result": payload})
         if action_type == "inspect_processing_state":
-            return HandlerResult("processing inspected", state={"running": bool(self.active_job)})
+            return HandlerResult(
+                "processing inspected",
+                state={"running": bool(self.active_job), "job_id": self.active_job_id},
+            )
         return HandlerResult("inspected", state={})
 
     def propose(self, action_type: str, args: Mapping[str, Any], revision: int) -> HandlerResult:
@@ -103,23 +109,40 @@ class ReviewBackend:
     def execute(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
         self.calls.append(("execute", action_type, dict(args)))
         if action_type == "cancel_processing":
+            if str(args.get("job_id", "")) != self.active_job_id:
+                raise ValueError("unexpected job identity")
             job_type = str(args.get("job_type") or self.active_job or "transcribe")
-            return HandlerResult("cancel requested", job={"type": job_type, "status": "cancelling"})
+            return HandlerResult(
+                "cancel requested",
+                job={"job_id": self.active_job_id, "type": job_type, "status": "cancelling"},
+            )
         job_type = {
             "start_transcription": "transcribe",
             "render_normal": "render",
             "render_short": "render_short",
         }.get(action_type, action_type)
+        self.job_sequence += 1
+        self.active_job_id = f"job-{self.job_sequence}"
         if action_type in self.running_jobs:
             self.active_job = job_type
-            return HandlerResult("started", job={"type": job_type, "status": "running"})
-        return HandlerResult("completed", job={"type": job_type, "status": "completed"})
+            return HandlerResult(
+                "started",
+                job={"job_id": self.active_job_id, "type": job_type, "status": "running"},
+            )
+        return HandlerResult(
+            "completed",
+            job={"job_id": self.active_job_id, "type": job_type, "status": "completed"},
+        )
 
 
 class CodexOrchestratorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.backend = ReviewBackend()
-        self.scope = ActionScope("goal-1", frozenset(ACTION_DEFINITIONS))
+        self.scope = ActionScope(
+            "goal-1",
+            frozenset(ACTION_DEFINITIONS),
+            project_revision=4,
+        )
         self.orchestrator = CodexOrchestrator(ActionDispatcher(self.backend), self.scope)
 
     def build(self, scope: tuple[str, ...] = ("subtitle", "audio", "timeline", "render")) -> PlanState:
@@ -339,6 +362,23 @@ class CodexOrchestratorTests(unittest.TestCase):
         self.assertEqual(plan.steps[-1].action_type, "review_project")
         self.assertEqual(plan.steps[-1].phase, "recovery")
 
+    def test_reinspect_rebinds_trusted_scope_to_the_backend_revision(self) -> None:
+        plan = self.build(("timeline", "render"))
+        self.backend.current_revision = 5
+        self.backend.reviews.append(
+            review(5, finding("timeline-1", "timeline", "warning", route="timeline_proposal"))
+        )
+
+        self.orchestrator.advance(plan)
+        self.assertEqual(plan.status, "stale")
+        self.orchestrator.reinspect(plan)
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+
+        self.assertEqual(plan.project_revision, 5)
+        self.assertEqual(plan.status, "waiting_approval")
+        self.assertEqual(self.backend.calls[-1][1], "propose_timeline_edit")
+
     def test_cancel_stops_running_backend_job_through_typed_action(self) -> None:
         issue = finding("processing-1", "processing", "blocking", route="processing_action")
         self.backend.project_state["segment_count"] = 0
@@ -350,7 +390,45 @@ class CodexOrchestratorTests(unittest.TestCase):
         self.orchestrator.cancel(plan)
 
         self.assertEqual(self.backend.calls[-1][1], "cancel_processing")
+        self.assertEqual(self.backend.calls[-1][2]["job_id"], "job-1")
         self.assertEqual(plan.status, "canceled")
+
+    def test_cancel_never_substitutes_a_generic_result_id_for_job_id(self) -> None:
+        plan = self.build(("transcription", "render"))
+        plan.steps.append(
+            PlanStep(
+                "transcribe",
+                "transcription",
+                "execute",
+                "start_transcription",
+                status="running",
+                result={"job": {"id": "not-a-tracked-job-id", "type": "transcribe"}},
+            )
+        )
+        plan.status = "running"
+
+        self.orchestrator.cancel(plan)
+
+        self.assertFalse(any(call[1] == "cancel_processing" for call in self.backend.calls))
+        self.assertEqual(plan.status, "failed")
+        self.assertEqual(plan.message, "running job has no tracking identity")
+
+    def test_restart_does_not_adopt_another_job_with_the_same_type(self) -> None:
+        issue = finding("processing-1", "processing", "blocking", route="processing_action")
+        self.backend.project_state["segment_count"] = 0
+        self.backend.reviews.append(review(4, issue))
+        plan = self.build(("transcription", "render"))
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+        self.assertEqual(plan.status, "running")
+
+        self.backend.active_job_id = "different-transcribe-job"
+        self.orchestrator.recover(plan, same_project_state=True)
+
+        running_step = next(step for step in plan.steps if step.action_type == "start_transcription")
+        self.assertEqual(running_step.status, "stale")
+        self.assertEqual(plan.status, "pending")
+        self.assertEqual(plan.steps[-1].phase, "recovery")
 
     def test_plan_round_trip_validates_duplicate_step_ids(self) -> None:
         plan = self.build()
@@ -549,6 +627,14 @@ class PlanControllerTests(unittest.TestCase):
 class GuiActionContractTests(unittest.TestCase):
     def gui_stub(self) -> SimpleNamespace:
         calls: list[tuple[str, dict[str, Any]]] = []
+        progress = SimpleNamespace(
+            job="",
+            job_id="",
+            status="idle",
+            value=0.0,
+            current_step="",
+            as_list=lambda: [],
+        )
 
         def start_audio(*, intent: str, revision: int) -> bool:
             calls.append(("audio", {"intent": intent, "revision": revision}))
@@ -558,10 +644,11 @@ class GuiActionContractTests(unittest.TestCase):
             calls.append(("timeline", {"intent": intent, "target": target}))
             return True
 
-        return SimpleNamespace(
+        gui = SimpleNamespace(
             _project_revision=4,
             _running=False,
             _active_job="",
+            _processing_progress=progress,
             _project={"segments": [{"id": "s1"}], "video": {"path": "video.mp4"}},
             _project_dirty=False,
             _selected_segment_index=0,
@@ -569,15 +656,35 @@ class GuiActionContractTests(unittest.TestCase):
             _codex_audio_mix_session=SimpleNamespace(running=False),
             _codex_timeline_session=SimpleNamespace(running=False),
             highlightAnalysisState="idle",
+            actionCapabilities={
+                "canRenderNormal": True,
+                "normalRenderNeedsOutput": False,
+            },
+            settings={},
             start_codex_audio_mix_proposal=start_audio,
             start_codex_timeline_proposal=start_timeline,
+            codex_render_output_exists=lambda **_kwargs: False,
             calls=calls,
         )
+        def render_video(_settings: Mapping[str, Any]) -> None:
+            calls.append(("render", {}))
+            gui._active_job = "render"
+            gui._running = True
+            progress.job = "render"
+            progress.job_id = "render-job-1"
+            progress.status = "running"
+
+        gui.renderVideo = render_video
+        return gui
 
     def test_timeline_schema_requires_explicit_target_before_gui_call(self) -> None:
         gui = self.gui_stub()
         dispatcher = ActionDispatcher(GuiActionBackend(gui))
-        scope = ActionScope("goal", frozenset({"propose_timeline_edit"}))
+        scope = ActionScope(
+            "goal",
+            frozenset({"propose_timeline_edit"}),
+            project_revision=4,
+        )
 
         missing = dispatcher.dispatch(
             {
@@ -612,6 +719,7 @@ class GuiActionContractTests(unittest.TestCase):
         scope = ActionScope(
             "goal",
             frozenset({"propose_audio_mix", "propose_timeline_edit"}),
+            project_revision=4,
         )
         for action_type, args in (
             ("propose_audio_mix", {"intent": "音を整える"}),
@@ -635,23 +743,27 @@ class GuiActionContractTests(unittest.TestCase):
         self.assertEqual(gui.calls[1][1]["target"], "normal")
         self.assertEqual(gui.calls[2][1]["target"], "short")
 
-    def test_chat_plan_drives_concrete_gui_backend_to_async_proposal_wait(self) -> None:
+    def test_chat_plan_drives_concrete_gui_backend_through_approval_and_render(self) -> None:
         gui = self.gui_stub()
         backend = GuiActionBackend(gui)
+        review_results = [
+            review(
+                4,
+                finding(
+                    "timeline-1",
+                    "timeline",
+                    "blocking",
+                    route="timeline_proposal",
+                ),
+            ),
+            review(5),
+            review(5),
+            review(5),
+        ]
         inspect_handlers = dict(backend._inspect_handlers)
         inspect_handlers["review_project"] = lambda _args: HandlerResult(
             "project reviewed",
-            state={
-                "review_result": review(
-                    4,
-                    finding(
-                        "timeline-1",
-                        "timeline",
-                        "blocking",
-                        route="timeline_proposal",
-                    ),
-                )
-            },
+            state={"review_result": review_results.pop(0)},
         )
         backend._inspect_handlers = inspect_handlers
         with TemporaryDirectory() as directory:
@@ -681,6 +793,30 @@ class GuiActionContractTests(unittest.TestCase):
                 project_revision=4,
             )
             self.assertEqual(controller.plan.status, "waiting_approval")
+
+            gui._project_revision = 5
+            self.assertTrue(
+                controller.proposal_resolved(
+                    "propose_timeline_edit",
+                    applied=True,
+                    project_revision=5,
+                )
+            )
+            self.assertEqual(controller.plan.status, "running")
+            self.assertEqual(gui.calls[-1], ("render", {}))
+
+            gui._running = False
+            gui._processing_progress.status = "completed"
+            self.assertTrue(
+                controller.job_terminal(
+                    "render",
+                    "completed",
+                    project_revision=5,
+                    job_id="render-job-1",
+                )
+            )
+            self.assertEqual(controller.plan.status, "success")
+            self.assertEqual(review_results, [])
 
 
 if __name__ == "__main__":

@@ -367,7 +367,7 @@ class CodexOrchestrator:
             plan.message = result.message
             return plan
         if result.revision is not None:
-            plan.project_revision = result.revision
+            self._set_project_revision(plan, result.revision)
         if step.action_type == "review_project":
             return self._complete_review(plan, step, result.current_state)
         if step.action_kind == "propose":
@@ -434,7 +434,7 @@ class CodexOrchestrator:
         if applied:
             plan.rendered_targets.clear()
             plan.final_review_revision = None
-        plan.project_revision = _valid_revision(project_revision)
+        self._set_project_revision(plan, project_revision)
         plan.status = PlanStatus.PAUSED.value if was_paused else PlanStatus.PENDING.value
         plan.message = "proposal applied" if applied else "proposal discarded"
         if not self._refresh(plan):
@@ -463,7 +463,7 @@ class CodexOrchestrator:
         result["terminal_status"] = normalized
         step.result = result
         self._remember_issues(plan, step.issue_ids)
-        plan.project_revision = _valid_revision(project_revision)
+        self._set_project_revision(plan, project_revision)
         plan.status = PlanStatus.PENDING.value
         plan.message = f"job {normalized}"
         if normalized == "success":
@@ -561,7 +561,7 @@ class CodexOrchestrator:
             plan.message = result.message
             return plan
         if result.revision is not None:
-            plan.project_revision = result.revision
+            self._set_project_revision(plan, result.revision)
         if result.current_state is not None:
             plan.last_project_state = _safe_project_state(result.current_state)
         self._discard_unfinished_steps(plan)
@@ -584,7 +584,7 @@ class CodexOrchestrator:
             return plan
         actual_revision = result.revision if result.revision is not None else plan.project_revision
         plan.last_project_state = _safe_project_state(result.current_state or {})
-        plan.project_revision = actual_revision
+        self._set_project_revision(plan, actual_revision)
         if plan.status in TERMINAL_PLAN_STATUSES:
             return plan
         if not same_project_state:
@@ -609,6 +609,14 @@ class CodexOrchestrator:
         if running is not None and running.action_kind == "execute":
             processing = self._inspect("inspect_processing_state", plan)
             state = processing.current_state if isinstance(processing.current_state, Mapping) else {}
+            expected_job_id = self._job_id(running.result)
+            actual_job_id = str(state.get("job_id", ""))
+            if not expected_job_id or expected_job_id != actual_job_id:
+                running.status = PlanStatus.STALE.value
+                self._queue_review(plan, "recovery")
+                plan.status = PlanStatus.PENDING.value
+                plan.message = "running job identity changed while the application was closed"
+                return plan
             backend_status = str(state.get("terminal_result") or state.get("status") or "")
             if bool(state.get("running")) or backend_status in {"running", "cancelling"}:
                 plan.status = PlanStatus.RUNNING.value
@@ -645,6 +653,8 @@ class CodexOrchestrator:
         expected = allowed_actions_for_scope(plan.scope)
         if not expected.issubset(self._scope.allowed_actions):
             raise PlanError("trusted scope does not cover the persisted plan")
+        if self._scope.project_revision != plan.project_revision:
+            raise PlanError("trusted scope revision does not match the persisted plan")
         for step in plan.steps:
             if step.action_type not in expected:
                 raise PlanError("persisted plan contains an action outside its scope")
@@ -921,7 +931,14 @@ class CodexOrchestrator:
     def _stop_running_job(self, plan: PlanState, step: PlanStep) -> bool:
         job = step.result.get("job", {}) if step.result else {}
         job_type = str(job.get("job_type") or job.get("type") or "") if isinstance(job, Mapping) else ""
-        args = {"job_type": job_type} if job_type else {}
+        job_id = self._job_id(step.result)
+        if not job_id:
+            plan.status = PlanStatus.FAILED.value
+            plan.message = "running job has no tracking identity"
+            return False
+        args = {"job_id": job_id}
+        if job_type:
+            args["job_type"] = job_type
         result = self._dispatcher.dispatch(
             {
                 "schema_version": 1,
@@ -940,6 +957,22 @@ class CodexOrchestrator:
         step.result = result.to_json()
         self._remember_issues(plan, step.issue_ids)
         return True
+
+    @staticmethod
+    def _job_id(result: Mapping[str, Any] | None) -> str:
+        job = result.get("job") if isinstance(result, Mapping) else None
+        if not isinstance(job, Mapping):
+            return ""
+        return str(job.get("job_id") or "")
+
+    def _set_project_revision(self, plan: PlanState, revision: object) -> None:
+        plan.project_revision = _valid_revision(revision)
+        self._scope = ActionScope(
+            self._scope.id,
+            self._scope.allowed_actions,
+            project_revision=plan.project_revision,
+            confirmed_actions=self._scope.confirmed_actions,
+        )
 
     @staticmethod
     def _remember_issues(plan: PlanState, issue_ids: Sequence[str]) -> None:
@@ -1264,7 +1297,14 @@ class CodexPlanController:
             self.advance()
         return True
 
-    def job_terminal(self, job_type: str, status: str, *, project_revision: int) -> bool:
+    def job_terminal(
+        self,
+        job_type: str,
+        status: str,
+        *,
+        project_revision: int,
+        job_id: str,
+    ) -> bool:
         if self._plan is None or self._orchestrator is None:
             return False
         running = next(
@@ -1283,6 +1323,9 @@ class CodexPlanController:
             "render_short": "render_short",
         }.get(running.action_type, "")
         if expected and str(job_type) != expected:
+            return False
+        expected_job_id = self._orchestrator._job_id(running.result)
+        if not expected_job_id or str(job_id) != expected_job_id:
             return False
         self._orchestrator.resolve_job(
             self._plan,
@@ -1431,7 +1474,11 @@ class CodexPlanController:
         if plan is None:
             self._orchestrator = None
             return
-        trusted = ActionScope(plan.scope_id, allowed_actions_for_scope(plan.scope))
+        trusted = ActionScope(
+            plan.scope_id,
+            allowed_actions_for_scope(plan.scope),
+            project_revision=plan.project_revision,
+        )
         self._orchestrator = CodexOrchestrator(self._dispatcher, trusted)
 
     def _restore_waiting_proposal(self, plan: PlanState) -> None:

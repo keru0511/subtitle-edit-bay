@@ -4704,6 +4704,7 @@ class EditBayBackend(LegacyEditBayBackend):
                     completed_job,
                     terminal_status,
                     project_revision=self._project_revision,
+                    job_id=str(self._processing_progress.job_id),
                 )
             except (PlanError, PlanPersistenceError) as error:
                 self._set_status(f"処理後の制作プランを更新できません: {error}", "ERROR")

@@ -230,7 +230,7 @@ Rectangle {
                 objectName: "codexPlanCard"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 76
-                visible: backend && backend.codexPlan && backend.codexPlan.goal
+                visible: !!(backend && backend.codexPlan && backend.codexPlan.goal)
                 radius: 7
                 color: panel.raisedColor
                 border.color: panel.borderColor

@@ -490,9 +490,6 @@ class GuiActionBackend:
                 return job_name
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
-        codex_session = getattr(self._gui, "_codex_session", None)
-        if codex_session is not None and bool(codex_session.running):
-            return "subtitle_proposal"
         return ""
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:

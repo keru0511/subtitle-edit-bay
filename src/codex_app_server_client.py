@@ -228,6 +228,7 @@ class CodexAppServerClient:
                         "name": "Subtitle Edit Bay",
                         "version": "1",
                     },
+                    "capabilities": {"experimentalApi": True},
                 },
             )
             self._initialized = True
@@ -339,6 +340,24 @@ class CodexAppServerClient:
             {"limit": max(1, int(limit)), "includeHidden": bool(include_hidden)},
         )
 
+    def mcp_server_status_list(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int = 100,
+        detail: str = "toolsAndAuthOnly",
+        thread_id: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "limit": max(1, int(limit)),
+            "detail": detail,
+        }
+        if cursor:
+            params["cursor"] = cursor
+        if thread_id:
+            params["threadId"] = thread_id
+        return self.request("mcpServerStatus/list", params)
+
     def thread_start(self, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return self.request("thread/start", params)
 
@@ -371,6 +390,8 @@ class CodexAppServerClient:
         context: Mapping[str, Any] | None = None,
         model: str | None = None,
         cwd: str | Path | None = None,
+        environments: Sequence[Mapping[str, Any]] | None = None,
+        runtime_workspace_roots: Sequence[str | Path] | None = None,
         approval_policy: str | None = None,
         sandbox_policy: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -397,6 +418,10 @@ class CodexAppServerClient:
             params["model"] = model
         if cwd is not None:
             params["cwd"] = str(cwd)
+        if environments is not None:
+            params["environments"] = [dict(item) for item in environments]
+        if runtime_workspace_roots is not None:
+            params["runtimeWorkspaceRoots"] = [str(item) for item in runtime_workspace_roots]
         if approval_policy:
             params["approvalPolicy"] = approval_policy
         if sandbox_policy is not None:
@@ -415,6 +440,8 @@ class CodexAppServerClient:
         context: Mapping[str, Any] | None = None,
         model: str | None = None,
         cwd: str | Path | None = None,
+        environments: Sequence[Mapping[str, Any]] | None = None,
+        runtime_workspace_roots: Sequence[str | Path] | None = None,
         approval_policy: str | None = None,
         sandbox_policy: Mapping[str, Any] | None = None,
         timeout: float = 120.0,
@@ -431,6 +458,8 @@ class CodexAppServerClient:
                 context=context,
                 model=model,
                 cwd=cwd,
+                environments=environments,
+                runtime_workspace_roots=runtime_workspace_roots,
                 approval_policy=approval_policy,
                 sandbox_policy=sandbox_policy,
             )

@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 import math
+from tempfile import TemporaryDirectory
 from typing import Any, Callable, Mapping, Protocol
 
 from .audio_mixer import path_free_audio_mix_channels
@@ -674,9 +675,10 @@ class GuiActionBackend:
         client_factory = getattr(self._gui, "_create_codex_chat_client", None)
         if not callable(client_factory):
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "Codex review is unavailable")
+        review_workspace = TemporaryDirectory(prefix="subtitle-edit-bay-review-")
         client = None
         try:
-            client = client_factory()
+            client = client_factory(cwd=review_workspace.name)
             client.start()
             if not self._codex_account_authenticated(client.account_read(refresh_token=False)):
                 raise ActionRejected(
@@ -689,6 +691,7 @@ class GuiActionBackend:
             result = review_context_with_codex(
                 context,
                 client=client,
+                isolated_cwd=review_workspace.name,
                 model=model,
                 current_revision=lambda: self.current_revision,
             )
@@ -707,6 +710,7 @@ class GuiActionBackend:
                     client.stop()
                 except Exception:
                     pass
+            review_workspace.cleanup()
         return HandlerResult(
             "project review completed",
             state={

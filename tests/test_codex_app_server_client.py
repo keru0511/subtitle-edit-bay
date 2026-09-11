@@ -37,6 +37,7 @@ class CodexAppServerClientTests(unittest.TestCase):
         try:
             initialized = client.start()
             self.assertEqual(initialized["protocolVersion"], "1")
+            self.assertEqual(initialized["receivedCapabilities"], {"experimentalApi": True})
             self.assertTrue(client.initialized)
             self.assertFalse(client.account_read()["authenticated"])
             login = client.account_login_start()
@@ -162,6 +163,8 @@ class CodexAppServerClientTests(unittest.TestCase):
                 thread_id="thread-1",
                 prompt="contract check",
                 cwd="C:/workspace",
+                environments=[],
+                runtime_workspace_roots=[],
                 approval_policy="never",
                 sandbox_policy=sandbox_policy,
                 context={"segment": "字幕"},
@@ -172,7 +175,15 @@ class CodexAppServerClientTests(unittest.TestCase):
         self.assertNotIn("context", params, CODEX_APP_SERVER_SCHEMA_COMMIT)
         self.assertEqual(
             set(params),
-            {"threadId", "input", "cwd", "approvalPolicy", "sandboxPolicy"},
+            {
+                "threadId",
+                "input",
+                "cwd",
+                "environments",
+                "runtimeWorkspaceRoots",
+                "approvalPolicy",
+                "sandboxPolicy",
+            },
             CODEX_APP_SERVER_SCHEMA_COMMIT,
         )
         self.assertEqual(params["input"][0], {"type": "text", "text": "contract check"})
@@ -186,6 +197,32 @@ class CodexAppServerClientTests(unittest.TestCase):
         self.assertEqual(
             set(params["sandboxPolicy"]),
             {"type", "networkAccess"},
+            CODEX_APP_SERVER_SCHEMA_COMMIT,
+        )
+        self.assertEqual(params["environments"], [], CODEX_APP_SERVER_SCHEMA_COMMIT)
+        self.assertEqual(params["runtimeWorkspaceRoots"], [], CODEX_APP_SERVER_SCHEMA_COMMIT)
+
+    def test_mcp_inventory_payload_matches_pinned_v2_contract(self) -> None:
+        client = CodexAppServerClient(["codex"])
+        with patch.object(client, "request", return_value={}) as request:
+            client.mcp_server_status_list(
+                cursor="next-page",
+                limit=25,
+                detail="toolsAndAuthOnly",
+                thread_id="thread-1",
+            )
+
+        self.assertEqual(
+            request.call_args.args,
+            (
+                "mcpServerStatus/list",
+                {
+                    "cursor": "next-page",
+                    "limit": 25,
+                    "detail": "toolsAndAuthOnly",
+                    "threadId": "thread-1",
+                },
+            ),
             CODEX_APP_SERVER_SCHEMA_COMMIT,
         )
 

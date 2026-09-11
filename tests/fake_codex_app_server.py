@@ -27,7 +27,17 @@ def main() -> None:
         method = request.get("method")
         request_id = request.get("id")
         if method == "initialize":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": "1"}}, partial=True)
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "protocolVersion": "1",
+                        "receivedCapabilities": request.get("params", {}).get("capabilities"),
+                    },
+                },
+                partial=True,
+            )
         elif method == "initialized":
             continue
         elif method == "account/read":

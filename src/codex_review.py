@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import math
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence, cast
 
 from .application_logging import redact_text
@@ -33,8 +34,31 @@ MAX_SHORT_CLIPS = 500
 MAX_TIMELINE_ITEMS = 500
 MAX_HIGHLIGHT_ITEMS = 50
 MAX_FINDINGS_PER_TURN = 100
+MAX_FINDINGS_PER_RESULT = 1_000
 MAX_REASON_CHARS = 800
 MAX_ID_CHARS = 160
+MCP_STATUS_PAGE_SIZE = 100
+MAX_MCP_STATUS_PAGES = 100
+CODEX_APPS_MCP_SERVER_NAME = "codex_apps"
+
+_REVIEW_DISABLED_FEATURES = (
+    "apps",
+    "code_mode",
+    "code_mode_only",
+    "enable_mcp_apps",
+    "image_generation",
+    "multi_agent",
+    "multi_agent_v2",
+    "plugins",
+    "shell_tool",
+    "skill_mcp_dependency_install",
+    "standalone_web_search",
+    "tool_suggest",
+    "unified_exec",
+    "view_image",
+    "web_search_cached",
+    "web_search_request",
+)
 
 
 class ReviewError(ValueError):
@@ -50,6 +74,8 @@ class StaleReviewError(ReviewError):
 
 
 class ReviewClient(Protocol):
+    def mcp_server_status_list(self, **kwargs: Any) -> Mapping[str, Any]: ...
+
     def thread_start(self, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
 
     def run_structured_turn(self, **kwargs: Any) -> Mapping[str, Any]: ...
@@ -223,9 +249,9 @@ class ReviewResult:
     issues: tuple[ReviewFinding, ...]
     recommended_order: tuple[str, ...] = ()
 
-    def ordered_issues(self) -> tuple[ReviewFinding, ...]:
+    def ordered_issues(self, *, max_issues: int | None = None) -> tuple[ReviewFinding, ...]:
         rank = {finding_id: index for index, finding_id in enumerate(self.recommended_order)}
-        return tuple(
+        ordered = tuple(
             sorted(
                 self.issues,
                 key=lambda item: (
@@ -234,15 +260,22 @@ class ReviewResult:
                     item.category,
                     item.id,
                 ),
-            )[:MAX_FINDINGS_PER_TURN]
+            )
         )
+        if max_issues is None:
+            return ordered
+        return ordered[: max(0, int(max_issues))]
 
-    def to_json(self) -> dict[str, Any]:
-        ordered = self.ordered_issues()
+    def to_json(self, *, max_issues: int = MAX_FINDINGS_PER_RESULT) -> dict[str, Any]:
+        all_ordered = self.ordered_issues()
+        ordered = all_ordered[: max(0, int(max_issues))]
+        remaining_count = len(all_ordered) - len(ordered)
         return {
             "project_revision": self.project_revision,
             "issues": [item.to_json() for item in ordered],
             "recommended_order": [item.id for item in ordered],
+            "truncated": remaining_count > 0,
+            "remaining_count": remaining_count,
         }
 
     def require_current_revision(self, current_revision: int) -> None:
@@ -1031,8 +1064,86 @@ def _review_turn_context(
         "previous_segment": previous_segment,
         "next_segment": next_segment,
     }
-    global_context["preflight"] = preflight.to_json()
+    global_context["preflight"] = preflight.to_json(max_issues=MAX_FINDINGS_PER_TURN)
     return global_context
+
+
+def _isolated_review_cwd(value: str | Path | None) -> str:
+    if value is None:
+        raise ReviewContractError("Codex review requires an isolated working directory")
+    try:
+        path = Path(value).resolve(strict=True)
+    except OSError as error:
+        raise ReviewContractError("Codex review working directory is unavailable") from error
+    if not path.is_dir():
+        raise ReviewContractError("Codex review working directory must be a directory")
+    try:
+        if any(path.iterdir()):
+            raise ReviewContractError("Codex review working directory must be empty")
+    except OSError as error:
+        raise ReviewContractError("Codex review working directory is unavailable") from error
+    return str(path)
+
+
+def _mcp_server_names(
+    client: ReviewClient,
+    *,
+    thread_id: str = "",
+    config_only: bool = False,
+) -> tuple[str, ...]:
+    names: list[str] = []
+    cursor = ""
+    seen_cursors: set[str] = set()
+    for _page_index in range(MAX_MCP_STATUS_PAGES):
+        params: dict[str, Any] = {
+            "limit": MCP_STATUS_PAGE_SIZE,
+            "detail": "toolsAndAuthOnly",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        if thread_id:
+            params["thread_id"] = thread_id
+        payload = client.mcp_server_status_list(**params)
+        data = payload.get("data")
+        if not isinstance(data, list):
+            raise ReviewContractError("Codex MCP inventory is invalid")
+        for item in data:
+            if not isinstance(item, Mapping):
+                raise ReviewContractError("Codex MCP inventory is invalid")
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name) > MAX_ID_CHARS:
+                raise ReviewContractError("Codex MCP inventory contains an invalid server name")
+            if config_only and (
+                item.get("pluginId") is not None or name == CODEX_APPS_MCP_SERVER_NAME
+            ):
+                continue
+            names.append(name)
+        next_cursor = payload.get("nextCursor")
+        if next_cursor is None:
+            return tuple(dict.fromkeys(names))
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
+            raise ReviewContractError("Codex MCP inventory pagination is invalid")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise ReviewContractError("Codex MCP inventory exceeds the page limit")
+
+
+def _review_thread_config(mcp_server_names: Sequence[str]) -> dict[str, Any]:
+    return {
+        "features": {name: False for name in _REVIEW_DISABLED_FEATURES},
+        "include_apps_instructions": False,
+        "include_collaboration_mode_instructions": False,
+        "include_environment_context": False,
+        "include_permissions_instructions": False,
+        "mcp_servers": {name: {"enabled": False} for name in mcp_server_names},
+        "memories": {"dedicated_tools": False, "use_memories": False},
+        "skills": {"include_instructions": False},
+        "tools": {
+            "experimental_request_user_input": {"enabled": False},
+            "update_plan": {"enabled": False},
+        },
+        "web_search": "disabled",
+    }
 
 
 def _require_revision(context: Mapping[str, Any], current_revision: Callable[[], int] | None) -> None:
@@ -1044,6 +1155,7 @@ def review_context_with_codex(
     context: Mapping[str, Any],
     *,
     client: ReviewClient,
+    isolated_cwd: str | Path | None = None,
     model: str = "",
     current_revision: Callable[[], int] | None = None,
     turn_timeout: float = 120.0,
@@ -1053,17 +1165,24 @@ def review_context_with_codex(
     preflight = review_context(context)
     if not bool(context.get("project", {}).get("loaded", False)):
         return preflight
+    review_cwd = _isolated_review_cwd(isolated_cwd)
     _require_revision(context, current_revision)
+    thread_config = _review_thread_config(_mcp_server_names(client, config_only=True))
     chunks = list(context.get("subtitle_chunks", [])) or [[]]
     findings: list[ReviewFinding] = list(preflight.issues)
-    recommended: list[str] = list(preflight.to_json()["recommended_order"])
+    recommended: list[str] = [item.id for item in preflight.ordered_issues()]
     for chunk_index in range(len(chunks)):
         _require_revision(context, current_revision)
         thread = client.thread_start(
             {
                 "approvalPolicy": "never",
+                "config": thread_config,
+                "cwd": review_cwd,
+                "dynamicTools": [],
+                "environments": [],
                 "sandbox": "read-only",
                 "ephemeral": True,
+                "runtimeWorkspaceRoots": [],
             }
         )
         thread_payload = thread.get("thread", thread)
@@ -1074,13 +1193,18 @@ def review_context_with_codex(
         ) or str(thread.get("threadId", ""))
         if not thread_id:
             raise ReviewContractError("Codex review thread id is missing")
+        if _mcp_server_names(client, thread_id=thread_id):
+            raise ReviewContractError("Codex review thread still exposes an MCP server")
         raw = client.run_structured_turn(
             thread_id=thread_id,
             prompt=REVIEW_PROMPT,
             output_schema=REVIEW_OUTPUT_SCHEMA,
             context=_review_turn_context(context, chunk_index=chunk_index, preflight=preflight),
             model=model or None,
+            cwd=review_cwd,
+            environments=[],
             approval_policy="never",
+            runtime_workspace_roots=[],
             sandbox_policy={"type": "readOnly", "networkAccess": False},
             timeout=max(1.0, float(turn_timeout)),
         )

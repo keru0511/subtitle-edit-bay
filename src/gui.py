@@ -61,6 +61,13 @@ from .gui_codex_state import (
 )
 from .codex_app_server_client import CodexAppServerClient
 from .codex_actions import ActionResult, ActionScope, build_gui_action_dispatcher
+from .codex_orchestrator import (
+    CodexPlanController,
+    PlanError,
+    PlanPersistenceError,
+    PlanState,
+    project_state_fingerprint,
+)
 from .codex_runtime import detect_codex
 from .gui_codex_chat_state import (
     CodexChatController,
@@ -370,6 +377,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
     codexChatChanged = Signal()
+    codexPlanChanged = Signal()
     codexCallbackRequested = Signal(object)
     highlightCandidatesChanged = Signal()
     highlightAnalysisChanged = Signal()
@@ -532,6 +540,18 @@ class EditBayBackend(LegacyEditBayBackend):
         )
         self.aboutToQuit.connect(self._codex_chat.shutdown)
         self._codex_chat.connect()
+        self._codex_plan = CodexPlanController(
+            self._codex_actions,
+            project_path=lambda: self._project_path,
+            project_revision=lambda: self._project_revision,
+            project_state=self._codex_plan_project_state,
+            project_fingerprint=lambda: project_state_fingerprint(self._project),
+            on_change=self._on_codex_plan_change,
+            restore_proposal=self._restore_codex_plan_proposal,
+            cancel_proposal=self._cancel_codex_plan_proposal,
+        )
+        self._connect_stacked_codex_plan_signals()
+        self._restore_codex_plan(auto_advance=False)
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
         self._record_log(
@@ -733,6 +753,11 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property("QVariantList", notify=codexChatChanged)
     def codexChatMessages(self) -> list[dict[str, Any]]:
         return [dict(item) for item in self._codex_chat.snapshot.messages]
+
+    @Property("QVariantMap", notify=codexPlanChanged)
+    def codexPlan(self) -> dict[str, Any]:
+        plan = self._codex_plan.plan
+        return plan.to_json() if plan is not None else {}
 
     @Property(bool, notify=updateInfoChanged)
     def updateAvailable(self) -> bool:
@@ -2234,6 +2259,9 @@ class EditBayBackend(LegacyEditBayBackend):
         return loaded
 
     def _clear_project(self) -> None:
+        codex_plan = getattr(self, "_codex_plan", None)
+        if codex_plan is not None:
+            codex_plan.clear()
         if self._project_dirty:
             self.saveProject()
         self._reset_transcription_integration_state()
@@ -2361,6 +2389,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project_dirty = False
         self.projectChanged.emit()
         self._set_status("別の場所に編集プロジェクトを保存しました", "SAVED")
+        codex_plan = getattr(self, "_codex_plan", None)
+        if codex_plan is not None and codex_plan.plan is not None:
+            try:
+                codex_plan.reinspect()
+            except (PlanError, PlanPersistenceError) as error:
+                self._set_status(f"制作プランを再確認できません: {error}", "ERROR")
         return True
 
     def _mixer_video_tracks(self) -> list[dict[str, str]]:
@@ -2676,6 +2710,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self.historyChanged.emit()
         self.selectionChanged.emit()
         self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
+        if str(getattr(self, "_active_job", "")) != "transcribe":
+            self._restore_codex_plan()
         return True
 
     def _record_history(
@@ -3110,6 +3146,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project_dirty = False
         self.projectChanged.emit()
         self._set_status("字幕編集を保存しました", "SAVED")
+        self._advance_saved_codex_plan()
         return True
 
     def _autosave_project(self) -> None:
@@ -3166,6 +3203,7 @@ class EditBayBackend(LegacyEditBayBackend):
         ):
             self._project_dirty = False
             self.projectChanged.emit()
+            self._advance_saved_codex_plan()
             return
         if pending or self._project_dirty:
             QTimer.singleShot(0, self._autosave_project)
@@ -3670,7 +3708,41 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(str)
     def sendCodexChatMessage(self, message: str) -> None:
+        try:
+            if self._codex_plan.handle_chat_request(message):
+                return
+        except (PlanError, PlanPersistenceError) as error:
+            self._set_status(f"制作プランを開始できません: {error}", "ERROR")
+            return
         self._codex_chat.send_message(message)
+
+    @Slot()
+    def pauseCodexPlan(self) -> None:
+        try:
+            self._codex_plan.pause()
+        except (PlanError, PlanPersistenceError) as error:
+            self._set_status(f"制作プランを一時停止できません: {error}", "ERROR")
+
+    @Slot()
+    def resumeCodexPlan(self) -> None:
+        try:
+            self._codex_plan.resume()
+        except (PlanError, PlanPersistenceError) as error:
+            self._set_status(f"制作プランを再開できません: {error}", "ERROR")
+
+    @Slot()
+    def cancelCodexPlan(self) -> None:
+        try:
+            self._codex_plan.cancel()
+        except (PlanError, PlanPersistenceError) as error:
+            self._set_status(f"制作プランを中止できません: {error}", "ERROR")
+
+    @Slot()
+    def reinspectCodexPlan(self) -> None:
+        try:
+            self._codex_plan.reinspect()
+        except (PlanError, PlanPersistenceError) as error:
+            self._set_status(f"制作プランを再確認できません: {error}", "ERROR")
 
     @Slot()
     def stopCodexChat(self) -> None:
@@ -3783,6 +3855,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._project is None or not self._codex_proposal:
             self._set_status("適用するCodex編集案がありません", "CHECK")
             return
+        plan_proposal = self._codex_proposal
         before = deepcopy(self._project.get("segments", []))
         try:
             result = self._codex_session.apply_to_project(
@@ -3810,12 +3883,31 @@ class EditBayBackend(LegacyEditBayBackend):
             self.selectionChanged.emit()
         self._codex_proposal = None
         self.codexProposalChanged.emit()
+        try:
+            self._codex_plan.proposal_resolved(
+                "propose_subtitle_edit",
+                applied=bool(plan_proposal),
+                project_revision=self._project_revision,
+                auto_advance=False,
+            )
+        except PlanPersistenceError as error:
+            self._set_status(f"制作プランを保存できません: {error}", "ERROR")
         self._set_status("Codex編集案を適用しました。内容を確認して保存してください", "EDIT")
 
     @Slot()
     def discardCodexProposal(self) -> None:
+        had_proposal = self._codex_proposal is not None
         self._codex_proposal = None
         self.codexProposalChanged.emit()
+        if had_proposal:
+            try:
+                self._codex_plan.proposal_resolved(
+                    "propose_subtitle_edit",
+                    applied=False,
+                    project_revision=self._project_revision,
+                )
+            except PlanPersistenceError as error:
+                self._set_status(f"制作プランを保存できません: {error}", "ERROR")
         self._set_status("Codex編集案を破棄しました", "EDIT")
 
     def dispatch_codex_action(
@@ -3842,6 +3934,15 @@ class EditBayBackend(LegacyEditBayBackend):
         self.codexStateChanged.emit()
         self.codexMessageChanged.emit()
         if self._codex_session.snapshot.error:
+            codex_plan = getattr(self, "_codex_plan", None)
+            if codex_plan is not None:
+                try:
+                    codex_plan.action_failed(
+                        "propose_subtitle_edit",
+                        self._codex_session.snapshot.error,
+                    )
+                except PlanPersistenceError as error:
+                    self._set_status(f"制作プランを保存できません: {error}", "ERROR")
             self._set_status(self._codex_session.snapshot.error, "ERROR")
 
     def _on_codex_message(self, _message: str) -> None:
@@ -3850,10 +3951,31 @@ class EditBayBackend(LegacyEditBayBackend):
     def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
         self._codex_proposal = dict(proposal)
         self.codexProposalChanged.emit()
+        codex_plan = getattr(self, "_codex_plan", None)
+        if codex_plan is not None:
+            try:
+                codex_plan.proposal_ready(
+                    "propose_subtitle_edit",
+                    self._codex_proposal,
+                    project_revision=self._project_revision,
+                )
+            except PlanPersistenceError as error:
+                self._set_status(f"制作プランを保存できません: {error}", "ERROR")
         self._set_status("Codex編集案を確認できます", "CODEX")
 
     def _on_codex_chat_state(self, snapshot: CodexChatSnapshot) -> None:
         self.codexChatChanged.emit()
+        codex_plan = getattr(self, "_codex_plan", None)
+        if (
+            codex_plan is not None
+            and snapshot.auth_state == "authenticated"
+            and codex_plan.plan is not None
+            and codex_plan.plan.status == "pending"
+        ):
+            try:
+                codex_plan.advance()
+            except (PlanError, PlanPersistenceError) as error:
+                self._set_status(f"制作プランを再開できません: {error}", "ERROR")
         log_state: tuple[object, ...] = (
             snapshot.connection_state,
             snapshot.auth_state,
@@ -3886,6 +4008,190 @@ class EditBayBackend(LegacyEditBayBackend):
         if snapshot.login_url and snapshot.login_url != self._last_codex_login_url:
             self._last_codex_login_url = snapshot.login_url
             QDesktopServices.openUrl(QUrl(snapshot.login_url))
+
+    def _codex_plan_project_state(self) -> dict[str, Any]:
+        project = self._project
+        return {
+            "loaded": project is not None,
+            "dirty": bool(self._project_dirty),
+            "revision": int(self._project_revision),
+            "segment_count": len(project.get("segments", [])) if project else 0,
+            "has_video": bool(project and project.get("video")),
+            "render_complete": bool(project) and self.codex_render_output_exists(short=False),
+            "short_render_complete": bool(project) and self.codex_render_output_exists(short=True),
+        }
+
+    def _on_codex_plan_change(self, plan: PlanState | None) -> None:
+        self.codexPlanChanged.emit()
+        if plan is None:
+            self._last_codex_plan_status = None
+            return
+        status_key = (plan.status, plan.message)
+        if status_key == getattr(self, "_last_codex_plan_status", None):
+            return
+        self._last_codex_plan_status = status_key
+        messages = {
+            "pending": "制作プランの次工程を確認しています",
+            "running": "制作プランの工程を実行しています",
+            "waiting_approval": "制作プランは編集案の承認待ちです",
+            "paused": "制作プランを一時停止しました",
+            "success": "制作プランが完了しました",
+            "failed": "制作プランを続行できません",
+            "canceled": "制作プランを中止しました",
+            "stale": "プロジェクト変更後に制作プランの再確認が必要です",
+        }
+        stage = "ERROR" if plan.status == "failed" else "CODEX"
+        self._set_status(messages.get(plan.status, "制作プランを更新しました"), stage)
+
+    def _restore_codex_plan(self, *, auto_advance: bool | None = None) -> None:
+        codex_plan = getattr(self, "_codex_plan", None)
+        if codex_plan is None:
+            return
+        should_advance = (
+            self._codex_chat.snapshot.auth_state == "authenticated"
+            if auto_advance is None
+            else bool(auto_advance)
+        )
+        try:
+            codex_plan.restore(auto_advance=should_advance)
+        except (PlanError, PlanPersistenceError) as error:
+            codex_plan.clear()
+            self._set_status(f"保存された制作プランを復元できません: {error}", "ERROR")
+
+    def _advance_saved_codex_plan(self) -> None:
+        codex_plan = getattr(self, "_codex_plan", None)
+        if codex_plan is None:
+            return
+        try:
+            codex_plan.project_saved()
+        except (PlanError, PlanPersistenceError) as error:
+            self._set_status(f"保存後の制作プランを続行できません: {error}", "ERROR")
+
+    def _restore_codex_plan_proposal(
+        self,
+        action_type: str,
+        proposal: Mapping[str, Any],
+    ) -> None:
+        targets = {
+            "propose_subtitle_edit": ("_codex_proposal", "codexProposalChanged"),
+            "propose_audio_mix": ("_audio_mix_proposal", "audioMixProposalChanged"),
+            "propose_timeline_edit": ("_codex_timeline_proposal", "codexTimelineProposalChanged"),
+        }
+        target = targets.get(str(action_type))
+        if target is None or not hasattr(self, target[0]):
+            return
+        setattr(self, target[0], deepcopy(dict(proposal)))
+        signal = getattr(self, target[1], None)
+        if signal is not None:
+            signal.emit()
+
+    def _cancel_codex_plan_proposal(self, action_type: str) -> None:
+        targets = {
+            "propose_subtitle_edit": (
+                "_codex_session",
+                "_codex_proposal",
+                "codexProposalChanged",
+            ),
+            "propose_audio_mix": (
+                "_codex_audio_mix_session",
+                "_audio_mix_proposal",
+                "audioMixProposalChanged",
+            ),
+            "propose_timeline_edit": (
+                "_codex_timeline_session",
+                "_codex_timeline_proposal",
+                "codexTimelineProposalChanged",
+            ),
+        }
+        target = targets.get(str(action_type))
+        if target is None:
+            return
+        session = getattr(self, target[0], None)
+        if session is not None and bool(getattr(session, "running", False)):
+            session.stop()
+        if hasattr(self, target[1]):
+            setattr(self, target[1], None)
+            signal = getattr(self, target[2], None)
+            if signal is not None:
+                signal.emit()
+
+    def _connect_stacked_codex_plan_signals(self) -> None:
+        for signal_name, action_type, proposal_attribute, session_attribute in (
+            (
+                "audioMixProposalChanged",
+                "propose_audio_mix",
+                "_audio_mix_proposal",
+                "_codex_audio_mix_session",
+            ),
+            (
+                "codexTimelineProposalChanged",
+                "propose_timeline_edit",
+                "_codex_timeline_proposal",
+                "_codex_timeline_session",
+            ),
+        ):
+            signal = getattr(self, signal_name, None)
+            if signal is None:
+                continue
+            signal.connect(
+                lambda action=action_type, proposal=proposal_attribute, session=session_attribute: (
+                    self._sync_stacked_codex_plan_proposal(action, proposal, session)
+                )
+            )
+
+    def _sync_stacked_codex_plan_proposal(
+        self,
+        action_type: str,
+        proposal_attribute: str,
+        session_attribute: str,
+    ) -> None:
+        codex_plan = getattr(self, "_codex_plan", None)
+        plan = codex_plan.plan if codex_plan is not None else None
+        if plan is None:
+            return
+        proposal = getattr(self, proposal_attribute, None)
+        if isinstance(proposal, Mapping):
+            try:
+                codex_plan.proposal_ready(
+                    action_type,
+                    proposal,
+                    project_revision=self._project_revision,
+                )
+            except PlanPersistenceError as error:
+                self._set_status(f"制作プランを保存できません: {error}", "ERROR")
+            return
+        waiting = next(
+            (
+                step
+                for step in plan.steps
+                if step.status == "waiting_approval" and step.action_type == action_type
+            ),
+            None,
+        )
+        if waiting is not None:
+            applied = self._project_revision != plan.project_revision
+            try:
+                codex_plan.proposal_resolved(
+                    action_type,
+                    applied=applied,
+                    project_revision=self._project_revision,
+                    auto_advance=not applied,
+                )
+            except PlanPersistenceError as error:
+                self._set_status(f"制作プランを保存できません: {error}", "ERROR")
+            return
+        running = any(
+            step.status == "running" and step.action_type == action_type
+            for step in plan.steps
+        )
+        session = getattr(self, session_attribute, None)
+        snapshot = getattr(session, "snapshot", None)
+        error = str(getattr(snapshot, "error", "") or "")
+        if running and error:
+            try:
+                codex_plan.action_failed(action_type, error)
+            except PlanPersistenceError as persistence_error:
+                self._set_status(f"制作プランを保存できません: {persistence_error}", "ERROR")
 
     def _persist_codex_model(self, model: str) -> None:
         if self._settings.get("codex_model") == model:
@@ -4384,6 +4690,21 @@ class EditBayBackend(LegacyEditBayBackend):
                 outcome="cancelled" if self._cancel_requested else "failed",
                 exit_code=exit_code,
             )
+        codex_plan = getattr(self, "_codex_plan", None)
+        if codex_plan is not None:
+            terminal_status = (
+                "cancelled"
+                if self._cancel_requested
+                else "completed" if exit_code == 0 else "error"
+            )
+            try:
+                codex_plan.job_terminal(
+                    completed_job,
+                    terminal_status,
+                    project_revision=self._project_revision,
+                )
+            except (PlanError, PlanPersistenceError) as error:
+                self._set_status(f"処理後の制作プランを更新できません: {error}", "ERROR")
         self._active_job = ""
         self.activeJobChanged.emit()
 

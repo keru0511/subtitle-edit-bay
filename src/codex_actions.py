@@ -201,6 +201,10 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     "inspect_dependency_state": ActionDefinition(ActionKind.INSPECT),
     "inspect_render_state": ActionDefinition(ActionKind.INSPECT),
     "inspect_selection_state": ActionDefinition(ActionKind.INSPECT),
+    "review_project": ActionDefinition(
+        ActionKind.INSPECT,
+        fields={"subtitle_chunk_size": FieldSchema((int,), minimum=25, maximum=500)},
+    ),
     "propose_subtitle_edit": ActionDefinition(
         ActionKind.PROPOSE,
         fields={
@@ -226,7 +230,14 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     ),
     "propose_timeline_edit": ActionDefinition(
         ActionKind.PROPOSE,
-        fields={"intent": FieldSchema((str,), required=True, non_empty=True)},
+        fields={
+            "intent": FieldSchema((str,), required=True, non_empty=True),
+            "target": FieldSchema(
+                (str,),
+                required=True,
+                choices=frozenset({"normal", "short"}),
+            ),
+        },
         revision_policy=RevisionPolicy.CURRENT,
         confirmation_policy=ConfirmationPolicy.EXPLICIT_APPLY,
         conflicts_with_job=True,
@@ -441,6 +452,8 @@ class GuiActionBackend:
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
+            "propose_audio_mix": self._propose_audio,
+            "propose_timeline_edit": self._propose_timeline,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
@@ -459,6 +472,14 @@ class GuiActionBackend:
     def active_job(self) -> str:
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
+        for attribute, job_name in (
+            ("_codex_session", "subtitle_proposal"),
+            ("_codex_audio_mix_session", "audio_mix_proposal"),
+            ("_codex_timeline_session", "timeline_proposal"),
+        ):
+            session = getattr(self._gui, attribute, None)
+            if session is not None and bool(getattr(session, "running", False)):
+                return job_name
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
         return ""
@@ -611,6 +632,25 @@ class GuiActionBackend:
         if not self._gui._codex_session.running:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
+
+    def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
+        if not self._gui.start_codex_audio_mix_proposal(
+            intent=str(args["intent"]),
+            revision=revision,
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be started")
+        return HandlerResult("audio mix proposal generation started", state={"status": "running"})
+
+    def _propose_timeline(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
+        if not self._gui.start_codex_timeline_proposal(
+            intent=str(args["intent"]),
+            target=str(args["target"]),
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "timeline proposal could not be started")
+        return HandlerResult(
+            "timeline proposal generation started",
+            state={"status": "running", "target": str(args["target"])},
+        )
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

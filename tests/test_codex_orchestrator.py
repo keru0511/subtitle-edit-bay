@@ -1,54 +1,142 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from typing import Any, Mapping
 
-from src.codex_actions import ACTION_DEFINITIONS, ActionDispatcher, ActionScope, HandlerResult
+from src.codex_actions import (
+    ACTION_DEFINITIONS,
+    ActionDispatcher,
+    ActionScope,
+    GuiActionBackend,
+    HandlerResult,
+)
 from src.codex_orchestrator import (
     CodexOrchestrator,
+    CodexPlanController,
     PlanError,
     PlanState,
+    PlanStateStore,
     build_completion_plan,
+    completion_scope_for_request,
+    plan_state_path,
 )
 
 
-class OrchestratorBackend:
+def finding(
+    issue_id: str,
+    category: str,
+    severity: str,
+    *,
+    route: str = "",
+) -> dict[str, Any]:
+    return {
+        "id": issue_id,
+        "category": category,
+        "severity": severity,
+        "target": {},
+        "reason": f"{category} needs attention",
+        "recommendation": {"available": bool(route), "route": route},
+    }
+
+
+def review(revision: int, *issues: Mapping[str, Any], **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "project_revision": revision,
+        "issues": [deepcopy(dict(item)) for item in issues],
+        "recommended_order": [str(item["id"]) for item in issues],
+        "truncated": False,
+        "remaining_count": 0,
+    }
+    payload.update(extra)
+    return payload
+
+
+class ReviewBackend:
     def __init__(self) -> None:
         self.current_revision = 4
         self.active_job = ""
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.reviews: list[dict[str, Any]] = []
+        self.project_state: dict[str, Any] = {
+            "loaded": True,
+            "dirty": False,
+            "revision": 4,
+            "segment_count": 2,
+            "has_video": True,
+            "render_complete": False,
+            "short_render_complete": False,
+        }
+        self.proposal_async = False
+        self.running_jobs: set[str] = {"start_transcription"}
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
-        self.calls.append(("inspect", action_type))
-        return HandlerResult("inspected", state={"revision": self.current_revision})
+        self.calls.append(("inspect", action_type, dict(args)))
+        if action_type == "inspect_project_state":
+            state = dict(self.project_state)
+            state["revision"] = self.current_revision
+            return HandlerResult("project inspected", state=state)
+        if action_type == "review_project":
+            payload = self.reviews.pop(0) if self.reviews else review(self.current_revision)
+            payload = deepcopy(payload)
+            payload["project_revision"] = self.current_revision
+            return HandlerResult("project reviewed", state={"review_result": payload})
+        if action_type == "inspect_processing_state":
+            return HandlerResult("processing inspected", state={"running": bool(self.active_job)})
+        return HandlerResult("inspected", state={})
 
     def propose(self, action_type: str, args: Mapping[str, Any], revision: int) -> HandlerResult:
-        self.calls.append(("propose", action_type))
-        return HandlerResult("proposed", proposal={"base_revision": revision, "operations": [{"id": "op-1"}]})
+        self.calls.append(("propose", action_type, dict(args)))
+        if self.proposal_async:
+            return HandlerResult("proposal started", state={"status": "running"})
+        return HandlerResult(
+            "proposed",
+            proposal={
+                "base_revision": revision,
+                "operations": [{"id": f"{action_type}-op-1"}],
+            },
+        )
 
     def execute(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
-        self.calls.append(("execute", action_type))
+        self.calls.append(("execute", action_type, dict(args)))
         if action_type == "cancel_processing":
-            return HandlerResult("cancel requested", job={"job_type": "transcribe", "status": "cancelling"})
-        if action_type.startswith("render"):
-            return HandlerResult("rendered", job={"id": "render-1", "status": "success"})
-        return HandlerResult("started", job={"id": "job-1", "status": "running"})
+            job_type = str(args.get("job_type") or self.active_job or "transcribe")
+            return HandlerResult("cancel requested", job={"type": job_type, "status": "cancelling"})
+        job_type = {
+            "start_transcription": "transcribe",
+            "render_normal": "render",
+            "render_short": "render_short",
+        }.get(action_type, action_type)
+        if action_type in self.running_jobs:
+            self.active_job = job_type
+            return HandlerResult("started", job={"type": job_type, "status": "running"})
+        return HandlerResult("completed", job={"type": job_type, "status": "completed"})
 
 
 class CodexOrchestratorTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.backend = OrchestratorBackend()
+        self.backend = ReviewBackend()
         self.scope = ActionScope("goal-1", frozenset(ACTION_DEFINITIONS))
         self.orchestrator = CodexOrchestrator(ActionDispatcher(self.backend), self.scope)
 
-    def build(self, *, state: Mapping[str, Any] | None = None) -> PlanState:
+    def build(self, scope: tuple[str, ...] = ("subtitle", "audio", "timeline", "render")) -> PlanState:
         return build_completion_plan(
-            goal="YouTube用に完成させる",
-            scope=("transcription", "subtitle", "audio", "render"),
+            goal="YouTube用の動画を完成させる",
+            scope=scope,
             scope_id="goal-1",
             project_revision=4,
-            current_state=state or {},
+            current_state=self.backend.project_state,
         )
+
+    def advance_until_stopped(self, plan: PlanState, limit: int = 16) -> None:
+        for _ in range(limit):
+            self.orchestrator.advance(plan)
+            if plan.status in {"running", "waiting_approval", "paused", "success", "failed", "stale"}:
+                return
+        self.fail("plan did not reach a stable state")
 
     def test_single_action_request_does_not_create_plan(self) -> None:
         with self.assertRaisesRegex(PlanError, "single-action"):
@@ -60,98 +148,539 @@ class CodexOrchestratorTests(unittest.TestCase):
                 current_state={},
             )
 
-    def test_completed_domains_are_skipped(self) -> None:
-        plan = self.build(state={"subtitles_ready": True, "subtitle_reviewed": True})
-        self.assertEqual([step.id for step in plan.steps], ["audio_review", "render"])
-
-    def test_plan_uses_inspect_then_typed_action_and_waits_for_job(self) -> None:
+    def test_plan_starts_with_review_instead_of_a_fixed_checklist(self) -> None:
         plan = self.build()
+
+        self.assertEqual(len(plan.steps), 1)
+        self.assertEqual(plan.steps[0].action_type, "review_project")
+        self.assertEqual(plan.steps[0].phase, "initial")
+
+    def test_recommended_order_selects_one_typed_action_at_a_time(self) -> None:
+        subtitle = finding("subtitle-1", "subtitle", "warning", route="subtitle_proposal")
+        audio = finding("audio-1", "audio", "warning", route="audio_mix_proposal")
+        payload = review(4, subtitle, audio)
+        payload["recommended_order"] = ["audio-1", "subtitle-1"]
+        self.backend.reviews.append(payload)
+        plan = self.build()
+
         self.orchestrator.advance(plan)
 
-        self.assertEqual(
-            self.backend.calls,
-            [("inspect", "inspect_project_state"), ("execute", "start_transcription")],
+        self.assertEqual(plan.steps[-1].action_type, "propose_audio_mix")
+        self.assertEqual(plan.steps[-1].issue_ids, ("audio-1",))
+        self.assertFalse(any(step.action_type == "propose_subtitle_edit" for step in plan.steps))
+
+    def test_timeline_proposals_always_include_normal_or_short_target(self) -> None:
+        normal = finding("timeline-1", "timeline", "warning", route="timeline_proposal")
+        self.backend.reviews.append(review(4, normal))
+        normal_plan = self.build(("timeline", "render"))
+        self.orchestrator.advance(normal_plan)
+        self.assertEqual(normal_plan.steps[-1].args["target"], "normal")
+
+        short_backend = ReviewBackend()
+        short_backend.reviews.append(
+            review(4, finding("short-1", "short", "warning", route="timeline_proposal"))
         )
-        self.assertEqual(plan.status, "running")
-        self.assertEqual(plan.steps[0].status, "running")
+        short_orchestrator = CodexOrchestrator(ActionDispatcher(short_backend), self.scope)
+        short_plan = build_completion_plan(
+            goal="ショート動画を完成させる",
+            scope=("short_timeline", "short_render"),
+            scope_id="goal-1",
+            project_revision=4,
+            current_state=short_backend.project_state,
+        )
+        short_orchestrator.advance(short_plan)
+        self.assertEqual(short_plan.steps[-1].args["target"], "short")
 
-        self.backend.current_revision = 5
-        self.orchestrator.resolve_job(plan, status="completed", project_revision=5)
-        self.assertEqual(plan.status, "pending")
-        self.assertEqual(plan.steps[0].status, "success")
-        self.assertEqual(self.backend.calls[-1], ("inspect", "inspect_project_state"))
+    def test_pause_resume_preserves_waiting_approval(self) -> None:
+        issue = finding("timeline-1", "timeline", "blocking", route="timeline_proposal")
+        self.backend.reviews.append(review(4, issue))
+        plan = self.build(("timeline", "render"))
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+        calls_before_pause = list(self.backend.calls)
 
-    def test_proposal_stops_for_explicit_approval_then_reinspects(self) -> None:
-        plan = self.build(state={"subtitles_ready": True})
+        self.orchestrator.pause(plan)
+        self.assertEqual(plan.status, "paused")
+        self.assertEqual(plan.steps[-1].status, "waiting_approval")
+        self.orchestrator.resume(plan, project_revision=4)
+        self.assertEqual(plan.status, "waiting_approval")
         self.orchestrator.advance(plan)
 
         self.assertEqual(plan.status, "waiting_approval")
-        self.assertEqual(plan.steps[0].action_type, "propose_subtitle_edit")
-        self.assertEqual(plan.steps[0].status, "waiting_approval")
+        self.assertEqual(
+            [call for call in self.backend.calls if call[0] in {"propose", "execute"}],
+            [call for call in calls_before_pause if call[0] in {"propose", "execute"}],
+        )
+        self.assertFalse(any(call[1] == "render_normal" for call in self.backend.calls))
 
-        self.backend.current_revision = 5
-        self.orchestrator.resolve_proposal(plan, applied=True, project_revision=5)
-        self.assertEqual(plan.status, "pending")
-        self.assertEqual(plan.steps[0].status, "success")
-
-    def test_manual_edit_marks_pending_plan_stale_before_next_action(self) -> None:
-        plan = self.build(state={"subtitles_ready": True})
-        self.backend.current_revision = 5
+    def test_discard_reinspects_rereviews_and_blocks_render_when_issue_remains(self) -> None:
+        issue = finding("subtitle-1", "subtitle", "blocking", route="subtitle_proposal")
+        self.backend.reviews.extend([review(4, issue), review(4, issue), review(4, issue)])
+        plan = self.build(("subtitle", "render"))
+        self.orchestrator.advance(plan)
         self.orchestrator.advance(plan)
 
-        self.assertEqual(plan.status, "stale")
-        self.assertEqual(plan.steps[0].status, "stale")
-        self.assertEqual(self.backend.calls, [("inspect", "inspect_project_state")])
+        self.orchestrator.resolve_proposal(
+            plan,
+            action_type="propose_subtitle_edit",
+            applied=False,
+            project_revision=4,
+        )
+        self.advance_until_stopped(plan)
 
+        self.assertEqual(plan.status, "paused")
+        self.assertEqual(plan.blocking_issues[0]["id"], "subtitle-1")
+        self.assertEqual(
+            len([call for call in self.backend.calls if call[1] == "review_project"]),
+            3,
+        )
+        self.assertFalse(any(call[1] == "render_normal" for call in self.backend.calls))
+
+    def test_applied_proposal_requires_post_action_and_final_review_before_render(self) -> None:
+        issue = finding("subtitle-1", "subtitle", "blocking", route="subtitle_proposal")
+        self.backend.reviews.extend([review(4, issue), review(5), review(5)])
+        plan = self.build(("subtitle", "render"))
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+        self.backend.current_revision = 5
+        self.backend.project_state["segment_count"] = 3
+
+        self.orchestrator.resolve_proposal(
+            plan,
+            action_type="propose_subtitle_edit",
+            applied=True,
+            project_revision=5,
+        )
+        self.advance_until_stopped(plan)
+
+        reviews = [call for call in self.backend.calls if call[1] == "review_project"]
+        renders = [call for call in self.backend.calls if call[1] == "render_normal"]
+        self.assertEqual(len(reviews), 4)
+        self.assertEqual(len(renders), 1)
+        self.assertEqual(plan.status, "success")
+
+    def test_job_terminal_reinspects_and_rereviews(self) -> None:
+        issue = finding("processing-1", "processing", "blocking", route="processing_action")
+        self.backend.project_state["segment_count"] = 0
+        self.backend.reviews.extend([review(4, issue), review(5), review(5)])
+        plan = self.build(("transcription", "render"))
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+        self.assertEqual(plan.status, "running")
+
+        self.backend.active_job = ""
+        self.backend.current_revision = 5
+        self.backend.project_state["segment_count"] = 8
+        self.orchestrator.resolve_job(plan, status="completed", project_revision=5)
+        self.advance_until_stopped(plan)
+
+        self.assertEqual(
+            len([call for call in self.backend.calls if call[1] == "review_project"]),
+            4,
+        )
+        self.assertEqual(plan.status, "success")
+
+    def test_failed_job_is_reviewed_once_without_automatic_retry(self) -> None:
+        issue = finding("processing-1", "processing", "blocking", route="processing_action")
+        self.backend.project_state["segment_count"] = 0
+        self.backend.reviews.extend([review(4, issue), review(4, issue)])
+        plan = self.build(("transcription", "render"))
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+        self.backend.active_job = ""
+
+        self.orchestrator.resolve_job(plan, status="error", project_revision=4)
+        self.advance_until_stopped(plan)
+
+        starts = [call for call in self.backend.calls if call[1] == "start_transcription"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(plan.status, "failed")
+
+    def test_incomplete_final_review_is_a_render_blocker(self) -> None:
+        self.backend.reviews.extend(
+            [
+                review(4),
+                review(4, truncated=True, remaining_count=1),
+            ]
+        )
+        plan = self.build(("subtitle", "render"))
+
+        self.advance_until_stopped(plan)
+
+        self.assertEqual(plan.status, "paused")
+        self.assertEqual(plan.blocking_issues[0]["id"], "review-incomplete")
+        self.assertFalse(any(call[1] == "render_normal" for call in self.backend.calls))
+
+    def test_review_ignores_blockers_outside_the_requested_output_scope(self) -> None:
+        short_only = finding("short-1", "short", "blocking", route="timeline_proposal")
+        self.backend.reviews.extend([review(4, short_only), review(4, short_only)])
+        plan = self.build(("timeline", "render"))
+
+        self.advance_until_stopped(plan)
+
+        self.assertEqual(plan.status, "success")
+        self.assertEqual(plan.blocking_issues, [])
+        self.assertEqual(
+            len([call for call in self.backend.calls if call[1] == "render_normal"]),
+            1,
+        )
+
+    def test_manual_edit_marks_future_work_stale_and_reinspect_queues_review(self) -> None:
+        self.backend.reviews.append(review(4))
+        plan = self.build(("subtitle", "render"))
+        self.backend.current_revision = 5
+
+        self.orchestrator.advance(plan)
+        self.assertEqual(plan.status, "stale")
         self.orchestrator.reinspect(plan)
+
         self.assertEqual(plan.project_revision, 5)
         self.assertEqual(plan.status, "pending")
-        self.assertEqual(plan.steps[0].status, "pending")
+        self.assertEqual(plan.steps[-1].action_type, "review_project")
+        self.assertEqual(plan.steps[-1].phase, "recovery")
 
-    def test_blocking_review_prevents_render(self) -> None:
+    def test_cancel_stops_running_backend_job_through_typed_action(self) -> None:
+        issue = finding("processing-1", "processing", "blocking", route="processing_action")
+        self.backend.project_state["segment_count"] = 0
+        self.backend.reviews.append(review(4, issue))
+        plan = self.build(("transcription", "render"))
+        self.orchestrator.advance(plan)
+        self.orchestrator.advance(plan)
+
+        self.orchestrator.cancel(plan)
+
+        self.assertEqual(self.backend.calls[-1][1], "cancel_processing")
+        self.assertEqual(plan.status, "canceled")
+
+    def test_plan_round_trip_validates_duplicate_step_ids(self) -> None:
+        plan = self.build()
+        restored = PlanState.from_json(plan.to_json())
+        self.assertEqual(restored.to_json(), plan.to_json())
+        invalid = plan.to_json()
+        invalid["steps"].append(deepcopy(invalid["steps"][0]))
+        with self.assertRaisesRegex(PlanError, "ids must be unique"):
+            PlanState.from_json(invalid)
+
+
+class PlanControllerTests(unittest.TestCase):
+    def test_completion_request_router_is_narrow_and_distinguishes_short(self) -> None:
+        self.assertIsNone(completion_scope_for_request("この字幕を少し直して"))
+        self.assertIn("render", completion_scope_for_request("この動画を完成させて") or ())
+        self.assertIn("render", completion_scope_for_request("YouTube用に完成させて") or ())
+        short = completion_scope_for_request("ショート動画を完成させて") or ()
+        self.assertIn("short_timeline", short)
+        self.assertIn("short_render", short)
+        self.assertNotIn("render", short)
+
+    def test_plan_is_persisted_and_waiting_proposal_is_restored_after_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.write_text("{}", encoding="utf-8")
+            backend = ReviewBackend()
+            backend.reviews.append(
+                review(4, finding("subtitle-1", "subtitle", "warning", route="subtitle_proposal"))
+            )
+            restored: list[tuple[str, dict[str, Any]]] = []
+            controller = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "same-project",
+            )
+
+            self.assertTrue(controller.handle_chat_request("この動画を完成させて"))
+            self.assertEqual(controller.plan.status, "waiting_approval")
+            self.assertTrue(plan_state_path(project_path).is_file())
+
+            backend.current_revision = 27
+            restarted = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "same-project",
+                restore_proposal=lambda action, proposal: restored.append((action, dict(proposal))),
+            )
+            restarted.restore()
+
+            self.assertEqual(restarted.plan.status, "waiting_approval")
+            self.assertEqual(restarted.plan.project_revision, 27)
+            self.assertEqual(restored[0][0], "propose_subtitle_edit")
+            self.assertEqual(restored[0][1]["base_revision"], 27)
+
+    def test_changed_project_recovery_discards_stale_wait_and_starts_fresh_review(self) -> None:
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.write_text("{}", encoding="utf-8")
+            backend = ReviewBackend()
+            backend.reviews.append(
+                review(4, finding("subtitle-1", "subtitle", "warning", route="subtitle_proposal"))
+            )
+            original = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "before",
+            )
+            original.start("この動画を完成させて", ("subtitle", "render"))
+            self.assertEqual(original.plan.status, "waiting_approval")
+
+            backend.current_revision = 5
+            backend.reviews.extend([review(5), review(5)])
+            restarted = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "after",
+            )
+            restarted.restore()
+
+            stale_wait = next(
+                step for step in restarted.plan.steps if step.action_type == "propose_subtitle_edit"
+            )
+            self.assertEqual(stale_wait.status, "stale")
+            self.assertEqual(restarted.plan.status, "success")
+            self.assertGreaterEqual(
+                len([call for call in backend.calls if call[1] == "review_project"]),
+                3,
+            )
+
+    def test_store_rejects_empty_path_and_round_trips(self) -> None:
+        store = PlanStateStore()
+        backend = ReviewBackend()
         plan = build_completion_plan(
-            goal="問題なければ書き出す",
+            goal="完成させる",
             scope=("subtitle", "render"),
             scope_id="goal-1",
             project_revision=4,
-            current_state={"subtitle_reviewed": True},
+            current_state=backend.project_state,
         )
-        self.orchestrator.set_blocking_issues(plan, [{"severity": "blocking", "reason": "字幕欠落"}])
-        self.orchestrator.advance(plan)
+        with self.assertRaisesRegex(PlanError, "path"):
+            store.save("", plan)
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.touch()
+            store.save(project_path, plan)
+            self.assertEqual(store.load(project_path).to_json(), plan.to_json())
 
-        self.assertEqual(plan.status, "paused")
-        self.assertEqual(plan.steps[0].status, "pending")
-        self.assertNotIn(("execute", "render_normal"), self.backend.calls)
+    def test_cancelled_plan_clears_a_running_or_waiting_product_proposal(self) -> None:
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.touch()
+            backend = ReviewBackend()
+            backend.reviews.append(
+                review(4, finding("subtitle-1", "subtitle", "warning", route="subtitle_proposal"))
+            )
+            canceled: list[str] = []
+            controller = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "same-project",
+                cancel_proposal=canceled.append,
+            )
+            controller.start("この動画を完成させて", ("subtitle", "render"))
 
-    def test_pause_resume_cancel_and_persisted_round_trip(self) -> None:
-        plan = self.build()
-        self.orchestrator.pause(plan)
-        restored = PlanState.from_json(plan.to_json())
-        self.assertEqual(restored.to_json(), plan.to_json())
+            controller.cancel()
 
-        self.orchestrator.resume(restored, project_revision=4)
-        self.assertEqual(restored.status, "pending")
-        self.orchestrator.cancel(restored)
-        self.assertEqual(restored.status, "canceled")
+            self.assertEqual(controller.plan.status, "canceled")
+            self.assertEqual(canceled, ["propose_subtitle_edit"])
 
-    def test_cancel_stops_running_backend_job_through_typed_action(self) -> None:
-        plan = self.build()
-        self.orchestrator.advance(plan)
-        self.orchestrator.cancel(plan)
+    def test_pause_stops_running_proposal_but_preserves_waiting_proposal(self) -> None:
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.touch()
+            backend = ReviewBackend()
+            backend.proposal_async = True
+            backend.reviews.append(
+                review(4, finding("subtitle-1", "subtitle", "warning", route="subtitle_proposal"))
+            )
+            stopped: list[str] = []
+            controller = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "same-project",
+                cancel_proposal=stopped.append,
+            )
+            controller.start("この動画を完成させて", ("subtitle", "render"))
+            self.assertEqual(controller.plan.status, "running")
 
-        self.assertEqual(self.backend.calls[-1], ("execute", "cancel_processing"))
-        self.assertEqual(plan.steps[0].status, "canceled")
-        self.assertEqual(plan.status, "canceled")
+            controller.pause()
 
-    def test_scope_cannot_be_broadened_by_plan(self) -> None:
-        narrow = ActionScope("goal-1", frozenset({"inspect_project_state"}))
-        orchestrator = CodexOrchestrator(ActionDispatcher(self.backend), narrow)
-        plan = self.build()
-        orchestrator.advance(plan)
+            self.assertEqual(controller.plan.status, "paused")
+            self.assertEqual(stopped, ["propose_subtitle_edit"])
+            self.assertEqual(controller.plan.steps[-2].status, "canceled")
+            self.assertEqual(controller.plan.steps[-1].phase, "after_action")
 
-        self.assertEqual(plan.status, "failed")
-        self.assertEqual(plan.steps[0].result["code"], "out_of_scope")
-        self.assertNotIn(("execute", "start_transcription"), self.backend.calls)
+    def test_saved_manual_edit_invalidates_and_clears_waiting_proposal(self) -> None:
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.touch()
+            backend = ReviewBackend()
+            backend.reviews.append(
+                review(4, finding("subtitle-1", "subtitle", "warning", route="subtitle_proposal"))
+            )
+            cleared: list[str] = []
+            controller = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: backend.current_revision,
+                project_state=lambda: backend.project_state,
+                project_fingerprint=lambda: "changed-project",
+                cancel_proposal=cleared.append,
+            )
+            controller.start("この動画を完成させて", ("subtitle", "render"))
+            waiting = controller.plan.steps[-1]
+            backend.current_revision = 5
+
+            controller.project_saved()
+
+            self.assertEqual(waiting.status, "stale")
+            self.assertEqual(cleared, ["propose_subtitle_edit"])
+            self.assertEqual(controller.plan.status, "success")
+
+
+class GuiActionContractTests(unittest.TestCase):
+    def gui_stub(self) -> SimpleNamespace:
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def start_audio(*, intent: str, revision: int) -> bool:
+            calls.append(("audio", {"intent": intent, "revision": revision}))
+            return True
+
+        def start_timeline(*, intent: str, target: str) -> bool:
+            calls.append(("timeline", {"intent": intent, "target": target}))
+            return True
+
+        return SimpleNamespace(
+            _project_revision=4,
+            _running=False,
+            _active_job="",
+            _project={"segments": [{"id": "s1"}], "video": {"path": "video.mp4"}},
+            _project_dirty=False,
+            _selected_segment_index=0,
+            _codex_session=SimpleNamespace(running=False),
+            _codex_audio_mix_session=SimpleNamespace(running=False),
+            _codex_timeline_session=SimpleNamespace(running=False),
+            highlightAnalysisState="idle",
+            start_codex_audio_mix_proposal=start_audio,
+            start_codex_timeline_proposal=start_timeline,
+            calls=calls,
+        )
+
+    def test_timeline_schema_requires_explicit_target_before_gui_call(self) -> None:
+        gui = self.gui_stub()
+        dispatcher = ActionDispatcher(GuiActionBackend(gui))
+        scope = ActionScope("goal", frozenset({"propose_timeline_edit"}))
+
+        missing = dispatcher.dispatch(
+            {
+                "schema_version": 1,
+                "kind": "propose",
+                "type": "propose_timeline_edit",
+                "args": {"intent": "整える"},
+                "scope_id": "goal",
+                "project_revision": 4,
+            },
+            trusted_scope=scope,
+        )
+        invalid = dispatcher.dispatch(
+            {
+                "schema_version": 1,
+                "kind": "propose",
+                "type": "propose_timeline_edit",
+                "args": {"intent": "整える", "target": "both"},
+                "scope_id": "goal",
+                "project_revision": 4,
+            },
+            trusted_scope=scope,
+        )
+
+        self.assertEqual(missing.code, "invalid_schema")
+        self.assertEqual(invalid.code, "invalid_schema")
+        self.assertEqual(gui.calls, [])
+
+    def test_concrete_gui_backend_delegates_audio_and_both_timeline_targets(self) -> None:
+        gui = self.gui_stub()
+        dispatcher = ActionDispatcher(GuiActionBackend(gui))
+        scope = ActionScope(
+            "goal",
+            frozenset({"propose_audio_mix", "propose_timeline_edit"}),
+        )
+        for action_type, args in (
+            ("propose_audio_mix", {"intent": "音を整える"}),
+            ("propose_timeline_edit", {"intent": "通常版を整える", "target": "normal"}),
+            ("propose_timeline_edit", {"intent": "短尺版を整える", "target": "short"}),
+        ):
+            result = dispatcher.dispatch(
+                {
+                    "schema_version": 1,
+                    "kind": "propose",
+                    "type": action_type,
+                    "args": args,
+                    "scope_id": "goal",
+                    "project_revision": 4,
+                },
+                trusted_scope=scope,
+            )
+            self.assertEqual(result.status.value, "success")
+
+        self.assertEqual(gui.calls[0][0], "audio")
+        self.assertEqual(gui.calls[1][1]["target"], "normal")
+        self.assertEqual(gui.calls[2][1]["target"], "short")
+
+    def test_chat_plan_drives_concrete_gui_backend_to_async_proposal_wait(self) -> None:
+        gui = self.gui_stub()
+        backend = GuiActionBackend(gui)
+        inspect_handlers = dict(backend._inspect_handlers)
+        inspect_handlers["review_project"] = lambda _args: HandlerResult(
+            "project reviewed",
+            state={
+                "review_result": review(
+                    4,
+                    finding(
+                        "timeline-1",
+                        "timeline",
+                        "blocking",
+                        route="timeline_proposal",
+                    ),
+                )
+            },
+        )
+        backend._inspect_handlers = inspect_handlers
+        with TemporaryDirectory() as directory:
+            project_path = Path(directory) / "sample.subtitle-project.json"
+            project_path.touch()
+            controller = CodexPlanController(
+                ActionDispatcher(backend),
+                project_path=lambda: str(project_path),
+                project_revision=lambda: gui._project_revision,
+                project_state=lambda: {
+                    "loaded": True,
+                    "dirty": False,
+                    "revision": gui._project_revision,
+                    "segment_count": 1,
+                    "has_video": True,
+                },
+                project_fingerprint=lambda: "same-project",
+            )
+
+            self.assertTrue(controller.handle_chat_request("この動画を完成させて"))
+            self.assertEqual(controller.plan.status, "running")
+            self.assertEqual(gui.calls[-1], ("timeline", {"intent": "timeline needs attention", "target": "normal"}))
+
+            controller.proposal_ready(
+                "propose_timeline_edit",
+                {"base_revision": 4, "operations": [{"id": "timeline-op-1"}]},
+                project_revision=4,
+            )
+            self.assertEqual(controller.plan.status, "waiting_approval")
 
 
 if __name__ == "__main__":

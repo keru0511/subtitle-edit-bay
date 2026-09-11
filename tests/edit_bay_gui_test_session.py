@@ -146,6 +146,8 @@ class EditBayGuiTestSession:
         app._codex_chat._active_assistant_id = ""
         app._codex_chat._thread_needs_resume = False
         app._codex_chat._stop_requested = False
+        app._codex_plan.clear()
+        app._last_codex_plan_status = None
 
         app.processEvents()
 

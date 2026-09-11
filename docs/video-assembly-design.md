@@ -205,7 +205,36 @@ $$\text{EffectiveDuration} = \sum_{i=0}^{N-1} (endSec_i - startSec_i) - \sum_{i=
 
 ---
 
-## 4. バックエンド連携 (`src/assemble_video.py` & `src/multi_source_short_video.py`)
+## 4. 複数動画・複数音声の紐づけと文字起こしターゲット選択設計 (Multi-source Binding & Selective Transcription)
+
+ゲーム実況動画の制作現場では、オープニング（OP）、本編録画（Part 1、Part 2…）、エンディング（ED）、アイキャッチなど**複数の動画素材**と、ゲーム内音声、実況者個別マイク（Craig botやオーディオインターフェース収録）、BGM楽曲、効果音（SE）など**複数の音声素材**が同時にプロジェクトへ取り込まれる。
+このため、字幕生成パイプラインでは**「どの動画にどの音声を紐づけるか」**および**「素材一覧の中からどれを文字起こし（WhisperX）対象にするか」**をユーザーが明示的にコントロールできる設計が必須となる。
+
+### 4.1 音声ソース紐づけ（Audio Source Binding）モデル
+各動画クリップ（`JoinClip`）および動画素材（`MediaAsset`）は、以下の3種類の音声ソースから連動先を選択可能とする：
+
+| 連動音声ソース | 説明 | 字幕生成時の扱い |
+| :--- | :--- | :--- |
+| **外部話者マイク (`craig_dual`)** | Discord Craig botやマルチマイク録音された個別話者FLAC/WAVファイル（例: `1-alice.flac`, `2-bob.flac`） | 話者ごとのトラックから個別文字起こしし、話者色（黄色/水色等）を割り当てて自動統合 |
+| **動画内蔵音声 (`embedded`)** | MP4等の動画コンテナに含まれる音声ストリーム（ゲーム音＋ボイス混ざり等） | 動画音声から直接WAV抽出して文字起こし（必要に応じて話者分離ダイアライゼーション適用） |
+| **音声なし / ミュート (`mute`)** | テロップや音声処理が不要な定型クリップ（BGM付きOP動画や無音アイキャッチ等） | 文字起こしパイプラインから完全除外（WhisperX推論コストをゼロ化） |
+
+### 4.2 素材一覧からの文字起こし対象選択（Selective Transcription）
+- **初期判定ルール（スマートデフォルト）**:
+  - `main`（本編動画）および `speaker`（個別話者マイク音声）: 初期値 **文字起こし対象: ON**
+  - `op`（オープニング）、`ed`（エンディング）、`bgm`（BGM）、`se`（効果音）: 初期値 **文字起こし対象: OFF**
+- **素材一覧（メディアビン）でのクイックトグル**:
+  - 素材カード上に常設された `[🎙️ 文字起こし対象]` バッジをクリックするだけで、対象のON/OFFをワンクリックでトグル可能。
+- **素材紐づけ・文字起こしマネージャー (`modal-source-settings`)**:
+  - 複数動画×音声の紐づけマトリクスを一覧表示。
+  - 各動画のチェックボックス、紐づけ音声ドロップダウン、外部話者マイクの追加・カラー設定を一元管理。
+  - 「選択サマリー（対象動画数・総尺・推定WhisperX処理時間）」を確認した上で、`[ 🎙️ 対象素材の文字起こしを開始 ]` を実行。
+- **字幕インスペクタでのクリップ別フィルター**:
+  - 字幕編集パネル上部に「すべて表示」「本編Part 1 (4字幕)」「本編Part 2 (2字幕)」のタブフィルターを常設。複数動画が繋がった長尺プロジェクトでも、クリップ単位で字幕を迷わず確認・編集可能。
+
+---
+
+## 5. バックエンド連携 (`src/assemble_video.py` & `src/multi_source_short_video.py`)
 
 既存のPythonモジュールとの対応関係は以下の通りであり、追加のアーキテクチャ破壊なしに直接バインド可能。
 
@@ -216,10 +245,11 @@ $$\text{EffectiveDuration} = \sum_{i=0}^{N-1} (endSec_i - startSec_i) - \sum_{i=
 | **無劣化/高速結合マニフェスト** | `src/assemble_video.py` | `write_concat_manifest()` / `build_concat_command()` |
 | **複数素材・クロスフェード** | `src/multi_source_short_video.py` | `build_concat_filter_script()` (xfade, acrossfade) |
 | **OP/EDスロット処理** | `src/assemble_video.py` | `assemble_video(opening_clip, main_clip, ending_clip)` |
+| **外部話者音声の文字起こし統合** | `src/craig_pipeline.py` / `src/merge_transcripts.py` | `run_craig_transcription()` / `merge_aligned_transcripts()` |
 
 ---
 
-## 5. UIプロトタイプ（`docs/ui-redesign-mockup.html`）での確認手順
+## 6. UIプロトタイプ（`docs/ui-redesign-mockup.html`）での確認手順
 
 1. ブラウザで `docs/ui-redesign-mockup.html` を開く。
 2. 左側のモードレールで **`🎬 編集`** を選択。

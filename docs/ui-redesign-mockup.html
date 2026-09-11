@@ -957,6 +957,35 @@
 
             <!-- 2. SUBTITLE MODE SETTINGS (既存全機能) -->
             <div id="inspector-subtitle" class="space-y-3.5 hidden">
+              <!-- Source Binding & Transcription Target Summary Card -->
+              <div class="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] font-semibold text-indigo-300 flex items-center gap-1.5">
+                    <span>🎙️</span> 文字起こし・音声紐づけ
+                  </span>
+                  <button onclick="openModal('source-settings')" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-medium transition shadow flex items-center gap-1 active:scale-95" title="動画と音声の紐づけ・文字起こし対象設定を開く">
+                    <span>⚙️</span> 設定・変更
+                  </button>
+                </div>
+                <div id="subtitle-binding-summary" class="text-[10px] text-slate-300 font-mono flex items-center justify-between">
+                  <span>対象: 本編 2件 (話者A/B + 内蔵)</span>
+                  <span class="text-emerald-400 font-semibold">✓ 同期済</span>
+                </div>
+              </div>
+
+              <!-- Clip Filter Tabs (全シーケンス / クリップ別) -->
+              <div class="space-y-1">
+                <div class="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>クリップ別フィルター:</span>
+                  <span id="subtitle-filter-current-label" class="text-indigo-300 font-mono text-[9px]">すべて表示</span>
+                </div>
+                <div id="subtitle-clip-filter-tabs" class="flex items-center gap-1 overflow-x-auto pb-1 text-[10px]">
+                  <button onclick="filterSubtitlesByClip('all')" id="sub-filter-tab-all" class="px-2 py-0.5 rounded-md bg-surface-card text-white font-medium border border-surface-border/60 transition flex-shrink-0">すべて (6)</button>
+                  <button onclick="filterSubtitlesByClip(2)" id="sub-filter-tab-2" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition flex-shrink-0">本編Part1 (4)</button>
+                  <button onclick="filterSubtitlesByClip(3)" id="sub-filter-tab-3" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition flex-shrink-0">本編Part2 (2)</button>
+                </div>
+              </div>
+
               <!-- Toolbar: Undo/Redo/Add/Split/Delete -->
               <div class="grid grid-cols-5 gap-1">
                 <button onclick="undoSubtitle()" class="py-1 rounded bg-surface-card hover:bg-surface-cardHover border border-surface-border text-[10px] text-slate-300" title="元に戻す">戻す</button>
@@ -969,7 +998,7 @@
               <!-- Subtitle List -->
               <div>
                 <div class="flex items-center justify-between mb-1.5">
-                  <span id="subtitle-list-title" class="text-xs font-semibold text-slate-300">字幕セグメント (3件)</span>
+                  <span id="subtitle-list-title" class="text-xs font-semibold text-slate-300">字幕セグメント (6件)</span>
                 </div>
                 <div id="subtitle-items-container" class="space-y-1.5 max-h-40 overflow-y-auto pr-1"></div>
               </div>
@@ -1441,13 +1470,17 @@
 
   </div>
 
-  <!-- ================= MODAL 1: SOURCE SETTINGS (素材設定ダイアログ) ================= -->
+  <!-- ================= MODAL 1: SOURCE SETTINGS (素材紐づけ・文字起こしマネージャー) ================= -->
   <div id="modal-source-settings" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-surface-panel border border-surface-border rounded-2xl max-w-2xl w-full shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
-      <div class="h-13 px-5 py-3 border-b border-surface-border flex items-center justify-between">
+    <div class="bg-surface-panel border border-surface-border rounded-2xl max-w-3xl w-full shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+      <div class="h-14 px-5 py-3 border-b border-surface-border flex items-center justify-between bg-surface-base/80">
         <div>
-          <h2 class="font-bold text-base text-white">素材設定</h2>
-          <p class="text-[11px] text-slate-400">動画・音声素材と文字起こしの同期設定</p>
+          <div class="flex items-center gap-2">
+            <span class="text-base">🎙️</span>
+            <h2 class="font-bold text-base text-white">素材紐づけ・文字起こしマネージャー</h2>
+            <span class="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono text-[10px] border border-indigo-500/30">マルチソース対応</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-0.5">どの動画と音声を紐づけるか、どの素材をWhisperX文字起こしするかを選択・同期します</p>
         </div>
         <button onclick="closeModal('source-settings')" class="w-8 h-8 rounded-lg hover:bg-surface-card text-slate-400 hover:text-white flex items-center justify-center transition">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -1455,74 +1488,92 @@
       </div>
 
       <div class="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+        <!-- Dependency Status Banner -->
         <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2.5">
             <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
             <div>
-              <span id="whisperx-status-label" class="font-semibold text-emerald-300">依存ツール: WhisperX 正常稼働</span>
-              <span class="text-[11px] text-emerald-400/80 block">CUDA GPU 加速が有効です (NVIDIA GeForce RTX)</span>
+              <span id="whisperx-status-label" class="font-semibold text-emerald-300">WhisperX AI 文字起こしエンジン: 準備完了</span>
+              <span class="text-[11px] text-emerald-400/80 block">CUDA GPU 加速有効 (NVIDIA GeForce RTX) • 高精度音素アライメント</span>
             </div>
           </div>
           <button onclick="rescanDependencies()" class="px-2.5 py-1 rounded bg-surface-base hover:bg-surface-card border border-surface-border text-slate-300 text-[11px] transition active:scale-95">再確認</button>
         </div>
 
-        <div onclick="simulateFileDrop()" class="p-6 rounded-2xl border-2 border-dashed border-surface-border hover:border-brand-500/70 bg-surface-card/40 hover:bg-surface-card/80 transition cursor-pointer flex flex-col items-center justify-center text-center group">
-          <div class="w-12 h-12 rounded-xl bg-brand-500/20 text-brand-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
-            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-          </div>
-          <span class="font-semibold text-sm text-slate-200">動画・話者音声をここにドロップ</span>
-          <span class="text-[11px] text-slate-400 mt-0.5">動画1件と複数の音声を自動判別して登録します（クリックでテスト登録）</span>
-        </div>
-
-        <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border space-y-2">
-          <span class="text-xs font-semibold text-slate-200 block">動画ファイル</span>
-          <div class="flex items-center gap-2">
-            <input id="source-video-input" type="text" readonly value="C:/Videos/gameplay_apex_session_01.mp4" class="flex-1 bg-surface-base border border-surface-border rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono">
-            <button onclick="browseVideoSource()" class="px-3 py-1.5 rounded-lg bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-200 font-medium text-xs transition active:scale-95">ファイル選択</button>
-          </div>
-        </div>
-
+        <!-- 1. VIDEO-AUDIO BINDING & TRANSCRIPTION MATRIX (動画×音声の紐づけと文字起こし対象一覧) -->
         <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border space-y-2.5">
           <div class="flex items-center justify-between">
-            <span id="modal-speakers-title" class="text-xs font-semibold text-slate-200">話者別音声ファイル (2件)</span>
             <div class="flex items-center gap-1.5">
-              <button onclick="addSourceSpeakerAudio()" class="text-[11px] px-2 py-1 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300 transition">+ 音声を追加</button>
+              <span class="text-sm">🎬</span>
+              <span class="text-xs font-semibold text-slate-200">動画素材の音声紐づけ & 文字起こし対象</span>
+              <span id="modal-video-count-badge" class="px-1.5 py-0.2 rounded bg-surface-base text-indigo-300 font-mono text-[10px] border border-surface-border">4動画</span>
+            </div>
+            <span class="text-[10px] text-slate-400">※不要なOP/EDは文字起こしをOFFにできます</span>
+          </div>
+
+          <!-- Video Binding Dynamic List -->
+          <div id="modal-video-bindings-container" class="space-y-2">
+            <!-- Populated dynamically by renderSourceSettingsModal() -->
+          </div>
+        </div>
+
+        <!-- 2. EXTERNAL SPEAKER AUDIO TRACKS (話者別外部マイク音声: Craig形式) -->
+        <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border space-y-2.5">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-1.5">
+              <span class="text-sm">🎙️</span>
+              <span id="modal-speakers-title" class="text-xs font-semibold text-slate-200">外部話者マイク音声 (Craig形式 / 2トラック)</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button onclick="addSourceSpeakerAudio()" class="text-[11px] px-2 py-1 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300 transition flex items-center gap-1 active:scale-95">
+                <span>+</span> 話者マイク追加
+              </button>
               <button onclick="clearSourceSpeakers()" class="text-[11px] px-2 py-1 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-400 transition">クリア</button>
             </div>
           </div>
+          <p class="text-[10px] text-slate-400">Discord録音（Craig bot等）の個別話者FLAC/WAVファイルを登録すると、話者ごとに色分けして文字起こし・字幕配置されます。</p>
           <div id="modal-speakers-container" class="space-y-1.5"></div>
         </div>
 
+        <!-- 3. ADVANCED SYNC & MODEL SETTINGS -->
         <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border space-y-3">
-          <span class="text-xs font-semibold text-slate-200 block">文字起こし対象と音声同期</span>
+          <span class="text-xs font-semibold text-slate-200 block">同期・AIモデル詳細設定</span>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="text-[10px] text-slate-400 block mb-1">動画音声トラック</label>
-              <select onchange="showToast('音声トラック: ' + this.value)" class="w-full bg-surface-base border border-surface-border rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
-                <option>自動検出（推奨）</option>
-                <option>トラック 1 (ステレオ)</option>
+              <label class="text-[10px] text-slate-400 block mb-1">音声同期の基準</label>
+              <select onchange="showToast('同期基準: ' + this.value)" class="w-full bg-surface-base border border-surface-border rounded-lg px-2.5 py-1.5 text-xs text-slate-200 outline-none">
+                <option value="auto">自動同期 (相互相関波形マッチング)</option>
+                <option value="speaker1">話者1 (speaker_player_a.wav) 基準</option>
+                <option value="embedded">動画内蔵トラック基準</option>
               </select>
             </div>
             <div>
-              <label class="text-[10px] text-slate-400 block mb-1">同期の基準音声</label>
-              <select onchange="showToast('同期基準: ' + this.value)" class="w-full bg-surface-base border border-surface-border rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
-                <option>自動同期（動画音声に合わせる）</option>
-                <option>話者1 (speaker_player_a.wav)</option>
+              <label class="text-[10px] text-slate-400 block mb-1">文字起こしモデル</label>
+              <select onchange="showToast('モデル: ' + this.value)" class="w-full bg-surface-base border border-surface-border rounded-lg px-2.5 py-1.5 text-xs text-slate-200 outline-none">
+                <option value="large-v3">WhisperX large-v3 (高精度・日本語特化 推奨)</option>
+                <option value="medium">WhisperX medium (高速)</option>
               </select>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="h-14 px-5 border-t border-surface-border flex items-center justify-between bg-surface-panel/80">
-        <button onclick="closeModal('source-settings')" class="px-3.5 py-1.5 rounded-lg hover:bg-surface-card text-slate-400 hover:text-slate-200 transition text-xs">キャンセル</button>
+      <!-- Modal Footer with Realtime Summary and Action Buttons -->
+      <div class="h-16 px-5 border-t border-surface-border flex items-center justify-between bg-surface-panel/90">
+        <div>
+          <span class="text-[10px] text-slate-400 block">選択サマリー:</span>
+          <span id="modal-transcription-summary-text" class="text-xs font-semibold text-indigo-300 font-mono">
+            文字起こし対象: 本編2件 (計 22分50秒) / 音声2トラック
+          </span>
+        </div>
         <div class="flex items-center gap-2">
-          <button onclick="closeModal('source-settings'); navigateView('editor-cut'); showToast('素材設定を保存しました');" class="px-3.5 py-2 rounded-xl bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 text-xs font-medium transition active:scale-95">
-            設定のみ保存
+          <button onclick="closeModal('source-settings')" class="px-3.5 py-2 rounded-xl hover:bg-surface-card text-slate-400 hover:text-slate-200 transition text-xs">キャンセル</button>
+          <button onclick="saveSourceBindingsModal()" class="px-3.5 py-2 rounded-xl bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 text-xs font-medium transition active:scale-95">
+            紐づけ設定を保存
           </button>
-          <button onclick="closeModal('source-settings'); startTranscriptionMock();" class="px-4 py-2 rounded-xl bg-gradient-to-r from-accent to-brand-500 hover:from-accent-hover hover:to-brand-600 text-white font-semibold text-xs shadow-lg shadow-accent/20 transition active:scale-95 flex items-center gap-1.5">
+          <button onclick="startSelectiveTranscription()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-accent to-brand-500 hover:from-accent-hover hover:to-brand-600 text-white font-semibold text-xs shadow-lg shadow-accent/20 transition active:scale-95 flex items-center gap-1.5">
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
-            文字起こしを開始
+            <span>対象素材の文字起こしを開始</span>
           </button>
         </div>
       </div>
@@ -1878,13 +1929,14 @@
 
     // Subtitles Data
     let subtitles = [
-      { id: 1, start: 0.8, end: 3.2, text: "こんにちは！今日のマッチよろしくお願いします！", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
-      { id: 2, start: 3.8, end: 7.0, text: "ここ無音だからカットしといて！", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
-      { id: 3, start: 8.5, end: 11.5, text: "了解です！右ルートから詰めていきましょう", speaker: "B", color: "#22D3EE", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
-      { id: 4, start: 13.0, end: 16.2, text: "敵発見！ピン刺した丘の上に2人います", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
-      { id: 5, start: 21.5, end: 25.0, text: "これで完璧に編集完了です", speaker: "B", color: "#22D3EE", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
-      { id: 6, start: 25.8, end: 29.2, text: "ナイス！GG、素晴らしい連携でした！", speaker: "B", color: "#22D3EE", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 }
+      { id: 1, clipId: 2, start: 0.8, end: 3.2, text: "こんにちは！今日のマッチよろしくお願いします！", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
+      { id: 2, clipId: 2, start: 3.8, end: 7.0, text: "ここ無音だからカットしといて！", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
+      { id: 3, clipId: 2, start: 8.5, end: 11.5, text: "了解です！右ルートから詰めていきましょう", speaker: "B", color: "#22D3EE", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
+      { id: 4, clipId: 2, start: 13.0, end: 16.2, text: "敵発見！ピン刺した丘の上に2人います", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
+      { id: 5, clipId: 3, start: 21.5, end: 25.0, text: "後半ラウンド開始、慎重に行きましょう", speaker: "B", color: "#22D3EE", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
+      { id: 6, clipId: 3, start: 25.8, end: 29.2, text: "ナイス！GG、素晴らしい連携でした！", speaker: "B", color: "#22D3EE", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 }
     ];
+    let currentSubtitleClipFilter = 'all'; // 'all' | 2 | 3
     let selectedSubIndex = 1;
     let subUndoStack = [];
     let subRedoStack = [];
@@ -2899,6 +2951,43 @@ ${escapeHtml(log.details)}
     }
 
     // SUBTITLES SYSTEM (Multi-track Speaker Separation, Undo/Redo, Realtime Styling)
+    function filterSubtitlesByClip(clipId) {
+      currentSubtitleClipFilter = clipId;
+
+      const tabAll = document.getElementById('sub-filter-tab-all');
+      const tab2 = document.getElementById('sub-filter-tab-2');
+      const tab3 = document.getElementById('sub-filter-tab-3');
+      const label = document.getElementById('subtitle-filter-current-label');
+
+      const inactive = "px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition flex-shrink-0";
+      const active = "px-2 py-0.5 rounded-md bg-surface-card text-white font-medium border border-surface-border/60 transition flex-shrink-0 shadow-sm";
+
+      if (tabAll) tabAll.className = (clipId === 'all') ? active : inactive;
+      if (tab2) tab2.className = (clipId === 2 || clipId === '2') ? active : inactive;
+      if (tab3) tab3.className = (clipId === 3 || clipId === '3') ? active : inactive;
+
+      if (label) {
+        if (clipId === 'all') label.innerText = 'すべて表示';
+        else if (clipId === 2 || clipId === '2') label.innerText = '本編 Part 1 (4字幕)';
+        else if (clipId === 3 || clipId === '3') label.innerText = '本編 Part 2 (2字幕)';
+      }
+
+      renderSubtitleList();
+      showToast(clipId === 'all' ? '全シーケンスの字幕を表示中' : `クリップ #${clipId} の字幕に絞り込みました`, 'info');
+    }
+
+    function updateSubtitleBindingSummary() {
+      const summaryElem = document.getElementById('subtitle-binding-summary');
+      if (!summaryElem) return;
+
+      const transVideos = mediaAssets.filter(a => (a.type || 'video') === 'video' && a.transcribe !== false);
+      const sources = transVideos.map(v => `${v.title.replace('ゲーム実況 ', '').replace('本編 ', '')}: ${v.audioSourceName || '内蔵'}`);
+      summaryElem.innerHTML = `
+        <span class="truncate max-w-[210px]" title="${sources.join(' / ')}">対象: ${transVideos.length}動画 (${sources.join(' / ')})</span>
+        <span class="text-emerald-400 font-semibold flex-shrink-0">✓ 同期済</span>
+      `;
+    }
+
     function renderSubtitleList() {
       const container = document.getElementById('subtitle-items-container');
       const trackA = document.getElementById('speaker-a-track-content');
@@ -2907,24 +2996,46 @@ ${escapeHtml(log.details)}
       if (trackA) trackA.innerHTML = '';
       if (trackB) trackB.innerHTML = '';
 
+      updateSubtitleBindingSummary();
+
+      const filteredSubs = subtitles.filter(sub => {
+        if (currentSubtitleClipFilter === 'all') return true;
+        return sub.clipId == currentSubtitleClipFilter;
+      });
+
       const countTitle = document.getElementById('subtitle-list-title');
-      if (countTitle) countTitle.innerText = `字幕セグメント (${subtitles.length}件)`;
+      if (countTitle) {
+        if (currentSubtitleClipFilter === 'all') {
+          countTitle.innerText = `字幕セグメント (${subtitles.length}件)`;
+        } else {
+          countTitle.innerText = `字幕セグメント (${filteredSubs.length}件 / 全${subtitles.length}件)`;
+        }
+      }
       const footerSubs = document.getElementById('footer-subs-count');
       if (footerSubs) footerSubs.innerText = `字幕: ${subtitles.length}件`;
 
-      subtitles.forEach((sub, idx) => {
-        const isSelected = idx === selectedSubIndex;
-        const isSpeakerA = (sub.speaker === 'A' || !sub.speaker || sub.speaker === '話者1');
+      if (container && filteredSubs.length === 0) {
+        container.innerHTML = `
+          <div class="py-6 text-center text-slate-500 text-xs">
+            選択中クリップに紐づく字幕がありません
+          </div>
+        `;
+      }
 
-        // 1. Right Inspector Subtitle Card with prominent Speaker Badge
-        if (container) {
+      // Render filtered subtitles in right inspector
+      if (container) {
+        filteredSubs.forEach((sub) => {
+          const originalIdx = subtitles.findIndex(s => s.id === sub.id);
+          const isSelected = originalIdx === selectedSubIndex;
+          const isSpeakerA = (sub.speaker === 'A' || !sub.speaker || sub.speaker === '話者1');
+
           const item = document.createElement('div');
           item.className = isSelected
             ? (isSpeakerA
                 ? "p-2.5 rounded-lg bg-yellow-950/40 border-2 border-yellow-400 text-xs shadow-md cursor-pointer transition"
                 : "p-2.5 rounded-lg bg-cyan-950/40 border-2 border-cyan-400 text-xs shadow-md cursor-pointer transition")
             : "p-2.5 rounded-lg bg-surface-card border border-surface-border cursor-pointer hover:border-slate-500 text-xs transition";
-          item.onclick = () => selectSubtitle(idx);
+          item.onclick = () => selectSubtitle(originalIdx);
 
           const speakerBadgeHtml = isSpeakerA
             ? `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-yellow-500/20 border border-yellow-500/40 text-yellow-300">
@@ -2934,11 +3045,16 @@ ${escapeHtml(log.details)}
                  <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400/80"></span>S2 プレイヤーB
                </span>`;
 
+          const clipBadgeHtml = sub.clipId
+            ? `<span class="px-1 py-0.2 rounded bg-surface-base text-slate-400 font-mono text-[9px] border border-surface-border">Part ${sub.clipId - 1}</span>`
+            : '';
+
           item.innerHTML = `
             <div class="flex items-center justify-between text-[10px]">
               <div class="flex items-center gap-1.5">
                 ${speakerBadgeHtml}
-                <span class="font-mono ${isSelected ? (isSpeakerA ? 'text-yellow-300' : 'text-cyan-300') : 'text-slate-400'} font-bold">#${String(idx + 1).padStart(2, '0')}</span>
+                ${clipBadgeHtml}
+                <span class="font-mono ${isSelected ? (isSpeakerA ? 'text-yellow-300' : 'text-cyan-300') : 'text-slate-400'} font-bold">#${String(originalIdx + 1).padStart(2, '0')}</span>
               </div>
               <span class="font-mono text-slate-400">${sub.start.toFixed(2)}s – ${sub.end.toFixed(2)}s</span>
             </div>
@@ -2947,7 +3063,12 @@ ${escapeHtml(log.details)}
             </div>
           `;
           container.appendChild(item);
-        }
+        });
+      }
+
+      // Render all subtitles on visual timeline tracks
+      subtitles.forEach((sub, idx) => {
+        const isSpeakerA = (sub.speaker === 'A' || !sub.speaker || sub.speaker === '話者1');
 
         // 2. Sequence Tracks (Speaker A -> S1 lane, Speaker B -> S2 lane)
         const targetTrack = isSpeakerA ? trackA : trackB;
@@ -3785,19 +3906,20 @@ ${escapeHtml(log.details)}
     let currentMediaFilter = 'all'; // 'all' | 'video' | 'audio'
 
     let mediaAssets = [
-      { id: 'm1', type: 'video', slot: 'op', title: 'チャンネルOP 2026', file: 'ch_intro_op_2026.mp4', duration: 15.0, resolution: '1080p 60fps' },
-      { id: 'm2', type: 'video', slot: 'main', title: 'ゲーム実況 本編 Part 1', file: 'gameplay_apex_session_01.mp4', duration: 750.0, resolution: '1080p 60fps' },
-      { id: 'm3', type: 'video', slot: 'main', title: 'ゲーム実況 本編 Part 2', file: 'gameplay_apex_session_02.mp4', duration: 620.0, resolution: '1080p 60fps' },
-      { id: 'm4', type: 'video', slot: 'ed', title: '登録促進 エンディング', file: 'ending_card_subscribe.mp4', duration: 20.0, resolution: '1080p 60fps' },
-      { id: 'm5', type: 'video', slot: 'clip', title: 'ハイライト (クラッチ決着)', file: 'clutch_highlight_moment.mp4', duration: 35.0, resolution: '1080p 60fps' },
-      { id: 'm6', type: 'audio', slot: 'bgm', title: '🎶 BGM: ほのぼの日常', file: 'bgm_daily_peace.mp3', duration: 180.0, resolution: '48kHz Stereo' },
-      { id: 'm7', type: 'audio', slot: 'se', title: '🔔 SE: 歓声・決定音', file: 'se_cheer_clutch.wav', duration: 2.5, resolution: '48kHz Mono' }
+      { id: 'm1', type: 'video', slot: 'op', title: 'チャンネルOP 2026', file: 'ch_intro_op_2026.mp4', duration: 15.0, resolution: '1080p 60fps', transcribe: false, audioSource: 'embedded', audioSourceName: '内蔵音声 (BGM)' },
+      { id: 'm2', type: 'video', slot: 'main', title: 'ゲーム実況 本編 Part 1', file: 'gameplay_apex_session_01.mp4', duration: 750.0, resolution: '1080p 60fps', transcribe: true, audioSource: 'craig_dual', audioSourceName: '外部話者マイク (Alice & Bob)' },
+      { id: 'm3', type: 'video', slot: 'main', title: 'ゲーム実況 本編 Part 2', file: 'gameplay_apex_session_02.mp4', duration: 620.0, resolution: '1080p 60fps', transcribe: true, audioSource: 'embedded', audioSourceName: '内蔵音声トラック' },
+      { id: 'm4', type: 'video', slot: 'ed', title: '登録促進 エンディング', file: 'ending_card_subscribe.mp4', duration: 20.0, resolution: '1080p 60fps', transcribe: false, audioSource: 'embedded', audioSourceName: '内蔵音声 (BGM)' },
+      { id: 'm5', type: 'video', slot: 'clip', title: 'ハイライト (クラッチ決着)', file: 'clutch_highlight_moment.mp4', duration: 35.0, resolution: '1080p 60fps', transcribe: true, audioSource: 'embedded', audioSourceName: '内蔵音声トラック' },
+      { id: 'm6', type: 'audio', slot: 'bgm', title: '🎶 BGM: ほのぼの日常', file: 'bgm_daily_peace.mp3', duration: 180.0, resolution: '48kHz Stereo', transcribe: false },
+      { id: 'm7', type: 'audio', slot: 'se', title: '🔔 SE: 歓声・決定音', file: 'se_cheer_clutch.wav', duration: 2.5, resolution: '48kHz Mono', transcribe: false }
     ];
 
     let joinClips = [
-      { id: 1, slot: "op", title: "オープニング", file: "ch_intro_op_2026.mp4", duration: 15.0, startSec: 0.0, endSec: 15.0, resolution: "1080p 60fps", transition: "クロスフェード", transDur: 0.5, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false },
-      { id: 2, slot: "main", title: "ゲーム実況本編", file: "gameplay_apex_session_01.mp4", duration: 750.0, startSec: 0.0, endSec: 750.0, resolution: "1080p 60fps", transition: "クロスフェード", transDur: 0.5, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false },
-      { id: 3, slot: "ed", title: "エンディング", file: "ending_card_subscribe.mp4", duration: 20.0, startSec: 0.0, endSec: 20.0, resolution: "1080p 60fps", transition: "カット", transDur: 0.0, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false }
+      { id: 1, slot: "op", title: "オープニング", file: "ch_intro_op_2026.mp4", duration: 15.0, startSec: 0.0, endSec: 15.0, resolution: "1080p 60fps", transition: "クロスフェード", transDur: 0.5, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false, transcribe: false, audioSource: 'embedded', audioSourceName: '内蔵音声 (BGM)' },
+      { id: 2, slot: "main", title: "ゲーム実況本編 Part 1", file: "gameplay_apex_session_01.mp4", duration: 750.0, startSec: 0.0, endSec: 750.0, resolution: "1080p 60fps", transition: "クロスフェード", transDur: 0.5, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false, transcribe: true, audioSource: 'craig_dual', audioSourceName: '外部話者マイク (Alice & Bob)' },
+      { id: 3, slot: "main", title: "ゲーム実況本編 Part 2", file: "gameplay_apex_session_02.mp4", duration: 620.0, startSec: 0.0, endSec: 620.0, resolution: "1080p 60fps", transition: "カット", transDur: 0.0, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false, transcribe: true, audioSource: 'embedded', audioSourceName: '内蔵音声トラック' },
+      { id: 4, slot: "ed", title: "エンディング", file: "ending_card_subscribe.mp4", duration: 20.0, startSec: 0.0, endSec: 20.0, resolution: "1080p 60fps", transition: "カット", transDur: 0.0, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false, transcribe: false, audioSource: 'embedded', audioSourceName: '内蔵音声 (BGM)' }
     ];
 
     let joinBgmClips = [
@@ -3841,6 +3963,24 @@ ${escapeHtml(log.details)}
       if (tabAudio) tabAudio.className = (currentMediaFilter === 'audio') ? activeClass : inactiveClass;
 
       renderJoinMediaBin();
+    }
+
+    function toggleAssetTranscribe(assetId) {
+      const asset = mediaAssets.find(a => a.id === assetId);
+      if (!asset) return;
+      asset.transcribe = !asset.transcribe;
+
+      // シーケンスクリップにも反映
+      joinClips.forEach(c => {
+        if (c.file === asset.file) {
+          c.transcribe = asset.transcribe;
+        }
+      });
+
+      renderJoinMediaBin();
+      if (typeof renderSourceSettingsModal === 'function') renderSourceSettingsModal();
+      if (typeof updateSubtitleBindingSummary === 'function') updateSubtitleBindingSummary();
+      showToast(`「${asset.title}」の文字起こし対象: ${asset.transcribe ? '✓ ON (WhisperX解析)' : '✕ OFF (スキップ)'}`, asset.transcribe ? 'success' : 'info');
     }
 
     function renderJoinMediaBin() {
@@ -3893,6 +4033,34 @@ ${escapeHtml(log.details)}
         card.setAttribute('draggable', 'true');
         card.ondragstart = (e) => handleMediaDragStart(e, asset.id);
 
+        let bottomMetaHtml = '';
+        if (!isAudio) {
+          const isTranscribing = asset.transcribe !== false;
+          bottomMetaHtml = `
+            <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-surface-border/40 text-[9px]">
+              <div class="flex items-center gap-1 text-slate-400 truncate max-w-[150px]" title="紐づけ音声: ${asset.audioSourceName || '内蔵音声'}">
+                <span>🔊</span>
+                <span class="truncate">${asset.audioSourceName || '内蔵音声'}</span>
+              </div>
+              <button onclick="event.stopPropagation(); toggleAssetTranscribe('${asset.id}')" class="px-1.5 py-0.5 rounded border text-[9px] font-medium transition flex items-center gap-0.5 ${
+                isTranscribing
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-surface-base text-slate-500 border-surface-border hover:text-slate-300'
+              }" title="クリックでWhisperX文字起こし対象のON/OFFを切り替え">
+                <span>🎙️</span>
+                <span>${isTranscribing ? '文字起こし対象' : '対象外'}</span>
+              </button>
+            </div>
+          `;
+        } else {
+          bottomMetaHtml = `
+            <div class="flex items-center justify-between mt-1 pt-1 border-t border-surface-border/30 text-[9px] text-slate-500">
+              <span>BGM/SE素材 (文字起こし不要)</span>
+              <span class="text-amber-400/80">オーディオ配置可</span>
+            </div>
+          `;
+        }
+
         card.innerHTML = `
           <div class="flex items-center justify-between gap-1.5">
             <div class="flex items-center gap-1.5 min-w-0">
@@ -3909,6 +4077,7 @@ ${escapeHtml(log.details)}
             <span class="truncate text-slate-500 max-w-[130px]">${asset.file}</span>
             <span class="${isAudio ? 'text-amber-300' : 'text-indigo-300'} font-semibold">${asset.duration.toFixed(0)}s</span>
           </div>
+          ${bottomMetaHtml}
         `;
         container.appendChild(card);
       });
@@ -4664,6 +4833,47 @@ ${escapeHtml(log.details)}
       removeJoinClip(selectedJoinClipId);
     }
 
+    function updateClipAudioSource(clipId, sourceValue) {
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+      clip.audioSource = sourceValue;
+      if (sourceValue === 'craig_dual') {
+        clip.audioSourceName = '外部話者マイク (Alice & Bob)';
+      } else if (sourceValue === 'embedded') {
+        clip.audioSourceName = '内蔵音声トラック';
+      } else if (sourceValue === 'mute') {
+        clip.audioSourceName = 'なし (ミュート)';
+      }
+
+      // 素材一覧にも反映
+      const asset = mediaAssets.find(a => a.file === clip.file);
+      if (asset) {
+        asset.audioSource = clip.audioSource;
+        asset.audioSourceName = clip.audioSourceName;
+      }
+
+      renderJoinInspector();
+      renderJoinMediaBin();
+      if (typeof updateSubtitleBindingSummary === 'function') updateSubtitleBindingSummary();
+      showToast(`「${clip.title}」の紐づけ音声を「${clip.audioSourceName}」に変更しました`, 'success');
+    }
+
+    function toggleClipTranscribe(clipId, checked) {
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+      clip.transcribe = !!checked;
+
+      const asset = mediaAssets.find(a => a.file === clip.file);
+      if (asset) {
+        asset.transcribe = clip.transcribe;
+      }
+
+      renderJoinInspector();
+      renderJoinMediaBin();
+      if (typeof updateSubtitleBindingSummary === 'function') updateSubtitleBindingSummary();
+      showToast(`「${clip.title}」の文字起こし対象: ${clip.transcribe ? '✓ ON' : '✕ OFF'}`, clip.transcribe ? 'success' : 'info');
+    }
+
     function renderJoinInspector() {
       const container = document.getElementById('join-clips-container');
       const totalDurElem = document.getElementById('join-summary-total-duration');
@@ -4741,14 +4951,32 @@ ${escapeHtml(log.details)}
             </div>
 
             <!-- Linked Audio (A1) Controls inside Clip Card -->
-            <div class="pt-2 border-t border-surface-border/40 space-y-1.5 bg-surface-base/40 -mx-1 px-2 py-1.5 rounded-lg">
+            <div class="pt-2 border-t border-surface-border/40 space-y-2 bg-surface-base/40 -mx-1 px-2.5 py-2 rounded-lg">
               <div class="flex items-center justify-between text-[10px]">
                 <span class="text-emerald-300 font-medium flex items-center gap-1">
-                  <span>🎵</span> 連動音声 (A1)
+                  <span>🎵</span> 連動音声ソース
                 </span>
                 <span class="text-slate-400 font-mono text-[9px]">${globalAudioLinked ? '🔗 映像と連動中' : '⛓️‍💥 リンク解除'}</span>
               </div>
-              <div class="flex items-center gap-2 text-[10px]">
+
+              <!-- Audio Source Selector -->
+              <div class="space-y-1">
+                <select onclick="event.stopPropagation()" onchange="event.stopPropagation(); updateClipAudioSource(${clip.id}, this.value)" class="w-full bg-surface-card border border-surface-border rounded px-2 py-1 text-[10px] text-slate-200 outline-none">
+                  <option value="craig_dual" ${clip.audioSource === 'craig_dual' ? 'selected' : ''}>🎙️ 外部話者マイク (Craig: Alice & Bob を同期)</option>
+                  <option value="embedded" ${clip.audioSource === 'embedded' ? 'selected' : ''}>🎬 動画の内蔵音声トラック (ゲーム音)</option>
+                  <option value="mute" ${clip.audioSource === 'mute' ? 'selected' : ''}>🔇 音声なし (ミュート / OP・BGM専用)</option>
+                </select>
+              </div>
+
+              <!-- Transcription Target Checkbox -->
+              <div class="flex items-center justify-between pt-0.5">
+                <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none" onclick="event.stopPropagation()">
+                  <input type="checkbox" ${clip.transcribe !== false ? 'checked' : ''} onchange="event.stopPropagation(); toggleClipTranscribe(${clip.id}, this.checked)" class="rounded accent-emerald-500 cursor-pointer">
+                  <span class="text-[10px]">🎙️ 文字起こし (WhisperX解析) 対象にする</span>
+                </label>
+              </div>
+
+              <div class="flex items-center gap-2 text-[10px] pt-1 border-t border-surface-border/30">
                 <span class="text-slate-400 text-[9px] w-8">音量:</span>
                 <input type="range" min="0" max="200" value="${clip.audioVolume || 100}"
                   onclick="event.stopPropagation()"
@@ -5489,7 +5717,138 @@ ${escapeHtml(log.details)}
       }, 500);
     }
 
-    // SOURCE & CONTEXT MODALS
+    // SOURCE & CONTEXT MODALS (マルチ素材・音声紐づけマネージャー)
+    function renderSourceSettingsModal() {
+      const container = document.getElementById('modal-video-bindings-container');
+      const badge = document.getElementById('modal-video-count-badge');
+      const summaryText = document.getElementById('modal-transcription-summary-text');
+
+      const videos = mediaAssets.filter(a => (a.type || 'video') === 'video');
+      if (badge) badge.innerText = `${videos.length}動画登録`;
+
+      if (container) {
+        container.innerHTML = '';
+        videos.forEach(v => {
+          const isTrans = v.transcribe !== false;
+          let slotBadge = '<span class="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[9px] border border-indigo-500/30">本編</span>';
+          if (v.slot === 'op') slotBadge = '<span class="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-bold text-[9px] border border-purple-500/30">OP</span>';
+          else if (v.slot === 'ed') slotBadge = '<span class="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">ED</span>';
+
+          const card = document.createElement('div');
+          card.className = `p-3 rounded-xl border transition space-y-2 ${
+            isTrans ? 'bg-surface-base border-surface-border' : 'bg-surface-base/50 border-surface-border/60 opacity-80'
+          }`;
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 min-w-0">
+                <input type="checkbox" ${isTrans ? 'checked' : ''} onchange="toggleModalVideoTranscribe('${v.id}')" class="rounded accent-emerald-500 cursor-pointer w-4 h-4" id="chk_trans_${v.id}">
+                <label for="chk_trans_${v.id}" class="flex items-center gap-1.5 cursor-pointer min-w-0 select-none">
+                  ${slotBadge}
+                  <span class="font-semibold text-xs text-white truncate">${v.title}</span>
+                </label>
+              </div>
+              <span class="font-mono text-[10px] text-slate-400">${v.duration.toFixed(0)}s | ${v.resolution || '1080p'}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 pl-6 pt-1 text-[10px]">
+              <div>
+                <label class="text-[9px] text-slate-400 block mb-0.5">紐づける音声ソース</label>
+                <select onchange="updateModalVideoAudioSource('${v.id}', this.value)" class="w-full bg-surface-card border border-surface-border rounded px-2 py-1 text-slate-200 outline-none">
+                  <option value="craig_dual" ${v.audioSource === 'craig_dual' ? 'selected' : ''}>🎙️ 外部話者マイク (Craig: Alice & Bob を同期)</option>
+                  <option value="embedded" ${v.audioSource === 'embedded' ? 'selected' : ''}>🎬 動画の内蔵音声トラック</option>
+                  <option value="mute" ${v.audioSource === 'mute' ? 'selected' : ''}>🔇 音声なし (文字起こし不要)</option>
+                </select>
+              </div>
+              <div class="flex flex-col justify-end">
+                <div class="p-1.5 rounded bg-surface-card border border-surface-border flex items-center justify-between">
+                  <span class="text-[9px] text-slate-400">ステータス:</span>
+                  <span class="font-mono text-[10px] ${isTrans ? 'text-emerald-300' : 'text-slate-500'} font-medium">
+                    ${isTrans ? '● 文字起こし対象 (WhisperX)' : '○ スキップ (文字起こし除外)'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          `;
+          container.appendChild(card);
+        });
+      }
+
+      // Calculate Summary
+      const transTargets = videos.filter(v => v.transcribe !== false);
+      const totalSec = transTargets.reduce((acc, v) => acc + v.duration, 0);
+      const min = Math.floor(totalSec / 60);
+      const sec = Math.round(totalSec % 60);
+      const estSec = Math.max(15, Math.round(totalSec / 15));
+
+      if (summaryText) {
+        summaryText.innerText = `文字起こし対象: ${transTargets.length}動画 (計 ${min}分${sec}秒) / 外部話者マイク2本 / 推定処理: 約${estSec}秒 (RTX 4080)`;
+      }
+
+      renderSourceSpeakers();
+    }
+
+    function toggleModalVideoTranscribe(assetId) {
+      const asset = mediaAssets.find(a => a.id === assetId);
+      if (!asset) return;
+      asset.transcribe = !asset.transcribe;
+      joinClips.forEach(c => {
+        if (c.file === asset.file) c.transcribe = asset.transcribe;
+      });
+      renderSourceSettingsModal();
+      renderJoinMediaBin();
+      renderJoinInspector();
+      updateSubtitleBindingSummary();
+      showToast(`「${asset.title}」の文字起こし対象: ${asset.transcribe ? '✓ ON' : '✕ OFF'}`, asset.transcribe ? 'success' : 'info');
+    }
+
+    function updateModalVideoAudioSource(assetId, sourceValue) {
+      const asset = mediaAssets.find(a => a.id === assetId);
+      if (!asset) return;
+      asset.audioSource = sourceValue;
+      if (sourceValue === 'craig_dual') asset.audioSourceName = '外部話者マイク (Alice & Bob)';
+      else if (sourceValue === 'embedded') asset.audioSourceName = '内蔵音声トラック';
+      else if (sourceValue === 'mute') asset.audioSourceName = 'なし (ミュート)';
+
+      joinClips.forEach(c => {
+        if (c.file === asset.file) {
+          c.audioSource = asset.audioSource;
+          c.audioSourceName = asset.audioSourceName;
+        }
+      });
+
+      renderSourceSettingsModal();
+      renderJoinMediaBin();
+      renderJoinInspector();
+      updateSubtitleBindingSummary();
+      showToast(`「${asset.title}」の音声を「${asset.audioSourceName}」に紐づけました`, 'success');
+    }
+
+    function saveSourceBindingsModal() {
+      closeModal('source-settings');
+      renderJoinMediaBin();
+      renderJoinInspector();
+      updateSubtitleBindingSummary();
+      showToast('動画と音声の紐づけ設定を保存しました！', 'success');
+    }
+
+    function startSelectiveTranscription() {
+      closeModal('source-settings');
+      const transTargets = mediaAssets.filter(a => (a.type || 'video') === 'video' && a.transcribe !== false);
+      if (transTargets.length === 0) {
+        showToast('文字起こし対象の動画が選択されていません', 'warning');
+        return;
+      }
+
+      showToast(`🎙️ 選択された ${transTargets.length}件の動画のWhisperX文字起こしを開始しました...`, 'info');
+      addLogEntry(`WhisperX 文字起こし開始 (対象: ${transTargets.map(t => t.title).join(', ')})`);
+
+      setTimeout(() => {
+        showToast(`🎉 文字起こし完了！ ${subtitles.length}件の字幕セグメントを生成・話者同期しました`, 'success');
+        addLogEntry(`WhisperX 文字起こし完了 (${subtitles.length}字幕・音素アライメント済)`);
+        navigateView('editor-subtitle');
+      }, 900);
+    }
+
     let sourceSpeakers = [
       { id: 1, name: "speaker_player_a.wav", label: "話者1", color: "#FACC15" },
       { id: 2, name: "speaker_player_b.wav", label: "話者2", color: "#22D3EE" }
@@ -5828,7 +6187,7 @@ ${escapeHtml(log.details)}
       const modal = document.getElementById(`modal-${modalId}`);
       if (modal) {
         modal.classList.remove('hidden');
-        if (modalId === 'source-settings') renderSourceSpeakers();
+        if (modalId === 'source-settings') renderSourceSettingsModal();
       }
     }
 
@@ -5919,6 +6278,7 @@ ${escapeHtml(log.details)}
       initKeyboardShortcuts();
       renderCuts();
       renderSubtitleList();
+      updateSubtitleBindingSummary();
       renderShortClips();
       renderShortTimeline();
       renderHighlightCandidates();

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .runtime_config_schema import validate_runtime_config_payload
+
 DEFAULT_RUNTIME_CONFIG = Path(__file__).resolve().parent.parent / "assets" / "runtime_config.json"
 
 
@@ -12,9 +14,10 @@ def load_runtime_config(config_path: str | Path | None = None) -> dict[str, Any]
     if not path.exists():
         return {}
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    if not isinstance(payload, dict):
-        raise SystemExit(f"Runtime config must be a JSON object: {path}")
-    return payload
+    try:
+        return validate_runtime_config_payload(payload, discard_unknown=False)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid runtime config {path}: {exc}") from exc
 
 
 def load_command_runtime_config(command_name: str, config_path: str | Path | None = None) -> dict[str, Any]:

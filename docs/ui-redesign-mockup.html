@@ -97,7 +97,7 @@
 
 
   <!-- ================= TOP HEADER (APP BAR) ================= -->
-  <header class="h-12 bg-surface-panel border-b border-surface-border flex items-center justify-between px-4 z-20 flex-shrink-0">
+  <header id="normal-workspace-header" class="h-12 bg-surface-panel border-b border-surface-border flex items-center justify-between px-4 z-20 flex-shrink-0">
     <!-- Brand & Project Source Info (Single canonical entry point to Source Settings) -->
     <div class="flex items-center gap-3">
       <div class="flex items-center gap-2">
@@ -152,7 +152,7 @@
       <div class="h-4 w-[1px] bg-surface-border mx-0.5"></div>
 
       <!-- Derivative Short Video Generator Action -->
-      <button onclick="navigateView('short')" class="px-3 py-1.5 rounded-md bg-surface-card hover:bg-surface-cardHover border border-surface-border hover:border-accent/60 text-slate-200 hover:text-white transition text-xs font-medium flex items-center gap-1.5 shadow-sm active:scale-95 group" title="本編ハイライトから9:16縦型ショート動画を制作">
+      <button onclick="openShortWorkspace()" class="px-3 py-1.5 rounded-md bg-surface-card hover:bg-surface-cardHover border border-surface-border hover:border-accent/60 text-slate-200 hover:text-white transition text-xs font-medium flex items-center gap-1.5 shadow-sm active:scale-95 group" title="本編とは独立した成果物ワークスペースで9:16縦型ショート動画を制作">
         <span class="text-xs group-hover:scale-110 transition-transform">📱</span>
         <span>ショート作成</span>
       </button>
@@ -1312,12 +1312,12 @@
       </div>
 
       <!-- ================= VIEW 3: SHORT MODE SCREEN (ショート動画 ＋ 見どころ自動分析) ================= -->
-      <div id="view-short" class="flex-1 flex flex-col overflow-hidden bg-surface-base hidden">
+      <div id="view-short" data-workspace-kind="short-artifact" data-time-basis="source" class="flex-1 flex flex-col overflow-hidden bg-surface-base hidden">
 
         <!-- Short Studio Top Return Bar -->
         <div class="h-10 px-4 bg-surface-panel/95 border-b border-surface-border flex items-center justify-between flex-shrink-0 z-10">
           <div class="flex items-center gap-3">
-            <button onclick="navigateView('editor-cut')" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-base hover:bg-surface-card border border-surface-border text-xs text-slate-300 hover:text-white transition group" title="本編（16:9）の編集に戻る">
+            <button onclick="closeShortWorkspace()" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-base hover:bg-surface-card border border-surface-border text-xs text-slate-300 hover:text-white transition group" title="ショート側の再生状態を保持して本編（16:9）の編集に戻る">
               <svg class="w-3.5 h-3.5 text-slate-400 group-hover:text-accent transition" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
               <span class="font-medium">← 本編編集に戻る</span>
             </button>
@@ -1329,7 +1329,7 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <button onclick="showToast('ショート動画の書き出しを開始します', 'success')" class="px-3.5 py-1.5 rounded-md bg-gradient-to-r from-accent to-brand-500 hover:from-accent-hover hover:to-brand-600 text-white font-medium text-xs shadow-md shadow-accent/20 transition flex items-center gap-1.5 active:scale-95">
+            <button onclick="startShortExportMock()" class="px-3.5 py-1.5 rounded-md bg-gradient-to-r from-accent to-brand-500 hover:from-accent-hover hover:to-brand-600 text-white font-medium text-xs shadow-md shadow-accent/20 transition flex items-center gap-1.5 active:scale-95">
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
               <span>ショート動画を書き出す</span>
             </button>
@@ -1366,12 +1366,12 @@
             <div>
               <label class="text-[11px] text-slate-400 block mb-1">トランジション</label>
               <div class="grid grid-cols-2 gap-2">
-                <select id="short-transition-select" onchange="showToast('トランジション: ' + this.value)" class="bg-surface-base border border-surface-border rounded px-2 py-1 text-xs text-slate-200">
-                  <option>クロスフェード</option>
-                  <option>フェード</option>
-                  <option>カット</option>
+                <select id="short-transition-select" onchange="updateShortTransitionType(this.value)" class="bg-surface-base border border-surface-border rounded px-2 py-1 text-xs text-slate-200">
+                  <option value="crossfade">クロスフェード</option>
+                  <option value="fade">フェード</option>
+                  <option value="cut">カット</option>
                 </select>
-                <input type="number" step="0.1" value="0.5" onchange="showToast('時間: ' + this.value + '秒')" class="bg-surface-base border border-surface-border rounded px-2 py-1 font-mono text-xs text-white" title="秒数">
+                <input id="short-transition-duration-input" type="number" min="0" step="0.1" value="0.5" onchange="updateShortTransitionDuration(this.value)" class="bg-surface-base border border-surface-border rounded px-2 py-1 font-mono text-xs text-white" title="クリップ境界の重なり秒数">
               </div>
             </div>
 
@@ -1419,7 +1419,7 @@
 
             <!-- Overlay Mock Badges -->
             <div class="absolute top-3 left-3 px-2 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-slate-300 border border-white/10 font-mono">
-              <span id="short-playhead-overlay">00:04.25</span> / <span id="short-total-overlay">00:05.90</span>
+              完成 <span id="short-playhead-overlay">00:00.00</span> / <span id="short-total-overlay">00:05.40</span>
             </div>
             <div class="absolute top-3 right-3 px-2 py-0.5 rounded bg-brand-500/80 backdrop-blur text-[10px] text-white font-semibold">
               Shorts 9:16
@@ -1435,14 +1435,17 @@
                 <button onclick="seekRelative(-1)" class="p-1 rounded hover:bg-surface-card text-slate-300 hover:text-white transition" title="1秒戻る">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"/></svg>
                 </button>
-                <button onclick="togglePlay()" class="p-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white transition active:scale-95" title="再生/一時停止 (Space)">
-                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
+                <button onclick="togglePlay()" class="p-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white transition active:scale-95" title="ショート完成タイムラインを再生/一時停止 (Space)">
+                  <svg id="shortPlayIcon" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
                 </button>
                 <button onclick="seekRelative(1)" class="p-1 rounded hover:bg-surface-card text-slate-300 hover:text-white transition" title="1秒進む">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.934 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zM19.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z"/></svg>
                 </button>
                 <div class="h-3.5 w-[1px] bg-surface-border mx-1"></div>
-                <span id="short-timeline-timecode" class="font-mono text-xs text-white font-semibold">00:04.250</span>
+                <span class="text-[9px] text-slate-500">完成</span>
+                <span id="short-timeline-timecode" class="font-mono text-xs text-white font-semibold">00:00.000</span>
+                <span class="text-[9px] text-slate-500">素材</span>
+                <span id="short-source-timecode" class="font-mono text-[10px] text-accent">00:00.800</span>
               </div>
 
               <!-- Cut Actions Toolbar -->
@@ -1464,7 +1467,7 @@
               <!-- Total Duration Metric & 60s Shorts Limit -->
               <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-surface-base border border-surface-border text-xs">
                 <span class="text-slate-400 text-[10px]">ショート尺:</span>
-                <span id="short-total-duration-text" class="font-mono font-bold text-accent">5.9秒</span>
+                <span id="short-total-duration-text" class="font-mono font-bold text-accent">5.4秒</span>
                 <span class="text-slate-500 text-[10px]">/ 60秒上限</span>
               </div>
             </div>
@@ -1487,10 +1490,7 @@
                 <span id="short-active-clip-range-label" class="font-mono text-accent">00:00.800 〜 00:03.200 (2.4秒)</span>
               </div>
               <div class="flex items-center gap-3">
-                <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition">
-                  <input type="checkbox" id="short-apply-silence-cut-toggle" checked onchange="toggleShortSilenceCuts(this.checked)" class="accent-brand-500 w-3.5 h-3.5 rounded">
-                  <span>本編の無音カットを除外適用</span>
-                </label>
+                <span class="px-1.5 py-0.5 rounded bg-accent/10 border border-accent/30 text-accent font-mono" title="本編output timelineを使う場合はbridgeでsource範囲へ明示変換します">time_basis=source / 本編カット非連動</span>
                 <div class="h-3 w-[1px] bg-surface-border"></div>
                 <button onclick="trimActiveClip(-0.5, 0)" class="px-1.5 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-300 border border-surface-border text-[10px] font-mono" title="開始を0.5秒前に戻す">-0.5s開始</button>
                 <button onclick="trimActiveClip(0.5, 0)" class="px-1.5 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-300 border border-surface-border text-[10px] font-mono" title="開始を0.5秒進める">+0.5s開始</button>
@@ -2001,13 +2001,19 @@
     </div>
   </footer>
 
+  <!-- ショートの尺・時刻変換はモックとNode contract testで共有する。 -->
+  <script src="./short-workspace-contract.js"></script>
+
   <!-- ================= INTERACTIVE JS ENGINE ================= -->
   <script>
     // State
+    // 通常動画側のsource-time再生位置。ショート側のplayer stateとは共有しない。
     let currentTimeSeconds = 4.25;
     const totalDurationSeconds = 30.0;
     let isPlaying = false;
     let playInterval = null;
+    let currentWorkspace = 'normal-video';
+    let lastNormalView = 'editor-cut';
 
     // Cuts Data
     let cuts = [
@@ -2041,11 +2047,19 @@
 
     // Short Video Clips & Highlights (ショート用カットデータ)
     let shortClips = [
-      { id: 1, title: "#1 オープニング挨拶", startSec: 0.8, endSec: 3.2, text: "「こんにちは！今日のマッチよろしくお願いします！」", transition: "クロスフェード" },
-      { id: 2, title: "#2 クライマックス勝利", startSec: 21.5, endSec: 25.0, text: "「これで完璧に編集完了です」", transition: "フェード" }
+      { id: 1, title: "#1 オープニング挨拶", startSec: 0.8, endSec: 3.2, time_basis: "source", text: "「こんにちは！今日のマッチよろしくお願いします！」" },
+      { id: 2, title: "#2 クライマックス勝利", startSec: 21.5, endSec: 25.0, time_basis: "source", text: "「これで完璧に編集完了です」" }
     ];
     let selectedShortClipId = 1;
-    let applySilenceCutInShort = true;
+    let shortTransition = { type: "crossfade", duration: 0.5 };
+    let shortPlayerState = {
+      time_basis: "source",
+      outputTimeSeconds: 0,
+      sourceTimeSeconds: 0.8,
+      activeClipId: 1,
+      isPlaying: false
+    };
+    let lastShortExportPlan = null;
 
     let highlightCandidates = [
       { id: 101, title: "白熱の交戦シーン", category: "盛り上がり", score: 94, start: "00:03", end: "00:09", duration: "6.0s", text: "「ここ無音だからカットしといて！」" },
@@ -2419,7 +2433,33 @@ ${escapeHtml(log.details)}
     }
 
     // Navigation
+    function isShortWorkspaceActive() {
+      return currentWorkspace === 'short-artifact';
+    }
+
+    function setWorkspaceChrome(workspace) {
+      const shortActive = workspace === 'short-artifact';
+      const normalHeader = document.getElementById('normal-workspace-header');
+      const normalModeRail = document.getElementById('globalModeRail');
+      if (normalHeader) normalHeader.classList.toggle('hidden', shortActive);
+      if (normalModeRail) normalModeRail.classList.toggle('hidden', shortActive);
+    }
+
+    function openShortWorkspace() {
+      navigateView('short');
+    }
+
+    function closeShortWorkspace() {
+      navigateView(lastNormalView || 'editor-cut');
+    }
+
     function navigateView(viewKey) {
+      stopPlaybackForWorkspaceChange();
+      const openingShortWorkspace = viewKey === 'short';
+      if (!openingShortWorkspace) lastNormalView = viewKey;
+      currentWorkspace = openingShortWorkspace ? 'short-artifact' : 'normal-video';
+      setWorkspaceChrome(currentWorkspace);
+
       document.getElementById('view-start').classList.add('hidden');
       document.getElementById('view-editor').classList.add('hidden');
       document.getElementById('view-short').classList.add('hidden');
@@ -2453,10 +2493,11 @@ ${escapeHtml(log.details)}
       } else if (viewKey === 'short') {
         updateHeaderModeIndicator('📱', 'ショート動画スタジオ');
         document.getElementById('view-short').classList.remove('hidden');
+        reconcileShortPlayerState();
         renderShortClips();
         renderShortTimeline();
         renderHighlightCandidates();
-        showToast('ショート動画作成画面を開きました');
+        showToast('別成果物のショート用ワークスペースを開きました');
       } else {
         document.getElementById('view-editor').classList.remove('hidden');
         if (viewKey === 'editor-join') {
@@ -2724,6 +2765,8 @@ ${escapeHtml(log.details)}
     let dragEndFraction = 0;
     let selectedRangeStartSec = 10.0;
     let selectedRangeEndSec = 13.0;
+    // 現行モックの本編選択はsource基準。output基準を受ける場合はbridgeで明示変換する。
+    let selectedRangeTimeBasis = 'source';
 
     function initTimelineDrag() {
       const inner = document.getElementById('timelineTracksInner') || document.getElementById('timelineViewport');
@@ -2836,6 +2879,12 @@ ${escapeHtml(log.details)}
     }
 
     function seekRelative(deltaSeconds) {
+      if (isShortWorkspaceActive()) {
+        setShortPlayheadOutputTime(shortPlayerState.outputTimeSeconds + Number(deltaSeconds || 0));
+        renderShortTimeline();
+        renderShortClips();
+        return;
+      }
       currentTimeSeconds = Math.max(0, Math.min(totalDurationSeconds, currentTimeSeconds + deltaSeconds));
       updatePlayheadUI();
     }
@@ -2854,14 +2903,63 @@ ${escapeHtml(log.details)}
       }, 650);
     }
 
-    function togglePlay() {
-      isPlaying = !isPlaying;
-      const icon = document.getElementById('playIcon');
-      if (isPlaying) {
-        icon.innerHTML = '<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />';
-        playInterval = setInterval(() => {
-          currentTimeSeconds += 0.1;
+    function updatePlaybackIcon(icon, playing) {
+      if (!icon) return;
+      icon.innerHTML = playing
+        ? '<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />'
+        : '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>';
+    }
 
+    function stopPlaybackForWorkspaceChange() {
+      if (playInterval !== null) {
+        clearInterval(playInterval);
+        playInterval = null;
+      }
+      isPlaying = false;
+      shortPlayerState.isPlaying = false;
+      updatePlaybackIcon(document.getElementById('playIcon'), false);
+      updatePlaybackIcon(document.getElementById('shortPlayIcon'), false);
+    }
+
+    function advanceShortPlayback(deltaSeconds) {
+      const timeline = getShortTimeline();
+      if (timeline.totalDuration <= 0) return;
+      let outputTime = shortPlayerState.outputTimeSeconds + Math.max(0, Number(deltaSeconds || 0));
+      if (outputTime >= timeline.totalDuration) outputTime %= timeline.totalDuration;
+      setShortPlayheadOutputTime(outputTime, timeline);
+      renderShortTimeline();
+      renderShortClips();
+    }
+
+    function togglePlay() {
+      const shortActive = isShortWorkspaceActive();
+      if (shortActive && getShortTimeline().totalDuration <= 0) {
+        showToast('再生するショートクリップを追加してください', 'warning');
+        return;
+      }
+      if (shortActive) {
+        shortPlayerState.isPlaying = !shortPlayerState.isPlaying;
+      } else {
+        isPlaying = !isPlaying;
+      }
+      const playing = shortActive ? shortPlayerState.isPlaying : isPlaying;
+      const icon = document.getElementById(shortActive ? 'shortPlayIcon' : 'playIcon');
+      updatePlaybackIcon(icon, playing);
+
+      if (playing) {
+        if (playInterval !== null) clearInterval(playInterval);
+        const playbackWorkspace = currentWorkspace;
+        playInterval = setInterval(() => {
+          if (currentWorkspace !== playbackWorkspace) {
+            stopPlaybackForWorkspaceChange();
+            return;
+          }
+          if (playbackWorkspace === 'short-artifact') {
+            advanceShortPlayback(0.1);
+            return;
+          }
+
+          currentTimeSeconds += 0.1;
           // カット自動スキップ再生: カット区間に差し掛かったら終端へ瞬間ジャンプ！
           if (Array.isArray(cuts) && cuts.length > 0) {
             const activeCut = cuts.find(c => currentTimeSeconds >= (c.start - 0.05) && currentTimeSeconds < c.end);
@@ -2871,14 +2969,18 @@ ${escapeHtml(log.details)}
               triggerCutSkipFeedback(skipped);
             }
           }
-
           if (currentTimeSeconds >= totalDurationSeconds) currentTimeSeconds = 0;
           updatePlayheadUI();
         }, 100);
-        showToast('▶️ 再生開始 (カット区間は自動スキップ)', 'info');
+        showToast(
+          shortActive
+            ? '▶️ ショート完成タイムラインを再生（クリップ境界で素材位置を切替）'
+            : '▶️ 本編再生開始 (カット区間は自動スキップ)',
+          'info'
+        );
       } else {
-        icon.innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>';
-        clearInterval(playInterval);
+        if (playInterval !== null) clearInterval(playInterval);
+        playInterval = null;
         showToast('⏸️ 一時停止');
       }
     }
@@ -3510,6 +3612,87 @@ ${escapeHtml(log.details)}
     }
 
     // SHORT VIDEO (With Candidates & Options)
+    function getShortTimeline() {
+      return ShortWorkspaceContract.buildTimeline(shortClips, shortTransition);
+    }
+
+    function setShortPlayheadOutputTime(outputTime, timeline = getShortTimeline()) {
+      const mapped = ShortWorkspaceContract.outputToSource(timeline, outputTime);
+      if (!mapped) {
+        shortPlayerState.outputTimeSeconds = 0;
+        shortPlayerState.sourceTimeSeconds = 0;
+        shortPlayerState.activeClipId = null;
+        return null;
+      }
+      shortPlayerState.outputTimeSeconds = mapped.outputTime;
+      shortPlayerState.sourceTimeSeconds = mapped.sourceTime;
+      shortPlayerState.activeClipId = mapped.clipId;
+      selectedShortClipId = mapped.clipId;
+      return mapped;
+    }
+
+    function setShortPlayheadSourceTime(clipId, sourceTime, timeline = getShortTimeline()) {
+      const mapped = ShortWorkspaceContract.sourceToOutput(timeline, clipId, sourceTime);
+      if (!mapped) return null;
+      shortPlayerState.outputTimeSeconds = mapped.outputTime;
+      shortPlayerState.sourceTimeSeconds = mapped.sourceTime;
+      shortPlayerState.activeClipId = mapped.clipId;
+      selectedShortClipId = mapped.clipId;
+      return mapped;
+    }
+
+    function reconcileShortPlayerState() {
+      const timeline = getShortTimeline();
+      if (timeline.clips.length === 0) {
+        return setShortPlayheadOutputTime(0, timeline);
+      }
+      const selectedEntry = timeline.clips.find(
+        entry => String(entry.clipId) === String(selectedShortClipId)
+      ) || timeline.clips[0];
+      const sourceTime = String(shortPlayerState.activeClipId) === String(selectedEntry.clipId)
+        ? shortPlayerState.sourceTimeSeconds
+        : selectedEntry.sourceStart;
+      return setShortPlayheadSourceTime(selectedEntry.clipId, sourceTime, timeline);
+    }
+
+    function updateShortTransitionType(value) {
+      shortTransition = ShortWorkspaceContract.normalizeTransition({
+        type: value,
+        duration: shortTransition.duration
+      });
+      reconcileShortPlayerState();
+      renderShortTimeline();
+      showToast(`トランジション: ${value === 'cut' ? 'カット' : value === 'fade' ? 'フェード' : 'クロスフェード'}`);
+    }
+
+    function updateShortTransitionDuration(value) {
+      shortTransition = ShortWorkspaceContract.normalizeTransition({
+        type: shortTransition.type,
+        duration: value
+      });
+      const input = document.getElementById('short-transition-duration-input');
+      if (input) input.value = shortTransition.duration.toFixed(1);
+      reconcileShortPlayerState();
+      renderShortTimeline();
+      showToast(`トランジション時間: ${shortTransition.duration.toFixed(1)}秒`);
+    }
+
+    function buildShortExportPlan() {
+      return ShortWorkspaceContract.buildExportPlan(shortClips, shortTransition);
+    }
+
+    function startShortExportMock() {
+      lastShortExportPlan = buildShortExportPlan();
+      if (lastShortExportPlan.clips.length === 0) {
+        showToast('書き出すクリップを追加してください', 'warning');
+        return;
+      }
+      showToast(
+        `ショート動画を書き出します（完成尺 ${lastShortExportPlan.durationSeconds.toFixed(1)}秒 / time_basis=${lastShortExportPlan.time_basis}）`,
+        'success'
+      );
+    }
+
     function switchShortRightTab(tab) {
       if (tab === 'clips') {
         document.getElementById('short-tab-clips-btn').className = "px-2.5 py-1 rounded text-xs font-semibold bg-surface-card text-white";
@@ -3541,19 +3724,33 @@ ${escapeHtml(log.details)}
         showToast('0.2秒以上の範囲を選択してください', 'warning');
         return;
       }
-      const newClip = {
-        id: Date.now(),
-        title: `#${shortClips.length + 1} 本編カット指定`,
-        startSec: parseFloat(startSec.toFixed(2)),
-        endSec: parseFloat(endSec.toFixed(2)),
-        text: `本編 ${formatTimecode(startSec)} - ${formatTimecode(endSec)}`,
-        transition: "クロスフェード"
-      };
-      shortClips.push(newClip);
-      selectedShortClipId = newClip.id;
+      const sourceRanges = ShortWorkspaceContract.bridgeSelectionToSourceRanges(
+        { start: startSec, end: endSec, time_basis: selectedRangeTimeBasis },
+        totalDurationSeconds,
+        cuts
+      );
+      if (sourceRanges.length === 0) {
+        showToast('選択範囲に書き出し対象の映像がありません', 'warning');
+        return;
+      }
+      const idSeed = Date.now();
+      sourceRanges.forEach((range, index) => {
+        const newClip = {
+          id: idSeed + index,
+          title: `#${shortClips.length + 1} 本編カット指定`,
+          startSec: parseFloat(range.sourceStart.toFixed(2)),
+          endSec: parseFloat(range.sourceEnd.toFixed(2)),
+          time_basis: range.time_basis,
+          text: `元素材 ${formatTimecode(range.sourceStart)} - ${formatTimecode(range.sourceEnd)}`
+        };
+        shortClips.push(newClip);
+        selectedShortClipId = newClip.id;
+      });
+      reconcileShortPlayerState();
       renderShortClips();
       renderShortTimeline();
-      showToast(`本編の範囲 [${startSec.toFixed(1)}s - ${endSec.toFixed(1)}s] をショート動画に追加しました！`, 'success');
+      const mappingLabel = selectedRangeTimeBasis === 'output' ? 'output→source変換済み' : 'source基準';
+      showToast(`本編の範囲を${sourceRanges.length}クリップとして追加しました（${mappingLabel}）`, 'success');
     }
 
     function toggleClipAddMode(mode) {
@@ -3568,8 +3765,8 @@ ${escapeHtml(log.details)}
       if (mode === 'range') {
         const start = parseFloat(document.getElementById('clip-start-sec').value) || 0;
         const end = parseFloat(document.getElementById('clip-end-sec').value) || 4;
-        if (end <= start) {
-          showToast('終了時間は開始時間より後に設定してください', 'warning');
+        if (start < 0 || end > totalDurationSeconds || end - start < 0.2) {
+          showToast(`元素材の範囲を0〜${totalDurationSeconds.toFixed(1)}秒内で0.2秒以上に設定してください`, 'warning');
           return;
         }
         const newClip = {
@@ -3577,20 +3774,24 @@ ${escapeHtml(log.details)}
           title: `#${shortClips.length + 1} 時間指定カット`,
           startSec: parseFloat(start.toFixed(2)),
           endSec: parseFloat(end.toFixed(2)),
-          text: `指定区間 (${start}s - ${end}s)`,
-          transition: "クロスフェード"
+          time_basis: "source",
+          text: `元素材の指定区間 (${start}s - ${end}s)`
         };
         shortClips.push(newClip);
         selectedShortClipId = newClip.id;
       } else {
         const sub = subtitles[selectedSubIndex] || subtitles[0];
+        if (!sub) {
+          showToast('字幕は未作成です。時間範囲を指定すればショートを作成できます', 'warning');
+          return;
+        }
         const newClip = {
           id: Date.now(),
           title: `#${shortClips.length + 1} 字幕引用`,
           startSec: sub.start,
           endSec: sub.end,
-          text: `「${sub.text}」`,
-          transition: "カット"
+          time_basis: "source",
+          text: `「${sub.text}」`
         };
         shortClips.push(newClip);
         selectedShortClipId = newClip.id;
@@ -3636,20 +3837,21 @@ ${escapeHtml(log.details)}
       const totalOverlay = document.getElementById('short-total-overlay');
       const playheadOverlay = document.getElementById('short-playhead-overlay');
       const timecodeElem = document.getElementById('short-timeline-timecode');
+      const sourceTimecodeElem = document.getElementById('short-source-timecode');
       const activeLabel = document.getElementById('short-active-clip-label');
       const activeRangeLabel = document.getElementById('short-active-clip-range-label');
+      const subtitlePreview = document.getElementById('short-subtitle-preview');
       const tabClipsBtn = document.getElementById('short-tab-clips-btn');
 
       if (!sequenceRow) return;
+      const timeline = getShortTimeline();
+      reconcileShortPlayerState();
 
       if (tabClipsBtn) {
         tabClipsBtn.innerText = `採用クリップ (${shortClips.length}件)`;
       }
 
-      let totalDuration = 0;
-      shortClips.forEach(c => {
-        totalDuration += Math.max(0, c.endSec - c.startSec);
-      });
+      const totalDuration = timeline.totalDuration;
 
       if (durationText) {
         durationText.innerText = `${totalDuration.toFixed(1)}秒`;
@@ -3664,15 +3866,19 @@ ${escapeHtml(log.details)}
         totalOverlay.innerText = formatTimecode(totalDuration).substring(0, 7);
       }
       if (playheadOverlay) {
-        playheadOverlay.innerText = formatTimecode(currentTimeSeconds).substring(0, 7);
+        playheadOverlay.innerText = formatTimecode(shortPlayerState.outputTimeSeconds).substring(0, 7);
       }
       if (timecodeElem) {
-        timecodeElem.innerText = formatTimecode(currentTimeSeconds);
+        timecodeElem.innerText = formatTimecode(shortPlayerState.outputTimeSeconds);
+      }
+      if (sourceTimecodeElem) {
+        sourceTimecodeElem.innerText = formatTimecode(shortPlayerState.sourceTimeSeconds);
       }
 
       const activeClip = shortClips.find(c => c.id === selectedShortClipId) || shortClips[0];
       if (activeClip) {
         if (activeLabel) activeLabel.innerText = `選択中: ${activeClip.title}`;
+        if (subtitlePreview) subtitlePreview.innerHTML = String(activeClip.text || '').replace(/「|」/g, '');
         if (activeRangeLabel) {
           const dur = (activeClip.endSec - activeClip.startSec).toFixed(2);
           activeRangeLabel.innerText = `${formatTimecode(activeClip.startSec)} 〜 ${formatTimecode(activeClip.endSec)} (${dur}秒)`;
@@ -3688,9 +3894,10 @@ ${escapeHtml(log.details)}
         return;
       }
 
-      shortClips.forEach((clip, idx) => {
-        const clipDur = Math.max(0.1, clip.endSec - clip.startSec);
-        const widthPct = Math.max(8, (clipDur / Math.max(0.1, totalDuration)) * 100);
+      timeline.clips.forEach((timelineClip, idx) => {
+        const clip = shortClips[idx];
+        const clipDur = Math.max(0.1, timelineClip.duration);
+        const widthPct = Math.max(8, (timelineClip.contribution / Math.max(0.1, totalDuration)) * 100);
         const isSelected = clip.id === selectedShortClipId;
 
         const clipDiv = document.createElement('div');
@@ -3700,7 +3907,7 @@ ${escapeHtml(log.details)}
             : 'bg-surface-card hover:bg-surface-cardHover border-surface-border text-slate-300'
         }`;
         clipDiv.style.width = `calc(${widthPct.toFixed(1)}% - 4px)`;
-        clipDiv.title = `${clip.title}: ${formatTimecode(clip.startSec)} - ${formatTimecode(clip.endSec)} (${clipDur.toFixed(1)}s)`;
+        clipDiv.title = `${clip.title}: source ${formatTimecode(clip.startSec)} - ${formatTimecode(clip.endSec)} (${clipDur.toFixed(1)}s)`;
         clipDiv.onclick = (e) => {
           e.stopPropagation();
           selectShortClip(clip.id);
@@ -3721,26 +3928,24 @@ ${escapeHtml(log.details)}
 
         sequenceRow.appendChild(clipDiv);
 
-        if (idx < shortClips.length - 1) {
+        if (idx < timeline.clips.length - 1) {
+          const nextTimelineClip = timeline.clips[idx + 1];
           const transBadge = document.createElement('div');
           transBadge.className = "flex-shrink-0 text-[10px] text-slate-500 font-mono px-0.5 flex items-center justify-center";
-          transBadge.title = `効果: ${clip.transition}`;
+          transBadge.title = nextTimelineClip.overlap > 0
+            ? `重なり: ${nextTimelineClip.overlap.toFixed(1)}秒`
+            : '重なりなし（カット）';
           transBadge.innerHTML = `<span class="text-[9px] opacity-70">🔀</span>`;
           sequenceRow.appendChild(transBadge);
         }
       });
 
       const playhead = document.getElementById('short-timeline-playhead');
-      if (playhead && activeClip) {
-        const clipDur = Math.max(0.1, activeClip.endSec - activeClip.startSec);
-        const progressInClip = Math.max(0, Math.min(1, (currentTimeSeconds - activeClip.startSec) / clipDur));
-        let priorSec = 0;
-        for (const c of shortClips) {
-          if (c.id === activeClip.id) break;
-          priorSec += Math.max(0, c.endSec - c.startSec);
-        }
-        const currentShortTime = priorSec + (progressInClip * clipDur);
-        const percent = Math.min(100, Math.max(0, (currentShortTime / Math.max(0.1, totalDuration)) * 100));
+      if (playhead) {
+        const percent = Math.min(100, Math.max(
+          0,
+          (shortPlayerState.outputTimeSeconds / Math.max(0.1, totalDuration)) * 100
+        ));
         playhead.style.left = `${percent}%`;
       }
     }
@@ -3809,7 +4014,7 @@ ${escapeHtml(log.details)}
       selectedShortClipId = id;
       const clip = shortClips.find(c => c.id === id);
       if (clip) {
-        currentTimeSeconds = clip.startSec;
+        setShortPlayheadSourceTime(clip.id, clip.startSec);
         const subPreview = document.getElementById('short-subtitle-preview');
         if (subPreview && clip.text) {
           subPreview.innerHTML = clip.text.replace(/「|」/g, '');
@@ -3822,10 +4027,11 @@ ${escapeHtml(log.details)}
     function setShortClipInPoint() {
       const clip = shortClips.find(c => c.id === selectedShortClipId) || shortClips[0];
       if (!clip) return;
-      if (currentTimeSeconds >= clip.endSec - 0.2) {
+      const sourceTime = shortPlayerState.sourceTimeSeconds;
+      if (sourceTime >= clip.endSec - 0.2) {
         clip.startSec = Math.max(0, clip.endSec - 0.5);
       } else {
-        clip.startSec = parseFloat(currentTimeSeconds.toFixed(2));
+        clip.startSec = parseFloat(sourceTime.toFixed(2));
       }
       renderShortTimeline();
       renderShortClips();
@@ -3835,10 +4041,11 @@ ${escapeHtml(log.details)}
     function setShortClipOutPoint() {
       const clip = shortClips.find(c => c.id === selectedShortClipId) || shortClips[0];
       if (!clip) return;
-      if (currentTimeSeconds <= clip.startSec + 0.2) {
+      const sourceTime = shortPlayerState.sourceTimeSeconds;
+      if (sourceTime <= clip.startSec + 0.2) {
         clip.endSec = Math.min(totalDurationSeconds, clip.startSec + 0.5);
       } else {
-        clip.endSec = parseFloat(currentTimeSeconds.toFixed(2));
+        clip.endSec = parseFloat(sourceTime.toFixed(2));
       }
       renderShortTimeline();
       renderShortClips();
@@ -3856,7 +4063,7 @@ ${escapeHtml(log.details)}
       if (clipIndex === -1) return;
       const clip = shortClips[clipIndex];
 
-      let splitSec = currentTimeSeconds;
+      let splitSec = shortPlayerState.sourceTimeSeconds;
       if (splitSec <= clip.startSec + 0.3 || splitSec >= clip.endSec - 0.3) {
         splitSec = (clip.startSec + clip.endSec) / 2;
       }
@@ -3877,7 +4084,7 @@ ${escapeHtml(log.details)}
 
       shortClips.splice(clipIndex, 1, clip1, clip2);
       selectedShortClipId = clip2.id;
-      currentTimeSeconds = splitSec;
+      setShortPlayheadSourceTime(clip2.id, splitSec);
 
       renderShortTimeline();
       renderShortClips();
@@ -3958,12 +4165,6 @@ ${escapeHtml(log.details)}
       showToast('クリップを除外しました');
     }
 
-    function toggleShortSilenceCuts(checked) {
-      applySilenceCutInShort = checked;
-      renderShortTimeline();
-      showToast(checked ? 'ショートに本編の無音カット除外を適用' : '無音カット除外を無効化');
-    }
-
     function handleShortTimelineClick(event) {
       const track = document.getElementById('short-timeline-track');
       if (!track) return;
@@ -3971,21 +4172,8 @@ ${escapeHtml(log.details)}
       const clickX = event.clientX - rect.left;
       const fraction = Math.max(0, Math.min(1, clickX / rect.width));
 
-      let totalDuration = 0;
-      shortClips.forEach(c => totalDuration += Math.max(0, c.endSec - c.startSec));
-      const targetShortSec = fraction * totalDuration;
-
-      let accumulated = 0;
-      for (const c of shortClips) {
-        const dur = c.endSec - c.startSec;
-        if (accumulated + dur >= targetShortSec || c === shortClips[shortClips.length - 1]) {
-          selectedShortClipId = c.id;
-          const offset = targetShortSec - accumulated;
-          currentTimeSeconds = parseFloat((c.startSec + Math.max(0, Math.min(dur, offset))).toFixed(2));
-          break;
-        }
-        accumulated += dur;
-      }
+      const timeline = getShortTimeline();
+      setShortPlayheadOutputTime(fraction * timeline.totalDuration, timeline);
       renderShortTimeline();
       renderShortClips();
     }
@@ -4021,8 +4209,8 @@ ${escapeHtml(log.details)}
           title: cand.title,
           startSec: startSec,
           endSec: endSec,
-          text: cand.text,
-          transition: "クロスフェード"
+          time_basis: "source",
+          text: cand.text
         };
         shortClips.push(newClip);
         selectedShortClipId = newClip.id;
@@ -6896,6 +7084,10 @@ ${escapeHtml(log.details)}
           togglePlay();
         } else if (e.code === 'Delete' || e.code === 'Backspace') {
           e.preventDefault();
+          if (isShortWorkspaceActive()) {
+            if (selectedShortClipId !== null) removeShortClip(selectedShortClipId);
+            return;
+          }
           // シーケンスモードでクリップ選択中の場合は除外
           if (currentEditTool === 'move' || currentEditTool === 'join') {
             if (selectedJoinClipId) {
@@ -6911,6 +7103,10 @@ ${escapeHtml(log.details)}
           }
         } else if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.key === 'z')) {
           e.preventDefault();
+          if (isShortWorkspaceActive()) {
+            showToast('ショート編集の履歴は本編タイムラインと分離されています', 'info');
+            return;
+          }
           if (e.shiftKey) {
             redoTimelineAction();
           } else {
@@ -6918,6 +7114,10 @@ ${escapeHtml(log.details)}
           }
         } else if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || e.key === 'y')) {
           e.preventDefault();
+          if (isShortWorkspaceActive()) {
+            showToast('ショート編集の履歴は本編タイムラインと分離されています', 'info');
+            return;
+          }
           redoTimelineAction();
         } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
           if (e.code === 'KeyJ' && !e.ctrlKey && !e.metaKey && !document.getElementById('view-editor').classList.contains('hidden')) {

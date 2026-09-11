@@ -2,6 +2,7 @@
 #define _UNICODE
 
 #include <windows.h>
+#include <shellapi.h>
 #include <wchar.h>
 
 static void show_error(const wchar_t *message) {
@@ -11,23 +12,52 @@ static void show_error(const wchar_t *message) {
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show_command) {
     (void)instance;
     (void)previous;
+    (void)command_line;
     (void)show_command;
 
     const wchar_t *powershell_arguments = L"";
-    if (command_line != NULL && command_line[0] != L'\0') {
-        if (wcscmp(command_line, L"--setup") == 0) {
+    int argument_count = 0;
+    LPWSTR *arguments = CommandLineToArgvW(GetCommandLineW(), &argument_count);
+    if (arguments == NULL || argument_count < 1) {
+        show_error(L"起動オプションを解析できませんでした。");
+        return 2;
+    }
+    if (argument_count > 1) {
+        if (wcscmp(arguments[1], L"--setup") == 0) {
             powershell_arguments = L" -Action Setup";
-        } else if (wcscmp(command_line, L"--update") == 0) {
+            for (int index = 2; index < argument_count; index++) {
+                const wchar_t *name = arguments[index];
+                if (wcscmp(name, L"--migration-source") == 0 && index + 1 < argument_count) {
+                    if (!SetEnvironmentVariableW(L"SUBTITLE_EDIT_BAY_MIGRATION_SOURCE", arguments[++index])) {
+                        LocalFree(arguments);
+                        show_error(L"移行元フォルダーをセットアップへ渡せませんでした。");
+                        return 2;
+                    }
+                } else if (wcscmp(name, L"--skip-runtime-config") == 0) {
+                    SetEnvironmentVariableW(L"SUBTITLE_EDIT_BAY_SKIP_RUNTIME_CONFIG", L"1");
+                } else if (wcscmp(name, L"--skip-speaker-colors") == 0) {
+                    SetEnvironmentVariableW(L"SUBTITLE_EDIT_BAY_SKIP_SPEAKER_COLORS", L"1");
+                } else if (wcscmp(name, L"--skip-workspace-reference") == 0) {
+                    SetEnvironmentVariableW(L"SUBTITLE_EDIT_BAY_SKIP_WORKSPACE_REFERENCE", L"1");
+                } else {
+                    LocalFree(arguments);
+                    show_error(L"不明なセットアップオプションです。");
+                    return 2;
+                }
+            }
+        } else if (argument_count == 2 && wcscmp(arguments[1], L"--update") == 0) {
             powershell_arguments = L" -Action Update";
-        } else if (wcscmp(command_line, L"--probe-setup") == 0) {
+        } else if (argument_count == 2 && wcscmp(arguments[1], L"--probe-setup") == 0) {
             powershell_arguments = L" -ProbeSetupStateOnly";
-        } else if (wcscmp(command_line, L"--probe-setup-running") == 0) {
+        } else if (argument_count == 2 && wcscmp(arguments[1], L"--probe-setup-running") == 0) {
             powershell_arguments = L" -ProbeSetupRunningOnly";
         } else {
+            LocalFree(arguments);
             show_error(L"不明な起動オプションです。");
             return 2;
         }
     }
+    LocalFree(arguments);
 
     wchar_t module_path[32768];
     DWORD length = GetModuleFileNameW(NULL, module_path, (DWORD)(sizeof(module_path) / sizeof(module_path[0])));

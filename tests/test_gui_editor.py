@@ -31,6 +31,7 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_actions import ActionResult, ActionStatus
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
@@ -2846,7 +2847,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._assert_quick_item_within(window.contentItem(), panel)
             for group_name, button_names in (
                 ("transcriptionToolActions", ("transcribeButton", "transcriptionDictionaryOpenButton")),
-                ("outputActions", ("renderVideoButton", "shortModeOpenButton")),
+                ("derivedArtifactActions", ("shortModeOpenButton",)),
+                ("outputActions", ("renderVideoButton",)),
             ):
                 with self.subTest(size=(width, height), group=group_name):
                     group = self._quick_item(window, group_name)
@@ -3817,6 +3819,38 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.status, "ショート動画を書き出しています")
         self.assertEqual(self.app.stage, "ENCODE")
 
+    def test_subtitle_chat_uses_the_typed_proposal_path_instead_of_plain_codex(self) -> None:
+        self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+
+        with (
+            patch.object(self.app._codex_chat, "send_message") as plain_chat,
+            patch.object(
+                self.app,
+                "dispatch_codex_action",
+                return_value=ActionResult(status=ActionStatus.SUCCESS),
+            ) as dispatch,
+        ):
+            self.app.sendCodexChatMessage("字幕を編集して", "auto", 0.0, 0.0)
+
+        plain_chat.assert_not_called()
+        dispatch.assert_called_once()
+        payload = dispatch.call_args.args[0]
+        trusted_scope = dispatch.call_args.kwargs["trusted_scope"]
+        self.assertEqual(payload["kind"], "propose")
+        self.assertEqual(payload["type"], "propose_subtitle_edit")
+        self.assertEqual(payload["args"]["selection_scope"], "selected")
+        self.assertEqual(trusted_scope.allowed_actions, frozenset({"propose_subtitle_edit"}))
+        self.assertEqual(
+            self.app._codex_chat.snapshot.messages[-1]["content_type"],
+            "subtitle_proposal",
+        )
+
     def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -3856,12 +3890,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
 
-        self.assertTrue(window.setProperty("activeOverlay", "short"))
+        self.assertTrue(window.setProperty("currentWorkspace", "short-artifact"))
         self.app.processEvents()
         self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
 
+        self.assertTrue(window.setProperty("currentWorkspace", "normal-video"))
         self.assertTrue(window.setProperty("activeOverlay", ""))
         self.app.processEvents()
         self.assertFalse(self._quick_item(window, "shortModePage").isVisible())
@@ -3939,7 +3974,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         with patch.object(self.app, "sendCodexChatMessage") as send:
             self._click(window, chat_send)
-        send.assert_called_once_with("進捗中も送信できる")
+        send.assert_called_once_with("進捗中も送信できる", "auto", 0.0, 0.0)
 
         streaming = CodexChatSnapshot(
             connection_state="ready",
@@ -4661,6 +4696,33 @@ class GuiEditorRegressionTests(unittest.TestCase):
         back_button = self._quick_item(window, "shortModeBackButton")
         self._click(window, back_button)
         self.assertFalse(short_page.property("visible"))
+
+    def test_short_workspace_is_separate_from_normal_edit_mode_and_chat_state(self) -> None:
+        self._load_project()
+        self.assertTrue(self.app.selectEditMode("audio"))
+        _, window = self._load_qml()
+        rail = self._quick_item(window, "editorModeRail")
+        chat_panel = self._quick_item(window, "codexChatPanel")
+        main_player = self.gui.find_object(window, "mainWorkspacePlayer", QMediaPlayer)
+
+        self.assertIsNone(rail.findChild(QObject, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        short_page = self._quick_item(window, "shortModePage")
+        short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
+        self.assertTrue(short_page.property("visible"))
+        self.assertEqual(short_page.property("workspaceKind"), "short-artifact")
+        self.assertEqual(window.property("currentWorkspace"), "short-artifact")
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertEqual(self.app.shortVideoSettings["time_basis"], "source")
+        self.assertIsNot(short_player, main_player)
+        self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+
+        self.assertEqual(window.property("currentWorkspace"), "normal-video")
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
 
     def test_short_mode_transition_duration_uses_internal_values(self) -> None:
         self._load_project()

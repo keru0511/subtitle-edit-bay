@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -18,7 +19,7 @@ from .craig_transcription_execution import (
     resolve_craig_transcription_hint,
     transcribe_craig_audio_file_with_cache,
 )
-from .merge_transcripts import is_short_reaction, max_width_for_speaker, refine_segments
+from .merge_transcripts import max_width_for_speaker, refine_segments
 from .pipeline import build_ass_from_transcript
 from .process_utils import hidden_subprocess_kwargs
 from .render_ass import parse_track_color_args
@@ -70,7 +71,6 @@ DEFAULT_INPUT_ROOT = "video_import"
 DEFAULT_EXPORT_ROOT = "video_export"
 SUPPORTED_VIDEO_EXTENSIONS = {".mkv", ".mp4", ".mov", ".webm"}
 SUPPORTED_CRAIG_EXTENSIONS = {".aac", ".flac", ".wav", ".m4a"}
-EMPHASIS_MARKERS = ["!", "?", "?", "?"]
 
 
 @dataclass(frozen=True)
@@ -509,6 +509,12 @@ def parse_craig_speaker_name(audio_path: str) -> str:
     return parts[1] if len(parts) == 2 else stem
 
 
+def source_stream_id_for_audio(audio_path: str) -> str:
+    resolved_path = str(Path(audio_path).resolve())
+    digest = hashlib.sha256(resolved_path.encode("utf-8")).hexdigest()
+    return f"audio-{digest[:16]}"
+
+
 def build_speaker_style_map(audio_files: list[Path]) -> dict[str, str]:
     ordered_files = sorted(audio_files, key=lambda path: (path.name.casefold(), str(path).casefold()))
     speaker_names = [parse_craig_speaker_name(str(path)) for path in ordered_files]
@@ -789,7 +795,7 @@ def build_craig_segments_for_transcript(
                 "end": float(shifted["end"]),
                 "speaker": speaker_style,
                 "text": text,
-                "emphasis": "shout" if is_short_reaction(text) and any(mark in text for mark in EMPHASIS_MARKERS) else segment.get("emphasis", "normal"),
+                "emphasis": segment.get("emphasis", "normal"),
                 "position": "bottom",
                 "layout_row": 0,
                 "max_width": max(8, round(max_width_for_speaker(speaker_style) / effective_font_scale)),
@@ -798,6 +804,7 @@ def build_craig_segments_for_transcript(
                 "source_track": f"craig:{speaker_name}",
                 "source_speaker": speaker_name,
                 "source_file": Path(audio_path).name,
+                "source_stream_id": source_stream_id_for_audio(audio_path),
                 "words": shifted.get("words", []),
             }
         )

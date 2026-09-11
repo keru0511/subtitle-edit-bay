@@ -132,6 +132,61 @@ class MergeTranscriptsTests(unittest.TestCase):
         self.assertEqual(len(refined), 1)
         self.assertEqual(len(filtered), 1)
 
+    def test_refine_segments_reattaches_leading_punctuation_before_layout(self) -> None:
+        segments = [
+            {
+                "start": 0,
+                "end": 1,
+                "text": "○○だよね",
+                "source_track": "craig:oz",
+                "source_speaker": "oz",
+                "speaker": "Oz",
+            },
+            {
+                "start": 1,
+                "end": 2,
+                "text": "。○○なんだけど",
+                "source_track": "craig:oz",
+                "source_speaker": "oz",
+                "speaker": "Oz",
+            },
+        ]
+
+        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=lambda seg, **kw: [seg]):
+            refined, filtered = refine_segments(segments)
+
+        self.assertEqual([item["text"] for item in refined], ["○○だよね。", "○○なんだけど"])
+        self.assertEqual(filtered, [])
+
+    def test_refine_segments_calculates_emphasis_after_moving_punctuation(self) -> None:
+        segments = [
+            {
+                "start": 0,
+                "end": 1,
+                "text": "えっ",
+                "emphasis": "normal",
+                "source_track": "craig:oz",
+                "speaker": "Oz",
+            },
+            {
+                "start": 1,
+                "end": 2,
+                "text": "！次",
+                "emphasis": "normal",
+                "source_track": "craig:oz",
+                "speaker": "Oz",
+            },
+        ]
+
+        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=lambda seg, **kw: [seg]):
+            refined, filtered = refine_segments(segments)
+
+        self.assertEqual(
+            [(item["text"], item["emphasis"]) for item in refined],
+            [("えっ！", "shout"), ("次", "normal")],
+        )
+        self.assertEqual(filtered, [])
+
     def test_merge_transcripts_merges_and_refines(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

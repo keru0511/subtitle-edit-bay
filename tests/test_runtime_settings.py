@@ -224,6 +224,15 @@ class RuntimeSettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "postprocess_workers"):
             settings_from_config({"postprocess_workers": 2.5})
 
+    def test_transcription_settings_preserve_supported_null_values(self) -> None:
+        settings = settings_from_config(
+            {"language": None, "vad_onset": None, "vad_offset": None}
+        )
+
+        self.assertIsNone(settings.transcription.language)
+        self.assertIsNone(settings.transcription.vad_onset)
+        self.assertIsNone(settings.transcription.vad_offset)
+
     def test_short_mode_settings_use_defaults(self) -> None:
         settings = settings_from_config({})
 

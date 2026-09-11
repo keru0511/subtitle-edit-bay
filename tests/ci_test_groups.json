@@ -9,6 +9,7 @@
         "test_media_semantic_e2e",
         "test_render_ass",
         "test_short_video_ass",
+        "test_short_video_semantic_e2e",
         "test_workflow_action_semantic_e2e"
       ],
       "selectors": []
@@ -34,6 +35,7 @@
         "test_ci_test_groups",
         "test_codex_actions",
         "test_codex_app_server_client",
+        "test_codex_chat_routing",
         "test_codex_edit_proposal",
         "test_codex_highlight_ranker",
         "test_codex_runtime",
@@ -44,6 +46,7 @@
         "test_gui_codex_chat_state",
         "test_gui_codex_state",
         "test_gui_large_project_performance",
+        "test_gui_performance_pipeline",
         "test_gui_runtime_settings",
         "test_gui_source_state",
         "test_gui_state",
@@ -52,6 +55,7 @@
         "test_highlight_candidates",
         "test_highlight_preferences",
         "test_highlight_visual_signals",
+        "test_installer_migration",
         "test_media_probe",
         "test_merge_transcripts",
         "test_multi_source_short_video",
@@ -68,6 +72,7 @@
         "test_runtime_settings",
         "test_short_video",
         "test_short_video_schema",
+        "test_short_workspace_mock",
         "test_silence_cut",
         "test_subtitle_bulk_edit",
         "test_subtitle_export",
@@ -81,6 +86,7 @@
         "test_subtitle_project_layout",
         "test_subtitle_project_safety",
         "test_subtitle_review",
+        "test_subtitle_text_rules",
         "test_subtitle_workflow_context_cli",
         "test_subtitle_workflow_cut",
         "test_subtitle_workflow_runtime_settings",
@@ -111,6 +117,7 @@
     },
     "qt-gui": {
       "modules": [
+        "test_gui_backend_metaobject",
         "test_gui_editor",
         "test_gui_test_harness",
         "test_qml_static",
@@ -135,7 +142,11 @@
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_line_count_override_changes_vertical_occupied_region",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_manual_line_break_is_preserved_in_ass_and_rendered_pixels",
         "tests.test_media_semantic_e2e.MediaSemanticE2ETests.test_subtitle_pixels_follow_start_and_end_timing",
-        "tests.test_short_video_ass.ShortVideoRenderE2ETests.test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace"
+        "tests.test_short_video_ass.ShortVideoRenderE2ETests.test_project_renders_all_fits_crossfade_bgm_and_faststart_in_unicode_workspace",
+        "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_clip_order_boundary_duration_and_unselected_media",
+        "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_short_without_subtitles_keeps_final_media_contract",
+        "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_source_time_basis_uses_original_source_ranges_in_final_media",
+        "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_subtitles_follow_selected_clips_on_short_output_timeline"
       ]
     },
     "windows-launcher-runtime": {
@@ -143,7 +154,11 @@
         "test_runtime_activation",
         "test_windows_launchers"
       ],
-      "selectors": []
+      "selectors": [
+        "tests.test_installer_migration.InstallerMigrationTests.test_destination_parent_junction_cannot_write_into_legacy_workspace",
+        "tests.test_installer_migration.InstallerMigrationTests.test_pending_request_is_reused_before_runtime_setup",
+        "tests.test_installer_migration.InstallerMigrationTests.test_setup_rejects_destination_as_source_before_mutating_state"
+      ]
     },
     "windows-runtime": {
       "modules": [

@@ -103,11 +103,7 @@ def _normalize_models(result: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
 
 
 class CodexChatController:
-    """Own a persistent app-server session for authentication and plain chat.
-
-    This boundary intentionally does not build subtitle context or apply Codex
-    edits. Those responsibilities remain in the existing edit workflow.
-    """
+    """Own authentication and the shared conversation shown by the Codex UI."""
 
     def __init__(
         self,
@@ -138,6 +134,7 @@ class CodexChatController:
         self._active_assistant_id = ""
         self._thread_needs_resume = False
         self._stop_requested = False
+        self._local_proposal_active = False
 
     @property
     def snapshot(self) -> CodexChatSnapshot:
@@ -209,9 +206,73 @@ class CodexChatController:
         self._update(messages=tuple(messages), chat_state="sending", error="")
         self._submit(self._send_worker, prompt, snapshot.selected_model)
 
+    def begin_proposal(self, text: str) -> bool:
+        """Append a subtitle request without starting a second plain-chat turn."""
+
+        prompt = str(text).strip()
+        snapshot = self.snapshot
+        if not prompt:
+            self._update(error="メッセージを入力してください")
+            return False
+        if snapshot.auth_state != "authenticated":
+            self._update(error="Codexへログインしてからメッセージを送信してください")
+            return False
+        if snapshot.chat_state in {"sending", "streaming", "stopping"}:
+            self._update(error="Codexの応答が完了してから次のメッセージを送信してください")
+            return False
+        self._message_sequence += 1
+        user_id = f"local-user-{self._message_sequence}"
+        self._message_sequence += 1
+        assistant_id = f"local-assistant-{self._message_sequence}"
+        self._active_assistant_id = assistant_id
+        self._local_proposal_active = True
+        messages = list(snapshot.messages)
+        messages.extend(
+            [
+                {"id": user_id, "role": "user", "text": prompt, "status": "completed"},
+                {
+                    "id": assistant_id,
+                    "role": "assistant",
+                    "text": "字幕の変更案を作成しています…",
+                    "status": "streaming",
+                    "content_type": "subtitle_proposal",
+                },
+            ]
+        )
+        self._update(messages=tuple(messages), chat_state="sending", error="")
+        return True
+
+    def complete_proposal(self, summary: str) -> None:
+        if not self._local_proposal_active:
+            return
+        self._replace_active_assistant(
+            text=str(summary).strip() or "字幕の変更案を作成しました。内容を確認してください。",
+            status="completed",
+            content_type="subtitle_proposal",
+        )
+        self._local_proposal_active = False
+        self._active_assistant_id = ""
+        self._update(chat_state="idle", error="")
+
+    def fail_proposal(self, message: str, *, cancelled: bool = False) -> None:
+        if not self._local_proposal_active:
+            return
+        text = "字幕の変更案の作成を停止しました。" if cancelled else str(message)
+        self._replace_active_assistant(
+            text=text,
+            status="cancelled" if cancelled else "failed",
+            content_type="subtitle_proposal",
+        )
+        self._local_proposal_active = False
+        self._active_assistant_id = ""
+        self._update(chat_state="idle", error="" if cancelled else text)
+
     def interrupt(self) -> None:
         snapshot = self.snapshot
         if snapshot.chat_state not in {"sending", "streaming"}:
+            return
+        if self._local_proposal_active:
+            self.fail_proposal("", cancelled=True)
             return
         with self._lock:
             self._stop_requested = True
@@ -223,6 +284,7 @@ class CodexChatController:
             self._update(error="応答中は新しいチャットを開始できません")
             return
         self._active_assistant_id = ""
+        self._local_proposal_active = False
         with self._lock:
             self._thread_needs_resume = False
             self._stop_requested = False
@@ -622,6 +684,7 @@ class CodexChatController:
             self._client = None
             self._thread_needs_resume = bool(self._snapshot.thread_id)
             self._stop_requested = False
+            self._local_proposal_active = False
         if current.chat_state in {"sending", "streaming", "stopping"}:
             self._finish_active_assistant("error")
         else:
@@ -644,12 +707,20 @@ class CodexChatController:
                 self._update(messages=tuple(messages))
                 return
 
-    def _replace_active_assistant(self, text: str, status: str) -> None:
+    def _replace_active_assistant(
+        self,
+        text: str,
+        status: str,
+        *,
+        content_type: str | None = None,
+    ) -> None:
         messages = [dict(item) for item in self.snapshot.messages]
         for item in reversed(messages):
             if str(item.get("id")) == self._active_assistant_id:
                 item["text"] = text
                 item["status"] = status
+                if content_type is not None:
+                    item["content_type"] = content_type
                 self._update(messages=tuple(messages))
                 return
 

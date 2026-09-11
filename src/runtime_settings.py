@@ -20,9 +20,9 @@ class TranscriptionSettings:
     model: str = "large-v3"
     device: str = "cpu"
     compute_type: str = "int8"
-    language: str = "ja"
-    vad_onset: float = 0.35
-    vad_offset: float = 0.2
+    language: str | None = "ja"
+    vad_onset: float | None = 0.35
+    vad_offset: float | None = 0.2
     skip_existing_transcripts: bool = True
 
 
@@ -227,6 +227,15 @@ def _float(config: RuntimeConfig, key: str, default: float) -> float:
     return float(value)
 
 
+def _optional_float(config: RuntimeConfig, key: str, default: float | None = None) -> float | None:
+    value = _raw(config, key, default)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Runtime setting '{key}' must be a number or null.")
+    return float(value)
+
+
 def _bool(config: RuntimeConfig, key: str, default: bool) -> bool:
     value = _raw(config, key, default)
     if isinstance(value, bool):
@@ -247,9 +256,9 @@ def settings_from_config(config: RuntimeConfig) -> RuntimeSettings:
             model=_str(config, "model", TranscriptionSettings.model),
             device=_str(config, "device", TranscriptionSettings.device),
             compute_type=_str(config, "compute_type", TranscriptionSettings.compute_type),
-            language=_str(config, "language", TranscriptionSettings.language),
-            vad_onset=_float(config, "vad_onset", TranscriptionSettings.vad_onset),
-            vad_offset=_float(config, "vad_offset", TranscriptionSettings.vad_offset),
+            language=_optional_str(config, "language", TranscriptionSettings.language),
+            vad_onset=_optional_float(config, "vad_onset", TranscriptionSettings.vad_onset),
+            vad_offset=_optional_float(config, "vad_offset", TranscriptionSettings.vad_offset),
             skip_existing_transcripts=_bool(
                 config,
                 "skip_existing_transcripts",

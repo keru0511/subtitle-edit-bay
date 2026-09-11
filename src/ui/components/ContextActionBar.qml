@@ -32,8 +32,8 @@ Rectangle {
     signal saveOrStopRequested()
     signal outputFolderRequested()
 
-    implicitHeight: 148
-    Layout.minimumHeight: 148
+    implicitHeight: 177
+    Layout.minimumHeight: 177
     radius: 12
     color: "#161B22"
     border.color: "#30363D"
@@ -128,6 +128,19 @@ Rectangle {
             }
         }
         RowLayout {
+            objectName: "derivedArtifactActions"
+            Layout.fillWidth: true
+            visible: actionBar.projectLoaded
+            spacing: 6
+            CategoryLabel { text: "別成果物" }
+            ActionButton {
+                objectName: "shortModeOpenButton"
+                enabled: !actionBar.running
+                text: "ショートを作成"
+                onClicked: actionBar.shortModeRequested()
+            }
+        }
+        RowLayout {
             objectName: "outputActions"
             Layout.fillWidth: true
             visible: actionBar.projectLoaded
@@ -140,12 +153,6 @@ Rectangle {
                 text: actionBar.activeJob === "render" ? "動画を書き出し中..." : (actionBar.renderNeedsOutput ? "出力先を選んで通常動画を書き出す" : (actionBar.subtitleAvailable ? "通常動画を書き出す（字幕焼き付け）" : "通常動画を書き出す"))
                 reason: actionBar.renderBlockReason
                 onClicked: actionBar.renderRequested()
-            }
-            ActionButton {
-                objectName: "shortModeOpenButton"
-                enabled: !actionBar.running
-                text: "ショート動画を作成"
-                onClicked: actionBar.shortModeRequested()
             }
         }
         RowLayout {

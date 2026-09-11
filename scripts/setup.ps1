@@ -2,8 +2,14 @@
     [switch]$ProbeNvidiaOnly,
     [switch]$ProbeNvidiaStatusOnly,
     [switch]$ProbeCpuInstallArgumentsOnly,
+    [switch]$ProbePendingMigrationOnly,
     [string]$NvidiaSmiSearchRoot = "",
     [string]$NvidiaSmiOverride = "",
+    [string]$MigrationSource = $env:SUBTITLE_EDIT_BAY_MIGRATION_SOURCE,
+    [switch]$SkipRuntimeConfig = ($env:SUBTITLE_EDIT_BAY_SKIP_RUNTIME_CONFIG -eq "1"),
+    [switch]$SkipSpeakerColors = ($env:SUBTITLE_EDIT_BAY_SKIP_SPEAKER_COLORS -eq "1"),
+    [switch]$SkipWorkspaceReference = ($env:SUBTITLE_EDIT_BAY_SKIP_WORKSPACE_REFERENCE -eq "1"),
+    [string]$PendingMigrationRequestPath = "",
     [string]$SetupTestHook = $env:SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK,
     [switch]$KeepPreviousRuntime
 )
@@ -17,6 +23,7 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 $projectRoot = (Get-Location).Path
 . (Join-Path $PSScriptRoot "runtime_activation.ps1")
 . (Join-Path $PSScriptRoot "setup_state.ps1")
+. (Join-Path $PSScriptRoot "windows_path_identity.ps1")
 
 function Find-Python310 {
     $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
@@ -179,6 +186,71 @@ if ($ProbeCpuInstallArgumentsOnly) {
     $probeContract = Get-Content -LiteralPath "runtime\runtime-contract.json" -Raw -Encoding UTF8 | ConvertFrom-Json
     $probeProfile = $probeContract.profiles.cpu
     Write-Output (Get-RuntimePipArguments -ProfileContract $probeProfile -RuntimeLock ([string]$probeProfile.lock_file) | ConvertTo-Json -Compress)
+    exit 0
+}
+
+$pendingMigrationPath = if ($PendingMigrationRequestPath) {
+    [IO.Path]::GetFullPath($PendingMigrationRequestPath)
+} else {
+    Join-Path $projectRoot ".local\migration\pending-request.json"
+}
+$pendingMigration = $null
+if (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf) {
+    try {
+        $pendingMigration = Get-Content -LiteralPath $pendingMigrationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($pendingMigration.schema_version -ne 1 -or -not $pendingMigration.source) {
+            throw "unsupported or incomplete pending migration request"
+        }
+    } catch {
+        throw "The pending migration request is invalid. Cancel it or reinstall before setup: $_"
+    }
+}
+if (-not $MigrationSource -and $pendingMigration) {
+    $MigrationSource = [string]$pendingMigration.source
+    $SkipRuntimeConfig = [bool]$pendingMigration.skip_runtime_config
+    $SkipSpeakerColors = [bool]$pendingMigration.skip_speaker_colors
+    $SkipWorkspaceReference = [bool]$pendingMigration.skip_workspace_reference
+}
+
+$clearPendingMigrationOnSuccess = $false
+if ($MigrationSource) {
+    # This guard deliberately runs before the mutex status, dependency install,
+    # runtime generation or compatibility junction can change the destination.
+    try {
+        $resolvedMigrationSource = Resolve-FinalDirectoryPath -Path $MigrationSource
+        $resolvedDestination = Resolve-FinalDirectoryPath -Path $projectRoot
+    } catch {
+        throw "The migration source path is invalid: $_"
+    }
+    if ($resolvedMigrationSource.TrimEnd('\', '/') -eq $resolvedDestination.TrimEnd('\', '/')) {
+        Write-Output "MIGRATION_PREFLIGHT_REJECTED same_directory"
+        throw "The migration source and installation destination must be different. No setup changes were made."
+    }
+    if (-not (Test-Path -LiteralPath $resolvedMigrationSource -PathType Container) -or
+        -not (Test-Path -LiteralPath (Join-Path $resolvedMigrationSource "setup.bat") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $resolvedMigrationSource "start.bat") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $resolvedMigrationSource "src") -PathType Container)) {
+        throw "The migration source is not a BAT/ZIP Subtitle Edit Bay workspace. No setup changes were made."
+    }
+    $MigrationSource = $resolvedMigrationSource
+    if ($pendingMigration) {
+        try {
+            $pendingSource = Resolve-FinalDirectoryPath -Path ([string]$pendingMigration.source)
+            $clearPendingMigrationOnSuccess =
+                $pendingSource.TrimEnd('\', '/') -eq $resolvedMigrationSource.TrimEnd('\', '/')
+        } catch {
+            $clearPendingMigrationOnSuccess = $false
+        }
+    }
+}
+if ($ProbePendingMigrationOnly) {
+    Write-Output (@{
+        source = $MigrationSource
+        skip_runtime_config = [bool]$SkipRuntimeConfig
+        skip_speaker_colors = [bool]$SkipSpeakerColors
+        skip_workspace_reference = [bool]$SkipWorkspaceReference
+        pending_request_preserved = (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf)
+    } | ConvertTo-Json -Compress)
     exit 0
 }
 
@@ -388,6 +460,32 @@ try {
     Write-Warning "The active runtime is valid, but the optional .venv compatibility junction could not be refreshed: $_"
 }
 
+if ($MigrationSource) {
+    Write-Host "Migrating settings from the BAT/ZIP workspace: $MigrationSource"
+    $migrationArguments = @(
+        "-m",
+        "src.installer_migration",
+        "--source",
+        $MigrationSource,
+        "--destination",
+        (Get-Location).Path
+    )
+    if ($SkipRuntimeConfig) { $migrationArguments += "--skip-runtime-config" }
+    if ($SkipSpeakerColors) { $migrationArguments += "--skip-speaker-colors" }
+    if ($SkipWorkspaceReference) { $migrationArguments += "--skip-workspace-reference" }
+    if ($cudaAvailable) { $migrationArguments += "--cuda" }
+    $nvencAvailableText = & $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; print('true' if check_runtime_dependencies(probe_nvenc=True).nvenc else 'false')"
+    if ($LASTEXITCODE -ne 0) { throw "Runtime capability verification for migration failed." }
+    if ($nvencAvailableText.Trim() -eq "true") { $migrationArguments += "--nvenc" }
+    & $venvPython @migrationArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "BAT/ZIP workspace migration failed. The old workspace was not modified."
+    }
+    if ($clearPendingMigrationOnSuccess -and (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $pendingMigrationPath -Force
+    }
+}
+
 $configPath = ".gui\runtime_config.json"
 $configChanged = $false
 if (Test-Path -LiteralPath $configPath -PathType Leaf) {
@@ -404,7 +502,9 @@ if (-not $cudaAvailable) {
         $configChanged = $true
         Write-Host "Runtime config: changed unavailable CUDA selection to cpu/int8."
     }
-    if (-not $nvidiaGpuAvailable -and $config.craig_pipeline.video_codec -eq "h264_nvenc") {
+    if (-not $nvidiaGpuAvailable -and
+        $config.craig_pipeline.video_codec -is [string] -and
+        $config.craig_pipeline.video_codec.EndsWith("_nvenc", [StringComparison]::OrdinalIgnoreCase)) {
         $config.craig_pipeline.video_codec = "libx264"
         $configChanged = $true
     }

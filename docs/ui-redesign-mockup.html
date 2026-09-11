@@ -399,13 +399,33 @@
                 </div>
 
                 <!-- Bottom Action Box (実行部) -->
-                <div class="p-2.5 bg-surface-base/90 border-t border-surface-border flex-shrink-0 space-y-1.5">
+                <div class="p-2.5 bg-surface-base/90 border-t border-surface-border flex-shrink-0 space-y-2">
                   <div class="flex items-center justify-between text-[10px] text-slate-300 px-0.5">
                     <span class="text-slate-400 truncate max-w-[170px]" id="subtitle-source-selected-summary">本編Part 1 (2音声選択)</span>
-                    <span class="text-emerald-400 font-mono text-[9px] font-bold">● 準備完了</span>
+                    <span id="subtitle-source-status-badge" class="text-emerald-400 font-mono text-[9px] font-bold">● 準備完了</span>
                   </div>
-                  <button onclick="runSubtitleTranscriptionWithSelectedSources()" class="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md hover:shadow-indigo-500/20 active:scale-[0.98] transition flex items-center justify-center gap-1.5" title="選択中の音声ファイルからWhisperXで文字起こしを実行">
-                    <span>🎙️</span> 選択音声で文字起こしを実行
+
+                  <!-- Inline Progress Bar (文字起こし実行中に展開表示) -->
+                  <div id="subtitle-source-inline-progress" class="hidden p-2 rounded-lg bg-surface-card border border-indigo-500/40 space-y-1.5 shadow-inner">
+                    <div class="flex items-center justify-between text-[10px]">
+                      <span id="subtitle-inline-status" class="text-indigo-300 truncate max-w-[170px] flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping"></span>
+                        <span>WhisperX 認識中...</span>
+                      </span>
+                      <span id="subtitle-inline-percent" class="font-mono font-bold text-indigo-400 text-xs">0%</span>
+                    </div>
+                    <div class="h-2 w-full bg-surface-base rounded-full overflow-hidden border border-surface-border/60">
+                      <div id="subtitle-inline-bar" class="h-full bg-gradient-to-r from-indigo-500 via-brand-500 to-accent rounded-full transition-all duration-150" style="width: 0%;"></div>
+                    </div>
+                    <div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+                      <span id="subtitle-inline-step">Step 2/6: 音声認識</span>
+                      <span id="subtitle-inline-remain">残り 約04s</span>
+                    </div>
+                  </div>
+
+                  <button id="btn-run-subtitle-transcribe" onclick="runSubtitleTranscriptionWithSelectedSources()" class="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md hover:shadow-indigo-500/20 active:scale-[0.98] transition flex items-center justify-center gap-1.5" title="選択中の音声ファイルからWhisperXで文字起こしを実行">
+                    <span id="btn-run-transcribe-icon">🎙️</span>
+                    <span id="btn-run-transcribe-label">選択音声で文字起こしを実行</span>
                   </button>
                   <button onclick="renderVideoWithCurrentSubtitles()" class="w-full py-1.2 rounded-lg bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[11px] font-medium transition flex items-center justify-center gap-1.5" title="選択中の動画に現在の字幕を焼き付けてエクスポート">
                     <span>🎬</span> 字幕付き動画を焼き出し (Render)
@@ -4180,13 +4200,8 @@ ${escapeHtml(log.details)}
       const videoName = videoAsset ? videoAsset.title : '選択中動画';
       const audioCount = subtitleSourceState.selectedAudioIds.length;
 
-      showToast(`🎙️ WhisperX 文字起こしを開始: [動画] ${videoName} ✕ [音声] ${audioCount}トラック`, 'info');
-
-      // 進行シミュレーション
-      setTimeout(() => {
-        showToast(`✅ WhisperX 文字起こしが完了しました！ ${audioCount}音声ソースから字幕セグメントを生成・反映`, 'success');
-        renderSubtitleList();
-      }, 1000);
+      // 中央の本格プログレスオーバーレイおよび左上インライン進捗バーを同時起動
+      startTranscriptionMock(videoName, audioCount);
     }
 
     function renderVideoWithCurrentSubtitles() {
@@ -6400,13 +6415,12 @@ ${escapeHtml(log.details)}
       });
     }
 
-    function startTranscriptionMock() {
+    function startTranscriptionMock(targetVideoTitle, audioSourceCount) {
       if (progressInterval) {
-        showToast('すでに処理が進行中です', 'warning');
+        showToast('すでに文字起こし処理が進行中です', 'warning');
         return;
       }
 
-      navigateView('editor-cut');
       const overlay = document.getElementById('processing-progress-overlay');
       const bar = document.getElementById('progress-main-bar');
       const percentText = document.getElementById('progress-percent-text');
@@ -6418,8 +6432,21 @@ ${escapeHtml(log.details)}
       const stepperBtn = document.getElementById('stepper-transcribe-btn');
       const stepperLabel = document.getElementById('stepper-transcribe-label');
 
+      // 左上パネルのインラインプログレス要素
+      const inlineProgress = document.getElementById('subtitle-source-inline-progress');
+      const inlineBar = document.getElementById('subtitle-inline-bar');
+      const inlinePercent = document.getElementById('subtitle-inline-percent');
+      const inlineStatus = document.getElementById('subtitle-inline-status');
+      const inlineStep = document.getElementById('subtitle-inline-step');
+      const inlineRemain = document.getElementById('subtitle-inline-remain');
+      const runBtn = document.getElementById('btn-run-subtitle-transcribe');
+      const runIcon = document.getElementById('btn-run-transcribe-icon');
+      const runLabel = document.getElementById('btn-run-transcribe-label');
+      const statusBadge = document.getElementById('subtitle-source-status-badge');
+
       overlay.classList.remove('hidden');
-      jobTitle.innerText = "処理進捗: 音声文字起こし";
+      const titleSuffix = targetVideoTitle ? ` (${targetVideoTitle} ✕ ${audioSourceCount || 2}音声)` : '';
+      jobTitle.innerText = `処理進捗: 音声文字起こし${titleSuffix}`;
       cancelBtn.innerText = "停止";
       cancelBtn.disabled = false;
       cancelBtn.className = "px-2.5 py-1 rounded-md bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 text-xs font-medium transition active:scale-95";
@@ -6428,12 +6455,25 @@ ${escapeHtml(log.details)}
         stepperBtn.className = "px-3 py-1 rounded-md text-xs font-medium text-brand-300 bg-brand-600/20 border border-brand-500/40 transition flex items-center gap-1.5";
       }
 
+      // 左上のインラインプログレスを展開
+      if (inlineProgress) inlineProgress.classList.remove('hidden');
+      if (runBtn) {
+        runBtn.disabled = true;
+        runBtn.classList.add('opacity-75', 'cursor-not-allowed');
+      }
+      if (runIcon) runIcon.innerText = '⏳';
+      if (runLabel) runLabel.innerText = '文字起こし実行中...';
+      if (statusBadge) {
+        statusBadge.className = 'text-amber-400 font-mono text-[9px] font-bold animate-pulse';
+        statusBadge.innerText = '● 処理進行中';
+      }
+
       progressStartTime = Date.now();
       let percent = 0;
       let stepIndex = 0;
       renderPipelineSteps(stepIndex);
-      showToast('WhisperX 高精度文字起こしを開始しました (GPU CUDA)', 'info');
-      addLogEntry('文字起こしパイプライン開始: large-v3, device: cuda, float16');
+      showToast(`🎙️ WhisperX 高精度文字起こしを開始しました${titleSuffix} (GPU CUDA)`, 'info');
+      addLogEntry(`文字起こしパイプライン開始${titleSuffix}: large-v3, device: cuda, float16`);
 
       progressInterval = setInterval(() => {
         percent += 2;
@@ -6459,13 +6499,27 @@ ${escapeHtml(log.details)}
         }
 
         renderPipelineSteps(stepIndex);
-        statusText.innerText = transcriptionPipelineSteps[stepIndex].desc;
+        const currentDesc = transcriptionPipelineSteps[stepIndex].desc;
+        const currentStepLabel = transcriptionPipelineSteps[stepIndex].label;
+        statusText.innerText = currentDesc;
         bar.style.width = `${Math.min(100, percent)}%`;
         percentText.innerText = `${Math.min(100, percent)}%`;
         if (stepperLabel) stepperLabel.innerText = `文字起こし (${Math.min(100, percent)}%)`;
 
+        // 左上インラインプログレスを連動更新
+        if (inlineBar) inlineBar.style.width = `${Math.min(100, percent)}%`;
+        if (inlinePercent) inlinePercent.innerText = `${Math.min(100, percent)}%`;
+        if (inlineStep) inlineStep.innerText = `Step ${stepIndex + 1}/6: ${currentStepLabel}`;
+        if (inlineRemain) inlineRemain.innerText = `残り 約00:${String(remainSec).padStart(2, '0')}`;
+        if (inlineStatus) {
+          inlineStatus.innerHTML = `
+            <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping"></span>
+            <span class="truncate">${currentStepLabel}...</span>
+          `;
+        }
+
         if (percent % 20 === 0) {
-          addLogEntry(`[${transcriptionPipelineSteps[stepIndex].label}] 進捗 ${percent}% - ${statusText.innerText}`);
+          addLogEntry(`[${currentStepLabel}] 進捗 ${percent}% - ${currentDesc}`);
         }
 
         if (percent >= 100) {
@@ -6482,7 +6536,22 @@ ${escapeHtml(log.details)}
             if (stepperLabel) stepperLabel.innerText = "文字起こし (完了)";
           }
 
-          // Enrich Subtitles in Mockup with real transcription results
+          // 左上インラインプログレスとボタンの完了状態
+          if (runBtn) {
+            runBtn.disabled = false;
+            runBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+          }
+          if (runIcon) runIcon.innerText = '✓';
+          if (runLabel) runLabel.innerText = '文字起こし完了 (再実行可)';
+          if (statusBadge) {
+            statusBadge.className = 'text-emerald-400 font-mono text-[9px] font-bold';
+            statusBadge.innerText = '● 同期完了';
+          }
+          if (inlineStatus) {
+            inlineStatus.innerHTML = `<span>✅ 文字起こし同期完了</span>`;
+          }
+
+          // 字幕セグメントを反映
           subtitles = [
             { id: 1, start: 0.5, end: 2.2, text: "皆さんこんにちは！実況を始めます", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
             { id: 2, start: 3.5, end: 7.8, text: "ここ無音だからカットしといて！", speaker: "A", color: "#FACC15", font: "sans-serif", scale: 100, outlineColor: "#000000", outlineThick: 3 },
@@ -6494,12 +6563,16 @@ ${escapeHtml(log.details)}
           renderSubtitleList();
           updatePlayheadUI();
 
-          showToast('文字起こしが完了しました！', 'success');
+          showToast('✅ WhisperX 文字起こしが完了しました！タイムラインに反映', 'success');
           addLogEntry('文字起こしパイプライン正常終了: 5字幕セグメント同期');
 
           setTimeout(() => {
             overlay.classList.add('hidden');
           }, 2400);
+
+          setTimeout(() => {
+            if (inlineProgress) inlineProgress.classList.add('hidden');
+          }, 3500);
         }
       }, 100);
     }
@@ -6513,6 +6586,25 @@ ${escapeHtml(log.details)}
         const cancelBtn = document.getElementById('progress-cancel-btn');
         const stepperBtn = document.getElementById('stepper-transcribe-btn');
         const stepperLabel = document.getElementById('stepper-transcribe-label');
+
+        // 左上インラインプログレス要素のリセット
+        const inlineProgress = document.getElementById('subtitle-source-inline-progress');
+        const runBtn = document.getElementById('btn-run-subtitle-transcribe');
+        const runIcon = document.getElementById('btn-run-transcribe-icon');
+        const runLabel = document.getElementById('btn-run-transcribe-label');
+        const statusBadge = document.getElementById('subtitle-source-status-badge');
+
+        if (inlineProgress) inlineProgress.classList.add('hidden');
+        if (runBtn) {
+          runBtn.disabled = false;
+          runBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+        }
+        if (runIcon) runIcon.innerText = '🎙️';
+        if (runLabel) runLabel.innerText = '選択音声で文字起こしを実行';
+        if (statusBadge) {
+          statusBadge.className = 'text-emerald-400 font-mono text-[9px] font-bold';
+          statusBadge.innerText = '● 準備完了';
+        }
 
         renderPipelineSteps(2, false, true);
         statusText.innerText = "処理を停止しました (ユーザーによるキャンセル)";

@@ -38,13 +38,13 @@ Codexからアプリ機能を利用するときは、`src/codex_actions.py` の�
 
 ## 既存backendとの接続
 
-`GuiActionBackend` はAction typeごとの固定handler mapだけを持ちます。inspectは不要なlocal pathを除いたsnapshotを返し、executeはGUIと同じ `startTranscription`、`startHighlightAnalysis`、`renderVideo`、`renderShortVideo` を呼びます。jobの進捗・停止・完了状態は既存GUI backendと `ProcessingProgress` が引き続き正本です。
+`GuiActionBackend` はAction typeごとの固定handler mapだけを持ちます。inspectは不要なlocal pathを除いたsnapshotを返し、executeはGUIと同じ `transcribeProject`、`startHighlightAnalysis`、`renderVideo`、`renderShortVideo` を呼びます。jobの進捗・停止・完了状態は既存GUI backendと `ProcessingProgress` が引き続き正本です。
 
 ### 長時間job
 
-`start_transcription`、`start_highlight_analysis`、`render_normal`、`render_short` は、開始結果にjob種別、進捗率、追跡用 `inspect_processing_state`、停止用 `cancel_processing` を返します。字幕プレビューの再生成は `rebuild_subtitle_preview` で既存の同期処理を呼び、完了済みResultを返します。
+`start_transcription`、`start_highlight_analysis`、`render_normal`、`render_short` は、開始結果に開始ごとに固有の `job_id`、job種別、進捗率、追跡用 `inspect_processing_state`、停止用 `cancel_processing` を返します。字幕プレビューの再生成は `rebuild_subtitle_preview` で既存の同期処理を呼び、完了済みResultを返します。
 
-`inspect_processing_state` はGUIから開始した処理も含め、工程、進捗率、現在内容、停止可否を既存trackerから取得します。完了・失敗・中断後も `terminal_result` を返すため、Codex切断中に終了しても再接続後に結果を判断できます。`cancel_processing` は既存の停止経路だけを使用し、対象jobが既に変わった場合は拒否します。失敗Resultから同じActionを自動再実行する処理はありません。
+`inspect_processing_state` はGUIから開始した処理も含め、同じ `job_id` と工程、進捗率、現在内容、停止可否を既存trackerから取得します。完了・失敗・中断後も `job_id` と `terminal_result` を返すため、Codex切断中に終了しても再接続後に結果を判断できます。`cancel_processing` は開始結果の `job_id` を必須引数として既存の停止経路だけを使用し、job種別が同じでもIDが変わっていればstale requestとして拒否します。失敗Resultから同じActionを自動再実行する処理はありません。
 
 既存字幕がある文字起こしではGUIと同じ `transcribeProject` を使用します。`replace` は信頼済みscopeで明示確認済みの場合だけ実行でき、`merge` は既存字幕を保持する既存統合経路へ進みます。最終renderや既存出力の上書きにも同じ確認契約を適用します。
 

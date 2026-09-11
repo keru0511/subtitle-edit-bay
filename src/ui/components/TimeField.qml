@@ -4,10 +4,10 @@ import QtQuick.Controls
 TextField {
     id: timeControl
 
-    property color textPrimary: "#F4F1E8"
-    property color borderColor: "#2A3530"
-    property color focusColor: "#C8FF3D"
-    property color inputBackground: "#101512"
+    property color textPrimary: "#F0F6FC"
+    property color borderColor: "#30363D"
+    property color focusColor: "#6366F1"
+    property color inputBackground: "#161B22"
 
     horizontalAlignment: TextInput.AlignRight
     color: textPrimary

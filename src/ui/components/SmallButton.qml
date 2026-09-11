@@ -4,13 +4,13 @@ import QtQuick.Controls
 Button {
     id: smallControl
 
-    property color textPrimary: "#F4F1E8"
-    property color disabledText: "#59635D"
-    property color borderColor: "#2A3530"
-    property color focusColor: "#C8FF3D"
-    property color defaultBackground: "#1A211E"
-    property color hoverBackground: "#27312C"
-    property color pressedBackground: "#303B35"
+    property color textPrimary: "#F0F6FC"
+    property color disabledText: "#6E7681"
+    property color borderColor: "#30363D"
+    property color focusColor: "#6366F1"
+    property color defaultBackground: "#21262D"
+    property color hoverBackground: "#282E33"
+    property color pressedBackground: "#30363D"
 
     implicitHeight: 32
     contentItem: Text {

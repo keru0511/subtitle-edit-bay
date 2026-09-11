@@ -95,24 +95,24 @@ ApplicationWindow {
     minimumHeight: 760
     visible: true
     title: "Subtitle Edit Bay"
-    color: "#0B0E0D"
-    palette.window: "#121715"
-    palette.windowText: "#F4F1E8"
-    palette.base: "#171D1A"
-    palette.text: "#F4F1E8"
-    palette.button: "#202823"
-    palette.buttonText: "#F4F1E8"
-    palette.highlight: "#C8FF3D"
-    palette.highlightedText: "#10140F"
+    color: "#0E1117"
+    palette.window: "#161B22"
+    palette.windowText: "#F0F6FC"
+    palette.base: "#161B22"
+    palette.text: "#F0F6FC"
+    palette.button: "#21262D"
+    palette.buttonText: "#F0F6FC"
+    palette.highlight: "#6366F1"
+    palette.highlightedText: "#FFFFFF"
 
-    readonly property color panel: "#121715"
-    readonly property color raised: "#19201D"
-    readonly property color border: "#2A3530"
-    readonly property color textPrimary: "#F4F1E8"
-    readonly property color textMuted: "#8E9B94"
-    readonly property color acid: "#C8FF3D"
-    readonly property color amber: "#FFB547"
-    readonly property color danger: "#FF6B5F"
+    readonly property color panel: "#161B22"
+    readonly property color raised: "#21262D"
+    readonly property color border: "#30363D"
+    readonly property color textPrimary: "#F0F6FC"
+    readonly property color textMuted: "#8B949E"
+    readonly property color acid: "#6366F1"
+    readonly property color amber: "#F59E0B"
+    readonly property color danger: "#EF4444"
 
     function openSpeakerColorPicker(target, index, currentColor) {
         root.colorTarget = target
@@ -408,6 +408,13 @@ ApplicationWindow {
     }
 
     function selectWorkspaceMode(mode) {
+        if (mode === "short") {
+            root.openShortModeScreen()
+            return true
+        }
+        if (root.shortMode) {
+            root.closeShortModeScreen()
+        }
         var changed = root.appBackend.selectEditMode(mode)
         return changed || root.appBackend.currentEditMode === mode
     }
@@ -1081,7 +1088,7 @@ ApplicationWindow {
     header: Rectangle {
         height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode ? 0 : 62
         visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
-        color: "#101512"
+        color: "#161B22"
         border.color: root.border
         RowLayout {
             anchors.fill: parent
@@ -1698,7 +1705,7 @@ ApplicationWindow {
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            currentMode: root.appBackend.currentEditMode
+            currentMode: root.shortMode ? "short" : root.appBackend.currentEditMode
             capabilities: root.appBackend.editorModeCapabilities
             panelColor: root.panel
             raisedColor: root.raised
@@ -3144,8 +3151,8 @@ ApplicationWindow {
         anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.shortMode
         z: 100
-        color: "#0D1210"
-        border.color: "#46564E"
+        color: root.panel
+        border.color: root.border
         focus: visible
         Keys.onEscapePressed: root.closeShortModeScreen()
         onVisibleChanged: if (visible) forceActiveFocus()

@@ -93,7 +93,7 @@ ColumnLayout {
             }
             contentItem: Text {
                 text: addButton.text
-                color: addButton.enabled ? "#10140F" : "#68716B"
+                color: addButton.enabled ? "#FFFFFF" : "#8B949E"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 12
                 font.weight: Font.Bold
@@ -102,7 +102,8 @@ ColumnLayout {
             }
             background: Rectangle {
                 radius: 8
-                color: addButton.enabled ? "#C8FF3D" : "#252C28"
+                color: addButton.enabled ? (addButton.down ? "#4F46E5" : (addButton.hovered ? "#818CF8" : "#6366F1")) : "#21262D"
+                border.color: addButton.enabled ? "#6366F1" : "#30363D"
             }
         }
     }
@@ -123,8 +124,8 @@ ColumnLayout {
             objectName: "shortModeClipItem" + index
             width: clipListView.width
             height: 124
-            color: clipListRoot.selectedIndex === index ? "#2A3530" : "#121715"
-            border.color: clipListRoot.selectedIndex === index ? "#C8FF3D" : "#2A3530"
+            color: clipListRoot.selectedIndex === index ? "#21262D" : "#161B22"
+            border.color: clipListRoot.selectedIndex === index ? "#6366F1" : "#30363D"
             radius: 8
 
             MouseArea {

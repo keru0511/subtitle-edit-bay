@@ -6,8 +6,8 @@ import QtMultimedia
 Rectangle {
     id: previewRoot
     objectName: "shortModePreview"
-    color: "#080A09"
-    border.color: "#2A3530"
+    color: "#0B0E14"
+    border.color: "#30363D"
     radius: 12
     clip: true
 
@@ -128,7 +128,7 @@ Rectangle {
         anchors.fill: parent
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
-        color: "#8E9B94"
+        color: "#8B949E"
         font.family: "Yu Gothic UI"
         font.pixelSize: 12
         text: !previewRoot.appBackend || !previewRoot.appBackend.previewUrl ? "プレビューする動画が選択されていません" : ""

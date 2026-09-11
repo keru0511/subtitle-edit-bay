@@ -13,8 +13,8 @@ MainWorkflowScreen {
         anchors.fill: parent
         visible: screenRoot.dictionaryMode
         z: 150
-        color: "#0D1210"
-        border.color: "#46564E"
+        color: screenRoot.panel
+        border.color: screenRoot.border
         focus: visible
         Keys.onEscapePressed: dictionaryPage.saveAndClose()
         onVisibleChanged: if (visible) forceActiveFocus()

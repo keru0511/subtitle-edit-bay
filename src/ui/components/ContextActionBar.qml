@@ -35,8 +35,8 @@ Rectangle {
     implicitHeight: 148
     Layout.minimumHeight: 148
     radius: 12
-    color: "#121715"
-    border.color: "#2A3530"
+    color: "#161B22"
+    border.color: "#30363D"
 
     component ActionButton: Button {
         id: control
@@ -48,7 +48,7 @@ Rectangle {
         ToolTip.text: reason
         contentItem: Text {
             text: control.text
-            color: control.enabled ? (control.primary ? "#10140F" : "#F4F1E8") : "#68716B"
+            color: control.enabled ? (control.primary ? "#FFFFFF" : "#F0F6FC") : "#6E7681"
             font.family: "Yu Gothic UI"
             font.pixelSize: 11
             font.weight: Font.Bold
@@ -58,13 +58,13 @@ Rectangle {
         }
         background: Rectangle {
             radius: 8
-            color: control.enabled ? (control.primary ? "#C8FF3D" : "#19201D") : "#252C28"
-            border.color: "#2A3530"
+            color: control.enabled ? (control.primary ? (control.down ? "#4F46E5" : (control.hovered ? "#818CF8" : "#6366F1")) : (control.down ? "#30363D" : (control.hovered ? "#282E33" : "#21262D"))) : "#161B22"
+            border.color: control.enabled ? (control.primary ? "#6366F1" : "#30363D") : "#21262D"
         }
     }
     component CategoryLabel: Text {
         Layout.preferredWidth: 38
-        color: "#8E9B94"
+        color: "#8B949E"
         font.family: "Yu Gothic UI"
         font.pixelSize: 10
     }
@@ -78,7 +78,7 @@ Rectangle {
             Text {
                 objectName: "contextActionBarTitle"
                 text: actionBar.projectLoaded ? "ツールと出力" : "素材の準備"
-                color: "#F4F1E8"
+                color: "#F0F6FC"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 14
                 font.weight: Font.Bold
@@ -87,7 +87,7 @@ Rectangle {
                 objectName: "contextActionStatus"
                 Layout.fillWidth: true
                 text: actionBar.running ? (actionBar.activeJob.indexOf("render") === 0 ? "書き出し中" : "処理中") : (actionBar.projectLoaded ? "プロジェクト準備済み" : "文字起こしなしでも編集できます")
-                color: actionBar.running ? "#FFB547" : "#8E9B94"
+                color: actionBar.running ? "#F59E0B" : "#8B949E"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 10
                 horizontalAlignment: Text.AlignRight
@@ -186,7 +186,7 @@ Rectangle {
             text: actionBar.projectLoaded && actionBar.renderBlockReason.length > 0
                 ? actionBar.renderBlockReason : actionBar.blockReason
             visible: text.length > 0
-            color: "#FFB547"
+            color: "#F59E0B"
             font.family: "Yu Gothic UI"
             font.pixelSize: 9
             elide: Text.ElideRight

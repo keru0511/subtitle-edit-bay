@@ -68,7 +68,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 "    if ($global:testCertificate) { $global:testCertificate.Dispose() }\n"
                 "    if ($rsa) { $rsa.Dispose() }\n"
                 "}\n",
-                encoding="utf-8",
+                encoding="utf-8-sig",
             )
 
             result = subprocess.run(

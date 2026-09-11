@@ -134,10 +134,10 @@
 
     <!-- === GLOBAL PERMANENT LEFT: MODE RAIL (本編編集モードに純化) === -->
     <aside id="globalModeRail" class="w-16 bg-surface-panel border-r border-surface-border flex flex-col items-center py-3 gap-2 flex-shrink-0 z-20">
-      <!-- Cut Mode -->
-      <button onclick="navigateView('editor-cut')" id="rail-cut" class="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-1 transition group relative bg-brand-600/20 border border-brand-500/40 text-brand-400" title="カット編集">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"/></svg>
-        <span class="text-[10px] font-semibold">カット</span>
+      <!-- Unified Edit Mode (カット・シーケンス移動・動画結合) -->
+      <button onclick="navigateView('editor-cut')" id="rail-edit" class="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-1 transition group relative bg-brand-600/20 border border-brand-500/40 text-brand-400" title="動画編集 (カット・シーケンス移動・結合)">
+        <span class="text-base group-hover:scale-110 transition">🎬</span>
+        <span class="text-[10px] font-semibold">編集</span>
       </button>
 
       <!-- Subtitle Mode -->
@@ -193,14 +193,18 @@
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                 新しい動画を読み込む（新規プロジェクト）
               </button>
-              <div class="grid grid-cols-2 gap-2">
-                <button onclick="loadSampleProject('gameplay_apex_session_01.mp4')" class="py-2.5 px-3 rounded-xl bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 font-medium text-xs transition flex items-center justify-center gap-1.5">
-                  <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>
-                  サンプルを開く
+              <div class="grid grid-cols-3 gap-2">
+                <button onclick="startJoinWorkflow()" class="py-2.5 px-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 font-medium text-xs transition flex items-center justify-center gap-1" title="複数動画をつなげて編集開始">
+                  <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                  <span>🔗 複数動画を連結</span>
                 </button>
-                <button onclick="createEmptyProjectMock()" class="py-2.5 px-3 rounded-xl bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 font-medium text-xs transition flex items-center justify-center gap-1.5" title="文字起こしなしで空プロジェクト作成">
-                  <svg class="w-4 h-4 text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                  空のプロジェクトを作成
+                <button onclick="loadSampleProject('gameplay_apex_session_01.mp4')" class="py-2.5 px-2.5 rounded-xl bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 font-medium text-xs transition flex items-center justify-center gap-1">
+                  <svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>
+                  <span>サンプル</span>
+                </button>
+                <button onclick="createEmptyProjectMock()" class="py-2.5 px-2.5 rounded-xl bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 font-medium text-xs transition flex items-center justify-center gap-1" title="文字起こしなしで空プロジェクト作成">
+                  <svg class="w-3.5 h-3.5 text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                  <span>空の新規</span>
                 </button>
               </div>
             </div>
@@ -261,54 +265,91 @@
         <!-- === CENTER: WORKSPACE (PREVIEW + TIMELINE) === -->
         <main class="flex-1 flex flex-col min-w-0 bg-surface-base">
 
-          <!-- PREVIEW AREA (VIDEO MONITOR) -->
-          <section class="flex-1 flex flex-col items-center justify-center p-3 min-h-[260px] relative bg-black/40">
-            <div class="relative max-w-4xl w-full aspect-video bg-surface-card rounded-xl border border-surface-border overflow-hidden shadow-2xl flex items-center justify-center group">
-              <div class="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-950 to-black flex items-center justify-center">
-                <div class="text-center">
-                  <div class="w-14 h-14 mx-auto mb-2 rounded-full bg-surface-border/50 flex items-center justify-center text-slate-500">
-                    <svg class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <!-- ================= UPPER WORKSPACE ROW: (JOIN MEDIA BIN + VIDEO MONITOR) ================= -->
+          <div class="flex-1 flex overflow-hidden min-h-[260px] relative">
+
+            <!-- LEFT-TOP: MEDIA BIN / 素材一覧 (Visible in Join Mode) -->
+            <aside id="join-media-bin-panel" class="w-80 flex-shrink-0 bg-surface-panel border-r border-surface-border flex flex-col overflow-hidden hidden z-10 select-none">
+              <!-- Media Bin Header -->
+              <div class="h-10 px-3 border-b border-surface-border flex items-center justify-between bg-surface-base/80 flex-shrink-0">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="text-sm">📁</span>
+                  <span class="font-semibold text-slate-200 text-xs truncate">素材一覧 (メディアビン)</span>
+                  <span id="join-media-count-badge" class="px-1.5 py-0.2 rounded-full bg-surface-card text-indigo-300 font-mono text-[10px] border border-surface-border">5件</span>
+                </div>
+                <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画を追加">
+                  <span>+</span> 追加
+                </button>
+              </div>
+
+              <!-- Media Bin Dropzone (OS File Explorer D&D) -->
+              <div id="join-media-bin-dropzone" ondragover="handleMediaBinDragOver(event)" ondragleave="handleMediaBinDragLeave(event)" ondrop="handleMediaBinDrop(event)" onclick="promptAddCustomMediaAsset()" class="m-2.5 p-3 rounded-xl border-2 border-dashed border-surface-border hover:border-indigo-500/60 bg-surface-base/50 hover:bg-indigo-500/5 transition cursor-pointer text-center group">
+                <div class="w-7 h-7 mx-auto mb-1 rounded-full bg-surface-card group-hover:bg-indigo-500/20 text-slate-400 group-hover:text-indigo-300 flex items-center justify-center transition">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                </div>
+                <p class="text-[11px] font-medium text-slate-300 group-hover:text-white transition">ここに動画をドラッグ＆ドロップ</p>
+                <p class="text-[9px] text-slate-500 mt-0.5">またはクリックしてファイルを追加</p>
+              </div>
+
+              <!-- Media Assets Draggable List -->
+              <div class="px-2.5 pb-1 flex items-center justify-between text-[10px] text-slate-400">
+                <span>登録済みクリップ</span>
+                <span class="text-[9px] text-indigo-400 font-medium">下のシーケンスへD&Dで配置</span>
+              </div>
+              <div id="join-media-assets-list" class="flex-1 overflow-y-auto px-2.5 pb-2 space-y-1.5">
+                <!-- Populated dynamically by renderJoinMediaBin() -->
+              </div>
+            </aside>
+
+            <!-- PREVIEW AREA (VIDEO MONITOR) -->
+            <section id="preview-monitor-area" class="flex-1 flex flex-col items-center justify-center p-3 relative bg-black/40 min-w-0">
+              <div class="relative max-w-4xl w-full aspect-video bg-surface-card rounded-xl border border-surface-border overflow-hidden shadow-2xl flex items-center justify-center group">
+                <div class="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-950 to-black flex items-center justify-center">
+                  <div class="text-center">
+                    <div class="w-14 h-14 mx-auto mb-2 rounded-full bg-surface-border/50 flex items-center justify-center text-slate-500">
+                      <svg class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    </div>
+                    <p class="text-xs text-slate-400 font-mono">1920 × 1080 | 60fps</p>
+                    <p id="preview-mode-caption" class="text-sm font-medium text-slate-300 mt-0.5">カット編集プレビュー</p>
                   </div>
-                  <p class="text-xs text-slate-400 font-mono">1920 × 1080 | 60fps</p>
-                  <p id="preview-mode-caption" class="text-sm font-medium text-slate-300 mt-0.5">カット編集プレビュー</p>
+
+                  <!-- Subtitle Overlay Sample (Dynamic Text, Font, Color, Outline!) -->
+                  <div class="absolute bottom-8 inset-x-0 flex justify-center pointer-events-none px-6">
+                    <span id="preview-subtitle-text" class="px-4 py-1.5 rounded bg-black/70 backdrop-blur-sm text-yellow-300 font-bold text-lg border border-yellow-400/20 shadow-lg tracking-wide transition-all duration-150" style="text-shadow: 0 0 3px #000000, 0 0 3px #000000;">
+                      「ここ無音だからカットしといて！」
+                    </span>
+                  </div>
                 </div>
 
-                <!-- Subtitle Overlay Sample (Dynamic Text, Font, Color, Outline!) -->
-                <div class="absolute bottom-8 inset-x-0 flex justify-center pointer-events-none px-6">
-                  <span id="preview-subtitle-text" class="px-4 py-1.5 rounded bg-black/70 backdrop-blur-sm text-yellow-300 font-bold text-lg border border-yellow-400/20 shadow-lg tracking-wide transition-all duration-150" style="text-shadow: 0 0 3px #000000, 0 0 3px #000000;">
-                    「ここ無音だからカットしといて！」
-                  </span>
+              </div>
+
+              <!-- Video Transport Controls -->
+              <div class="w-full max-w-4xl mt-2.5 flex items-center justify-between px-2">
+                <div class="flex items-center gap-2 font-mono text-xs w-56">
+                  <span class="text-slate-400">位置:</span>
+                  <span id="current-timecode" class="text-accent font-semibold text-sm">00:04.250</span>
+                  <span class="text-slate-600">/</span>
+                  <span class="text-slate-400">完成尺:</span>
+                  <span id="output-length-timecode" class="text-slate-200 font-medium">00:21.500</span>
+                  <span class="text-slate-500 text-[10px]">(元: 30.000)</span>
                 </div>
+
+                <div class="flex items-center gap-2">
+                  <button onclick="seekRelative(-1)" class="w-8 h-8 rounded-lg hover:bg-surface-card text-slate-400 hover:text-slate-200 flex items-center justify-center transition" title="1秒戻る (J / ←)">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"/></svg>
+                  </button>
+                  <button id="playBtn" onclick="togglePlay()" class="w-9 h-9 rounded-xl bg-slate-200 hover:bg-white text-slate-900 flex items-center justify-center shadow-lg transition active:scale-95" title="再生/一時停止 (Space)">
+                    <svg id="playIcon" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
+                  </button>
+                  <button onclick="seekRelative(1)" class="w-8 h-8 rounded-lg hover:bg-surface-card text-slate-400 hover:text-slate-200 flex items-center justify-center transition" title="1秒進む (L / →)">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z"/></svg>
+                  </button>
+                </div>
+
+                <div class="w-56 flex justify-end"></div>
               </div>
-
-            </div>
-
-            <!-- Video Transport Controls -->
-            <div class="w-full max-w-4xl mt-2.5 flex items-center justify-between px-2">
-              <div class="flex items-center gap-2 font-mono text-xs w-56">
-                <span class="text-slate-400">位置:</span>
-                <span id="current-timecode" class="text-accent font-semibold text-sm">00:04.250</span>
-                <span class="text-slate-600">/</span>
-                <span class="text-slate-400">完成尺:</span>
-                <span id="output-length-timecode" class="text-slate-200 font-medium">00:21.500</span>
-                <span class="text-slate-500 text-[10px]">(元: 30.000)</span>
-              </div>
-
-              <div class="flex items-center gap-2">
-                <button onclick="seekRelative(-1)" class="w-8 h-8 rounded-lg hover:bg-surface-card text-slate-400 hover:text-slate-200 flex items-center justify-center transition" title="1秒戻る (J / ←)">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"/></svg>
-                </button>
-                <button id="playBtn" onclick="togglePlay()" class="w-9 h-9 rounded-xl bg-slate-200 hover:bg-white text-slate-900 flex items-center justify-center shadow-lg transition active:scale-95" title="再生/一時停止 (Space)">
-                  <svg id="playIcon" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
-                </button>
-                <button onclick="seekRelative(1)" class="w-8 h-8 rounded-lg hover:bg-surface-card text-slate-400 hover:text-slate-200 flex items-center justify-center transition" title="1秒進む (L / →)">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z"/></svg>
-                </button>
-              </div>
-
-              <div class="w-56 flex justify-end"></div>
-            </div>
-          </section>
+            </section>
+          </div>
 
           <!-- ================= PROCESSING PROGRESS PANEL (文字起こし・バックグラウンド進捗) ================= -->
           <section id="processing-progress-overlay" class="hidden bg-surface-panel border-t border-b border-surface-border px-5 py-3 flex-shrink-0 transition-all duration-300">
@@ -386,7 +427,7 @@
           </section>
 
           <!-- TIMELINE SECTION (Sequence Tracks with Headers & Speaker Lanes) -->
-          <section class="h-72 bg-surface-panel border-t border-surface-border flex flex-col flex-shrink-0 relative">
+          <section class="h-80 bg-surface-panel border-t border-surface-border flex flex-col flex-shrink-0 relative">
             <!-- Timeline Toolbar -->
             <div class="h-9 px-4 border-b border-surface-border flex items-center justify-between bg-surface-panel/90 text-xs flex-shrink-0">
               <div class="flex items-center gap-2">
@@ -402,6 +443,22 @@
                 </button>
                 <button onclick="redoTimelineAction()" class="w-7 h-7 rounded hover:bg-surface-card text-slate-400 hover:text-slate-200 flex items-center justify-center transition" title="やり直す (Ctrl+Y)">
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10H11a5 5 0 00-5 5v2m0 0l3-3m-3 3l-3-3m11-7l-3 3m3-3l-3-3"/></svg>
+                </button>
+              </div>
+
+              <!-- Center Gap: 3-Way Editing Tool Switcher (カット / シーケンス移動 / 動画結合) -->
+              <div id="editingToolSwitcher" class="flex items-center bg-surface-base/90 p-0.5 rounded-lg border border-surface-border shadow-inner select-none">
+                <button id="edit-tool-cut" onclick="setEditTool('cut')" class="px-2.5 py-1 rounded-md text-[11px] font-semibold transition flex items-center gap-1.5 bg-surface-card text-white shadow-sm border border-surface-border/50" title="カットツール (無音カット・トリミング・削除) [C]">
+                  <span class="text-xs">✂️</span>
+                  <span>カット</span>
+                </button>
+                <button id="edit-tool-move" onclick="setEditTool('move')" class="px-2.5 py-1 rounded-md text-[11px] font-medium transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200" title="シーケンス移動ツール (クリップ並び替え・位置移動・トリム) [V]">
+                  <span class="text-xs">✋</span>
+                  <span>シーケンス移動</span>
+                </button>
+                <button id="edit-tool-join" onclick="setEditTool('join')" class="px-2.5 py-1 rounded-md text-[11px] font-medium transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200" title="動画結合ツール (素材プール・D&D配置・トランジション・OP/ED) [J]">
+                  <span class="text-xs">🔗</span>
+                  <span>動画結合</span>
                 </button>
               </div>
 
@@ -430,7 +487,7 @@
                 </div>
 
                 <!-- Track Headers List (Vertically aligned with right tracks) -->
-                <div class="flex-1 p-2 flex flex-col gap-2">
+                <div id="trackHeadersStandard" class="flex-1 p-2 flex flex-col gap-2">
                   <!-- Track V1 Header (Video & Cut) -->
                   <div class="h-10 rounded-lg bg-surface-card/90 border border-surface-border px-2.5 flex items-center justify-between group hover:border-slate-500 transition">
                     <div class="flex items-center gap-1.5 min-w-0">
@@ -468,6 +525,65 @@
                     </div>
                   </div>
                 </div>
+
+                <!-- Track Headers for Join / Sequence Move Mode (Multi-Track: Video, Audio, BGM/SE) -->
+                <div id="trackHeadersJoin" class="flex-1 p-2 flex flex-col gap-1.5 hidden">
+                  <!-- V1 Video Track Header -->
+                  <div class="h-14 rounded-lg bg-indigo-950/40 border border-indigo-500/40 p-2 flex flex-col justify-between group hover:border-indigo-400 transition flex-shrink-0">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="w-5 h-4.5 rounded bg-indigo-500/30 text-indigo-300 font-mono text-[9px] font-bold flex items-center justify-center flex-shrink-0 border border-indigo-500/40">V1</span>
+                        <span class="text-xs text-indigo-200 font-semibold truncate">映像トラック</span>
+                      </div>
+                      <div class="flex items-center gap-1 text-[9px] text-slate-400">
+                        <button onclick="showToast('V1 映像表示切り替え')" class="hover:text-white px-1 py-0.5 rounded bg-surface-base border border-surface-border/50" title="表示/非表示">👁️</button>
+                        <button onclick="showToast('V1 トラックロック')" class="hover:text-white px-1 py-0.5 rounded bg-surface-base border border-surface-border/50" title="トラックロック">🔒</button>
+                      </div>
+                    </div>
+                    <div class="text-[9px] text-slate-400 font-mono flex items-center justify-between">
+                      <span id="join-track-header-count">3クリップ</span>
+                      <span class="text-indigo-400 text-[8px]">1080p 60fps</span>
+                    </div>
+                  </div>
+
+                  <!-- A1 Linked Audio Track Header -->
+                  <div class="h-10 rounded-lg bg-emerald-950/30 border border-emerald-500/30 px-2 py-1 flex flex-col justify-between group hover:border-emerald-400/50 transition flex-shrink-0">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1 min-w-0">
+                        <span class="w-5 h-4 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[9px] font-bold flex items-center justify-center flex-shrink-0 border border-emerald-500/40">A1</span>
+                        <span class="text-[11px] text-emerald-200 font-medium truncate">本編音声 (連動)</span>
+                      </div>
+                      <div class="flex items-center gap-1 text-[9px] font-mono text-slate-400">
+                        <button id="header-audio-link-btn" onclick="toggleGlobalAudioLink()" class="hover:text-emerald-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50 text-emerald-300" title="映像と音声のリンク同期 (ON/OFF)">🔗</button>
+                        <button onclick="showToast('A1 音声ミュート')" class="hover:text-emerald-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50" title="ミュート">M</button>
+                        <button onclick="showToast('A1 ソロ')" class="hover:text-emerald-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50" title="ソロ">S</button>
+                      </div>
+                    </div>
+                    <div class="text-[8px] text-slate-400 font-mono flex items-center justify-between">
+                      <span id="header-link-state-text" class="text-emerald-400">🔗 映像リンク同期中</span>
+                      <span class="text-emerald-400/80">Loudnorm ON</span>
+                    </div>
+                  </div>
+
+                  <!-- A2 BGM / SE Track Header -->
+                  <div class="h-10 rounded-lg bg-amber-950/30 border border-amber-500/30 px-2 py-1 flex flex-col justify-between group hover:border-amber-400/50 transition flex-shrink-0">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-1 min-w-0">
+                        <span class="w-5 h-4 rounded bg-amber-500/20 text-amber-300 font-mono text-[9px] font-bold flex items-center justify-center flex-shrink-0 border border-amber-500/40">A2</span>
+                        <span class="text-[11px] text-amber-200 font-medium truncate">BGM / 効果音</span>
+                      </div>
+                      <div class="flex items-center gap-1 text-[9px] font-mono text-slate-400">
+                        <button onclick="addJoinBgmClipPrompt()" class="hover:text-amber-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50 text-amber-300" title="BGM/効果音を追加">➕</button>
+                        <button onclick="showToast('A2 BGMミュート')" class="hover:text-amber-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50" title="ミュート">M</button>
+                        <button onclick="showToast('A2 ソロ')" class="hover:text-amber-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50" title="ソロ">S</button>
+                      </div>
+                    </div>
+                    <div class="text-[8px] text-slate-400 font-mono flex items-center justify-between">
+                      <span id="join-bgm-header-count" class="text-amber-400">2トラック配置</span>
+                      <span class="text-amber-400/80">ダッキング有効</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <!-- Right Canvas: Sequence Viewport (Ruler + Tracks Canvas + Playhead) -->
@@ -484,6 +600,7 @@
 
                 <!-- Tracks Canvas Container -->
                 <div id="timelineTracksCanvas" class="flex-1 p-2 relative">
+                  <!-- Standard Multi-Track Timeline (Cut / Subtitle / Audio) -->
                   <div id="timelineTracksInner" class="relative w-full h-full flex flex-col gap-2">
                     <!-- Playhead (Scrubber line that stretches vertically across all tracks!) -->
                     <div id="timelinePlayhead" class="absolute top-0 bottom-0 left-[14.16%] w-[2px] bg-accent z-30 pointer-events-none shadow-lg shadow-accent/50 flex flex-col items-center transition-all duration-75">
@@ -517,6 +634,61 @@
                       <div id="speaker-b-track-content" class="absolute inset-0 flex items-center"></div>
                     </div>
                   </div>
+
+                  <!-- Dedicated Join Sequence Track View (Shown in Join & Sequence Move Mode) -->
+                  <div id="timelineJoinSequenceInner" class="relative w-full h-full flex flex-col justify-between gap-1 hidden">
+                    <!-- Sequence Bar Top Toolbar -->
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 py-0.5 flex-shrink-0">
+                      <div class="flex items-center gap-2">
+                        <button id="toolbar-link-btn" onclick="toggleGlobalAudioLink()" class="px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[10px] font-medium flex items-center gap-1 transition shadow-sm" title="映像と音声の連動移動 (リンク) を切り替え">
+                          <span id="toolbar-link-icon">🔗</span> <span id="toolbar-link-label">映像・音声リンク: ON</span>
+                        </button>
+                        <span class="text-slate-600">•</span>
+                        <span class="text-[10px] text-slate-400">✋ 移動: クリップやBGMを掴んでドラッグ移動 | ◀ ▶: トリム | ⛓️‍💥: 音ズレ補正</span>
+                      </div>
+                      <div class="flex items-center gap-1.5">
+                        <button onclick="splitJoinClipAtPlayhead()" class="px-2 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[10px] flex items-center gap-1 transition shadow-sm active:scale-95" title="再生ヘッド位置で選択クリップを分割 (カット)">
+                          <span>✂️</span> 分割
+                        </button>
+                        <button onclick="setJoinClipInFromPlayhead()" class="px-1.5 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-300 hover:text-white border border-surface-border text-[10px] font-mono transition active:scale-95" title="現在の再生位置を開始カット(In点)に設定">
+                          [ I ] In
+                        </button>
+                        <button onclick="setJoinClipOutFromPlayhead()" class="px-1.5 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-300 hover:text-white border border-surface-border text-[10px] font-mono transition active:scale-95" title="現在の再生位置を終了カット(Out点)に設定">
+                          [ O ] Out
+                        </button>
+                        <button onclick="addJoinBgmClipPrompt()" class="px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[10px] flex items-center gap-1 transition active:scale-95" title="BGMトラックを追加">
+                          <span>🎵</span> +BGM
+                        </button>
+                        <button onclick="addJoinSeClipPrompt()" class="px-2 py-0.5 rounded bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-[10px] flex items-center gap-1 transition active:scale-95" title="効果音(SE)を追加">
+                          <span>🔔</span> +SE
+                        </button>
+                        <button onclick="removeSelectedJoinClip()" class="px-1.5 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-[10px] transition active:scale-95" title="選択クリップを除外">
+                          🗑️
+                        </button>
+                        <div class="h-3 w-[1px] bg-surface-border mx-0.5"></div>
+                        <span id="join-track-status-badge" class="font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 text-[10px]">実効総尺: 13:05.000 (3クリップ)</span>
+                      </div>
+                    </div>
+
+                    <!-- Multi-Track Canvas Area (V1 Video, A1 Linked Audio, A2 BGM/SE) -->
+                    <div id="join-sequence-canvas"
+                         ondragover="handleSequenceDragOver(event)"
+                         ondragleave="handleSequenceDragLeave(event)"
+                         ondrop="handleSequenceDrop(event)"
+                         class="flex-1 bg-surface-base/80 rounded-xl border border-surface-border relative overflow-x-auto overflow-y-hidden flex flex-col justify-between p-1.5 gap-1.5 select-none transition">
+                      <!-- Visual Drop Insertion Indicator -->
+                      <div id="join-drop-indicator" class="absolute top-1.5 bottom-1.5 w-1 bg-indigo-400 shadow-lg shadow-indigo-500/80 rounded z-30 pointer-events-none hidden transition-all"></div>
+                      
+                      <!-- Row 1: V1 Video Clips Sequence Row -->
+                      <div id="join-clips-sequence-row" class="w-full h-14 flex items-center gap-1.5 relative min-w-max"></div>
+
+                      <!-- Row 2: A1 Linked Audio Sequence Row -->
+                      <div id="join-audio-sequence-row" class="w-full h-10 flex items-center gap-1.5 relative min-w-max"></div>
+
+                      <!-- Row 3: A2 BGM / SE Audio Sequence Row -->
+                      <div id="join-bgm-sequence-row" class="w-full h-10 flex items-center relative min-w-max bg-surface-card/40 rounded-lg border border-surface-border/40 px-1"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -544,6 +716,102 @@
 
           <!-- TAB CONTENT: SETTINGS (SUB-MODES) -->
           <div id="tabContentSettings" class="flex-1 overflow-y-auto p-3.5 space-y-4">
+
+            <!-- 0. JOIN MODE SETTINGS (動画連結・シーケンス結合) -->
+            <div id="inspector-join" class="space-y-4 hidden">
+              <!-- Summary Card -->
+              <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 font-medium mb-1">
+                  <span>連結シーケンス総尺</span>
+                  <span id="join-clip-count-badge" class="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px] border border-indigo-500/30">3本連結</span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                  <span id="join-summary-total-duration" class="text-2xl font-bold font-mono text-indigo-400">13:05.000</span>
+                  <span class="text-xs text-slate-400">/ 1080p 60fps</span>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span>自動解像度・フレームレート正規化済</span>
+                </div>
+              </div>
+
+              <!-- Quick Add & Preset Slot -->
+              <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold text-slate-200">動画クリップの追加</span>
+                  <button onclick="addJoinClipFromPrompt()" class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition shadow flex items-center gap-1">
+                    <span>+ 動画を追加</span>
+                  </button>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <button onclick="setJoinSlot('op')" class="py-1.5 rounded-lg bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300 flex items-center justify-center gap-1 transition">
+                    <span>🎬 OP動画を設定</span>
+                  </button>
+                  <button onclick="setJoinSlot('ed')" class="py-1.5 rounded-lg bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300 flex items-center justify-center gap-1 transition">
+                    <span>🏁 ED動画を設定</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Global Transition & Loudnorm Options -->
+              <div class="bg-surface-card rounded-xl p-3.5 border border-surface-border space-y-2.5 text-xs">
+                <span class="font-semibold text-slate-200 block text-[11px]">つなぎ目設定 (トランジション)</span>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="text-[9px] text-slate-400 block mb-1">デフォルト効果</label>
+                    <select id="join-global-transition-type" onchange="applyGlobalJoinTransition(this.value)" class="w-full bg-surface-base border border-surface-border rounded-lg px-2 py-1 text-slate-200 outline-none">
+                      <option value="クロスフェード">クロスフェード (自然な混ざり)</option>
+                      <option value="黒フェード">黒フェード (暗転転換)</option>
+                      <option value="カット">カット (直接連結)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="text-[9px] text-slate-400 block mb-1">重なり時間 (秒)</label>
+                    <input id="join-global-transition-dur" type="number" step="0.1" value="0.5" min="0" max="3" onchange="updateJoinTransitionDuration(parseFloat(this.value))" class="w-full bg-surface-base border border-surface-border rounded-lg px-2 py-1 font-mono text-white outline-none">
+                  </div>
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer pt-1 text-slate-300 hover:text-white transition">
+                  <input type="checkbox" id="join-loudnorm-toggle" checked onchange="toggleJoinLoudnorm(this.checked)" class="accent-brand-500 w-3.5 h-3.5 rounded">
+                  <span class="text-[11px]">音量を自動均一化 (Loudnorm -16 LUFS)</span>
+                </label>
+              </div>
+
+              <!-- Sequence Clip List Cards -->
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <span id="join-list-title" class="text-xs font-semibold text-slate-300">連結クリップ一覧 (3本)</span>
+                  <span class="text-[10px] text-slate-500">▲▼で順序入れ替え</span>
+                </div>
+                <div id="join-clips-container" class="space-y-2"></div>
+              </div>
+
+              <!-- BGM / Sound Effect Audio Tracks Section -->
+              <div class="pt-2 border-t border-surface-border/50 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span id="join-bgm-list-title" class="text-xs font-semibold text-slate-300">BGM / 効果音トラック (2件)</span>
+                  <div class="flex items-center gap-1">
+                    <button onclick="addJoinBgmClipPrompt()" class="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] transition">
+                      + BGM
+                    </button>
+                    <button onclick="addJoinSeClipPrompt()" class="px-2 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-[10px] transition">
+                      + SE
+                    </button>
+                  </div>
+                </div>
+                <div id="join-bgm-container" class="space-y-2"></div>
+              </div>
+
+              <!-- Workflow Commit Buttons -->
+              <div class="space-y-2 pt-2 border-t border-surface-border/50">
+                <button onclick="commitJoinToMainEditor()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-accent to-brand-500 hover:from-accent-hover hover:to-brand-600 text-white font-semibold text-xs shadow-lg shadow-accent/20 transition flex items-center justify-center gap-1.5 active:scale-98">
+                  <span>✂️ この並びで本編編集（カット・字幕）へ進む</span>
+                </button>
+                <button onclick="exportJoinedVideoQuick()" class="w-full py-2 rounded-lg bg-surface-card hover:bg-surface-cardHover border border-surface-border text-slate-200 text-xs font-medium transition flex items-center justify-center gap-1.5">
+                  <svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                  <span>結合動画として直接書き出す (Concat)</span>
+                </button>
+              </div>
+            </div>
 
             <!-- 1. CUT MODE SETTINGS (既存全機能) -->
             <div id="inspector-cut" class="space-y-4">
@@ -1919,8 +2187,9 @@ ${escapeHtml(log.details)}
       document.getElementById('view-editor').classList.add('hidden');
       document.getElementById('view-short').classList.add('hidden');
 
+      const isEditActive = viewKey === 'editor-edit' || viewKey === 'editor-cut' || viewKey === 'editor-join';
       const railModes = [
-        { key: 'cut', activeWhen: viewKey === 'editor-cut' },
+        { key: 'edit', activeWhen: isEditActive },
         { key: 'subtitle', activeWhen: viewKey === 'editor-subtitle' },
         { key: 'audio', activeWhen: viewKey === 'editor-audio' }
       ];
@@ -1953,35 +2222,143 @@ ${escapeHtml(log.details)}
         showToast('ショート動画作成画面を開きました');
       } else {
         document.getElementById('view-editor').classList.remove('hidden');
-        if (viewKey === 'editor-cut') setEditorSubMode('cut');
-        if (viewKey === 'editor-subtitle') setEditorSubMode('subtitle');
-        if (viewKey === 'editor-audio') setEditorSubMode('audio');
+        if (viewKey === 'editor-join') {
+          setEditorSubMode('edit');
+          setEditTool('join');
+        } else if (viewKey === 'editor-cut' || viewKey === 'editor-edit') {
+          setEditorSubMode('edit');
+        } else if (viewKey === 'editor-subtitle') {
+          setEditorSubMode('subtitle');
+        } else if (viewKey === 'editor-audio') {
+          setEditorSubMode('audio');
+        }
+      }
+    }
+
+    let currentEditTool = 'cut'; // 'cut' | 'move' | 'join'
+
+    function setEditTool(tool) {
+      currentEditTool = tool;
+      const tools = ['cut', 'move', 'join'];
+      tools.forEach(t => {
+        const btn = document.getElementById(`edit-tool-${t}`);
+        if (btn) {
+          if (t === tool) {
+            btn.className = "px-2.5 py-1 rounded-md text-[11px] font-semibold transition flex items-center gap-1.5 bg-surface-card text-white shadow-sm border border-surface-border/50";
+          } else {
+            btn.className = "px-2.5 py-1 rounded-md text-[11px] font-medium transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200";
+          }
+        }
+      });
+
+      const mediaBin = document.getElementById('join-media-bin-panel');
+      const tracksInner = document.getElementById('timelineTracksInner');
+      const joinInner = document.getElementById('timelineJoinSequenceInner');
+      const headersStandard = document.getElementById('trackHeadersStandard');
+      const headersJoin = document.getElementById('trackHeadersJoin');
+      const inspCut = document.getElementById('inspector-cut');
+      const inspJoin = document.getElementById('inspector-join');
+      const caption = document.getElementById('preview-mode-caption');
+
+      if (tool === 'cut') {
+        if (mediaBin) mediaBin.classList.add('hidden');
+        if (tracksInner) tracksInner.classList.remove('hidden');
+        if (joinInner) joinInner.classList.add('hidden');
+        if (headersStandard) headersStandard.classList.remove('hidden');
+        if (headersJoin) headersJoin.classList.add('hidden');
+        if (inspCut) inspCut.classList.remove('hidden');
+        if (inspJoin) inspJoin.classList.add('hidden');
+        updateHeaderModeIndicator('🎬', '動画編集 (✂️ カット)');
+        if (caption) caption.innerText = 'カット編集プレビュー (波形・無音検出)';
+        showToast('✂️ カットツール: 範囲指定または無音検出でカット', 'info');
+      } else if (tool === 'move') {
+        if (mediaBin) mediaBin.classList.add('hidden');
+        if (tracksInner) tracksInner.classList.add('hidden');
+        if (joinInner) joinInner.classList.remove('hidden');
+        if (headersStandard) headersStandard.classList.add('hidden');
+        if (headersJoin) headersJoin.classList.remove('hidden');
+        if (inspCut) inspCut.classList.add('hidden');
+        if (inspJoin) inspJoin.classList.remove('hidden');
+        renderJoinInspector();
+        renderJoinSequence();
+        updateHeaderModeIndicator('🎬', '動画編集 (✋ シーケンス移動)');
+        if (caption) caption.innerText = 'シーケンス移動プレビュー (並び替え・トリム)';
+        showToast('✋ シーケンス移動ツール: クリップを掴んで並び替え・両端でトリム', 'info');
+      } else if (tool === 'join') {
+        if (mediaBin) {
+          mediaBin.classList.remove('hidden');
+          renderJoinMediaBin();
+        }
+        if (tracksInner) tracksInner.classList.add('hidden');
+        if (joinInner) joinInner.classList.remove('hidden');
+        if (headersStandard) headersStandard.classList.add('hidden');
+        if (headersJoin) headersJoin.classList.remove('hidden');
+        if (inspCut) inspCut.classList.add('hidden');
+        if (inspJoin) inspJoin.classList.remove('hidden');
+        renderJoinInspector();
+        renderJoinSequence();
+        updateHeaderModeIndicator('🎬', '動画編集 (🔗 動画結合)');
+        if (caption) caption.innerText = '動画結合・シーケンスプレビュー';
+        showToast('🔗 動画結合ツール: 左上の素材一覧からD&Dで追加・つなぎ目効果を設定', 'info');
       }
     }
 
     function setEditorSubMode(subMode) {
-      const modes = ['cut', 'subtitle', 'audio'];
-      modes.forEach(m => {
-        const insp = document.getElementById(`inspector-${m}`);
-        if (m === subMode) {
-          if (insp) insp.classList.remove('hidden');
-        } else {
-          if (insp) insp.classList.add('hidden');
-        }
-      });
+      if (subMode === 'join') {
+        currentEditTool = 'join';
+        subMode = 'edit';
+      } else if (subMode === 'cut') {
+        subMode = 'edit';
+      }
 
-      const caption = document.getElementById('preview-mode-caption');
-      if (subMode === 'cut') {
-        updateHeaderModeIndicator('✂️', 'カット編集');
-        if (caption) caption.innerText = 'カット編集プレビュー';
-        showToast('カット編集モード');
+      const switcher = document.getElementById('editingToolSwitcher');
+      const inspSubtitle = document.getElementById('inspector-subtitle');
+      const inspAudio = document.getElementById('inspector-audio');
+
+      if (subMode === 'edit') {
+        if (switcher) switcher.classList.remove('hidden');
+        if (inspSubtitle) inspSubtitle.classList.add('hidden');
+        if (inspAudio) inspAudio.classList.add('hidden');
+        setEditTool(currentEditTool);
       } else if (subMode === 'subtitle') {
+        if (switcher) switcher.classList.add('hidden');
+        const mediaBin = document.getElementById('join-media-bin-panel');
+        if (mediaBin) mediaBin.classList.add('hidden');
+        const tracksInner = document.getElementById('timelineTracksInner');
+        const joinInner = document.getElementById('timelineJoinSequenceInner');
+        if (tracksInner) tracksInner.classList.remove('hidden');
+        if (joinInner) joinInner.classList.add('hidden');
+        const headersStandard = document.getElementById('trackHeadersStandard');
+        const headersJoin = document.getElementById('trackHeadersJoin');
+        if (headersStandard) headersStandard.classList.remove('hidden');
+        if (headersJoin) headersJoin.classList.add('hidden');
+        document.getElementById('inspector-cut').classList.add('hidden');
+        document.getElementById('inspector-join').classList.add('hidden');
+        if (inspSubtitle) inspSubtitle.classList.remove('hidden');
+        if (inspAudio) inspAudio.classList.add('hidden');
         updateHeaderModeIndicator('💬', '字幕編集');
+        const caption = document.getElementById('preview-mode-caption');
         if (caption) caption.innerText = '字幕リアルタイムプレビュー';
         renderSubtitleList();
         showToast('字幕編集モード');
       } else if (subMode === 'audio') {
+        if (switcher) switcher.classList.add('hidden');
+        const mediaBin = document.getElementById('join-media-bin-panel');
+        if (mediaBin) mediaBin.classList.add('hidden');
+        const tracksInner = document.getElementById('timelineTracksInner');
+        const joinInner = document.getElementById('timelineJoinSequenceInner');
+        if (tracksInner) tracksInner.classList.remove('hidden');
+        if (joinInner) joinInner.classList.add('hidden');
+        const headersStandard = document.getElementById('trackHeadersStandard');
+        const headersJoin = document.getElementById('trackHeadersJoin');
+        if (headersStandard) headersStandard.classList.remove('hidden');
+        if (headersJoin) headersJoin.classList.add('hidden');
+        document.getElementById('inspector-cut').classList.add('hidden');
+        document.getElementById('inspector-join').classList.add('hidden');
+        if (inspSubtitle) inspSubtitle.classList.add('hidden');
+        if (inspAudio) inspAudio.classList.remove('hidden');
         updateHeaderModeIndicator('🔊', '音量ミキサー');
+        const caption = document.getElementById('preview-mode-caption');
         if (caption) caption.innerText = '音量バランス調整プレビュー';
         showToast('音量ミキサーモード');
       }
@@ -3199,6 +3576,1171 @@ ${escapeHtml(log.details)}
       }, 800);
     }
 
+    // ================= VIDEO JOIN & SEQUENCE ASSEMBLY ENGINE (動画連結モード) =================
+    let mediaAssets = [
+      { id: 'm1', slot: 'op', title: 'チャンネルOP 2026', file: 'ch_intro_op_2026.mp4', duration: 15.0, resolution: '1080p 60fps' },
+      { id: 'm2', slot: 'main', title: 'ゲーム実況 本編 Part 1', file: 'gameplay_apex_session_01.mp4', duration: 750.0, resolution: '1080p 60fps' },
+      { id: 'm3', slot: 'main', title: 'ゲーム実況 本編 Part 2', file: 'gameplay_apex_session_02.mp4', duration: 620.0, resolution: '1080p 60fps' },
+      { id: 'm4', slot: 'ed', title: '登録促進 エンディング', file: 'ending_card_subscribe.mp4', duration: 20.0, resolution: '1080p 60fps' },
+      { id: 'm5', slot: 'clip', title: 'ハイライト (クラッチ決着)', file: 'clutch_highlight_moment.mp4', duration: 35.0, resolution: '1080p 60fps' }
+    ];
+
+    let joinClips = [
+      { id: 1, slot: "op", title: "オープニング", file: "ch_intro_op_2026.mp4", duration: 15.0, startSec: 0.0, endSec: 15.0, resolution: "1080p 60fps", transition: "クロスフェード", transDur: 0.5, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false },
+      { id: 2, slot: "main", title: "ゲーム実況本編", file: "gameplay_apex_session_01.mp4", duration: 750.0, startSec: 0.0, endSec: 750.0, resolution: "1080p 60fps", transition: "クロスフェード", transDur: 0.5, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false },
+      { id: 3, slot: "ed", title: "エンディング", file: "ending_card_subscribe.mp4", duration: 20.0, startSec: 0.0, endSec: 20.0, resolution: "1080p 60fps", transition: "カット", transDur: 0.0, audioLinked: true, audioVolume: 100, audioOffsetSec: 0.0, audioMuted: false }
+    ];
+
+    let joinBgmClips = [
+      { id: 'bgm_1', type: 'bgm', title: '🎶 BGM: ほのぼの日常', file: 'bgm_daily_peace.mp3', offsetSec: 15.0, duration: 180.0, volume: 30, fadeIn: 1.0, fadeOut: 1.5, loop: true, ducking: true },
+      { id: 'se_1', type: 'se', title: '🔔 SE: 歓声・決定音', file: 'se_cheer_clutch.wav', offsetSec: 210.0, duration: 2.5, volume: 80, fadeIn: 0.0, fadeOut: 0.2, loop: false, ducking: false }
+    ];
+
+    let globalAudioLinked = true;
+    let selectedJoinAudioId = null; // 'audio_clip_X' or 'bgm_1' etc.
+    let selectedJoinClipId = 2;
+    let joinLoudnormEnabled = true;
+    let globalJoinTransitionType = "クロスフェード";
+    let globalJoinTransitionDur = 0.5;
+
+    function getJoinEffectiveDuration() {
+      let total = 0;
+      for (let i = 0; i < joinClips.length; i++) {
+        const c = joinClips[i];
+        const clipDur = Math.max(0, c.endSec - c.startSec);
+        total += clipDur;
+        if (i < joinClips.length - 1 && c.transition !== "カット") {
+          total -= Math.min(c.transDur || 0.5, clipDur);
+        }
+      }
+      return Math.max(0, total);
+    }
+
+    // --- TOP-LEFT MEDIA BIN (素材一覧) ---
+    function renderJoinMediaBin() {
+      const container = document.getElementById('join-media-assets-list');
+      const badge = document.getElementById('join-media-count-badge');
+      if (badge) badge.innerText = `${mediaAssets.length}件`;
+      if (!container) return;
+
+      container.innerHTML = '';
+      mediaAssets.forEach((asset) => {
+        let badgeColor = "bg-indigo-500/20 text-indigo-300 border-indigo-500/30";
+        if (asset.slot === 'op') badgeColor = "bg-purple-500/20 text-purple-300 border-purple-500/30";
+        else if (asset.slot === 'ed') badgeColor = "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+
+        const card = document.createElement('div');
+        card.className = "p-2 rounded-lg bg-surface-card hover:bg-surface-cardHover border border-surface-border cursor-grab active:cursor-grabbing transition group select-none relative";
+        card.setAttribute('draggable', 'true');
+        card.ondragstart = (e) => handleMediaDragStart(e, asset.id);
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between gap-1.5">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="text-slate-500 text-xs cursor-grab">⋮⋮</span>
+              <span class="px-1.5 py-0.2 rounded ${badgeColor} font-mono text-[9px] font-bold border flex-shrink-0">${asset.slot.toUpperCase()}</span>
+              <span class="font-semibold text-xs text-slate-200 truncate group-hover:text-white">${asset.title}</span>
+            </div>
+            <button onclick="event.stopPropagation(); insertAssetIntoSequence('${asset.id}')" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-indigo-600 text-slate-300 hover:text-white border border-surface-border text-[10px] flex-shrink-0 opacity-0 group-hover:opacity-100 transition shadow" title="シーケンス末尾に追加">
+              + 挿入
+            </button>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pl-4">
+            <span class="truncate text-slate-500">${asset.file}</span>
+            <span class="text-indigo-300 font-semibold">${asset.duration.toFixed(0)}s</span>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function handleMediaDragStart(e, assetId) {
+      e.dataTransfer.setData('text/plain', assetId);
+      e.dataTransfer.setData('application/x-join-media', assetId);
+      e.dataTransfer.effectAllowed = 'copy';
+      showToast('素材をドラッグ中: シーケンスバーへドロップして取り込み', 'info');
+    }
+
+    function handleClipDragStart(e, clipId) {
+      e.dataTransfer.setData('text/plain', clipId.toString());
+      e.dataTransfer.setData('application/x-join-clip-reorder', clipId.toString());
+      e.dataTransfer.effectAllowed = 'move';
+    }
+
+    function handleBgmDragStart(e, bgmId) {
+      e.dataTransfer.setData('text/plain', bgmId);
+      e.dataTransfer.setData('application/x-join-bgm', bgmId);
+      e.dataTransfer.effectAllowed = 'move';
+      showToast('BGM/効果音をドラッグ中: シーケンス上でドロップして開始位置を移動', 'info');
+    }
+
+    function handleSequenceDragOver(e) {
+      e.preventDefault();
+      const canvas = document.getElementById('join-sequence-canvas');
+      const row = document.getElementById('join-clips-sequence-row');
+      const indicator = document.getElementById('join-drop-indicator');
+      if (!canvas || !row || !indicator) return;
+
+      const canvasRect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX;
+      const children = Array.from(row.querySelectorAll('.join-clip-item'));
+
+      let insertIdx = children.length;
+      let indicatorLeft = 0;
+
+      for (let i = 0; i < children.length; i++) {
+        const rect = children[i].getBoundingClientRect();
+        const midX = rect.left + rect.width / 2;
+        if (mouseX < midX) {
+          insertIdx = i;
+          indicatorLeft = (rect.left - canvasRect.left + canvas.scrollLeft);
+          break;
+        }
+      }
+
+      if (insertIdx === children.length && children.length > 0) {
+        const lastRect = children[children.length - 1].getBoundingClientRect();
+        indicatorLeft = (lastRect.right - canvasRect.left + canvas.scrollLeft + 3);
+      } else if (children.length === 0) {
+        indicatorLeft = 12;
+      }
+
+      indicator.style.left = `${Math.max(4, indicatorLeft)}px`;
+      indicator.classList.remove('hidden');
+      e.dataTransfer.dropEffect = 'copy';
+    }
+
+    function handleSequenceDragLeave(e) {
+      const canvas = document.getElementById('join-sequence-canvas');
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (e.clientX <= rect.left || e.clientX >= rect.right || e.clientY <= rect.top || e.clientY >= rect.bottom) {
+        const indicator = document.getElementById('join-drop-indicator');
+        if (indicator) indicator.classList.add('hidden');
+      }
+    }
+
+    function handleSequenceDrop(e) {
+      e.preventDefault();
+      const indicator = document.getElementById('join-drop-indicator');
+      if (indicator) indicator.classList.add('hidden');
+
+      const canvas = document.getElementById('join-sequence-canvas');
+      const row = document.getElementById('join-clips-sequence-row');
+      if (!canvas || !row) return;
+
+      // 1. Check BGM / SE timing shift drag
+      const bgmDragId = e.dataTransfer.getData('application/x-join-bgm');
+      if (bgmDragId) {
+        const bgm = joinBgmClips.find(b => b.id === bgmDragId);
+        if (bgm) {
+          const canvasRect = canvas.getBoundingClientRect();
+          const dropX = e.clientX - canvasRect.left + canvas.scrollLeft;
+          const totalDur = getJoinEffectiveDuration();
+          const newOffset = Math.max(0, Math.min(Math.max(1, totalDur - 0.5), (dropX / Math.max(1, canvasRect.width)) * totalDur));
+          bgm.offsetSec = parseFloat(newOffset.toFixed(1));
+          selectedJoinAudioId = bgm.id;
+          renderJoinInspector();
+          renderJoinSequence();
+          showToast(`🎵 「${bgm.title}」の再生位置を移動: ${bgm.offsetSec.toFixed(1)}s`, 'success');
+          return;
+        }
+      }
+
+      const mouseX = e.clientX;
+      const children = Array.from(row.querySelectorAll('.join-clip-item'));
+      let targetIndex = children.length;
+
+      for (let i = 0; i < children.length; i++) {
+        const rect = children[i].getBoundingClientRect();
+        const midX = rect.left + rect.width / 2;
+        if (mouseX < midX) {
+          targetIndex = i;
+          break;
+        }
+      }
+
+      // 2. Check OS file drop (Videos and Audios)
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        let addedVideos = 0;
+        let addedAudios = 0;
+        Array.from(e.dataTransfer.files).forEach((file, fIdx) => {
+          const isAudio = /\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(file.name);
+          if (isAudio) {
+            const newBgm = {
+              id: 'bgm_' + Date.now() + '_' + fIdx,
+              type: 'bgm',
+              title: '🎶 ' + file.name.replace(/\.[^/.]+$/, ""),
+              file: file.name,
+              offsetSec: 0.0,
+              duration: 120.0,
+              volume: 40,
+              fadeIn: 1.0,
+              fadeOut: 1.5,
+              loop: true,
+              ducking: true
+            };
+            joinBgmClips.push(newBgm);
+            selectedJoinAudioId = newBgm.id;
+            addedAudios++;
+          } else {
+            const newAsset = {
+              id: 'm_' + Date.now() + '_' + fIdx,
+              slot: 'clip',
+              title: file.name.replace(/\.[^/.]+$/, ""),
+              file: file.name,
+              duration: 60.0,
+              resolution: "1080p 60fps"
+            };
+            mediaAssets.push(newAsset);
+            const newClip = {
+              id: Date.now() + fIdx,
+              slot: newAsset.slot,
+              title: newAsset.title,
+              file: newAsset.file,
+              duration: newAsset.duration,
+              startSec: 0.0,
+              endSec: newAsset.duration,
+              resolution: newAsset.resolution,
+              transition: globalJoinTransitionType,
+              transDur: globalJoinTransitionDur,
+              audioLinked: true,
+              audioVolume: 100,
+              audioOffsetSec: 0.0,
+              audioMuted: false
+            };
+            joinClips.splice(targetIndex + addedVideos, 0, newClip);
+            selectedJoinClipId = newClip.id;
+            addedVideos++;
+          }
+        });
+        renderJoinMediaBin();
+        renderJoinInspector();
+        renderJoinSequence();
+        if (addedAudios > 0 && addedVideos > 0) {
+          showToast(`動画${addedVideos}件と音声${addedAudios}件を取り込みました！`, 'success');
+        } else if (addedAudios > 0) {
+          showToast(`🎵 ${addedAudios}件の音声ファイルをBGMトラックに取り込みました！`, 'success');
+        } else {
+          showToast(`🎉 ${addedVideos}件の動画ファイルをシーケンスに取り込みました！`, 'success');
+        }
+        return;
+      }
+
+      // 3. Check Media Bin asset drag
+      const mediaAssetId = e.dataTransfer.getData('application/x-join-media');
+      if (mediaAssetId) {
+        const asset = mediaAssets.find(a => a.id === mediaAssetId);
+        if (asset) {
+          const newClip = {
+            id: Date.now(),
+            slot: asset.slot,
+            title: asset.title,
+            file: asset.file,
+            duration: asset.duration,
+            startSec: 0.0,
+            endSec: asset.duration,
+            resolution: asset.resolution,
+            transition: globalJoinTransitionType,
+            transDur: globalJoinTransitionDur,
+            audioLinked: true,
+            audioVolume: 100,
+            audioOffsetSec: 0.0,
+            audioMuted: false
+          };
+          joinClips.splice(targetIndex, 0, newClip);
+          selectedJoinClipId = newClip.id;
+          renderJoinInspector();
+          renderJoinSequence();
+          showToast(`「${asset.title}」をシーケンスの #${targetIndex + 1} に追加しました！`, 'success');
+        }
+        return;
+      }
+
+      // 4. Check Clip reorder drag
+      const reorderClipIdStr = e.dataTransfer.getData('application/x-join-clip-reorder');
+      if (reorderClipIdStr) {
+        const clipId = parseInt(reorderClipIdStr);
+        const sourceIndex = joinClips.findIndex(c => c.id === clipId);
+        if (sourceIndex !== -1) {
+          const [movedClip] = joinClips.splice(sourceIndex, 1);
+          const finalIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+          joinClips.splice(finalIndex, 0, movedClip);
+          selectedJoinClipId = movedClip.id;
+          renderJoinInspector();
+          renderJoinSequence();
+          showToast(`クリップ「${movedClip.title}」を #${finalIndex + 1} に並び替えました！`, 'success');
+        }
+      }
+    }
+
+    function promptAddCustomMediaAsset() {
+      const sampleAssets = [
+        { title: "試合パート3 (終盤ラウンド)", file: "apex_session_part3_final.mp4", duration: 540.0, slot: "main" },
+        { title: "アイキャッチ / トランジション", file: "eyecatch_logo_3s.mp4", duration: 3.5, slot: "clip" },
+        { title: "神プレイハイライト", file: "highlight_clutch_ace.mp4", duration: 25.0, slot: "clip" },
+        { title: "EDカード (Twitter/X告知)", file: "ending_sns_notice.mp4", duration: 15.0, slot: "ed" }
+      ];
+      const sample = sampleAssets[mediaAssets.length % sampleAssets.length];
+      const newAsset = {
+        id: 'm_' + Date.now(),
+        slot: sample.slot,
+        title: sample.title,
+        file: sample.file,
+        duration: sample.duration,
+        resolution: "1080p 60fps"
+      };
+      mediaAssets.push(newAsset);
+      renderJoinMediaBin();
+      showToast(`素材一覧に「${newAsset.title}」を追加しました！`, 'success');
+    }
+
+    function handleMediaBinDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      const dz = document.getElementById('join-media-bin-dropzone');
+      if (dz) dz.classList.add('border-indigo-500', 'bg-indigo-500/10');
+    }
+
+    function handleMediaBinDragLeave(e) {
+      const dz = document.getElementById('join-media-bin-dropzone');
+      if (dz) dz.classList.remove('border-indigo-500', 'bg-indigo-500/10');
+    }
+
+    function handleMediaBinDrop(e) {
+      e.preventDefault();
+      const dz = document.getElementById('join-media-bin-dropzone');
+      if (dz) dz.classList.remove('border-indigo-500', 'bg-indigo-500/10');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        Array.from(e.dataTransfer.files).forEach((file, idx) => {
+          const newAsset = {
+            id: 'm_' + Date.now() + '_' + idx,
+            slot: 'clip',
+            title: file.name.replace(/\.[^/.]+$/, ""),
+            file: file.name,
+            duration: 60.0,
+            resolution: "1080p 60fps"
+          };
+          mediaAssets.push(newAsset);
+        });
+        renderJoinMediaBin();
+        showToast(`📁 ${e.dataTransfer.files.length}件の動画を素材一覧に登録しました！`, 'success');
+      } else {
+        promptAddCustomMediaAsset();
+      }
+    }
+
+    function insertAssetIntoSequence(assetId, targetIndex) {
+      const asset = mediaAssets.find(a => a.id === assetId);
+      if (!asset) return;
+      const newClip = {
+        id: Date.now(),
+        slot: asset.slot,
+        title: asset.title,
+        file: asset.file,
+        duration: asset.duration,
+        startSec: 0.0,
+        endSec: asset.duration,
+        resolution: asset.resolution,
+        transition: globalJoinTransitionType,
+        transDur: globalJoinTransitionDur
+      };
+      if (typeof targetIndex === 'number') {
+        joinClips.splice(targetIndex, 0, newClip);
+      } else {
+        joinClips.push(newClip);
+      }
+      selectedJoinClipId = newClip.id;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`「${asset.title}」をシーケンスバーに追加しました！`, 'success');
+    }
+
+    // --- SEQUENCE BAR IN-PLACE CUTTING & TRIMMING ---
+    function splitJoinClipAtPlayhead() {
+      const clip = joinClips.find(c => c.id === selectedJoinClipId);
+      if (!clip) {
+        showToast('分割するクリップをシーケンスバーで選択してください', 'warning');
+        return;
+      }
+      splitJoinClipDirect(clip.id);
+    }
+
+    function splitJoinClipDirect(clipId) {
+      const idx = joinClips.findIndex(c => c.id === clipId);
+      if (idx === -1) return;
+      const clip = joinClips[idx];
+      const dur = clip.endSec - clip.startSec;
+      if (dur < 2.0) {
+        showToast('2秒未満の短いクリップは分割できません', 'warning');
+        return;
+      }
+      const splitPoint = parseFloat((clip.startSec + dur / 2).toFixed(1));
+      const secondPart = {
+        id: Date.now(),
+        slot: clip.slot,
+        title: clip.title + ' (後編)',
+        file: clip.file,
+        duration: clip.duration,
+        startSec: splitPoint,
+        endSec: clip.endSec,
+        resolution: clip.resolution,
+        transition: clip.transition,
+        transDur: clip.transDur
+      };
+      clip.title = clip.title + ' (前編)';
+      clip.endSec = splitPoint;
+      joinClips.splice(idx + 1, 0, secondPart);
+      selectedJoinClipId = secondPart.id;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`✂️ クリップを分割しました: 前編(${clip.startSec}s-${clip.endSec}s) と 後編(${secondPart.startSec}s-${secondPart.endSec}s)`, 'success');
+    }
+
+    function setJoinClipInFromPlayhead() {
+      const clip = joinClips.find(c => c.id === selectedJoinClipId);
+      if (!clip) return;
+      const newIn = parseFloat(Math.min(clip.endSec - 1.0, clip.startSec + 1.0).toFixed(1));
+      clip.startSec = newIn;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`開始カット(In点)を ${newIn.toFixed(1)}s に設定しました`);
+    }
+
+    function setJoinClipOutFromPlayhead() {
+      const clip = joinClips.find(c => c.id === selectedJoinClipId);
+      if (!clip) return;
+      const newOut = parseFloat(Math.max(clip.startSec + 1.0, clip.endSec - 1.0).toFixed(1));
+      clip.endSec = newOut;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`終了カット(Out点)を ${newOut.toFixed(1)}s に設定しました`);
+    }
+
+    function removeSelectedJoinClip() {
+      if (!selectedJoinClipId) return;
+      removeJoinClip(selectedJoinClipId);
+    }
+
+    function renderJoinInspector() {
+      const container = document.getElementById('join-clips-container');
+      const totalDurElem = document.getElementById('join-summary-total-duration');
+      const badgeElem = document.getElementById('join-clip-count-badge');
+      const listTitle = document.getElementById('join-list-title');
+      const trackHeaderCount = document.getElementById('join-track-header-count');
+      const trackStatusBadge = document.getElementById('join-track-status-badge');
+
+      const totalDur = getJoinEffectiveDuration();
+      const timecode = formatTimecode(totalDur);
+
+      if (totalDurElem) totalDurElem.innerText = timecode;
+      if (badgeElem) badgeElem.innerText = `${joinClips.length}本連結`;
+      if (listTitle) listTitle.innerText = `連結クリップ一覧 (${joinClips.length}本)`;
+      if (trackHeaderCount) trackHeaderCount.innerText = `${joinClips.length}クリップ`;
+      if (trackStatusBadge) trackStatusBadge.innerText = `実効総尺: ${timecode} (${joinClips.length}クリップ)`;
+
+      if (container) {
+        container.innerHTML = '';
+        joinClips.forEach((clip, idx) => {
+          const isSelected = clip.id === selectedJoinClipId;
+          const dur = (clip.endSec - clip.startSec).toFixed(1);
+          const card = document.createElement('div');
+          card.className = `p-3 rounded-xl border transition cursor-pointer space-y-2 ${
+            isSelected
+              ? 'bg-surface-card border-indigo-500/60 ring-1 ring-indigo-500/30 shadow-lg'
+              : 'bg-surface-card/70 hover:bg-surface-card border-surface-border'
+          }`;
+          card.onclick = () => selectJoinClip(clip.id);
+
+          let slotBadge = '';
+          if (clip.slot === 'op') slotBadge = '<span class="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-bold text-[9px] border border-purple-500/30">OP</span>';
+          else if (clip.slot === 'ed') slotBadge = '<span class="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">ED</span>';
+          else slotBadge = `<span class="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[9px] border border-indigo-500/30">#${idx + 1}</span>`;
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-1.5 min-w-0">
+                ${slotBadge}
+                <span class="font-semibold text-slate-200 text-xs truncate">${clip.title}</span>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button onclick="event.stopPropagation(); moveJoinClip(${clip.id}, -1)" class="p-0.5 rounded hover:bg-surface-base text-slate-400 hover:text-white text-[10px] ${idx === 0 ? 'opacity-30 pointer-events-none' : ''}" title="順序を上に移動">▲</button>
+                <button onclick="event.stopPropagation(); moveJoinClip(${clip.id}, 1)" class="p-0.5 rounded hover:bg-surface-base text-slate-400 hover:text-white text-[10px] ${idx === joinClips.length - 1 ? 'opacity-30 pointer-events-none' : ''}" title="順序を下に移動">▼</button>
+                <button onclick="event.stopPropagation(); removeJoinClip(${clip.id})" class="text-rose-400 hover:text-rose-300 text-[11px] ml-1">除外</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+              <span class="truncate">${clip.file}</span>
+              <span class="text-slate-500">${clip.resolution}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 pt-1 text-[10px]">
+              <div>
+                <label class="text-[9px] text-slate-400 block mb-0.5">開始カット (秒)</label>
+                <input type="number" step="0.5" value="${clip.startSec.toFixed(1)}"
+                  onclick="event.stopPropagation()"
+                  onchange="event.stopPropagation(); updateJoinClipRange(${clip.id}, 'start', parseFloat(this.value))"
+                  class="w-full bg-surface-base border border-surface-border rounded px-2 py-1 font-mono text-xs text-white outline-none focus:border-indigo-500">
+              </div>
+              <div>
+                <label class="text-[9px] text-slate-400 block mb-0.5">終了カット (秒)</label>
+                <input type="number" step="0.5" value="${clip.endSec.toFixed(1)}"
+                  onclick="event.stopPropagation()"
+                  onchange="event.stopPropagation(); updateJoinClipRange(${clip.id}, 'end', parseFloat(this.value))"
+                  class="w-full bg-surface-base border border-surface-border rounded px-2 py-1 font-mono text-xs text-white outline-none focus:border-indigo-500">
+              </div>
+            </div>
+            <div class="flex items-center justify-between pt-1 border-t border-surface-border/40 text-[10px]">
+              <div class="flex items-center gap-1">
+                <span class="text-slate-500">微調整:</span>
+                <button onclick="event.stopPropagation(); trimJoinClip(${clip.id}, -1.0, 0)" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300">-1s</button>
+                <button onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 1.0, 0)" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300">+1s</button>
+              </div>
+              <span class="font-mono text-indigo-300 font-semibold">使用尺: ${dur}秒</span>
+            </div>
+
+            <!-- Linked Audio (A1) Controls inside Clip Card -->
+            <div class="pt-2 border-t border-surface-border/40 space-y-1.5 bg-surface-base/40 -mx-1 px-2 py-1.5 rounded-lg">
+              <div class="flex items-center justify-between text-[10px]">
+                <span class="text-emerald-300 font-medium flex items-center gap-1">
+                  <span>🎵</span> 連動音声 (A1)
+                </span>
+                <span class="text-slate-400 font-mono text-[9px]">${globalAudioLinked ? '🔗 映像と連動中' : '⛓️‍💥 リンク解除'}</span>
+              </div>
+              <div class="flex items-center gap-2 text-[10px]">
+                <span class="text-slate-400 text-[9px] w-8">音量:</span>
+                <input type="range" min="0" max="200" value="${clip.audioVolume || 100}"
+                  onclick="event.stopPropagation()"
+                  oninput="event.stopPropagation(); updateClipAudioVolume(${clip.id}, parseInt(this.value))"
+                  class="flex-1 accent-emerald-500 h-1.5 bg-surface-base rounded">
+                <span class="font-mono text-emerald-400 text-[10px] w-8 text-right">${clip.audioVolume || 100}%</span>
+              </div>
+              <div class="flex items-center justify-between text-[9px] pt-0.5">
+                <span class="text-slate-400">音ズレ補正 (スリップ):</span>
+                <div class="flex items-center gap-1">
+                  <button onclick="event.stopPropagation(); adjustAudioOffset(${clip.id}, -0.1)" class="px-1 py-0.5 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300" title="音声を0.1秒早める">-0.1s</button>
+                  <span class="font-mono text-white px-1">${clip.audioOffsetSec === 0 ? '±0.0s' : (clip.audioOffsetSec > 0 ? '+' : '') + clip.audioOffsetSec.toFixed(2) + 's'}</span>
+                  <button onclick="event.stopPropagation(); adjustAudioOffset(${clip.id}, 0.1)" class="px-1 py-0.5 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-300" title="音声を0.1秒遅らせる">+0.1s</button>
+                  <button onclick="event.stopPropagation(); adjustAudioOffset(${clip.id}, 0, true)" class="px-1 py-0.5 rounded bg-surface-base hover:bg-surface-panel border border-surface-border text-slate-400" title="リセット">リセット</button>
+                </div>
+              </div>
+            </div>
+
+            ${idx < joinClips.length - 1 ? `
+            <div class="pt-1.5 border-t border-surface-border/30 flex items-center justify-between text-[10px]">
+              <span class="text-slate-400">次へのつなぎ目:</span>
+              <div class="flex items-center gap-1">
+                <select onclick="event.stopPropagation()" onchange="event.stopPropagation(); updateSingleJoinTransition(${idx}, this.value)" class="bg-surface-base border border-surface-border rounded px-1.5 py-0.5 text-[10px] text-slate-200 outline-none">
+                  <option value="クロスフェード" ${clip.transition === 'クロスフェード' ? 'selected' : ''}>クロスフェード</option>
+                  <option value="黒フェード" ${clip.transition === '黒フェード' ? 'selected' : ''}>黒フェード</option>
+                  <option value="カット" ${clip.transition === 'カット' ? 'selected' : ''}>カット</option>
+                </select>
+                <input type="number" step="0.1" value="${clip.transDur || 0.5}" min="0" max="3"
+                  onclick="event.stopPropagation()"
+                  onchange="event.stopPropagation(); updateSingleJoinTransDur(${idx}, parseFloat(this.value))"
+                  class="w-12 bg-surface-base border border-surface-border rounded px-1 py-0.5 font-mono text-[10px] text-white text-center">
+                <span class="text-slate-500 text-[9px]">秒</span>
+              </div>
+            </div>
+            ` : ''}
+          `;
+          container.appendChild(card);
+        });
+      }
+
+      // Render BGM / SE Section in Inspector
+      const bgmContainer = document.getElementById('join-bgm-container');
+      const bgmListTitle = document.getElementById('join-bgm-list-title');
+      const bgmHeaderCount = document.getElementById('join-bgm-header-count');
+      if (bgmListTitle) bgmListTitle.innerText = `BGM / 効果音トラック (${joinBgmClips.length}件)`;
+      if (bgmHeaderCount) bgmHeaderCount.innerText = `${joinBgmClips.length}トラック配置`;
+
+      if (bgmContainer) {
+        bgmContainer.innerHTML = '';
+        if (joinBgmClips.length === 0) {
+          bgmContainer.innerHTML = `<div class="text-center text-slate-500 text-[10px] py-2">BGMや効果音がありません。「+ BGM」で追加できます。</div>`;
+        } else {
+          joinBgmClips.forEach(bgm => {
+            const isAudioSelected = selectedJoinAudioId === bgm.id;
+            const bCard = document.createElement('div');
+            bCard.className = `p-2.5 rounded-xl border transition cursor-pointer space-y-1.5 ${
+              isAudioSelected
+                ? (bgm.type === 'bgm' ? 'bg-amber-950/40 border-amber-500/60 ring-1 ring-amber-500/40' : 'bg-purple-950/40 border-purple-500/60 ring-1 ring-purple-500/40')
+                : 'bg-surface-card/60 hover:bg-surface-card border-surface-border'
+            }`;
+            bCard.onclick = () => selectJoinAudio(bgm.id);
+
+            bCard.innerHTML = `
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="px-1.5 py-0.2 rounded ${bgm.type === 'bgm' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-purple-500/20 text-purple-300 border-purple-500/30'} font-mono text-[9px] font-bold border">${bgm.type.toUpperCase()}</span>
+                  <span class="font-semibold text-slate-200 text-xs truncate">${bgm.title}</span>
+                </div>
+                <button onclick="event.stopPropagation(); removeJoinBgm('${bgm.id}')" class="text-rose-400 hover:text-rose-300 text-[11px]">除外</button>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-[10px]">
+                <div>
+                  <label class="text-[9px] text-slate-400 block mb-0.5">開始位置 (秒)</label>
+                  <div class="flex items-center gap-1">
+                    <input type="number" step="0.5" value="${bgm.offsetSec.toFixed(1)}" min="0"
+                      onclick="event.stopPropagation()"
+                      onchange="event.stopPropagation(); updateBgmProperty('${bgm.id}', 'offsetSec', parseFloat(this.value))"
+                      class="w-full bg-surface-base border border-surface-border rounded px-1.5 py-0.5 font-mono text-xs text-white">
+                    <button onclick="event.stopPropagation(); updateBgmProperty('${bgm.id}', 'offsetSec', Math.max(0, bgm.offsetSec - 1.0))" class="px-1 py-0.5 rounded bg-surface-base border border-surface-border text-[9px] text-slate-300">-1s</button>
+                    <button onclick="event.stopPropagation(); updateBgmProperty('${bgm.id}', 'offsetSec', bgm.offsetSec + 1.0)" class="px-1 py-0.5 rounded bg-surface-base border border-surface-border text-[9px] text-slate-300">+1s</button>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-[9px] text-slate-400 block mb-0.5">音量 (${bgm.volume}%)</label>
+                  <input type="range" min="0" max="200" value="${bgm.volume}"
+                    onclick="event.stopPropagation()"
+                    oninput="event.stopPropagation(); updateBgmProperty('${bgm.id}', 'volume', parseInt(this.value))"
+                    class="w-full accent-amber-500 h-1.5 bg-surface-base rounded mt-1.5">
+                </div>
+              </div>
+              <div class="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
+                <span class="truncate">${bgm.file}</span>
+                <div class="flex items-center gap-1.5">
+                  <span>フェード: ${bgm.fadeIn}s / ${bgm.fadeOut}s</span>
+                  ${bgm.type === 'bgm' ? `<span class="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300">${bgm.ducking ? 'ダッキングON' : 'OFF'}</span>` : ''}
+                </div>
+              </div>
+            `;
+            bgmContainer.appendChild(bCard);
+          });
+        }
+      }
+    }
+
+    function renderJoinSequence() {
+      const row1 = document.getElementById('join-clips-sequence-row');
+      const row2 = document.getElementById('join-audio-sequence-row');
+      const row3 = document.getElementById('join-bgm-sequence-row');
+      if (!row1) return;
+      row1.innerHTML = '';
+      if (row2) row2.innerHTML = '';
+      if (row3) row3.innerHTML = '';
+
+      const totalDur = getJoinEffectiveDuration();
+      if (joinClips.length === 0) {
+        row1.innerHTML = `<div class="w-full text-center text-xs text-slate-500 py-2">動画クリップがありません。左上の素材一覧からドラッグ＆ドロップして並べてください。</div>`;
+        return;
+      }
+
+      joinClips.forEach((clip, idx) => {
+        const clipDur = Math.max(1, clip.endSec - clip.startSec);
+        const widthPct = Math.max(14, (clipDur / Math.max(1, totalDur)) * 100);
+        const isSelected = clip.id === selectedJoinClipId;
+
+        // --- Row 1: V1 Video Clip ---
+        const clipDiv = document.createElement('div');
+        clipDiv.className = `join-clip-item h-14 rounded-xl relative flex flex-col justify-between p-1.5 cursor-pointer transition select-none flex-shrink-0 border group ${
+          isSelected
+            ? 'bg-gradient-to-r from-indigo-900/60 to-surface-card border-indigo-400 text-white shadow-lg ring-1 ring-indigo-400'
+            : 'bg-surface-card hover:bg-surface-cardHover border-surface-border text-slate-300'
+        }`;
+        clipDiv.style.width = `calc(${widthPct.toFixed(1)}% - 6px)`;
+        clipDiv.setAttribute('draggable', 'true');
+        clipDiv.ondragstart = (e) => handleClipDragStart(e, clip.id);
+        clipDiv.onclick = () => selectJoinClip(clip.id);
+
+        let badgeColor = "bg-indigo-500/30 text-indigo-300 border-indigo-500/40";
+        if (clip.slot === 'op') badgeColor = "bg-purple-500/30 text-purple-300 border-purple-500/40";
+        else if (clip.slot === 'ed') badgeColor = "bg-emerald-500/30 text-emerald-300 border-emerald-500/40";
+
+        clipDiv.innerHTML = `
+          <!-- Left Trim Handle (In点) -->
+          <div onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 1.0, 0)" 
+               class="absolute left-0 top-0 bottom-0 w-2.5 hover:w-3.5 bg-slate-700/80 hover:bg-indigo-500 rounded-l-xl cursor-ew-resize flex items-center justify-center text-[8px] text-white opacity-40 hover:opacity-100 transition z-20" 
+               title="ドラッグまたはクリックで開始カット(In点)を調整">
+            ◀
+          </div>
+
+          <!-- Top Row: Grip, Slot, Title, Duration, Cut button -->
+          <div class="flex items-center justify-between gap-1 overflow-hidden pointer-events-none pl-1 pr-1">
+            <div class="flex items-center gap-1 min-w-0">
+              <span class="text-slate-500 text-[10px] cursor-grab pointer-events-auto">⋮⋮</span>
+              <span class="px-1 py-0.1 rounded ${badgeColor} font-mono text-[8px] font-bold border">${clip.slot.toUpperCase()}</span>
+              <span class="font-semibold text-xs truncate flex-1">${clip.title}</span>
+            </div>
+            <div class="flex items-center gap-1 flex-shrink-0 pointer-events-auto">
+              <span class="font-mono text-[10px] text-indigo-300 font-semibold">${clipDur.toFixed(1)}s</span>
+              <button onclick="event.stopPropagation(); splitJoinClipDirect(${clip.id})" class="p-0.5 rounded hover:bg-surface-base text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition text-[10px]" title="このクリップを分割 (カット)">
+                ✂️
+              </button>
+            </div>
+          </div>
+
+          <!-- In/Out Trim status & File Info -->
+          <div class="flex items-center justify-between text-[8px] text-slate-400 font-mono pointer-events-none pl-1 pr-1">
+            <span class="truncate text-slate-400">${clip.file}</span>
+            <span class="text-slate-400">${clip.startSec.toFixed(1)}s - ${clip.endSec.toFixed(1)}s</span>
+          </div>
+
+          <!-- Right Trim Handle (Out点) -->
+          <div onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 0, -1.0)" 
+               class="absolute right-0 top-0 bottom-0 w-2.5 hover:w-3.5 bg-slate-700/80 hover:bg-indigo-500 rounded-r-xl cursor-ew-resize flex items-center justify-center text-[8px] text-white opacity-40 hover:opacity-100 transition z-20" 
+               title="ドラッグまたはクリックで終了カット(Out点)を調整">
+            ▶
+          </div>
+        `;
+        row1.appendChild(clipDiv);
+
+        // --- Row 2: A1 Linked Audio Segment ---
+        if (row2) {
+          const audioDiv = document.createElement('div');
+          audioDiv.className = `join-audio-item h-10 rounded-lg relative flex items-center justify-between px-2 cursor-pointer transition select-none flex-shrink-0 border group overflow-hidden ${
+            isSelected
+              ? 'bg-emerald-950/70 border-emerald-400 text-white shadow ring-1 ring-emerald-400'
+              : 'bg-surface-card/90 hover:bg-surface-card border-surface-border text-emerald-300'
+          }`;
+          audioDiv.style.width = `calc(${widthPct.toFixed(1)}% - 6px)`;
+          audioDiv.onclick = () => selectJoinClip(clip.id);
+
+          const waveSvg = `
+            <svg class="absolute inset-0 w-full h-full opacity-15 pointer-events-none text-emerald-400" preserveAspectRatio="none" viewBox="0 0 100 24">
+              <path fill="currentColor" d="M0,12 L5,8 L10,16 L15,6 L20,18 L25,7 L30,17 L35,9 L40,15 L45,5 L50,19 L55,8 L60,16 L65,7 L70,17 L75,10 L80,14 L85,6 L90,18 L95,10 L100,12 L100,24 L0,24 Z"></path>
+            </svg>
+          `;
+
+          audioDiv.innerHTML = `
+            ${waveSvg}
+            <div class="flex items-center gap-1.5 min-w-0 z-10">
+              <span class="text-[9px] text-emerald-400">🎵</span>
+              <span class="text-[10px] font-medium truncate text-emerald-200">${clip.title} (音声)</span>
+            </div>
+            <div class="flex items-center gap-1 z-10 font-mono text-[9px] flex-shrink-0">
+              <span class="px-1 py-0.1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">${clip.audioVolume || 100}%</span>
+              <span class="text-slate-400 text-[8px]" title="音ズレオフセット">${clip.audioOffsetSec === 0 ? '±0.0s' : (clip.audioOffsetSec > 0 ? '+' : '') + clip.audioOffsetSec.toFixed(2) + 's'}</span>
+              ${!globalAudioLinked ? `
+                <div class="flex items-center gap-0.5 ml-0.5">
+                  <button onclick="event.stopPropagation(); adjustAudioOffset(${clip.id}, -0.1)" class="px-1 py-0.2 rounded bg-surface-base hover:bg-surface-panel text-slate-300 text-[8px] border border-surface-border" title="音ズレ -0.1s">◀</button>
+                  <button onclick="event.stopPropagation(); adjustAudioOffset(${clip.id}, 0.1)" class="px-1 py-0.2 rounded bg-surface-base hover:bg-surface-panel text-slate-300 text-[8px] border border-surface-border" title="音ズレ +0.1s">▶</button>
+                </div>
+              ` : ''}
+            </div>
+          `;
+          row2.appendChild(audioDiv);
+        }
+
+        // --- Transition Button on Row 1 and spacer on Row 2 ---
+        if (idx < joinClips.length - 1) {
+          const transBtn = document.createElement('button');
+          transBtn.className = "flex-shrink-0 px-2 py-1 rounded bg-surface-panel hover:bg-indigo-600/30 border border-surface-border hover:border-indigo-500/50 text-[10px] text-slate-300 hover:text-white transition flex items-center gap-1 shadow group z-10";
+          transBtn.title = `つなぎ目効果: ${clip.transition} (${clip.transDur}s) - クリックで効果を切り替え`;
+          transBtn.onclick = (e) => {
+            e.stopPropagation();
+            cycleJoinTransition(idx);
+          };
+          transBtn.innerHTML = `
+            <span class="text-xs group-hover:scale-110 transition">🔀</span>
+            <span class="font-mono text-[9px]">${clip.transition.slice(0, 3)} ${clip.transDur}s</span>
+          `;
+          row1.appendChild(transBtn);
+
+          if (row2) {
+            const transAudioSpacer = document.createElement('div');
+            transAudioSpacer.className = "flex-shrink-0 px-2 py-0.5 text-center font-mono text-[8px] text-slate-500";
+            transAudioSpacer.innerText = `${clip.transDur}s`;
+            row2.appendChild(transAudioSpacer);
+          }
+        }
+      });
+
+      // --- Row 3: A2 BGM / SE Audio Blocks ---
+      if (row3) {
+        if (joinBgmClips.length === 0) {
+          row3.innerHTML = `<span class="text-[9px] text-slate-500 px-2">BGM/効果音トラック (空) - 上部の「+BGM」または音声ファイルドロップで追加</span>`;
+        } else {
+          joinBgmClips.forEach(bgm => {
+            const leftPct = Math.max(0, Math.min(95, (bgm.offsetSec / Math.max(1, totalDur)) * 100));
+            const widthPct = Math.max(6, Math.min(100 - leftPct, (bgm.duration / Math.max(1, totalDur)) * 100));
+            const isAudioSelected = selectedJoinAudioId === bgm.id;
+
+            const bgmDiv = document.createElement('div');
+            bgmDiv.className = `absolute top-0.5 bottom-0.5 rounded-lg flex items-center justify-between px-2 cursor-grab active:cursor-grabbing border shadow-sm select-none group transition ${
+              isAudioSelected
+                ? (bgm.type === 'bgm' ? 'bg-amber-950/80 border-amber-400 ring-1 ring-amber-400 text-white' : 'bg-purple-950/80 border-purple-400 ring-1 ring-purple-400 text-white')
+                : (bgm.type === 'bgm' ? 'bg-amber-950/40 hover:bg-amber-900/50 border-amber-500/30 text-amber-200' : 'bg-purple-950/40 hover:bg-purple-900/50 border-purple-500/30 text-purple-200')
+            }`;
+            bgmDiv.style.left = `${leftPct.toFixed(1)}%`;
+            bgmDiv.style.width = `max(80px, ${widthPct.toFixed(1)}%)`;
+            bgmDiv.setAttribute('draggable', 'true');
+            bgmDiv.ondragstart = (e) => handleBgmDragStart(e, bgm.id);
+            bgmDiv.onclick = (e) => {
+              e.stopPropagation();
+              selectJoinAudio(bgm.id);
+            };
+
+            bgmDiv.innerHTML = `
+              <div class="flex items-center gap-1 min-w-0 pointer-events-none">
+                <span class="text-slate-400 text-[9px] cursor-grab pointer-events-auto">⋮⋮</span>
+                <span class="text-[9px] font-medium truncate">${bgm.title}</span>
+              </div>
+              <div class="flex items-center gap-1 font-mono text-[8px] flex-shrink-0 pointer-events-auto">
+                <span class="text-slate-400">${bgm.offsetSec.toFixed(1)}s~</span>
+                <span class="font-semibold ${bgm.type === 'bgm' ? 'text-amber-300' : 'text-purple-300'}">${bgm.volume}%</span>
+                <button onclick="event.stopPropagation(); removeJoinBgm('${bgm.id}')" class="p-0.5 rounded hover:bg-surface-base text-slate-400 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition text-[9px]" title="削除">✕</button>
+              </div>
+            `;
+            row3.appendChild(bgmDiv);
+          });
+        }
+      }
+    }
+
+    function toggleGlobalAudioLink() {
+      globalAudioLinked = !globalAudioLinked;
+      const btn = document.getElementById('toolbar-link-btn');
+      const icon = document.getElementById('toolbar-link-icon');
+      const label = document.getElementById('toolbar-link-label');
+      const headerBtn = document.getElementById('header-audio-link-btn');
+      const headerState = document.getElementById('header-link-state-text');
+
+      if (globalAudioLinked) {
+        if (btn) btn.className = "px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[10px] font-medium flex items-center gap-1 transition shadow-sm";
+        if (icon) icon.innerText = "🔗";
+        if (label) label.innerText = "映像・音声リンク: ON";
+        if (headerBtn) {
+          headerBtn.innerText = "🔗";
+          headerBtn.className = "hover:text-emerald-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50 text-emerald-300";
+        }
+        if (headerState) headerState.innerText = "🔗 映像リンク同期中";
+        showToast('🔗 映像・音声リンク同期: ON (映像移動時に音声も自動連動)', 'success');
+      } else {
+        if (btn) btn.className = "px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] font-medium flex items-center gap-1 transition shadow-sm";
+        if (icon) icon.innerText = "⛓️‍💥";
+        if (label) label.innerText = "映像・音声リンク: OFF";
+        if (headerBtn) {
+          headerBtn.innerText = "⛓️‍💥";
+          headerBtn.className = "hover:text-amber-300 px-1 py-0.5 rounded bg-surface-base border border-surface-border/50 text-amber-300";
+        }
+        if (headerState) headerState.innerText = "⛓️‍💥 リンク解除 (単独操作可能)";
+        showToast('⛓️‍💥 映像・音声リンク解除: 音声クリップを個別に移動・音ズレ補正可能', 'info');
+      }
+      renderJoinInspector();
+      renderJoinSequence();
+    }
+
+    function adjustAudioOffset(clipId, deltaSec, reset = false) {
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+      if (reset) {
+        clip.audioOffsetSec = 0.0;
+        showToast(`音声オフセットをリセットしました (±0.0s)`);
+      } else {
+        clip.audioOffsetSec = parseFloat((clip.audioOffsetSec + deltaSec).toFixed(2));
+        showToast(`音ズレ補正: ${clip.audioOffsetSec > 0 ? '+' : ''}${clip.audioOffsetSec.toFixed(2)}s`);
+      }
+      renderJoinInspector();
+      renderJoinSequence();
+    }
+
+    function updateClipAudioVolume(clipId, volume) {
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+      clip.audioVolume = Math.max(0, Math.min(200, volume));
+      renderJoinSequence();
+    }
+
+    function selectJoinAudio(audioId) {
+      selectedJoinAudioId = audioId;
+      renderJoinInspector();
+      renderJoinSequence();
+      const bgm = joinBgmClips.find(b => b.id === audioId);
+      if (bgm) {
+        showToast(`音声トラック「${bgm.title}」を選択しました`);
+      }
+    }
+
+    function addJoinBgmClipPrompt() {
+      const sampleBgms = [
+        { title: "🎶 BGM: ほのぼの日常", file: "bgm_daily_peace.mp3", duration: 180.0, volume: 30 },
+        { title: "🎶 BGM: 白熱バトル・戦闘", file: "bgm_battle_intense.mp3", duration: 150.0, volume: 35 },
+        { title: "🎶 BGM: オープニングテーマ", file: "bgm_ch_theme_op.mp3", duration: 90.0, volume: 40 }
+      ];
+      const sample = sampleBgms[joinBgmClips.length % sampleBgms.length];
+      const newBgm = {
+        id: 'bgm_' + Date.now(),
+        type: 'bgm',
+        title: sample.title,
+        file: sample.file,
+        offsetSec: 0.0,
+        duration: sample.duration,
+        volume: sample.volume,
+        fadeIn: 1.0,
+        fadeOut: 1.5,
+        loop: true,
+        ducking: true
+      };
+      joinBgmClips.push(newBgm);
+      selectedJoinAudioId = newBgm.id;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`BGM「${newBgm.title}」をタイムラインに追加しました！`, 'success');
+    }
+
+    function addJoinSeClipPrompt() {
+      const sampleSes = [
+        { title: "🔔 SE: ドン!(ツッコミ)", file: "se_impact_don.wav", duration: 1.5, volume: 80 },
+        { title: "🔔 SE: キラーン(ひらめき)", file: "se_sparkle_flash.wav", duration: 1.8, volume: 75 },
+        { title: "🔔 SE: 歓声・大喝采", file: "se_crowd_cheer.wav", duration: 3.5, volume: 85 }
+      ];
+      const sample = sampleSes[joinBgmClips.length % sampleSes.length];
+      const totalDur = getJoinEffectiveDuration();
+      const newSe = {
+        id: 'se_' + Date.now(),
+        type: 'se',
+        title: sample.title,
+        file: sample.file,
+        offsetSec: Math.max(0, Math.min(Math.max(1, totalDur - 2.0), currentTimeSeconds || 10.0)),
+        duration: sample.duration,
+        volume: sample.volume,
+        fadeIn: 0.0,
+        fadeOut: 0.2,
+        loop: false,
+        ducking: false
+      };
+      joinBgmClips.push(newSe);
+      selectedJoinAudioId = newSe.id;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`効果音「${newSe.title}」を追加しました (開始: ${newSe.offsetSec.toFixed(1)}s)`, 'success');
+    }
+
+    function removeJoinBgm(id) {
+      joinBgmClips = joinBgmClips.filter(b => b.id !== id);
+      if (selectedJoinAudioId === id) selectedJoinAudioId = null;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast('音声トラックを除外しました');
+    }
+
+    function updateBgmProperty(id, prop, val) {
+      const bgm = joinBgmClips.find(b => b.id === id);
+      if (!bgm) return;
+      bgm[prop] = val;
+      renderJoinInspector();
+      renderJoinSequence();
+    }
+
+    function selectJoinClip(id) {
+      selectedJoinClipId = id;
+      renderJoinInspector();
+      renderJoinSequence();
+      const clip = joinClips.find(c => c.id === id);
+      if (clip) {
+        showToast(`クリップ「${clip.title}」を選択しました`);
+      }
+    }
+
+    function addJoinClipFromPrompt() {
+      const sampleNames = [
+        { title: "試合パート2 (中盤)", file: "gameplay_match_part2.mp4", duration: 420.0, slot: "part" },
+        { title: "ハイライト (決着シーン)", file: "clutch_moment_final.mp4", duration: 45.0, slot: "highlight" },
+        { title: "ショートCM / スポンサー", file: "sponsor_card_10s.mp4", duration: 10.0, slot: "ad" }
+      ];
+      const sample = sampleNames[(joinClips.length) % sampleNames.length];
+      const newClip = {
+        id: Date.now(),
+        slot: sample.slot,
+        title: sample.title,
+        file: sample.file,
+        duration: sample.duration,
+        startSec: 0.0,
+        endSec: sample.duration,
+        resolution: "1080p 60fps",
+        transition: globalJoinTransitionType,
+        transDur: globalJoinTransitionDur
+      };
+      joinClips.push(newClip);
+      selectedJoinClipId = newClip.id;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`新しい動画「${newClip.title}」を連結シーケンスに追加しました！`, 'success');
+    }
+
+    function setJoinSlot(slot) {
+      if (slot === 'op') {
+        const existingOp = joinClips.find(c => c.slot === 'op');
+        if (existingOp) {
+          existingOp.file = "custom_new_op_2026.mp4";
+          existingOp.title = "新オープニング (OP)";
+        } else {
+          joinClips.unshift({
+            id: Date.now(),
+            slot: "op",
+            title: "オープニング (OP)",
+            file: "opening_ch_intro.mp4",
+            duration: 15.0,
+            startSec: 0.0,
+            endSec: 15.0,
+            resolution: "1080p 60fps",
+            transition: "クロスフェード",
+            transDur: 0.5
+          });
+        }
+        showToast('🎬 オープニング動画(OP)を設定しました', 'success');
+      } else if (slot === 'ed') {
+        const existingEd = joinClips.find(c => c.slot === 'ed');
+        if (existingEd) {
+          existingEd.file = "custom_new_ed_card.mp4";
+          existingEd.title = "新エンディング (ED)";
+        } else {
+          joinClips.push({
+            id: Date.now(),
+            slot: "ed",
+            title: "エンディング (ED)",
+            file: "ending_card_subscribe.mp4",
+            duration: 20.0,
+            startSec: 0.0,
+            endSec: 20.0,
+            resolution: "1080p 60fps",
+            transition: "カット",
+            transDur: 0.0
+          });
+        }
+        showToast('🏁 エンディング動画(ED)を設定しました', 'success');
+      }
+      renderJoinInspector();
+      renderJoinSequence();
+    }
+
+    function moveJoinClip(id, direction) {
+      const idx = joinClips.findIndex(c => c.id === id);
+      if (idx === -1) return;
+      const targetIdx = idx + direction;
+      if (targetIdx < 0 || targetIdx >= joinClips.length) return;
+      const item = joinClips.splice(idx, 1)[0];
+      joinClips.splice(targetIdx, 0, item);
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast('クリップの再生順序を入れ替えました');
+    }
+
+    function removeJoinClip(id) {
+      joinClips = joinClips.filter(c => c.id !== id);
+      if (selectedJoinClipId === id) {
+        selectedJoinClipId = joinClips.length > 0 ? joinClips[0].id : null;
+      }
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast('クリップをシーケンスから除外しました');
+    }
+
+    function trimJoinClip(id, deltaStart, deltaEnd) {
+      const clip = joinClips.find(c => c.id === id);
+      if (!clip) return;
+      let newStart = Math.max(0, parseFloat((clip.startSec + deltaStart).toFixed(1)));
+      let newEnd = Math.min(clip.duration, parseFloat((clip.endSec + deltaEnd).toFixed(1)));
+      if (newEnd - newStart < 1.0) {
+        showToast('クリップの最小尺は1秒です', 'warning');
+        return;
+      }
+      clip.startSec = newStart;
+      clip.endSec = newEnd;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`カット範囲を調整: ${newStart.toFixed(1)}s - ${newEnd.toFixed(1)}s`);
+    }
+
+    function updateJoinClipRange(id, field, value) {
+      const clip = joinClips.find(c => c.id === id);
+      if (!clip || isNaN(value)) return;
+      if (field === 'start') {
+        if (value >= clip.endSec) {
+          showToast('開始時間は終了時間より前に設定してください', 'warning');
+          renderJoinInspector();
+          return;
+        }
+        clip.startSec = Math.max(0, value);
+      } else if (field === 'end') {
+        if (value <= clip.startSec) {
+          showToast('終了時間は開始時間より後に設定してください', 'warning');
+          renderJoinInspector();
+          return;
+        }
+        clip.endSec = Math.min(clip.duration, value);
+      }
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast('クリップのカット範囲を更新しました');
+    }
+
+    function cycleJoinTransition(idx) {
+      if (!joinClips[idx]) return;
+      const types = ["クロスフェード", "黒フェード", "カット"];
+      const curr = joinClips[idx].transition || "クロスフェード";
+      const next = types[(types.indexOf(curr) + 1) % types.length];
+      joinClips[idx].transition = next;
+      if (next === "カット") joinClips[idx].transDur = 0.0;
+      else if (!joinClips[idx].transDur || joinClips[idx].transDur === 0) joinClips[idx].transDur = 0.5;
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`つなぎ目 #${idx + 1} を「${next}」に変更しました`);
+    }
+
+    function updateSingleJoinTransition(idx, type) {
+      if (!joinClips[idx]) return;
+      joinClips[idx].transition = type;
+      if (type === "カット") joinClips[idx].transDur = 0.0;
+      else if (!joinClips[idx].transDur || joinClips[idx].transDur === 0) joinClips[idx].transDur = 0.5;
+      renderJoinSequence();
+    }
+
+    function updateSingleJoinTransDur(idx, dur) {
+      if (!joinClips[idx] || isNaN(dur)) return;
+      joinClips[idx].transDur = Math.max(0, dur);
+      renderJoinInspector();
+      renderJoinSequence();
+    }
+
+    function applyGlobalJoinTransition(type) {
+      globalJoinTransitionType = type;
+      joinClips.forEach(c => {
+        c.transition = type;
+        if (type === "カット") c.transDur = 0.0;
+        else if (!c.transDur || c.transDur === 0) c.transDur = globalJoinTransitionDur;
+      });
+      renderJoinInspector();
+      renderJoinSequence();
+      showToast(`すべてのつなぎ目を「${type}」に一括設定しました`);
+    }
+
+    function updateJoinTransitionDuration(dur) {
+      if (isNaN(dur)) return;
+      globalJoinTransitionDur = Math.max(0, dur);
+      joinClips.forEach(c => {
+        if (c.transition !== "カット") c.transDur = globalJoinTransitionDur;
+      });
+      renderJoinInspector();
+      renderJoinSequence();
+    }
+
+    function toggleJoinLoudnorm(checked) {
+      joinLoudnormEnabled = checked;
+      showToast(checked ? '音量自動均一化 (Loudnorm -16 LUFS) を有効化' : '音量自動均一化を無効化');
+    }
+
+    function commitJoinToMainEditor() {
+      const totalDur = getJoinEffectiveDuration();
+      showToast(`✅ ${joinClips.length}本の動画を連結して本編タイムラインを展開しました！`, 'success');
+      addLogEntry(`動画連結シーケンス構築完了: ${joinClips.length}本 (総尺: ${formatTimecode(totalDur)}, Loudnorm: ${joinLoudnormEnabled ? 'ON' : 'OFF'})`);
+      setEditTool('cut');
+    }
+
+    function exportJoinedVideoQuick() {
+      showToast('🚀 FFmpeg Concat による高速結合書き出しを開始しました...', 'info');
+      addLogEntry('FFmpeg 高速Concat書き出し実行: normalized streams -> concat manifest -> output.mp4');
+      setTimeout(() => {
+        showToast('🎉 結合動画の書き出しが完了しました！ (output_assembled.mp4)', 'success');
+      }, 1200);
+    }
+
+    function startJoinWorkflow() {
+      navigateView('editor-cut');
+      setEditTool('join');
+    }
+
     // CODEX ASSISTANT (Chat & Proposals)
     function switchCodexSubTab(tab) {
       if (tab === 'chat') {
@@ -3689,6 +5231,14 @@ ${escapeHtml(log.details)}
           } else {
             setCutOutPoint();
           }
+        } else if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey) {
+          if (!document.getElementById('view-editor').classList.contains('hidden')) {
+            setEditTool('cut');
+          }
+        } else if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey) {
+          if (!document.getElementById('view-editor').classList.contains('hidden')) {
+            setEditTool('move');
+          }
         }
       });
     }
@@ -3702,6 +5252,9 @@ ${escapeHtml(log.details)}
       renderShortClips();
       renderShortTimeline();
       renderHighlightCandidates();
+      renderJoinMediaBin();
+      renderJoinInspector();
+      renderJoinSequence();
       updatePlayheadUI();
       renderLogs();
     });

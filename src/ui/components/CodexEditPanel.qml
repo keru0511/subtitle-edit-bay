@@ -11,8 +11,8 @@ Rectangle {
     property bool expanded: false
     implicitHeight: expanded ? 300 : 42
     radius: 9
-    color: "#101812"
-    border.color: backend && backend.codexState === "error" ? "#C66B62" : "#34463A"
+    color: "#161B22"
+    border.color: backend && backend.codexState === "error" ? "#EF4444" : "#30363D"
     clip: true
 
     function selectedOperationIds() {
@@ -95,7 +95,7 @@ Rectangle {
             Layout.fillWidth: true
             Text {
                 text: "Codexで編集"
-                color: "#E8EFEA"
+                color: "#F0F6FC"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 11
                 font.weight: Font.Bold
@@ -103,7 +103,7 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 text: panel.stateLabel(backend ? backend.codexState : "disabled")
-                color: backend && backend.codexState === "error" ? "#F1A39A" : "#AEBEB3"
+                color: backend && backend.codexState === "error" ? "#EF4444" : "#8B949E"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 9
                 horizontalAlignment: Text.AlignRight
@@ -150,7 +150,7 @@ Rectangle {
                     text: "0.000"
                     validator: DoubleValidator { bottom: 0; top: 86400; decimals: 3 }
                 }
-                Text { text: "秒"; color: "#AEBEB3"; font.pixelSize: 9 }
+                Text { text: "秒"; color: "#8B949E"; font.pixelSize: 9 }
             }
 
             TextArea {
@@ -186,14 +186,14 @@ Rectangle {
                     onClicked: backend.stopCodexEdit()
                 }
                 Item { Layout.fillWidth: true }
-                Text { text: panel.proposalData.summary || ""; color: "#B8D7A8"; elide: Text.ElideRight }
+                Text { text: panel.proposalData.summary || ""; color: "#10B981"; elide: Text.ElideRight }
             }
 
             Text {
                 objectName: "codexAgentMessageText"
                 Layout.fillWidth: true
                 text: backend ? backend.codexMessage : ""
-                color: "#AEBEB3"
+                color: "#8B949E"
                 font.family: "Cascadia Mono"
                 font.pixelSize: 9
                 elide: Text.ElideRight
@@ -211,7 +211,7 @@ Rectangle {
                     property string operationId: panel.operationIdFor(modelData, index)
                     width: proposalList.width
                     height: 34
-                    color: "#172219"
+                    color: "#21262D"
                     radius: 5
                     RowLayout {
                         anchors.fill: parent
@@ -222,8 +222,8 @@ Rectangle {
                             checked: panel.isOperationSelected(operationId)
                             onToggled: panel.setOperationSelected(operationId, checked)
                         }
-                        Text { text: panel.operationLabel(modelData.type); color: "#E8EFEA"; font.pixelSize: 9 }
-                        Text { Layout.fillWidth: true; text: modelData.reason || "字幕の変更を提案"; color: "#AEBEB3"; elide: Text.ElideRight; font.pixelSize: 9 }
+                        Text { text: panel.operationLabel(modelData.type); color: "#F0F6FC"; font.pixelSize: 9 }
+                        Text { Layout.fillWidth: true; text: modelData.reason || "字幕の変更を提案"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 9 }
                     }
                 }
             }
@@ -250,7 +250,7 @@ Rectangle {
             Text {
                 visible: backend && backend.codexError
                 text: backend ? backend.codexError : ""
-                color: "#F1A39A"
+                color: "#EF4444"
                 font.pixelSize: 9
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true

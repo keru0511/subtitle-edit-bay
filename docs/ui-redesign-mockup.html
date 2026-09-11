@@ -52,6 +52,42 @@
         rgba(244, 63, 94, 0.5) 16px
       );
     }
+    /* Timeline Grid & Magnetic Snap Styles */
+    :root {
+      --grid-major-size: 80px;
+      --grid-minor-size: 16px;
+    }
+    .timeline-grid-pattern {
+      background-color: #0c111d;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+        linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: var(--grid-major-size) 100%, var(--grid-minor-size) 100%;
+    }
+    .timeline-snap-line {
+      box-shadow: 0 0 12px #22d3ee, 0 0 2px #fff;
+    }
+    .trim-handle-active {
+      background-color: #6366f1 !important;
+      opacity: 1 !important;
+      box-shadow: 0 0 10px rgba(99, 102, 241, 0.9);
+    }
+    .slice-flash {
+      animation: sliceFlash 0.35s ease-out forwards;
+    }
+    @keyframes sliceFlash {
+      0% { box-shadow: 0 0 0 2px #f43f5e, 0 0 24px #f43f5e; filter: brightness(1.9); }
+      100% { box-shadow: none; filter: brightness(1); }
+    }
+    .skip-badge-anim {
+      animation: skipBadgePop 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes skipBadgePop {
+      0% { opacity: 0; transform: translate(-50%, 0) scale(0.85); }
+      20% { opacity: 1; transform: translate(-50%, -16px) scale(1.05); }
+      80% { opacity: 1; transform: translate(-50%, -16px) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -28px) scale(0.9); }
+    }
   </style>
 </head>
 <body class="bg-surface-base text-slate-100 font-sans h-screen flex flex-col select-none overflow-hidden text-sm relative">
@@ -465,13 +501,47 @@
               <div class="flex items-center gap-3 text-slate-400">
                 <div class="flex items-center gap-1.5">
                   <span class="text-[11px]">ズーム</span>
-                  <input type="range" class="w-20 accent-brand-500 h-1 bg-surface-card rounded" value="50" oninput="showToast('ズーム倍率: ' + this.value + '%')">
+                  <input id="timeline-zoom-slider" type="range" min="50" max="250" value="100" class="w-20 accent-brand-500 h-1.5 bg-surface-card rounded cursor-pointer" oninput="updateTimelineZoom(this.value)" title="タイムラインのズーム倍率を調整 (グリッド格子線が伸縮)">
+                  <span id="timeline-zoom-label" class="text-[10px] font-mono text-slate-300 w-8 text-right">100%</span>
                 </div>
                 <div class="h-3.5 w-[1px] bg-surface-border"></div>
-                <label class="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-300">
-                  <input type="checkbox" checked class="accent-brand-500 rounded" onchange="showToast(this.checked ? 'スナップ有効 (100ms)' : 'スナップ無効')">
-                  スナップ (100ms)
+                <label class="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-300 hover:text-white transition">
+                  <input id="timeline-snap-checkbox" type="checkbox" checked class="accent-cyan-400 rounded cursor-pointer" onchange="toggleMagneticSnap(this.checked)">
+                  <span class="flex items-center gap-1"><span class="text-cyan-400">🧲</span>スナップ吸着 (0.5s/端)</span>
                 </label>
+              </div>
+            </div>
+
+            <!-- Quick Interactive Usage Hints Banner (動画編集の使用感を試せるガイド) -->
+            <div id="timelineInteractiveGuide" class="h-6 px-4 bg-indigo-950/40 border-b border-indigo-500/20 flex items-center justify-between text-[10px] text-slate-300 select-none flex-shrink-0">
+              <div class="flex items-center gap-3 overflow-hidden">
+                <span class="font-bold flex items-center gap-1 text-indigo-300 flex-shrink-0">💡 操作テスト:</span>
+                <div class="flex items-center gap-3 truncate text-[10px]">
+                  <span class="hover:text-white transition cursor-pointer flex items-center gap-1" onclick="setEditTool('cut')">
+                    <kbd class="px-1 py-0.2 bg-surface-card rounded border border-surface-border font-mono text-[9px] text-amber-300">C</kbd>
+                    <span>クリックで即座にスライスカット</span>
+                  </span>
+                  <span class="text-slate-600">•</span>
+                  <span class="hover:text-white transition cursor-pointer flex items-center gap-1" onclick="setEditTool('move')">
+                    <kbd class="px-1 py-0.2 bg-surface-card rounded border border-surface-border font-mono text-[9px] text-cyan-300">V</kbd>
+                    <span>クリップ・BGMをドラッグ移動＆並び替え</span>
+                  </span>
+                  <span class="text-slate-600">•</span>
+                  <span class="flex items-center gap-1 text-slate-300">
+                    <span class="font-mono text-indigo-300 font-bold">◀ ▶</span>
+                    <span>クリップ両端ドラッグで伸縮トリミング</span>
+                  </span>
+                  <span class="text-slate-600">•</span>
+                  <span class="hover:text-white transition cursor-pointer flex items-center gap-1" onclick="togglePlay()">
+                    <kbd class="px-1 py-0.2 bg-surface-card rounded border border-surface-border font-mono text-[9px] text-emerald-300">Space</kbd>
+                    <span>再生 (カット自動スキップ)</span>
+                  </span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <span id="activeToolIndicatorBadge" class="px-2 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-mono text-[9px] font-semibold flex items-center gap-1">
+                  <span>✂️</span><span>カットツール (スライス待機)</span>
+                </span>
               </div>
             </div>
 
@@ -599,7 +669,24 @@
                 </div>
 
                 <!-- Tracks Canvas Container -->
-                <div id="timelineTracksCanvas" class="flex-1 p-2 relative">
+                <div id="timelineTracksCanvas" class="flex-1 p-2 relative timeline-grid-pattern">
+                  <!-- Snap Guide Line (Magnetic 吸着ガイド縦線) -->
+                  <div id="timelineSnapGuideLine" class="absolute top-0 bottom-0 w-[2px] bg-cyan-400 timeline-snap-line z-40 pointer-events-none hidden">
+                    <div class="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-cyan-500 text-slate-950 font-mono text-[9px] font-extrabold shadow-md flex items-center gap-1 whitespace-nowrap">
+                      <span>🧲</span><span id="timelineSnapTimeText">00:05.000 (スナップ吸着)</span>
+                    </div>
+                  </div>
+
+                  <!-- Floating Trim Tooltip (クリップ両端トリム伸縮中の秒数バッジ) -->
+                  <div id="timelineTrimTooltip" class="absolute px-2 py-0.5 rounded-md bg-indigo-600 text-white font-mono text-[10px] font-bold shadow-lg z-50 pointer-events-none hidden whitespace-nowrap border border-indigo-400 flex items-center gap-1">
+                    <span id="timelineTrimTooltipText">開始: 00:02.5s (+1.0s)</span>
+                  </div>
+
+                  <!-- Skip Badge on Cut Playback (カット自動スキップ時のポップアップ) -->
+                  <div id="timelineSkipBadge" class="absolute top-1 px-2 py-0.5 rounded-full bg-rose-600/95 text-white font-mono text-[10px] font-extrabold shadow-lg z-40 pointer-events-none hidden whitespace-nowrap flex items-center gap-1 border border-rose-400">
+                    <span>⚡ カット区間スキップ</span>
+                  </div>
+
                   <!-- Standard Multi-Track Timeline (Cut / Subtitle / Audio) -->
                   <div id="timelineTracksInner" class="relative w-full h-full flex flex-col gap-2">
                     <!-- Playhead (Scrubber line that stretches vertically across all tracks!) -->
@@ -609,12 +696,12 @@
 
                     <!-- Drag Selection Overlay Box -->
                     <div id="timelineSelectionBox" class="absolute top-0 bottom-0 bg-amber-400/20 border-2 border-amber-400 rounded-md pointer-events-none z-20 hidden flex items-center justify-center">
-                      <span id="timelineSelectionBadge" class="bg-amber-500 text-slate-950 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow">10.0s - 13.0s を選択中</span>
+                      <span id="timelineSelectionBadge" class="bg-amber-500 text-slate-950 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow">10.0s - 13.0s を選択中 (Deleteでカット)</span>
                     </div>
 
                     <!-- Track V1 Content (Video Waveform & Silence Cut Blocks) -->
-                    <div id="timeline-video-track" class="h-10 rounded-lg bg-surface-card border border-surface-border relative overflow-hidden flex items-center">
-                      <span class="absolute left-2 top-0.5 text-[8px] font-mono text-slate-400 uppercase tracking-wider z-10 pointer-events-none">V1 映像 / カット</span>
+                    <div id="timeline-video-track" class="h-10 rounded-lg bg-surface-card/85 border border-surface-border relative overflow-hidden flex items-center">
+                      <span class="absolute left-2 top-0.5 text-[8px] font-mono text-slate-400 uppercase tracking-wider z-10 pointer-events-none">V1 映像 / カット (波形クリックで分割)</span>
                       <div id="video-track-content" class="absolute inset-0 flex items-center"></div>
                     </div>
 
@@ -644,10 +731,10 @@
                           <span id="toolbar-link-icon">🔗</span> <span id="toolbar-link-label">映像・音声リンク: ON</span>
                         </button>
                         <span class="text-slate-600">•</span>
-                        <span class="text-[10px] text-slate-400">✋ 移動: クリップやBGMを掴んでドラッグ移動 | ◀ ▶: トリム | ⛓️‍💥: 音ズレ補正</span>
+                        <span class="text-[10px] text-slate-400">✋ 移動: クリップやBGMをマウスで掴んでドラッグ移動 | ◀ ▶: 端をドラッグして伸縮</span>
                       </div>
                       <div class="flex items-center gap-1.5">
-                        <button onclick="splitJoinClipAtPlayhead()" class="px-2 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[10px] flex items-center gap-1 transition shadow-sm active:scale-95" title="再生ヘッド位置で選択クリップを分割 (カット)">
+                        <button onclick="splitJoinClipAtPlayhead()" class="px-2 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[10px] flex items-center gap-1 transition shadow-sm active:scale-95" title="再生ヘッド位置で選択クリップを分割 (カット) [S]">
                           <span>✂️</span> 分割
                         </button>
                         <button onclick="setJoinClipInFromPlayhead()" class="px-1.5 py-0.5 rounded bg-surface-card hover:bg-surface-cardHover text-slate-300 hover:text-white border border-surface-border text-[10px] font-mono transition active:scale-95" title="現在の再生位置を開始カット(In点)に設定">
@@ -670,12 +757,12 @@
                       </div>
                     </div>
 
-                    <!-- Multi-Track Canvas Area (V1 Video, A1 Linked Audio, A2 BGM/SE) -->
+                    <!-- Multi-Track Canvas Area (V1 Video, A1 Linked Audio, A2 BGM/SE) with Grid -->
                     <div id="join-sequence-canvas"
                          ondragover="handleSequenceDragOver(event)"
                          ondragleave="handleSequenceDragLeave(event)"
                          ondrop="handleSequenceDrop(event)"
-                         class="flex-1 bg-surface-base/80 rounded-xl border border-surface-border relative overflow-x-auto overflow-y-hidden flex flex-col justify-between p-1.5 gap-1.5 select-none transition">
+                         class="flex-1 timeline-grid-pattern rounded-xl border border-surface-border relative overflow-x-auto overflow-y-hidden flex flex-col justify-between p-1.5 gap-1.5 select-none transition">
                       <!-- Visual Drop Insertion Indicator -->
                       <div id="join-drop-indicator" class="absolute top-1.5 bottom-1.5 w-1 bg-indigo-400 shadow-lg shadow-indigo-500/80 rounded z-30 pointer-events-none hidden transition-all"></div>
                       
@@ -2236,6 +2323,80 @@ ${escapeHtml(log.details)}
     }
 
     let currentEditTool = 'cut'; // 'cut' | 'move' | 'join'
+    let timelineZoomPercent = 100;
+    let magneticSnapEnabled = true;
+
+    function updateTimelineZoom(val) {
+      timelineZoomPercent = parseInt(val) || 100;
+      const label = document.getElementById('timeline-zoom-label');
+      if (label) label.innerText = `${timelineZoomPercent}%`;
+      const majorPx = (80 * (timelineZoomPercent / 100)).toFixed(0);
+      const minorPx = (16 * (timelineZoomPercent / 100)).toFixed(0);
+      document.documentElement.style.setProperty('--grid-major-size', `${majorPx}px`);
+      document.documentElement.style.setProperty('--grid-minor-size', `${minorPx}px`);
+      showToast(`タイムラインズーム: ${timelineZoomPercent}% (グリッド目盛りスケーリング)`, 'info');
+    }
+
+    function toggleMagneticSnap(checked) {
+      magneticSnapEnabled = !!checked;
+      const guide = document.getElementById('timelineSnapGuideLine');
+      if (!magneticSnapEnabled && guide) guide.classList.add('hidden');
+      showToast(magneticSnapEnabled ? '🧲 スナップ吸着: 有効 (グリッド・境界・再生ヘッドに吸着)' : 'スナップ吸着: 無効', 'info');
+    }
+
+    function findMagneticSnapSec(targetSec, snapThresholdSec = 0.35) {
+      if (!magneticSnapEnabled) return { snappedSec: targetSec, isSnapped: false, label: '' };
+
+      const candidates = [];
+      // 1. Grid targets (0.5s intervals)
+      const gridSnapSec = Math.round(targetSec / 0.5) * 0.5;
+      candidates.push({ sec: gridSnapSec, label: `グリッド ${gridSnapSec.toFixed(1)}s` });
+
+      // 2. Playhead target
+      if (typeof currentTimeSeconds === 'number') {
+        candidates.push({ sec: currentTimeSeconds, label: `再生ヘッド ${currentTimeSeconds.toFixed(1)}s` });
+      }
+
+      // 3. Sequence clip boundary targets
+      if (Array.isArray(joinClips)) {
+        let accSec = 0;
+        joinClips.forEach((c) => {
+          candidates.push({ sec: accSec, label: `クリップ境界 (${c.title})` });
+          const dur = Math.max(0.1, c.endSec - c.startSec);
+          accSec += dur;
+          candidates.push({ sec: accSec, label: `クリップ境界 (${c.title})` });
+        });
+      }
+
+      let closest = null;
+      let minDiff = Infinity;
+      candidates.forEach(cand => {
+        const diff = Math.abs(cand.sec - targetSec);
+        if (diff <= snapThresholdSec && diff < minDiff) {
+          minDiff = diff;
+          closest = cand;
+        }
+      });
+
+      if (closest) {
+        return { snappedSec: parseFloat(closest.sec.toFixed(2)), isSnapped: true, label: closest.label };
+      }
+      return { snappedSec: targetSec, isSnapped: false, label: '' };
+    }
+
+    function showSnapGuideLine(xPx, timeText) {
+      const line = document.getElementById('timelineSnapGuideLine');
+      const text = document.getElementById('timelineSnapTimeText');
+      if (!line) return;
+      line.style.left = `${Math.max(0, xPx)}px`;
+      if (text) text.innerText = timeText || '00:00.00 (吸着)';
+      line.classList.remove('hidden');
+    }
+
+    function hideSnapGuideLine() {
+      const line = document.getElementById('timelineSnapGuideLine');
+      if (line) line.classList.add('hidden');
+    }
 
     function setEditTool(tool) {
       currentEditTool = tool;
@@ -2250,6 +2411,13 @@ ${escapeHtml(log.details)}
           }
         }
       });
+
+      const toolBadge = document.getElementById('activeToolIndicatorBadge');
+      if (toolBadge) {
+        if (tool === 'cut') toolBadge.innerHTML = '<span>✂️</span><span>カットツール (クリックスライス待機)</span>';
+        else if (tool === 'move') toolBadge.innerHTML = '<span>✋</span><span>移動ツール (クリップ・BGMドラッグ移動)</span>';
+        else if (tool === 'join') toolBadge.innerHTML = '<span>🔗</span><span>動画結合ツール (素材一覧D&D・つなぎ目)</span>';
+      }
 
       const mediaBin = document.getElementById('join-media-bin-panel');
       const tracksInner = document.getElementById('timelineTracksInner');
@@ -2270,7 +2438,7 @@ ${escapeHtml(log.details)}
         if (inspJoin) inspJoin.classList.add('hidden');
         updateHeaderModeIndicator('🎬', '動画編集 (✂️ カット)');
         if (caption) caption.innerText = 'カット編集プレビュー (波形・無音検出)';
-        showToast('✂️ カットツール: 範囲指定または無音検出でカット', 'info');
+        showToast('✂️ カットツール: 範囲指定またはクリップクリックでスライスカット', 'info');
       } else if (tool === 'move') {
         if (mediaBin) mediaBin.classList.add('hidden');
         if (tracksInner) tracksInner.classList.add('hidden');
@@ -2283,7 +2451,7 @@ ${escapeHtml(log.details)}
         renderJoinSequence();
         updateHeaderModeIndicator('🎬', '動画編集 (✋ シーケンス移動)');
         if (caption) caption.innerText = 'シーケンス移動プレビュー (並び替え・トリム)';
-        showToast('✋ シーケンス移動ツール: クリップを掴んで並び替え・両端でトリム', 'info');
+        showToast('✋ シーケンス移動ツール: クリップ本体を掴んでドラッグ移動・両端でトリム', 'info');
       } else if (tool === 'join') {
         if (mediaBin) {
           mediaBin.classList.remove('hidden');
@@ -2506,6 +2674,20 @@ ${escapeHtml(log.details)}
       updatePlayheadUI();
     }
 
+    function triggerCutSkipFeedback(skippedSec) {
+      const badge = document.getElementById('timelineSkipBadge');
+      if (!badge) return;
+      badge.innerHTML = `<span>⚡ カット区間スキップ (+${parseFloat(skippedSec).toFixed(1)}s)</span>`;
+      badge.style.left = `${Math.min(88, Math.max(8, (currentTimeSeconds / totalDurationSeconds) * 100)).toFixed(1)}%`;
+      badge.classList.remove('hidden');
+      badge.classList.remove('skip-badge-anim');
+      void badge.offsetWidth; // trigger reflow for animation restart
+      badge.classList.add('skip-badge-anim');
+      setTimeout(() => {
+        if (badge) badge.classList.add('hidden');
+      }, 650);
+    }
+
     function togglePlay() {
       isPlaying = !isPlaying;
       const icon = document.getElementById('playIcon');
@@ -2513,14 +2695,25 @@ ${escapeHtml(log.details)}
         icon.innerHTML = '<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />';
         playInterval = setInterval(() => {
           currentTimeSeconds += 0.1;
+
+          // カット自動スキップ再生: カット区間に差し掛かったら終端へ瞬間ジャンプ！
+          if (Array.isArray(cuts) && cuts.length > 0) {
+            const activeCut = cuts.find(c => currentTimeSeconds >= (c.start - 0.05) && currentTimeSeconds < c.end);
+            if (activeCut) {
+              const skipped = activeCut.end - currentTimeSeconds;
+              currentTimeSeconds = activeCut.end;
+              triggerCutSkipFeedback(skipped);
+            }
+          }
+
           if (currentTimeSeconds >= totalDurationSeconds) currentTimeSeconds = 0;
           updatePlayheadUI();
         }, 100);
-        showToast('再生開始');
+        showToast('▶️ 再生開始 (カット区間は自動スキップ)', 'info');
       } else {
         icon.innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>';
         clearInterval(playInterval);
-        showToast('一時停止');
+        showToast('⏸️ 一時停止');
       }
     }
 
@@ -3956,7 +4149,325 @@ ${escapeHtml(log.details)}
       showToast(`「${asset.title}」をシーケンスバーに追加しました！`, 'success');
     }
 
-    // --- SEQUENCE BAR IN-PLACE CUTTING & TRIMMING ---
+    // --- SEQUENCE BAR IN-PLACE CUTTING, DRAGGING & TRIMMING ---
+    let activeTimelineDrag = null;
+
+    function handleClipClick(e, clipId) {
+      if (currentEditTool === 'cut') {
+        sliceClipAtPosition(e, clipId);
+      } else {
+        selectJoinClip(clipId);
+      }
+    }
+
+    function sliceClipAtPosition(e, clipId) {
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+      const targetElem = e.currentTarget;
+      const rect = targetElem.getBoundingClientRect();
+      const clickRatio = Math.max(0.08, Math.min(0.92, (e.clientX - rect.left) / rect.width));
+      const clipDur = clip.endSec - clip.startSec;
+      if (clipDur < 1.0) {
+        showToast('1秒未満の短いクリップはスライスできません', 'warning');
+        return;
+      }
+      const rawSec = clip.startSec + (clipDur * clickRatio);
+      const snap = findMagneticSnapSec(rawSec, 0.4);
+      let splitSec = snap.isSnapped ? snap.snappedSec : parseFloat(rawSec.toFixed(1));
+      if (splitSec <= clip.startSec + 0.3) splitSec = parseFloat((clip.startSec + 0.5).toFixed(1));
+      if (splitSec >= clip.endSec - 0.3) splitSec = parseFloat((clip.endSec - 0.5).toFixed(1));
+
+      const idx = joinClips.findIndex(c => c.id === clipId);
+      const secondPart = {
+        id: Date.now(),
+        slot: clip.slot,
+        title: clip.title.replace(/ \(前編\)$/, '') + ' (後編)',
+        file: clip.file,
+        duration: clip.duration,
+        startSec: splitSec,
+        endSec: clip.endSec,
+        resolution: clip.resolution,
+        transition: clip.transition,
+        transDur: clip.transDur,
+        audioLinked: clip.audioLinked,
+        audioVolume: clip.audioVolume,
+        audioOffsetSec: clip.audioOffsetSec,
+        audioMuted: clip.audioMuted
+      };
+      clip.title = clip.title.replace(/ \(前編\)$/, '') + ' (前編)';
+      clip.endSec = splitSec;
+      joinClips.splice(idx + 1, 0, secondPart);
+      selectedJoinClipId = secondPart.id;
+
+      targetElem.classList.add('slice-flash');
+      setTimeout(() => {
+        renderJoinInspector();
+        renderJoinSequence();
+      }, 120);
+      showToast(`✂️ クリップをスライス分割しました: 前編(~${splitSec.toFixed(1)}s) と 後編(${splitSec.toFixed(1)}s~)`, 'success');
+    }
+
+    function handleClipMouseDown(e, clipId) {
+      if (e.button !== 0) return;
+      if (e.target.closest('.trim-handle') || e.target.closest('button') || e.target.closest('select') || e.target.closest('input')) return;
+      if (currentEditTool === 'cut') return; // カットツールの場合はクリックによるスライスを優先
+
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+
+      const row = document.getElementById('join-clips-sequence-row');
+      const canvas = document.getElementById('join-sequence-canvas');
+      if (!row || !canvas) return;
+
+      activeTimelineDrag = {
+        type: 'clip_move',
+        clipId: clipId,
+        startX: e.clientX,
+        startY: e.clientY,
+        hasMoved: false,
+        sourceIndex: joinClips.findIndex(c => c.id === clipId),
+        targetIndex: joinClips.findIndex(c => c.id === clipId),
+        elem: e.currentTarget,
+        canvas: canvas,
+        row: row
+      };
+    }
+
+    function handleTrimMouseDown(e, clipId, edge) {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+
+      const clip = joinClips.find(c => c.id === clipId);
+      if (!clip) return;
+
+      const canvas = document.getElementById('join-sequence-canvas');
+      activeTimelineDrag = {
+        type: 'clip_trim',
+        clipId: clipId,
+        edge: edge, // 'in' | 'out'
+        startX: e.clientX,
+        initialStartSec: clip.startSec,
+        initialEndSec: clip.endSec,
+        clipMaxDur: clip.duration,
+        elem: e.currentTarget.closest('.join-clip-item'),
+        handleElem: e.currentTarget,
+        canvas: canvas
+      };
+      if (activeTimelineDrag.handleElem) activeTimelineDrag.handleElem.classList.add('trim-handle-active');
+    }
+
+    function handleBgmMouseDown(e, bgmId) {
+      if (e.button !== 0) return;
+      if (e.target.closest('button') || e.target.closest('input')) return;
+      e.stopPropagation();
+
+      const bgm = joinBgmClips.find(b => b.id === bgmId);
+      if (!bgm) return;
+
+      const canvas = document.getElementById('join-sequence-canvas');
+      activeTimelineDrag = {
+        type: 'bgm_move',
+        bgmId: bgmId,
+        startX: e.clientX,
+        initialOffsetSec: bgm.offsetSec,
+        elem: e.currentTarget,
+        canvas: canvas
+      };
+    }
+
+    function initInteractiveTimelineEngine() {
+      window.addEventListener('mousemove', (e) => {
+        if (!activeTimelineDrag) return;
+
+        // 1. CLIP REORDER DRAG
+        if (activeTimelineDrag.type === 'clip_move') {
+          const dx = Math.abs(e.clientX - activeTimelineDrag.startX);
+          const dy = Math.abs(e.clientY - activeTimelineDrag.startY);
+          if (dx > 4 || dy > 4) {
+            activeTimelineDrag.hasMoved = true;
+            activeTimelineDrag.elem.classList.add('opacity-50', 'ring-2', 'ring-indigo-400', 'scale-[1.02]');
+          }
+          if (!activeTimelineDrag.hasMoved) return;
+
+          const canvas = activeTimelineDrag.canvas;
+          const row = activeTimelineDrag.row;
+          const indicator = document.getElementById('join-drop-indicator');
+          const canvasRect = canvas.getBoundingClientRect();
+          const mouseX = e.clientX;
+          const children = Array.from(row.querySelectorAll('.join-clip-item'));
+
+          let insertIdx = children.length;
+          let indicatorLeft = 12;
+
+          for (let i = 0; i < children.length; i++) {
+            const rect = children[i].getBoundingClientRect();
+            const midX = rect.left + rect.width / 2;
+            if (mouseX < midX) {
+              insertIdx = i;
+              indicatorLeft = (rect.left - canvasRect.left + canvas.scrollLeft);
+              break;
+            }
+          }
+
+          if (insertIdx === children.length && children.length > 0) {
+            const lastRect = children[children.length - 1].getBoundingClientRect();
+            indicatorLeft = (lastRect.right - canvasRect.left + canvas.scrollLeft + 3);
+          }
+
+          activeTimelineDrag.targetIndex = insertIdx;
+          if (indicator) {
+            indicator.style.left = `${Math.max(4, indicatorLeft)}px`;
+            indicator.classList.remove('hidden');
+          }
+
+          const snap = findMagneticSnapSec(insertIdx * 5.0, 0.5);
+          if (snap.isSnapped) {
+            showSnapGuideLine(indicatorLeft, `🧲 ${snap.label}`);
+          } else {
+            hideSnapGuideLine();
+          }
+        }
+
+        // 2. CLIP EDGE DRAG TRIMMING (◀ / ▶)
+        else if (activeTimelineDrag.type === 'clip_trim') {
+          const clip = joinClips.find(c => c.id === activeTimelineDrag.clipId);
+          if (!clip) return;
+
+          const canvas = activeTimelineDrag.canvas;
+          const canvasRect = canvas ? canvas.getBoundingClientRect() : { width: 800, left: 0 };
+          const totalDur = getJoinEffectiveDuration();
+          const pxPerSec = Math.max(1, canvasRect.width / Math.max(1, totalDur));
+          const dxPx = e.clientX - activeTimelineDrag.startX;
+          const deltaSec = dxPx / pxPerSec;
+
+          const tooltip = document.getElementById('timelineTrimTooltip');
+          const tooltipText = document.getElementById('timelineTrimTooltipText');
+
+          if (activeTimelineDrag.edge === 'in') {
+            let candidateIn = Math.max(0, Math.min(clip.endSec - 0.5, activeTimelineDrag.initialStartSec + deltaSec));
+            const snap = findMagneticSnapSec(candidateIn, 0.35);
+            if (snap.isSnapped && snap.snappedSec < clip.endSec - 0.5) {
+              candidateIn = snap.snappedSec;
+              showSnapGuideLine(e.clientX - canvasRect.left + canvas.scrollLeft, `🧲 In点: ${candidateIn.toFixed(1)}s (${snap.label})`);
+            } else {
+              hideSnapGuideLine();
+            }
+            activeTimelineDrag.candidateSec = candidateIn;
+            const changeSec = candidateIn - activeTimelineDrag.initialStartSec;
+            const newDur = clip.endSec - candidateIn;
+
+            if (tooltip && tooltipText) {
+              tooltipText.innerText = `◀ In点: ${candidateIn.toFixed(1)}s (${changeSec >= 0 ? '+' : ''}${changeSec.toFixed(1)}s) | 使用尺: ${newDur.toFixed(1)}s`;
+              tooltip.style.left = `${Math.max(10, e.clientX - canvasRect.left)}px`;
+              tooltip.style.top = '10px';
+              tooltip.classList.remove('hidden');
+            }
+          } else {
+            // edge === 'out'
+            let candidateOut = Math.min(activeTimelineDrag.clipMaxDur, Math.max(clip.startSec + 0.5, activeTimelineDrag.initialEndSec + deltaSec));
+            const snap = findMagneticSnapSec(candidateOut, 0.35);
+            if (snap.isSnapped && snap.snappedSec > clip.startSec + 0.5) {
+              candidateOut = snap.snappedSec;
+              showSnapGuideLine(e.clientX - canvasRect.left + canvas.scrollLeft, `🧲 Out点: ${candidateOut.toFixed(1)}s (${snap.label})`);
+            } else {
+              hideSnapGuideLine();
+            }
+            activeTimelineDrag.candidateSec = candidateOut;
+            const changeSec = candidateOut - activeTimelineDrag.initialEndSec;
+            const newDur = candidateOut - clip.startSec;
+
+            if (tooltip && tooltipText) {
+              tooltipText.innerText = `▶ Out点: ${candidateOut.toFixed(1)}s (${changeSec >= 0 ? '+' : ''}${changeSec.toFixed(1)}s) | 使用尺: ${newDur.toFixed(1)}s`;
+              tooltip.style.left = `${Math.max(10, e.clientX - canvasRect.left - 130)}px`;
+              tooltip.style.top = '10px';
+              tooltip.classList.remove('hidden');
+            }
+          }
+        }
+
+        // 3. BGM DIRECT DRAG MOVE
+        else if (activeTimelineDrag.type === 'bgm_move') {
+          const bgm = joinBgmClips.find(b => b.id === activeTimelineDrag.bgmId);
+          if (!bgm) return;
+
+          const canvas = activeTimelineDrag.canvas;
+          const canvasRect = canvas ? canvas.getBoundingClientRect() : { width: 800, left: 0 };
+          const totalDur = getJoinEffectiveDuration();
+          const pxPerSec = Math.max(1, canvasRect.width / Math.max(1, totalDur));
+          const dxPx = e.clientX - activeTimelineDrag.startX;
+          let candidateOffset = Math.max(0, Math.min(Math.max(1, totalDur - 0.5), activeTimelineDrag.initialOffsetSec + (dxPx / pxPerSec)));
+
+          const snap = findMagneticSnapSec(candidateOffset, 0.4);
+          if (snap.isSnapped) {
+            candidateOffset = snap.snappedSec;
+            showSnapGuideLine(e.clientX - canvasRect.left + canvas.scrollLeft, `🧲 BGM開始: ${candidateOffset.toFixed(1)}s (${snap.label})`);
+          } else {
+            hideSnapGuideLine();
+          }
+
+          activeTimelineDrag.candidateOffset = candidateOffset;
+          const leftPct = Math.max(0, Math.min(95, (candidateOffset / Math.max(1, totalDur)) * 100));
+          activeTimelineDrag.elem.style.left = `${leftPct.toFixed(1)}%`;
+        }
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!activeTimelineDrag) return;
+        const drag = activeTimelineDrag;
+        activeTimelineDrag = null;
+
+        hideSnapGuideLine();
+        const indicator = document.getElementById('join-drop-indicator');
+        if (indicator) indicator.classList.add('hidden');
+        const tooltip = document.getElementById('timelineTrimTooltip');
+        if (tooltip) tooltip.classList.add('hidden');
+        if (drag.handleElem) drag.handleElem.classList.remove('trim-handle-active');
+
+        // Complete Clip Move
+        if (drag.type === 'clip_move') {
+          drag.elem.classList.remove('opacity-50', 'ring-2', 'ring-indigo-400', 'scale-[1.02]');
+          if (drag.hasMoved && drag.sourceIndex !== -1 && typeof drag.targetIndex === 'number') {
+            const [movedClip] = joinClips.splice(drag.sourceIndex, 1);
+            const finalIndex = drag.sourceIndex < drag.targetIndex ? drag.targetIndex - 1 : drag.targetIndex;
+            joinClips.splice(finalIndex, 0, movedClip);
+            selectedJoinClipId = movedClip.id;
+            renderJoinInspector();
+            renderJoinSequence();
+            showToast(`クリップ「${movedClip.title}」を #${finalIndex + 1} に移動しました！`, 'success');
+          }
+        }
+
+        // Complete Clip Trim
+        else if (drag.type === 'clip_trim' && typeof drag.candidateSec === 'number') {
+          const clip = joinClips.find(c => c.id === drag.clipId);
+          if (clip) {
+            if (drag.edge === 'in') {
+              clip.startSec = parseFloat(drag.candidateSec.toFixed(1));
+              showToast(`開始カット(In点)を ${clip.startSec.toFixed(1)}s にトリム確定しました`, 'success');
+            } else {
+              clip.endSec = parseFloat(drag.candidateSec.toFixed(1));
+              showToast(`終了カット(Out点)を ${clip.endSec.toFixed(1)}s にトリム確定しました`, 'success');
+            }
+            renderJoinInspector();
+            renderJoinSequence();
+          }
+        }
+
+        // Complete BGM Move
+        else if (drag.type === 'bgm_move' && typeof drag.candidateOffset === 'number') {
+          const bgm = joinBgmClips.find(b => b.id === drag.bgmId);
+          if (bgm) {
+            bgm.offsetSec = parseFloat(drag.candidateOffset.toFixed(1));
+            selectedJoinAudioId = bgm.id;
+            renderJoinInspector();
+            renderJoinSequence();
+            showToast(`🎵 「${bgm.title}」の再生位置を ${bgm.offsetSec.toFixed(1)}s に確定しました`, 'success');
+          }
+        }
+      });
+    }
+
     function splitJoinClipAtPlayhead() {
       const clip = joinClips.find(c => c.id === selectedJoinClipId);
       if (!clip) {
@@ -4233,30 +4744,35 @@ ${escapeHtml(log.details)}
 
         // --- Row 1: V1 Video Clip ---
         const clipDiv = document.createElement('div');
-        clipDiv.className = `join-clip-item h-14 rounded-xl relative flex flex-col justify-between p-1.5 cursor-pointer transition select-none flex-shrink-0 border group ${
+        const isCutTool = currentEditTool === 'cut';
+        clipDiv.className = `join-clip-item h-14 rounded-xl relative flex flex-col justify-between p-1.5 transition select-none flex-shrink-0 border group ${
+          isCutTool ? 'cursor-crosshair hover:border-rose-400' : 'cursor-grab active:cursor-grabbing'
+        } ${
           isSelected
-            ? 'bg-gradient-to-r from-indigo-900/60 to-surface-card border-indigo-400 text-white shadow-lg ring-1 ring-indigo-400'
+            ? 'bg-gradient-to-r from-indigo-900/70 to-surface-card border-indigo-400 text-white shadow-lg ring-1 ring-indigo-400'
             : 'bg-surface-card hover:bg-surface-cardHover border-surface-border text-slate-300'
         }`;
         clipDiv.style.width = `calc(${widthPct.toFixed(1)}% - 6px)`;
         clipDiv.setAttribute('draggable', 'true');
         clipDiv.ondragstart = (e) => handleClipDragStart(e, clip.id);
-        clipDiv.onclick = () => selectJoinClip(clip.id);
+        clipDiv.onmousedown = (e) => handleClipMouseDown(e, clip.id);
+        clipDiv.onclick = (e) => handleClipClick(e, clip.id);
 
         let badgeColor = "bg-indigo-500/30 text-indigo-300 border-indigo-500/40";
         if (clip.slot === 'op') badgeColor = "bg-purple-500/30 text-purple-300 border-purple-500/40";
         else if (clip.slot === 'ed') badgeColor = "bg-emerald-500/30 text-emerald-300 border-emerald-500/40";
 
         clipDiv.innerHTML = `
-          <!-- Left Trim Handle (In点) -->
-          <div onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 1.0, 0)" 
-               class="absolute left-0 top-0 bottom-0 w-2.5 hover:w-3.5 bg-slate-700/80 hover:bg-indigo-500 rounded-l-xl cursor-ew-resize flex items-center justify-center text-[8px] text-white opacity-40 hover:opacity-100 transition z-20" 
-               title="ドラッグまたはクリックで開始カット(In点)を調整">
+          <!-- Left Trim Handle (In点: ドラッグで伸縮) -->
+          <div onmousedown="handleTrimMouseDown(event, ${clip.id}, 'in')"
+               onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 1.0, 0)" 
+               class="trim-handle absolute left-0 top-0 bottom-0 w-2.5 hover:w-4 bg-slate-700/80 hover:bg-indigo-500 rounded-l-xl cursor-ew-resize flex items-center justify-center text-[8px] text-white opacity-40 hover:opacity-100 transition z-20" 
+               title="ドラッグで開始カット(In点)を伸縮トリム (スナップ吸着)">
             ◀
           </div>
 
           <!-- Top Row: Grip, Slot, Title, Duration, Cut button -->
-          <div class="flex items-center justify-between gap-1 overflow-hidden pointer-events-none pl-1 pr-1">
+          <div class="flex items-center justify-between gap-1 overflow-hidden pointer-events-none pl-2 pr-2">
             <div class="flex items-center gap-1 min-w-0">
               <span class="text-slate-500 text-[10px] cursor-grab pointer-events-auto">⋮⋮</span>
               <span class="px-1 py-0.1 rounded ${badgeColor} font-mono text-[8px] font-bold border">${clip.slot.toUpperCase()}</span>
@@ -4271,15 +4787,16 @@ ${escapeHtml(log.details)}
           </div>
 
           <!-- In/Out Trim status & File Info -->
-          <div class="flex items-center justify-between text-[8px] text-slate-400 font-mono pointer-events-none pl-1 pr-1">
+          <div class="flex items-center justify-between text-[8px] text-slate-400 font-mono pointer-events-none pl-2 pr-2">
             <span class="truncate text-slate-400">${clip.file}</span>
             <span class="text-slate-400">${clip.startSec.toFixed(1)}s - ${clip.endSec.toFixed(1)}s</span>
           </div>
 
-          <!-- Right Trim Handle (Out点) -->
-          <div onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 0, -1.0)" 
-               class="absolute right-0 top-0 bottom-0 w-2.5 hover:w-3.5 bg-slate-700/80 hover:bg-indigo-500 rounded-r-xl cursor-ew-resize flex items-center justify-center text-[8px] text-white opacity-40 hover:opacity-100 transition z-20" 
-               title="ドラッグまたはクリックで終了カット(Out点)を調整">
+          <!-- Right Trim Handle (Out点: ドラッグで伸縮) -->
+          <div onmousedown="handleTrimMouseDown(event, ${clip.id}, 'out')"
+               onclick="event.stopPropagation(); trimJoinClip(${clip.id}, 0, -1.0)" 
+               class="trim-handle absolute right-0 top-0 bottom-0 w-2.5 hover:w-4 bg-slate-700/80 hover:bg-indigo-500 rounded-r-xl cursor-ew-resize flex items-center justify-center text-[8px] text-white opacity-40 hover:opacity-100 transition z-20" 
+               title="ドラッグで終了カット(Out点)を伸縮トリム (スナップ吸着)">
             ▶
           </div>
         `;
@@ -4366,6 +4883,7 @@ ${escapeHtml(log.details)}
             bgmDiv.style.width = `max(80px, ${widthPct.toFixed(1)}%)`;
             bgmDiv.setAttribute('draggable', 'true');
             bgmDiv.ondragstart = (e) => handleBgmDragStart(e, bgm.id);
+            bgmDiv.onmousedown = (e) => handleBgmMouseDown(e, bgm.id);
             bgmDiv.onclick = (e) => {
               e.stopPropagation();
               selectJoinAudio(bgm.id);
@@ -5200,10 +5718,18 @@ ${escapeHtml(log.details)}
           togglePlay();
         } else if (e.code === 'Delete' || e.code === 'Backspace') {
           e.preventDefault();
-          if (selectedCutId) {
-            restoreCut(selectedCutId);
+          // シーケンスモードでクリップ選択中の場合は除外
+          if (currentEditTool === 'move' || currentEditTool === 'join') {
+            if (selectedJoinClipId) {
+              removeSelectedJoinClip();
+            }
           } else {
-            addManualCut();
+            // カットモード
+            if (selectedCutId) {
+              restoreCut(selectedCutId);
+            } else {
+              addManualCut();
+            }
           }
         } else if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.key === 'z')) {
           e.preventDefault();
@@ -5216,18 +5742,26 @@ ${escapeHtml(log.details)}
           e.preventDefault();
           redoTimelineAction();
         } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
-          seekRelative(-1);
+          if (e.code === 'KeyJ' && !e.ctrlKey && !e.metaKey && !document.getElementById('view-editor').classList.contains('hidden')) {
+            setEditTool('join');
+          } else {
+            seekRelative(-1);
+          }
         } else if (e.code === 'ArrowRight' || e.code === 'KeyL') {
           seekRelative(1);
         } else if (e.code === 'KeyI') {
           if (!document.getElementById('view-short').classList.contains('hidden')) {
             setShortClipInPoint();
+          } else if (currentEditTool === 'move' || currentEditTool === 'join') {
+            setJoinClipInFromPlayhead();
           } else {
             setCutInPoint();
           }
         } else if (e.code === 'KeyO') {
           if (!document.getElementById('view-short').classList.contains('hidden')) {
             setShortClipOutPoint();
+          } else if (currentEditTool === 'move' || currentEditTool === 'join') {
+            setJoinClipOutFromPlayhead();
           } else {
             setCutOutPoint();
           }
@@ -5239,6 +5773,10 @@ ${escapeHtml(log.details)}
           if (!document.getElementById('view-editor').classList.contains('hidden')) {
             setEditTool('move');
           }
+        } else if (e.code === 'KeyS' && !e.ctrlKey && !e.metaKey) {
+          if (!document.getElementById('view-editor').classList.contains('hidden')) {
+            splitJoinClipAtPlayhead();
+          }
         }
       });
     }
@@ -5246,6 +5784,7 @@ ${escapeHtml(log.details)}
     // INITIALIZATION
     window.addEventListener('DOMContentLoaded', () => {
       initTimelineDrag();
+      initInteractiveTimelineEngine();
       initKeyboardShortcuts();
       renderCuts();
       renderSubtitleList();

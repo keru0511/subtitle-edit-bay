@@ -309,13 +309,15 @@
               <!-- Media Bin Header -->
               <div class="h-10 px-3 border-b border-surface-border flex items-center justify-between bg-surface-base/80 flex-shrink-0">
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <span class="text-sm">📁</span>
-                  <span class="font-semibold text-slate-200 text-xs truncate">素材一覧 (メディアビン)</span>
+                  <span id="join-media-icon" class="text-sm">📁</span>
+                  <span id="join-media-title" class="font-semibold text-slate-200 text-xs truncate">素材一覧 (メディアビン)</span>
                   <span id="join-media-count-badge" class="px-1.5 py-0.2 rounded-full bg-surface-card text-indigo-300 font-mono text-[10px] border border-surface-border">5件</span>
                 </div>
-                <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画・音声を追加">
-                  <span>+</span> 追加
-                </button>
+                <div id="join-media-header-action" class="flex items-center gap-1">
+                  <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画・音声を追加">
+                    <span>+</span> 追加
+                  </button>
+                </div>
               </div>
 
               <!-- Media Filter Tabs (All / Video / Audio) -->
@@ -336,8 +338,8 @@
 
               <!-- Media Assets Draggable List -->
               <div class="px-2.5 pb-1 flex items-center justify-between text-[10px] text-slate-400 flex-shrink-0">
-                <span>登録素材 (D&Dで配置)</span>
-                <span class="text-[9px] text-indigo-400 font-medium">タイムラインへドラッグ</span>
+                <span id="join-media-list-caption">登録素材 (D&Dで配置)</span>
+                <span id="join-media-list-hint" class="text-[9px] text-indigo-400 font-medium">タイムラインへドラッグ</span>
               </div>
               <div id="join-media-assets-list" class="flex-1 overflow-y-auto px-2.5 pb-2 space-y-1.5">
                 <!-- Populated dynamically by renderJoinMediaBin() -->
@@ -2530,6 +2532,8 @@ ${escapeHtml(log.details)}
       }
     }
 
+    let currentEditorSubMode = 'edit'; // 'edit' | 'subtitle' | 'audio'
+
     function setEditorSubMode(subMode) {
       if (subMode === 'join') {
         currentEditTool = 'join';
@@ -2538,15 +2542,17 @@ ${escapeHtml(log.details)}
         subMode = 'edit';
       }
 
+      currentEditorSubMode = subMode;
+
       const switcher = document.getElementById('editingToolSwitcher');
       const inspSubtitle = document.getElementById('inspector-subtitle');
       const inspAudio = document.getElementById('inspector-audio');
+      const mediaBin = document.getElementById('join-media-bin-panel');
 
       if (subMode === 'edit') {
         if (switcher) switcher.classList.remove('hidden');
         if (inspSubtitle) inspSubtitle.classList.add('hidden');
         if (inspAudio) inspAudio.classList.add('hidden');
-        const mediaBin = document.getElementById('join-media-bin-panel');
         if (mediaBin) {
           mediaBin.classList.remove('hidden');
           renderJoinMediaBin();
@@ -2554,8 +2560,11 @@ ${escapeHtml(log.details)}
         setEditTool(currentEditTool);
       } else if (subMode === 'subtitle') {
         if (switcher) switcher.classList.add('hidden');
-        const mediaBin = document.getElementById('join-media-bin-panel');
-        if (mediaBin) mediaBin.classList.add('hidden');
+        // 字幕モードでも左上に素材一覧・ソース選択を常設表示
+        if (mediaBin) {
+          mediaBin.classList.remove('hidden');
+          renderJoinMediaBin();
+        }
         const tracksInner = document.getElementById('timelineTracksInner');
         const joinInner = document.getElementById('timelineJoinSequenceInner');
         if (tracksInner) tracksInner.classList.remove('hidden');
@@ -2572,10 +2581,9 @@ ${escapeHtml(log.details)}
         const caption = document.getElementById('preview-mode-caption');
         if (caption) caption.innerText = '字幕リアルタイムプレビュー';
         renderSubtitleList();
-        showToast('字幕編集モード');
+        showToast('💬 字幕編集モード (左上の素材から対象選択・絞り込み可)');
       } else if (subMode === 'audio') {
         if (switcher) switcher.classList.add('hidden');
-        const mediaBin = document.getElementById('join-media-bin-panel');
         if (mediaBin) mediaBin.classList.add('hidden');
         const tracksInner = document.getElementById('timelineTracksInner');
         const joinInner = document.getElementById('timelineJoinSequenceInner');
@@ -2970,10 +2978,27 @@ ${escapeHtml(log.details)}
         if (clipId === 'all') label.innerText = 'すべて表示';
         else if (clipId === 2 || clipId === '2') label.innerText = '本編 Part 1 (4字幕)';
         else if (clipId === 3 || clipId === '3') label.innerText = '本編 Part 2 (2字幕)';
+        else label.innerText = `クリップ #${clipId}`;
       }
 
       renderSubtitleList();
+      renderJoinMediaBin();
       showToast(clipId === 'all' ? '全シーケンスの字幕を表示中' : `クリップ #${clipId} の字幕に絞り込みました`, 'info');
+    }
+
+    function filterSubtitlesFromMediaBin(assetId) {
+      const asset = mediaAssets.find(a => a.id === assetId);
+      if (!asset || asset.type === 'audio') return;
+      const clip = joinClips.find(c => c.file === asset.file);
+      if (!clip) {
+        showToast(`「${asset.title}」は現在のシーケンスに含まれていません`, 'info');
+        return;
+      }
+      if (currentSubtitleClipFilter == clip.id) {
+        filterSubtitlesByClip('all');
+      } else {
+        filterSubtitlesByClip(clip.id);
+      }
     }
 
     function updateSubtitleBindingSummary() {
@@ -3068,6 +3093,7 @@ ${escapeHtml(log.details)}
 
       // Render all subtitles on visual timeline tracks
       subtitles.forEach((sub, idx) => {
+        const isSelected = idx === selectedSubIndex;
         const isSpeakerA = (sub.speaker === 'A' || !sub.speaker || sub.speaker === '話者1');
 
         // 2. Sequence Tracks (Speaker A -> S1 lane, Speaker B -> S2 lane)
@@ -3986,7 +4012,55 @@ ${escapeHtml(log.details)}
     function renderJoinMediaBin() {
       const container = document.getElementById('join-media-assets-list');
       const badge = document.getElementById('join-media-count-badge');
+      const titleEl = document.getElementById('join-media-title');
+      const iconEl = document.getElementById('join-media-icon');
+      const actionContainer = document.getElementById('join-media-header-action');
+      const captionEl = document.getElementById('join-media-list-caption');
+      const hintEl = document.getElementById('join-media-list-hint');
       if (!container) return;
+
+      const isSubtitleMode = (currentEditorSubMode === 'subtitle');
+
+      // Update header elements based on mode
+      if (isSubtitleMode) {
+        if (titleEl) titleEl.innerText = '素材ソース選択 (字幕)';
+        if (iconEl) iconEl.innerText = '🎙️';
+        if (captionEl) captionEl.innerText = '登録素材 (クリックで字幕絞込)';
+        if (hintEl) hintEl.innerText = 'カード選択で字幕を絞り込み';
+
+        const transTargets = mediaAssets.filter(a => (a.type || 'video') === 'video' && a.transcribe !== false);
+        const videoCount = mediaAssets.filter(a => (a.type || 'video') === 'video').length;
+        if (badge) badge.innerText = `${transTargets.length}/${videoCount}動画 対象`;
+
+        if (actionContainer) {
+          actionContainer.innerHTML = `
+            <button onclick="openModal('source-settings')" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[10px] flex items-center gap-1 transition shadow-sm active:scale-95" title="動画と音声の紐づけ・文字起こし設定を開く">
+              <span>⚙️</span> 紐づけ設定
+            </button>
+          `;
+        }
+      } else {
+        if (titleEl) titleEl.innerText = '素材一覧 (メディアビン)';
+        if (iconEl) iconEl.innerText = '📁';
+        if (captionEl) captionEl.innerText = '登録素材 (D&Dで配置)';
+        if (hintEl) hintEl.innerText = 'タイムラインへドラッグ';
+
+        const filtered = mediaAssets.filter(asset => {
+          if (currentMediaFilter === 'all') return true;
+          if (currentMediaFilter === 'video') return (asset.type || 'video') === 'video';
+          if (currentMediaFilter === 'audio') return asset.type === 'audio';
+          return true;
+        });
+        if (badge) badge.innerText = `${filtered.length}件 / 全${mediaAssets.length}件`;
+
+        if (actionContainer) {
+          actionContainer.innerHTML = `
+            <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画・音声を追加">
+              <span>+</span> 追加
+            </button>
+          `;
+        }
+      }
 
       const filtered = mediaAssets.filter(asset => {
         if (currentMediaFilter === 'all') return true;
@@ -3994,8 +4068,6 @@ ${escapeHtml(log.details)}
         if (currentMediaFilter === 'audio') return asset.type === 'audio';
         return true;
       });
-
-      if (badge) badge.innerText = `${filtered.length}件 / 全${mediaAssets.length}件`;
 
       container.innerHTML = '';
       if (filtered.length === 0) {
@@ -4028,17 +4100,66 @@ ${escapeHtml(log.details)}
           icon = "🔔";
         }
 
+        // Subtitle mode specific metrics & active filter matching
+        const matchingClip = joinClips.find(c => c.file === asset.file);
+        const clipId = matchingClip ? matchingClip.id : null;
+        const subCount = clipId ? subtitles.filter(s => s.clipId === clipId).length : 0;
+        const isClipFilterActive = isSubtitleMode && clipId && (currentSubtitleClipFilter == clipId);
+
+        let activeCardStyle = "bg-surface-card hover:bg-surface-cardHover border-surface-border";
+        if (isClipFilterActive) {
+          activeCardStyle = "ring-2 ring-indigo-500 bg-indigo-500/10 border-indigo-500/60 shadow-md";
+        }
+
         const card = document.createElement('div');
-        card.className = "p-2 rounded-lg bg-surface-card hover:bg-surface-cardHover border border-surface-border cursor-grab active:cursor-grabbing transition group select-none relative";
-        card.setAttribute('draggable', 'true');
-        card.ondragstart = (e) => handleMediaDragStart(e, asset.id);
+        card.className = `p-2 rounded-lg border cursor-pointer transition group select-none relative ${activeCardStyle}`;
+        if (!isSubtitleMode) {
+          card.setAttribute('draggable', 'true');
+          card.ondragstart = (e) => handleMediaDragStart(e, asset.id);
+        } else {
+          card.onclick = () => filterSubtitlesFromMediaBin(asset.id);
+        }
+
+        let rightActionHtml = '';
+        if (isSubtitleMode) {
+          if (!isAudio) {
+            if (isClipFilterActive) {
+              rightActionHtml = `
+                <button onclick="event.stopPropagation(); filterSubtitlesByClip('all')" class="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[9px] flex-shrink-0 shadow transition flex items-center gap-0.5" title="絞り込みを解除して全字幕を表示">
+                  <span>✓</span> 絞込中
+                </button>
+              `;
+            } else {
+              rightActionHtml = `
+                <button onclick="event.stopPropagation(); filterSubtitlesFromMediaBin('${asset.id}')" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-indigo-600 text-slate-300 hover:text-white border border-surface-border text-[9px] flex-shrink-0 opacity-80 group-hover:opacity-100 transition shadow" title="この動画の字幕のみに絞り込み">
+                  絞込
+                </button>
+              `;
+            }
+          }
+        } else {
+          rightActionHtml = `
+            <button onclick="event.stopPropagation(); insertAssetIntoSequence('${asset.id}')" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-indigo-600 text-slate-300 hover:text-white border border-surface-border text-[10px] flex-shrink-0 opacity-0 group-hover:opacity-100 transition shadow" title="${isAudio ? 'オーディオトラックへ追加' : 'シーケンス末尾に追加'}">
+              + 挿入
+            </button>
+          `;
+        }
+
+        let subtitleCountBadge = '';
+        if (!isAudio) {
+          subtitleCountBadge = `
+            <span class="px-1.5 py-0.2 rounded ${subCount > 0 ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 font-bold' : 'bg-surface-base text-slate-500 border-surface-border/60'} font-mono text-[9px] border">
+              💬 ${subCount}字幕
+            </span>
+          `;
+        }
 
         let bottomMetaHtml = '';
         if (!isAudio) {
           const isTranscribing = asset.transcribe !== false;
           bottomMetaHtml = `
             <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-surface-border/40 text-[9px]">
-              <div class="flex items-center gap-1 text-slate-400 truncate max-w-[150px]" title="紐づけ音声: ${asset.audioSourceName || '内蔵音声'}">
+              <div class="flex items-center gap-1 text-slate-400 truncate max-w-[140px]" title="紐づけ音声: ${asset.audioSourceName || '内蔵音声'}">
                 <span>🔊</span>
                 <span class="truncate">${asset.audioSourceName || '内蔵音声'}</span>
               </div>
@@ -4064,18 +4185,19 @@ ${escapeHtml(log.details)}
         card.innerHTML = `
           <div class="flex items-center justify-between gap-1.5">
             <div class="flex items-center gap-1.5 min-w-0">
-              <span class="text-slate-500 text-xs cursor-grab">⋮⋮</span>
+              <span class="text-slate-500 text-xs ${isSubtitleMode ? 'hidden' : 'cursor-grab'}">⋮⋮</span>
               <span class="text-xs">${icon}</span>
               <span class="px-1.5 py-0.2 rounded ${badgeColor} font-mono text-[9px] font-bold border flex-shrink-0">${badgeText}</span>
               <span class="font-semibold text-xs text-slate-200 truncate group-hover:text-white">${asset.title}</span>
             </div>
-            <button onclick="event.stopPropagation(); insertAssetIntoSequence('${asset.id}')" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-indigo-600 text-slate-300 hover:text-white border border-surface-border text-[10px] flex-shrink-0 opacity-0 group-hover:opacity-100 transition shadow" title="${isAudio ? 'オーディオトラックへ追加' : 'シーケンス末尾に追加'}">
-              + 挿入
-            </button>
+            ${rightActionHtml}
           </div>
-          <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pl-5">
-            <span class="truncate text-slate-500 max-w-[130px]">${asset.file}</span>
-            <span class="${isAudio ? 'text-amber-300' : 'text-indigo-300'} font-semibold">${asset.duration.toFixed(0)}s</span>
+          <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 ${isSubtitleMode ? 'pl-0' : 'pl-5'}">
+            <span class="truncate text-slate-500 max-w-[120px]">${asset.file}</span>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              ${subtitleCountBadge}
+              <span class="${isAudio ? 'text-amber-300' : 'text-indigo-300'} font-semibold">${asset.duration.toFixed(0)}s</span>
+            </div>
           </div>
           ${bottomMetaHtml}
         `;

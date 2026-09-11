@@ -188,6 +188,42 @@ class SubtitleTextRuleTests(unittest.TestCase):
         self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
         self.assertEqual([word["word"] for word in original[1]["words"]], ["！", "次"])
 
+    def test_removes_aligned_later_mark_when_the_first_mark_is_unaligned(self) -> None:
+        original = [
+            segment("前", 0.0),
+            segment(
+                "！？次",
+                1.0,
+                words=[{"word": "？次", "start": 1.0, "end": 2.0}],
+            ),
+        ]
+
+        repaired = reattach_leading_punctuation(original)
+
+        self.assertEqual(repaired[0]["text"], "前！？")
+        self.assertEqual(repaired[1]["text"], "次")
+        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
+        self.assertEqual([word["word"] for word in original[1]["words"]], ["？次"])
+
+    def test_removes_aligned_later_mark_from_a_separate_word(self) -> None:
+        repaired = reattach_leading_punctuation(
+            [
+                segment("前", 0.0),
+                segment(
+                    "！？次",
+                    1.0,
+                    words=[
+                        {"word": "？", "start": 1.0, "end": 1.1},
+                        {"word": "次", "start": 1.1, "end": 2.0},
+                    ],
+                ),
+            ]
+        )
+
+        self.assertEqual(repaired[0]["text"], "前！？")
+        self.assertEqual(repaired[1]["text"], "次")
+        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
+
 
 if __name__ == "__main__":
     unittest.main()

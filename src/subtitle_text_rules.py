@@ -55,11 +55,11 @@ def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str
     if not isinstance(words, list) or not punctuation:
         return
 
-    remaining = punctuation
+    punctuation_index = 0
     cleaned: list[Any] = []
     removed_any = False
     for index, word in enumerate(words):
-        if not remaining:
+        if punctuation_index >= len(punctuation):
             cleaned.extend(words[index:])
             break
         if not isinstance(word, dict):
@@ -75,9 +75,15 @@ def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str
             continue
 
         removed = 0
-        while remaining and removed < len(body) and body[removed] == remaining[0]:
+        while removed < len(body):
+            # Alignment may omit marks, so match its prefix as an ordered subsequence.
+            matched_index = punctuation.find(body[removed], punctuation_index)
+            if matched_index < 0:
+                break
             removed += 1
-            remaining = remaining[1:]
+            punctuation_index = matched_index + 1
+            if punctuation_index >= len(punctuation):
+                break
 
         if removed:
             removed_any = True
@@ -85,9 +91,8 @@ def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str
             updated["word"] = leading_space + body[removed:]
             if str(updated["word"]).strip():
                 cleaned.append(updated)
-                if remaining:
-                    cleaned.extend(words[index + 1 :])
-                    break
+                cleaned.extend(words[index + 1 :])
+                break
             continue
         cleaned.extend(words[index:])
         break

@@ -70,6 +70,19 @@ class WorkflowActionTests(unittest.TestCase):
         self.assertTrue(render_capability(self.dependencies, self.project, self.path).enabled)
         self.assertFalse(render_capability(self.dependencies, self.project, self.path, short=True).enabled)
 
+    def test_short_render_rejects_an_ambiguous_output_timeline_basis(self) -> None:
+        self.project["short_video"]["time_basis"] = "output"
+
+        capability = render_capability(
+            self.dependencies,
+            self.project,
+            self.path,
+            short=True,
+        )
+
+        self.assertFalse(capability.enabled)
+        self.assertIn("元ソース動画", capability.reason)
+
     def test_output_validation_is_independent_for_each_artifact(self) -> None:
         output = render_output_path(self.path, self.project, short=True)
         output.mkdir()

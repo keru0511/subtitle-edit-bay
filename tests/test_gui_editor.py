@@ -2847,7 +2847,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._assert_quick_item_within(window.contentItem(), panel)
             for group_name, button_names in (
                 ("transcriptionToolActions", ("transcribeButton", "transcriptionDictionaryOpenButton")),
-                ("outputActions", ("renderVideoButton", "shortModeOpenButton")),
+                ("derivedArtifactActions", ("shortModeOpenButton",)),
+                ("outputActions", ("renderVideoButton",)),
             ):
                 with self.subTest(size=(width, height), group=group_name):
                     group = self._quick_item(window, group_name)
@@ -3885,12 +3886,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
 
-        self.assertTrue(window.setProperty("activeOverlay", "short"))
+        self.assertTrue(window.setProperty("currentWorkspace", "short-artifact"))
         self.app.processEvents()
         self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
 
+        self.assertTrue(window.setProperty("currentWorkspace", "normal-video"))
         self.assertTrue(window.setProperty("activeOverlay", ""))
         self.app.processEvents()
         self.assertFalse(self._quick_item(window, "shortModePage").isVisible())
@@ -4690,6 +4692,33 @@ class GuiEditorRegressionTests(unittest.TestCase):
         back_button = self._quick_item(window, "shortModeBackButton")
         self._click(window, back_button)
         self.assertFalse(short_page.property("visible"))
+
+    def test_short_workspace_is_separate_from_normal_edit_mode_and_chat_state(self) -> None:
+        self._load_project()
+        self.assertTrue(self.app.selectEditMode("audio"))
+        _, window = self._load_qml()
+        rail = self._quick_item(window, "editorModeRail")
+        chat_panel = self._quick_item(window, "codexChatPanel")
+        main_player = self.gui.find_object(window, "mainWorkspacePlayer", QMediaPlayer)
+
+        self.assertIsNone(rail.findChild(QObject, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        short_page = self._quick_item(window, "shortModePage")
+        short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
+        self.assertTrue(short_page.property("visible"))
+        self.assertEqual(short_page.property("workspaceKind"), "short-artifact")
+        self.assertEqual(window.property("currentWorkspace"), "short-artifact")
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertEqual(self.app.shortVideoSettings["time_basis"], "source")
+        self.assertIsNot(short_player, main_player)
+        self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+
+        self.assertEqual(window.property("currentWorkspace"), "normal-video")
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
 
     def test_short_mode_transition_duration_uses_internal_values(self) -> None:
         self._load_project()

@@ -45,6 +45,9 @@ ApplicationWindow {
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
+    // A short is a derived artifact workspace, not a normal-video edit mode
+    // or a transient editor overlay.
+    property string currentWorkspace: "normal-video"
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
     property string selectedCutId: ""
@@ -65,7 +68,7 @@ ApplicationWindow {
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
-    readonly property bool shortMode: root.activeOverlay === "short"
+    readonly property bool shortWorkspaceActive: root.currentWorkspace === "short-artifact"
     readonly property bool codexAuthenticated: root.appBackend
         && root.appBackend.codexAuthState === "authenticated"
     readonly property bool codexSidebarOverlay: root.width < 1400
@@ -544,18 +547,18 @@ ApplicationWindow {
         root.activeOverlay = ""
     }
 
-    function openShortModeScreen() {
+    function openShortWorkspace() {
         if (root.appBackend.running)
             return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
-        root.activeOverlay = "short"
+        root.currentWorkspace = "short-artifact"
     }
 
-    function closeShortModeScreen() {
-        root.activeOverlay = ""
+    function closeShortWorkspace() {
+        root.currentWorkspace = "normal-video"
         mainPlayer.position = root.editorPositionCache
     }
 
@@ -1079,8 +1082,8 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode ? 0 : 62
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
+        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive ? 0 : 62
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortWorkspaceActive
         color: "#101512"
         border.color: root.border
         RowLayout {
@@ -1549,7 +1552,7 @@ ApplicationWindow {
     RowLayout {
         id: mainWorkspace
         objectName: "mainWorkspace"
-        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode
+        visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortWorkspaceActive
         anchors.fill: parent
         anchors.leftMargin: 12
         anchors.topMargin: 12
@@ -1739,7 +1742,7 @@ ApplicationWindow {
                 onStartTranscriptionRequested: root.requestTranscription()
                 onEditorRequested: root.openEditorScreen()
                 onMixerRequested: root.openMixerScreen()
-                onShortModeRequested: root.openShortModeScreen()
+                onShortModeRequested: root.openShortWorkspace()
                 onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
                 onSaveOrStopRequested: {
                     if (!root.appBackend.running)
@@ -3133,19 +3136,20 @@ ApplicationWindow {
         id: shortModePage
         objectName: "shortModePage"
         anchors.fill: parent
+        property string workspaceKind: "short-artifact"
         anchors.rightMargin: root.codexWorkspaceRightInset
-        visible: root.shortMode
+        visible: root.shortWorkspaceActive
         z: 100
         color: "#0D1210"
         border.color: "#46564E"
         focus: visible
-        Keys.onEscapePressed: root.closeShortModeScreen()
+        Keys.onEscapePressed: root.closeShortWorkspace()
         onVisibleChanged: if (visible) forceActiveFocus()
 
         Loader {
             id: shortModeLoader
             anchors.fill: parent
-            active: root.shortMode
+            active: root.shortWorkspaceActive
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
         }
@@ -3220,7 +3224,7 @@ ApplicationWindow {
         color: "transparent"
         visible: root.appBackend
             && root.appBackend.progressVisible
-            && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortMode)
+            && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive)
         height: modeProgressPanel.implicitHeight
 
         ProcessingProgressPanel {

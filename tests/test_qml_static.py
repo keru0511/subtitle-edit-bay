@@ -36,6 +36,7 @@ QML_LINT_FILES = (
     ENTRYPOINT_QML,
     WORKFLOW_QML,
     WORKFLOW_WRAPPER_QML,
+    UI_ROOT / "screens" / "ShortModeScreen.qml",
     *SHARED_CONTROL_QML_FILES,
 )
 
@@ -173,6 +174,9 @@ class QmlStaticTests(unittest.TestCase):
         )[0]
 
         self.assertIn('property string activeOverlay: ""', workflow)
+        self.assertIn('property string currentWorkspace: "normal-video"', workflow)
+        self.assertIn('root.currentWorkspace = "short-artifact"', workflow)
+        self.assertNotIn('root.activeOverlay = "short"', workflow)
         self.assertNotIn("\n    property bool editorMode:", workflow)
         self.assertNotIn("\n    property bool mixerMode:", workflow)
         self.assertIn('objectName: "editorModeRail"', main_workspace)

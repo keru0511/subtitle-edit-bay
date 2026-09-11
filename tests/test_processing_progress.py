@@ -46,6 +46,19 @@ class ProcessingProgressTests(unittest.TestCase):
         self.assertEqual(tracker.as_list()[1]["state"], "completed")
         self.assertEqual(tracker.as_list()[2]["state"], "running")
 
+    def test_each_start_gets_a_new_job_id_and_finish_preserves_it(self) -> None:
+        tracker = ProcessingProgress()
+        tracker.start("transcribe")
+        first_job_id = tracker.job_id
+
+        tracker.finish("completed")
+        self.assertEqual(tracker.job_id, first_job_id)
+
+        tracker.start("transcribe")
+        self.assertTrue(first_job_id)
+        self.assertTrue(tracker.job_id)
+        self.assertNotEqual(tracker.job_id, first_job_id)
+
     def test_all_jobs_have_issue_steps_and_success_reaches_one_hundred(self) -> None:
         expected = {
             "transcribe": ["準備", "音声同期", "文字起こし", "字幕の統合・整形", "波形生成", "プロジェクト保存"],

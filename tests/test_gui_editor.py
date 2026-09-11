@@ -31,6 +31,8 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_actions import GuiActionBackend
+from src.codex_timeline_proposal import apply_timeline_proposal, timeline_state_revision
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
@@ -2282,6 +2284,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.app._finish_processing_progress("error")
                 self.assertEqual(self.app.progressPercent, before)
                 self.assertEqual(self.app.progressState, "error")
+
+    def test_codex_tracks_process_between_start_command_and_started_callback(self) -> None:
+        with patch.object(self.app, "_start_process") as start_process:
+            self.app._start_command(["worker"], "render", "処理を開始しています")
+
+        self.assertFalse(self.app._running)
+        start_process.assert_called_once_with(["worker"])
+        state = GuiActionBackend(self.app).inspect("inspect_processing_state", {}).state
+        self.assertEqual(state["job_id"], self.app._processing_progress.job_id)
+        self.assertEqual(state["job_type"], "render")
+        self.assertEqual(state["active_job"], "render")
+        self.assertTrue(state["running"])
+        self.assertFalse(state["can_cancel"])
+
+        self.app._process_started()
+        running_state = GuiActionBackend(self.app).inspect("inspect_processing_state", {}).state
+        self.assertEqual(running_state["job_id"], state["job_id"])
+        self.assertTrue(running_state["can_cancel"])
 
     def test_processing_progress_uses_tracker_value_and_short_output_duration(self) -> None:
         self.app._processing_machine_event_seen = False
@@ -4661,6 +4681,72 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.shortVideoClips[0]["start"], 1.5)
         self.assertEqual(self.app.shortVideoClips[0]["end"], 2.5)
 
+    def test_short_gui_and_codex_command_sequences_produce_identical_state(self) -> None:
+        self._load_project(
+            duration_seconds=120.0,
+            segments=[
+                {"id": "s1", "start": 0.0, "end": 20.0, "text": "opening", "speaker": "Speaker_Alice"},
+                {"id": "s2", "start": 30.0, "end": 50.0, "text": "topic", "speaker": "Speaker_Bob"},
+                {"id": "s3", "start": 80.0, "end": 110.0, "text": "ending", "speaker": "Speaker_Alice"},
+            ],
+        )
+        assert self.app._project is not None
+        self.app._project["short_video"] = {
+            "enabled": True,
+            "clips": [
+                {"proposal_id": "clip-a", "segment_id": "s1", "start": 2.0, "end": 10.0},
+                {"proposal_id": "clip-b", "segment_id": "s2", "start": 32.0, "end": 40.0},
+            ],
+        }
+        initial = deepcopy(self.app._project)
+
+        self.assertFalse(self.app.updateShortVideoClip(0, {"start": 32.0, "end": 40.0}))
+        self.assertEqual(self.app._project, initial)
+        self.assertTrue(self.app.addShortVideoClipByRange(82.0, 90.0))
+        added_clip_id = self.app._project["short_video"]["clips"][-1]["proposal_id"]
+        self.assertTrue(self.app.updateShortVideoClip(1, {"start": 34.0, "end": 39.0}))
+        self.assertTrue(self.app.moveShortVideoClip(2, 0))
+        self.assertTrue(self.app.removeShortVideoClip(1))
+        self.app.autosave_timer.stop()
+
+        proposal = {
+            "schema_version": 1,
+            "summary": "GUIと同じショート編集",
+            "target": "short",
+            "operations": [
+                {
+                    "id": "add",
+                    "type": "add_clip_by_range",
+                    "clip_id": added_clip_id,
+                    "source_start": 82.0,
+                    "source_end": 90.0,
+                },
+                {
+                    "id": "update",
+                    "type": "update_clip_range",
+                    "clip_id": "clip-b",
+                    "source_start": 34.0,
+                    "source_end": 39.0,
+                },
+                {
+                    "id": "move",
+                    "type": "move_clip",
+                    "clip_id": added_clip_id,
+                    "before_clip_id": "clip-a",
+                },
+                {"id": "remove", "type": "remove_clip", "clip_id": "clip-a"},
+            ],
+            "warnings": [],
+            "base_revision": 7,
+            "base_state_revision": timeline_state_revision(initial, "short"),
+        }
+        codex_result = apply_timeline_proposal(initial, proposal, current_revision=7)
+
+        self.assertEqual(
+            self.app._project["short_video"],
+            codex_result.project["short_video"],
+        )
+
     def test_short_mode_visual_clip_updates_do_not_require_trim_metadata(self) -> None:
         self._load_project(
             segments=[
@@ -5020,6 +5106,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_followup_transcription_preserves_project_settings_for_merge_and_replace(self) -> None:
         project_path = self._load_project()
+        self.assertTrue(self.app.addCut(10.0, 12.0))
         project = self.app._project
         assert project is not None
         project["audio_mix"] = {
@@ -5085,6 +5172,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                     saved = load_project(custom_project_path)
                     self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
                     self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                    self.assertEqual(saved["timeline"], preserved["timeline"])
                     self.assertEqual(saved["short_video"], preserved["short_video"])
                     self.assertEqual(saved["transcription"], {"engine": "new-engine"})
                     expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}

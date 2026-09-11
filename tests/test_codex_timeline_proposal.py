@@ -257,6 +257,28 @@ class CodexTimelineProposalTests(unittest.TestCase):
         with self.assertRaisesRegex(TimelineProposalError, "inside its segment"):
             apply_timeline_proposal(state, payload, current_revision=7)
 
+    def test_short_update_rejects_another_clips_exact_range_atomically(self) -> None:
+        state = project()
+        original = deepcopy(state)
+        payload = proposal(
+            "short",
+            state,
+            [
+                {
+                    "id": "duplicate-update",
+                    "type": "update_clip_range",
+                    "clip_id": "clip-a",
+                    "source_start": 32.0,
+                    "source_end": 40.0,
+                }
+            ],
+        )
+
+        with self.assertRaisesRegex(TimelineProposalError, "duplicate clip range"):
+            apply_timeline_proposal(state, payload, current_revision=7)
+
+        self.assertEqual(state, original)
+
     def test_highlight_candidate_and_duration_target_are_validated(self) -> None:
         state = project()
         payload = proposal(
@@ -340,6 +362,24 @@ class CodexTimelineProposalTests(unittest.TestCase):
         payload["summary"] = {"text": "invalid"}
         with self.assertRaisesRegex(TimelineProposalError, "summary must be a string"):
             TimelineProposal.from_json(payload)
+
+    def test_selected_operation_ids_must_be_non_empty_strings(self) -> None:
+        state = project()
+        payload = proposal(
+            "normal",
+            state,
+            [{"id": "add", "type": "add_cut", "source_start": 10.0, "source_end": 12.0}],
+        )
+
+        for selected in ([1], [""], "add"):
+            with self.subTest(selected=selected):
+                with self.assertRaisesRegex(TimelineProposalError, "non-empty strings"):
+                    apply_timeline_proposal(
+                        state,
+                        payload,
+                        current_revision=7,
+                        selected_operation_ids=selected,
+                    )
 
 
 if __name__ == "__main__":

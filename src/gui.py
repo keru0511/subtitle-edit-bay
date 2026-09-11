@@ -13,7 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -68,6 +68,17 @@ from .codex_timeline_proposal import (
     apply_timeline_proposal,
     build_timeline_proposal_context,
 )
+from .short_video_commands import (
+    AddShortVideoRangeClip,
+    AddShortVideoSegmentClip,
+    MoveShortVideoClip,
+    RemoveShortVideoClip,
+    ShortVideoCommand,
+    UpdateShortVideoClip,
+    UseShortVideoHighlightCandidate,
+    apply_short_video_commands,
+    short_video_from_project,
+)
 from .codex_runtime import detect_codex
 from .gui_codex_chat_state import (
     CodexChatController,
@@ -107,7 +118,7 @@ from .subtitle_project import (
     save_project,
 )
 from .processing_progress import ProcessingProgress, parse_ffmpeg_timestamp, parse_progress_events
-from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
+from .short_video_schema import ShortVideoError, VALID_FIT_MODES, VALID_TRANSITION_TYPES
 from .subtitle_line_count import segment_editor_text, segment_preview_text
 from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
@@ -490,6 +501,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._highlight_progress = 0.0
         self._highlight_cancel = threading.Event()
         self._highlight_generation = 0
+        self._highlight_job_id = ""
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
         self._audio_preview_pending_levels: dict[str, float] = {}
@@ -964,6 +976,41 @@ class EditBayBackend(LegacyEditBayBackend):
             }
         return section
 
+    def _apply_short_video_commands(
+        self,
+        commands: Iterable[ShortVideoCommand],
+        *,
+        highlight_candidates: Iterable[Mapping[str, Any]] = (),
+        error_status: str = "",
+    ) -> bool:
+        """Commit the shared short-domain result and publish GUI notifications."""
+
+        if self._project is None:
+            return False
+        try:
+            result = apply_short_video_commands(
+                self._project,
+                commands,
+                highlight_candidates=highlight_candidates,
+            )
+        except ShortVideoError as error:
+            if error_status:
+                self._set_status(f"{error_status}: {error}", "CHECK")
+            return False
+        self._project["short_video"] = result.short_video.to_json()
+        self._mark_project_dirty()
+        self.projectDataChanged.emit()
+        self.shortVideoChanged.emit()
+        return True
+
+    def _short_video_clip_ids(self) -> list[str]:
+        if self._project is None:
+            return []
+        try:
+            return [clip.proposal_id for clip in short_video_from_project(self._project).clips]
+        except ShortVideoError:
+            return []
+
     def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
         return self._segment_by_id.get(str(segment_id))
 
@@ -1021,193 +1068,92 @@ class EditBayBackend(LegacyEditBayBackend):
     def initializeShortVideoClips(self) -> None:
         if self._project is None:
             return
-        section = self._short_video_section()
-        if section.get("clips"):
+        if self._short_video_clip_count() > 0:
             return
-        clips: list[dict[str, Any]] = []
-        for segment in sorted(
-            self._project.get("segments", []),
-            key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)), str(item.get("id", ""))),
-        ):
-            clips.append(
-                {
-                    "proposal_id": f"short-clip-{uuid4().hex[:12]}",
-                    "segment_id": str(segment.get("id", "")),
-                    "start": float(segment.get("start", 0.0)),
-                    "end": float(segment.get("end", 0.0)),
-                }
+        commands = [
+            AddShortVideoSegmentClip(
+                clip_id=f"short-clip-{uuid4().hex[:12]}",
+                segment_id=str(segment.get("id", "")),
             )
-        section["enabled"] = True
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
+            for segment in sorted(
+                self._project.get("segments", []),
+                key=lambda item: (
+                    float(item.get("start", 0.0)),
+                    float(item.get("end", 0.0)),
+                    str(item.get("id", "")),
+                ),
+            )
+        ]
+        if commands:
+            self._apply_short_video_commands(commands)
 
     @Slot(str, result=bool)
     def addShortVideoClip(self, segment_id: str) -> bool:
         if self._project is None or self._running:
             return False
-        segment = self._find_segment_by_id(segment_id)
-        if segment is None:
-            return False
-        section = self._short_video_section()
-        clips = list(section.get("clips", []))
-        clips.append(
-            {
-                "proposal_id": f"short-clip-{uuid4().hex[:12]}",
-                "segment_id": segment_id,
-                "start": float(segment.get("start", 0.0)),
-                "end": float(segment.get("end", 0.0)),
-            }
+        return self._apply_short_video_commands(
+            (
+                AddShortVideoSegmentClip(
+                    clip_id=f"short-clip-{uuid4().hex[:12]}",
+                    segment_id=segment_id,
+                ),
+            )
         )
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
 
     @Slot(float, float, result=bool)
     def addShortVideoClipByRange(self, start: float, end: float) -> bool:
         if self._project is None or self._running:
             return False
-        try:
-            start = float(start)
-            end = float(end)
-        except (TypeError, ValueError, OverflowError):
-            return False
-        if not math.isfinite(start) or not math.isfinite(end):
-            return False
-        duration = max(0.0, float(self.projectDuration))
-        if start < 0.0 or start >= end or (duration > 0.0 and end > duration):
-            return False
-        section = self._short_video_section()
-        clips = list(section.get("clips", []))
-        clips.append(
-            {
-                "proposal_id": f"short-clip-{uuid4().hex[:12]}",
-                "segment_id": "",
-                "start": round(start, 3),
-                "end": round(end, 3),
-            }
+        return self._apply_short_video_commands(
+            (
+                AddShortVideoRangeClip(
+                    clip_id=f"short-clip-{uuid4().hex[:12]}",
+                    source_start=start,
+                    source_end=end,
+                ),
+            )
         )
-        section["enabled"] = True
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
 
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
-        clips = list(section.get("clips", []))
-        if not 0 <= index < len(clips):
+        clip_ids = self._short_video_clip_ids()
+        if not 0 <= index < len(clip_ids):
             return False
-        clips.pop(index)
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._apply_short_video_commands((RemoveShortVideoClip(clip_id=clip_ids[index]),))
 
     @Slot(int, int, result=bool)
     def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
-        clips = list(section.get("clips", []))
-        if not (0 <= from_index < len(clips)):
+        clip_ids = self._short_video_clip_ids()
+        if not 0 <= from_index < len(clip_ids):
             return False
         if to_index < 0:
             to_index = 0
-        if to_index > len(clips):
-            to_index = len(clips)
+        if to_index > len(clip_ids):
+            to_index = len(clip_ids)
         if from_index == to_index:
             return True
-        clip = clips.pop(from_index)
+        clip_id = clip_ids.pop(from_index)
         if to_index > from_index:
             to_index -= 1
-        clips.insert(to_index, clip)
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        before_clip_id = clip_ids[to_index] if to_index < len(clip_ids) else ""
+        return self._apply_short_video_commands(
+            (MoveShortVideoClip(clip_id=clip_id, before_clip_id=before_clip_id),)
+        )
 
     @Slot(int, "QVariantMap", result=bool)
     def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
         if self._project is None or self._running:
             return False
-        if not isinstance(fields, dict) or not fields:
+        clip_ids = self._short_video_clip_ids()
+        if not 0 <= index < len(clip_ids):
             return False
-        section = self._short_video_section()
-        clips = list(section.get("clips", []))
-        if not 0 <= index < len(clips):
-            return False
-        clip = dict(clips[index])
-        trim_requested = "start" in fields or "end" in fields
-        if not trim_requested and not any(
-            key in fields for key in ("fit", "background_color")
-        ):
-            return False
-
-        if trim_requested:
-            segment = self._find_segment_by_id(str(clip.get("segment_id", "")))
-            range_clip = not str(clip.get("segment_id", "")).strip()
-            if segment is None and not range_clip:
-                return False
-            try:
-                if segment is None:
-                    segment_start = 0.0
-                    segment_end = float(self.projectDuration)
-                    if segment_end <= 0.0:
-                        segment_end = max(float(clip.get("end", 0.0)), 0.0)
-                else:
-                    segment_start = float(segment.get("start", 0.0))
-                    segment_end = float(segment.get("end", segment_start))
-                start = float(fields.get("start", clip.get("start", segment_start)))
-                end = float(fields.get("end", clip.get("end", segment_end)))
-                if not all(
-                    math.isfinite(value)
-                    for value in (segment_start, segment_end, start, end)
-                ):
-                    return False
-            except (TypeError, ValueError):
-                return False
-            video_duration = self.projectDuration
-            upper_bound = (
-                min(segment_end, video_duration)
-                if video_duration > 0.0
-                else segment_end
-            )
-            lower_bound = max(0.0, segment_start)
-            if (
-                upper_bound <= lower_bound
-                or start < lower_bound
-                or end > upper_bound
-                or start >= end
-            ):
-                return False
-            clip["start"] = start
-            clip["end"] = end
-        if "fit" in fields:
-            fit = str(fields["fit"]).lower()
-            if fit not in VALID_FIT_MODES:
-                return False
-            clip["fit"] = fit
-        if "background_color" in fields:
-            try:
-                clip["background_color"] = normalize_rgb_color(fields["background_color"])
-            except (TypeError, ValueError, OverflowError):
-                return False
-        clips[index] = clip
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._apply_short_video_commands(
+            (UpdateShortVideoClip(clip_id=clip_ids[index], changes=deepcopy(fields)),)
+        )
 
     @Slot(str, result=bool)
     def setShortVideoGlobalFit(self, fit: str) -> bool:
@@ -1304,6 +1250,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._highlight_status in {"running", "cancelling"}:
             return False
         self._highlight_generation += 1
+        self._highlight_job_id = uuid4().hex
         generation = self._highlight_generation
         cancel_event = threading.Event()
         self._highlight_cancel = cancel_event
@@ -1376,36 +1323,16 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._project is None or self._running or not 0 <= index < len(self._highlight_candidates):
             return False
         candidate = self._highlight_candidates[index]
-        source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
-        if not source_ids:
-            return False
-        section = self._short_video_section()
-        clips = list(section.get("clips", []))
-        candidate_start = float(candidate.get("start", 0.0))
-        candidate_end = float(candidate.get("end", candidate_start))
-        if any(
-            str(clip.get("segment_id", "")) in source_ids
-            and min(float(clip.get("end", 0.0)), candidate_end)
-            > max(float(clip.get("start", 0.0)), candidate_start)
-            for clip in clips
-        ):
-            self._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
-            return False
-        section["enabled"] = True
-        clips.append(
-            {
-                "proposal_id": f"short-clip-{uuid4().hex[:12]}",
-                "segment_id": source_ids[0],
-                "start": candidate_start,
-                "end": candidate_end,
-                "highlight_candidate_id": str(candidate.get("id", "")),
-            }
+        return self._apply_short_video_commands(
+            (
+                UseShortVideoHighlightCandidate(
+                    clip_id=f"short-clip-{uuid4().hex[:12]}",
+                    highlight_candidate_id=str(candidate.get("id", "")),
+                ),
+            ),
+            highlight_candidates=self._highlight_candidates,
+            error_status="見どころ候補をショートへ追加できません",
         )
-        section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
 
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:

@@ -16,6 +16,12 @@ GUI は内容を表示し、利用者が選択した operation だけを明示�
 - 全カットの消去、動画の半分以上を除外する提案、全ショート clip の削除には追加確認が必要です。
 - FFmpeg 実行やファイル書き換えを行わず、既存の `VideoTimeline` と `ShortVideo` 契約へ dispatch します。
 
+Proposal 境界の責務は、信頼できない JSON の schema、project/target revision、利用者が選択した
+operation ID、追加確認の検証までです。ショート clip の検索・追加・削除・並べ替え・更新、
+source/segment 範囲、重複 range、ハイライト候補、目標尺の検証と state 更新は
+`short_video_commands` だけが担います。GUI Slot と Codex Proposal は同じ command API を呼び、
+入力 project を変更せずに全 command が成功した場合だけ結果を反映します。
+
 ## operation
 
 `normal` は `add_cut` / `remove_range`、`restore_cut`、`restore_range`、
@@ -24,6 +30,9 @@ GUI は内容を表示し、利用者が選択した operation だけを明示�
 `short` は `add_clip_by_range`、`remove_clip`、`move_clip`、`update_clip_range`、
 `use_highlight_candidate`、`set_short_duration_target` を受け付けます。
 ハイライト由来 clip には候補 ID を残すため、提案根拠を追跡できます。
+
+`add_clip_by_range`、`use_highlight_candidate`、`update_clip_range` は、更新対象自身を除く clip と
+`(source_start, source_end)` が完全一致する場合を同じ重複 range として拒否します。
 
 ## 統合境界
 

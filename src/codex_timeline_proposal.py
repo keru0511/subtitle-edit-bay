@@ -7,7 +7,18 @@ import json
 import math
 from typing import Any, Iterable, Mapping
 
-from .short_video_schema import ShortVideo, ShortVideoError
+from .short_video_commands import (
+    AddShortVideoRangeClip,
+    MoveShortVideoClip,
+    RemoveShortVideoClip,
+    SetShortVideoDurationTarget,
+    ShortVideoCommand,
+    UpdateShortVideoClip,
+    UseShortVideoHighlightCandidate,
+    apply_short_video_commands,
+    short_video_from_project,
+)
+from .short_video_schema import ShortVideoError
 from .video_timeline import MIN_CUT_DURATION_SECONDS, VideoTimelineError, timeline_from_project
 
 
@@ -66,7 +77,6 @@ OPERATION_FIELDS_BY_TYPE = {
 }
 SAFE_SEGMENT_FIELDS = {"id", "start", "end", "text", "speaker"}
 SAFE_SELECTION_FIELDS = {"basis", "sourcePositionMs", "outputPositionMs", "segment_id"}
-MIN_SHORT_CLIP_SECONDS = 0.05
 
 
 class TimelineProposalError(ValueError):
@@ -277,41 +287,11 @@ class TimelineProposalApplyResult:
     changed_ids: tuple[str, ...]
 
 
-def _legacy_clip_id(clip: Mapping[str, Any], index: int) -> str:
-    canonical = json.dumps(dict(clip), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(f"{index}:{canonical}".encode()).hexdigest()[:12]
-    return f"short-clip-{digest}"
-
-
-def _short_section_with_ids(project: Mapping[str, Any]) -> dict[str, Any]:
-    raw = project.get("short_video", {})
-    section = deepcopy(dict(raw)) if isinstance(raw, Mapping) else {}
-    section.setdefault("enabled", False)
-    section.setdefault("clips", [])
-    clips = section.get("clips")
-    if not isinstance(clips, list):
-        raise TimelineProposalError("short_video.clips must be an array")
-    normalized: list[dict[str, Any]] = []
-    used: set[str] = set()
-    for index, raw_clip in enumerate(clips):
-        if not isinstance(raw_clip, Mapping):
-            raise TimelineProposalError(f"short_video.clips[{index}] must be an object")
-        clip = deepcopy(dict(raw_clip))
-        clip_id = str(clip.get("proposal_id", "")).strip() or _legacy_clip_id(clip, index)
-        if clip_id in used:
-            raise TimelineProposalError("short clip proposal ids must be unique")
-        used.add(clip_id)
-        clip["proposal_id"] = clip_id
-        normalized.append(clip)
-    section["clips"] = normalized
-    return section
-
-
 def timeline_state_revision(project: Mapping[str, Any], target: str) -> str:
     if target == "normal":
         state: Mapping[str, Any] = timeline_from_project(dict(project)).to_json()
     elif target == "short":
-        state = ShortVideo.from_json(_short_section_with_ids(project)).to_json()
+        state = short_video_from_project(project).to_json()
     else:
         raise TimelineProposalError(f"unknown timeline target: {target}")
     canonical = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -344,11 +324,11 @@ def build_timeline_proposal_context(
     if target == "normal":
         target_state: Mapping[str, Any] = timeline_from_project(dict(project)).as_view()
     elif target == "short":
-        section = _short_section_with_ids(project)
+        short_video = short_video_from_project(project)
         target_state = {
             "time_basis": "source",
-            "clips": deepcopy(section["clips"]),
-            "duration_target_seconds": section.get("duration_target_seconds"),
+            "clips": [clip.to_json() for clip in short_video.clips],
+            "duration_target_seconds": short_video.duration_target_seconds,
         }
     else:
         raise TimelineProposalError(f"unknown timeline target: {target}")
@@ -367,23 +347,21 @@ def build_timeline_proposal_context(
     }
 
 
-def _validated_range(start: Any, end: Any, duration: float, field: str) -> tuple[float, float]:
-    resolved_start = _finite_seconds(start, f"{field}.source_start")
-    resolved_end = _finite_seconds(end, f"{field}.source_end")
-    if resolved_start < 0.0 or resolved_end - resolved_start < MIN_SHORT_CLIP_SECONDS:
-        raise TimelineProposalError(f"{field} must be at least {MIN_SHORT_CLIP_SECONDS:.2f} seconds")
-    if duration <= 0.0 or resolved_end > duration:
-        raise TimelineProposalError(f"{field} is outside the source video")
-    return resolved_start, resolved_end
-
-
 def _selected_operations(
     proposal: TimelineProposal,
     selected_operation_ids: Iterable[str] | None,
 ) -> tuple[TimelineProposalOperation, ...]:
     if selected_operation_ids is None:
         return proposal.operations
-    selected = set(selected_operation_ids)
+    if isinstance(selected_operation_ids, (str, bytes)):
+        raise TimelineProposalError("selected operation ids must be non-empty strings")
+    try:
+        requested = tuple(selected_operation_ids)
+    except TypeError as error:
+        raise TimelineProposalError("selected operation ids must be an iterable of strings") from error
+    if not all(isinstance(operation_id, str) and operation_id for operation_id in requested):
+        raise TimelineProposalError("selected operation ids must be non-empty strings")
+    selected = set(requested)
     known = {operation.id for operation in proposal.operations}
     unknown = selected - known
     if unknown:
@@ -409,10 +387,41 @@ def _requires_confirmation(
             if operation.type in {"add_cut", "remove_range"}
         )
         return timeline.source_duration > 0.0 and added >= timeline.source_duration * 0.5
-    section = _short_section_with_ids(project)
-    clip_ids = {str(clip["proposal_id"]) for clip in section["clips"]}
+    short_video = short_video_from_project(project)
+    clip_ids = {clip.proposal_id for clip in short_video.clips}
     removed = {operation.clip_id for operation in operations if operation.type == "remove_clip"}
     return bool(clip_ids) and clip_ids.issubset(removed)
+
+
+def _short_command(operation: TimelineProposalOperation) -> ShortVideoCommand:
+    """Translate a schema-validated proposal operation into a domain command."""
+
+    if operation.type == "add_clip_by_range":
+        return AddShortVideoRangeClip(
+            clip_id=operation.clip_id,
+            source_start=operation.source_start,
+            source_end=operation.source_end,
+        )
+    if operation.type == "remove_clip":
+        return RemoveShortVideoClip(clip_id=operation.clip_id)
+    if operation.type == "move_clip":
+        return MoveShortVideoClip(
+            clip_id=operation.clip_id,
+            before_clip_id=operation.before_clip_id,
+        )
+    if operation.type == "update_clip_range":
+        return UpdateShortVideoClip(
+            clip_id=operation.clip_id,
+            changes={"start": operation.source_start, "end": operation.source_end},
+        )
+    if operation.type == "use_highlight_candidate":
+        return UseShortVideoHighlightCandidate(
+            clip_id=operation.clip_id,
+            highlight_candidate_id=operation.highlight_candidate_id,
+        )
+    if operation.type == "set_short_duration_target":
+        return SetShortVideoDurationTarget(target_seconds=operation.target_seconds)
+    raise TimelineProposalError(f"unsupported short operation type: {operation.type!r}")
 
 
 def apply_timeline_proposal(
@@ -466,7 +475,13 @@ def apply_timeline_proposal(
                 changed_ids.add(operation.cut_id or operation.id)
             candidate["timeline"] = timeline.to_json()
         else:
-            _apply_short_operations(candidate, operations, highlight_candidates, changed_ids)
+            command_result = apply_short_video_commands(
+                candidate,
+                (_short_command(operation) for operation in operations),
+                highlight_candidates=highlight_candidates,
+            )
+            candidate["short_video"] = command_result.short_video.to_json()
+            changed_ids.update(command_result.changed_clip_ids)
     except (ShortVideoError, VideoTimelineError) as error:
         raise TimelineProposalError(str(error)) from error
     return TimelineProposalApplyResult(
@@ -475,124 +490,6 @@ def apply_timeline_proposal(
         applied_operation_ids=tuple(operation.id for operation in operations),
         changed_ids=tuple(sorted(changed_ids)),
     )
-
-
-def _apply_short_operations(
-    project: dict[str, Any],
-    operations: tuple[TimelineProposalOperation, ...],
-    highlight_candidates: Iterable[Mapping[str, Any]],
-    changed_ids: set[str],
-) -> None:
-    section = _short_section_with_ids(project)
-    if str(section.get("time_basis", "source")) != "source":
-        raise TimelineProposalError("short clips must use source time")
-    duration = max(0.0, float(project.get("video", {}).get("duration_seconds", 0.0)))
-    candidates = {
-        str(candidate.get("id", "")): candidate
-        for candidate in highlight_candidates
-        if isinstance(candidate, Mapping) and str(candidate.get("id", ""))
-    }
-    clips: list[dict[str, Any]] = section["clips"]
-    for operation in operations:
-        by_id = {str(clip["proposal_id"]): index for index, clip in enumerate(clips)}
-        if operation.type == "add_clip_by_range":
-            clip_id = operation.clip_id or operation.id
-            if clip_id in by_id:
-                raise TimelineProposalError(f"short clip id already exists: {clip_id}")
-            start, end = _validated_range(operation.source_start, operation.source_end, duration, operation.id)
-            if any(float(clip.get("start", 0.0)) == start and float(clip.get("end", 0.0)) == end for clip in clips):
-                raise TimelineProposalError("short proposal contains a duplicate clip range")
-            clips.append({"proposal_id": clip_id, "segment_id": "", "start": start, "end": end})
-            changed_ids.add(clip_id)
-        elif operation.type == "remove_clip":
-            index = by_id.get(operation.clip_id)
-            if index is None:
-                raise TimelineProposalError(f"short clip was not found: {operation.clip_id}")
-            clips.pop(index)
-            changed_ids.add(operation.clip_id)
-        elif operation.type == "move_clip":
-            index = by_id.get(operation.clip_id)
-            if index is None:
-                raise TimelineProposalError(f"short clip was not found: {operation.clip_id}")
-            clip = clips.pop(index)
-            if operation.before_clip_id:
-                destination = next(
-                    (
-                        item_index
-                        for item_index, item in enumerate(clips)
-                        if str(item["proposal_id"]) == operation.before_clip_id
-                    ),
-                    -1,
-                )
-                if destination < 0:
-                    raise TimelineProposalError(f"short clip was not found: {operation.before_clip_id}")
-                clips.insert(destination, clip)
-            else:
-                clips.append(clip)
-            changed_ids.add(operation.clip_id)
-        elif operation.type == "update_clip_range":
-            index = by_id.get(operation.clip_id)
-            if index is None:
-                raise TimelineProposalError(f"short clip was not found: {operation.clip_id}")
-            start, end = _validated_range(operation.source_start, operation.source_end, duration, operation.id)
-            _validate_segment_clip_range(project, clips[index], start, end)
-            clips[index] = {**clips[index], "start": start, "end": end}
-            changed_ids.add(operation.clip_id)
-        elif operation.type == "use_highlight_candidate":
-            if operation.clip_id in by_id:
-                raise TimelineProposalError(f"short clip id already exists: {operation.clip_id}")
-            highlight = candidates.get(operation.highlight_candidate_id)
-            if highlight is None:
-                raise TimelineProposalError(f"highlight candidate was not found: {operation.highlight_candidate_id}")
-            start, end = _validated_range(highlight.get("start"), highlight.get("end"), duration, operation.id)
-            if any(float(clip.get("start", 0.0)) == start and float(clip.get("end", 0.0)) == end for clip in clips):
-                raise TimelineProposalError("short proposal contains a duplicate clip range")
-            raw_source_ids = highlight.get("source_segment_ids", [])
-            if not isinstance(raw_source_ids, list) or not all(isinstance(item, str) for item in raw_source_ids):
-                raise TimelineProposalError("highlight candidate source ids are invalid")
-            clips.append(
-                {
-                    "proposal_id": operation.clip_id,
-                    "segment_id": str(next(iter(raw_source_ids), "")),
-                    "start": start,
-                    "end": end,
-                    "highlight_candidate_id": operation.highlight_candidate_id,
-                }
-            )
-            changed_ids.add(operation.clip_id)
-        elif operation.type == "set_short_duration_target":
-            assert operation.target_seconds is not None
-            if duration <= 0.0 or operation.target_seconds > duration:
-                raise TimelineProposalError("short duration target is outside the source video")
-            section["duration_target_seconds"] = operation.target_seconds
-    section["enabled"] = bool(clips)
-    section["clips"] = clips
-    project["short_video"] = ShortVideo.from_json(section).to_json()
-
-
-def _validate_segment_clip_range(
-    project: Mapping[str, Any],
-    clip: Mapping[str, Any],
-    start: float,
-    end: float,
-) -> None:
-    segment_id = str(clip.get("segment_id", ""))
-    if not segment_id:
-        return
-    segment = next(
-        (
-            item
-            for item in project.get("segments", [])
-            if isinstance(item, Mapping) and str(item.get("id", "")) == segment_id
-        ),
-        None,
-    )
-    if segment is None:
-        raise TimelineProposalError(f"short clip segment was not found: {segment_id}")
-    segment_start = float(segment.get("start", 0.0))
-    segment_end = float(segment.get("end", segment_start))
-    if start < segment_start or end > segment_end:
-        raise TimelineProposalError("short clip range must stay inside its segment")
 
 
 _OPERATION_OUTPUT_SCHEMA: dict[str, Any] = {

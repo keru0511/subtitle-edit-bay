@@ -106,7 +106,7 @@ try {
         throw "Launcher resource compilation failed with exit code $LASTEXITCODE."
     }
     # /MT makes the launcher independent of the separately installed VC runtime.
-    & $compiler.Source /nologo /O2 /W4 /MT $sourcePath SubtitleEditBayLauncher.res user32.lib /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS /MACHINE:X64
+    & $compiler.Source /nologo /O2 /W4 /MT $sourcePath SubtitleEditBayLauncher.res user32.lib shell32.lib /Fe:$resolvedOutputPath /link /SUBSYSTEM:WINDOWS /MACHINE:X64
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher compilation failed with exit code $LASTEXITCODE."
     }

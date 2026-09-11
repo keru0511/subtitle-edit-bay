@@ -131,6 +131,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
         package = (ROOT / "scripts" / "build_release_package.ps1").read_text(encoding="utf-8-sig")
         smoke = (ROOT / "scripts" / "test_installer.ps1").read_text(encoding="utf-8-sig")
+        installer = (ROOT / "installer" / "SubtitleEditBay.iss").read_text(encoding="utf-8-sig")
 
         self.assertIn("[string]$Version", build)
         self.assertIn("[string]$OutputPath", build)
@@ -157,6 +158,19 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertNotIn("installed-gui-smoke.py", smoke)
         self.assertIn("SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", smoke)
         self.assertNotIn("SUBTITLE_EDIT_BAY_SETUP_PROVIDER", smoke)
+        self.assertIn("function Invoke-InstallerScenario", smoke)
+        self.assertIn("InstallerTimeoutSeconds = 120", smoke)
+        self.assertEqual(smoke.count("Invoke-InstallerScenario -Name"), 4)
+        self.assertIn("INSTALLER_SCENARIO_START", smoke)
+        self.assertIn("INSTALLER_SCENARIO_END", smoke)
+        self.assertIn("INSTALLER_DIAGNOSTICS", smoke)
+        self.assertIn("Get-CimInstance Win32_Process", smoke)
+        self.assertIn("taskkill.exe /PID", smoke)
+        self.assertIn("SILENT_MIGRATION_REJECTION", installer)
+        self.assertIn("if WizardSilent then", installer)
+        self.assertIn("validation runs again in PrepareToInstall", installer)
+        self.assertIn("PostMessage(WizardForm.Handle, $0010, 0, 0)", installer)
+        self.assertIn("Silent junction rejection did not record", smoke)
         self.assertIn("Normal launch did not report the setup failure", smoke)
         self.assertIn('if ($failed.status -ne "failed"', smoke)
         self.assertNotIn('status = "success"', smoke)
@@ -194,6 +208,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Set-AuthenticodeSignature", signer)
         self.assertNotIn("$LASTEXITCODE", signer)
         self.assertIn("Assert-InstallerPublisher", updater)
+        self.assertIn('"/MERGETASKS=!legacymigration"', updater)
         self.assertIn("TimeStamperCertificate", updater)
         publisher_check = updater[
             updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")
@@ -1282,6 +1297,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "scripts/runtime_activation.ps1",
                         "scripts/setup.ps1",
                         "scripts/setup_state.ps1",
+                        "scripts/windows_path_identity.ps1",
                         "scripts/runtime_contract.py",
                         "runtime/runtime-contract.json",
                         "runtime/requirements-windows-cpu.lock",

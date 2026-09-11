@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$InstallerPath,
     [Parameter(Mandatory = $true)][ValidatePattern('^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$')][string]$ExpectedVersion,
-    [Parameter(Mandatory = $true)][string]$InstallDirectory
+    [Parameter(Mandatory = $true)][string]$InstallDirectory,
+    [ValidateRange(10, 900)][int]$InstallerTimeoutSeconds = 120
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,15 +12,73 @@ $testRoot = [IO.Path]::GetDirectoryName($installDir)
 $logPath = Join-Path $testRoot "subtitle-edit-bay-install.log"
 if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Installer is missing: $installer" }
 
-$install = Start-Process -FilePath $installer -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir", "/LOG=$logPath") -Wait -PassThru
+function Write-InstallerDiagnostics {
+    param(
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+    Write-Host "INSTALLER_DIAGNOSTICS scenario=$Scenario root_pid=$($Process.Id) log=$LogPath"
+    if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+        Write-Host "--- Inno Setup log tail ($Scenario) ---"
+        Get-Content -LiteralPath $LogPath -Tail 250 -ErrorAction Continue | ForEach-Object { Write-Host $_ }
+    } else {
+        Write-Host "Inno Setup log was not created for scenario '$Scenario'."
+    }
+    try {
+        $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+        $included = [Collections.Generic.HashSet[uint32]]::new()
+        [void]$included.Add([uint32]$Process.Id)
+        do {
+            $added = $false
+            foreach ($candidate in $allProcesses) {
+                if ($included.Contains([uint32]$candidate.ParentProcessId) -and
+                    $included.Add([uint32]$candidate.ProcessId)) {
+                    $added = $true
+                }
+            }
+        } while ($added)
+        foreach ($candidate in ($allProcesses | Where-Object {
+            $included.Contains([uint32]$_.ProcessId) -or $_.Name -like "SubtitleEditBay-Setup*"
+        } | Sort-Object ProcessId)) {
+            Write-Host ("PROCESS pid={0} ppid={1} name={2} command={3}" -f `
+                $candidate.ProcessId, $candidate.ParentProcessId, $candidate.Name, $candidate.CommandLine)
+        }
+    } catch {
+        Write-Warning "Could not collect Installer process diagnostics: $_"
+    }
+}
+
+function Invoke-InstallerScenario {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+    Write-Host "INSTALLER_SCENARIO_START name=$Name timeout_seconds=$InstallerTimeoutSeconds log=$LogPath"
+    $process = Start-Process -FilePath $installer -ArgumentList $Arguments -PassThru
+    if (-not $process.WaitForExit($InstallerTimeoutSeconds * 1000)) {
+        Write-InstallerDiagnostics -Scenario $Name -Process $process -LogPath $LogPath
+        & taskkill.exe /PID $process.Id /T /F 2>&1 | ForEach-Object { Write-Host $_ }
+        throw "Installer scenario '$Name' timed out after $InstallerTimeoutSeconds seconds."
+    }
+    Write-Host "INSTALLER_SCENARIO_END name=$Name exit_code=$($process.ExitCode)"
+    if ($process.ExitCode -ne 0 -and (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        Get-Content -LiteralPath $LogPath -Tail 250 -ErrorAction Continue | ForEach-Object { Write-Host $_ }
+    }
+    return $process
+}
+
+$install = Invoke-InstallerScenario -Name "base-install" -LogPath $logPath -Arguments @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir", "/LOG=$logPath"
+)
 if ($install.ExitCode -ne 0) {
-    Get-Content -LiteralPath $logPath -ErrorAction SilentlyContinue
     throw "Installer exited with code $($install.ExitCode)."
 }
 foreach ($path in @(
     "SubtitleEditBayLauncher.exe", "src\gui.py", "src\ui\Main.qml", "scripts\launch.ps1",
     "scripts\setup.ps1", "scripts\setup_state.ps1", "scripts\runtime_activation.ps1",
-    "scripts\runtime_contract.py", "scripts\windows_signing_identity.ps1", "runtime\runtime-contract.json",
+    "scripts\runtime_contract.py", "scripts\windows_path_identity.ps1", "scripts\windows_signing_identity.ps1", "runtime\runtime-contract.json",
     "runtime\requirements-windows-cpu.lock", "runtime\requirements-windows-cu128.lock", "VERSION"
 )) {
     $candidate = Join-Path $installDir $path
@@ -28,6 +87,73 @@ foreach ($path in @(
 $expectedInstalledVersion = $ExpectedVersion.Substring(1)
 $installedVersion = (Get-Content -LiteralPath (Join-Path $installDir "VERSION") -Raw).Trim()
 if ($installedVersion -ne $expectedInstalledVersion) { throw "Installed VERSION mismatch: expected=$expectedInstalledVersion actual=$installedVersion" }
+
+# Exercise the Installer-owned persistence path with non-ASCII data. The repair
+# setup must consume exactly the UTF-8 request written by Inno Setup.
+$migrationSource = Join-Path $testRoot "旧ワークスペース"
+$migrationInstallDir = Join-Path $testRoot "migration-probe-install"
+New-Item -ItemType Directory -Path (Join-Path $migrationSource "src") -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $migrationSource "setup.bat"), "setup")
+[IO.File]::WriteAllText((Join-Path $migrationSource "start.bat"), "start")
+$migrationInstallLog = Join-Path $testRoot "subtitle-edit-bay-migration-install.log"
+$migrationInstall = Invoke-InstallerScenario -Name "migration-install" -LogPath $migrationInstallLog -Arguments @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$migrationInstallDir",
+    "/TASKS=legacymigration", "/LEGACYWORKSPACE=$migrationSource", "/LOG=$migrationInstallLog"
+)
+if ($migrationInstall.ExitCode -ne 0) { throw "Installer UTF-8 migration probe failed with code $($migrationInstall.ExitCode)." }
+$pendingMigrationPath = Join-Path $migrationInstallDir ".local\migration\pending-request.json"
+$pendingMigration = Get-Content -LiteralPath $pendingMigrationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([IO.Path]::GetFullPath([string]$pendingMigration.source) -ne [IO.Path]::GetFullPath($migrationSource)) {
+    throw "Installer did not preserve the Japanese migration source as UTF-8."
+}
+$powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$pendingProbeOutput = & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
+    (Join-Path $migrationInstallDir "scripts\setup.ps1") -ProbePendingMigrationOnly
+if ($LASTEXITCODE -ne 0) { throw "Setup could not reload the Installer-owned pending migration request." }
+$pendingProbe = ($pendingProbeOutput | Select-Object -Last 1) | ConvertFrom-Json
+if ([IO.Path]::GetFullPath([string]$pendingProbe.source) -ne [IO.Path]::GetFullPath($migrationSource)) {
+    throw "Setup changed the Japanese migration source while reloading it."
+}
+
+# Inno Setup remembers task selections for a stable AppId. A later silent
+# application update without migration arguments must not restore the one-shot
+# migration task and fail because LEGACYWORKSPACE is absent.
+$migrationUpdateLog = Join-Path $testRoot "subtitle-edit-bay-migration-update.log"
+$migrationUpdate = Invoke-InstallerScenario -Name "migration-free-update" -LogPath $migrationUpdateLog -Arguments @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$migrationInstallDir",
+    "/LOG=$migrationUpdateLog"
+)
+if ($migrationUpdate.ExitCode -ne 0) {
+    Get-Content -LiteralPath $migrationUpdateLog -ErrorAction SilentlyContinue
+    throw "Silent update restored the one-shot migration task and failed with code $($migrationUpdate.ExitCode)."
+}
+$pendingAfterUpdate = Get-Content -LiteralPath $pendingMigrationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([IO.Path]::GetFullPath([string]$pendingAfterUpdate.source) -ne [IO.Path]::GetFullPath($migrationSource)) {
+    throw "Silent update changed the pending migration request."
+}
+
+# A junction alias for the destination must fail before the Installer writes
+# product files or setup has a chance to mutate the legacy runtime.
+$junctionDestination = Join-Path $testRoot "junction-destination"
+$junctionAlias = Join-Path $testRoot "junction-source-alias"
+New-Item -ItemType Directory -Path (Join-Path $junctionDestination "src") -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $junctionDestination "setup.bat"), "legacy-setup")
+[IO.File]::WriteAllText((Join-Path $junctionDestination "start.bat"), "legacy-start")
+$legacySentinel = Join-Path $junctionDestination "legacy-sentinel.txt"
+[IO.File]::WriteAllText($legacySentinel, "unchanged")
+New-Item -ItemType Junction -Path $junctionAlias -Target $junctionDestination | Out-Null
+$junctionInstallLog = Join-Path $testRoot "subtitle-edit-bay-junction-rejection.log"
+$junctionInstall = Invoke-InstallerScenario -Name "junction-rejection" -LogPath $junctionInstallLog -Arguments @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$junctionDestination",
+    "/TASKS=legacymigration", "/LEGACYWORKSPACE=$junctionAlias", "/LOG=$junctionInstallLog"
+)
+if ($junctionInstall.ExitCode -eq 0) { throw "Installer accepted its destination through a junction alias." }
+$junctionLogText = Get-Content -LiteralPath $junctionInstallLog -Raw -ErrorAction Stop
+if ($junctionLogText -notmatch "SILENT_MIGRATION_REJECTION") {
+    throw "Silent junction rejection did not record its pre-install validation failure."
+}
+if ((Get-Content -LiteralPath $legacySentinel -Raw) -ne "unchanged") { throw "Installer changed legacy data before junction rejection." }
+if (Test-Path -LiteralPath (Join-Path $junctionDestination "src\gui.py")) { throw "Installer copied product files before junction rejection." }
 
 $launcher = Join-Path $installDir "SubtitleEditBayLauncher.exe"
 $hookPath = Join-Path $testRoot "installer-e2e-setup-hook.ps1"

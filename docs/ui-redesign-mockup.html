@@ -427,8 +427,9 @@
                     <span id="btn-run-transcribe-icon">🎙️</span>
                     <span id="btn-run-transcribe-label">選択音声で文字起こしを実行</span>
                   </button>
-                  <button onclick="renderVideoWithCurrentSubtitles()" class="w-full py-1.2 rounded-lg bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[11px] font-medium transition flex items-center justify-center gap-1.5" title="選択中の動画に現在の字幕を焼き付けてエクスポート">
-                    <span>🎬</span> 字幕付き動画を焼き出し (Render)
+                  <button id="btn-render-subtitles" onclick="renderVideoWithCurrentSubtitles()" class="w-full py-1.2 rounded-lg bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[11px] font-medium transition flex items-center justify-center gap-1.5" title="選択中の動画に現在の字幕を焼き付けてエクスポート">
+                    <span id="btn-render-subtitles-icon">🎬</span>
+                    <span id="btn-render-subtitles-label">字幕付き動画を焼き出し (Render)</span>
                   </button>
                 </div>
               </div>
@@ -6381,12 +6382,27 @@ ${escapeHtml(log.details)}
       { id: 'save', label: '保存', desc: 'プロジェクトメタデータと非破壊カット情報の同期中...' }
     ];
 
-    function renderPipelineSteps(activeStepIndex, isCompleted = false, isCancelled = false) {
+    const renderExportPipelineSteps = [
+      { id: 'prepare', label: '出力準備', desc: '解像度・フレームレート・フォントキャッシュを初期化中...' },
+      { id: 'subtitle', label: 'ASS字幕合成', desc: '話者別カラー・縁取り・配置スタイルをASSスクリプトへ合成中...' },
+      { id: 'audio', label: '音声ミックス', desc: 'EBU R128 (-16 LUFS) 音量均一化 & オーディオトラックを合成中...' },
+      { id: 'encode', label: '映像エンコード', desc: 'GPU (NVENC) でASS字幕をハードウェア焼き付けエンコード中...' },
+      { id: 'finalize', label: 'コンテナ出力', desc: 'MP4コンテナのメタデータ付与 & 最終動画ファイルを確定中...' }
+    ];
+
+    let currentActiveSteps = transcriptionPipelineSteps;
+
+    function renderPipelineSteps(activeStepIndex, isCompleted = false, isCancelled = false, steps = null) {
       const container = document.getElementById('progress-steps-container');
       if (!container) return;
       container.innerHTML = '';
 
-      transcriptionPipelineSteps.forEach((step, idx) => {
+      const targetSteps = steps || currentActiveSteps || transcriptionPipelineSteps;
+      currentActiveSteps = targetSteps;
+
+      container.className = `grid grid-cols-${targetSteps.length} gap-2`;
+
+      targetSteps.forEach((step, idx) => {
         const div = document.createElement('div');
         let borderCls = 'border-surface-border bg-surface-card/30';
         let iconHtml = `<span class="w-4 h-4 rounded-full bg-surface-base text-slate-500 flex items-center justify-center text-[10px] font-mono">${idx + 1}</span>`;
@@ -6592,6 +6608,9 @@ ${escapeHtml(log.details)}
         const runBtn = document.getElementById('btn-run-subtitle-transcribe');
         const runIcon = document.getElementById('btn-run-transcribe-icon');
         const runLabel = document.getElementById('btn-run-transcribe-label');
+        const renderBtn = document.getElementById('btn-render-subtitles');
+        const renderIcon = document.getElementById('btn-render-subtitles-icon');
+        const renderLabel = document.getElementById('btn-render-subtitles-label');
         const statusBadge = document.getElementById('subtitle-source-status-badge');
 
         if (inlineProgress) inlineProgress.classList.add('hidden');
@@ -6601,6 +6620,14 @@ ${escapeHtml(log.details)}
         }
         if (runIcon) runIcon.innerText = '🎙️';
         if (runLabel) runLabel.innerText = '選択音声で文字起こしを実行';
+
+        if (renderBtn) {
+          renderBtn.disabled = false;
+          renderBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+        }
+        if (renderIcon) renderIcon.innerText = '🎬';
+        if (renderLabel) renderLabel.innerText = '字幕付き動画を焼き出し (Render)';
+
         if (statusBadge) {
           statusBadge.className = 'text-emerald-400 font-mono text-[9px] font-bold';
           statusBadge.innerText = '● 準備完了';
@@ -6617,7 +6644,7 @@ ${escapeHtml(log.details)}
           if (stepperLabel) stepperLabel.innerText = "文字起こし";
         }
 
-        showToast('文字起こし処理を停止しました', 'warning');
+        showToast('処理を停止しました', 'warning');
         addLogEntry('[WARN] 処理がユーザーによりキャンセルされました');
         setTimeout(() => {
           overlay.classList.add('hidden');
@@ -6626,6 +6653,151 @@ ${escapeHtml(log.details)}
       } else {
         document.getElementById('processing-progress-overlay').classList.add('hidden');
       }
+    }
+
+    function startMockRenderProgress(outputFilename, videoTitle) {
+      if (progressInterval) {
+        showToast('すでに別の処理が進行中です', 'warning');
+        return;
+      }
+
+      const overlay = document.getElementById('processing-progress-overlay');
+      const bar = document.getElementById('progress-main-bar');
+      const percentText = document.getElementById('progress-percent-text');
+      const statusText = document.getElementById('progress-status-text');
+      const jobTitle = document.getElementById('progress-job-title');
+      const timeElapsed = document.getElementById('progress-time-elapsed');
+      const timeRemaining = document.getElementById('progress-time-remaining');
+      const cancelBtn = document.getElementById('progress-cancel-btn');
+      const speedMetric = document.getElementById('progress-speed-metric');
+
+      // 左上パネルのインラインプログレス要素
+      const inlineProgress = document.getElementById('subtitle-source-inline-progress');
+      const inlineBar = document.getElementById('subtitle-inline-bar');
+      const inlinePercent = document.getElementById('subtitle-inline-percent');
+      const inlineStatus = document.getElementById('subtitle-inline-status');
+      const inlineStep = document.getElementById('subtitle-inline-step');
+      const inlineRemain = document.getElementById('subtitle-inline-remain');
+      const renderBtn = document.getElementById('btn-render-subtitles');
+      const renderIcon = document.getElementById('btn-render-subtitles-icon');
+      const renderLabel = document.getElementById('btn-render-subtitles-label');
+      const statusBadge = document.getElementById('subtitle-source-status-badge');
+
+      overlay.classList.remove('hidden');
+      const targetName = videoTitle || outputFilename || '完成動画';
+      jobTitle.innerText = `処理進捗: 字幕付き動画書き出し (${targetName})`;
+      cancelBtn.innerText = "停止";
+      cancelBtn.disabled = false;
+      cancelBtn.className = "px-2.5 py-1 rounded-md bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 text-xs font-medium transition active:scale-95";
+
+      if (speedMetric) {
+        speedMetric.innerText = "GPU: NVENC (HEVC 60fps) 138fps";
+      }
+
+      // 左上パネルのインラインプログレスを展開
+      if (inlineProgress) inlineProgress.classList.remove('hidden');
+      if (renderBtn) {
+        renderBtn.disabled = true;
+        renderBtn.classList.add('opacity-75', 'cursor-not-allowed');
+      }
+      if (renderIcon) renderIcon.innerText = '⏳';
+      if (renderLabel) renderLabel.innerText = '書き出しエンコード中...';
+      if (statusBadge) {
+        statusBadge.className = 'text-amber-400 font-mono text-[9px] font-bold animate-pulse';
+        statusBadge.innerText = '● 書き出し進行中';
+      }
+
+      progressStartTime = Date.now();
+      let percent = 0;
+      let stepIndex = 0;
+      renderPipelineSteps(stepIndex, false, false, renderExportPipelineSteps);
+      showToast(`🎬 字幕付き動画の書き出しを開始しました (${targetName})`, 'info');
+      addLogEntry(`動画書き出しパイプライン開始: ${targetName}, GPU: NVENC, Loudnorm: ON`);
+
+      progressInterval = setInterval(() => {
+        percent += 2;
+        const elapsedSec = Math.floor((Date.now() - progressStartTime) / 1000);
+        const estTotalSec = 6;
+        const remainSec = Math.max(0, estTotalSec - elapsedSec);
+
+        timeElapsed.innerText = `経過: 00:${String(elapsedSec).padStart(2, '0')}`;
+        timeRemaining.innerText = `残り予測: 約 00:${String(remainSec).padStart(2, '0')}`;
+
+        if (percent < 15) {
+          stepIndex = 0;
+        } else if (percent < 35) {
+          stepIndex = 1;
+        } else if (percent < 60) {
+          stepIndex = 2;
+        } else if (percent < 90) {
+          stepIndex = 3;
+        } else {
+          stepIndex = 4;
+        }
+
+        renderPipelineSteps(stepIndex, false, false, renderExportPipelineSteps);
+        const currentDesc = renderExportPipelineSteps[stepIndex].desc;
+        const currentStepLabel = renderExportPipelineSteps[stepIndex].label;
+        statusText.innerText = currentDesc;
+        bar.style.width = `${Math.min(100, percent)}%`;
+        percentText.innerText = `${Math.min(100, percent)}%`;
+
+        // 左上インラインプログレスを連動更新
+        if (inlineBar) inlineBar.style.width = `${Math.min(100, percent)}%`;
+        if (inlinePercent) inlinePercent.innerText = `${Math.min(100, percent)}%`;
+        if (inlineStep) inlineStep.innerText = `Step ${stepIndex + 1}/5: ${currentStepLabel}`;
+        if (inlineRemain) inlineRemain.innerText = `残り 約00:${String(remainSec).padStart(2, '0')}`;
+        if (inlineStatus) {
+          inlineStatus.innerHTML = `
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+            <span class="truncate">${currentStepLabel}...</span>
+          `;
+        }
+
+        if (percent % 20 === 0) {
+          addLogEntry(`[${currentStepLabel}] 書き出し進捗 ${percent}% - ${currentDesc}`);
+        }
+
+        if (percent >= 100) {
+          clearInterval(progressInterval);
+          progressInterval = null;
+          renderPipelineSteps(4, true, false, renderExportPipelineSteps);
+          statusText.innerText = `動画の書き出しが完了しました！保存先: C:/Videos/Output/${outputFilename || 'subtitled_video.mp4'}`;
+          percentText.innerText = "100%";
+          cancelBtn.innerText = "フォルダを開く";
+          cancelBtn.className = "px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-medium cursor-pointer";
+          cancelBtn.onclick = () => {
+            showToast('エクスプローラーで保存先フォルダを開きました', 'info');
+            overlay.classList.add('hidden');
+          };
+
+          // 左上ボタンの復帰
+          if (renderBtn) {
+            renderBtn.disabled = false;
+            renderBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+          }
+          if (renderIcon) renderIcon.innerText = '🎬';
+          if (renderLabel) renderLabel.innerText = '字幕付き動画を焼き出し (Render)';
+          if (statusBadge) {
+            statusBadge.className = 'text-emerald-400 font-mono text-[9px] font-bold';
+            statusBadge.innerText = '● 出力完了';
+          }
+          if (inlineStatus) {
+            inlineStatus.innerHTML = `<span>✅ 動画書き出し完了</span>`;
+          }
+
+          showToast(`✅ 字幕付き動画の書き出しが完了しました！ (${targetName})`, 'success');
+          addLogEntry(`動画書き出しパイプライン正常終了: ${outputFilename || 'subtitled_video.mp4'}`);
+
+          setTimeout(() => {
+            overlay.classList.add('hidden');
+          }, 3000);
+
+          setTimeout(() => {
+            if (inlineProgress) inlineProgress.classList.add('hidden');
+          }, 3500);
+        }
+      }, 120);
     }
 
     function simulateWebDictGrab() {

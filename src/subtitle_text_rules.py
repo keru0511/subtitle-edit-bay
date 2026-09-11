@@ -57,13 +57,14 @@ def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str
 
     remaining = punctuation
     cleaned: list[Any] = []
+    removed_any = False
     for index, word in enumerate(words):
         if not remaining:
             cleaned.extend(words[index:])
-            segment["words"] = cleaned
-            return
+            break
         if not isinstance(word, dict):
-            return
+            cleaned.extend(words[index:])
+            break
 
         value = str(word.get("word", ""))
         leading_space_count = len(value) - len(value.lstrip())
@@ -79,16 +80,19 @@ def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str
             remaining = remaining[1:]
 
         if removed:
+            removed_any = True
             updated = dict(word)
             updated["word"] = leading_space + body[removed:]
             if str(updated["word"]).strip():
                 cleaned.append(updated)
                 if remaining:
-                    return
+                    cleaned.extend(words[index + 1 :])
+                    break
             continue
-        return
+        cleaned.extend(words[index:])
+        break
 
-    if not remaining:
+    if removed_any:
         segment["words"] = cleaned
 
 

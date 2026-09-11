@@ -148,6 +148,46 @@ class SubtitleTextRuleTests(unittest.TestCase):
         self.assertEqual(repaired[1]["text"], "次。")
         self.assertEqual("".join(word["word"] for word in repaired[1]["words"]), "次。")
 
+    def test_removes_leading_punctuation_across_multiple_aligned_words(self) -> None:
+        repaired = reattach_leading_punctuation(
+            [
+                segment("前", 0.0),
+                segment(
+                    "！？次",
+                    1.0,
+                    words=[
+                        {"word": "！", "start": 1.0, "end": 1.1},
+                        {"word": "？次", "start": 1.1, "end": 2.0},
+                    ],
+                ),
+            ]
+        )
+
+        self.assertEqual(repaired[0]["text"], "前！？")
+        self.assertEqual(repaired[0]["words"][0]["word"], "前！？")
+        self.assertEqual(repaired[1]["text"], "次")
+        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
+
+    def test_removes_partial_aligned_prefix_when_later_punctuation_is_unaligned(self) -> None:
+        original = [
+            segment("前", 0.0),
+            segment(
+                "！？次",
+                1.0,
+                words=[
+                    {"word": "！", "start": 1.0, "end": 1.1},
+                    {"word": "次", "start": 1.1, "end": 2.0},
+                ],
+            ),
+        ]
+
+        repaired = reattach_leading_punctuation(original)
+
+        self.assertEqual(repaired[0]["text"], "前！？")
+        self.assertEqual(repaired[1]["text"], "次")
+        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
+        self.assertEqual([word["word"] for word in original[1]["words"]], ["！", "次"])
+
 
 if __name__ == "__main__":
     unittest.main()

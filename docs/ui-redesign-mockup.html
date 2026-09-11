@@ -304,8 +304,8 @@
           <!-- ================= UPPER WORKSPACE ROW: (JOIN MEDIA BIN + VIDEO MONITOR) ================= -->
           <div class="flex-1 flex overflow-hidden min-h-[260px] relative">
 
-            <!-- LEFT-TOP: MEDIA BIN / 素材一覧 (Visible in Join Mode) -->
-            <aside id="join-media-bin-panel" class="w-80 flex-shrink-0 bg-surface-panel border-r border-surface-border flex flex-col overflow-hidden hidden z-10 select-none">
+            <!-- LEFT: MEDIA BIN / 素材一覧 (編集モード時は常に左側に常設表示) -->
+            <aside id="join-media-bin-panel" class="w-80 flex-shrink-0 bg-surface-panel border-r border-surface-border flex flex-col overflow-hidden z-10 select-none">
               <!-- Media Bin Header -->
               <div class="h-10 px-3 border-b border-surface-border flex items-center justify-between bg-surface-base/80 flex-shrink-0">
                 <div class="flex items-center gap-1.5 min-w-0">
@@ -313,24 +313,31 @@
                   <span class="font-semibold text-slate-200 text-xs truncate">素材一覧 (メディアビン)</span>
                   <span id="join-media-count-badge" class="px-1.5 py-0.2 rounded-full bg-surface-card text-indigo-300 font-mono text-[10px] border border-surface-border">5件</span>
                 </div>
-                <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画を追加">
+                <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画・音声を追加">
                   <span>+</span> 追加
                 </button>
               </div>
 
+              <!-- Media Filter Tabs (All / Video / Audio) -->
+              <div class="px-2.5 pt-2 pb-1 flex items-center gap-1 flex-shrink-0 text-[10px]">
+                <button onclick="filterMediaBin('all')" id="media-tab-all" class="px-2 py-0.5 rounded-md bg-surface-card text-white font-medium border border-surface-border/60 transition">すべて</button>
+                <button onclick="filterMediaBin('video')" id="media-tab-video" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition">🎬 動画</button>
+                <button onclick="filterMediaBin('audio')" id="media-tab-audio" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition">🎵 BGM/SE</button>
+              </div>
+
               <!-- Media Bin Dropzone (OS File Explorer D&D) -->
-              <div id="join-media-bin-dropzone" ondragover="handleMediaBinDragOver(event)" ondragleave="handleMediaBinDragLeave(event)" ondrop="handleMediaBinDrop(event)" onclick="promptAddCustomMediaAsset()" class="m-2.5 p-3 rounded-xl border-2 border-dashed border-surface-border hover:border-indigo-500/60 bg-surface-base/50 hover:bg-indigo-500/5 transition cursor-pointer text-center group">
-                <div class="w-7 h-7 mx-auto mb-1 rounded-full bg-surface-card group-hover:bg-indigo-500/20 text-slate-400 group-hover:text-indigo-300 flex items-center justify-center transition">
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+              <div id="join-media-bin-dropzone" ondragover="handleMediaBinDragOver(event)" ondragleave="handleMediaBinDragLeave(event)" ondrop="handleMediaBinDrop(event)" onclick="promptAddCustomMediaAsset()" class="mx-2.5 my-1.5 p-2.5 rounded-xl border-2 border-dashed border-surface-border hover:border-indigo-500/60 bg-surface-base/50 hover:bg-indigo-500/5 transition cursor-pointer text-center group flex-shrink-0">
+                <div class="w-6 h-6 mx-auto mb-1 rounded-full bg-surface-card group-hover:bg-indigo-500/20 text-slate-400 group-hover:text-indigo-300 flex items-center justify-center transition">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                 </div>
-                <p class="text-[11px] font-medium text-slate-300 group-hover:text-white transition">ここに動画をドラッグ＆ドロップ</p>
-                <p class="text-[9px] text-slate-500 mt-0.5">またはクリックしてファイルを追加</p>
+                <p class="text-[10px] font-medium text-slate-300 group-hover:text-white transition">動画・音声ファイルをここにドロップ</p>
+                <p class="text-[8px] text-slate-500">またはクリックしてファイルを追加</p>
               </div>
 
               <!-- Media Assets Draggable List -->
-              <div class="px-2.5 pb-1 flex items-center justify-between text-[10px] text-slate-400">
-                <span>登録済みクリップ</span>
-                <span class="text-[9px] text-indigo-400 font-medium">下のシーケンスへD&Dで配置</span>
+              <div class="px-2.5 pb-1 flex items-center justify-between text-[10px] text-slate-400 flex-shrink-0">
+                <span>登録素材 (D&Dで配置)</span>
+                <span class="text-[9px] text-indigo-400 font-medium">タイムラインへドラッグ</span>
               </div>
               <div id="join-media-assets-list" class="flex-1 overflow-y-auto px-2.5 pb-2 space-y-1.5">
                 <!-- Populated dynamically by renderJoinMediaBin() -->
@@ -2428,8 +2435,13 @@ ${escapeHtml(log.details)}
       const inspJoin = document.getElementById('inspector-join');
       const caption = document.getElementById('preview-mode-caption');
 
+      // 編集モード中は素材一覧(メディアビン)を常に左側に常設表示
+      if (mediaBin) {
+        mediaBin.classList.remove('hidden');
+        renderJoinMediaBin();
+      }
+
       if (tool === 'cut') {
-        if (mediaBin) mediaBin.classList.add('hidden');
         if (tracksInner) tracksInner.classList.remove('hidden');
         if (joinInner) joinInner.classList.add('hidden');
         if (headersStandard) headersStandard.classList.remove('hidden');
@@ -2440,7 +2452,6 @@ ${escapeHtml(log.details)}
         if (caption) caption.innerText = 'カット編集プレビュー (波形・無音検出)';
         showToast('✂️ カットツール: 範囲指定またはクリップクリックでスライスカット', 'info');
       } else if (tool === 'move') {
-        if (mediaBin) mediaBin.classList.add('hidden');
         if (tracksInner) tracksInner.classList.add('hidden');
         if (joinInner) joinInner.classList.remove('hidden');
         if (headersStandard) headersStandard.classList.add('hidden');
@@ -2453,10 +2464,6 @@ ${escapeHtml(log.details)}
         if (caption) caption.innerText = 'シーケンス移動プレビュー (並び替え・トリム)';
         showToast('✋ シーケンス移動ツール: クリップ本体を掴んでドラッグ移動・両端でトリム', 'info');
       } else if (tool === 'join') {
-        if (mediaBin) {
-          mediaBin.classList.remove('hidden');
-          renderJoinMediaBin();
-        }
         if (tracksInner) tracksInner.classList.add('hidden');
         if (joinInner) joinInner.classList.remove('hidden');
         if (headersStandard) headersStandard.classList.add('hidden');
@@ -2487,6 +2494,11 @@ ${escapeHtml(log.details)}
         if (switcher) switcher.classList.remove('hidden');
         if (inspSubtitle) inspSubtitle.classList.add('hidden');
         if (inspAudio) inspAudio.classList.add('hidden');
+        const mediaBin = document.getElementById('join-media-bin-panel');
+        if (mediaBin) {
+          mediaBin.classList.remove('hidden');
+          renderJoinMediaBin();
+        }
         setEditTool(currentEditTool);
       } else if (subMode === 'subtitle') {
         if (switcher) switcher.classList.add('hidden');
@@ -3770,12 +3782,16 @@ ${escapeHtml(log.details)}
     }
 
     // ================= VIDEO JOIN & SEQUENCE ASSEMBLY ENGINE (動画連結モード) =================
+    let currentMediaFilter = 'all'; // 'all' | 'video' | 'audio'
+
     let mediaAssets = [
-      { id: 'm1', slot: 'op', title: 'チャンネルOP 2026', file: 'ch_intro_op_2026.mp4', duration: 15.0, resolution: '1080p 60fps' },
-      { id: 'm2', slot: 'main', title: 'ゲーム実況 本編 Part 1', file: 'gameplay_apex_session_01.mp4', duration: 750.0, resolution: '1080p 60fps' },
-      { id: 'm3', slot: 'main', title: 'ゲーム実況 本編 Part 2', file: 'gameplay_apex_session_02.mp4', duration: 620.0, resolution: '1080p 60fps' },
-      { id: 'm4', slot: 'ed', title: '登録促進 エンディング', file: 'ending_card_subscribe.mp4', duration: 20.0, resolution: '1080p 60fps' },
-      { id: 'm5', slot: 'clip', title: 'ハイライト (クラッチ決着)', file: 'clutch_highlight_moment.mp4', duration: 35.0, resolution: '1080p 60fps' }
+      { id: 'm1', type: 'video', slot: 'op', title: 'チャンネルOP 2026', file: 'ch_intro_op_2026.mp4', duration: 15.0, resolution: '1080p 60fps' },
+      { id: 'm2', type: 'video', slot: 'main', title: 'ゲーム実況 本編 Part 1', file: 'gameplay_apex_session_01.mp4', duration: 750.0, resolution: '1080p 60fps' },
+      { id: 'm3', type: 'video', slot: 'main', title: 'ゲーム実況 本編 Part 2', file: 'gameplay_apex_session_02.mp4', duration: 620.0, resolution: '1080p 60fps' },
+      { id: 'm4', type: 'video', slot: 'ed', title: '登録促進 エンディング', file: 'ending_card_subscribe.mp4', duration: 20.0, resolution: '1080p 60fps' },
+      { id: 'm5', type: 'video', slot: 'clip', title: 'ハイライト (クラッチ決着)', file: 'clutch_highlight_moment.mp4', duration: 35.0, resolution: '1080p 60fps' },
+      { id: 'm6', type: 'audio', slot: 'bgm', title: '🎶 BGM: ほのぼの日常', file: 'bgm_daily_peace.mp3', duration: 180.0, resolution: '48kHz Stereo' },
+      { id: 'm7', type: 'audio', slot: 'se', title: '🔔 SE: 歓声・決定音', file: 'se_cheer_clutch.wav', duration: 2.5, resolution: '48kHz Mono' }
     ];
 
     let joinClips = [
@@ -3810,17 +3826,67 @@ ${escapeHtml(log.details)}
     }
 
     // --- TOP-LEFT MEDIA BIN (素材一覧) ---
+    function filterMediaBin(category) {
+      currentMediaFilter = category || 'all';
+
+      const tabAll = document.getElementById('media-tab-all');
+      const tabVideo = document.getElementById('media-tab-video');
+      const tabAudio = document.getElementById('media-tab-audio');
+
+      const inactiveClass = "px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition";
+      const activeClass = "px-2 py-0.5 rounded-md bg-surface-card text-white font-medium border border-surface-border/60 transition shadow-sm";
+
+      if (tabAll) tabAll.className = (currentMediaFilter === 'all') ? activeClass : inactiveClass;
+      if (tabVideo) tabVideo.className = (currentMediaFilter === 'video') ? activeClass : inactiveClass;
+      if (tabAudio) tabAudio.className = (currentMediaFilter === 'audio') ? activeClass : inactiveClass;
+
+      renderJoinMediaBin();
+    }
+
     function renderJoinMediaBin() {
       const container = document.getElementById('join-media-assets-list');
       const badge = document.getElementById('join-media-count-badge');
-      if (badge) badge.innerText = `${mediaAssets.length}件`;
       if (!container) return;
 
+      const filtered = mediaAssets.filter(asset => {
+        if (currentMediaFilter === 'all') return true;
+        if (currentMediaFilter === 'video') return (asset.type || 'video') === 'video';
+        if (currentMediaFilter === 'audio') return asset.type === 'audio';
+        return true;
+      });
+
+      if (badge) badge.innerText = `${filtered.length}件 / 全${mediaAssets.length}件`;
+
       container.innerHTML = '';
-      mediaAssets.forEach((asset) => {
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="py-8 text-center text-slate-500 text-xs">
+            <p>該当する素材がありません</p>
+            <button onclick="promptAddCustomMediaAsset()" class="mt-2 text-indigo-400 hover:text-indigo-300 underline text-[11px]">＋ 素材を追加する</button>
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach((asset) => {
+        const isAudio = asset.type === 'audio';
         let badgeColor = "bg-indigo-500/20 text-indigo-300 border-indigo-500/30";
-        if (asset.slot === 'op') badgeColor = "bg-purple-500/20 text-purple-300 border-purple-500/30";
-        else if (asset.slot === 'ed') badgeColor = "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+        let badgeText = (asset.slot || 'clip').toUpperCase();
+        let icon = "🎬";
+
+        if (asset.slot === 'op') {
+          badgeColor = "bg-purple-500/20 text-purple-300 border-purple-500/30";
+        } else if (asset.slot === 'ed') {
+          badgeColor = "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+        } else if (asset.slot === 'bgm') {
+          badgeColor = "bg-amber-500/20 text-amber-300 border-amber-500/30";
+          badgeText = "BGM";
+          icon = "🎵";
+        } else if (asset.slot === 'se') {
+          badgeColor = "bg-rose-500/20 text-rose-300 border-rose-500/30";
+          badgeText = "SE";
+          icon = "🔔";
+        }
 
         const card = document.createElement('div');
         card.className = "p-2 rounded-lg bg-surface-card hover:bg-surface-cardHover border border-surface-border cursor-grab active:cursor-grabbing transition group select-none relative";
@@ -3831,16 +3897,17 @@ ${escapeHtml(log.details)}
           <div class="flex items-center justify-between gap-1.5">
             <div class="flex items-center gap-1.5 min-w-0">
               <span class="text-slate-500 text-xs cursor-grab">⋮⋮</span>
-              <span class="px-1.5 py-0.2 rounded ${badgeColor} font-mono text-[9px] font-bold border flex-shrink-0">${asset.slot.toUpperCase()}</span>
+              <span class="text-xs">${icon}</span>
+              <span class="px-1.5 py-0.2 rounded ${badgeColor} font-mono text-[9px] font-bold border flex-shrink-0">${badgeText}</span>
               <span class="font-semibold text-xs text-slate-200 truncate group-hover:text-white">${asset.title}</span>
             </div>
-            <button onclick="event.stopPropagation(); insertAssetIntoSequence('${asset.id}')" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-indigo-600 text-slate-300 hover:text-white border border-surface-border text-[10px] flex-shrink-0 opacity-0 group-hover:opacity-100 transition shadow" title="シーケンス末尾に追加">
+            <button onclick="event.stopPropagation(); insertAssetIntoSequence('${asset.id}')" class="px-1.5 py-0.5 rounded bg-surface-base hover:bg-indigo-600 text-slate-300 hover:text-white border border-surface-border text-[10px] flex-shrink-0 opacity-0 group-hover:opacity-100 transition shadow" title="${isAudio ? 'オーディオトラックへ追加' : 'シーケンス末尾に追加'}">
               + 挿入
             </button>
           </div>
-          <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pl-4">
-            <span class="truncate text-slate-500">${asset.file}</span>
-            <span class="text-indigo-300 font-semibold">${asset.duration.toFixed(0)}s</span>
+          <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pl-5">
+            <span class="truncate text-slate-500 max-w-[130px]">${asset.file}</span>
+            <span class="${isAudio ? 'text-amber-300' : 'text-indigo-300'} font-semibold">${asset.duration.toFixed(0)}s</span>
           </div>
         `;
         container.appendChild(card);
@@ -3848,10 +3915,14 @@ ${escapeHtml(log.details)}
     }
 
     function handleMediaDragStart(e, assetId) {
+      const asset = mediaAssets.find(a => a.id === assetId);
       e.dataTransfer.setData('text/plain', assetId);
       e.dataTransfer.setData('application/x-join-media', assetId);
+      if (asset && asset.type === 'audio') {
+        e.dataTransfer.setData('application/x-join-bgm', assetId);
+      }
       e.dataTransfer.effectAllowed = 'copy';
-      showToast('素材をドラッグ中: シーケンスバーへドロップして取り込み', 'info');
+      showToast(asset && asset.type === 'audio' ? '🎵 音声素材をドラッグ中: シーケンスへドロップして配置' : '🎬 素材をドラッグ中: シーケンスバーへドロップして取り込み', 'info');
     }
 
     function handleClipDragStart(e, clipId) {
@@ -4025,6 +4096,33 @@ ${escapeHtml(log.details)}
       if (mediaAssetId) {
         const asset = mediaAssets.find(a => a.id === mediaAssetId);
         if (asset) {
+          if (asset.type === 'audio' || asset.slot === 'bgm' || asset.slot === 'se') {
+            const isBgm = asset.slot === 'bgm';
+            const canvasRect = canvas.getBoundingClientRect();
+            const dropX = e.clientX - canvasRect.left + canvas.scrollLeft;
+            const totalDur = getJoinEffectiveDuration();
+            const newOffset = Math.max(0, Math.min(Math.max(1, totalDur - 0.5), (dropX / Math.max(1, canvasRect.width)) * totalDur));
+            const newAudio = {
+              id: 'audio_' + Date.now(),
+              type: isBgm ? 'bgm' : 'se',
+              title: (isBgm ? '🎶 BGM: ' : '🔔 SE: ') + asset.title.replace(/^(🎶 BGM: |🔔 SE: )/, ''),
+              file: asset.file,
+              offsetSec: parseFloat(newOffset.toFixed(1)),
+              duration: asset.duration,
+              volume: isBgm ? 30 : 80,
+              fadeIn: isBgm ? 1.0 : 0.0,
+              fadeOut: isBgm ? 1.5 : 0.2,
+              loop: isBgm,
+              ducking: isBgm
+            };
+            joinBgmClips.push(newAudio);
+            selectedJoinAudioId = newAudio.id;
+            renderJoinInspector();
+            renderJoinSequence();
+            showToast(`🎵 音声「${asset.title}」をオーディオトラック (${newAudio.offsetSec}s) に配置しました！`, 'success');
+            return;
+          }
+
           const newClip = {
             id: Date.now(),
             slot: asset.slot,
@@ -4033,7 +4131,7 @@ ${escapeHtml(log.details)}
             duration: asset.duration,
             startSec: 0.0,
             endSec: asset.duration,
-            resolution: asset.resolution,
+            resolution: asset.resolution || "1080p 60fps",
             transition: globalJoinTransitionType,
             transDur: globalJoinTransitionDur,
             audioLinked: true,
@@ -4069,19 +4167,22 @@ ${escapeHtml(log.details)}
 
     function promptAddCustomMediaAsset() {
       const sampleAssets = [
-        { title: "試合パート3 (終盤ラウンド)", file: "apex_session_part3_final.mp4", duration: 540.0, slot: "main" },
-        { title: "アイキャッチ / トランジション", file: "eyecatch_logo_3s.mp4", duration: 3.5, slot: "clip" },
-        { title: "神プレイハイライト", file: "highlight_clutch_ace.mp4", duration: 25.0, slot: "clip" },
-        { title: "EDカード (Twitter/X告知)", file: "ending_sns_notice.mp4", duration: 15.0, slot: "ed" }
+        { type: "video", title: "試合パート3 (終盤ラウンド)", file: "apex_session_part3_final.mp4", duration: 540.0, slot: "main", resolution: "1080p 60fps" },
+        { type: "audio", title: "🎶 BGM: 白熱戦闘クライマックス", file: "bgm_epic_battle_loop.mp3", duration: 150.0, slot: "bgm", resolution: "48kHz Stereo" },
+        { type: "video", title: "アイキャッチ / トランジション", file: "eyecatch_logo_3s.mp4", duration: 3.5, slot: "clip", resolution: "1080p 60fps" },
+        { type: "audio", title: "🔔 SE: ファンファーレ勝利音", file: "se_victory_fanfare.wav", duration: 3.2, slot: "se", resolution: "48kHz Mono" },
+        { type: "video", title: "神プレイハイライト", file: "highlight_clutch_ace.mp4", duration: 25.0, slot: "clip", resolution: "1080p 60fps" },
+        { type: "video", title: "EDカード (Twitter/X告知)", file: "ending_sns_notice.mp4", duration: 15.0, slot: "ed", resolution: "1080p 60fps" }
       ];
       const sample = sampleAssets[mediaAssets.length % sampleAssets.length];
       const newAsset = {
         id: 'm_' + Date.now(),
+        type: sample.type,
         slot: sample.slot,
         title: sample.title,
         file: sample.file,
         duration: sample.duration,
-        resolution: "1080p 60fps"
+        resolution: sample.resolution
       };
       mediaAssets.push(newAsset);
       renderJoinMediaBin();
@@ -4106,18 +4207,20 @@ ${escapeHtml(log.details)}
       if (dz) dz.classList.remove('border-indigo-500', 'bg-indigo-500/10');
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         Array.from(e.dataTransfer.files).forEach((file, idx) => {
+          const isAudio = /\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(file.name);
           const newAsset = {
             id: 'm_' + Date.now() + '_' + idx,
-            slot: 'clip',
-            title: file.name.replace(/\.[^/.]+$/, ""),
+            type: isAudio ? 'audio' : 'video',
+            slot: isAudio ? 'bgm' : 'clip',
+            title: (isAudio ? '🎶 ' : '') + file.name.replace(/\.[^/.]+$/, ""),
             file: file.name,
-            duration: 60.0,
-            resolution: "1080p 60fps"
+            duration: isAudio ? 120.0 : 60.0,
+            resolution: isAudio ? "48kHz Stereo" : "1080p 60fps"
           };
           mediaAssets.push(newAsset);
         });
         renderJoinMediaBin();
-        showToast(`📁 ${e.dataTransfer.files.length}件の動画を素材一覧に登録しました！`, 'success');
+        showToast(`📁 ${e.dataTransfer.files.length}件の素材を素材一覧に登録しました！`, 'success');
       } else {
         promptAddCustomMediaAsset();
       }
@@ -4126,6 +4229,30 @@ ${escapeHtml(log.details)}
     function insertAssetIntoSequence(assetId, targetIndex) {
       const asset = mediaAssets.find(a => a.id === assetId);
       if (!asset) return;
+
+      if (asset.type === 'audio' || asset.slot === 'bgm' || asset.slot === 'se') {
+        const isBgm = asset.slot === 'bgm';
+        const newAudio = {
+          id: 'audio_' + Date.now(),
+          type: isBgm ? 'bgm' : 'se',
+          title: (isBgm ? '🎶 BGM: ' : '🔔 SE: ') + asset.title.replace(/^(🎶 BGM: |🔔 SE: )/, ''),
+          file: asset.file,
+          offsetSec: currentTimeSeconds || 0.0,
+          duration: asset.duration,
+          volume: isBgm ? 30 : 80,
+          fadeIn: isBgm ? 1.0 : 0.0,
+          fadeOut: isBgm ? 1.5 : 0.2,
+          loop: isBgm,
+          ducking: isBgm
+        };
+        joinBgmClips.push(newAudio);
+        selectedJoinAudioId = newAudio.id;
+        renderJoinInspector();
+        renderJoinSequence();
+        showToast(`🎵 音声素材「${asset.title}」をオーディオトラックに追加しました！`, 'success');
+        return;
+      }
+
       const newClip = {
         id: Date.now(),
         slot: asset.slot,
@@ -4134,9 +4261,13 @@ ${escapeHtml(log.details)}
         duration: asset.duration,
         startSec: 0.0,
         endSec: asset.duration,
-        resolution: asset.resolution,
+        resolution: asset.resolution || "1080p 60fps",
         transition: globalJoinTransitionType,
-        transDur: globalJoinTransitionDur
+        transDur: globalJoinTransitionDur,
+        audioLinked: true,
+        audioVolume: 100,
+        audioOffsetSec: 0.0,
+        audioMuted: false
       };
       if (typeof targetIndex === 'number') {
         joinClips.splice(targetIndex, 0, newClip);

@@ -304,9 +304,9 @@
           <!-- ================= UPPER WORKSPACE ROW: (JOIN MEDIA BIN + VIDEO MONITOR) ================= -->
           <div class="flex-1 flex overflow-hidden min-h-[260px] relative">
 
-            <!-- LEFT: MEDIA BIN / 素材一覧 (編集モード時は常に左側に常設表示) -->
+            <!-- LEFT: MEDIA BIN & SUBTITLE SOURCE SELECTOR (編集時は素材一覧、字幕時はソース選択として常設表示) -->
             <aside id="join-media-bin-panel" class="w-80 flex-shrink-0 bg-surface-panel border-r border-surface-border flex flex-col overflow-hidden z-10 select-none">
-              <!-- Media Bin Header -->
+              <!-- Top Header (Mode-aware) -->
               <div class="h-10 px-3 border-b border-surface-border flex items-center justify-between bg-surface-base/80 flex-shrink-0">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <span id="join-media-icon" class="text-sm">📁</span>
@@ -320,29 +320,97 @@
                 </div>
               </div>
 
-              <!-- Media Filter Tabs (All / Video / Audio) -->
-              <div class="px-2.5 pt-2 pb-1 flex items-center gap-1 flex-shrink-0 text-[10px]">
-                <button onclick="filterMediaBin('all')" id="media-tab-all" class="px-2 py-0.5 rounded-md bg-surface-card text-white font-medium border border-surface-border/60 transition">すべて</button>
-                <button onclick="filterMediaBin('video')" id="media-tab-video" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition">🎬 動画</button>
-                <button onclick="filterMediaBin('audio')" id="media-tab-audio" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition">🎵 BGM/SE</button>
-              </div>
-
-              <!-- Media Bin Dropzone (OS File Explorer D&D) -->
-              <div id="join-media-bin-dropzone" ondragover="handleMediaBinDragOver(event)" ondragleave="handleMediaBinDragLeave(event)" ondrop="handleMediaBinDrop(event)" onclick="promptAddCustomMediaAsset()" class="mx-2.5 my-1.5 p-2.5 rounded-xl border-2 border-dashed border-surface-border hover:border-indigo-500/60 bg-surface-base/50 hover:bg-indigo-500/5 transition cursor-pointer text-center group flex-shrink-0">
-                <div class="w-6 h-6 mx-auto mb-1 rounded-full bg-surface-card group-hover:bg-indigo-500/20 text-slate-400 group-hover:text-indigo-300 flex items-center justify-center transition">
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+              <!-- VIEW 1: 編集モード用 (素材D&D・フィルタ) -->
+              <div id="media-bin-edit-view" class="flex-1 flex flex-col overflow-hidden">
+                <!-- Media Filter Tabs (All / Video / Audio) -->
+                <div class="px-2.5 pt-2 pb-1 flex items-center gap-1 flex-shrink-0 text-[10px]">
+                  <button onclick="filterMediaBin('all')" id="media-tab-all" class="px-2 py-0.5 rounded-md bg-surface-card text-white font-medium border border-surface-border/60 transition">すべて</button>
+                  <button onclick="filterMediaBin('video')" id="media-tab-video" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition">🎬 動画</button>
+                  <button onclick="filterMediaBin('audio')" id="media-tab-audio" class="px-2 py-0.5 rounded-md text-slate-400 hover:text-slate-200 transition">🎵 BGM/SE</button>
                 </div>
-                <p class="text-[10px] font-medium text-slate-300 group-hover:text-white transition">動画・音声ファイルをここにドロップ</p>
-                <p class="text-[8px] text-slate-500">またはクリックしてファイルを追加</p>
+
+                <!-- Media Bin Dropzone (OS File Explorer D&D) -->
+                <div id="join-media-bin-dropzone" ondragover="handleMediaBinDragOver(event)" ondragleave="handleMediaBinDragLeave(event)" ondrop="handleMediaBinDrop(event)" onclick="promptAddCustomMediaAsset()" class="mx-2.5 my-1.5 p-2.5 rounded-xl border-2 border-dashed border-surface-border hover:border-indigo-500/60 bg-surface-base/50 hover:bg-indigo-500/5 transition cursor-pointer text-center group flex-shrink-0">
+                  <div class="w-6 h-6 mx-auto mb-1 rounded-full bg-surface-card group-hover:bg-indigo-500/20 text-slate-400 group-hover:text-indigo-300 flex items-center justify-center transition">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                  </div>
+                  <p class="text-[10px] font-medium text-slate-300 group-hover:text-white transition">動画・音声ファイルをここにドロップ</p>
+                  <p class="text-[8px] text-slate-500">またはクリックしてファイルを追加</p>
+                </div>
+
+                <!-- Media Assets Draggable List -->
+                <div class="px-2.5 pb-1 flex items-center justify-between text-[10px] text-slate-400 flex-shrink-0">
+                  <span id="join-media-list-caption">登録素材 (D&Dで配置)</span>
+                  <span id="join-media-list-hint" class="text-[9px] text-indigo-400 font-medium">タイムラインへドラッグ</span>
+                </div>
+                <div id="join-media-assets-list" class="flex-1 overflow-y-auto px-2.5 pb-2 space-y-1.5">
+                  <!-- Populated dynamically by renderJoinMediaBin() -->
+                </div>
               </div>
 
-              <!-- Media Assets Draggable List -->
-              <div class="px-2.5 pb-1 flex items-center justify-between text-[10px] text-slate-400 flex-shrink-0">
-                <span id="join-media-list-caption">登録素材 (D&Dで配置)</span>
-                <span id="join-media-list-hint" class="text-[9px] text-indigo-400 font-medium">タイムラインへドラッグ</span>
-              </div>
-              <div id="join-media-assets-list" class="flex-1 overflow-y-auto px-2.5 pb-2 space-y-1.5">
-                <!-- Populated dynamically by renderJoinMediaBin() -->
+              <!-- VIEW 2: 字幕モード用 (① どの動画を使うか ＋ ② どの音声ファイルを文字起こしに使うか) -->
+              <div id="media-bin-subtitle-view" class="flex-1 flex flex-col overflow-hidden hidden">
+                <div class="px-3 py-1.5 bg-indigo-500/10 border-b border-indigo-500/20 text-[10px] text-indigo-300 flex items-center gap-1.5 flex-shrink-0">
+                  <span>💡</span>
+                  <span>字幕焼き付け対象の動画と、文字起こし音声を指定</span>
+                </div>
+
+                <!-- Scrollable Source Selection Content -->
+                <div class="flex-1 overflow-y-auto px-2.5 py-2 space-y-3">
+                  <!-- SECTION 1: どの動画を使うか (焼き付け対象) -->
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <label class="text-[11px] font-bold text-slate-200 flex items-center gap-1">
+                        <span class="w-4 h-4 rounded bg-indigo-600 text-white flex items-center justify-center text-[10px] font-mono">1</span>
+                        <span>使用する動画 (焼き付け対象)</span>
+                      </label>
+                      <span id="subtitle-video-selected-badge" class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">1件選択中</span>
+                    </div>
+                    <p class="text-[9px] text-slate-400 mb-1.5 leading-relaxed">
+                      プレビューおよび字幕を焼き付けるターゲット動画を選択します。
+                    </p>
+                    <div id="subtitle-video-selector-list" class="space-y-1">
+                      <!-- Populated dynamically by renderSubtitleSourceView() -->
+                    </div>
+                  </div>
+
+                  <div class="h-[1px] bg-surface-border/60"></div>
+
+                  <!-- SECTION 2: どの音声ファイルを文字起こしに使うか (WhisperX入力) -->
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <label class="text-[11px] font-bold text-slate-200 flex items-center gap-1">
+                        <span class="w-4 h-4 rounded bg-indigo-600 text-white flex items-center justify-center text-[10px] font-mono">2</span>
+                        <span>文字起こしに使う音声ファイル</span>
+                      </label>
+                      <div class="flex items-center gap-1 text-[9px]">
+                        <button onclick="toggleAllSubtitleAudios(true)" class="text-indigo-400 hover:text-indigo-300 transition">全選択</button>
+                        <span class="text-slate-600">|</span>
+                        <button onclick="toggleAllSubtitleAudios(false)" class="text-slate-400 hover:text-slate-300 transition">解除</button>
+                      </div>
+                    </div>
+                    <p class="text-[9px] text-slate-400 mb-1.5 leading-relaxed">
+                      WhisperXで文字起こし・話者判定する音声トラックを選択します。
+                    </p>
+                    <div id="subtitle-audio-selector-list" class="space-y-1">
+                      <!-- Populated dynamically by renderSubtitleSourceView() -->
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Bottom Action Box (実行部) -->
+                <div class="p-2.5 bg-surface-base/90 border-t border-surface-border flex-shrink-0 space-y-1.5">
+                  <div class="flex items-center justify-between text-[10px] text-slate-300 px-0.5">
+                    <span class="text-slate-400 truncate max-w-[170px]" id="subtitle-source-selected-summary">本編Part 1 (2音声選択)</span>
+                    <span class="text-emerald-400 font-mono text-[9px] font-bold">● 準備完了</span>
+                  </div>
+                  <button onclick="runSubtitleTranscriptionWithSelectedSources()" class="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md hover:shadow-indigo-500/20 active:scale-[0.98] transition flex items-center justify-center gap-1.5" title="選択中の音声ファイルからWhisperXで文字起こしを実行">
+                    <span>🎙️</span> 選択音声で文字起こしを実行
+                  </button>
+                  <button onclick="renderVideoWithCurrentSubtitles()" class="w-full py-1.2 rounded-lg bg-surface-card hover:bg-surface-cardHover text-slate-200 hover:text-white border border-surface-border text-[11px] font-medium transition flex items-center justify-center gap-1.5" title="選択中の動画に現在の字幕を焼き付けてエクスポート">
+                    <span>🎬</span> 字幕付き動画を焼き出し (Render)
+                  </button>
+                </div>
               </div>
             </aside>
 
@@ -2579,9 +2647,14 @@ ${escapeHtml(log.details)}
         if (inspAudio) inspAudio.classList.add('hidden');
         updateHeaderModeIndicator('💬', '字幕編集');
         const caption = document.getElementById('preview-mode-caption');
-        if (caption) caption.innerText = '字幕リアルタイムプレビュー';
+        if (caption) {
+          const selVid = (typeof subtitleSourceState !== 'undefined' && subtitleSourceState.selectedVideoId)
+            ? mediaAssets.find(a => a.id === subtitleSourceState.selectedVideoId)
+            : null;
+          caption.innerText = selVid ? `字幕プレビュー: ${selVid.title}` : '字幕リアルタイムプレビュー';
+        }
         renderSubtitleList();
-        showToast('💬 字幕編集モード (左上の素材から対象選択・絞り込み可)');
+        showToast('💬 字幕モード: 左上で対象動画と文字起こし音声を指定し、生成・焼き付けを実行');
       } else if (subMode === 'audio') {
         if (switcher) switcher.classList.add('hidden');
         if (mediaBin) mediaBin.classList.add('hidden');
@@ -3004,6 +3077,24 @@ ${escapeHtml(log.details)}
     function updateSubtitleBindingSummary() {
       const summaryElem = document.getElementById('subtitle-binding-summary');
       if (!summaryElem) return;
+
+      if (typeof subtitleSourceState !== 'undefined' && subtitleSourceState.selectedVideoId) {
+        const selVid = mediaAssets.find(a => a.id === subtitleSourceState.selectedVideoId);
+        const vidName = selVid ? selVid.title.replace('ゲーム実況 ', '') : '本編';
+        const audCount = subtitleSourceState.selectedAudioIds.length;
+        const audList = subtitleSourceState.availableAudioSources
+          .filter(a => subtitleSourceState.selectedAudioIds.includes(a.id))
+          .map(a => a.speaker || a.name)
+          .join(', ');
+
+        summaryElem.innerHTML = `
+          <span class="truncate max-w-[210px]" title="焼き付け対象動画: ${vidName} / 文字起こし音声: ${audList}">
+            🎬 ${vidName} ✕ 🎙️ ${audCount}音声 (${audList})
+          </span>
+          <span class="text-emerald-400 font-semibold flex-shrink-0">✓ ソース設定済</span>
+        `;
+        return;
+      }
 
       const transVideos = mediaAssets.filter(a => (a.type || 'video') === 'video' && a.transcribe !== false);
       const sources = transVideos.map(v => `${v.title.replace('ゲーム実況 ', '').replace('本編 ', '')}: ${v.audioSourceName || '内蔵'}`);
@@ -4009,7 +4100,247 @@ ${escapeHtml(log.details)}
       showToast(`「${asset.title}」の文字起こし対象: ${asset.transcribe ? '✓ ON (WhisperX解析)' : '✕ OFF (スキップ)'}`, asset.transcribe ? 'success' : 'info');
     }
 
+    // ================= SUBTITLE SOURCE SELECTION (どの動画を使うか & どの音声ファイルを文字起こしに使うか) =================
+    let subtitleSourceState = {
+      selectedVideoId: 'm2', // どの動画を使うか (焼き付け対象): mediaAssetsのid (デフォルト: 本編 Part 1)
+      selectedAudioIds: ['embedded', 'craig_alice', 'craig_bob'], // どの音声ファイルを文字起こしに使うか (WhisperX入力)
+      availableAudioSources: [
+        { id: 'embedded', name: '動画の内蔵音声トラック', file: 'gameplay_apex_session_01.mp4 (内蔵トラック)', type: 'embedded', speaker: '内蔵音声', color: '#94A3B8' },
+        { id: 'craig_alice', name: '話者1 マイク音声 (Alice)', file: 'craig_alice.flac', type: 'external', speaker: 'Alice (黄色)', color: '#FACC15' },
+        { id: 'craig_bob', name: '話者2 マイク音声 (Bob)', file: 'craig_bob.flac', type: 'external', speaker: 'Bob (水色)', color: '#22D3EE' },
+        { id: 'm6', name: '🎶 BGM: ほのぼの日常', file: 'bgm_daily_peace.mp3', type: 'bgm', speaker: 'BGM (任意)', color: '#F59E0B' }
+      ]
+    };
+
+    function selectSubtitleVideo(assetId) {
+      const asset = mediaAssets.find(a => a.id === assetId && (a.type || 'video') === 'video');
+      if (!asset) return;
+
+      subtitleSourceState.selectedVideoId = assetId;
+
+      // 内蔵音声のファイル名表示を追従更新
+      const embeddedAudio = subtitleSourceState.availableAudioSources.find(a => a.id === 'embedded');
+      if (embeddedAudio) {
+        embeddedAudio.file = `${asset.file} (内蔵トラック)`;
+      }
+
+      // クリップ別フィルターとも連動
+      const matchingClip = joinClips.find(c => c.file === asset.file);
+      if (matchingClip) {
+        filterSubtitlesByClip(matchingClip.id);
+      } else {
+        filterSubtitlesByClip('all');
+      }
+
+      // プレビューモニターの表示を更新
+      const caption = document.getElementById('preview-mode-caption');
+      if (caption) {
+        caption.innerText = `字幕プレビュー: ${asset.title}`;
+      }
+
+      renderSubtitleSourceView();
+      updateSubtitleBindingSummary();
+      showToast(`🎬 使用する動画を「${asset.title}」に設定しました`, 'info');
+    }
+
+    function toggleSubtitleAudio(audioId) {
+      const idx = subtitleSourceState.selectedAudioIds.indexOf(audioId);
+      if (idx >= 0) {
+        if (subtitleSourceState.selectedAudioIds.length <= 1) {
+          showToast('⚠️ 最低1つの文字起こし音声ソースを選択してください', 'warning');
+          return;
+        }
+        subtitleSourceState.selectedAudioIds.splice(idx, 1);
+      } else {
+        subtitleSourceState.selectedAudioIds.push(audioId);
+      }
+
+      const audioObj = subtitleSourceState.availableAudioSources.find(a => a.id === audioId);
+      const isNowChecked = subtitleSourceState.selectedAudioIds.includes(audioId);
+      showToast(isNowChecked ? `🎙️ 「${audioObj ? audioObj.name : audioId}」を文字起こし対象に追加` : `「${audioObj ? audioObj.name : audioId}」を文字起こし対象から除外`, 'info');
+
+      renderSubtitleSourceView();
+      updateSubtitleBindingSummary();
+    }
+
+    function toggleAllSubtitleAudios(selectAll) {
+      if (selectAll) {
+        subtitleSourceState.selectedAudioIds = subtitleSourceState.availableAudioSources.map(a => a.id);
+        showToast('🎙️ すべての音声ソースを文字起こし対象に設定しました', 'info');
+      } else {
+        subtitleSourceState.selectedAudioIds = ['embedded'];
+        showToast('🎙️ 内蔵音声のみを文字起こし対象に設定しました', 'info');
+      }
+      renderSubtitleSourceView();
+      updateSubtitleBindingSummary();
+    }
+
+    function runSubtitleTranscriptionWithSelectedSources() {
+      const videoAsset = mediaAssets.find(a => a.id === subtitleSourceState.selectedVideoId);
+      const videoName = videoAsset ? videoAsset.title : '選択中動画';
+      const audioCount = subtitleSourceState.selectedAudioIds.length;
+
+      showToast(`🎙️ WhisperX 文字起こしを開始: [動画] ${videoName} ✕ [音声] ${audioCount}トラック`, 'info');
+
+      // 進行シミュレーション
+      setTimeout(() => {
+        showToast(`✅ WhisperX 文字起こしが完了しました！ ${audioCount}音声ソースから字幕セグメントを生成・反映`, 'success');
+        renderSubtitleList();
+      }, 1000);
+    }
+
+    function renderVideoWithCurrentSubtitles() {
+      const videoAsset = mediaAssets.find(a => a.id === subtitleSourceState.selectedVideoId);
+      const videoTitle = videoAsset ? videoAsset.title : '選択中動画';
+      const videoFile = videoAsset ? videoAsset.file : 'video.mp4';
+
+      showToast(`🎬 字幕付き動画を書き出し中: ${videoFile} (ASS字幕レンダリング)`, 'info');
+
+      if (typeof startMockRenderProgress === 'function') {
+        startMockRenderProgress(`output_${videoFile}`, `字幕焼き付け (${videoTitle})`);
+      }
+    }
+
+    function renderSubtitleSourceView() {
+      const titleEl = document.getElementById('join-media-title');
+      const iconEl = document.getElementById('join-media-icon');
+      const badge = document.getElementById('join-media-count-badge');
+      const actionContainer = document.getElementById('join-media-header-action');
+      const videoContainer = document.getElementById('subtitle-video-selector-list');
+      const audioContainer = document.getElementById('subtitle-audio-selector-list');
+      const summaryEl = document.getElementById('subtitle-source-selected-summary');
+      const videoSelectedBadge = document.getElementById('subtitle-video-selected-badge');
+
+      if (titleEl) titleEl.innerText = '字幕ソース選択';
+      if (iconEl) iconEl.innerText = '🎬';
+
+      const selectedVideo = mediaAssets.find(a => a.id === subtitleSourceState.selectedVideoId) || mediaAssets[1];
+      const audioCount = subtitleSourceState.selectedAudioIds.length;
+
+      if (badge) badge.innerText = `動画 1件 / 音声 ${audioCount}件`;
+      if (videoSelectedBadge) videoSelectedBadge.innerText = selectedVideo ? selectedVideo.file : '1件選択中';
+
+      if (actionContainer) {
+        actionContainer.innerHTML = `
+          <button onclick="openModal('source-settings')" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[10px] flex items-center gap-1 transition shadow-sm active:scale-95" title="動画と音声の紐づけ設定を開く">
+            <span>⚙️</span> 紐づけ設定
+          </button>
+        `;
+      }
+
+      // 1. どの動画を使うか (焼き付け対象) のリスト描画
+      if (videoContainer) {
+        videoContainer.innerHTML = '';
+        const videoAssets = mediaAssets.filter(a => (a.type || 'video') === 'video');
+
+        videoAssets.forEach(asset => {
+          const isSelected = (asset.id === subtitleSourceState.selectedVideoId);
+          const matchingClip = joinClips.find(c => c.file === asset.file);
+          const clipId = matchingClip ? matchingClip.id : null;
+          const subCount = clipId ? subtitles.filter(s => s.clipId === clipId).length : 0;
+
+          let cardStyle = "bg-surface-card hover:bg-surface-cardHover border-surface-border";
+          let radioStyle = "border-slate-500 text-transparent";
+          if (isSelected) {
+            cardStyle = "ring-2 ring-indigo-500 bg-indigo-500/10 border-indigo-500/60 shadow-md";
+            radioStyle = "border-indigo-500 bg-indigo-500 text-white";
+          }
+
+          const card = document.createElement('div');
+          card.className = `p-2 rounded-lg border cursor-pointer transition select-none ${cardStyle}`;
+          card.onclick = () => selectSubtitleVideo(asset.id);
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between gap-1.5">
+              <div class="flex items-center gap-2 min-w-0">
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 text-[10px] ${radioStyle}">
+                  ${isSelected ? '●' : ''}
+                </div>
+                <span class="text-xs">🎬</span>
+                <span class="font-semibold text-xs text-slate-200 truncate ${isSelected ? 'text-indigo-200 font-bold' : ''}">
+                  ${asset.title}
+                </span>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <span class="px-1.5 py-0.2 rounded ${subCount > 0 ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 font-bold' : 'bg-surface-base text-slate-500 border-surface-border/60'} font-mono text-[9px] border">
+                  💬 ${subCount}字幕
+                </span>
+              </div>
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pl-6">
+              <span class="truncate text-slate-400 max-w-[150px]">${asset.file}</span>
+              <span class="text-indigo-300 font-semibold">${asset.duration.toFixed(0)}秒</span>
+            </div>
+          `;
+          videoContainer.appendChild(card);
+        });
+      }
+
+      // 2. どの音声ファイルを文字起こしに使うか のリスト描画
+      if (audioContainer) {
+        audioContainer.innerHTML = '';
+        subtitleSourceState.availableAudioSources.forEach(audio => {
+          const isChecked = subtitleSourceState.selectedAudioIds.includes(audio.id);
+          let checkStyle = "border-slate-500 text-transparent bg-surface-base";
+          let cardStyle = "bg-surface-card hover:bg-surface-cardHover border-surface-border";
+          if (isChecked) {
+            checkStyle = "border-indigo-500 bg-indigo-600 text-white font-bold";
+            cardStyle = "border-indigo-500/40 bg-indigo-500/5";
+          }
+
+          const card = document.createElement('div');
+          card.className = `p-2 rounded-lg border cursor-pointer transition select-none ${cardStyle}`;
+          card.onclick = () => toggleSubtitleAudio(audio.id);
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between gap-1.5">
+              <div class="flex items-center gap-2 min-w-0">
+                <div class="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 text-[10px] ${checkStyle}">
+                  ${isChecked ? '✓' : ''}
+                </div>
+                <span class="text-xs">${audio.type === 'embedded' ? '🔊' : audio.type === 'external' ? '🎙️' : '🎵'}</span>
+                <span class="font-medium text-xs text-slate-200 truncate ${isChecked ? 'text-white' : 'text-slate-400'}">
+                  ${audio.name}
+                </span>
+              </div>
+              <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background-color: ${audio.color};" title="話者カラー: ${audio.speaker}"></span>
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pl-6">
+              <span class="truncate text-slate-400 max-w-[170px]">${audio.file}</span>
+              <span class="text-[9px] ${isChecked ? 'text-emerald-400 font-semibold' : 'text-slate-500'}">
+                ${isChecked ? '解析対象' : 'スキップ'}
+              </span>
+            </div>
+          `;
+          audioContainer.appendChild(card);
+        });
+      }
+
+      // 下部サマリー表示
+      if (summaryEl) {
+        const selTitle = selectedVideo ? selectedVideo.title : '未選択';
+        summaryEl.innerText = `${selTitle} ✕ ${audioCount}音声`;
+        summaryEl.title = `選択中の動画: ${selTitle} / 文字起こし音声: ${audioCount}トラック`;
+      }
+    }
+
     function renderJoinMediaBin() {
+      const editView = document.getElementById('media-bin-edit-view');
+      const subtitleView = document.getElementById('media-bin-subtitle-view');
+      const isSubtitleMode = (currentEditorSubMode === 'subtitle');
+
+      // 字幕モードの場合は専用ソース選択ビューを表示
+      if (isSubtitleMode) {
+        if (editView) editView.classList.add('hidden');
+        if (subtitleView) subtitleView.classList.remove('hidden');
+        renderSubtitleSourceView();
+        return;
+      }
+
+      // 編集モードの場合は素材一覧(メディアビン)を表示
+      if (editView) editView.classList.remove('hidden');
+      if (subtitleView) subtitleView.classList.add('hidden');
+
       const container = document.getElementById('join-media-assets-list');
       const badge = document.getElementById('join-media-count-badge');
       const titleEl = document.getElementById('join-media-title');
@@ -4019,48 +4350,10 @@ ${escapeHtml(log.details)}
       const hintEl = document.getElementById('join-media-list-hint');
       if (!container) return;
 
-      const isSubtitleMode = (currentEditorSubMode === 'subtitle');
-
-      // Update header elements based on mode
-      if (isSubtitleMode) {
-        if (titleEl) titleEl.innerText = '素材ソース選択 (字幕)';
-        if (iconEl) iconEl.innerText = '🎙️';
-        if (captionEl) captionEl.innerText = '登録素材 (クリックで字幕絞込)';
-        if (hintEl) hintEl.innerText = 'カード選択で字幕を絞り込み';
-
-        const transTargets = mediaAssets.filter(a => (a.type || 'video') === 'video' && a.transcribe !== false);
-        const videoCount = mediaAssets.filter(a => (a.type || 'video') === 'video').length;
-        if (badge) badge.innerText = `${transTargets.length}/${videoCount}動画 対象`;
-
-        if (actionContainer) {
-          actionContainer.innerHTML = `
-            <button onclick="openModal('source-settings')" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[10px] flex items-center gap-1 transition shadow-sm active:scale-95" title="動画と音声の紐づけ・文字起こし設定を開く">
-              <span>⚙️</span> 紐づけ設定
-            </button>
-          `;
-        }
-      } else {
-        if (titleEl) titleEl.innerText = '素材一覧 (メディアビン)';
-        if (iconEl) iconEl.innerText = '📁';
-        if (captionEl) captionEl.innerText = '登録素材 (D&Dで配置)';
-        if (hintEl) hintEl.innerText = 'タイムラインへドラッグ';
-
-        const filtered = mediaAssets.filter(asset => {
-          if (currentMediaFilter === 'all') return true;
-          if (currentMediaFilter === 'video') return (asset.type || 'video') === 'video';
-          if (currentMediaFilter === 'audio') return asset.type === 'audio';
-          return true;
-        });
-        if (badge) badge.innerText = `${filtered.length}件 / 全${mediaAssets.length}件`;
-
-        if (actionContainer) {
-          actionContainer.innerHTML = `
-            <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画・音声を追加">
-              <span>+</span> 追加
-            </button>
-          `;
-        }
-      }
+      if (titleEl) titleEl.innerText = '素材一覧 (メディアビン)';
+      if (iconEl) iconEl.innerText = '📁';
+      if (captionEl) captionEl.innerText = '登録素材 (D&Dで配置)';
+      if (hintEl) hintEl.innerText = 'タイムラインへドラッグ';
 
       const filtered = mediaAssets.filter(asset => {
         if (currentMediaFilter === 'all') return true;
@@ -4068,6 +4361,15 @@ ${escapeHtml(log.details)}
         if (currentMediaFilter === 'audio') return asset.type === 'audio';
         return true;
       });
+      if (badge) badge.innerText = `${filtered.length}件 / 全${mediaAssets.length}件`;
+
+      if (actionContainer) {
+        actionContainer.innerHTML = `
+          <button onclick="promptAddCustomMediaAsset()" class="px-2 py-0.8 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow-sm active:scale-95" title="ローカル動画・音声を追加">
+            <span>+</span> 追加
+          </button>
+        `;
+      }
 
       container.innerHTML = '';
       if (filtered.length === 0) {

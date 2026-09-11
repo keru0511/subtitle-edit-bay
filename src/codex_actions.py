@@ -7,6 +7,9 @@ import math
 from typing import Any, Callable, Mapping, Protocol
 
 ACTION_SCHEMA_VERSION = 1
+CANCELLABLE_JOB_TYPES = frozenset(
+    {"transcribe", "highlight_analysis", "render", "render_short"}
+)
 
 
 class ActionKind(str, Enum):
@@ -246,6 +249,11 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
         revision_policy=RevisionPolicy.CURRENT,
         conflicts_with_job=True,
     ),
+    "rebuild_subtitle_preview": ActionDefinition(
+        ActionKind.EXECUTE,
+        revision_policy=RevisionPolicy.CURRENT,
+        conflicts_with_job=True,
+    ),
     "render_normal": ActionDefinition(
         ActionKind.EXECUTE,
         fields={"overwrite": FieldSchema((bool,))},
@@ -261,6 +269,16 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
         confirmation_policy=ConfirmationPolicy.WHEN_DESTRUCTIVE,
         conflicts_with_job=True,
         destructive_when=lambda args: bool(args.get("overwrite", False)),
+    ),
+    "cancel_processing": ActionDefinition(
+        ActionKind.EXECUTE,
+        fields={
+            "job_id": FieldSchema((str,), required=True, non_empty=True),
+            "job_type": FieldSchema(
+                (str,),
+                choices=CANCELLABLE_JOB_TYPES,
+            ),
+        },
     ),
 }
 
@@ -432,8 +450,10 @@ class GuiActionBackend:
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
             "start_highlight_analysis": self._start_highlight,
+            "rebuild_subtitle_preview": self._rebuild_subtitle_preview,
             "render_normal": self._render_normal,
             "render_short": self._render_short,
+            "cancel_processing": self._cancel_processing,
         }
 
     @property
@@ -442,6 +462,9 @@ class GuiActionBackend:
 
     @property
     def active_job(self) -> str:
+        registered_process_job = self._registered_process_job()
+        if registered_process_job:
+            return registered_process_job
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
@@ -498,13 +521,19 @@ class GuiActionBackend:
 
     def _inspect_processing(self, _args: Mapping[str, Any]) -> HandlerResult:
         active_job = self.active_job
+        registered_process_job = self._registered_process_job()
         if active_job == "highlight_analysis":
             state = {
+                "job_id": self._job_id_for(active_job),
+                "job_type": "highlight_analysis",
                 "active_job": active_job,
                 "running": True,
                 "progress": float(self._gui.highlightAnalysisProgress),
+                "progress_percent": int(round(float(self._gui.highlightAnalysisProgress) * 100)),
                 "status": str(self._gui.highlightAnalysisState),
+                "current_detail": "見どころを解析中",
                 "steps": [],
+                "can_cancel": str(self._gui.highlightAnalysisState) == "running",
             }
         elif active_job == "subtitle_proposal":
             snapshot = self._gui._codex_session.snapshot
@@ -516,14 +545,70 @@ class GuiActionBackend:
                 "status": str(snapshot.state),
                 "steps": [],
             }
-        else:
+        elif (
+            str(self._gui.highlightAnalysisState) in {"completed", "cancelled", "error"}
+            and not str(self._gui._processing_progress.job)
+        ):
+            status = str(self._gui.highlightAnalysisState)
             state = {
-                "active_job": active_job,
-                "running": bool(self._gui._running),
-                "progress": float(self._gui._processing_progress.value),
-                "status": str(self._gui._processing_progress.status),
-                "steps": self._gui._processing_progress.as_list(),
+                "job_id": self._job_id_for("highlight_analysis"),
+                "job_type": "highlight_analysis",
+                "active_job": "",
+                "running": False,
+                "progress": float(self._gui.highlightAnalysisProgress),
+                "progress_percent": int(round(float(self._gui.highlightAnalysisProgress) * 100)),
+                "status": status,
+                "current_detail": "",
+                "steps": [],
+                "can_cancel": False,
+                "terminal_result": status,
             }
+        else:
+            tracker = self._gui._processing_progress
+            status = str(tracker.status)
+            current_detail = next(
+                (
+                    str(step.get("label", ""))
+                    for step in tracker.as_list()
+                    if step.get("id") == tracker.current_step
+                ),
+                "",
+            )
+            state = {
+                "job_id": str(tracker.job_id),
+                "job_type": str(self._gui._active_job or tracker.job),
+                "active_job": active_job,
+                "running": bool(self._gui._running) or bool(registered_process_job),
+                "progress": float(tracker.value),
+                "progress_percent": int(round(float(tracker.value) * 100)),
+                "status": status,
+                "current_detail": current_detail,
+                "steps": tracker.as_list(),
+                "can_cancel": bool(self._gui._running)
+                and str(self._gui._active_job) != "update",
+            }
+            if status in {"completed", "cancelled", "error"}:
+                state["terminal_result"] = status
+            terminal_results = []
+            if status in {"completed", "cancelled", "error"} and tracker.job:
+                terminal_results.append(
+                    {
+                        "job_id": str(tracker.job_id),
+                        "type": str(tracker.job),
+                        "status": status,
+                    }
+                )
+            highlight_status = str(self._gui.highlightAnalysisState)
+            if highlight_status in {"completed", "cancelled", "error"}:
+                terminal_results.append(
+                    {
+                        "job_id": self._job_id_for("highlight_analysis"),
+                        "type": "highlight_analysis",
+                        "status": highlight_status,
+                    }
+                )
+            if terminal_results:
+                state["terminal_results"] = terminal_results
         return HandlerResult("processing state inspected", state=state)
 
     def _inspect_dependencies(self, _args: Mapping[str, Any]) -> HandlerResult:
@@ -574,24 +659,117 @@ class GuiActionBackend:
             )
         self._gui.transcribeProject(dict(self._gui.settings), str(args["mode"]))
         self._require_started_job("transcribe")
-        return HandlerResult("transcription started", job={"type": "transcribe", "status": "running"})
+        return HandlerResult("transcription started", job=self._current_job())
 
     def _start_highlight(self, _args: Mapping[str, Any]) -> HandlerResult:
         if not self._gui.startHighlightAnalysis():
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "highlight analysis is unavailable")
-        return HandlerResult("highlight analysis started", job={"type": "highlight_analysis", "status": "running"})
+        return HandlerResult("highlight analysis started", job=self._current_job())
+
+    def _rebuild_subtitle_preview(self, _args: Mapping[str, Any]) -> HandlerResult:
+        if self._gui._project is None:
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "project is not loaded")
+        self._gui.buildSubtitlePreview(dict(self._gui.settings))
+        if not str(self._gui.assPath) or str(getattr(self._gui, "stage", "")) == "ERROR":
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle preview could not be rebuilt")
+        return HandlerResult(
+            "subtitle preview rebuilt",
+            job={
+                "type": "subtitle_preview",
+                "status": "completed",
+                "progress_percent": 100,
+                "terminal_result": "completed",
+            },
+        )
 
     def _render_normal(self, args: Mapping[str, Any]) -> HandlerResult:
         self._require_render("normal", args)
         self._gui.renderVideo(dict(self._gui.settings))
         self._require_started_job("render")
-        return HandlerResult("normal render started", job={"type": "render", "status": "running"})
+        return HandlerResult("normal render started", job=self._current_job())
 
     def _render_short(self, args: Mapping[str, Any]) -> HandlerResult:
         self._require_render("short", args)
         self._gui.renderShortVideo()
         self._require_started_job("render_short")
-        return HandlerResult("short render started", job={"type": "render_short", "status": "running"})
+        return HandlerResult("short render started", job=self._current_job())
+
+    def _cancel_processing(self, args: Mapping[str, Any]) -> HandlerResult:
+        active_job = self.active_job
+        expected_job_id = str(args.get("job_id", ""))
+        expected_job_type = str(args.get("job_type", ""))
+        if not expected_job_id:
+            raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "job_id is required")
+        if not active_job:
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "no cancellable job is running")
+        if active_job not in CANCELLABLE_JOB_TYPES:
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "no cancellable job is running")
+        current_job_id = self._job_id_for(active_job)
+        if (
+            not current_job_id
+            or expected_job_id != current_job_id
+            or (expected_job_type and expected_job_type != active_job)
+        ):
+            raise ActionRejected(ActionErrorCode.STALE_REVISION, "the selected job is no longer running")
+        if active_job == "highlight_analysis":
+            if not self._gui.cancelHighlightAnalysis():
+                raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "highlight analysis could not be cancelled")
+        else:
+            if not bool(self._gui._running):
+                raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "processing job is not cancellable yet")
+            self._gui.cancelProcessing()
+        return HandlerResult(
+            "processing cancellation requested",
+            job={
+                "job_id": current_job_id,
+                "type": active_job,
+                "status": "cancelling",
+                "progress_percent": self._progress_percent(),
+            },
+        )
+
+    def _progress_percent(self) -> int:
+        if self.active_job == "highlight_analysis":
+            return int(round(float(self._gui.highlightAnalysisProgress) * 100))
+        return int(round(float(self._gui._processing_progress.value) * 100))
+
+    def _current_job(self) -> dict[str, Any]:
+        job_type = self.active_job
+        job_id = self._job_id_for(job_type)
+        if not job_id:
+            raise ActionRejected(
+                ActionErrorCode.PRECONDITION_FAILED,
+                "started job has no tracking identity",
+            )
+        return {
+            "job_id": job_id,
+            "type": job_type,
+            "status": "running",
+            "progress_percent": self._progress_percent(),
+            "inspect_action": "inspect_processing_state",
+            "cancel_action": "cancel_processing",
+        }
+
+    def _job_id_for(self, job_type: str) -> str:
+        if job_type == "highlight_analysis":
+            return str(getattr(self._gui, "_highlight_job_id", ""))
+        tracker = getattr(self._gui, "_processing_progress", None)
+        if tracker is None or str(getattr(tracker, "job", "")) != job_type:
+            return ""
+        return str(getattr(tracker, "job_id", ""))
+
+    def _registered_process_job(self) -> str:
+        job_type = str(getattr(self._gui, "_active_job", ""))
+        tracker = getattr(self._gui, "_processing_progress", None)
+        if (
+            not job_type
+            or tracker is None
+            or str(getattr(tracker, "job", "")) != job_type
+            or not str(getattr(tracker, "job_id", ""))
+            or str(getattr(tracker, "status", "")) != "running"
+        ):
+            return ""
+        return job_type
 
     def _require_render(self, kind: str, args: Mapping[str, Any]) -> None:
         capabilities = self._gui.actionCapabilities
@@ -615,7 +793,7 @@ class GuiActionBackend:
             )
 
     def _require_started_job(self, expected: str) -> None:
-        if not bool(self._gui._running) or str(self._gui._active_job) != expected:
+        if self._registered_process_job() != expected:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, f"{expected} job could not be started")
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 import unittest
 from typing import Any, Mapping
 
@@ -13,6 +14,7 @@ from src.codex_actions import (
     GuiActionBackend,
     HandlerResult,
 )
+from src.processing_progress import ProcessingProgress
 
 
 class FakeBackend:
@@ -112,6 +114,7 @@ class CodexActionTests(unittest.TestCase):
                 revision=7,
             ),
             request("execute", "render_normal", {"overwrite": "yes"}, revision=7),
+            request("execute", "cancel_processing", {"job_type": "transcribe"}),
         ]
 
         for payload in cases:
@@ -309,14 +312,25 @@ class GuiActionBackendTests(unittest.TestCase):
             highlightAnalysisState = "idle"
             _codex_session = Session()
 
-            def __init__(self, normal_status: str, normal_progress: float) -> None:
+            def __init__(
+                self,
+                normal_status: str,
+                normal_progress: float,
+                highlight_status: str,
+            ) -> None:
                 self._processing_progress = ProcessingProgress(normal_status, normal_progress)
+                self.highlightAnalysisState = highlight_status
 
-        for normal_status, normal_progress in (("idle", 0.0), ("completed", 1.0)):
-            with self.subTest(normal_status=normal_status):
-                state = GuiActionBackend(GuiStub(normal_status, normal_progress)).inspect(
-                    "inspect_processing_state", {}
-                ).state
+        cases = (
+            ("idle", 0.0, "idle"),
+            ("completed", 1.0, "idle"),
+            ("completed", 1.0, "completed"),
+        )
+        for normal_status, normal_progress, highlight_status in cases:
+            with self.subTest(normal_status=normal_status, highlight_status=highlight_status):
+                state = GuiActionBackend(
+                    GuiStub(normal_status, normal_progress, highlight_status)
+                ).inspect("inspect_processing_state", {}).state
 
                 self.assertEqual(state["active_job"], "subtitle_proposal")
                 self.assertTrue(state["running"])
@@ -336,11 +350,13 @@ class GuiActionBackendTests(unittest.TestCase):
 
             def __init__(self) -> None:
                 self.calls: list[tuple[dict[str, Any], str]] = []
+                self._processing_progress = ProcessingProgress()
 
             def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
                 self.calls.append((settings, mode))
                 self._running = True
                 self._active_job = "transcribe"
+                self._processing_progress.start("transcribe")
 
             def startTranscription(self, *_args: object) -> None:
                 raise AssertionError("Codex action bypassed transcribeProject")
@@ -351,7 +367,69 @@ class GuiActionBackendTests(unittest.TestCase):
                 result = GuiActionBackend(gui).execute("start_transcription", {"mode": mode})
 
                 self.assertEqual(gui.calls, [({"device": "cpu"}, mode)])
-                self.assertEqual(result.job, {"type": "transcribe", "status": "running"})
+                self.assertEqual(result.job["type"], "transcribe")
+                self.assertEqual(result.job["status"], "running")
+                self.assertEqual(result.job["job_id"], gui._processing_progress.job_id)
+
+    def test_process_start_is_trackable_before_qprocess_started_signal(self) -> None:
+        progress = ProcessingProgress()
+        cancel_calls: list[str] = []
+        gui = SimpleNamespace(
+            _project_revision=4,
+            _running=False,
+            _active_job="",
+            _processing_progress=progress,
+            highlightAnalysisState="idle",
+            highlightAnalysisProgress=0.0,
+            actionCapabilities={"canTranscribe": True},
+            settings={"device": "cpu"},
+            cancelProcessing=lambda: cancel_calls.append("cancel"),
+        )
+
+        def transcribe_project(_settings: Mapping[str, Any], _mode: str) -> None:
+            gui._active_job = "transcribe"
+            progress.start("transcribe")
+
+        gui.transcribeProject = transcribe_project
+        backend = GuiActionBackend(gui)
+
+        started = backend.execute("start_transcription", {"mode": "merge"})
+        inspected = backend.inspect("inspect_processing_state", {}).state
+
+        self.assertFalse(gui._running)
+        self.assertEqual(backend.active_job, "transcribe")
+        self.assertEqual(started.job["job_id"], progress.job_id)
+        self.assertEqual(inspected["job_id"], progress.job_id)
+        self.assertEqual(inspected["active_job"], "transcribe")
+        self.assertTrue(inspected["running"])
+        self.assertFalse(inspected["can_cancel"])
+        dispatcher = ActionDispatcher(backend)
+        conflict = dispatcher.dispatch(
+            request(
+                "execute",
+                "start_transcription",
+                {"mode": "merge"},
+                revision=4,
+                scope_id="pending-process-start",
+            ),
+            trusted_scope=ActionScope(
+                "pending-process-start",
+                frozenset({"start_transcription"}),
+                project_revision=4,
+            ),
+        )
+        self.assertEqual(conflict.code, "job_conflict")
+        with self.assertRaisesRegex(ActionRejected, "not cancellable yet"):
+            backend.execute(
+                "cancel_processing",
+                {"job_id": progress.job_id, "job_type": "transcribe"},
+            )
+        self.assertEqual(cancel_calls, [])
+
+        gui._running = True
+        running = backend.inspect("inspect_processing_state", {}).state
+        self.assertEqual(running["job_id"], started.job["job_id"])
+        self.assertTrue(running["can_cancel"])
 
     def test_running_subtitle_proposal_rejects_new_request_without_restarting(self) -> None:
         class Session:
@@ -416,6 +494,175 @@ class GuiActionBackendTests(unittest.TestCase):
         self.assertNotIn("path", audio["channels"][0])
         with self.assertRaisesRegex(ActionRejected, "no backend handler"):
             backend.inspect("save_project", {})
+
+    def test_inspect_tracks_gui_started_job_and_keeps_terminal_result(self) -> None:
+        progress = ProcessingProgress()
+        progress.start("render")
+        progress.update({"job": "render", "step": "encode", "progress": 0.5})
+        gui = SimpleNamespace(
+            _project_revision=8,
+            _running=True,
+            _active_job="render",
+            _processing_progress=progress,
+            highlightAnalysisState="idle",
+            highlightAnalysisProgress=0.0,
+        )
+        backend = GuiActionBackend(gui)
+        job_id = progress.job_id
+
+        running = backend.inspect("inspect_processing_state", {}).state
+        self.assertEqual(running["job_id"], job_id)
+        self.assertEqual(running["job_type"], "render")
+        self.assertEqual(running["current_detail"], "動画エンコード")
+        self.assertTrue(running["can_cancel"])
+        self.assertGreater(running["progress_percent"], 0)
+
+        gui._running = False
+        progress.finish("completed")
+        completed = backend.inspect("inspect_processing_state", {}).state
+        self.assertEqual(completed["job_id"], job_id)
+        self.assertEqual(completed["job_type"], "render")
+        self.assertEqual(completed["active_job"], "")
+        self.assertEqual(completed["progress_percent"], 100)
+        self.assertEqual(completed["terminal_result"], "completed")
+        self.assertEqual(
+            completed["terminal_results"],
+            [{"job_id": job_id, "type": "render", "status": "completed"}],
+        )
+        self.assertFalse(completed["can_cancel"])
+
+    def test_highlight_job_id_matches_start_inspect_and_cancel(self) -> None:
+        cancel_calls: list[str] = []
+        gui = SimpleNamespace(
+            _project_revision=4,
+            _running=False,
+            _active_job="",
+            _processing_progress=ProcessingProgress(),
+            _highlight_job_id="",
+            highlightAnalysisState="idle",
+            highlightAnalysisProgress=0.0,
+        )
+
+        def start_highlight() -> bool:
+            gui._highlight_job_id = "highlight-job-1"
+            gui.highlightAnalysisState = "running"
+            gui.highlightAnalysisProgress = 0.4
+            return True
+
+        def cancel_highlight() -> bool:
+            cancel_calls.append("cancel")
+            gui.highlightAnalysisState = "cancelling"
+            return True
+
+        gui.startHighlightAnalysis = start_highlight
+        gui.cancelHighlightAnalysis = cancel_highlight
+        backend = GuiActionBackend(gui)
+
+        started = backend.execute("start_highlight_analysis", {})
+        inspected = backend.inspect("inspect_processing_state", {}).state
+        cancelled = backend.execute(
+            "cancel_processing",
+            {"job_id": started.job["job_id"], "job_type": "highlight_analysis"},
+        )
+
+        self.assertEqual(started.job["job_id"], "highlight-job-1")
+        self.assertEqual(inspected["job_id"], "highlight-job-1")
+        self.assertEqual(cancelled.job["job_id"], "highlight-job-1")
+        self.assertEqual(cancel_calls, ["cancel"])
+
+    def test_cancel_rejects_old_id_after_same_job_type_restarts(self) -> None:
+        progress = ProcessingProgress()
+        progress.start("transcribe")
+        first_job_id = progress.job_id
+        calls: list[str] = []
+        gui = SimpleNamespace(
+            _project_revision=3,
+            _running=True,
+            _active_job="transcribe",
+            _processing_progress=progress,
+            highlightAnalysisState="idle",
+            highlightAnalysisProgress=0.0,
+            cancelProcessing=lambda: calls.append("cancel"),
+        )
+        backend = GuiActionBackend(gui)
+
+        progress.finish("completed")
+        gui._running = False
+        gui._active_job = ""
+        progress.start("transcribe")
+        second_job_id = progress.job_id
+        gui._running = True
+        gui._active_job = "transcribe"
+
+        self.assertNotEqual(first_job_id, second_job_id)
+        with self.assertRaisesRegex(ActionRejected, "no longer running"):
+            backend.execute(
+                "cancel_processing",
+                {"job_id": first_job_id, "job_type": "transcribe"},
+            )
+        self.assertEqual(calls, [])
+        with self.assertRaisesRegex(ActionRejected, "no longer running"):
+            backend.execute(
+                "cancel_processing",
+                {"job_id": second_job_id, "job_type": "render"},
+            )
+
+        result = backend.execute(
+            "cancel_processing",
+            {"job_id": second_job_id, "job_type": "transcribe"},
+        )
+        self.assertEqual(calls, ["cancel"])
+        self.assertEqual(result.job["job_id"], second_job_id)
+        self.assertEqual(result.job["status"], "cancelling")
+
+    def test_existing_project_transcription_reuses_merge_replace_flow(self) -> None:
+        calls: list[tuple[str, str]] = []
+        progress = ProcessingProgress()
+        gui = SimpleNamespace(
+            _project_revision=5,
+            _running=False,
+            _active_job="",
+            _project={"segments": [{"id": "existing"}]},
+            settings={"device": "cpu"},
+            actionCapabilities={"canTranscribe": True},
+            highlightAnalysisState="idle",
+            _processing_progress=progress,
+        )
+
+        def transcribe_project(_settings: Mapping[str, Any], mode: str) -> None:
+            calls.append(("project", mode))
+            gui._running = True
+            gui._active_job = "transcribe"
+            progress.start("transcribe")
+
+        gui.transcribeProject = transcribe_project
+        backend = GuiActionBackend(gui)
+        result = backend.execute("start_transcription", {"mode": "merge"})
+
+        self.assertEqual(calls, [("project", "merge")])
+        self.assertEqual(result.job["job_id"], progress.job_id)
+        self.assertEqual(result.job["type"], "transcribe")
+        self.assertEqual(result.job["inspect_action"], "inspect_processing_state")
+
+    def test_preview_rebuild_returns_completed_job_without_starting_process(self) -> None:
+        gui = SimpleNamespace(
+            _project_revision=2,
+            _running=False,
+            _active_job="",
+            _project={"segments": []},
+            settings={},
+            assPath="",
+            highlightAnalysisState="idle",
+        )
+
+        def rebuild(_settings: Mapping[str, Any]) -> None:
+            gui.assPath = "preview.ass"
+
+        gui.buildSubtitlePreview = rebuild
+        result = GuiActionBackend(gui).execute("rebuild_subtitle_preview", {})
+
+        self.assertEqual(result.job["status"], "completed")
+        self.assertEqual(result.job["terminal_result"], "completed")
 
 
 if __name__ == "__main__":

@@ -371,6 +371,66 @@ class GuiActionBackendTests(unittest.TestCase):
                 self.assertEqual(result.job["status"], "running")
                 self.assertEqual(result.job["job_id"], gui._processing_progress.job_id)
 
+    def test_process_start_is_trackable_before_qprocess_started_signal(self) -> None:
+        progress = ProcessingProgress()
+        cancel_calls: list[str] = []
+        gui = SimpleNamespace(
+            _project_revision=4,
+            _running=False,
+            _active_job="",
+            _processing_progress=progress,
+            highlightAnalysisState="idle",
+            highlightAnalysisProgress=0.0,
+            actionCapabilities={"canTranscribe": True},
+            settings={"device": "cpu"},
+            cancelProcessing=lambda: cancel_calls.append("cancel"),
+        )
+
+        def transcribe_project(_settings: Mapping[str, Any], _mode: str) -> None:
+            gui._active_job = "transcribe"
+            progress.start("transcribe")
+
+        gui.transcribeProject = transcribe_project
+        backend = GuiActionBackend(gui)
+
+        started = backend.execute("start_transcription", {"mode": "merge"})
+        inspected = backend.inspect("inspect_processing_state", {}).state
+
+        self.assertFalse(gui._running)
+        self.assertEqual(backend.active_job, "transcribe")
+        self.assertEqual(started.job["job_id"], progress.job_id)
+        self.assertEqual(inspected["job_id"], progress.job_id)
+        self.assertEqual(inspected["active_job"], "transcribe")
+        self.assertTrue(inspected["running"])
+        self.assertFalse(inspected["can_cancel"])
+        dispatcher = ActionDispatcher(backend)
+        conflict = dispatcher.dispatch(
+            request(
+                "execute",
+                "start_transcription",
+                {"mode": "merge"},
+                revision=4,
+                scope_id="pending-process-start",
+            ),
+            trusted_scope=ActionScope(
+                "pending-process-start",
+                frozenset({"start_transcription"}),
+                project_revision=4,
+            ),
+        )
+        self.assertEqual(conflict.code, "job_conflict")
+        with self.assertRaisesRegex(ActionRejected, "not cancellable yet"):
+            backend.execute(
+                "cancel_processing",
+                {"job_id": progress.job_id, "job_type": "transcribe"},
+            )
+        self.assertEqual(cancel_calls, [])
+
+        gui._running = True
+        running = backend.inspect("inspect_processing_state", {}).state
+        self.assertEqual(running["job_id"], started.job["job_id"])
+        self.assertTrue(running["can_cancel"])
+
     def test_running_subtitle_proposal_rejects_new_request_without_restarting(self) -> None:
         class Session:
             running = True
@@ -458,11 +518,11 @@ class GuiActionBackendTests(unittest.TestCase):
         self.assertGreater(running["progress_percent"], 0)
 
         gui._running = False
-        gui._active_job = ""
         progress.finish("completed")
         completed = backend.inspect("inspect_processing_state", {}).state
         self.assertEqual(completed["job_id"], job_id)
         self.assertEqual(completed["job_type"], "render")
+        self.assertEqual(completed["active_job"], "")
         self.assertEqual(completed["progress_percent"], 100)
         self.assertEqual(completed["terminal_result"], "completed")
         self.assertEqual(

@@ -462,6 +462,9 @@ class GuiActionBackend:
 
     @property
     def active_job(self) -> str:
+        registered_process_job = self._registered_process_job()
+        if registered_process_job:
+            return registered_process_job
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
@@ -518,6 +521,7 @@ class GuiActionBackend:
 
     def _inspect_processing(self, _args: Mapping[str, Any]) -> HandlerResult:
         active_job = self.active_job
+        registered_process_job = self._registered_process_job()
         if active_job == "highlight_analysis":
             state = {
                 "job_id": self._job_id_for(active_job),
@@ -574,7 +578,7 @@ class GuiActionBackend:
                 "job_id": str(tracker.job_id),
                 "job_type": str(self._gui._active_job or tracker.job),
                 "active_job": active_job,
-                "running": bool(self._gui._running),
+                "running": bool(self._gui._running) or bool(registered_process_job),
                 "progress": float(tracker.value),
                 "progress_percent": int(round(float(tracker.value) * 100)),
                 "status": status,
@@ -711,6 +715,8 @@ class GuiActionBackend:
             if not self._gui.cancelHighlightAnalysis():
                 raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "highlight analysis could not be cancelled")
         else:
+            if not bool(self._gui._running):
+                raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "processing job is not cancellable yet")
             self._gui.cancelProcessing()
         return HandlerResult(
             "processing cancellation requested",
@@ -752,6 +758,19 @@ class GuiActionBackend:
             return ""
         return str(getattr(tracker, "job_id", ""))
 
+    def _registered_process_job(self) -> str:
+        job_type = str(getattr(self._gui, "_active_job", ""))
+        tracker = getattr(self._gui, "_processing_progress", None)
+        if (
+            not job_type
+            or tracker is None
+            or str(getattr(tracker, "job", "")) != job_type
+            or not str(getattr(tracker, "job_id", ""))
+            or str(getattr(tracker, "status", "")) != "running"
+        ):
+            return ""
+        return job_type
+
     def _require_render(self, kind: str, args: Mapping[str, Any]) -> None:
         capabilities = self._gui.actionCapabilities
         prefix = "normal" if kind == "normal" else "short"
@@ -774,7 +793,7 @@ class GuiActionBackend:
             )
 
     def _require_started_job(self, expected: str) -> None:
-        if not bool(self._gui._running) or str(self._gui._active_job) != expected:
+        if self._registered_process_job() != expected:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, f"{expected} job could not be started")
 
 

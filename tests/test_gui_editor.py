@@ -31,6 +31,7 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_actions import GuiActionBackend
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
@@ -2282,6 +2283,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.app._finish_processing_progress("error")
                 self.assertEqual(self.app.progressPercent, before)
                 self.assertEqual(self.app.progressState, "error")
+
+    def test_codex_tracks_process_between_start_command_and_started_callback(self) -> None:
+        with patch.object(self.app, "_start_process") as start_process:
+            self.app._start_command(["worker"], "render", "処理を開始しています")
+
+        self.assertFalse(self.app._running)
+        start_process.assert_called_once_with(["worker"])
+        state = GuiActionBackend(self.app).inspect("inspect_processing_state", {}).state
+        self.assertEqual(state["job_id"], self.app._processing_progress.job_id)
+        self.assertEqual(state["job_type"], "render")
+        self.assertEqual(state["active_job"], "render")
+        self.assertTrue(state["running"])
+        self.assertFalse(state["can_cancel"])
+
+        self.app._process_started()
+        running_state = GuiActionBackend(self.app).inspect("inspect_processing_state", {}).state
+        self.assertEqual(running_state["job_id"], state["job_id"])
+        self.assertTrue(running_state["can_cancel"])
 
     def test_processing_progress_uses_tracker_value_and_short_output_duration(self) -> None:
         self.app._processing_machine_event_seen = False

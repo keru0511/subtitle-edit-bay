@@ -482,6 +482,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._highlight_progress = 0.0
         self._highlight_cancel = threading.Event()
         self._highlight_generation = 0
+        self._highlight_job_id = ""
         self._audio_preview_gains: dict[str, float] = {}
         self._audio_preview_levels: dict[str, float] = {}
         self._audio_preview_pending_levels: dict[str, float] = {}
@@ -1270,6 +1271,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._highlight_status in {"running", "cancelling"}:
             return False
         self._highlight_generation += 1
+        self._highlight_job_id = uuid4().hex
         generation = self._highlight_generation
         cancel_event = threading.Event()
         self._highlight_cancel = cancel_event

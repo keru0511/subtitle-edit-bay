@@ -38,13 +38,27 @@ Codexからアプリ機能を利用するときは、`src/codex_actions.py` の�
 
 ## 既存backendとの接続
 
-`GuiActionBackend` はAction typeごとの固定handler mapだけを持ちます。inspectは不要なlocal pathを除いたsnapshotを返し、executeはGUIと同じ `startTranscription`、`startHighlightAnalysis`、`renderVideo`、`renderShortVideo` を呼びます。jobの進捗・停止・完了状態は既存GUI backendと `ProcessingProgress` が引き続き正本です。
+`GuiActionBackend` はAction typeごとの固定handler mapだけを持ちます。inspectは不要なlocal pathを除いたsnapshotを返し、executeはGUIと同じ `transcribeProject`、`startHighlightAnalysis`、`renderVideo`、`renderShortVideo` を呼びます。jobの進捗・停止・完了状態は既存GUI backendと `ProcessingProgress` が引き続き正本です。
+
+### 長時間job
+
+`start_transcription`、`start_highlight_analysis`、`render_normal`、`render_short` は、開始結果に開始ごとに固有の `job_id`、job種別、進捗率、追跡用 `inspect_processing_state`、停止用 `cancel_processing` を返します。字幕プレビューの再生成は `rebuild_subtitle_preview` で既存の同期処理を呼び、完了済みResultを返します。
+
+`inspect_processing_state` はGUIから開始した処理も含め、同じ `job_id` と工程、進捗率、現在内容、停止可否を既存trackerから取得します。`QProcess.started` の通知前でも、GUIが同期的に登録したactive jobとtrackerの `job_id` が一致すれば開始済みとして追跡し、通知後と同じIDを維持します。この起動待ち区間はまだ停止不可です。完了・失敗・中断後も `job_id` と `terminal_result` を返すため、Codex切断中に終了しても再接続後に結果を判断できます。`cancel_processing` は開始結果の `job_id` を必須引数として既存の停止経路だけを使用し、job種別が同じでもIDが変わっていればstale requestとして拒否します。失敗Resultから同じActionを自動再実行する処理はありません。
+
+既存字幕がある文字起こしではGUIと同じ `transcribeProject` を使用します。`replace` は信頼済みscopeで明示確認済みの場合だけ実行でき、`merge` は既存字幕を保持する既存統合経路へ進みます。最終renderや既存出力の上書きにも同じ確認契約を適用します。
 
 音量・timeline Proposalなど後続のdomain Issueは、新しいbackend handlerをこの固定mapへ明示登録し、`ACTION_DEFINITIONS` の引数契約とdomain validatorを追加します。反射的な `getattr` や自由形式method名には拡張しません。
 
 ## 横断レビュー
 
-`review_project` は字幕、音量、通常timeline、ショート、処理状態、依存関係、render可否をpath-freeなReview Contextへまとめ、変更を行わない `ReviewResult` を返します。長尺字幕は上限付きchunkへ分割し、重複findingsをstable IDで統合します。各findingはcategory、target、severity、reasonと、利用可能な型付きActionへのrouteを持ちます。利用できないdomainは前提不足として残し、実行可能routeを付けません。
+`review_project` は字幕、音量、通常timeline、ショート、見どころ候補・却下候補、処理状態、依存関係、render可否を再帰的なallowlistでpath-freeなReview Contextへまとめます。音声channelはprojectへ保存する共通のopaque IDを使い、旧projectのpath由来channel IDはmixer境界で制御値ごと移行します。preview levelもallowlist済みchannel IDだけを含めます。
+
+固定閾値の検査は事前検査として残し、その結果とReview Contextを実際のCodex structured turnへ送ります。モデルを呼べない、未ログイン、schema不一致、応答欠落の場合にローカル検査だけを「問題なし」として返すfallbackはありません。長尺字幕は件数とserialized sizeの両方に上限を持つ独立したephemeral/read-only turnへ分割し、隣接chunkの境界1件だけを添えます。各turnはnetwork無効・approvalなしで、project変更や任意tool実行を許しません。
+
+Codex出力は未知fieldを許さない `ReviewResult` schemaで検証します。各findingはcategory、target、severity、reason、recommendationを必須とし、target IDは送信済みsegment/channel/clip/cut/candidateだけ、recommendation routeは現在backendに実装されているdomainだけを受理します。全issueを含まないrecommended order、重複ID、別domainのroute、review中に古くなったrevisionは拒否します。複数chunkの同一findingはstable IDで統合し、blocking、warning、suggestionの順を保って返します。
+
+事前検査の音声判定はrendererと同じ `active_audio_mix_channels()` を正本にするため、enabledでもmuteされた全channelやsoloで除外されたchannelを有効音声として数えません。
 
 ReviewResultの `project_revision` が現在値と一致しなければstaleとして扱います。「レビューして」だけではProposal、job、永続Planを開始しません。修正を依頼された場合も、#256のorchestratorが現在状態を再inspectし、#248/#251/#252/#253の各Actionへ明示的にroutingします。
 

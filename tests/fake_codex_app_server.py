@@ -49,6 +49,26 @@ def main() -> None:
             sys.stdout.flush()
             _send({"jsonrpc": "2.0", "method": "turn/started", "params": {"turnId": "turn-1"}})
             _send({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"delta": "提案"}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "item/completed",
+                    "params": {
+                        "turnId": "turn-1",
+                        "item": {
+                            "type": "agentMessage",
+                            "text": json.dumps({"answer": "ok"}),
+                        },
+                    },
+                }
+            )
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "turn/completed",
+                    "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                }
+            )
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"turnId": "turn-1", "status": "completed", "receivedInput": request.get("params", {}).get("input"), "receivedModel": request.get("params", {}).get("model")}})
         elif method == "turn/interrupt":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"interrupted": True}})

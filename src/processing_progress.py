@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
+from uuid import uuid4
 
 
 PROGRESS_EVENT_PREFIX = "PROGRESS_EVENT "
@@ -119,6 +120,7 @@ class ProcessingProgress:
 
     def __init__(self) -> None:
         self.job = ""
+        self.job_id = ""
         self.status = "idle"
         self.value = 0.0
         self.current_step = ""
@@ -133,6 +135,7 @@ class ProcessingProgress:
             if definition[0] not in skipped
         )
         self.job = str(job)
+        self.job_id = uuid4().hex
         self.status = "running"
         self.value = 0.0
         self.current_step = ""

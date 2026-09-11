@@ -62,6 +62,26 @@ class CodexAppServerClientTests(unittest.TestCase):
         finally:
             client.stop()
 
+    def test_structured_turn_waits_for_completed_agent_message(self) -> None:
+        client = self._client([], [])
+        try:
+            client.start()
+            thread = client.thread_start()
+            result = client.run_structured_turn(
+                thread_id=str(thread["threadId"]),
+                prompt="strict output",
+                output_schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["answer"],
+                    "properties": {"answer": {"type": "string"}},
+                },
+            )
+
+            self.assertEqual(result, {"answer": "ok"})
+        finally:
+            client.stop()
+
     def test_timeout_does_not_stop_client_and_restart_rehandshakes(self) -> None:
         client = self._client([], [])
         try:

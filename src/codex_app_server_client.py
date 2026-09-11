@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from collections import deque
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from .application_logging import redact_text
 
 DEFAULT_CODEX_COMMAND = ("codex", "app-server", "--listen", "stdio://")
 MAX_RETAINED_NOTIFICATIONS = 512
+MAX_STRUCTURED_OUTPUT_BYTES = 128 * 1024
 _SENSITIVE_KEY_PATTERN = re.compile(
     r"(?i)^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)$"
 )
@@ -40,6 +42,70 @@ class CodexRpcError(CodexAppServerError):
 class CodexNotification:
     method: str
     params: Mapping[str, Any]
+
+
+def _turn_id(params: Mapping[str, Any]) -> str:
+    for value in (params.get("turnId"), params.get("turn_id")):
+        if value:
+            return str(value)
+    turn = params.get("turn")
+    if isinstance(turn, Mapping):
+        return str(turn.get("id", ""))
+    return ""
+
+
+class _StructuredTurnCollector:
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._outputs: dict[str, str] = {}
+        self._statuses: dict[str, str] = {}
+        self._errors: dict[str, str] = {}
+        self._global_error = ""
+
+    def __call__(self, notification: CodexNotification) -> None:
+        method = notification.method
+        params = notification.params
+        turn_id = _turn_id(params)
+        with self._condition:
+            if method == "item/completed":
+                item = params.get("item")
+                if isinstance(item, Mapping) and str(item.get("type", "")) == "agentMessage":
+                    text = str(item.get("text", ""))
+                    if len(text.encode("utf-8")) > MAX_STRUCTURED_OUTPUT_BYTES:
+                        self._errors[turn_id] = "structured output exceeds the size limit"
+                    else:
+                        self._outputs[turn_id] = text
+            elif method == "turn/completed":
+                turn = params.get("turn")
+                status = str(turn.get("status", "completed")) if isinstance(turn, Mapping) else "completed"
+                self._statuses[turn_id] = status
+                if isinstance(turn, Mapping) and turn.get("error"):
+                    self._errors[turn_id] = "structured turn failed"
+            elif method == "error":
+                self._global_error = "structured turn failed"
+            else:
+                return
+            self._condition.notify_all()
+
+    def wait(self, turn_id: str, timeout: float) -> str:
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        with self._condition:
+            while True:
+                error = self._errors.get(turn_id) or self._errors.get("") or self._global_error
+                if error:
+                    raise CodexAppServerError(error)
+                status = self._statuses.get(turn_id) or self._statuses.get("")
+                if status:
+                    if status != "completed":
+                        raise CodexAppServerError(f"structured turn ended with status {status}")
+                    output = self._outputs.get(turn_id) or self._outputs.get("")
+                    if output is None:
+                        raise CodexAppServerError("structured turn completed without an assistant response")
+                    return output
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CodexRequestTimeout("timed out waiting for structured turn completion")
+                self._condition.wait(remaining)
 
 
 def _redact_log(value: object) -> str:
@@ -102,6 +168,7 @@ class CodexAppServerClient:
         self._notifications: deque[CodexNotification] = deque(
             maxlen=MAX_RETAINED_NOTIFICATIONS
         )
+        self._notification_listeners: list[Callable[[CodexNotification], None]] = []
 
     @property
     def is_running(self) -> bool:
@@ -339,11 +406,69 @@ class CodexAppServerClient:
             params,
         )
 
+    def run_structured_turn(
+        self,
+        *,
+        thread_id: str,
+        prompt: str,
+        output_schema: Mapping[str, Any],
+        context: Mapping[str, Any] | None = None,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox_policy: Mapping[str, Any] | None = None,
+        timeout: float = 120.0,
+    ) -> dict[str, Any]:
+        """Run one output-schema turn and wait for its final agent message."""
+
+        collector = _StructuredTurnCollector()
+        remove_listener = self.add_notification_listener(collector)
+        try:
+            response = self.turn_start(
+                thread_id=thread_id,
+                prompt=prompt,
+                output_schema=output_schema,
+                context=context,
+                model=model,
+                cwd=cwd,
+                approval_policy=approval_policy,
+                sandbox_policy=sandbox_policy,
+            )
+            turn = response.get("turn", response)
+            turn_id = str(turn.get("id", "")) if isinstance(turn, Mapping) else ""
+            turn_id = turn_id or str(response.get("turnId", ""))
+            if not turn_id:
+                raise CodexAppServerError("structured turn id was not returned")
+            text = collector.wait(turn_id, timeout)
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError as error:
+                raise CodexAppServerError("structured turn returned invalid JSON") from error
+            if not isinstance(payload, dict):
+                raise CodexAppServerError("structured turn output must be an object")
+            return payload
+        finally:
+            remove_listener()
+
     def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, Any]:
         return self.request(
             "turn/interrupt",
             {"threadId": thread_id, "turnId": turn_id},
         )
+
+    def add_notification_listener(
+        self,
+        callback: Callable[[CodexNotification], None],
+    ) -> Callable[[], None]:
+        with self._state_lock:
+            self._notification_listeners.append(callback)
+
+        def remove() -> None:
+            with self._state_lock:
+                if callback in self._notification_listeners:
+                    self._notification_listeners.remove(callback)
+
+        return remove
 
     def _reserve_request(self) -> int:
         with self._state_lock:
@@ -453,12 +578,18 @@ class CodexAppServerClient:
         )
         with self._state_lock:
             self._notifications.append(notification)
+            listeners = tuple(self._notification_listeners)
         self._log(f"notification {method}")
         if self.notification_callback is not None:
             try:
                 self.notification_callback(notification)
             except Exception as error:
                 self._log(f"notification callback failed: {_redact_log(error)}", error=True)
+        for listener in listeners:
+            try:
+                listener(notification)
+            except Exception as error:
+                self._log(f"notification listener failed: {_redact_log(error)}", error=True)
 
     @staticmethod
     def _is_approval_request(method: str) -> bool:
@@ -476,4 +607,3 @@ class CodexAppServerClient:
     def _log(self, message: object, *, error: bool = False) -> None:
         if self.log_callback is not None:
             self.log_callback(("ERROR: " if error else "") + _redact_log(message))
-

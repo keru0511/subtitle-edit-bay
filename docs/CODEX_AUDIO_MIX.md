@@ -8,9 +8,12 @@ GUI methodやproject JSONを直接操作しません。
 1. `inspect_audio_mix_state`がpath-freeなchannel状態、preview level、master level、limiter reduction、
    playheadを返します。
 2. trusted user scope、project revision、job競合を共通dispatcherが検証します。
-3. `propose_audio_mix`が安定channel IDを持つ`update_audio_channel` operationを生成します。
+3. `propose_audio_mix`がpath-free contextをread-onlyのCodex turnへ渡し、
+   `schemas/codex_audio_mix_proposal.schema.json`に従うoperation生成を開始します。
+   固定キーワードや固定増減量ではなく、現在値とpreview/master/limiter levelを判断材料にします。
 4. proposal表示時点ではproject、preview、historyを変更しません。
-5. GUIで選択されたoperationだけをdomain validatorが再検証し、明示適用します。
+5. Codex出力はroot、operation、changesの全階層で未知fieldを拒否し、backendが現在値から
+   `before`を付与します。GUIで選択されたoperationだけを再検証し、明示適用します。
 6. 適用後は既存audio mix、realtime preview、project dirty、undo/redo経路を更新します。
 
 ## Allowed changes
@@ -25,7 +28,11 @@ audio stateは拒否します。全channelを無効化・muteして無音にす�
 `confirm_silence`を必要とします。
 
 inspect/proposalにはaudio source pathやproject pathを含めません。channel indexは並び替えで変わるため、
-適用対象の識別には常にchannel IDを使います。
+適用対象の識別には常に`audio:<opaque id>`を使います。旧projectでexternal channel IDにpathが
+埋め込まれている場合は、audio sourceへ永続化するopaque IDへ移行し、既存のchannel設定を引き継ぎます。
+
+GUI操作とCodex proposalは、どちらも`audio_mixer.update_audio_mix_channel()`を正本として利用します。
+volume型・範囲、boolean、unknown field、channel IDの検証と実際のchannel mutationを別実装にしません。
 
 ## Stacked dependencies
 

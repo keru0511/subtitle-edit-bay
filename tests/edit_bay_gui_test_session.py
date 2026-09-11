@@ -28,6 +28,9 @@ class EditBayGuiTestSession:
         self._base_settings = deepcopy(self.backend.settings)
         self._base_transcription_context = deepcopy(self.backend._transcription_context)
         self._base_codex_session_snapshot = self.backend._codex_session.snapshot
+        self._base_codex_audio_mix_session_snapshot = (
+            self.backend._codex_audio_mix_session.snapshot
+        )
         self._base_codex_chat_snapshot = self.backend._codex_chat.snapshot
         self._closed = False
 
@@ -135,10 +138,14 @@ class EditBayGuiTestSession:
         app._update_download_cancel = threading.Event()
 
         app._codex_proposal = None
+        app._audio_mix_proposal = None
         app._codex_current_time = None
         app._last_codex_login_url = ""
         app._last_codex_log_state = None
         app._codex_session._snapshot = self._base_codex_session_snapshot
+        app._codex_audio_mix_session._snapshot = (
+            self._base_codex_audio_mix_session_snapshot
+        )
         app._codex_chat._snapshot = self._base_codex_chat_snapshot
         app._codex_chat._workspace_root = str(root.resolve())
         app._codex_chat._preferred_model = self._base_codex_chat_snapshot.selected_model
@@ -176,18 +183,22 @@ class EditBayGuiTestSession:
         app.processEvents()
 
     def _stop_codex_session(self) -> None:
-        session = self.backend._codex_session
-        session.stop()
-        thread = session._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=1.0)
-            if thread.is_alive():
-                raise AssertionError("GUI test leaked a running Codex edit session")
-        with session._state_lock:
-            session._generation += 1
-            session._client = None
-            session._thread = None
-            session._stop_event = threading.Event()
+        sessions = (
+            self.backend._codex_session,
+            self.backend._codex_audio_mix_session,
+        )
+        for session in sessions:
+            session.stop()
+            thread = session._thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.0)
+                if thread.is_alive():
+                    raise AssertionError("GUI test leaked a running Codex proposal session")
+            with session._state_lock:
+                session._generation += 1
+                session._client = None
+                session._thread = None
+                session._stop_event = threading.Event()
 
     def finish_test(self) -> None:
         self._stop_background_work()

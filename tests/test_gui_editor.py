@@ -30,6 +30,7 @@ from src.audio_preview_cache import (
     audio_preview_cache_entries,
     cached_audio_preview_paths,
 )
+from src.audio_mix_proposal import AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA
 from src import updater
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
@@ -1476,14 +1477,40 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._project_dirty = False
         before_revision = self.app._project_revision
         before = self.app.audioMixerChannels[1]["volume_percent"]
+        channel_id = self.app.audioMixerChannels[1]["id"]
 
-        proposal = self.app.proposeAudioMix("音声を上げて", before_revision)
+        with patch.object(self.app._codex_audio_mix_session, "start") as start:
+            self.assertTrue(self.app.proposeAudioMix("声を聞きやすくして", before_revision))
+        request = start.call_args.kwargs
+        self.assertIn("声を聞きやすくして", request["prompt"])
+        self.assertEqual(request["output_schema"], AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA)
+        self.assertIn("preview_level", request["context"]["channels"][1])
+        self.assertNotIn(str(self.root), str(request["context"]))
+
+        self.app._on_codex_audio_mix_proposal(
+            {
+                "schema_version": 1,
+                "summary": "声を前に出します",
+                "warnings": [],
+                "base_revision": before_revision,
+                "audio_state_revision": request["context"]["audio_state_revision"],
+                "operations": [
+                    {
+                        "id": "voice-up",
+                        "type": "update_audio_channel",
+                        "channel_id": channel_id,
+                        "changes": {"volume_percent": before + 12.0},
+                        "reason": "現在のプレビューレベルでは声が小さいため",
+                    }
+                ],
+            }
+        )
+        proposal = self.app.audioMixProposal
 
         self.assertTrue(proposal["operations"])
         self.assertEqual(self.app.audioMixerChannels[1]["volume_percent"], before)
-        operation = next(
-            item for item in proposal["operations"] if item["channel_id"] == self.app.audioMixerChannels[1]["id"]
-        )
+        operation = proposal["operations"][0]
+        self.assertEqual(operation["before"], {"volume_percent": before})
         self.assertTrue(self.app.applyAudioMixProposal([operation["id"]], False))
         self.app.autosave_timer.stop()
         self.assertGreater(self.app.audioMixerChannels[1]["volume_percent"], before)
@@ -3842,9 +3869,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         preview_players = window.findChild(QObject, "mixerPreviewPlayers")
         self.assertIsNotNone(preview_players)
         self.assertEqual(preview_players.property("count"), 1)
-        preview_player = window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0")
-        self.assertIsNotNone(preview_player)
         video_channel_id = self.app.audioMixerChannels[0]["id"]
+        preview_player = window.findChild(
+            QObject,
+            f"mixerPreviewPlayer-{video_channel_id}",
+        )
+        self.assertIsNotNone(preview_player)
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
 
@@ -3852,7 +3882,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
-            window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
+            window.findChild(QObject, f"mixerPreviewPlayer-{video_channel_id}"),
             preview_player,
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 0.0)
@@ -3863,7 +3893,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
-            window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
+            window.findChild(QObject, f"mixerPreviewPlayer-{video_channel_id}"),
             preview_player,
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)

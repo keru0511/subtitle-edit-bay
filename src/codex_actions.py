@@ -444,6 +444,12 @@ class GuiActionBackend:
     def active_job(self) -> str:
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
+        subtitle_session = getattr(self._gui, "_codex_session", None)
+        if subtitle_session is not None and subtitle_session.running:
+            return "subtitle_proposal"
+        audio_session = getattr(self._gui, "_codex_audio_mix_session", None)
+        if audio_session is not None and audio_session.running:
+            return "audio_mix_proposal"
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
         return ""
@@ -553,13 +559,14 @@ class GuiActionBackend:
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
 
     def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
-        proposal = self._gui.proposeAudioMix(str(args["intent"]), revision)
-        if not proposal:
-            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be created")
+        if not self._gui.start_codex_audio_mix_proposal(
+            intent=str(args["intent"]),
+            revision=revision,
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be started")
         return HandlerResult(
-            "audio mix proposal is waiting for explicit apply",
-            state={"status": "waiting_approval"},
-            proposal=proposal,
+            "audio mix proposal generation started",
+            state={"status": "running"},
         )
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:

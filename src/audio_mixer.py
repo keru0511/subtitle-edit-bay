@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from pathlib import Path
-from typing import Any, Iterable
+from hashlib import sha256
+import math
+from pathlib import Path, PureWindowsPath
+import re
+from typing import Any, Iterable, Mapping, cast
+from uuid import uuid4
 
 
 AUDIO_MIX_VERSION = 1
@@ -15,30 +19,130 @@ AUDIO_MIX_MASTER_FILTER = (
     f"alimiter=limit={AUDIO_MIX_LIMITER_CEILING:.6f}:"
     "attack=5:release=80:level=disabled:latency=enabled"
 )
+AUDIO_CHANNEL_CHANGE_FIELDS = frozenset({"volume_percent", "muted", "solo", "enabled"})
+_AUDIO_CHANNEL_ID_PATTERN = re.compile(r"audio:[0-9a-f]{32}\Z")
+
+
+class AudioMixError(ValueError):
+    """Raised when a mixer update cannot be validated or applied."""
 
 
 def _clamp_volume(value: object) -> float:
     try:
-        numeric = float(value)
-    except (TypeError, ValueError):
+        numeric = float(cast(Any, value))
+    except (TypeError, ValueError, OverflowError):
+        numeric = 100.0
+    if not math.isfinite(numeric):
         numeric = 100.0
     return max(0.0, min(MAX_VOLUME_PERCENT, numeric))
 
 
+def is_opaque_audio_channel_id(value: object) -> bool:
+    return bool(_AUDIO_CHANNEL_ID_PATTERN.fullmatch(str(value)))
+
+
+def _opaque_channel_id(kind: str, identity: str) -> str:
+    digest = sha256(f"subtitle-edit-bay\0{kind}\0{identity}".encode("utf-8")).hexdigest()[:32]
+    return f"audio:{digest}"
+
+
 def _video_channel_id(selector: str) -> str:
-    return f"video:{selector}"
+    return _opaque_channel_id("video", selector)
 
 
-def _external_channel_id(source: dict[str, Any], index: int) -> str:
+def _external_channel_id(
+    source: dict[str, Any],
+    index: int,
+    used_ids: set[str],
+) -> str:
+    persisted = str(source.get("audio_channel_id", "")).strip()
+    if is_opaque_audio_channel_id(persisted) and persisted not in used_ids:
+        used_ids.add(persisted)
+        return persisted
+
+    track_key = str(source.get("track_key", "")).strip()
+    candidate = _opaque_channel_id("external", track_key) if track_key else ""
+    if not candidate or candidate in used_ids:
+        candidate = f"audio:{uuid4().hex}"
+        while candidate in used_ids:
+            candidate = f"audio:{uuid4().hex}"
+    source["audio_channel_id"] = candidate
+    used_ids.add(candidate)
+    return candidate
+
+
+def _legacy_external_channel_id(source: Mapping[str, Any], index: int) -> str:
     identity = str(source.get("track_key") or source.get("path") or source.get("file_name") or index)
     return f"external:{identity}"
+
+
+def _looks_like_absolute_path(value: object) -> bool:
+    text = str(value).strip()
+    if not text:
+        return False
+    return text.casefold().startswith("file://") or Path(text).is_absolute() or PureWindowsPath(text).is_absolute()
+
+
+def _safe_channel_label(value: object, fallback: str) -> str:
+    label = "" if value is None else str(value).strip()
+    return fallback if not label or _looks_like_absolute_path(label) else label
+
+
+def validate_audio_channel_changes(changes: object) -> dict[str, Any]:
+    if not isinstance(changes, Mapping) or not changes:
+        raise AudioMixError("audio channel changes must be a non-empty object")
+    unknown = sorted(str(key) for key in changes if not isinstance(key, str) or key not in AUDIO_CHANNEL_CHANGE_FIELDS)
+    if unknown:
+        raise AudioMixError("unsupported audio channel fields: " + ", ".join(unknown))
+    validated: dict[str, Any] = {}
+    for key in AUDIO_CHANNEL_CHANGE_FIELDS:
+        if key not in changes:
+            continue
+        value = changes[key]
+        if key == "volume_percent":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise AudioMixError("volume_percent must be a number")
+            number = float(value)
+            if not math.isfinite(number) or not 0.0 <= number <= MAX_VOLUME_PERCENT:
+                raise AudioMixError(f"volume_percent must be between 0 and {MAX_VOLUME_PERCENT:g}")
+            validated[key] = number
+        elif type(value) is not bool:
+            raise AudioMixError(f"{key} must be true or false")
+        else:
+            validated[key] = value
+    return validated
+
+
+def update_audio_mix_channel(
+    audio_mix: Mapping[str, Any],
+    channel_id: str,
+    changes: object,
+) -> dict[str, Any]:
+    """Apply one validated channel update to a copy of the canonical mixer state."""
+
+    if not isinstance(channel_id, str) or not is_opaque_audio_channel_id(channel_id):
+        raise AudioMixError("audio channel id must be a safe opaque ID")
+    validated = validate_audio_channel_changes(changes)
+    candidate = deepcopy(dict(audio_mix))
+    channels = candidate.get("channels")
+    if not isinstance(channels, list):
+        raise AudioMixError("audio mix channels must be an array")
+    matches = [
+        channel for channel in channels if isinstance(channel, dict) and str(channel.get("id", "")) == channel_id
+    ]
+    if len(matches) != 1:
+        raise AudioMixError(f"audio channel does not exist or is ambiguous: {channel_id}")
+    matches[0].update(validated)
+    candidate["customized"] = True
+    return candidate
 
 
 def video_track_entries(streams: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     for audio_index, stream in enumerate(streams):
         selector = f"0:a:{audio_index}"
-        tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
+        raw_tags = stream.get("tags")
+        tags: dict[str, Any] = raw_tags if isinstance(raw_tags, dict) else {}
         title = str(tags.get("title", "")).strip()
         codec = str(stream.get("codec_name", "audio"))
         channels = stream.get("channels", "?")
@@ -50,7 +154,10 @@ def _normalized_channel(channel: dict[str, Any], defaults: dict[str, Any]) -> di
     normalized = {**defaults, **deepcopy(channel)}
     normalized["id"] = str(defaults["id"])
     normalized["kind"] = str(defaults["kind"])
-    normalized["label"] = str(normalized.get("label") or defaults["label"])
+    normalized["label"] = _safe_channel_label(
+        normalized.get("label"),
+        str(defaults["label"]),
+    )
     normalized["enabled"] = bool(normalized.get("enabled", defaults.get("enabled", False)))
     normalized["muted"] = bool(normalized.get("muted", False))
     normalized["solo"] = bool(normalized.get("solo", False))
@@ -68,29 +175,42 @@ def reconcile_audio_mix(
     project: dict[str, Any],
     video_tracks: Iterable[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    current = project.get("audio_mix") if isinstance(project.get("audio_mix"), dict) else {}
-    existing_channels = current.get("channels") if isinstance(current.get("channels"), list) else []
+    raw_current = project.get("audio_mix")
+    current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
+    raw_existing_channels = current.get("channels")
+    existing_channels: list[Any] = raw_existing_channels if isinstance(raw_existing_channels, list) else []
     existing_by_id = {
         str(channel.get("id")): channel
         for channel in existing_channels
         if isinstance(channel, dict) and channel.get("id")
     }
-    existing_video = [channel for channel in existing_channels if isinstance(channel, dict) and channel.get("kind") == "video"]
-    existing_external = [
-        channel
-        for channel in existing_channels
-        if isinstance(channel, dict) and channel.get("kind") == "external"
+    existing_video = [
+        channel for channel in existing_channels if isinstance(channel, dict) and channel.get("kind") == "video"
     ]
+    existing_external = [
+        channel for channel in existing_channels if isinstance(channel, dict) and channel.get("kind") == "external"
+    ]
+    claimed_existing: set[int] = set()
+
+    def existing_channel(*ids: str, kind: str, path: str = "") -> dict[str, Any]:
+        for channel_id in ids:
+            candidate = existing_by_id.get(channel_id)
+            if isinstance(candidate, dict) and id(candidate) not in claimed_existing and candidate.get("kind") == kind:
+                claimed_existing.add(id(candidate))
+                return candidate
+        if kind == "external" and path:
+            for candidate in existing_external:
+                if id(candidate) not in claimed_existing and str(candidate.get("path", "")) == path:
+                    claimed_existing.add(id(candidate))
+                    return candidate
+        return {}
+
     supplied_tracks = None if video_tracks is None else list(video_tracks)
     preserve_external = (
-        supplied_tracks is None
-        or bool(existing_video)
-        or (not supplied_tracks and bool(existing_external))
+        supplied_tracks is None or bool(existing_video) or (not supplied_tracks and bool(existing_external))
     )
 
-    preferred_selector = str(
-        project.get("render_settings", {}).get("output_audio_track") or DEFAULT_AUDIO_TRACK
-    )
+    preferred_selector = str(project.get("render_settings", {}).get("output_audio_track") or DEFAULT_AUDIO_TRACK)
     if supplied_tracks is None:
         track_entries = [
             {"selector": str(channel.get("selector", "")), "label": str(channel.get("label", ""))}
@@ -107,12 +227,19 @@ def reconcile_audio_mix(
         ]
 
     selectors = {entry["selector"] for entry in track_entries}
-    enabled_selector = preferred_selector if preferred_selector in selectors else (track_entries[0]["selector"] if track_entries else "")
+    enabled_selector = (
+        preferred_selector
+        if preferred_selector in selectors
+        else (track_entries[0]["selector"] if track_entries else "")
+    )
     channels: list[dict[str, Any]] = []
+    used_channel_ids: set[str] = set()
     for entry in track_entries:
         selector = entry["selector"]
+        channel_id = _video_channel_id(selector)
+        used_channel_ids.add(channel_id)
         defaults = {
-            "id": _video_channel_id(selector),
+            "id": channel_id,
             "kind": "video",
             "label": entry["label"] or selector,
             "selector": selector,
@@ -121,13 +248,21 @@ def reconcile_audio_mix(
             "solo": False,
             "volume_percent": 100.0,
         }
-        channels.append(_normalized_channel(existing_by_id.get(defaults["id"], {}), defaults))
+        channels.append(
+            _normalized_channel(
+                existing_channel(channel_id, f"video:{selector}", kind="video"),
+                defaults,
+            )
+        )
 
     for index, source in enumerate(project.get("audio_sources", [])):
         if not isinstance(source, dict) or not str(source.get("path", "")).strip():
             continue
-        channel_id = _external_channel_id(source, index)
-        speaker_name = str(source.get("name") or source.get("file_name") or Path(str(source["path"])).name)
+        channel_id = _external_channel_id(source, index, used_channel_ids)
+        speaker_name = _safe_channel_label(
+            source.get("name") or source.get("file_name"),
+            f"外部音声 {index + 1}",
+        )
         defaults = {
             "id": channel_id,
             "kind": "external",
@@ -138,10 +273,15 @@ def reconcile_audio_mix(
             "solo": False,
             "volume_percent": 100.0,
         }
-        existing_channel = existing_by_id.get(channel_id, {})
-        if existing_channel and not preserve_external:
-            existing_channel = {}
-        channels.append(_normalized_channel(existing_channel, defaults))
+        previous = existing_channel(
+            channel_id,
+            _legacy_external_channel_id(source, index),
+            kind="external",
+            path=str(source["path"]),
+        )
+        if previous and not preserve_external:
+            previous = {}
+        channels.append(_normalized_channel(previous, defaults))
 
     if not track_entries:
         has_enabled_external = any(
@@ -218,10 +358,6 @@ def build_audio_mix_filter(
         filters.append(
             f"{''.join(branch_labels)}amix=inputs={len(branch_labels)}:duration=longest:dropout_transition=0:normalize=0[{base_label}]"
         )
-    final_filter = (
-        f"{post_filter},{AUDIO_MIX_MASTER_FILTER},apad"
-        if post_filter
-        else f"{AUDIO_MIX_MASTER_FILTER},apad"
-    )
+    final_filter = f"{post_filter},{AUDIO_MIX_MASTER_FILTER},apad" if post_filter else f"{AUDIO_MIX_MASTER_FILTER},apad"
     filters.append(f"[{base_label}]{final_filter}[{output_label}]")
     return input_args, ";".join(filters)

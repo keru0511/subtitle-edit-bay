@@ -32,11 +32,29 @@ if ($CheckDependencies) {
     if (-not $dumpbin) {
         throw "dumpbin.exe is required to verify launcher dependencies."
     }
+    $headers = (& $dumpbin.Source /HEADERS $binary.FullName | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "dumpbin PE header inspection failed with exit code $LASTEXITCODE."
+    }
+    if ($headers -notmatch '(?im)^\s*866 machine \(x64\)') {
+        throw "Launcher must be an x64 PE image."
+    }
+    if ($headers -notmatch '(?im)^\s*2 subsystem \(Windows GUI\)') {
+        throw "Launcher must use the Windows GUI subsystem."
+    }
     $imports = (& $dumpbin.Source /DEPENDENTS $binary.FullName | Out-String)
     if ($LASTEXITCODE -ne 0) {
         throw "dumpbin dependency inspection failed with exit code $LASTEXITCODE."
     }
-    $forbidden = @("VCRUNTIME", "MSVCP", "UCRTBASE.DLL", "API-MS-WIN-CRT-")
+    $forbidden = @(
+        "VCRUNTIME",
+        "MSVCP",
+        "MSVCR",
+        "CONCRT",
+        "UCRTBASE.DLL",
+        "API-MS-WIN-CRT-",
+        "EXT-MS-WIN-CRT-"
+    )
     foreach ($name in $forbidden) {
         if ($imports.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "Launcher has a forbidden external C/C++ runtime dependency: $name"

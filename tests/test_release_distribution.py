@@ -200,6 +200,9 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn('VALUE "ProductName"', launcher)
         self.assertIn("verify_windows_binary.ps1", launcher)
         self.assertIn("dumpbin.exe", verifier)
+        self.assertIn("/HEADERS", verifier)
+        self.assertIn("8664 machine", verifier)
+        self.assertIn("Windows GUI", verifier)
         self.assertIn("API-MS-WIN-CRT-", verifier)
         self.assertIn("Get-AuthenticodeSignature", verifier)
         self.assertIn("TimeStamperCertificate", verifier)
@@ -210,6 +213,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Assert-InstallerPublisher", updater)
         self.assertIn('"/MERGETASKS=!legacymigration"', updater)
         self.assertIn("TimeStamperCertificate", updater)
+        releasing = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+        self.assertIn("MSVC `/MT`で静的CRTリンク", releasing)
+        self.assertIn("Visual C++ Redistributable", releasing)
+        self.assertIn("verify_windows_binary.ps1 -CheckDependencies", releasing)
         publisher_check = updater[
             updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")
         ]

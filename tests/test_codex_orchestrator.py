@@ -713,6 +713,47 @@ class GuiActionContractTests(unittest.TestCase):
         gui.renderVideo = render_video
         return gui
 
+    def test_review_routes_require_callable_gui_lifecycle_methods(self) -> None:
+        gui = self.gui_stub()
+        del gui.start_codex_audio_mix_proposal
+        gui.start_codex_timeline_proposal = None
+        gui.startCodexEdit = object()
+
+        availability = GuiActionBackend(gui)._review_route_availability()
+
+        self.assertFalse(availability["audio_mix_proposal"])
+        self.assertFalse(availability["timeline_proposal"])
+        self.assertFalse(availability["subtitle_proposal"])
+
+    def test_missing_proposal_lifecycle_fails_closed(self) -> None:
+        gui = self.gui_stub()
+        del gui.start_codex_audio_mix_proposal
+        gui.start_codex_timeline_proposal = None
+        dispatcher = ActionDispatcher(GuiActionBackend(gui))
+        scope = ActionScope(
+            "goal",
+            frozenset({"propose_audio_mix", "propose_timeline_edit"}),
+            project_revision=4,
+        )
+
+        for action_type, args in (
+            ("propose_audio_mix", {"intent": "音を整える"}),
+            ("propose_timeline_edit", {"intent": "構成を整える", "target": "normal"}),
+        ):
+            with self.subTest(action_type=action_type):
+                result = dispatcher.dispatch(
+                    {
+                        "schema_version": 1,
+                        "kind": "propose",
+                        "type": action_type,
+                        "args": args,
+                        "scope_id": "goal",
+                        "project_revision": 4,
+                    },
+                    trusted_scope=scope,
+                )
+                self.assertEqual(result.code, "precondition_failed")
+
     def test_timeline_schema_requires_explicit_target_before_gui_call(self) -> None:
         gui = self.gui_stub()
         dispatcher = ActionDispatcher(GuiActionBackend(gui))

@@ -748,11 +748,18 @@ class GuiActionBackend:
 
     def _review_route_availability(self) -> dict[str, bool]:
         return {
-            "subtitle_proposal": "propose_subtitle_edit" in self._propose_handlers,
-            "audio_mix_proposal": "propose_audio_mix" in self._propose_handlers,
+            "subtitle_proposal": (
+                "propose_subtitle_edit" in self._propose_handlers
+                and callable(getattr(self._gui, "startCodexEdit", None))
+            ),
+            "audio_mix_proposal": (
+                "propose_audio_mix" in self._propose_handlers
+                and callable(getattr(self._gui, "start_codex_audio_mix_proposal", None))
+            ),
             "timeline_proposal": (
                 "propose_timeline_edit" in self._propose_handlers
                 and bool(getattr(self._gui, "_cut_editor_available", True))
+                and callable(getattr(self._gui, "start_codex_timeline_proposal", None))
             ),
             "processing_action": bool(self._execute_handlers),
         }
@@ -780,7 +787,10 @@ class GuiActionBackend:
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
 
     def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
-        if not self._gui.start_codex_audio_mix_proposal(
+        start_proposal = getattr(self._gui, "start_codex_audio_mix_proposal", None)
+        if not callable(start_proposal):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal is not available")
+        if not start_proposal(
             intent=str(args["intent"]),
             revision=revision,
         ):
@@ -788,7 +798,10 @@ class GuiActionBackend:
         return HandlerResult("audio mix proposal generation started", state={"status": "running"})
 
     def _propose_timeline(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
-        if not self._gui.start_codex_timeline_proposal(
+        start_proposal = getattr(self._gui, "start_codex_timeline_proposal", None)
+        if not callable(start_proposal):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "timeline proposal is not available")
+        if not start_proposal(
             intent=str(args["intent"]),
             target=str(args["target"]),
         ):

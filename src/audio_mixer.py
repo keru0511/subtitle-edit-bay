@@ -8,6 +8,8 @@ import re
 from typing import Any, Iterable, Mapping, cast
 from uuid import uuid4
 
+from .application_logging import redact_text
+
 
 AUDIO_MIX_VERSION = 1
 DEFAULT_AUDIO_TRACK = "0:a:0"
@@ -19,6 +21,7 @@ AUDIO_MIX_MASTER_FILTER = (
     f"alimiter=limit={AUDIO_MIX_LIMITER_CEILING:.6f}:"
     "attack=5:release=80:level=disabled:latency=enabled"
 )
+AUDIO_SOURCE_ID_FIELD = "audio_channel_id"
 AUDIO_CHANNEL_CHANGE_FIELDS = frozenset({"volume_percent", "muted", "solo", "enabled"})
 _AUDIO_CHANNEL_ID_PATTERN = re.compile(r"audio:[0-9a-f]{32}\Z")
 
@@ -55,7 +58,8 @@ def _external_channel_id(
     index: int,
     used_ids: set[str],
 ) -> str:
-    persisted = str(source.get("audio_channel_id", "")).strip()
+    del index
+    persisted = str(source.get(AUDIO_SOURCE_ID_FIELD, "")).strip()
     if is_opaque_audio_channel_id(persisted) and persisted not in used_ids:
         used_ids.add(persisted)
         return persisted
@@ -66,7 +70,7 @@ def _external_channel_id(
         candidate = f"audio:{uuid4().hex}"
         while candidate in used_ids:
             candidate = f"audio:{uuid4().hex}"
-    source["audio_channel_id"] = candidate
+    source[AUDIO_SOURCE_ID_FIELD] = candidate
     used_ids.add(candidate)
     return candidate
 
@@ -135,6 +139,45 @@ def update_audio_mix_channel(
     matches[0].update(validated)
     candidate["customized"] = True
     return candidate
+
+def _path_free_channel_id(channel: dict[str, Any]) -> str:
+    channel_id = str(channel.get("id", "")).strip()
+    if not is_opaque_audio_channel_id(channel_id):
+        raise ValueError("audio channel identity is not a safe opaque ID")
+    return channel_id
+
+
+def path_free_audio_mix_channels(channels: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build the shared Codex-facing audio view from normalized mixer channels."""
+
+    safe: list[dict[str, Any]] = []
+    channel_ids: set[str] = set()
+    for index, channel in enumerate(channels):
+        if not isinstance(channel, dict):
+            continue
+        channel_id = _path_free_channel_id(channel)
+        if channel_id in channel_ids:
+            raise ValueError("audio channel identities must be unique")
+        channel_ids.add(channel_id)
+        kind = redact_text(channel.get("kind", ""), paths=True)[:40]
+        safe.append(
+            {
+                "id": channel_id,
+                "kind": kind,
+                "label": redact_text(
+                    _safe_channel_label(
+                        channel.get("label"),
+                        f"{'動画' if kind == 'video' else '外部'}音声 {index + 1}",
+                    ),
+                    paths=True,
+                )[:160],
+                "enabled": bool(channel.get("enabled", False)),
+                "muted": bool(channel.get("muted", False)),
+                "solo": bool(channel.get("solo", False)),
+                "volume_percent": _clamp_volume(channel.get("volume_percent", 100.0)),
+            }
+        )
+    return safe
 
 
 def video_track_entries(streams: Iterable[dict[str, Any]]) -> list[dict[str, str]]:

@@ -5,10 +5,12 @@ import unittest
 from pathlib import Path
 
 from src.audio_mixer import (
+    AUDIO_SOURCE_ID_FIELD,
     AudioMixError,
     active_audio_mix_channels,
     build_audio_mix_filter,
     is_opaque_audio_channel_id,
+    path_free_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,
     update_audio_mix_channel,
@@ -41,6 +43,9 @@ class AudioMixerTests(unittest.TestCase):
         self.assertEqual(
             [channel["enabled"] for channel in audio_mix["channels"]],
             [False, True, False, False],
+        )
+        self.assertTrue(
+            all(is_opaque_audio_channel_id(channel["id"]) for channel in audio_mix["channels"])
         )
         self.assertFalse(audio_mix["customized"])
 
@@ -271,6 +276,88 @@ class AudioMixerTests(unittest.TestCase):
             ],
             [(42.0, True, False, True), (157.0, False, True, True)],
         )
+
+    def test_path_only_legacy_source_gets_persisted_opaque_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "source.mkv"
+            audio = root / "private" / "voice.flac"
+            audio.parent.mkdir()
+            video.write_bytes(b"video")
+            audio.write_bytes(b"audio")
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                audio_sources=[{"name": "legacy", "path": str(audio)}],
+                segments=[],
+                duration_seconds=1.0,
+            )
+            first_id = project["audio_mix"]["channels"][0]["id"]
+            source_identity = project["audio_sources"][0][AUDIO_SOURCE_ID_FIELD]
+            project["audio_mix"]["channels"][0].update(
+                {"enabled": True, "muted": True, "solo": True, "volume_percent": 44}
+            )
+            project_path = root / "legacy.subtitle-project.json"
+            save_project(project_path, project)
+            reloaded = load_project(project_path)
+            reconciled = reconcile_audio_mix(reloaded, video_tracks=[])
+
+        self.assertTrue(is_opaque_audio_channel_id(source_identity))
+        self.assertEqual(first_id, source_identity)
+        self.assertEqual(reconciled["channels"][0]["id"], first_id)
+        self.assertEqual(reconciled["channels"][0]["volume_percent"], 44.0)
+        self.assertTrue(reconciled["channels"][0]["muted"])
+        self.assertNotIn(str(audio), first_id)
+
+    def test_legacy_path_channel_id_is_migrated_without_losing_controls(self) -> None:
+        private_path = "C:/Users/alice/private/voice.flac"
+        project = {
+            "audio_sources": [{"name": "legacy", "path": private_path}],
+            "render_settings": {},
+            "audio_mix": {
+                "customized": True,
+                "channels": [
+                    {
+                        "id": f"external:{private_path}",
+                        "kind": "external",
+                        "label": private_path,
+                        "path": private_path,
+                        "enabled": True,
+                        "muted": False,
+                        "solo": True,
+                        "volume_percent": 63,
+                    }
+                ],
+            },
+        }
+
+        reconciled = reconcile_audio_mix(project, video_tracks=[])
+        channel = reconciled["channels"][0]
+        safe = path_free_audio_mix_channels(reconciled["channels"])
+
+        self.assertTrue(is_opaque_audio_channel_id(channel["id"]))
+        self.assertEqual(channel["volume_percent"], 63.0)
+        self.assertTrue(channel["solo"])
+        self.assertEqual(channel["label"], "legacy")
+        self.assertNotIn(private_path, str(safe))
+        with self.assertRaisesRegex(ValueError, "opaque"):
+            path_free_audio_mix_channels(project["audio_mix"]["channels"] + [{"id": private_path}])
+
+    def test_duplicate_track_keys_receive_distinct_opaque_ids(self) -> None:
+        project = {
+            "audio_sources": [
+                {"track_key": "craig:alice", "path": "one.flac"},
+                {"track_key": "craig:alice", "path": "two.flac"},
+            ],
+            "render_settings": {},
+        }
+
+        first = reconcile_audio_mix(project, video_tracks=[])
+        first_ids = [channel["id"] for channel in first["channels"]]
+        second = reconcile_audio_mix(project, video_tracks=[])
+
+        self.assertEqual(len(set(first_ids)), 2)
+        self.assertEqual([channel["id"] for channel in second["channels"]], first_ids)
 
     def test_reconcile_does_not_invent_video_channel_for_video_only_project(self) -> None:
         project = {"audio_sources": [], "render_settings": {}}

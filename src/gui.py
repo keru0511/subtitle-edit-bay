@@ -538,6 +538,7 @@ class EditBayBackend(LegacyEditBayBackend):
             on_state=self._on_codex_audio_mix_state,
             on_proposal=self._on_codex_audio_mix_proposal,
             callback_dispatcher=self._dispatch_codex_callback,
+            isolated_turn=True,
         )
         self._codex_actions = build_gui_action_dispatcher(self)
         self._last_codex_login_url = ""

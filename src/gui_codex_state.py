@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol
+from pathlib import Path
+from typing import Any, Callable, Mapping, Protocol, cast
+
+from .codex_isolation import (
+    build_isolated_thread_params,
+    build_isolated_turn_kwargs,
+    collect_mcp_server_names,
+    validate_isolated_cwd,
+)
 
 
 CODEX_SCOPES = ("selected", "current", "time_range", "all")
@@ -38,6 +47,8 @@ class CodexClientProtocol(Protocol):
     def thread_start(self, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
     def thread_resume(self, thread_id: str, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
     def turn_start(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def run_structured_turn(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def mcp_server_status_list(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def turn_interrupt(self, turn_id: str, *, thread_id: str) -> Mapping[str, Any]: ...
 
 
@@ -111,19 +122,22 @@ class CodexSessionController:
     def __init__(
         self,
         *,
-        client_factory: Callable[[], CodexClientProtocol] | None = None,
+        client_factory: Callable[..., CodexClientProtocol] | None = None,
         proposal_parser: Callable[[Mapping[str, Any]], Any] | None = None,
         on_state: Callable[[CodexSessionSnapshot], None] | None = None,
         on_message: Callable[[str], None] | None = None,
         on_proposal: Callable[[Mapping[str, Any]], None] | None = None,
         callback_dispatcher: Callable[[Callable[[], None]], None] | None = None,
+        isolated_turn: bool = False,
     ) -> None:
+        self._uses_default_client_factory = client_factory is None
         self.client_factory = client_factory or self._default_client_factory
         self.proposal_parser = proposal_parser or self._default_proposal_parser
         self.on_state = on_state
         self.on_message = on_message
         self.on_proposal = on_proposal
         self._callback_dispatcher = callback_dispatcher or (lambda callback: callback())
+        self.isolated_turn = bool(isolated_turn)
         self._snapshot = CodexSessionSnapshot()
         self._client: CodexClientProtocol | None = None
         self._thread: threading.Thread | None = None
@@ -233,8 +247,18 @@ class CodexSessionController:
         stop_event: threading.Event,
     ) -> None:
         client: CodexClientProtocol | None = None
+        isolation_workspace: tempfile.TemporaryDirectory[str] | None = None
+        isolated_cwd: str | None = None
         try:
-            client = self.client_factory()
+            if self.isolated_turn:
+                isolation_workspace = tempfile.TemporaryDirectory(prefix="subtitle-edit-bay-codex-turn-")
+                isolated_cwd = validate_isolated_cwd(isolation_workspace.name)
+            if self._uses_default_client_factory:
+                client = self._default_client_factory(cwd=isolated_cwd)
+            elif self.isolated_turn:
+                client = self.client_factory(cwd=isolated_cwd)
+            else:
+                client = self.client_factory()
             with self._state_lock:
                 if not self._is_active(generation, stop_event):
                     return
@@ -262,15 +286,28 @@ class CodexSessionController:
                     stop_event=stop_event,
                 )
                 return
-            thread = client.thread_start(
-                {
+            if self.isolated_turn:
+                if isolated_cwd is None:
+                    raise CodexSessionError("Codex isolated working directory was not created")
+                configured_mcp_names = collect_mcp_server_names(client, config_only=True)
+                thread_params = build_isolated_thread_params(
+                    isolated_cwd,
+                    mcp_server_names=configured_mcp_names,
+                )
+            else:
+                thread_params = {
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
                 }
-            )
+            thread = client.thread_start(thread_params)
             if not self._is_active(generation, stop_event):
                 return
-            thread_id = str(thread.get("threadId", thread.get("id", "")))
+            thread_payload = thread.get("thread", thread)
+            thread_id = (
+                str(thread_payload.get("id", ""))
+                if isinstance(thread_payload, Mapping)
+                else ""
+            ) or str(thread.get("threadId", ""))
             if not thread_id:
                 raise CodexSessionError("Codex thread id was not returned")
             self._publish(
@@ -278,22 +315,35 @@ class CodexSessionController:
                 generation=generation,
                 stop_event=stop_event,
             )
-            response = client.turn_start(
-                thread_id=thread_id,
-                prompt=prompt,
-                output_schema=output_schema,
-                context=context,
-                approval_policy="never",
-                sandbox_policy={
-                    "type": "readOnly",
-                    "networkAccess": False,
-                },
-            )
+            if self.isolated_turn:
+                if collect_mcp_server_names(client, thread_id=thread_id):
+                    raise CodexSessionError("Codex isolated thread still exposes an MCP server")
+                if isolated_cwd is None:
+                    raise CodexSessionError("Codex isolated working directory was not created")
+                raw_proposal = client.run_structured_turn(
+                    thread_id=thread_id,
+                    prompt=prompt,
+                    output_schema=output_schema,
+                    context=context,
+                    **build_isolated_turn_kwargs(isolated_cwd),
+                )
+            else:
+                response = client.turn_start(
+                    thread_id=thread_id,
+                    prompt=prompt,
+                    output_schema=output_schema,
+                    context=context,
+                    approval_policy="never",
+                    sandbox_policy={
+                        "type": "readOnly",
+                        "networkAccess": False,
+                    },
+                )
+                raw_proposal = response.get("proposal", response.get("output", response))
+                if isinstance(raw_proposal, str):
+                    raw_proposal = json.loads(raw_proposal)
             if not self._is_active(generation, stop_event):
                 return
-            raw_proposal = response.get("proposal", response.get("output", response))
-            if isinstance(raw_proposal, str):
-                raw_proposal = json.loads(raw_proposal)
             if not isinstance(raw_proposal, Mapping):
                 raise CodexSessionError("Codex output is not a proposal object")
             self.proposal_parser(raw_proposal)
@@ -309,9 +359,10 @@ class CodexSessionController:
                 generation=generation,
                 stop_event=stop_event,
             )
-            if self.on_proposal is not None:
+            on_proposal = self.on_proposal
+            if on_proposal is not None:
                 self._dispatch(
-                    lambda: self.on_proposal(proposal),
+                    lambda: on_proposal(proposal),
                     generation,
                     stop_event,
                 )
@@ -339,6 +390,8 @@ class CodexSessionController:
                 with self._state_lock:
                     if self._client is client:
                         self._client = None
+            if isolation_workspace is not None:
+                isolation_workspace.cleanup()
 
     def _attach_notification_callback(
         self,
@@ -394,8 +447,9 @@ class CodexSessionController:
                 ),
                 generation=generation,
             )
-            if self.on_message is not None:
-                self._dispatch(lambda: self.on_message(str(delta)), generation, stop_event)
+            on_message = self.on_message
+            if on_message is not None:
+                self._dispatch(lambda: on_message(str(delta)), generation, stop_event)
 
     def _publish(
         self,
@@ -407,8 +461,9 @@ class CodexSessionController:
         if generation is not None and not self._is_current_generation(generation):
             return
         self._snapshot = snapshot
-        if self.on_state is not None:
-            self._dispatch(lambda: self.on_state(snapshot), generation, stop_event)
+        on_state = self.on_state
+        if on_state is not None:
+            self._dispatch(lambda: on_state(snapshot), generation, stop_event)
 
     def _dispatch(
         self,
@@ -433,14 +488,13 @@ class CodexSessionController:
         return self._is_current_generation(generation) and not stop_event.is_set()
 
     @staticmethod
-    def _default_client_factory() -> CodexClientProtocol:
+    def _default_client_factory(*, cwd: str | Path | None = None) -> CodexClientProtocol:
         from .codex_app_server_client import CodexAppServerClient
 
-        return CodexAppServerClient()
+        return cast(CodexClientProtocol, CodexAppServerClient(cwd=cwd))
 
     @staticmethod
     def _default_proposal_parser(payload: Mapping[str, Any]) -> Any:
         from .codex_edit_proposal import CodexEditProposal
 
         return CodexEditProposal.from_json(payload)
-

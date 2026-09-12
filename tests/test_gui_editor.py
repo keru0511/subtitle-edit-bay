@@ -31,12 +31,18 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
+from src.codex_app_server_client import CodexAppServerClient
 from src.codex_actions import GuiActionBackend
-from src.codex_timeline_proposal import apply_timeline_proposal, timeline_state_revision
+from src.codex_timeline_proposal import (
+    TIMELINE_PROPOSAL_OUTPUT_SCHEMA,
+    TimelineProposal,
+    apply_timeline_proposal,
+    timeline_state_revision,
+)
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
-from src.gui_codex_state import CodexSessionSnapshot
+from src.gui_codex_state import CodexSessionController, CodexSessionSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -3837,9 +3843,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         preview_players = window.findChild(QObject, "mixerPreviewPlayers")
         self.assertIsNotNone(preview_players)
         self.assertEqual(preview_players.property("count"), 1)
-        preview_player = window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0")
-        self.assertIsNotNone(preview_player)
         video_channel_id = self.app.audioMixerChannels[0]["id"]
+        preview_player = window.findChild(
+            QObject,
+            f"mixerPreviewPlayer-{video_channel_id}",
+        )
+        self.assertIsNotNone(preview_player)
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
 
@@ -3847,7 +3856,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
-            window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
+            window.findChild(QObject, f"mixerPreviewPlayer-{video_channel_id}"),
             preview_player,
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 0.0)
@@ -3858,7 +3867,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
-            window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
+            window.findChild(QObject, f"mixerPreviewPlayer-{video_channel_id}"),
             preview_player,
         )
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)
@@ -4746,6 +4755,53 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.app._project["short_video"],
             codex_result.project["short_video"],
         )
+
+    def test_start_codex_timeline_proposal_waits_for_final_structured_output(self) -> None:
+        self._load_project()
+        fake_server = Path(__file__).with_name("fake_codex_app_server.py")
+        clients: list[CodexAppServerClient] = []
+
+        def client_factory(*, cwd: str) -> CodexAppServerClient:
+            client = CodexAppServerClient(
+                [sys.executable, str(fake_server)],
+                cwd=cwd,
+                environment={"FAKE_CODEX_AUTHENTICATED": "1"},
+                request_timeout=1.0,
+            )
+            clients.append(client)
+            return client
+
+        previous_session = self.app._codex_timeline_session
+        session = CodexSessionController(
+            client_factory=client_factory,
+            proposal_parser=TimelineProposal.from_json,
+            on_state=self.app._on_codex_timeline_state,
+            on_proposal=self.app._on_codex_timeline_proposal,
+            callback_dispatcher=lambda callback: callback(),
+            isolated_turn=True,
+        )
+        self.app._codex_timeline_session = session
+
+        def restore_session() -> None:
+            session.stop()
+            if session._thread is not None:
+                session._thread.join(2)
+            self.app._codex_timeline_session = previous_session
+
+        self.addCleanup(restore_session)
+        self.assertTrue(self.app.startCodexTimelineProposal("通常動画のカット案", "normal"))
+
+        deadline = time.time() + 3
+        while session.snapshot.state not in {"proposal_ready", "error"} and time.time() < deadline:
+            self.app.processEvents()
+            time.sleep(0.01)
+
+        self.assertEqual(session.snapshot.state, "proposal_ready", session.snapshot.error)
+        self.assertEqual(self.app.codexTimelineProposal["summary"], "fake timeline proposal")
+        self.assertEqual(self.app.codexTimelineProposal["target"], "normal")
+        self.assertEqual(session.snapshot.proposal["operations"][0]["type"], "add_cut")
+        self.assertTrue(clients)
+        self.assertTrue(all(not client.is_running for client in clients))
 
     def test_short_mode_visual_clip_updates_do_not_require_trim_metadata(self) -> None:
         self._load_project(

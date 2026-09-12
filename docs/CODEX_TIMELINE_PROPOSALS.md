@@ -15,6 +15,18 @@ GUI は内容を表示し、利用者が選択した operation だけを明示�
   Proposal 全体を拒否します。途中までプロジェクトへ反映することはありません。
 - 全カットの消去、動画の半分以上を除外する提案、全ショート clip の削除には追加確認が必要です。
 - FFmpeg 実行やファイル書き換えを行わず、既存の `VideoTimeline` と `ShortVideo` 契約へ dispatch します。
+- Proposal turn は横断レビューと同じ隔離契約を使います。空の一時 directory を cwd にし、
+  `environments`、`runtimeWorkspaceRoots`、`dynamicTools` を空に固定し、shell/web/plugin、
+  MCP、skills、memory を無効化した read-only/network-disabled turn で実行します。
+- Proposal は `turn/start` の即時RPC応答では確定せず、`item/completed` の最終agent messageと
+  `turn/completed` を収集してから schema 検証します。途中のdeltaや入力文の指示で適用経路を
+  変更することはありません。
+
+Proposal 境界の責務は、信頼できない JSON の schema、project/target revision、利用者が選択した
+operation ID、追加確認の検証までです。ショート clip の検索・追加・削除・並べ替え・更新、
+source/segment 範囲、重複 range、ハイライト候補、目標尺の検証と state 更新は
+`short_video_commands` だけが担います。GUI Slot と Codex Proposal は同じ command API を呼び、
+入力 project を変更せずに全 command が成功した場合だけ結果を反映します。
 
 Proposal 境界の責務は、信頼できない JSON の schema、project/target revision、利用者が選択した
 operation ID、追加確認の検証までです。ショート clip の検索・追加・削除・並べ替え・更新、

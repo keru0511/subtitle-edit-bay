@@ -53,7 +53,7 @@ Rectangle {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modeControl.mark
-                color: rail.currentMode === modeControl.mode ? "#10140F" : rail.textColor
+                color: rail.currentMode === modeControl.mode ? "#FFFFFF" : rail.textColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 16
                 font.weight: Font.Bold
@@ -61,7 +61,7 @@ Rectangle {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modeControl.label
-                color: rail.currentMode === modeControl.mode ? "#10140F" : rail.textColor
+                color: rail.currentMode === modeControl.mode ? "#FFFFFF" : rail.textColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 9
             }

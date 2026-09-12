@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -3502,6 +3502,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         progress = self._quick_item(window, "processingProgressOverlay")
         self.assertTrue(sidebar.isVisible())
         self.assertTrue(progress.isVisible())
+        self.gui.wait_until(
+            lambda: progress.width() > 0,
+            description="processing progress overlay layout",
+        )
         progress_right = progress.mapToScene(QPointF(progress.width(), 0)).x()
         sidebar_left = sidebar.mapToScene(QPointF(0, 0)).x()
         self.assertLessEqual(progress_right, sidebar_left)

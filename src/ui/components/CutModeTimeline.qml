@@ -12,14 +12,14 @@ Item {
     property real selectionStartMs: 0
     property real selectionEndMs: 0
     property string selectedCutId: ""
-    property color panelColor: "#121715"
-    property color raisedColor: "#19201D"
-    property color borderColor: "#2A3530"
-    property color textColor: "#F4F1E8"
-    property color mutedColor: "#8E9B94"
-    property color accentColor: "#C8FF3D"
-    property color warningColor: "#FFB547"
-    property color cutColor: "#FF6B5F"
+    property color panelColor: "#161B22"
+    property color raisedColor: "#21262D"
+    property color borderColor: "#30363D"
+    property color textColor: "#F0F6FC"
+    property color mutedColor: "#8B949E"
+    property color accentColor: "#6366F1"
+    property color warningColor: "#F59E0B"
+    property color cutColor: "#EF4444"
     readonly property real sourceDurationMs: Math.max(1, Number(root.timeline.sourceDuration || 0) * 1000)
     signal rangeSelected(real sourceStartMs, real sourceEndMs)
     signal cutSelected(string cutId, real sourceStartMs, real sourceEndMs)

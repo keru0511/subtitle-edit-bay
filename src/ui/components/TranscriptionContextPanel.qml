@@ -9,12 +9,12 @@ Rectangle {
 
     property var context: ({})
     property bool running: false
-    property color panelColor: "#121715"
-    property color raisedColor: "#19201D"
-    property color borderColor: "#2A3530"
-    property color textPrimaryColor: "#F4F1E8"
-    property color textMutedColor: "#8E9B94"
-    property color accentColor: "#C8FF3D"
+    property color panelColor: "#161B22"
+    property color raisedColor: "#21262D"
+    property color borderColor: "#30363D"
+    property color textPrimaryColor: "#F0F6FC"
+    property color textMutedColor: "#8B949E"
+    property color accentColor: "#6366F1"
 
     signal transcriptionContextEdited(var context)
     signal webDictionaryRefreshRequested(string url, string snippet)

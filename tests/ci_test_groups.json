@@ -72,6 +72,7 @@
         "test_runtime_settings",
         "test_short_video",
         "test_short_video_schema",
+        "test_short_workspace_mock",
         "test_silence_cut",
         "test_subtitle_bulk_edit",
         "test_subtitle_export",

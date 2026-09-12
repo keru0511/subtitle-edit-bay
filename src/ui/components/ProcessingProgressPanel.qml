@@ -7,14 +7,14 @@ Rectangle {
     id: panel
     // qmllint disable unqualified
     property var backend
-    property color panelColor: "#101512"
-    property color raisedColor: "#19201D"
-    property color borderColor: "#2A3530"
-    property color textColor: "#F4F1E8"
-    property color mutedColor: "#8E9B94"
-    property color accentColor: "#C8FF3D"
-    property color warningColor: "#FFD166"
-    property color errorColor: "#FF8A80"
+    property color panelColor: "#161B22"
+    property color raisedColor: "#21262D"
+    property color borderColor: "#30363D"
+    property color textColor: "#F0F6FC"
+    property color mutedColor: "#8B949E"
+    property color accentColor: "#6366F1"
+    property color warningColor: "#F59E0B"
+    property color errorColor: "#EF4444"
 
     visible: backend && backend.progressVisible
     implicitHeight: 126
@@ -58,20 +58,52 @@ Rectangle {
                 font.weight: Font.Bold
             }
             Button {
+                id: stopButton
                 objectName: "processingProgressStopButton"
                 text: "停止"
                 visible: backend && backend.running
                 enabled: visible
                 onClicked: backend.cancelProcessing()
+                contentItem: Text {
+                    text: "停止"
+                    color: panel.errorColor
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 11
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    implicitWidth: 52
+                    implicitHeight: 24
+                    radius: 6
+                    color: stopButton.down ? "#3A1B1F" : "#241518"
+                    border.color: panel.errorColor
+                    border.width: 1
+                }
             }
         }
 
         ProgressBar {
             objectName: "processingProgressBar"
             Layout.fillWidth: true
+            Layout.preferredHeight: 6
             from: 0
             to: 1
             value: backend ? backend.progress : 0
+            background: Rectangle {
+                radius: 3
+                color: panel.raisedColor
+                border.color: panel.borderColor
+            }
+            contentItem: Item {
+                Rectangle {
+                    width: parent.width * (backend ? backend.progress : 0)
+                    height: parent.height
+                    radius: 3
+                    color: panel.accentColor
+                }
+            }
         }
 
         RowLayout {

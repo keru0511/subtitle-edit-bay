@@ -213,6 +213,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Assert-InstallerPublisher", updater)
         self.assertIn('"/MERGETASKS=!legacymigration"', updater)
         self.assertIn("TimeStamperCertificate", updater)
+        releasing = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+        self.assertIn("MSVC `/MT`で静的CRTリンク", releasing)
+        self.assertIn("Visual C++ Redistributable", releasing)
+        self.assertIn("verify_windows_binary.ps1 -CheckDependencies", releasing)
         publisher_check = updater[
             updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")
         ]

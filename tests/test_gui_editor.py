@@ -32,11 +32,18 @@ from src.audio_preview_cache import (
 )
 from src.audio_mix_proposal import AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA
 from src import updater
+from src.codex_app_server_client import CodexAppServerClient
 from src.codex_actions import GuiActionBackend
+from src.codex_timeline_proposal import (
+    TIMELINE_PROPOSAL_OUTPUT_SCHEMA,
+    TimelineProposal,
+    apply_timeline_proposal,
+    timeline_state_revision,
+)
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
-from src.gui_codex_state import CodexSessionSnapshot
+from src.gui_codex_state import CodexSessionController, CodexSessionSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
@@ -4734,6 +4741,119 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.updateShortVideoClip(0, {"start": 2.5, "end": 2.5}))
         self.assertEqual(self.app.shortVideoClips[0]["start"], 1.5)
         self.assertEqual(self.app.shortVideoClips[0]["end"], 2.5)
+
+    def test_short_gui_and_codex_command_sequences_produce_identical_state(self) -> None:
+        self._load_project(
+            duration_seconds=120.0,
+            segments=[
+                {"id": "s1", "start": 0.0, "end": 20.0, "text": "opening", "speaker": "Speaker_Alice"},
+                {"id": "s2", "start": 30.0, "end": 50.0, "text": "topic", "speaker": "Speaker_Bob"},
+                {"id": "s3", "start": 80.0, "end": 110.0, "text": "ending", "speaker": "Speaker_Alice"},
+            ],
+        )
+        assert self.app._project is not None
+        self.app._project["short_video"] = {
+            "enabled": True,
+            "clips": [
+                {"proposal_id": "clip-a", "segment_id": "s1", "start": 2.0, "end": 10.0},
+                {"proposal_id": "clip-b", "segment_id": "s2", "start": 32.0, "end": 40.0},
+            ],
+        }
+        initial = deepcopy(self.app._project)
+
+        self.assertFalse(self.app.updateShortVideoClip(0, {"start": 32.0, "end": 40.0}))
+        self.assertEqual(self.app._project, initial)
+        self.assertTrue(self.app.addShortVideoClipByRange(82.0, 90.0))
+        added_clip_id = self.app._project["short_video"]["clips"][-1]["proposal_id"]
+        self.assertTrue(self.app.updateShortVideoClip(1, {"start": 34.0, "end": 39.0}))
+        self.assertTrue(self.app.moveShortVideoClip(2, 0))
+        self.assertTrue(self.app.removeShortVideoClip(1))
+        self.app.autosave_timer.stop()
+
+        proposal = {
+            "schema_version": 1,
+            "summary": "GUIと同じショート編集",
+            "target": "short",
+            "operations": [
+                {
+                    "id": "add",
+                    "type": "add_clip_by_range",
+                    "clip_id": added_clip_id,
+                    "source_start": 82.0,
+                    "source_end": 90.0,
+                },
+                {
+                    "id": "update",
+                    "type": "update_clip_range",
+                    "clip_id": "clip-b",
+                    "source_start": 34.0,
+                    "source_end": 39.0,
+                },
+                {
+                    "id": "move",
+                    "type": "move_clip",
+                    "clip_id": added_clip_id,
+                    "before_clip_id": "clip-a",
+                },
+                {"id": "remove", "type": "remove_clip", "clip_id": "clip-a"},
+            ],
+            "warnings": [],
+            "base_revision": 7,
+            "base_state_revision": timeline_state_revision(initial, "short"),
+        }
+        codex_result = apply_timeline_proposal(initial, proposal, current_revision=7)
+
+        self.assertEqual(
+            self.app._project["short_video"],
+            codex_result.project["short_video"],
+        )
+
+    def test_start_codex_timeline_proposal_waits_for_final_structured_output(self) -> None:
+        self._load_project()
+        fake_server = Path(__file__).with_name("fake_codex_app_server.py")
+        clients: list[CodexAppServerClient] = []
+
+        def client_factory(*, cwd: str) -> CodexAppServerClient:
+            client = CodexAppServerClient(
+                [sys.executable, str(fake_server)],
+                cwd=cwd,
+                environment={"FAKE_CODEX_AUTHENTICATED": "1"},
+                request_timeout=1.0,
+            )
+            clients.append(client)
+            return client
+
+        previous_session = self.app._codex_timeline_session
+        session = CodexSessionController(
+            client_factory=client_factory,
+            proposal_parser=TimelineProposal.from_json,
+            on_state=self.app._on_codex_timeline_state,
+            on_proposal=self.app._on_codex_timeline_proposal,
+            callback_dispatcher=lambda callback: callback(),
+            isolated_turn=True,
+        )
+        self.app._codex_timeline_session = session
+
+        def restore_session() -> None:
+            session.stop()
+            if session._thread is not None:
+                session._thread.join(2)
+            self.app._codex_timeline_session = previous_session
+
+        self.addCleanup(restore_session)
+        self.assertTrue(self.app.startCodexTimelineProposal("通常動画のカット案", "normal"))
+
+        deadline = time.time() + 3
+        while session.snapshot.state not in {"proposal_ready", "error"} and time.time() < deadline:
+            self.app.processEvents()
+            time.sleep(0.01)
+
+        self.assertEqual(session.snapshot.state, "proposal_ready", session.snapshot.error)
+        self.assertEqual(self.app.codexTimelineProposal["summary"], "fake timeline proposal")
+        self.assertEqual(self.app.codexTimelineProposal["target"], "normal")
+        self.assertEqual(session.snapshot.proposal["operations"][0]["type"], "add_cut")
+        self.assertTrue(clients)
+        self.assertTrue(all(not client.is_running for client in clients))
 
     def test_short_mode_visual_clip_updates_do_not_require_trim_metadata(self) -> None:
         self._load_project(

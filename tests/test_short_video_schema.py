@@ -154,6 +154,33 @@ class ShortVideoSchemaTests(unittest.TestCase):
         self.assertNotIn("fit", short_video.to_json()["clips"][0])
         self.assertNotIn("background_color", short_video.to_json()["clips"][0])
 
+    def test_proposal_identity_highlight_and_duration_target_round_trip(self) -> None:
+        payload = {
+            "enabled": True,
+            "duration_target_seconds": 60.0,
+            "clips": [
+                {
+                    "proposal_id": "clip-1",
+                    "highlight_candidate_id": "highlight-1",
+                    "segment_id": "segment-1",
+                    "start": 1.0,
+                    "end": 2.0,
+                }
+            ],
+        }
+
+        restored = ShortVideo.from_json(ShortVideo.from_json(payload).to_json()).to_json()
+
+        self.assertEqual(restored["duration_target_seconds"], 60.0)
+        self.assertEqual(restored["clips"][0]["proposal_id"], "clip-1")
+        self.assertEqual(restored["clips"][0]["highlight_candidate_id"], "highlight-1")
+
+    def test_duration_target_must_be_positive_and_finite(self) -> None:
+        for value in (0, -1, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                with self.assertRaises(ShortVideoError):
+                    ShortVideo.from_json({"duration_target_seconds": value})
+
     def test_invalid_fit_raises(self) -> None:
         with self.assertRaisesRegex(ShortVideoError, "fit"):
             ShortVideo.from_json({"global_fit": "stretch"})

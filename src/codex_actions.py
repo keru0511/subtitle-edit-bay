@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable, Mapping, Protocol
 
 from .audio_mix_proposal import build_audio_mix_context
-from .audio_mixer import path_free_audio_mix_channels
 from .codex_review import (
     ReviewError,
     StaleReviewError,
@@ -246,7 +245,10 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     ),
     "propose_timeline_edit": ActionDefinition(
         ActionKind.PROPOSE,
-        fields={"intent": FieldSchema((str,), required=True, non_empty=True)},
+        fields={
+            "intent": FieldSchema((str,), required=True, non_empty=True),
+            "target": FieldSchema((str,), required=True, choices=frozenset({"normal", "short"})),
+        },
         revision_policy=RevisionPolicy.CURRENT,
         confirmation_policy=ConfirmationPolicy.EXPLICIT_APPLY,
         conflicts_with_job=True,
@@ -465,6 +467,7 @@ class GuiActionBackend:
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
             "propose_audio_mix": self._propose_audio,
+            "propose_timeline_edit": self._propose_timeline,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
@@ -486,14 +489,17 @@ class GuiActionBackend:
             return registered_process_job
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
-        subtitle_session = getattr(self._gui, "_codex_session", None)
-        if subtitle_session is not None and subtitle_session.running:
-            return "subtitle_proposal"
-        audio_session = getattr(self._gui, "_codex_audio_mix_session", None)
-        if audio_session is not None and audio_session.running:
-            return "audio_mix_proposal"
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
+        codex_session = getattr(self._gui, "_codex_session", None)
+        if codex_session is not None and bool(codex_session.running):
+            return "subtitle_proposal"
+        timeline_session = getattr(self._gui, "_codex_timeline_session", None)
+        if timeline_session is not None and bool(timeline_session.running):
+            return "timeline_proposal"
+        audio_session = getattr(self._gui, "_codex_audio_mix_session", None)
+        if audio_session is not None and bool(audio_session.running):
+            return "audio_mix_proposal"
         return ""
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
@@ -560,11 +566,17 @@ class GuiActionBackend:
                 "steps": [],
                 "can_cancel": str(self._gui.highlightAnalysisState) == "running",
             }
-        elif active_job == "subtitle_proposal":
-            snapshot = self._gui._codex_session.snapshot
+        elif active_job in {"subtitle_proposal", "timeline_proposal", "audio_mix_proposal"}:
+            if active_job == "subtitle_proposal":
+                session = self._gui._codex_session
+            elif active_job == "timeline_proposal":
+                session = self._gui._codex_timeline_session
+            else:
+                session = self._gui._codex_audio_mix_session
+            snapshot = session.snapshot
             state = {
                 "active_job": active_job,
-                "running": bool(self._gui._codex_session.running),
+                "running": bool(session.running),
                 "progress": None,
                 "progress_known": False,
                 "status": str(snapshot.state),
@@ -763,16 +775,24 @@ class GuiActionBackend:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
 
+    def _propose_timeline(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
+        if not self._gui.start_codex_timeline_proposal(
+            intent=str(args["intent"]),
+            target=str(args["target"]),
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "timeline proposal could not be started")
+        return HandlerResult(
+            "timeline proposal generation started",
+            state={"status": "running", "target": str(args["target"])},
+        )
+
     def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
         if not self._gui.start_codex_audio_mix_proposal(
             intent=str(args["intent"]),
             revision=revision,
         ):
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be started")
-        return HandlerResult(
-            "audio mix proposal generation started",
-            state={"status": "running"},
-        )
+        return HandlerResult("audio mix proposal generation started", state={"status": "running"})
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

@@ -39,6 +39,7 @@
         "test_codex_highlight_ranker",
         "test_codex_review",
         "test_codex_runtime",
+        "test_codex_timeline_proposal",
         "test_color_config",
         "test_craig_pipeline",
         "test_craig_transcription_execution",

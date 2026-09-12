@@ -183,6 +183,29 @@ class CodexActionTests(unittest.TestCase):
         self.assertEqual(result.proposal["base_revision"], 7)
         self.assertEqual(self.backend.project, before)
 
+    def test_timeline_proposal_action_requires_an_allowlisted_target(self) -> None:
+        accepted = self.dispatcher.dispatch(
+            request(
+                "propose",
+                "propose_timeline_edit",
+                {"intent": "60秒にして", "target": "short"},
+                revision=7,
+            ),
+            trusted_scope=self.scope,
+        )
+        rejected = self.dispatcher.dispatch(
+            request(
+                "propose",
+                "propose_timeline_edit",
+                {"intent": "切って", "target": "source-file"},
+                revision=7,
+            ),
+            trusted_scope=self.scope,
+        )
+
+        self.assertEqual(accepted.status.value, "success")
+        self.assertEqual(rejected.code, "invalid_schema")
+
     def test_unknown_proposal_operation_is_returned_as_structured_rejection(self) -> None:
         result = self.dispatcher.dispatch(
             request(
@@ -288,6 +311,48 @@ class CodexActionTests(unittest.TestCase):
 
 
 class GuiActionBackendTests(unittest.TestCase):
+    def test_timeline_proposal_dispatches_only_to_fixed_gui_boundary(self) -> None:
+        class GuiStub:
+            calls: list[tuple[str, str]] = []
+
+            def start_codex_timeline_proposal(self, *, intent: str, target: str) -> bool:
+                self.calls.append((intent, target))
+                return True
+
+        gui = GuiStub()
+        result = GuiActionBackend(gui).propose(
+            "propose_timeline_edit",
+            {"intent": "冒頭を短く", "target": "normal"},
+            4,
+        )
+
+        self.assertEqual(gui.calls, [("冒頭を短く", "normal")])
+        self.assertEqual(result.state, {"status": "running", "target": "normal"})
+
+    def test_timeline_proposal_has_its_own_processing_state(self) -> None:
+        idle_session = SimpleNamespace(running=False)
+        timeline_session = SimpleNamespace(
+            running=True,
+            snapshot=SimpleNamespace(state="running"),
+        )
+        gui = SimpleNamespace(
+            _active_job="",
+            _codex_session=idle_session,
+            _codex_timeline_session=timeline_session,
+            _project_revision=4,
+            _running=False,
+            highlightAnalysisState="idle",
+        )
+
+        state = GuiActionBackend(gui).inspect("inspect_processing_state", {}).state
+
+        self.assertEqual(state["active_job"], "timeline_proposal")
+        self.assertTrue(state["running"])
+        self.assertEqual(state["status"], "running")
+        self.assertIsNone(state["progress"])
+        self.assertFalse(state["progress_known"])
+        self.assertEqual(state["steps"], [])
+
     def test_subtitle_proposal_processing_state_does_not_reuse_normal_job_progress(self) -> None:
         class SessionSnapshot:
             state = "running"

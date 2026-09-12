@@ -67,9 +67,9 @@ def main() -> None:
             request = json.loads(line)
         except json.JSONDecodeError:
             continue
+        _trace(request)
         method = request.get("method")
         request_id = request.get("id")
-        _trace(request)
         if method == "initialize":
             _send(
                 {
@@ -90,7 +90,7 @@ def main() -> None:
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
-                        "authenticated": os.environ.get("CODEX_FAKE_AUTHENTICATED") == "1"
+                        "authenticated": os.environ.get("FAKE_CODEX_AUTHENTICATED") == "1"
                     },
                 }
             )
@@ -102,10 +102,6 @@ def main() -> None:
             _send({"jsonrpc": "2.0", "id": request_id, "result": {}})
         elif method == "model/list":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"data": [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}]}})
-        elif method == "thread/start":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": "thread-1"}})
-        elif method == "thread/resume":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": request.get("params", {}).get("threadId")}})
         elif method == "mcpServerStatus/list":
             params = request.get("params", {})
             configured = [
@@ -124,7 +120,56 @@ def main() -> None:
                     },
                 }
             )
+        elif method == "thread/start":
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": "thread-1"}})
+        elif method == "thread/resume":
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": request.get("params", {}).get("threadId")}})
         elif method == "turn/start":
+            params = request.get("params", {})
+            output_schema = params.get("outputSchema", {})
+            required = output_schema.get("required", []) if isinstance(output_schema, dict) else []
+            if "schema_version" in required:
+                context = {}
+                for item in params.get("input", []):
+                    if not isinstance(item, dict) or item.get("type") != "text":
+                        continue
+                    text = str(item.get("text", ""))
+                    if text.startswith("参照コンテキスト(JSON):\n"):
+                        try:
+                            context = json.loads(text.split("\n", 1)[1])
+                        except (IndexError, json.JSONDecodeError):
+                            context = {}
+                        break
+                target = str(context.get("target", "normal"))
+                operation = (
+                    {
+                        "id": "fake-add-cut",
+                        "type": "add_cut",
+                        "source_start": 1.0,
+                        "source_end": 2.0,
+                        "reason": "fake integration proposal",
+                    }
+                    if target == "normal"
+                    else {
+                        "id": "fake-short-target",
+                        "type": "set_short_duration_target",
+                        "target_seconds": 1.0,
+                        "reason": "fake integration proposal",
+                    }
+                )
+                structured_output = {
+                    "schema_version": 1,
+                    "summary": "fake timeline proposal",
+                    "target": target,
+                    "operations": [operation],
+                    "warnings": [],
+                    "base_revision": int(context.get("project_revision", 0)),
+                    "base_state_revision": str(context.get("state_revision", "sha256:fake")),
+                }
+            else:
+                structured_output = {"answer": "ok"}
+            if os.environ.get("CODEX_FAKE_AUDIO_PROPOSAL") == "1":
+                structured_output = _audio_proposal(request)
             sys.stdout.write("not-json\n")
             sys.stdout.flush()
             _send({"jsonrpc": "2.0", "method": "turn/started", "params": {"turnId": "turn-1"}})
@@ -137,11 +182,7 @@ def main() -> None:
                         "turnId": "turn-1",
                         "item": {
                             "type": "agentMessage",
-                            "text": json.dumps(
-                                _audio_proposal(request)
-                                if os.environ.get("CODEX_FAKE_AUDIO_PROPOSAL") == "1"
-                                else {"answer": "ok"}
-                            ),
+                            "text": json.dumps(structured_output),
                         },
                     },
                 }
@@ -153,7 +194,7 @@ def main() -> None:
                     "params": {"turn": {"id": "turn-1", "status": "completed"}},
                 }
             )
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"turnId": "turn-1", "status": "completed", "receivedInput": request.get("params", {}).get("input"), "receivedModel": request.get("params", {}).get("model")}})
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"turnId": "turn-1", "status": "completed", "receivedInput": params.get("input"), "receivedModel": params.get("model")}})
         elif method == "turn/interrupt":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"interrupted": True}})
         elif method == "test/timeout":

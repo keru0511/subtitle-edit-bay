@@ -11,7 +11,6 @@ from .application_logging import redact_text
 from .audio_mixer import active_audio_mix_channels, path_free_audio_mix_channels
 from .codex_isolation import (
     CodexIsolationError,
-    ISOLATED_DISABLED_FEATURES,
     build_isolated_thread_config,
     build_isolated_thread_params,
     build_isolated_turn_kwargs,
@@ -46,12 +45,6 @@ MAX_FINDINGS_PER_TURN = 100
 MAX_FINDINGS_PER_RESULT = 1_000
 MAX_REASON_CHARS = 800
 MAX_ID_CHARS = 160
-# Backward-compatible aliases for callers/tests that import the old review names.
-MCP_STATUS_PAGE_SIZE = 100
-MAX_MCP_STATUS_PAGES = 100
-_REVIEW_DISABLED_FEATURES = ISOLATED_DISABLED_FEATURES
-
-
 class ReviewError(ValueError):
     """Base error for safe review context and result contract failures."""
 
@@ -1105,8 +1098,8 @@ def review_context_with_codex(
     preflight = review_context(context)
     if not bool(context.get("project", {}).get("loaded", False)):
         return preflight
-    _require_revision(context, current_revision)
     review_cwd = _isolated_review_cwd(isolated_cwd)
+    _require_revision(context, current_revision)
     configured_mcp_names = _mcp_server_names(client, config_only=True)
     chunks = list(context.get("subtitle_chunks", [])) or [[]]
     findings: list[ReviewFinding] = list(preflight.issues)

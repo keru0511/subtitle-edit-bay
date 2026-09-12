@@ -3693,7 +3693,11 @@ class EditBayBackend(LegacyEditBayBackend):
             )
         )
 
-    def _create_codex_chat_client(self) -> CodexAppServerClient:
+    def _create_codex_chat_client(
+        self,
+        *,
+        cwd: str | Path | None = None,
+    ) -> CodexAppServerClient:
         runtime = detect_codex(self.workspace_root)
         if not runtime.available:
             self._queue_codex_system_log(
@@ -3715,7 +3719,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
         return CodexAppServerClient(
             runtime.command,
-            cwd=self.workspace_root,
+            cwd=cwd or self.workspace_root,
             log_callback=record_app_server,
         )
 

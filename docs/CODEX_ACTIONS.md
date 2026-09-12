@@ -50,6 +50,18 @@ Codexからアプリ機能を利用するときは、`src/codex_actions.py` の�
 
 音量・timeline Proposalなど後続のdomain Issueは、新しいbackend handlerをこの固定mapへ明示登録し、`ACTION_DEFINITIONS` の引数契約とdomain validatorを追加します。反射的な `getattr` や自由形式method名には拡張しません。
 
+## 横断レビュー
+
+`review_project` は字幕、音量、通常timeline、ショート、見どころ候補・却下候補、処理状態、依存関係、render可否を再帰的なallowlistでpath-freeなReview Contextへまとめます。音声channelはprojectへ保存する共通のopaque IDを使い、旧projectのpath由来channel IDはmixer境界で制御値ごと移行します。preview levelもallowlist済みchannel IDだけを含めます。
+
+固定閾値の検査は事前検査として残し、その結果とReview Contextを実際のCodex structured turnへ送ります。モデルを呼べない、未ログイン、schema不一致、応答欠落の場合にローカル検査だけを「問題なし」として返すfallbackはありません。長尺字幕は件数とserialized sizeの両方に上限を持つ独立したephemeral/read-only turnへ分割し、隣接chunkの境界1件だけを添えます。レビュー専用App Serverは空の一時directoryをcwdにし、execution environment・workspace root・dynamic toolを空に固定します。設定済みMCP serverはthread configで無効化し、turn開始前にもMCP inventoryが空であることを確認します。各turnはnetwork無効・approvalなしで、project変更やcommand/file/MCP toolによるworkspace参照を許しません。
+
+Codex出力は未知fieldを許さない `ReviewResult` schemaで検証します。各findingはcategory、target、severity、reason、recommendationを必須とし、target IDは送信済みsegment/channel/clip/cut/candidateだけ、recommendation routeは現在backendに実装されているdomainだけを受理します。全issueを含まないrecommended order、重複ID、別domainのroute、review中に古くなったrevisionは拒否します。複数chunkの同一findingはstable IDで統合し、blocking、warning、suggestionの順を保って返します。1 turnのfinding上限100件と最終結果の上限1,000件は分離し、最終結果が上限を超える場合は `truncated=true` と `remaining_count` で未返却件数を明示します。
+
+事前検査の音声判定はrendererと同じ `active_audio_mix_channels()` を正本にするため、enabledでもmuteされた全channelやsoloで除外されたchannelを有効音声として数えません。
+
+ReviewResultの `project_revision` が現在値と一致しなければstaleとして扱います。「レビューして」だけではProposal、job、永続Planを開始しません。修正を依頼された場合も、#256のorchestratorが現在状態を再inspectし、#248/#251/#252/#253の各Actionへ明示的にroutingします。
+
 ## Result
 
 結果は `success`、`rejected`、`failed` のいずれかで、`code`、ユーザー向けmessage、現在revisionを返します。成功時は必要に応じて `current_state`、`proposal`、`job` を含みます。予期しない例外は `handler_failed` に変換し、例外本文、秘密情報、local pathをCodexへ返しません。

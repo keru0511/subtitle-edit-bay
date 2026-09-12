@@ -483,7 +483,14 @@ class GuiActionBackendTests(unittest.TestCase):
                 "segments": [{"id": "s1", "text": "字幕", "path": "C:/private/subtitle.txt"}],
             }
             subtitleSegments = _project["segments"]
-            audioMixerChannels = [{"id": "bgm", "enabled": True, "volume_percent": 70, "path": "C:/private/bgm.wav"}]
+            audioMixerChannels = [
+                {
+                    "id": "audio:" + "1" * 32,
+                    "enabled": True,
+                    "volume_percent": 70,
+                    "path": "C:/private/bgm.wav",
+                }
+            ]
             highlightAnalysisState = "idle"
 
         backend = GuiActionBackend(GuiStub())

@@ -30,6 +30,7 @@ from src.audio_preview_cache import (
     audio_preview_cache_entries,
     cached_audio_preview_paths,
 )
+from src.audio_mix_proposal import AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA
 from src import updater
 from src.codex_app_server_client import CodexAppServerClient
 from src.codex_actions import GuiActionBackend
@@ -1478,6 +1479,57 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.autosave_timer.stop()
         self.assertFalse(self.app._project["audio_mix"]["customized"])
         self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
+
+    def test_audio_mix_proposal_applies_selected_change_to_preview_and_history(self) -> None:
+        self._load_project()
+        self.app._project_dirty = False
+        before_revision = self.app._project_revision
+        before = self.app.audioMixerChannels[1]["volume_percent"]
+        channel_id = self.app.audioMixerChannels[1]["id"]
+
+        with patch.object(self.app._codex_audio_mix_session, "start") as start:
+            self.assertTrue(self.app.proposeAudioMix("声を聞きやすくして", before_revision))
+        request = start.call_args.kwargs
+        self.assertIn("声を聞きやすくして", request["prompt"])
+        self.assertEqual(request["output_schema"], AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA)
+        self.assertIn("preview_level", request["context"]["channels"][1])
+        self.assertNotIn(str(self.root), str(request["context"]))
+
+        self.app._on_codex_audio_mix_proposal(
+            {
+                "schema_version": 1,
+                "summary": "声を前に出します",
+                "warnings": [],
+                "base_revision": before_revision,
+                "audio_state_revision": request["context"]["audio_state_revision"],
+                "operations": [
+                    {
+                        "id": "voice-up",
+                        "type": "update_audio_channel",
+                        "channel_id": channel_id,
+                        "changes": {"volume_percent": before + 12.0},
+                        "reason": "現在のプレビューレベルでは声が小さいため",
+                    }
+                ],
+            }
+        )
+        proposal = self.app.audioMixProposal
+
+        self.assertTrue(proposal["operations"])
+        self.assertEqual(self.app.audioMixerChannels[1]["volume_percent"], before)
+        operation = proposal["operations"][0]
+        self.assertEqual(operation["before"], {"volume_percent": before})
+        self.assertTrue(self.app.applyAudioMixProposal([operation["id"]], False))
+        self.app.autosave_timer.stop()
+        self.assertGreater(self.app.audioMixerChannels[1]["volume_percent"], before)
+        self.assertTrue(self.app._project_dirty)
+        self.assertEqual(self.app._project_revision, before_revision + 1)
+        self.assertEqual(self.app.audioMixProposal, {})
+        self.assertEqual(self.app._undo_stack[-1]["kind"], "audio_mix")
+
+        self.app.undoEdit()
+        self.app.autosave_timer.stop()
+        self.assertEqual(self.app.audioMixerChannels[1]["volume_percent"], before)
 
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()

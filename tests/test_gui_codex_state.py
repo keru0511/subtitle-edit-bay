@@ -6,6 +6,12 @@ import threading
 import unittest
 from pathlib import Path
 
+from src.audio_mix_proposal import (
+    AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA,
+    AudioMixProposal,
+    build_audio_mix_context,
+    build_audio_mix_proposal_prompt,
+)
 from src.codex_app_server_client import CodexAppServerClient
 from src.codex_timeline_proposal import TIMELINE_PROPOSAL_OUTPUT_SCHEMA, TimelineProposal
 from src.gui_codex_state import (
@@ -209,6 +215,7 @@ class GuiCodexStateTests(unittest.TestCase):
         deadline = time.time() + 3
         while controller.snapshot.state not in {"proposal_ready", "error"} and time.time() < deadline:
             time.sleep(0.01)
+        isolated_cwd: Path | None = None
         try:
             self.assertEqual(controller.snapshot.state, "proposal_ready", controller.snapshot.error)
             self.assertEqual(controller.snapshot.proposal["base_revision"], 7)
@@ -220,6 +227,77 @@ class GuiCodexStateTests(unittest.TestCase):
                 controller._thread.join(2)
         self.assertTrue(clients)
         self.assertTrue(all(not client.is_running for client in clients))
+
+    def test_isolated_audio_session_uses_gui_factory_command_and_temp_cwd(self) -> None:
+        fake_server = Path(__file__).with_name("fake_codex_app_server.py")
+        selected_command = [sys.executable, str(fake_server)]
+        factory_calls: list[dict[str, object]] = []
+        clients: list[CodexAppServerClient] = []
+
+        def gui_codex_factory(*, cwd: str) -> CodexAppServerClient:
+            factory_calls.append(
+                {
+                    "command": tuple(selected_command),
+                    "cwd": cwd,
+                    "cwd_exists": Path(cwd).is_dir(),
+                }
+            )
+            client = CodexAppServerClient(
+                selected_command,
+                cwd=cwd,
+                environment={
+                    "FAKE_CODEX_AUTHENTICATED": "1",
+                    "CODEX_FAKE_AUDIO_PROPOSAL": "1",
+                    "CODEX_FAKE_MCP_NAMES": "filesystem,project.reader",
+                },
+                request_timeout=1.0,
+            )
+            clients.append(client)
+            return client
+
+        channels = [
+            {
+                "id": "audio:" + "1" * 32,
+                "kind": "external",
+                "label": "声",
+                "enabled": True,
+                "muted": False,
+                "solo": False,
+                "volume_percent": 100,
+            }
+        ]
+        context = build_audio_mix_context(channels, project_revision=7)
+        controller = CodexSessionController(
+            client_factory=gui_codex_factory,
+            proposal_parser=AudioMixProposal.from_json,
+            isolated_turn=True,
+        )
+        controller.start(
+            prompt=build_audio_mix_proposal_prompt("声を聞きやすくして"),
+            context=context,
+            output_schema=AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA,
+            revision=7,
+        )
+        deadline = time.time() + 3
+        while controller.snapshot.state not in {"proposal_ready", "error"} and time.time() < deadline:
+            time.sleep(0.01)
+        try:
+            self.assertEqual(controller.snapshot.state, "proposal_ready", controller.snapshot.error)
+            self.assertEqual(controller.snapshot.proposal["base_revision"], 7)
+            self.assertEqual(len(factory_calls), 1)
+            factory_call = factory_calls[0]
+            self.assertEqual(factory_call["command"], tuple(selected_command))
+            isolated_cwd = Path(str(factory_call["cwd"]))
+            self.assertTrue(factory_call["cwd_exists"])
+            self.assertTrue(clients)
+            self.assertEqual(clients[0].command, tuple(selected_command))
+            self.assertEqual(clients[0].cwd, str(isolated_cwd))
+        finally:
+            controller.stop()
+            if controller._thread is not None:
+                controller._thread.join(2)
+        assert isolated_cwd is not None
+        self.assertFalse(isolated_cwd.exists())
 
     def test_isolated_session_disables_workspace_tools_for_prompt_injection(self) -> None:
         client = IsolatedFakeClient()

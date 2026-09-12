@@ -38,9 +38,20 @@ from .audio_mixer import (
     AUDIO_MIX_MASTER_GAIN,
     DEFAULT_AUDIO_TRACK,
     MAX_VOLUME_PERCENT,
+    AudioMixError,
     active_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,
+    update_audio_mix_channel,
+)
+from .audio_mix_proposal import (
+    AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA,
+    AudioMixProposal,
+    AudioMixProposalError,
+    apply_audio_mix_proposal,
+    build_audio_mix_context,
+    build_audio_mix_proposal,
+    build_audio_mix_proposal_prompt,
 )
 from .audio_preview_cache import (
     AudioPreviewCacheResult,
@@ -387,6 +398,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexStateChanged = Signal()
     codexMessageChanged = Signal()
     codexProposalChanged = Signal()
+    audioMixProposalChanged = Signal()
     codexTimelineProposalChanged = Signal()
     codexChatChanged = Signal()
     codexCallbackRequested = Signal(object)
@@ -528,6 +540,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._update_download_cancel = threading.Event()
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
         self._codex_proposal: dict[str, Any] | None = None
+        self._audio_mix_proposal: dict[str, Any] | None = None
         self._codex_timeline_proposal: dict[str, Any] | None = None
         self._codex_current_time: float | None = None
         self.codexCallbackRequested.connect(
@@ -539,6 +552,14 @@ class EditBayBackend(LegacyEditBayBackend):
             on_message=self._on_codex_message,
             on_proposal=self._on_codex_proposal,
             callback_dispatcher=self._dispatch_codex_callback,
+        )
+        self._codex_audio_mix_session = CodexSessionController(
+            client_factory=self._create_codex_chat_client,
+            proposal_parser=AudioMixProposal.from_json,
+            on_state=self._on_codex_audio_mix_state,
+            on_proposal=self._on_codex_audio_mix_proposal,
+            callback_dispatcher=self._dispatch_codex_callback,
+            isolated_turn=True,
         )
         self._codex_timeline_session = CodexSessionController(
             client_factory=self._create_codex_chat_client,
@@ -560,6 +581,7 @@ class EditBayBackend(LegacyEditBayBackend):
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self.aboutToQuit.connect(self._codex_chat.shutdown)
+        self.aboutToQuit.connect(self._codex_audio_mix_session.stop)
         self.aboutToQuit.connect(self._codex_timeline_session.stop)
         self._codex_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
@@ -719,6 +741,18 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property("QVariantMap", notify=codexProposalChanged)
     def codexProposal(self) -> dict[str, Any]:
         return dict(self._codex_proposal or {})
+
+    @Property("QVariantMap", notify=audioMixProposalChanged)
+    def audioMixProposal(self) -> dict[str, Any]:
+        return deepcopy(self._audio_mix_proposal or {})
+
+    @Property(str, notify=audioMixProposalChanged)
+    def audioMixProposalState(self) -> str:
+        return self._codex_audio_mix_session.snapshot.state
+
+    @Property(str, notify=audioMixProposalChanged)
+    def audioMixProposalError(self) -> str:
+        return self._codex_audio_mix_session.snapshot.error
 
     @Property("QVariantMap", notify=codexTimelineProposalChanged)
     def codexTimelineProposal(self) -> dict[str, Any]:
@@ -2200,8 +2234,12 @@ class EditBayBackend(LegacyEditBayBackend):
     def _clear_project(self) -> None:
         if self._project_dirty:
             self.saveProject()
+        self._codex_audio_mix_session.stop()
         self._reset_transcription_integration_state()
         self._project = None
+        if self._audio_mix_proposal is not None:
+            self._audio_mix_proposal = None
+            self.audioMixProposalChanged.emit()
         self._project_path = ""
         self._project_dirty = False
         self._undo_stack.clear()
@@ -2349,22 +2387,20 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         channel = channels[index]
         enabled_before = bool(channel.get("enabled"))
-        for key in ("enabled", "muted", "solo"):
-            if key in changes:
-                channel[key] = bool(changes[key])
-        if "volume_percent" in changes:
-            try:
-                channel["volume_percent"] = max(
-                    0.0,
-                    min(MAX_VOLUME_PERCENT, float(changes["volume_percent"])),
-                )
-            except (TypeError, ValueError):
-                self._set_status("音量は0〜200%で指定してください", "CHECK")
-                return
-        audio_mix["customized"] = True
+        try:
+            updated = update_audio_mix_channel(
+                audio_mix,
+                str(channel.get("id", "")),
+                changes,
+            )
+        except AudioMixError as error:
+            self._set_status(f"音量ミキサー設定を更新できません: {error}", "CHECK")
+            return
+        self._project["audio_mix"] = updated
+        updated_channel = updated["channels"][index]
         self.projectDataChanged.emit()
         self._notify_audio_mixer_preview(
-            structure_changed=enabled_before != bool(channel.get("enabled"))
+            structure_changed=enabled_before != bool(updated_channel.get("enabled"))
         )
         self._mark_project_dirty()
         self._set_status("音量ミキサー設定を更新しました", "EDIT")
@@ -2381,6 +2417,121 @@ class EditBayBackend(LegacyEditBayBackend):
         self._notify_audio_mixer_preview(structure_changed=True)
         self._mark_project_dirty()
         self._set_status("音量ミキサーを既定値へ戻しました", "EDIT")
+
+    def start_codex_audio_mix_proposal(
+        self,
+        *,
+        intent: str,
+        revision: int,
+    ) -> bool:
+        if (
+            self._project is None
+            or self._running
+            or revision != self._project_revision
+            or self._codex_session.running
+            or self._codex_audio_mix_session.running
+        ):
+            return False
+        try:
+            context = build_audio_mix_context(
+                self.audioMixerChannels,
+                preview_levels=self.audioPreviewLevels,
+                master_level=float(self.audioMasterLevel),
+                limiter_reduction_db=float(self.audioLimiterReductionDb),
+                playhead_seconds=float(self.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+                project_revision=self._project_revision,
+            )
+            self._audio_mix_proposal = None
+            self.audioMixProposalChanged.emit()
+            self._codex_audio_mix_session.start(
+                prompt=build_audio_mix_proposal_prompt(intent),
+                context=context,
+                output_schema=AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA,
+                revision=self._project_revision,
+            )
+        except (AudioMixProposalError, CodexSessionError, ValueError) as error:
+            self._set_status(f"音量ミキサー変更案を作成できません: {error}", "CHECK")
+            return False
+        self._set_status("Codexへ音量ミキサー変更案を依頼しています", "CODEX")
+        return True
+
+    @Slot(str, int, result=bool)
+    def proposeAudioMix(self, intent: str, revision: int) -> bool:
+        return self.start_codex_audio_mix_proposal(intent=intent, revision=revision)
+
+    @Slot(str, result=bool)
+    def startCodexAudioMixProposal(self, intent: str) -> bool:
+        return self.start_codex_audio_mix_proposal(
+            intent=intent,
+            revision=self._project_revision,
+        )
+
+    @Slot()
+    def stopCodexAudioMixProposal(self) -> None:
+        self._codex_audio_mix_session.stop()
+        self._set_status("Codexの音量ミキサー提案を停止しました", "CODEX")
+
+    @Slot("QVariantList", bool, result=bool)
+    def applyAudioMixProposal(
+        self,
+        selected_operation_ids: list[Any] | None = None,
+        confirm_silence: bool = False,
+    ) -> bool:
+        if self._project is None or self._running or self._audio_mix_proposal is None:
+            return False
+        before = deepcopy(self._project.get("audio_mix", {}))
+        try:
+            updated, _changed_ids = apply_audio_mix_proposal(
+                before,
+                self._audio_mix_proposal,
+                current_revision=self._project_revision,
+                selected_operation_ids=(
+                    None if selected_operation_ids is None else {str(item) for item in selected_operation_ids}
+                ),
+                allow_silence=bool(confirm_silence),
+            )
+        except AudioMixProposalError as error:
+            self._set_status(f"音量ミキサー変更案を適用できません: {error}", "CHECK")
+            return False
+        self._push_history({"kind": "audio_mix", "before": before, "after": deepcopy(updated)})
+        self._project["audio_mix"] = updated
+        self.projectDataChanged.emit()
+        self._notify_audio_mixer_preview(structure_changed=True)
+        self._mark_project_dirty()
+        self._audio_mix_proposal = None
+        self.audioMixProposalChanged.emit()
+        self._set_status("選択した音量ミキサー変更を適用しました", "EDIT")
+        return True
+
+    @Slot()
+    def discardAudioMixProposal(self) -> None:
+        if self._audio_mix_proposal is not None:
+            self._audio_mix_proposal = None
+            self.audioMixProposalChanged.emit()
+        self._set_status("音量ミキサー変更案を破棄しました", "EDIT")
+
+    def _on_codex_audio_mix_state(self, snapshot: CodexSessionSnapshot) -> None:
+        self.audioMixProposalChanged.emit()
+        if snapshot.error:
+            self._set_status(f"音量ミキサー変更案を作成できません: {snapshot.error}", "ERROR")
+
+    def _on_codex_audio_mix_proposal(self, proposal: Mapping[str, Any]) -> None:
+        if self._project is None:
+            return
+        try:
+            validated = build_audio_mix_proposal(
+                proposal,
+                self._project.get("audio_mix", {}).get("channels", []),
+                project_revision=self._project_revision,
+            )
+        except AudioMixProposalError as error:
+            self._audio_mix_proposal = None
+            self.audioMixProposalChanged.emit()
+            self._set_status(f"音量ミキサー変更案を検証できません: {error}", "CHECK")
+            return
+        self._audio_mix_proposal = validated
+        self.audioMixProposalChanged.emit()
+        self._set_status("音量ミキサー変更案を確認できます", "CODEX")
 
     @Slot(str)
     def loadProject(self, path: str) -> None:
@@ -2740,6 +2891,12 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         if entry.get("kind") == "timeline":
             self._replace_timeline(deepcopy(entry.get(state, {})))
+            return
+        if entry.get("kind") == "audio_mix":
+            self._project["audio_mix"] = deepcopy(entry.get(state, {}))
+            self.projectDataChanged.emit()
+            self._notify_audio_mixer_preview(structure_changed=True)
+            self._mark_project_dirty()
             return
         affected_ids = {
             str(item["id"])
@@ -3149,6 +3306,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_pending = False
 
     def _shutdown_executor(self) -> None:
+        if hasattr(self, "_codex_audio_mix_session"):
+            self._codex_audio_mix_session.stop()
         if hasattr(self, "_audio_master_mixer"):
             self._audio_master_mixer.stop()
         if hasattr(self, "autosave_timer"):

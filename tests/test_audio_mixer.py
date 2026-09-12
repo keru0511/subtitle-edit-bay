@@ -6,12 +6,14 @@ from pathlib import Path
 
 from src.audio_mixer import (
     AUDIO_SOURCE_ID_FIELD,
+    AudioMixError,
     active_audio_mix_channels,
     build_audio_mix_filter,
     is_opaque_audio_channel_id,
     path_free_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,
+    update_audio_mix_channel,
 )
 from src.subtitle_project import create_project, load_project, save_project
 
@@ -59,6 +61,99 @@ class AudioMixerTests(unittest.TestCase):
         self.assertEqual(audio_mix["channels"][1]["volume_percent"], 200.0)
         self.assertTrue(audio_mix["channels"][1]["muted"])
         self.assertTrue(audio_mix["customized"])
+
+    def test_legacy_path_id_is_migrated_to_persisted_opaque_id_without_losing_controls(self) -> None:
+        source_path = r"C:\Users\Alice\private\voice.wav"
+        project = {
+            "audio_sources": [{"path": source_path}],
+            "audio_mix": {
+                "version": 1,
+                "customized": True,
+                "channels": [
+                    {
+                        "id": f"external:{source_path}",
+                        "kind": "external",
+                        "label": source_path,
+                        "path": source_path,
+                        "enabled": True,
+                        "muted": True,
+                        "solo": False,
+                        "volume_percent": 42.0,
+                    }
+                ],
+            },
+        }
+
+        first = reconcile_audio_mix(project, video_tracks=[])
+        channel_id = first["channels"][0]["id"]
+        source_id = project["audio_sources"][0]["audio_channel_id"]
+        second = reconcile_audio_mix(project, video_tracks=[])
+
+        self.assertTrue(is_opaque_audio_channel_id(channel_id))
+        self.assertEqual(channel_id, source_id)
+        self.assertEqual(second["channels"][0]["id"], channel_id)
+        self.assertEqual(second["channels"][0]["volume_percent"], 42.0)
+        self.assertTrue(second["channels"][0]["muted"])
+        self.assertEqual(second["channels"][0]["label"], "外部音声 1")
+        self.assertNotIn("Users", channel_id)
+
+    def test_opaque_external_id_survives_path_and_track_key_changes(self) -> None:
+        project = {
+            "audio_sources": [{"path": "C:/old/voice.wav"}],
+            "render_settings": {},
+        }
+        first = reconcile_audio_mix(project, video_tracks=[])
+        channel_id = first["channels"][0]["id"]
+        project["audio_sources"][0].update({"path": "D:/moved/renamed.wav", "track_key": "craig:renamed"})
+
+        second = reconcile_audio_mix(project, video_tracks=[])
+
+        self.assertEqual(second["channels"][0]["id"], channel_id)
+
+    def test_generated_opaque_id_round_trips_with_legacy_source_without_track_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = create_project(
+                video_path=root / "video.mkv",
+                output_dir=root,
+                audio_sources=[{"path": str(root / "voice.wav")}],
+                segments=[],
+                duration_seconds=1.0,
+            )
+            channel_id = project["audio_mix"]["channels"][0]["id"]
+            project_path = root / "legacy.subtitle-project.json"
+            save_project(project_path, project)
+
+            reloaded = load_project(project_path)
+
+        self.assertTrue(is_opaque_audio_channel_id(channel_id))
+        self.assertEqual(reloaded["audio_sources"][0]["audio_channel_id"], channel_id)
+        self.assertEqual(reloaded["audio_mix"]["channels"][0]["id"], channel_id)
+
+    def test_gui_and_proposal_updates_share_strict_canonical_channel_update(self) -> None:
+        project = self._project()
+        mix = reconcile_audio_mix(project, [{"selector": "0:a:0", "label": "game"}])
+        channel_id = mix["channels"][0]["id"]
+
+        updated = update_audio_mix_channel(
+            mix,
+            channel_id,
+            {"enabled": True, "volume_percent": 125.0},
+        )
+
+        self.assertEqual(updated["channels"][0]["volume_percent"], 125.0)
+        self.assertTrue(updated["customized"])
+        self.assertEqual(mix["channels"][0]["volume_percent"], 100.0)
+        for changes in (
+            {"volume_percent": 201},
+            {"muted": "yes"},
+            {"method": "delete"},
+        ):
+            with self.subTest(changes=changes):
+                with self.assertRaises(AudioMixError):
+                    update_audio_mix_channel(mix, channel_id, changes)
+        with self.assertRaisesRegex(AudioMixError, "opaque"):
+            update_audio_mix_channel(mix, "external:C:/private/voice.wav", {"muted": True})
 
     def test_solo_excludes_other_enabled_channels(self) -> None:
         audio_mix = {
@@ -113,14 +208,16 @@ class AudioMixerTests(unittest.TestCase):
 
     def test_filter_supports_negative_offset_and_silent_output(self) -> None:
         external = {
-            "channels": [{
-                "kind": "external",
-                "path": "voice.flac",
-                "enabled": True,
-                "muted": False,
-                "solo": False,
-                "volume_percent": 100,
-            }]
+            "channels": [
+                {
+                    "kind": "external",
+                    "path": "voice.flac",
+                    "enabled": True,
+                    "muted": False,
+                    "solo": False,
+                    "volume_percent": 100,
+                }
+            ]
         }
         _, negative_graph = build_audio_mix_filter(external, offset_seconds=-0.375)
         _, silent_graph = build_audio_mix_filter({"channels": []})

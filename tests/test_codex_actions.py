@@ -551,11 +551,17 @@ class GuiActionBackendTests(unittest.TestCase):
             audioMixerChannels = [
                 {
                     "id": "audio:" + "1" * 32,
+                    "kind": "external",
+                    "label": "BGM",
                     "enabled": True,
                     "volume_percent": 70,
                     "path": "C:/private/bgm.wav",
                 }
             ]
+            audioPreviewLevels = {"audio:" + "1" * 32: 0.4}
+            audioMasterLevel = 0.4
+            audioLimiterReductionDb = 0.0
+            editorPlayhead = {"sourcePositionMs": 1200}
             highlightAnalysisState = "idle"
 
         backend = GuiActionBackend(GuiStub())
@@ -564,8 +570,33 @@ class GuiActionBackendTests(unittest.TestCase):
 
         self.assertNotIn("path", subtitle["segments"][0])
         self.assertNotIn("path", audio["channels"][0])
+        self.assertEqual(audio["channels"][0]["preview_level"], 0.4)
         with self.assertRaisesRegex(ActionRejected, "no backend handler"):
             backend.inspect("save_project", {})
+
+    def test_audio_proposal_starts_fixed_codex_handler_and_does_not_apply(self) -> None:
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+
+            def __init__(self) -> None:
+                self.applied = False
+                self.calls: list[tuple[str, int]] = []
+
+            def start_codex_audio_mix_proposal(self, *, intent: str, revision: int) -> bool:
+                self.calls.append((intent, revision))
+                return True
+
+        gui = GuiStub()
+        backend = GuiActionBackend(gui)
+        result = backend.propose("propose_audio_mix", {"intent": "BGMを下げて"}, 4)
+
+        self.assertEqual(result.state, {"status": "running"})
+        self.assertIsNone(result.proposal)
+        self.assertEqual(gui.calls, [("BGMを下げて", 4)])
+        self.assertFalse(gui.applied)
 
     def test_inspect_tracks_gui_started_job_and_keeps_terminal_result(self) -> None:
         progress = ProcessingProgress()

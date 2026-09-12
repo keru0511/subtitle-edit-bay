@@ -7,7 +7,7 @@ import math
 from tempfile import TemporaryDirectory
 from typing import Any, Callable, Mapping, Protocol
 
-from .audio_mixer import path_free_audio_mix_channels
+from .audio_mix_proposal import build_audio_mix_context
 from .codex_review import (
     ReviewError,
     StaleReviewError,
@@ -466,6 +466,7 @@ class GuiActionBackend:
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
+            "propose_audio_mix": self._propose_audio,
             "propose_timeline_edit": self._propose_timeline,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
@@ -496,6 +497,9 @@ class GuiActionBackend:
         timeline_session = getattr(self._gui, "_codex_timeline_session", None)
         if timeline_session is not None and bool(timeline_session.running):
             return "timeline_proposal"
+        audio_session = getattr(self._gui, "_codex_audio_mix_session", None)
+        if audio_session is not None and bool(audio_session.running):
+            return "audio_mix_proposal"
         return ""
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
@@ -534,8 +538,14 @@ class GuiActionBackend:
         return HandlerResult("subtitle state inspected", state={"segments": safe})
 
     def _inspect_audio(self, _args: Mapping[str, Any]) -> HandlerResult:
-        channels = path_free_audio_mix_channels(self._gui.audioMixerChannels)
-        return HandlerResult("audio mix state inspected", state={"channels": channels})
+        context = build_audio_mix_context(
+            self._gui.audioMixerChannels,
+            preview_levels=self._gui.audioPreviewLevels,
+            master_level=float(self._gui.audioMasterLevel),
+            limiter_reduction_db=float(self._gui.audioLimiterReductionDb),
+            playhead_seconds=float(self._gui.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+        )
+        return HandlerResult("audio mix state inspected", state=context)
 
     def _inspect_timeline(self, _args: Mapping[str, Any]) -> HandlerResult:
         return HandlerResult("timeline state inspected", state=path_free_timeline_view(self._gui.cutTimeline))
@@ -556,12 +566,13 @@ class GuiActionBackend:
                 "steps": [],
                 "can_cancel": str(self._gui.highlightAnalysisState) == "running",
             }
-        elif active_job in {"subtitle_proposal", "timeline_proposal"}:
-            session = (
-                self._gui._codex_session
-                if active_job == "subtitle_proposal"
-                else self._gui._codex_timeline_session
-            )
+        elif active_job in {"subtitle_proposal", "timeline_proposal", "audio_mix_proposal"}:
+            if active_job == "subtitle_proposal":
+                session = self._gui._codex_session
+            elif active_job == "timeline_proposal":
+                session = self._gui._codex_timeline_session
+            else:
+                session = self._gui._codex_audio_mix_session
             snapshot = session.snapshot
             state = {
                 "active_job": active_job,
@@ -774,6 +785,14 @@ class GuiActionBackend:
             "timeline proposal generation started",
             state={"status": "running", "target": str(args["target"])},
         )
+
+    def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
+        if not self._gui.start_codex_audio_mix_proposal(
+            intent=str(args["intent"]),
+            revision=revision,
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be started")
+        return HandlerResult("audio mix proposal generation started", state={"status": "running"})
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

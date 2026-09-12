@@ -36,7 +36,7 @@ if ($CheckDependencies) {
     if ($LASTEXITCODE -ne 0) {
         throw "dumpbin PE header inspection failed with exit code $LASTEXITCODE."
     }
-    if ($headers -notmatch '(?im)^\s*866 machine \(x64\)') {
+    if ($headers -notmatch '(?im)^\s*8664 machine \(x64\)') {
         throw "Launcher must be an x64 PE image."
     }
     if ($headers -notmatch '(?im)^\s*2 subsystem \(Windows GUI\)') {

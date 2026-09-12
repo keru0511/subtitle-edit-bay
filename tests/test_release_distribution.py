@@ -201,7 +201,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("verify_windows_binary.ps1", launcher)
         self.assertIn("dumpbin.exe", verifier)
         self.assertIn("/HEADERS", verifier)
-        self.assertIn("866 machine", verifier)
+        self.assertIn("8664 machine", verifier)
         self.assertIn("Windows GUI", verifier)
         self.assertIn("API-MS-WIN-CRT-", verifier)
         self.assertIn("Get-AuthenticodeSignature", verifier)

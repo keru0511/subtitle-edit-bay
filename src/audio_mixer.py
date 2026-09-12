@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable
+
+from .application_logging import redact_text
 
 
 AUDIO_MIX_VERSION = 1
@@ -178,6 +181,44 @@ def active_audio_mix_channels(audio_mix: dict[str, Any]) -> list[dict[str, Any]]
     ]
     solo = [channel for channel in enabled if bool(channel.get("solo"))]
     return solo or enabled
+
+
+def path_free_audio_mix_channels(channels: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the allowlisted audio view used by Codex project reviews.
+
+    Older projects may still carry human-readable channel ids.  Normalize
+    those ids to stable opaque values instead of rejecting the whole review;
+    no source path or other local identifier is exposed to the model.
+    """
+
+    safe: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for index, channel in enumerate(channels):
+        if not isinstance(channel, dict):
+            continue
+        raw_id = str(channel.get("id", "")).strip() or f"channel-{index}"
+        channel_id = raw_id
+        if not channel_id.startswith("audio:") or len(channel_id) != 38:
+            digest = sha256(f"subtitle-edit-bay\\0audio\\0{raw_id}".encode("utf-8")).hexdigest()[:32]
+            channel_id = f"audio:{digest}"
+        while channel_id in used_ids:
+            digest = sha256(f"subtitle-edit-bay\\0audio\\0{raw_id}\\0{index}".encode("utf-8")).hexdigest()[:32]
+            channel_id = f"audio:{digest}"
+        used_ids.add(channel_id)
+        kind = redact_text(channel.get("kind", ""), paths=True)[:40]
+        label = str(channel.get("label") or f"{'動画' if kind == 'video' else '外部'}音声 {index + 1}")
+        safe.append(
+            {
+                "id": channel_id,
+                "kind": kind,
+                "label": redact_text(label, paths=True)[:160],
+                "enabled": bool(channel.get("enabled", False)),
+                "muted": bool(channel.get("muted", False)),
+                "solo": bool(channel.get("solo", False)),
+                "volume_percent": _clamp_volume(channel.get("volume_percent", 100.0)),
+            }
+        )
+    return safe
 
 
 def build_audio_mix_filter(

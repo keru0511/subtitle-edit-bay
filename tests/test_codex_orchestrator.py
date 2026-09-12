@@ -649,18 +649,54 @@ class GuiActionContractTests(unittest.TestCase):
             _running=False,
             _active_job="",
             _processing_progress=progress,
-            _project={"segments": [{"id": "s1"}], "video": {"path": "video.mp4"}},
+            _project={
+                "segments": [{"id": "s1", "start": 0.0, "end": 1.0, "text": "字幕"}],
+                "video": {"path": "video.mp4"},
+            },
             _project_dirty=False,
             _selected_segment_index=0,
             _codex_session=SimpleNamespace(running=False),
             _codex_audio_mix_session=SimpleNamespace(running=False),
             _codex_timeline_session=SimpleNamespace(running=False),
+            _cut_editor_available=True,
             highlightAnalysisState="idle",
+            highlightAnalysisProgress=0.0,
             actionCapabilities={
                 "canRenderNormal": True,
                 "normalRenderNeedsOutput": False,
+                "canRenderShort": False,
+                "shortRenderNeedsOutput": False,
+                "canTranscribe": True,
+                "canUseNvenc": False,
             },
             settings={},
+            subtitleSegments=[{"id": "s1", "start": 0.0, "end": 1.0, "text": "字幕"}],
+            audioMixerChannels=[
+                {
+                    "id": "audio:" + "1" * 32,
+                    "kind": "video",
+                    "label": "Main",
+                    "enabled": True,
+                    "volume_percent": 100.0,
+                }
+            ],
+            audioPreviewLevels={},
+            audioMasterLevel=1.0,
+            audioLimiterReductionDb=0.0,
+            cutTimeline={"cuts": []},
+            shortVideoSettings={"enabled": False},
+            shortVideoClips=[],
+            highlightCandidates=[],
+            _highlight_rejected=[],
+            projectDuration=1.0,
+            _dependencies=SimpleNamespace(
+                ffmpeg=True,
+                ffprobe=True,
+                whisperx=True,
+                cuda=False,
+                nvenc=False,
+            ),
+            _codex_chat=SimpleNamespace(snapshot=SimpleNamespace(selected_model="gpt-test")),
             start_codex_audio_mix_proposal=start_audio,
             start_codex_timeline_proposal=start_timeline,
             codex_render_output_exists=lambda **_kwargs: False,
@@ -746,26 +782,69 @@ class GuiActionContractTests(unittest.TestCase):
     def test_chat_plan_drives_concrete_gui_backend_through_approval_and_render(self) -> None:
         gui = self.gui_stub()
         backend = GuiActionBackend(gui)
-        review_results = [
-            review(
-                4,
-                finding(
-                    "timeline-1",
-                    "timeline",
-                    "blocking",
-                    route="timeline_proposal",
-                ),
-            ),
-            review(5),
-            review(5),
-            review(5),
+        review_outputs: list[dict[str, Any]] = [
+            {
+                "project_revision": 4,
+                "issues": [
+                    {
+                        "id": "timeline-1",
+                        "category": "timeline",
+                        "severity": "blocking",
+                        "target": {
+                            "segment_ids": [],
+                            "channel_ids": [],
+                            "clip_ids": [],
+                            "cut_ids": [],
+                            "candidate_ids": [],
+                            "start_seconds": None,
+                            "end_seconds": None,
+                        },
+                        "reason": "timeline needs attention",
+                        "recommendation": {"available": True, "route": "timeline_proposal"},
+                    }
+                ],
+                "recommended_order": ["timeline-1"],
+            },
+            {"project_revision": 5, "issues": [], "recommended_order": []},
+            {"project_revision": 5, "issues": [], "recommended_order": []},
+            {"project_revision": 5, "issues": [], "recommended_order": []},
         ]
-        inspect_handlers = dict(backend._inspect_handlers)
-        inspect_handlers["review_project"] = lambda _args: HandlerResult(
-            "project reviewed",
-            state={"review_result": review_results.pop(0)},
-        )
-        backend._inspect_handlers = inspect_handlers
+
+        class ReviewClient:
+            def __init__(self) -> None:
+                self.thread_calls: list[dict[str, Any]] = []
+                self.turn_calls: list[dict[str, Any]] = []
+
+            def start(self) -> None:
+                return None
+
+            def stop(self) -> None:
+                return None
+
+            def account_read(self, *, refresh_token: bool = False) -> Mapping[str, Any]:
+                del refresh_token
+                return {"authenticated": True}
+
+            def mcp_server_status_list(self, **_kwargs: Any) -> Mapping[str, Any]:
+                return {"data": [], "nextCursor": None}
+
+            def thread_start(self, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+                self.thread_calls.append(dict(params or {}))
+                return {"thread": {"id": f"review-thread-{len(self.thread_calls)}"}}
+
+            def run_structured_turn(self, **kwargs: Any) -> Mapping[str, Any]:
+                self.turn_calls.append(dict(kwargs))
+                return deepcopy(review_outputs.pop(0))
+
+        clients: list[ReviewClient] = []
+
+        def create_review_client(*, cwd: str | None = None) -> ReviewClient:
+            self.assertTrue(cwd)
+            client = ReviewClient()
+            clients.append(client)
+            return client
+
+        gui._create_codex_chat_client = create_review_client
         with TemporaryDirectory() as directory:
             project_path = Path(directory) / "sample.subtitle-project.json"
             project_path.touch()
@@ -816,7 +895,16 @@ class GuiActionContractTests(unittest.TestCase):
                 )
             )
             self.assertEqual(controller.plan.status, "success")
-            self.assertEqual(review_results, [])
+            self.assertEqual(review_outputs, [])
+            self.assertTrue(all(client.thread_calls for client in clients))
+            self.assertTrue(all(client.turn_calls for client in clients))
+            self.assertTrue(
+                all(
+                    call["sandbox_policy"] == {"type": "readOnly", "networkAccess": False}
+                    for client in clients
+                    for call in client.turn_calls
+                )
+            )
 
 
 if __name__ == "__main__":

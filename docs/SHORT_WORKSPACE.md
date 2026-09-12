@@ -2,6 +2,12 @@
 
 ショートは通常動画の編集モードではなく、通常動画プロジェクトを参照して作る別成果物です。通常動画の `currentEditMode` は `subtitle`、`cut`、`audio` のみに限定し、ショート画面への遷移は `currentWorkspace` で管理します。
 
+## 本PRの成果物範囲
+
+このPR（#349）で更新するカット・結合・マルチトラック操作の主な成果物は、`docs/ui-redesign-mockup.html` にある設計・操作モックと、この文書の契約です。`src/ui` の変更は主にpalette/themeの調整であり、モックの操作がproductionアプリへ接続済みであることを意味しません。
+
+production化は別Issue/PRで、backend state、QML interaction、プロジェクト保存・読み込み、undo/redo、render/exportまで接続して受け入れ確認します。この文書の契約やモックを、未接続のproduction機能またはリリース済み機能として扱わないでください。
+
 ## 状態境界
 
 - 通常動画編集は共通プレイヤーと `editorPlayhead` を所有します。

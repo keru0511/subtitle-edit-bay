@@ -66,6 +66,22 @@ Rectangle {
         return labels[String(backend.codexChatState || "")] || ""
     }
 
+    function planStatusLabel() {
+        if (!backend || !backend.codexPlan)
+            return ""
+        var labels = {
+            "pending": "次の工程を確認中",
+            "running": "工程を実行中",
+            "waiting_approval": "編集案の承認待ち",
+            "paused": "一時停止中",
+            "success": "完了",
+            "failed": "続行できません",
+            "canceled": "中止済み",
+            "stale": "再確認が必要"
+        }
+        return labels[String(backend.codexPlan.status || "")] || ""
+    }
+
     function syncModelSelection() {
         if (!backend || modelCombo.count === 0)
             return
@@ -206,6 +222,71 @@ Rectangle {
                     onClicked: {
                         panel.expanded = false
                         backend.logoutCodex()
+                    }
+                }
+            }
+
+            Rectangle {
+                objectName: "codexPlanCard"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 76
+                visible: !!(backend && backend.codexPlan && backend.codexPlan.goal)
+                radius: 7
+                color: panel.raisedColor
+                border.color: panel.borderColor
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 7
+                    spacing: 4
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: backend && backend.codexPlan ? String(backend.codexPlan.goal || "") : ""
+                        textFormat: Text.PlainText
+                        color: panel.textColor
+                        font.pixelSize: 10
+                        elide: Text.ElideRight
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            Layout.fillWidth: true
+                            text: panel.planStatusLabel()
+                            textFormat: Text.PlainText
+                            color: panel.mutedColor
+                            font.pixelSize: 9
+                        }
+                        SmallButton {
+                            objectName: "codexPlanPauseButton"
+                            Layout.preferredWidth: 44
+                            text: "停止"
+                            visible: backend && ["pending", "running", "waiting_approval"].indexOf(
+                                String(backend.codexPlan.status || "")) >= 0
+                            onClicked: backend.pauseCodexPlan()
+                        }
+                        SmallButton {
+                            objectName: "codexPlanResumeButton"
+                            Layout.preferredWidth: 44
+                            text: "再開"
+                            visible: backend && backend.codexPlan.status === "paused"
+                            onClicked: backend.resumeCodexPlan()
+                        }
+                        SmallButton {
+                            objectName: "codexPlanReinspectButton"
+                            Layout.preferredWidth: 52
+                            text: "再確認"
+                            visible: backend && backend.codexPlan.status === "stale"
+                            onClicked: backend.reinspectCodexPlan()
+                        }
+                        SmallButton {
+                            objectName: "codexPlanCancelButton"
+                            Layout.preferredWidth: 44
+                            text: "中止"
+                            visible: backend && ["success", "failed", "canceled"].indexOf(
+                                String(backend.codexPlan.status || "")) < 0
+                            onClicked: backend.cancelCodexPlan()
+                        }
                     }
                 }
             }

@@ -3812,6 +3812,25 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_codex_chat_connects_during_backend_startup(self) -> None:
         self.assertEqual(self._codex_chat_connect_calls, 1)
 
+    def test_completion_chat_request_is_routed_to_product_plan_controller(self) -> None:
+        with (
+            patch.object(self.app._codex_plan, "handle_chat_request", return_value=True) as handle,
+            patch.object(self.app._codex_chat, "send_message") as send,
+        ):
+            self.app.sendCodexChatMessage("この動画を完成させて")
+
+        handle.assert_called_once_with("この動画を完成させて")
+        send.assert_not_called()
+
+    def test_ordinary_chat_request_stays_on_plain_chat_controller(self) -> None:
+        with (
+            patch.object(self.app._codex_plan, "handle_chat_request", return_value=False),
+            patch.object(self.app._codex_chat, "send_message") as send,
+        ):
+            self.app.sendCodexChatMessage("字幕の直し方を教えて")
+
+        send.assert_called_once_with("字幕の直し方を教えて")
+
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()
         _, window = self._load_qml()

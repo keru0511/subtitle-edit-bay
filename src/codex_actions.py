@@ -4,7 +4,16 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 import math
+from tempfile import TemporaryDirectory
 from typing import Any, Callable, Mapping, Protocol
+
+from .codex_review import (
+    ReviewError,
+    StaleReviewError,
+    build_review_context,
+    review_context,
+    review_context_with_codex,
+)
 
 ACTION_SCHEMA_VERSION = 1
 CANCELLABLE_JOB_TYPES = frozenset(
@@ -204,6 +213,10 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     "inspect_dependency_state": ActionDefinition(ActionKind.INSPECT),
     "inspect_render_state": ActionDefinition(ActionKind.INSPECT),
     "inspect_selection_state": ActionDefinition(ActionKind.INSPECT),
+    "review_project": ActionDefinition(
+        ActionKind.INSPECT,
+        fields={"subtitle_chunk_size": FieldSchema((int,), minimum=25, maximum=500)},
+    ),
     "propose_subtitle_edit": ActionDefinition(
         ActionKind.PROPOSE,
         fields={
@@ -229,7 +242,14 @@ ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
     ),
     "propose_timeline_edit": ActionDefinition(
         ActionKind.PROPOSE,
-        fields={"intent": FieldSchema((str,), required=True, non_empty=True)},
+        fields={
+            "intent": FieldSchema((str,), required=True, non_empty=True),
+            "target": FieldSchema(
+                (str,),
+                required=True,
+                choices=frozenset({"normal", "short"}),
+            ),
+        },
         revision_policy=RevisionPolicy.CURRENT,
         confirmation_policy=ConfirmationPolicy.EXPLICIT_APPLY,
         conflicts_with_job=True,
@@ -443,9 +463,12 @@ class GuiActionBackend:
             "inspect_dependency_state": self._inspect_dependencies,
             "inspect_render_state": self._inspect_render,
             "inspect_selection_state": self._inspect_selection,
+            "review_project": self._review_project,
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
+            "propose_audio_mix": self._propose_audio,
+            "propose_timeline_edit": self._propose_timeline,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
@@ -467,11 +490,16 @@ class GuiActionBackend:
             return registered_process_job
         if bool(self._gui._running):
             return str(self._gui._active_job or "processing")
+        for attribute, job_name in (
+            ("_codex_session", "subtitle_proposal"),
+            ("_codex_audio_mix_session", "audio_mix_proposal"),
+            ("_codex_timeline_session", "timeline_proposal"),
+        ):
+            session = getattr(self._gui, attribute, None)
+            if session is not None and bool(getattr(session, "running", False)):
+                return job_name
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
-        codex_session = getattr(self._gui, "_codex_session", None)
-        if codex_session is not None and bool(codex_session.running):
-            return "subtitle_proposal"
         return ""
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
@@ -637,6 +665,114 @@ class GuiActionBackend:
             state={"segment_id": segment_id, "playhead": deepcopy(dict(self._gui.editorPlayhead))},
         )
 
+    def _review_project(self, args: Mapping[str, Any]) -> HandlerResult:
+        """Review the current project through the isolated structured-turn contract."""
+
+        try:
+            context = build_review_context(
+                self._gui,
+                subtitle_chunk_size=int(args.get("subtitle_chunk_size", 200)),
+                route_availability=self._review_route_availability(),
+            )
+        except StaleReviewError as error:
+            raise ActionRejected(
+                ActionErrorCode.STALE_REVISION,
+                "project changed while review was starting",
+            ) from error
+        except ReviewError as error:
+            raise ActionRejected(
+                ActionErrorCode.PRECONDITION_FAILED,
+                "a safe review context could not be created",
+            ) from error
+
+        if not context["project"]["loaded"]:
+            result = review_context(context)
+            return HandlerResult(
+                "project review completed",
+                state={"review_result": result.to_json(), "reviewed_chunks": 0},
+            )
+
+        client_factory = getattr(self._gui, "_create_codex_chat_client", None)
+        if not callable(client_factory):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "Codex review is unavailable")
+
+        review_workspace = TemporaryDirectory(prefix="subtitle-edit-bay-review-")
+        client = None
+        try:
+            # The review client must be created in a fresh workspace so the
+            # review turn cannot inherit the normal chat's tools or state.
+            client = client_factory(cwd=review_workspace.name)
+            client.start()
+            if not self._codex_account_authenticated(client.account_read(refresh_token=False)):
+                raise ActionRejected(
+                    ActionErrorCode.PRECONDITION_FAILED,
+                    "Codex login is required before project review",
+                )
+            codex_chat = getattr(self._gui, "_codex_chat", None)
+            snapshot = getattr(codex_chat, "snapshot", None)
+            model = str(getattr(snapshot, "selected_model", "") or "")
+            result = review_context_with_codex(
+                context,
+                client=client,
+                isolated_cwd=review_workspace.name,
+                model=model,
+                current_revision=lambda: self.current_revision,
+            )
+        except ActionRejected:
+            raise
+        except StaleReviewError as error:
+            raise ActionRejected(
+                ActionErrorCode.STALE_REVISION,
+                "project changed while review was running",
+            ) from error
+        except Exception as error:
+            raise ActionRejected(
+                ActionErrorCode.PRECONDITION_FAILED,
+                "Codex could not complete the project review",
+            ) from error
+        finally:
+            if client is not None:
+                try:
+                    client.stop()
+                except Exception:
+                    pass
+            review_workspace.cleanup()
+
+        return HandlerResult(
+            "project review completed",
+            state={
+                "review_result": result.to_json(),
+                "reviewed_chunks": max(1, len(context["subtitle_chunks"])),
+            },
+        )
+
+    def _review_route_availability(self) -> dict[str, bool]:
+        return {
+            "subtitle_proposal": (
+                "propose_subtitle_edit" in self._propose_handlers
+                and callable(getattr(self._gui, "startCodexEdit", None))
+            ),
+            "audio_mix_proposal": (
+                "propose_audio_mix" in self._propose_handlers
+                and callable(getattr(self._gui, "start_codex_audio_mix_proposal", None))
+            ),
+            "timeline_proposal": (
+                "propose_timeline_edit" in self._propose_handlers
+                and bool(getattr(self._gui, "_cut_editor_available", True))
+                and callable(getattr(self._gui, "start_codex_timeline_proposal", None))
+            ),
+            "processing_action": bool(self._execute_handlers),
+        }
+
+    @staticmethod
+    def _codex_account_authenticated(account: Mapping[str, Any]) -> bool:
+        if isinstance(account.get("account"), Mapping):
+            return True
+        legacy = account.get("authenticated", account.get("loggedIn"))
+        if legacy is not None:
+            return bool(legacy)
+        return account.get("requiresOpenaiAuth") is False
+
     def _propose_subtitle(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
         if bool(self._gui._codex_session.running):
             raise ActionRejected(ActionErrorCode.JOB_CONFLICT, "a subtitle proposal is already being generated")
@@ -649,6 +785,31 @@ class GuiActionBackend:
         if not self._gui._codex_session.running:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
+
+    def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
+        start_proposal = getattr(self._gui, "start_codex_audio_mix_proposal", None)
+        if not callable(start_proposal):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal is not available")
+        if not start_proposal(
+            intent=str(args["intent"]),
+            revision=revision,
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix proposal could not be started")
+        return HandlerResult("audio mix proposal generation started", state={"status": "running"})
+
+    def _propose_timeline(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
+        start_proposal = getattr(self._gui, "start_codex_timeline_proposal", None)
+        if not callable(start_proposal):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "timeline proposal is not available")
+        if not start_proposal(
+            intent=str(args["intent"]),
+            target=str(args["target"]),
+        ):
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "timeline proposal could not be started")
+        return HandlerResult(
+            "timeline proposal generation started",
+            state={"status": "running", "target": str(args["target"])},
+        )
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

@@ -36,6 +36,7 @@
         "test_codex_app_server_client",
         "test_codex_edit_proposal",
         "test_codex_highlight_ranker",
+        "test_codex_orchestrator",
         "test_codex_runtime",
         "test_color_config",
         "test_craig_pipeline",

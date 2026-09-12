@@ -625,7 +625,8 @@ class PlanControllerTests(unittest.TestCase):
 
 
 class GuiActionContractTests(unittest.TestCase):
-    def gui_stub(self) -> SimpleNamespace:
+    def gui_lifecycle_test_double(self) -> SimpleNamespace:
+        """Build a test double; it is not the production EditBayBackend."""
         calls: list[tuple[str, dict[str, Any]]] = []
         progress = SimpleNamespace(
             job="",
@@ -714,7 +715,7 @@ class GuiActionContractTests(unittest.TestCase):
         return gui
 
     def test_review_routes_require_callable_gui_lifecycle_methods(self) -> None:
-        gui = self.gui_stub()
+        gui = self.gui_lifecycle_test_double()
         del gui.start_codex_audio_mix_proposal
         gui.start_codex_timeline_proposal = None
         gui.startCodexEdit = object()
@@ -726,7 +727,7 @@ class GuiActionContractTests(unittest.TestCase):
         self.assertFalse(availability["subtitle_proposal"])
 
     def test_missing_proposal_lifecycle_fails_closed(self) -> None:
-        gui = self.gui_stub()
+        gui = self.gui_lifecycle_test_double()
         del gui.start_codex_audio_mix_proposal
         gui.start_codex_timeline_proposal = None
         dispatcher = ActionDispatcher(GuiActionBackend(gui))
@@ -755,7 +756,7 @@ class GuiActionContractTests(unittest.TestCase):
                 self.assertEqual(result.code, "precondition_failed")
 
     def test_timeline_schema_requires_explicit_target_before_gui_call(self) -> None:
-        gui = self.gui_stub()
+        gui = self.gui_lifecycle_test_double()
         dispatcher = ActionDispatcher(GuiActionBackend(gui))
         scope = ActionScope(
             "goal",
@@ -791,7 +792,7 @@ class GuiActionContractTests(unittest.TestCase):
         self.assertEqual(gui.calls, [])
 
     def test_concrete_gui_backend_delegates_audio_and_both_timeline_targets(self) -> None:
-        gui = self.gui_stub()
+        gui = self.gui_lifecycle_test_double()
         dispatcher = ActionDispatcher(GuiActionBackend(gui))
         scope = ActionScope(
             "goal",
@@ -820,8 +821,10 @@ class GuiActionContractTests(unittest.TestCase):
         self.assertEqual(gui.calls[1][1]["target"], "normal")
         self.assertEqual(gui.calls[2][1]["target"], "short")
 
-    def test_chat_plan_drives_concrete_gui_backend_through_approval_and_render(self) -> None:
-        gui = self.gui_stub()
+    def test_chat_plan_wiring_with_lifecycle_test_double_through_approval_and_render(self) -> None:
+        """Exercise PlanController wiring; dependency GUI lifecycle is a test double here."""
+
+        gui = self.gui_lifecycle_test_double()
         backend = GuiActionBackend(gui)
         review_outputs: list[dict[str, Any]] = [
             {

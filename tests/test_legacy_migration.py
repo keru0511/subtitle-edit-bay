@@ -18,6 +18,8 @@ from src.legacy_migration import (
     CATEGORY_RUNTIME_CONFIG,
     CATEGORY_SPEAKER_COLORS,
     CATEGORY_USER_SETTINGS,
+    SCOPE_EXTERNAL,
+    STATUS_NOT_DISCOVERABLE,
     STATUS_MISSING,
     STATUS_UNSAFE,
     build_legacy_inventory,
@@ -108,12 +110,44 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             self.assertEqual(decoded["legacy_root"], str(legacy.resolve()))
             self.assertEqual(decoded["actions"][0]["operation"], "inspect_only")
 
+    def test_external_cache_capabilities_are_not_misclassified_as_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            inventory = build_legacy_inventory(self._fixture(Path(temporary)))
+
+            external = {entry.candidate_id: entry for entry in inventory.external_cache_entries}
+            self.assertEqual(
+                set(external),
+                {
+                    "pip-user-cache",
+                    "pytorch-user-cache",
+                    "huggingface-user-cache",
+                    "application-user-cache",
+                },
+            )
+            for candidate_id, entry in external.items():
+                self.assertEqual(entry.scope, SCOPE_EXTERNAL)
+                self.assertEqual(entry.status, STATUS_NOT_DISCOVERABLE, candidate_id)
+                self.assertFalse(entry.exists)
+                self.assertTrue(entry.safe)
+                self.assertEqual(entry.path, "")
+                self.assertIn("not treated as missing", entry.diagnostic or "")
+
+            decoded = json.loads(inventory.to_json())
+            external_json = [
+                item for item in decoded["entries"] if item["scope"] == SCOPE_EXTERNAL
+            ]
+            self.assertEqual(
+                {item["candidate_id"] for item in external_json},
+                set(external),
+            )
+
     def test_missing_root_is_diagnostic_and_does_not_create_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             missing = Path(temporary) / "does-not-exist"
             inventory = build_legacy_inventory(missing)
             self.assertFalse(inventory.root_exists)
-            self.assertEqual(inventory.entries, ())
+            self.assertEqual(len(inventory.external_cache_entries), 4)
+            self.assertTrue(all(entry.scope == SCOPE_EXTERNAL for entry in inventory.entries))
             self.assertEqual(inventory.root_status, STATUS_MISSING)
             self.assertFalse(missing.exists())
 
@@ -149,7 +183,8 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             inventory = build_legacy_inventory(linked_root)
             self.assertEqual(inventory.root_status, STATUS_UNSAFE)
             self.assertFalse(inventory.root_safe)
-            self.assertEqual(inventory.entries, ())
+            self.assertEqual(len(inventory.external_cache_entries), 4)
+            self.assertTrue(all(entry.scope == SCOPE_EXTERNAL for entry in inventory.entries))
             self.assertTrue(any("not followed" in diagnostic for diagnostic in inventory.diagnostics))
 
     def test_malformed_path_is_safe_diagnostic(self) -> None:

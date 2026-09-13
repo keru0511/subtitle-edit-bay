@@ -15,30 +15,19 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from .ass_template import (
-    DEFAULT_SUBTITLE_FONT_SIZE,
-    DEFAULT_SUBTITLE_OUTLINE_COLOR,
-    DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
-)
 from .color_config import normalize_rgb_color, save_speaker_color
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
-    DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT,
     resolve_alignment,
 )
 from .gui_state import (
     AUDIO_EXTENSIONS,
-    SOURCE_CONFIG_KEYS,
     VIDEO_EXTENSIONS,
     SourceSelection,
     build_gui_command,
-    build_gui_runtime_config,
     build_speaker_entries_from_files,
-    gui_state_to_transcription_context,
-    gui_transcription_context_state_from_config,
-    write_gui_runtime_config,
 )
-from .runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
+from .gui_settings_controller import SettingsController
 from .runtime_dependencies import check_runtime_dependencies
 from .media_probe import probe_media_stream_types
 from .transcribe import probe_audio_streams
@@ -86,18 +75,14 @@ class LegacyEditBayBackend(QApplication):
 
         self.workspace_root = (workspace_root or Path(__file__).resolve().parent.parent).resolve()
         self._application_info = resolve_application_info(self.workspace_root)
-        self.gui_config_path = self.workspace_root / ".gui" / "runtime_config.json"
+        self._settings_controller = SettingsController(self.workspace_root)
         self.color_config_path = self.workspace_root / "assets" / "speaker_colors.json"
-        self._base_config = load_runtime_config(DEFAULT_RUNTIME_CONFIG)
-        self._config = load_runtime_config(self.gui_config_path) if self.gui_config_path.exists() else self._base_config
         self._source_selection = SourceSelection()
         self._dependencies = check_runtime_dependencies(probe_nvenc=True)
         self._speakers: list[dict[str, str]] = []
         self._audio_tracks: list[dict[str, str]] = self._default_audio_tracks()
         self._alignment_result = self._empty_alignment_result()
         self._alignment_busy = False
-        self._settings = self._settings_from_config(self._config)
-        self._transcription_context = gui_transcription_context_state_from_config(self._config)
         self._running = False
         self._status = "動画・話者音声・出力先を指定してください"
         self._stage = "READY"
@@ -122,6 +107,46 @@ class LegacyEditBayBackend(QApplication):
         self.elapsed_timer.setInterval(1000)
         self.elapsed_timer.timeout.connect(self._tick_elapsed)
         self._update_source_status()
+
+    @property
+    def gui_config_path(self) -> Path:
+        return self._settings_controller.gui_config_path
+
+    @gui_config_path.setter
+    def gui_config_path(self, value: str | Path) -> None:
+        self._settings_controller.gui_config_path = Path(value)
+
+    @property
+    def _base_config(self) -> dict[str, Any]:
+        return self._settings_controller.base_config
+
+    @_base_config.setter
+    def _base_config(self, value: dict[str, Any]) -> None:
+        self._settings_controller.base_config = value
+
+    @property
+    def _config(self) -> dict[str, Any]:
+        return self._settings_controller.config
+
+    @_config.setter
+    def _config(self, value: dict[str, Any]) -> None:
+        self._settings_controller.config = value
+
+    @property
+    def _settings(self) -> dict[str, Any]:
+        return self._settings_controller.settings
+
+    @_settings.setter
+    def _settings(self, value: dict[str, Any]) -> None:
+        self._settings_controller.settings = value
+
+    @property
+    def _transcription_context(self) -> dict[str, Any]:
+        return self._settings_controller.transcription_context
+
+    @_transcription_context.setter
+    def _transcription_context(self, value: dict[str, Any]) -> None:
+        self._settings_controller.transcription_context = value
 
     @staticmethod
     def _default_audio_tracks() -> list[dict[str, str]]:
@@ -148,38 +173,10 @@ class LegacyEditBayBackend(QApplication):
     def _normalized_gui_transcription_context(
         context: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
-        runtime_context = gui_state_to_transcription_context(context)
-        return gui_transcription_context_state_from_config(
-            {"craig_pipeline": {"transcription_context": runtime_context}}
-        )
+        return SettingsController.normalize_transcription_context(context)
 
     def _settings_from_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        shared = payload.get("shared", {})
-        craig = payload.get("craig_pipeline", {})
-        return {
-            "codex_model": shared.get("codex_model", ""),
-            "model": shared.get("model", "large-v3"),
-            "device": shared.get("device", "cuda"),
-            "compute_type": shared.get("compute_type", "float16"),
-            "language": shared.get("language", "ja"),
-            "nvenc_cq": int(shared.get("nvenc_cq", 18)),
-            "x264_crf": int(shared.get("x264_crf", 18)),
-            "subtitle_font_size": int(shared.get("subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE)),
-            "subtitle_outline_color": normalize_rgb_color(shared.get("subtitle_outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)),
-            "subtitle_outline_thickness": int(shared.get("subtitle_outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
-            "subtitle_volume_scale_percent": float(craig.get("subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)),
-            "subtitle_max_gap_seconds": float(shared.get("subtitle_max_gap_seconds", 0.1)),
-            "subtitle_end_padding_seconds": float(shared.get("subtitle_end_padding_seconds", 0.08)),
-            "subtitle_min_duration_seconds": float(shared.get("subtitle_min_duration_seconds", 0.35)),
-            "video_codec": craig.get("video_codec", "h264_nvenc"),
-            "audio_normalize": bool(craig.get("audio_normalize", True)),
-            "audio_target_lufs": float(craig.get("audio_target_lufs", -16.0)),
-            "cut_no_speech": bool(craig.get("cut_no_speech", False)),
-            "no_speech_min_seconds": float(craig.get("no_speech_min_seconds", 1.2)),
-            "speech_padding_seconds": float(craig.get("speech_padding_seconds", 0.25)),
-            "postprocess_workers": int(craig.get("postprocess_workers", 4)),
-            "alignment_offset_adjustment": float(craig.get("alignment_offset_adjustment", 0.0)),
-        }
+        return self._settings_controller.settings_from_config(payload)
 
     @Property("QVariantMap", notify=sourceSelectionChanged)
     def sourceSelection(self) -> dict[str, Any]:
@@ -643,34 +640,16 @@ class LegacyEditBayBackend(QApplication):
         self._save_settings(settings, announce=True)
 
     def _save_settings(self, settings: dict[str, Any], *, announce: bool) -> None:
-        persistent_settings = dict(settings)
-        incoming_context = persistent_settings.pop("transcription_context", None)
-        if incoming_context is not None:
-            try:
-                self._transcription_context = self._normalized_gui_transcription_context(
-                    incoming_context
-                )
-            except (TypeError, ValueError) as error:
-                self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
-                return
-            self.transcriptionContextChanged.emit()
-
-        for key in SOURCE_CONFIG_KEYS:
-            persistent_settings.pop(key, None)
-        self._settings.update(persistent_settings)
         try:
-            transcription_context = gui_state_to_transcription_context(self._transcription_context)
+            _snapshot, context_changed = self._settings_controller.save_settings(
+                settings,
+                self._speakers,
+            )
         except (TypeError, ValueError) as error:
             self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
             return
-        payload = build_gui_runtime_config(
-            self._base_config,
-            self._settings,
-            self._speakers,
-            transcription_context=transcription_context,
-        )
-        write_gui_runtime_config(self.gui_config_path, payload)
-        self._config = payload
+        if context_changed:
+            self.transcriptionContextChanged.emit()
         self.settingsChanged.emit()
         if announce:
             self._set_status("GUI設定を保存しました", "SAVED")

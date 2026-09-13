@@ -308,7 +308,10 @@ class SettingsMigrationOptions:
     user_settings: bool = True
     overwrite: bool = False
     confirm: bool = False
-    capabilities: RuntimeCapabilities = RuntimeCapabilities(cuda=True, nvenc=True)
+    # Capability probes are optional at this boundary.  Unknown capabilities
+    # must fail closed so a legacy GPU setting is never carried into a runtime
+    # that has not been verified to support it.
+    capabilities: RuntimeCapabilities = RuntimeCapabilities(cuda=False, nvenc=False)
     selected: tuple[str, ...] = ()
 
 
@@ -354,7 +357,8 @@ class LegacySettingsMigrationPlan:
     diagnostics: tuple[str, ...] = ()
     overwrite: bool = False
     confirm: bool = False
-    capabilities: RuntimeCapabilities = RuntimeCapabilities(cuda=True, nvenc=True)
+    # Keep plans created directly (without the builder) conservative too.
+    capabilities: RuntimeCapabilities = RuntimeCapabilities(cuda=False, nvenc=False)
 
     @property
     def ready_items(self) -> tuple[SettingsMigrationItem, ...]:
@@ -1120,7 +1124,13 @@ def build_settings_migration_plan(
     options: SettingsMigrationOptions = SettingsMigrationOptions(),
     capabilities: RuntimeCapabilities | None = None,
 ) -> LegacySettingsMigrationPlan:
-    """Create a validated dry-run plan for user settings only."""
+    """Create a validated dry-run plan for user settings only.
+
+    ``capabilities`` is an optional trusted probe result.  When it is omitted,
+    the options' conservative ``cuda=False, nvenc=False`` default is used so
+    GPU-dependent settings are adjusted to CPU/libx264 rather than assumed to
+    be supported.
+    """
 
     if not isinstance(inventory, LegacyInventory):
         raise LegacyInventoryError("settings migration requires a LegacyInventory")
@@ -1243,6 +1253,17 @@ def _snapshot_targets(paths: Sequence[Path]) -> tuple[dict[Path, bytes | None], 
     return snapshots, tuple(sorted(parents, key=lambda item: len(item.parts), reverse=True))
 
 
+def _write_bytes_atomic(path: Path, payload: bytes, *, temporary_suffix: str = ".tmp") -> None:
+    """Replace one file atomically and remove its temporary file on every path."""
+
+    temporary = path.with_name(f".{path.name}.{os.getpid()}{temporary_suffix}")
+    try:
+        temporary.write_bytes(payload)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _restore_targets(snapshots: Mapping[Path, bytes | None], parents: Sequence[Path]) -> None:
     failures: list[str] = []
     for path, original in reversed(tuple(snapshots.items())):
@@ -1251,9 +1272,7 @@ def _restore_targets(snapshots: Mapping[Path, bytes | None], parents: Sequence[P
                 path.unlink(missing_ok=True)
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = path.with_name(f".{path.name}.{os.getpid()}.restore.tmp")
-                temporary.write_bytes(original)
-                os.replace(temporary, path)
+                _write_bytes_atomic(path, original, temporary_suffix=".restore.tmp")
         except OSError as exc:
             failures.append(f"{path}: {exc}")
     for parent in parents:
@@ -1331,9 +1350,7 @@ def apply_settings_migration(
     try:
         for target, payload in writes:
             target.parent.mkdir(parents=True, exist_ok=True)
-            temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-            temporary.write_bytes(payload)
-            os.replace(temporary, target)
+            _write_bytes_atomic(target, payload)
     except Exception as exc:
         try:
             _restore_targets(snapshots, parents)

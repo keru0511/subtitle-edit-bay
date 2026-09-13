@@ -40,6 +40,9 @@ runtime構築を始める前に拒否します。
 
 - CUDAを実際に利用できない場合、`device=cuda`は`cpu/int8`へ補正します。
 - NVENC encode probeが失敗した場合、`h264_nvenc`は`libx264`へ補正します。
+- `build_settings_migration_plan()`へcapability probe結果を渡さない場合も安全側に倒し、
+  `cuda=False, nvenc=False`として上記の補正を適用します。未確認のGPU capabilityを
+  移行処理が推測して有効化することはありません。
 - 現行schemaに存在しない古いkeyは取り込みません。
 - 値の型が現行schemaと異なる場合、移行全体を失敗させます。
 - schemaはアプリの設定loaderと共有し、既定値JSONの掲載有無や`null`値から型を推測しません。
@@ -87,6 +90,9 @@ CUDA/NVENCを検証済みの場合だけ、それぞれ`--cuda`、`--nvenc`を�
 inventoryを入力にしたdry-runを作り、`apply_settings_migration()`へ渡します。plan/resultは
 値を含めず、移行対象のkey、調整内容、skip理由だけをJSON化します。旧`.venv`、project、
 素材、出力、cache候補はこのAPIの書き込み対象になりません。
+`capabilities`は信頼できるCUDA/NVENC probe結果を渡す場合だけ指定し、省略時は
+`RuntimeCapabilities(cuda=False, nvenc=False)`として保守的に補正します。書き込み中に失敗した
+場合は、通常の一時ファイルとrollback用一時ファイルを残さず、開始時のdestination treeへ戻します。
 
 ## 関連Issueと段階導入
 

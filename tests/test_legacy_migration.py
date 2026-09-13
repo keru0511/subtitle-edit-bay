@@ -296,6 +296,19 @@ class LegacySettingsMigrationTests(unittest.TestCase):
             self.assertFalse((destination / "video_import").exists())
             self.assertIn("cpu/int8", " ".join(result.adjusted))
 
+    def test_omitted_capabilities_fail_closed_to_cpu_and_libx264(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            plan = build_settings_migration_plan(build_legacy_inventory(source), destination)
+
+            self.assertEqual(plan.capabilities, RuntimeCapabilities(cuda=False, nvenc=False))
+            result = apply_settings_migration(plan)
+            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertEqual(migrated["shared"]["device"], "cpu")
+            self.assertEqual(migrated["shared"]["compute_type"], "int8")
+            self.assertEqual(migrated["craig_pipeline"]["video_codec"], "libx264")
+            self.assertIn("cpu/int8", " ".join(result.adjusted))
+
     def test_existing_destination_requires_explicit_overwrite_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspace(Path(temporary))
@@ -384,6 +397,60 @@ class LegacySettingsMigrationTests(unittest.TestCase):
                     apply_settings_migration(plan)
             self.assertFalse((destination / ".gui" / "runtime_config.json").exists())
             self.assertFalse((destination / "assets" / "speaker_colors.json").exists())
+
+    def test_atomic_failure_restores_destination_tree_and_cleans_temporary_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            (destination / ".gui").mkdir(parents=True)
+            (destination / ".gui" / "runtime_config.json").write_text(
+                '{"shared":{"device":"cpu","compute_type":"int8"}}\n', encoding="utf-8"
+            )
+            (destination / "assets").mkdir()
+            (destination / "assets" / "speaker_colors.json").write_text(
+                '{"speakers":{},"files":{}}\n', encoding="utf-8"
+            )
+            (destination / "unrelated.txt").write_text("keep me\n", encoding="utf-8")
+
+            def tree_snapshot(root: Path) -> tuple[tuple[str, str, bytes | None], ...]:
+                snapshot: list[tuple[str, str, bytes | None]] = []
+                for path in root.rglob("*"):
+                    relative = path.relative_to(root).as_posix()
+                    if path.is_dir():
+                        snapshot.append((relative, "directory", None))
+                    elif path.is_file():
+                        snapshot.append((relative, "file", path.read_bytes()))
+                    else:
+                        snapshot.append((relative, "other", None))
+                return tuple(sorted(snapshot))
+
+            before = tree_snapshot(destination)
+            plan = build_settings_migration_plan(
+                build_legacy_inventory(source),
+                destination,
+                options=SettingsMigrationOptions(
+                    overwrite=True,
+                    confirm=True,
+                    capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
+                ),
+            )
+            import src.legacy_migration as migration_module
+
+            original_replace = migration_module.os.replace
+            replace_count = 0
+
+            def fail_on_second_replace(source_path: str, target_path: str) -> None:
+                nonlocal replace_count
+                replace_count += 1
+                if replace_count == 2:
+                    raise OSError("synthetic replace failure")
+                original_replace(source_path, target_path)
+
+            with patch.object(migration_module.os, "replace", side_effect=fail_on_second_replace):
+                with self.assertRaisesRegex(MigrationError, "rolled back"):
+                    apply_settings_migration(plan)
+
+            self.assertEqual(tree_snapshot(destination), before)
+            self.assertFalse(any(path.name.endswith((".tmp", ".restore.tmp")) for path in destination.rglob("*")))
 
 
 if __name__ == "__main__":

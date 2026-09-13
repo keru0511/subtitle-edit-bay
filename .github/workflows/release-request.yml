@@ -34,7 +34,7 @@ jobs:
       release_version: ${{ steps.release.outputs.release_version }}
     steps:
       - name: Check out main history
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false

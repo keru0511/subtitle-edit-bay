@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,15 @@ from src.legacy_migration import (
     STATUS_NOT_DISCOVERABLE,
     STATUS_MISSING,
     STATUS_UNSAFE,
+    MIGRATION_ITEM_INVALID,
+    MIGRATION_ITEM_READY,
+    MIGRATION_REASON_CONFIRMATION_REQUIRED,
+    MIGRATION_REASON_DESTINATION_EXISTS,
+    MigrationError,
+    RuntimeCapabilities,
+    SettingsMigrationOptions,
+    apply_settings_migration,
+    build_settings_migration_plan,
     build_legacy_inventory,
     build_legacy_migration_plan,
 )
@@ -215,6 +225,165 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             self.assertEqual(cache.size_bytes, 0)
             self.assertIn("unable to enumerate directory", cache.diagnostic or "")
             self.assertFalse((permission_target / "new-file").exists())
+
+
+class LegacySettingsMigrationTests(unittest.TestCase):
+    def _workspace(self, root: Path) -> tuple[Path, Path]:
+        source = root / "legacy"
+        destination = root / "installed"
+        for relative in (".gui", "assets", "dictionaries", "presets", "video_import", "video_export"):
+            (source / relative).mkdir(parents=True, exist_ok=True)
+        (source / ".gui" / "runtime_config.json").write_text(
+            json.dumps(
+                {
+                    "shared": {"device": "cuda", "compute_type": "float16"},
+                    "craig_pipeline": {
+                        "video_codec": "h264_nvenc",
+                        "transcription_context": {
+                            "dictionary_path": "dictionaries/game.json",
+                            "dictionary_confirmed": True,
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source / "assets" / "speaker_colors.json").write_text(
+            json.dumps({"speakers": {"Alice": {"color": "#AABBCC"}}, "files": {}}),
+            encoding="utf-8",
+        )
+        (source / "dictionaries" / "game.json").write_text(
+            json.dumps({"game_title": "Test", "terms": []}), encoding="utf-8"
+        )
+        (source / "presets" / "default.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "name": "default",
+                    "categories": {"subtitle": {"font_size": 42}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source / "video_import" / "keep.mp4").write_bytes(b"media")
+        return source, destination
+
+    def test_plan_and_apply_migrate_only_validated_user_settings_with_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            inventory = build_legacy_inventory(source)
+            plan = build_settings_migration_plan(
+                inventory,
+                destination,
+                capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
+            )
+            self.assertTrue(any(item.status == MIGRATION_ITEM_READY for item in plan.items))
+            self.assertNotIn("h264_nvenc", plan.to_json())
+            result = apply_settings_migration(plan, now=datetime(2026, 9, 13, tzinfo=timezone.utc))
+
+            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertEqual(migrated["shared"]["device"], "cpu")
+            self.assertEqual(migrated["shared"]["compute_type"], "int8")
+            self.assertEqual(migrated["craig_pipeline"]["video_codec"], "libx264")
+            self.assertEqual(
+                migrated["craig_pipeline"]["transcription_context"]["dictionary_path"],
+                str((destination / "dictionaries" / "game.json").resolve()),
+            )
+            self.assertTrue((destination / "dictionaries" / "game.json").is_file())
+            self.assertTrue((destination / "presets" / "default.json").is_file())
+            self.assertTrue((destination / "assets" / "speaker_colors.json").is_file())
+            self.assertTrue((source / "video_import" / "keep.mp4").is_file())
+            self.assertFalse((destination / "video_import").exists())
+            self.assertIn("cpu/int8", " ".join(result.adjusted))
+
+    def test_existing_destination_requires_explicit_overwrite_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            current = destination / ".gui" / "runtime_config.json"
+            current.parent.mkdir(parents=True)
+            current.write_text('{"shared":{"device":"cpu"}}\n', encoding="utf-8")
+            inventory = build_legacy_inventory(source)
+
+            preserved = build_settings_migration_plan(inventory, destination)
+            config_item = next(item for item in preserved.items if item.relative_path == ".gui/runtime_config.json")
+            self.assertEqual(config_item.reason, MIGRATION_REASON_DESTINATION_EXISTS)
+            self.assertEqual(json.loads(current.read_text())["shared"]["device"], "cpu")
+
+            with_confirm = build_settings_migration_plan(
+                inventory,
+                destination,
+                options=SettingsMigrationOptions(
+                    overwrite=True,
+                    confirm=True,
+                    capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
+                ),
+            )
+            result = apply_settings_migration(with_confirm)
+            self.assertIn(str(current), result.applied)
+            self.assertEqual(json.loads(current.read_text())["shared"]["device"], "cpu")
+            self.assertEqual(json.loads(current.read_text())["shared"]["compute_type"], "int8")
+
+            without_confirm = build_settings_migration_plan(
+                inventory,
+                destination,
+                options=SettingsMigrationOptions(overwrite=True),
+            )
+            item = next(item for item in without_confirm.items if item.relative_path == ".gui/runtime_config.json")
+            self.assertEqual(item.reason, MIGRATION_REASON_CONFIRMATION_REQUIRED)
+            with self.assertRaisesRegex(MigrationError, "confirmation"):
+                apply_settings_migration(without_confirm)
+
+    def test_invalid_settings_are_skipped_without_secret_or_partial_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            (source / ".gui" / "runtime_config.json").write_text(
+                json.dumps({"shared": {"api_token": "do-not-log"}}), encoding="utf-8"
+            )
+            plan = build_settings_migration_plan(build_legacy_inventory(source), destination)
+            item = next(item for item in plan.items if item.relative_path == ".gui/runtime_config.json")
+            self.assertEqual(item.status, MIGRATION_ITEM_INVALID)
+            self.assertNotIn("do-not-log", plan.to_json())
+            result = apply_settings_migration(plan)
+            self.assertFalse((destination / ".gui" / "runtime_config.json").exists())
+            self.assertTrue(result.skipped)
+
+    def test_unknown_runtime_fields_are_dropped_without_copying_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            (source / ".gui" / "runtime_config.json").write_text(
+                json.dumps({"shared": {"device": "cpu", "old_option": "ignored"}}),
+                encoding="utf-8",
+            )
+            plan = build_settings_migration_plan(build_legacy_inventory(source), destination)
+            self.assertEqual(
+                next(item for item in plan.items if item.relative_path == ".gui/runtime_config.json").status,
+                MIGRATION_ITEM_READY,
+            )
+            apply_settings_migration(plan)
+            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertNotIn("old_option", migrated["shared"])
+
+    def test_atomic_apply_rolls_back_when_a_later_setting_write_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._workspace(Path(temporary))
+            plan = build_settings_migration_plan(build_legacy_inventory(source), destination)
+            import src.legacy_migration as migration_module
+
+            original_replace = migration_module.os.replace
+            replace_count = 0
+
+            def fail_on_second_replace(source_path: str, target_path: str) -> None:
+                nonlocal replace_count
+                replace_count += 1
+                if replace_count == 2:
+                    raise OSError("synthetic write failure")
+                original_replace(source_path, target_path)
+
+            with patch.object(migration_module.os, "replace", side_effect=fail_on_second_replace):
+                with self.assertRaisesRegex(MigrationError, "rolled back"):
+                    apply_settings_migration(plan)
+            self.assertFalse((destination / ".gui" / "runtime_config.json").exists())
+            self.assertFalse((destination / "assets" / "speaker_colors.json").exists())
 
 
 if __name__ == "__main__":

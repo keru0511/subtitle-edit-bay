@@ -11,6 +11,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.legacy_migration import (
+    CACHE_KIND_AUDIO_PREVIEW,
+    CACHE_KIND_LEGACY_APP_SOURCE,
+    CACHE_KIND_LEGACY_VENV,
+    CACHE_KIND_MEDIA,
+    CACHE_KIND_OUTPUT,
+    CACHE_KIND_PIP_DOWNLOAD,
+    CACHE_KIND_PROJECT,
+    CACHE_KIND_RUNTIME_DEPENDENT,
+    CACHE_KIND_TRANSCRIPT_METADATA,
+    CACHE_REASON_MIGRATION_INCOMPLETE,
+    CACHE_REASON_NOT_DISCOVERABLE,
+    CACHE_REASON_PROJECT_PRESERVED,
+    CACHE_STATE_PRESERVE,
+    CACHE_STATE_REBUILD,
+    CACHE_STATE_REMOVABLE_AFTER_SUCCESS,
+    CACHE_STATE_REUSE,
+    CacheCleanupEntry,
+    CacheCleanupPlan,
+    CacheCleanupOptions,
     CATEGORY_CACHE,
     CATEGORY_LEGACY_RUNTIME,
     CATEGORY_MEDIA,
@@ -31,6 +50,8 @@ from src.legacy_migration import (
     RuntimeCapabilities,
     SettingsMigrationOptions,
     apply_settings_migration,
+    apply_cache_cleanup,
+    build_cache_cleanup_plan,
     build_settings_migration_plan,
     build_legacy_inventory,
     build_legacy_migration_plan,
@@ -150,6 +171,175 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
                 {item["candidate_id"] for item in external_json},
                 set(external),
             )
+
+    def test_cache_cleanup_plan_classifies_reuse_rebuild_preserve_and_post_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy = self._fixture(root)
+            (legacy / "src").mkdir()
+            (legacy / "src" / "launcher.py").write_bytes(b"source")
+            (legacy / ".cache" / "pip").mkdir(parents=True)
+            (legacy / ".cache" / "pip" / "wheel.whl").write_bytes(b"wheel")
+            (legacy / ".cache" / "audio-preview").mkdir(parents=True)
+            (legacy / ".cache" / "audio-preview" / "preview.mka").write_bytes(b"preview")
+            (legacy / "transcripts").mkdir()
+            (legacy / "transcripts" / "voice.json.cache.json").write_bytes(b"metadata")
+            external_pip = root / "pip-cache"
+            external_pip.mkdir()
+            (external_pip / "download.whl").write_bytes(b"download")
+
+            inventory = build_legacy_inventory(legacy)
+            incomplete = build_cache_cleanup_plan(inventory)
+            by_id = {entry.candidate_id: entry for entry in incomplete.entries}
+            self.assertEqual(by_id["legacy:.venv"].state, CACHE_STATE_PRESERVE)
+            self.assertEqual(by_id["legacy:.venv"].protection_reason, CACHE_REASON_MIGRATION_INCOMPLETE)
+            self.assertEqual(by_id["legacy:src"].kind, CACHE_KIND_LEGACY_APP_SOURCE)
+            self.assertFalse(by_id["legacy:src"].cleanup_allowed)
+            self.assertEqual(by_id["legacy:episode.seb-project.json"].kind, CACHE_KIND_PROJECT)
+            self.assertEqual(by_id["legacy:episode.seb-project.json"].state, CACHE_STATE_PRESERVE)
+            self.assertEqual(
+                by_id["legacy:episode.seb-project.json"].protection_reason,
+                CACHE_REASON_PROJECT_PRESERVED,
+            )
+            self.assertEqual(by_id["legacy:video_import"].kind, CACHE_KIND_MEDIA)
+            self.assertEqual(by_id["legacy:video_export"].kind, CACHE_KIND_OUTPUT)
+            self.assertEqual(by_id["legacy:.cache/audio-preview"].kind, CACHE_KIND_AUDIO_PREVIEW)
+            self.assertEqual(by_id["legacy:transcripts"].kind, CACHE_KIND_TRANSCRIPT_METADATA)
+            self.assertEqual(by_id["legacy:.cache/pip"].state, CACHE_STATE_REBUILD)
+            self.assertFalse(by_id["legacy:.cache/pip"].cleanup_allowed)
+            self.assertEqual(by_id["pip-user-cache"].state, CACHE_STATE_REBUILD)
+            self.assertEqual(by_id["pip-user-cache"].protection_reason, CACHE_REASON_NOT_DISCOVERABLE)
+
+            complete = build_cache_cleanup_plan(
+                inventory,
+                options=CacheCleanupOptions(
+                    migration_completed=True,
+                    cache_paths={"pip-user-cache": external_pip},
+                    reusable_cache_ids=("pip-user-cache",),
+                ),
+            )
+            by_id = {entry.candidate_id: entry for entry in complete.entries}
+            self.assertEqual(by_id["legacy:.venv"].state, CACHE_STATE_REMOVABLE_AFTER_SUCCESS)
+            self.assertTrue(by_id["legacy:.venv"].cleanup_allowed)
+            self.assertEqual(by_id["legacy:.cache/pip"].state, CACHE_STATE_REBUILD)
+            self.assertTrue(by_id["legacy:.cache/pip"].cleanup_allowed)
+            self.assertEqual(by_id["pip-user-cache"].kind, CACHE_KIND_PIP_DOWNLOAD)
+            self.assertEqual(by_id["pip-user-cache"].state, CACHE_STATE_REUSE)
+            self.assertFalse(by_id["pip-user-cache"].cleanup_allowed)
+            self.assertGreaterEqual(complete.reclaimable_bytes, len(b"wheel") + len(b"source"))
+            decoded = json.loads(complete.to_json())
+            self.assertIn("reclaimable_bytes", decoded)
+            self.assertIn("referenced_data", decoded["entries"][0])
+
+    def test_cache_cleanup_requires_confirmation_and_preserves_user_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy = self._fixture(root)
+            (legacy / "src").mkdir()
+            (legacy / "src" / "launcher.py").write_bytes(b"source")
+            (legacy / ".cache" / "audio-preview").mkdir(parents=True)
+            (legacy / ".cache" / "audio-preview" / "preview.mka").write_bytes(b"preview")
+            inventory = build_legacy_inventory(legacy)
+            plan = build_cache_cleanup_plan(
+                inventory,
+                options=CacheCleanupOptions(
+                    migration_completed=True,
+                    confirm=True,
+                    selected=("legacy:.venv", "legacy:src", "legacy:.cache/audio-preview"),
+                ),
+            )
+            with self.assertRaisesRegex(MigrationError, "confirmation"):
+                apply_cache_cleanup(plan, confirm=False)
+
+            result = apply_cache_cleanup(plan)
+            self.assertTrue((legacy / "episode.seb-project.json").is_file())
+            self.assertTrue((legacy / "video_import" / "capture.mp4").is_file())
+            self.assertTrue((legacy / "video_export" / "render.mp4").is_file())
+            self.assertFalse((legacy / ".venv").exists())
+            self.assertFalse((legacy / "src").exists())
+            self.assertFalse((legacy / ".cache" / "audio-preview").exists())
+            self.assertEqual(
+                set(result.removed),
+                {str(legacy / ".venv"), str(legacy / "src"), str(legacy / ".cache" / "audio-preview")},
+            )
+
+    def test_cache_cleanup_rejects_path_escape_before_deleting_anything(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy = self._fixture(root)
+            outside = root / "outside"
+            outside.mkdir()
+            protected = outside / "secret.txt"
+            protected.write_text("do not delete", encoding="utf-8")
+            plan = CacheCleanupPlan(
+                schema_version=1,
+                source=str(legacy),
+                inventory_schema_version=1,
+                migration_completed=True,
+                confirm=True,
+                selected=("malicious",),
+                entries=(
+                    CacheCleanupEntry(
+                        candidate_id="malicious",
+                        kind=CACHE_KIND_RUNTIME_DEPENDENT,
+                        path=str(protected),
+                        state=CACHE_STATE_REBUILD,
+                        exists=True,
+                        safe=True,
+                        size_bytes=protected.stat().st_size,
+                        reclaimable_bytes=protected.stat().st_size,
+                        cleanup_allowed=True,
+                    ),
+                ),
+                reclaimable_bytes=protected.stat().st_size,
+            )
+            with self.assertRaisesRegex(MigrationError, "escapes selected root"):
+                apply_cache_cleanup(plan)
+            self.assertTrue(protected.exists())
+
+    def test_external_cache_cleanup_requires_explicit_path_and_never_follows_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy = self._fixture(root)
+            external = root / "pip-cache"
+            external.mkdir()
+            (external / "download.whl").write_bytes(b"download")
+            inventory = build_legacy_inventory(legacy)
+            plan = build_cache_cleanup_plan(
+                inventory,
+                options=CacheCleanupOptions(
+                    migration_completed=True,
+                    confirm=True,
+                    selected=("pip-user-cache",),
+                    cache_paths={"pip-user-cache": external},
+                ),
+            )
+            entry = next(item for item in plan.entries if item.candidate_id == "pip-user-cache")
+            self.assertTrue(entry.cleanup_allowed)
+            result = apply_cache_cleanup(plan)
+            self.assertEqual(result.removed, (str(external),))
+            self.assertFalse(external.exists())
+
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "secret.whl").write_bytes(b"secret")
+            linked = root / "linked-pip-cache"
+            try:
+                linked.symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symbolic links are unavailable: {exc}")
+            linked_plan = build_cache_cleanup_plan(
+                inventory,
+                options=CacheCleanupOptions(
+                    migration_completed=True,
+                    confirm=True,
+                    selected=("pip-user-cache",),
+                    cache_paths={"pip-user-cache": linked},
+                ),
+            )
+            linked_entry = next(item for item in linked_plan.entries if item.candidate_id == "pip-user-cache")
+            self.assertFalse(linked_entry.cleanup_allowed)
+            self.assertTrue((outside / "secret.whl").exists())
 
     def test_missing_root_is_diagnostic_and_does_not_create_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

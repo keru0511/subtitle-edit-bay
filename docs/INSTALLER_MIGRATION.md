@@ -62,6 +62,36 @@ runtime構築を始める前に拒否します。
 環境変数でcache rootを変更していた旧環境についても、その値やcache内容をInstallerへコピーしません。
 cacheを再利用できる場合でも、このsliceは共有を行わず、実行runtimeは必ずInstaller用`.venv`から起動します。
 
+### cache/cleanup plan
+
+`build_cache_cleanup_plan(inventory)` は、上記のinventoryを再利用したread-onlyの構造化planです。
+planの各entryは `kind`、`state`、`size_bytes`、`reclaimable_bytes`、`protection_reason`、
+`referenced_data`、`cleanup_allowed` を持ち、値やsecretは含めません。状態の意味は次のとおりです。
+
+| kind | 既定のstate | cleanupの扱い |
+| --- | --- | --- |
+| pip download | `rebuild`（lock/fingerprintを検証済みなら明示的に`reuse`） | migration成功後にplanで指定したpathだけ削除可能 |
+| PyTorch wheel | `rebuild`（lock/fingerprintを検証済みなら明示的に`reuse`） | 同上 |
+| Hugging Face / WhisperX model | `rebuild` | runtime依存のため既定では再利用しない |
+| audio preview | `rebuild` | project/media参照が解決するまで再利用しない |
+| transcript metadata | `rebuild` | project/runtime fingerprint不明なら再利用しない |
+| 旧`.venv` | migration未完了は`preserve`、成功後は`removable_after_success` | 自動削除しない |
+| 旧app/source | migration未完了は`preserve`、成功後は`removable_after_success` | 旧rootそのものは削除対象にしない |
+| project / media / output | `preserve` | 常に自動削除不可 |
+
+pip/PyTorch/Hugging Faceのuser cacheは旧rootの外にあるため、inventoryでは`not_discoverable`です。
+共有またはcleanupを検討する場合も、呼び出し側がcandidate IDに対応する絶対pathを
+`CacheCleanupOptions(cache_paths=...)`で明示する必要があります。`reusable_cache_ids`を指定しない
+限り、pathが存在するだけでは`reuse`になりません。project/runtimeに依存するcacheを、stale判定なしに
+再利用する経路はありません。
+
+cleanupを実行する場合は、`migration_completed=True`、plan作成時または
+`apply_cache_cleanup(plan, confirm=True)`での明示確認、plan内candidate IDの選択が必要です。
+source rootそのもの、project/media/output、symlink/junction、root外や`..`を含むpathは拒否します。
+全対象の安全性を先に検査してから削除するため、危険なpathが混ざった場合に先行対象だけを消すことも
+ありません。cleanupは移行transactionのrollback対象ではないpost-success操作なので、Installerの
+runtime構築と必要なデータの保全を確認した後だけ実行してください。
+
 ## cleanup
 
 移行記録の`cleanup_blockers`が空でなくても異常ではありません。project、素材、出力、設定などが
@@ -72,6 +102,12 @@ cacheを再利用できる場合でも、このsliceは共有を行わず、実�
 `.venv`を自動削除しません。Installer版が正常起動し、必要なproject/media/outputが保全されて
 いることを確認してから、旧`.venv`だけを手動削除できます。Installer版は旧`.venv`を参照しないため、
 削除後も起動できます。
+
+従来の`reclaimable_venv_bytes`は移行結果に記録される旧`.venv`単体の概算です。より広い候補を
+確認する場合は、`build_cache_cleanup_plan()`の`reclaimable_bytes`を使います。この値は
+`cleanup_allowed=True`かつ安全に観測できたplan内pathだけを合計し、project/media/outputや
+未発見の外部cacheを含めません。planを保存して後で実行する場合も、pathを再探索して増やさず、
+保存時に確認したcandidate IDとpathだけをcleanup対象にします。
 
 ## 手動実行
 

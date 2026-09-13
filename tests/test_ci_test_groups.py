@@ -84,7 +84,13 @@ class CiTestGroupManifestTests(unittest.TestCase):
             groups["windows-ffmpeg-runtime"]["selectors"],
             [
                 "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests."
+                "test_gain_changes_frequency_level_by_the_expected_decibels",
+                "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests."
+                "test_mute_suppresses_only_the_muted_frequency",
+                "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests."
                 "test_normalize_reaches_the_configured_ebu_r128_target",
+                "tests.test_audio_mix_semantic_e2e.AudioMixSemanticE2ETests."
+                "test_solo_frequency_dominates_every_non_solo_channel",
                 "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."
                 "test_final_duration_matches_the_output_timeline",
                 "tests.test_manual_cut_semantic_e2e.ManualCutSemanticE2ETests."

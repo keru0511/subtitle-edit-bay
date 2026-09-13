@@ -10,7 +10,7 @@ from pathlib import Path
 from src.subtitle_project import create_project, save_project
 from src.subtitle_workflow import build_project_ass
 from src.video_encoding import select_automatic_video_codec
-from tests.media_test_utils import (
+from tests.media_test_helpers import (
     FrameDifference,
     FrameRegion,
     MediaSegment,

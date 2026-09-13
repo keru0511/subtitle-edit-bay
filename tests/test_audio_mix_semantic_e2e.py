@@ -11,7 +11,7 @@ from typing import Any
 
 from src.audio_mixer import reconcile_audio_mix
 from src.subtitle_project import create_project, load_project, save_project
-from tests.media_test_utils import (
+from tests.media_test_helpers import (
     AudioFixture,
     AudioLevelMeasurement,
     IntegratedLoudnessMeasurement,

@@ -25,6 +25,15 @@ from src.short_video_schema import (
 from src.short_video_timeline import build_short_video_timeline
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_short_video
+from tests.media_test_helpers import (
+    MediaSegment,
+    audio_streams,
+    create_lavfi_av_fixture,
+    extract_rgb_frame,
+    media_duration_seconds,
+    probe_media,
+    video_stream,
+)
 
 
 class ShortVideoTimelineTests(unittest.TestCase):
@@ -208,18 +217,12 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
     def test_project_renders_vertical_video_audio_and_remapped_subtitles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            video = root / "source.mkv"
-            subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-f", "lavfi", "-i", "color=c=black:size=320x180:rate=15:duration=3",
-                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3",
-                    "-shortest", "-c:v", "libx264", "-preset", "ultrafast",
-                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(video),
-                ],
-                check=True,
-                capture_output=True,
+            fixture = create_lavfi_av_fixture(
+                root / "source.mp4",
+                [MediaSegment("black", 3.0, "black", 440)],
+                fps=15,
             )
+            video = fixture.path
             segments = [
                 {"id": "first", "start": 0.2, "end": 1.0, "text": "FIRST SHORT", "speaker": "Oz", "words": []},
                 {"id": "second", "start": 1.5, "end": 2.3, "text": "SECOND SHORT", "speaker": "Oz", "words": []},
@@ -251,22 +254,12 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                 x264_crf=30,
             )
 
-            probe = subprocess.run(
-                [
-                    "ffprobe", "-v", "error", "-show_entries",
-                    "format=duration:stream=codec_type,width,height,pix_fmt",
-                    "-of", "json", str(output),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            media = json.loads(probe.stdout)
-            video_stream = next(item for item in media["streams"] if item["codec_type"] == "video")
-            self.assertEqual((video_stream["width"], video_stream["height"]), (180, 320))
-            self.assertEqual(video_stream["pix_fmt"], "yuv420p")
-            self.assertTrue(any(item["codec_type"] == "audio" for item in media["streams"]))
-            self.assertAlmostEqual(float(media["format"]["duration"]), 1.6, delta=0.25)
+            media = probe_media(output)
+            output_video = video_stream(media)
+            self.assertEqual((output_video["width"], output_video["height"]), (180, 320))
+            self.assertEqual(output_video["pix_fmt"], "yuv420p")
+            self.assertTrue(audio_streams(media))
+            self.assertAlmostEqual(media_duration_seconds(media), 1.6, delta=0.25)
 
             ass_path = Path(project["render_settings"].get("short_last_ass", root / "source.short.ass"))
             if not ass_path.is_file():
@@ -279,16 +272,9 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
             self.assertEqual(len(dialogue_lines), 2)
 
             for timestamp in (0.4, 1.2):
-                frame = subprocess.run(
-                    [
-                        "ffmpeg", "-v", "error", "-ss", str(timestamp), "-i", str(output),
-                        "-frames:v", "1", "-vf", "format=gray", "-f", "rawvideo", "-",
-                    ],
-                    check=True,
-                    capture_output=True,
-                ).stdout
-                self.assertTrue(frame)
-                self.assertGreater(max(frame), 100)
+                frame = extract_rgb_frame(output, timestamp, probe=media)
+                self.assertTrue(frame.pixels)
+                self.assertGreater(max(frame.pixels), 100)
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
@@ -297,18 +283,12 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
     def test_project_renders_direct_range_without_subtitles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            video = root / "source.mkv"
-            subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-f", "lavfi", "-i", "color=c=black:size=320x180:rate=15:duration=2",
-                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
-                    "-shortest", "-c:v", "libx264", "-preset", "ultrafast",
-                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(video),
-                ],
-                check=True,
-                capture_output=True,
+            fixture = create_lavfi_av_fixture(
+                root / "source.mp4",
+                [MediaSegment("black", 2.0, "black", 440)],
+                fps=15,
             )
+            video = fixture.path
             project = create_project(
                 video_path=video,
                 output_dir=root,
@@ -333,20 +313,11 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
             self.assertTrue(output.is_file())
             saved = load_project(project_path)
             self.assertNotIn("short_last_ass", saved["render_settings"])
-            probe = subprocess.run(
-                [
-                    "ffprobe", "-v", "error", "-show_entries",
-                    "stream=codec_type,width,height,pix_fmt", "-of", "json", str(output),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            streams = json.loads(probe.stdout)["streams"]
-            video_stream = next(item for item in streams if item["codec_type"] == "video")
-            self.assertEqual((video_stream["width"], video_stream["height"]), (180, 320))
-            self.assertEqual(video_stream["pix_fmt"], "yuv420p")
-            self.assertTrue(any(item["codec_type"] == "audio" for item in streams))
+            media = probe_media(output)
+            output_video = video_stream(media)
+            self.assertEqual((output_video["width"], output_video["height"]), (180, 320))
+            self.assertEqual(output_video["pix_fmt"], "yuv420p")
+            self.assertTrue(audio_streams(media))
 
     @unittest.skipUnless(
         os.name == "nt"

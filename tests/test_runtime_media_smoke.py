@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,14 +11,18 @@ from src.silence_cut import cut_media_ranges
 from src.subtitle_project import create_project, save_project
 from src.subtitle_workflow_transcription import _extract_video_audio_track
 from src.transcribe import probe_audio_streams
+from tests.media_test_helpers import (
+    MediaSegment,
+    assert_mp4_faststart,
+    create_lavfi_audio_fixture,
+    create_lavfi_av_fixture,
+    probe_media,
+    video_stream,
+)
 
 
 def _has_tool(name: str) -> bool:
     return shutil.which(name) is not None
-
-
-def _run(command: list[str]) -> None:
-    subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 class RuntimeMediaSmokeTests(unittest.TestCase):
@@ -30,91 +32,32 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
 
     def _make_video(self, path: Path, pix_fmt: str = "yuv420p", duration: float = 1.0) -> Path:
         self._require_ffmpeg()
-        _run([
-            "ffmpeg",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            f"testsrc=size=320x180:rate=15:duration={duration}",
-            "-f",
-            "lavfi",
-            "-i",
-            f"sine=frequency=440:sample_rate=48000:duration={duration}",
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            pix_fmt,
-            "-c:a",
-            "aac",
-            str(path),
-        ])
+        create_lavfi_av_fixture(
+            path,
+            [MediaSegment("testsrc", duration, "testsrc", 440)],
+            fps=15,
+            video_source="testsrc",
+            video_pix_fmt=pix_fmt,
+        )
         return path
 
     def _make_wav(self, path: Path, duration: float = 1.0) -> Path:
         self._require_ffmpeg()
-        _run([
-            "ffmpeg",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            f"sine=frequency=880:sample_rate=48000:duration={duration}",
-            "-ac",
-            "1",
-            "-ar",
-            "48000",
-            str(path),
-        ])
+        create_lavfi_audio_fixture(
+            path,
+            frequency_hz=880,
+            duration_seconds=duration,
+            sample_rate=48_000,
+            channel_layout="mono",
+        )
         return path
 
     def _probe_video_stream(self, path: Path) -> dict:
         self._require_ffmpeg()
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=codec_name,pix_fmt,profile,width,height",
-                "-of",
-                "json",
-                str(path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return json.loads(result.stdout)["streams"][0]
+        return video_stream(probe_media(path))
 
     def _assert_faststart_moov_before_mdat(self, output: Path) -> None:
-        data = output.read_bytes()
-        moov_offsets: list[int] = []
-        mdat_offsets: list[int] = []
-        index = 0
-        while index + 8 <= len(data):
-            size = int.from_bytes(data[index : index + 4], "big")
-            if size == 1:
-                if index + 16 > len(data):
-                    break
-                size = int.from_bytes(data[index + 8 : index + 16], "big")
-            elif size == 0 or size < 8:
-                break
-            box_type = data[index + 4 : index + 8].decode("ascii", errors="ignore")
-            if box_type == "moov":
-                moov_offsets.append(index)
-            elif box_type == "mdat":
-                mdat_offsets.append(index)
-            index += size
-
-        self.assertTrue(moov_offsets, "output missing moov atom")
-        self.assertTrue(mdat_offsets, "output missing mdat atom")
-        self.assertLess(moov_offsets[0], mdat_offsets[0])
+        assert_mp4_faststart(output)
 
     def test_long_cut_media_ranges_preserves_video_audio_and_resolution(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":

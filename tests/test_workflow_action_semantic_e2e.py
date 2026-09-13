@@ -9,7 +9,7 @@ import unittest
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import create_project, derive_ass_path, load_project, save_project
 from src.workflow_actions import prepare_render_request
-from tests.media_test_utils import (
+from tests.media_test_helpers import (
     FrameRegion, MediaSegment, compare_rgb_frames, create_lavfi_av_fixture,
     extract_rgb_frame, mean_rgb, measure_audio_level, media_duration_seconds,
     probe_media, require_media_tools, run_media_command, video_stream,

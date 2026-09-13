@@ -279,17 +279,15 @@ class CodexChatController:
             with self._lock:
                 self._provider = provider
             state = provider.connect(force=False)
+            if state.availability == "error":
+                self._handle_provider_error(state, provider)
+                return
             self._apply_provider_state(state)
         except Exception as error:
             with self._lock:
                 provider = self._provider
                 self._provider = None
-            if provider is not None:
-                try:
-                    provider.unsubscribe(self._on_provider_event)
-                    provider.close()
-                except Exception:
-                    pass
+            self._close_provider(provider)
             message = f"Codexへ接続できません: {self._safe_error(error)}"
             self._update(
                 connection_state="error",
@@ -470,6 +468,36 @@ class CodexChatController:
         with self._lock:
             return self._provider
 
+    def _close_provider(self, provider: AIProvider | None) -> None:
+        if provider is None:
+            return
+        try:
+            provider.unsubscribe(self._on_provider_event)
+        except Exception:
+            pass
+        try:
+            provider.close()
+        except Exception:
+            pass
+
+    def _handle_provider_error(
+        self,
+        state: AIProviderState,
+        provider: AIProvider | None = None,
+    ) -> None:
+        with self._lock:
+            current = self._provider
+            if provider is not None and current is not provider:
+                return
+            self._provider = None
+        self._close_provider(current)
+        self._update(
+            connection_state="error",
+            auth_state=state.auth_state,
+            chat_state="disconnected",
+            error=state.error,
+        )
+
     def _require_provider(self) -> AIProvider:
         provider = self._provider_or_none()
         if provider is None or self.snapshot.connection_state != "ready":
@@ -483,7 +511,11 @@ class CodexChatController:
         if event.kind == "state_changed":
             provider = self._provider_or_none()
             if provider is not None:
-                self._apply_provider_state(provider.state)
+                state = provider.state
+                if state.availability == "error":
+                    self._handle_provider_error(state, provider)
+                else:
+                    self._apply_provider_state(state)
             return
         if event.kind == "disconnected":
             self._on_disconnect(event.error)
@@ -552,6 +584,9 @@ class CodexChatController:
         *,
         reset_chat: bool = False,
     ) -> None:
+        if state.availability == "error":
+            self._handle_provider_error(state)
+            return
         connection_state = "ready" if state.availability == "available" else state.availability
         models = tuple(model.as_mapping() for model in state.models)
         model_error = state.error if state.auth_state == "authenticated" else ""

@@ -220,7 +220,7 @@ jobs:
 
       - name: Upload shard reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: gui-performance-shard-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.repetition }}
           path: artifacts/gui-performance-*.json
@@ -297,7 +297,7 @@ jobs:
 
       - name: Upload integrated reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: gui-performance-integrated-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/combined/gui-performance-*.json

@@ -468,7 +468,7 @@ jobs:
             --delegated-workflow "$DELEGATED_WORKFLOW" \
             --output ci-validation-identity.json
       - name: Upload immutable CI validation identity
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ci-validation-identity-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: ci-validation-identity.json

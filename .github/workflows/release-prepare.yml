@@ -244,7 +244,7 @@ jobs:
           Formal release candidates remain blocked; do not publish unsigned artifacts."
       - name: Upload prepared installer
         id: upload
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
           path: |

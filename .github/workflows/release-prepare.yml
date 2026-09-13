@@ -36,14 +36,14 @@ jobs:
       app_version: ${{ steps.contract.outputs.app_version }}
     steps:
       - name: Check out preparation tools
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
           path: release-tools
       - name: Check out exact source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 1
@@ -78,7 +78,7 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - name: Check out exact source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 1
@@ -131,14 +131,14 @@ jobs:
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     steps:
       - name: Check out preparation tools
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
           path: release-tools
       - name: Check out exact source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 1
@@ -272,7 +272,7 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - name: Check out preparation tools
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
@@ -319,7 +319,7 @@ jobs:
       artifact_digest: ${{ needs.build.outputs.artifact_digest }}
     steps:
       - name: Check out preparation tools
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1

@@ -29,6 +29,11 @@ not an allowed fallback. To build the native launcher explicitly, run:
 pwsh -File scripts/build_launcher.ps1 -Version 1.0.0
 ```
 
+正式配布用の既存product iconを持つbuildでは、iconを省略せず
+`-IconPath <approved-product-icon.ico> -RequireProductIcon`を指定します。
+リポジトリ内に承認済みiconがない状態で独自iconを生成・代用することは
+ありません。
+
 The launcher never uses the current working directory to find the application,
 so shortcuts and file associations remain valid when started from another
 directory. It does not elevate privileges.

@@ -1,10 +1,13 @@
 param(
     [Parameter(Mandatory = $true)][string]$Path,
     [string]$ExpectedVersion,
+    [string]$ExpectedFileVersion,
+    [string]$ExpectedFileDescription,
     [string]$ExpectedProductName,
     [string]$ExpectedPublisher,
     [string]$ExpectedSignerSubject,
     [switch]$CheckDependencies,
+    [switch]$RequireProductIcon,
     [switch]$RequireSignature,
     [switch]$RequireTimestamp
 )
@@ -20,6 +23,19 @@ $version = $binary.VersionInfo
 if ($ExpectedVersion -and $version.ProductVersion.Trim() -ne $ExpectedVersion) {
     throw "ProductVersion mismatch: expected $ExpectedVersion, got $($version.ProductVersion)"
 }
+if ($ExpectedFileVersion) {
+    $actualFileVersion = $version.FileVersion.Trim()
+    $expectedFileVersions = @(
+        $ExpectedFileVersion.Trim(),
+        "$($ExpectedFileVersion.Trim()).0"
+    )
+    if ($expectedFileVersions -notcontains $actualFileVersion) {
+        throw "FileVersion mismatch: expected $ExpectedFileVersion (or its four-part PE form), got $($version.FileVersion)"
+    }
+}
+if ($ExpectedFileDescription -and $version.FileDescription.Trim() -ne $ExpectedFileDescription) {
+    throw "FileDescription mismatch: expected $ExpectedFileDescription, got $($version.FileDescription)"
+}
 if ($ExpectedProductName -and $version.ProductName.Trim() -ne $ExpectedProductName) {
     throw "ProductName mismatch: expected $ExpectedProductName, got $($version.ProductName)"
 }
@@ -30,8 +46,11 @@ if ($ExpectedPublisher -and $version.CompanyName.Trim() -ne $ExpectedPublisher) 
 if ($CheckDependencies) {
     $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
     if (-not $dumpbin) {
-        throw "dumpbin.exe is required to verify launcher dependencies."
+        throw "dumpbin.exe is required to verify launcher PE headers and dependencies."
     }
+}
+
+if ($CheckDependencies) {
     $headers = (& $dumpbin.Source /HEADERS $binary.FullName | Out-String)
     if ($LASTEXITCODE -ne 0) {
         throw "dumpbin PE header inspection failed with exit code $LASTEXITCODE."
@@ -59,6 +78,20 @@ if ($CheckDependencies) {
         if ($imports.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "Launcher has a forbidden external C/C++ runtime dependency: $name"
         }
+    }
+}
+
+if ($RequireProductIcon) {
+    try {
+        Add-Type -AssemblyName System.Drawing
+        $productIcon = [Drawing.Icon]::ExtractAssociatedIcon($binary.FullName)
+        if (-not $productIcon) {
+            throw "ExtractAssociatedIcon returned no icon."
+        }
+        $productIcon.Dispose()
+    }
+    catch {
+        throw "Launcher does not expose a product icon resource: $($_.Exception.Message)"
     }
 }
 

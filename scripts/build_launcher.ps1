@@ -4,12 +4,14 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')]
     [string]$Version,
     [string]$Publisher = "Subtitle Edit Bay",
-    [string]$IconPath
+    [string]$IconPath,
+    [switch]$RequireProductIcon
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $sourcePath = Join-Path $projectRoot "launcher\SubtitleEditBayLauncher.c"
+$resourceTemplatePath = Join-Path $projectRoot "launcher\SubtitleEditBayLauncher.rc"
 $resolvedOutputPath = if ([IO.Path]::IsPathRooted($OutputPath)) {
     [IO.Path]::GetFullPath($OutputPath)
 }
@@ -19,6 +21,22 @@ else {
 
 if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
     throw "Launcher source is missing: $sourcePath"
+}
+if (-not (Test-Path -LiteralPath $resourceTemplatePath -PathType Leaf)) {
+    throw "Launcher resource definition is missing: $resourceTemplatePath"
+}
+
+if ($RequireProductIcon -and -not $IconPath) {
+    throw "A product icon path is required when -RequireProductIcon is specified."
+}
+if ($IconPath -and -not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
+    throw "Launcher product icon is missing: $IconPath"
+}
+$resolvedIconPath = if ($IconPath) {
+    (Resolve-Path -LiteralPath $IconPath).Path
+}
+else {
+    $null
 }
 
 function Initialize-MsvcEnvironment {
@@ -70,37 +88,24 @@ try {
     $versionParts = $versionCore.Split('.')
     $versionQuad = "$($versionParts[0]),$($versionParts[1]),$($versionParts[2]),0"
     $resourcePath = Join-Path $objectDirectory "SubtitleEditBayLauncher.rc"
-    $resourceLines = @(
-        "#include <windows.h>",
-        "1 VERSIONINFO",
-        "FILEVERSION $versionQuad",
-        "PRODUCTVERSION $versionQuad",
-        "FILEFLAGSMASK 0x3fL",
-        "FILEOS 0x40004L",
-        "FILETYPE 0x1L",
-        "BEGIN",
-        '  BLOCK "StringFileInfo"',
-        "  BEGIN",
-        '    BLOCK "041104b0"',
-        "    BEGIN",
-        '      VALUE "CompanyName", "' + $Publisher.Replace('"', '\"') + '\0"',
-        '      VALUE "FileDescription", "Subtitle Edit Bay launcher\0"',
-        '      VALUE "FileVersion", "' + $versionCore + '\0"',
-        '      VALUE "ProductName", "Subtitle Edit Bay\0"',
-        '      VALUE "ProductVersion", "' + $versionCore + '\0"',
-        "    END",
-        "  END",
-        '  BLOCK "VarFileInfo"',
-        "  BEGIN",
-        '    VALUE "Translation", 0x411, 1200',
-        "  END",
-        "END"
-    )
-    if ($IconPath) {
-        $resolvedIcon = (Resolve-Path -LiteralPath $IconPath).Path.Replace('\', '\\')
-        $resourceLines = @('101 ICON "' + $resolvedIcon + '"') + $resourceLines
+    function ConvertTo-RcString {
+        param([Parameter(Mandatory = $true)][string]$Value)
+
+        return $Value.Replace('\', '\\').Replace('"', '\"')
     }
-    [IO.File]::WriteAllLines($resourcePath, $resourceLines, [Text.UTF8Encoding]::new($false))
+
+    $iconResource = ""
+    if ($resolvedIconPath) {
+        $resolvedIcon = $resolvedIconPath.Replace('\', '\\')
+        $iconResource = '101 ICON "' + $resolvedIcon + '"'
+    }
+
+    $resourceText = [IO.File]::ReadAllText($resourceTemplatePath, [Text.UTF8Encoding]::new($false))
+    $resourceText = $resourceText.Replace('@ICON_RESOURCE@', $iconResource)
+    $resourceText = $resourceText.Replace('@VERSION_QUAD@', $versionQuad)
+    $resourceText = $resourceText.Replace('@VERSION_CORE@', (ConvertTo-RcString $versionCore))
+    $resourceText = $resourceText.Replace('@PUBLISHER@', (ConvertTo-RcString $Publisher))
+    [IO.File]::WriteAllText($resourcePath, $resourceText, [Text.UTF8Encoding]::new($false))
     & $resourceCompiler.Source /nologo /fo SubtitleEditBayLauncher.res $resourcePath
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher resource compilation failed with exit code $LASTEXITCODE."
@@ -120,12 +125,19 @@ if (-not (Test-Path -LiteralPath $resolvedOutputPath -PathType Leaf)) {
     throw "Launcher compilation completed without producing $resolvedOutputPath"
 }
 
-& "$PSScriptRoot/verify_windows_binary.ps1" `
-    -Path $resolvedOutputPath `
-    -ExpectedVersion $versionCore `
-    -ExpectedProductName "Subtitle Edit Bay" `
-    -ExpectedPublisher $Publisher `
-    -CheckDependencies
+$verificationArguments = @(
+    "-Path", $resolvedOutputPath,
+    "-ExpectedVersion", $versionCore,
+    "-ExpectedFileVersion", $versionCore,
+    "-ExpectedFileDescription", "Subtitle Edit Bay launcher",
+    "-ExpectedProductName", "Subtitle Edit Bay",
+    "-ExpectedPublisher", $Publisher,
+    "-CheckDependencies"
+)
+if ($IconPath -or $RequireProductIcon) {
+    $verificationArguments += "-RequireProductIcon"
+}
+& "$PSScriptRoot/verify_windows_binary.ps1" @verificationArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Launcher binary contract verification failed with exit code $LASTEXITCODE."
 }

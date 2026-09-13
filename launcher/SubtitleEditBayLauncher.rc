@@ -1,0 +1,33 @@
+/*
+ * This file is the single resource definition for the native launcher.
+ * scripts/build_launcher.ps1 replaces the @...@ tokens in a temporary copy
+ * before invoking the Windows resource compiler.  Keeping the definition in
+ * source makes the resource boundary reviewable without accepting a source
+ * string as proof that the PE contains the resource.
+ */
+
+@ICON_RESOURCE@
+
+1 VERSIONINFO
+FILEVERSION @VERSION_QUAD@
+PRODUCTVERSION @VERSION_QUAD@
+FILEFLAGSMASK 0x3fL
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041104b0"
+    BEGIN
+      VALUE "CompanyName", "@PUBLISHER@\0"
+      VALUE "FileDescription", "Subtitle Edit Bay launcher\0"
+      VALUE "FileVersion", "@VERSION_CORE@\0"
+      VALUE "ProductName", "Subtitle Edit Bay\0"
+      VALUE "ProductVersion", "@VERSION_CORE@\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x411, 1200
+  END
+END

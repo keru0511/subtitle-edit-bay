@@ -187,8 +187,31 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Launcher build did not produce the required executable", build)
         self.assertIn('"SubtitleEditBayLauncher.exe"', manifest_build)
 
+    def test_launcher_resource_contract_is_bound_and_verified_from_the_pe(self) -> None:
+        launcher = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
+        resource = (ROOT / "launcher" / "SubtitleEditBayLauncher.rc").read_text(encoding="utf-8-sig")
+        verifier = (ROOT / "scripts" / "verify_windows_binary.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertIn("SubtitleEditBayLauncher.rc", launcher)
+        self.assertIn("rc.exe", launcher)
+        self.assertIn("@VERSION_QUAD@", resource)
+        self.assertIn('VALUE "FileVersion"', resource)
+        self.assertIn('VALUE "ProductVersion"', resource)
+        self.assertIn('VALUE "FileDescription"', resource)
+        self.assertIn('VALUE "CompanyName"', resource)
+        self.assertIn('VALUE "ProductName"', resource)
+        self.assertIn("@ICON_RESOURCE@", resource)
+        self.assertIn("-RequireProductIcon", launcher)
+        self.assertIn("-ExpectedFileVersion", launcher)
+        self.assertIn("-ExpectedFileDescription", launcher)
+        self.assertIn("ExtractAssociatedIcon", verifier)
+        self.assertNotIn("/RESOURCES", verifier)
+        self.assertIn("ExpectedFileVersion", verifier)
+        self.assertIn("ExpectedFileDescription", verifier)
+
     def test_launcher_is_self_contained_versioned_and_signature_ready(self) -> None:
         launcher = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")
+        resource = (ROOT / "launcher" / "SubtitleEditBayLauncher.rc").read_text(encoding="utf-8-sig")
         verifier = (ROOT / "scripts" / "verify_windows_binary.ps1").read_text(encoding="utf-8-sig")
         signer = (ROOT / "scripts" / "sign_windows_artifacts.ps1").read_text(encoding="utf-8-sig")
         updater = (ROOT / "scripts" / "apply_installer_update.ps1").read_text(encoding="utf-8-sig")
@@ -196,8 +219,8 @@ class ReleaseDistributionTests(unittest.TestCase):
 
         self.assertIn("/MT", launcher)
         self.assertIn("user32.lib", launcher)
-        self.assertIn("VERSIONINFO", launcher)
-        self.assertIn('VALUE "ProductName"', launcher)
+        self.assertIn("VERSIONINFO", resource)
+        self.assertIn('VALUE "ProductName"', resource)
         self.assertIn("verify_windows_binary.ps1", launcher)
         self.assertIn("dumpbin.exe", verifier)
         self.assertIn("/HEADERS", verifier)

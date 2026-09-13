@@ -25,6 +25,8 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "browseProjectFile()",
             "createEmptyProject()",
             "transcriptionProjectExists()",
+            "saveSettings(QVariantMap)",
+            "setTranscriptionContext(QVariantMap)",
         ):
             with self.subTest(method=signature):
                 self.assertGreaterEqual(meta_object.indexOfMethod(signature), 0)
@@ -34,6 +36,8 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "editorModeCapabilities",
             "editorPlayhead",
             "actionCapabilities",
+            "settings",
+            "transcriptionContext",
         ):
             with self.subTest(property=name):
                 self.assertGreaterEqual(meta_object.indexOfProperty(name), 0)

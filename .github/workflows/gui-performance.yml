@@ -120,7 +120,7 @@ jobs:
 
       - name: Restore Windows FFmpeg cache
         id: ffmpeg-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: C:\ProgramData\chocolatey\lib\ffmpeg
           key: windows-ffmpeg-9.0.1-v1
@@ -147,7 +147,7 @@ jobs:
 
       - name: Save Windows FFmpeg cache
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: C:\ProgramData\chocolatey\lib\ffmpeg
           key: windows-ffmpeg-9.0.1-v1

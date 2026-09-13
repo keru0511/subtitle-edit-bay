@@ -12,6 +12,7 @@ Subtitle Edit Bayフォルダーを指定すると、安全に引き継げるユ
 | OSのPython 3.10、FFmpeg/ffprobe | 対応版を検出・検証して再利用 |
 | `.gui/runtime_config.json` | schemaと現在のCUDA/NVENC capabilityを検証して移行 |
 | `assets/speaker_colors.json` | JSON/schemaを検証して移行 |
+| dictionary / preset / `.gui/settings.json` | JSON/schemaを検証したuser設定だけを移行 |
 | project、素材、出力 | コピー・移動せず、旧workspaceへの参照だけを登録 |
 | secret/token類 | 移行しない。secretらしいkeyを含む設定はfail closed |
 
@@ -27,8 +28,10 @@ capabilityに合わせて補正した設定、旧workspace内の参照中デー�
 保留要求はInstallerがUTF-8 JSONとして保存するため、日本語を含む旧workspaceパスも再試行時に
 同じ値で読み込まれます。
 
-設定・話者色・workspace一覧・監査記録は1つの移行transactionとして反映します。途中の保存に
-失敗した場合は、上書き前の内容を含めて開始前の状態へ戻します。複数の旧workspaceを移行した場合、
+runtime config・話者色・dictionary・preset・user設定は、dry-runで差分とskip理由を確認してから
+1つの移行transactionとして反映します。既存Installer側データの上書きには、`overwrite`と明示的な
+`confirm`の両方が必要です。途中の保存に失敗した場合は、上書き前の内容を含めて開始前の状態へ戻します。
+複数の旧workspaceを移行した場合、
 登録済みworkspaceを維持して追記し、同じworkspaceの再実行では重複を作りません。
 移行元とインストール先はjunctionを含むリンク先の最終パスで比較し、同じ実体ならファイル配置や
 runtime構築を始める前に拒否します。
@@ -37,6 +40,9 @@ runtime構築を始める前に拒否します。
 
 - CUDAを実際に利用できない場合、`device=cuda`は`cpu/int8`へ補正します。
 - NVENC encode probeが失敗した場合、`h264_nvenc`は`libx264`へ補正します。
+- `build_settings_migration_plan()`へcapability probe結果を渡さない場合も安全側に倒し、
+  `cuda=False, nvenc=False`として上記の補正を適用します。未確認のGPU capabilityを
+  移行処理が推測して有効化することはありません。
 - 現行schemaに存在しない古いkeyは取り込みません。
 - 値の型が現行schemaと異なる場合、移行全体を失敗させます。
 - schemaはアプリの設定loaderと共有し、既定値JSONの掲載有無や`null`値から型を推測しません。
@@ -47,14 +53,14 @@ runtime構築を始める前に拒否します。
 
 | cache | 共有/移行 |
 | --- | --- |
-| pip download cache | pipの標準user cacheを共有可能。`.venv`は共有しない |
-| PyTorch wheel cache | installer用runtimeの解決結果が同じ場合だけ標準cacheから再利用 |
-| Hugging Face / WhisperX model cache | library標準のuser cacheを共有可能 |
+| pip download cache | 旧workspace rootからは検出・移行せず、外部user cache capabilityとして明示 |
+| PyTorch wheel cache | 旧workspace rootからは検出・移行せず、runtime構築と共有しない |
+| Hugging Face / WhisperX model cache | 旧workspace rootからは検出・移行せず、外部user cache capabilityとして明示 |
 | audio preview cache | project/runtime依存のためコピーしない |
 | transcript cache | project fingerprint依存のためコピーしない |
 
-環境変数でcache rootを変更していた旧環境について、移行処理はその値をInstallerへコピーしません。
-cacheを再利用できても、実行runtimeは必ずInstaller用`.venv`から起動します。
+環境変数でcache rootを変更していた旧環境についても、その値やcache内容をInstallerへコピーしません。
+cacheを再利用できる場合でも、このsliceは共有を行わず、実行runtimeは必ずInstaller用`.venv`から起動します。
 
 ## cleanup
 
@@ -79,6 +85,14 @@ cacheを再利用できても、実行runtimeは必ずInstaller用`.venv`から�
 
 CUDA/NVENCを検証済みの場合だけ、それぞれ`--cuda`、`--nvenc`を付けます。通常は
 `scripts/setup.ps1 -MigrationSource ...`を使い、setupがprobe結果を渡す経路を推奨します。
+
+コードから確認する場合は、`src.legacy_migration.build_settings_migration_plan()`で
+inventoryを入力にしたdry-runを作り、`apply_settings_migration()`へ渡します。plan/resultは
+値を含めず、移行対象のkey、調整内容、skip理由だけをJSON化します。旧`.venv`、project、
+素材、出力、cache候補はこのAPIの書き込み対象になりません。
+`capabilities`は信頼できるCUDA/NVENC probe結果を渡す場合だけ指定し、省略時は
+`RuntimeCapabilities(cuda=False, nvenc=False)`として保守的に補正します。書き込み中に失敗した
+場合は、通常の一時ファイルとrollback用一時ファイルを残さず、開始時のdestination treeへ戻します。
 
 ## 関連Issueと段階導入
 

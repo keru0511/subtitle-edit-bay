@@ -87,6 +87,8 @@ pip/PyTorch/Hugging Faceのuser cacheは旧rootの外にあるため、inventory
 
 cleanupを実行する場合は、`migration_completed=True`、plan作成時または
 `apply_cache_cleanup(plan, confirm=True)`での明示確認、plan内candidate IDの選択が必要です。
+selectionが空の場合は、確認済みのplanであっても安全なno-opになり、候補を自動的に全選択しません。
+削除する場合は、`selected=("legacy:.venv",)`のようにcandidate IDを1件以上明示してください。
 source rootそのもの、project/media/output、symlink/junction、root外や`..`を含むpathは拒否します。
 全対象の安全性を先に検査してから削除するため、危険なpathが混ざった場合に先行対象だけを消すことも
 ありません。cleanupは移行transactionのrollback対象ではないpost-success操作なので、Installerの

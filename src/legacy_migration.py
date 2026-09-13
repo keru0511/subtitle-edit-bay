@@ -2091,11 +2091,35 @@ def apply_cache_cleanup(
         raise MigrationError("explicit confirmation is required for cache cleanup")
     requested = plan.selected if selected is None else tuple(str(value) for value in selected)
     requested_ids = {value.casefold() for value in requested}
-    use_all_eligible = not requested_ids and selected is None and not plan.selected
+    # An empty selection is intentionally a no-op.  Cleanup is destructive and
+    # must never widen an omitted selection to every plan-approved candidate.
+    # Callers must name at least one candidate ID explicitly, either when the
+    # plan is built or when it is applied.
+    if not requested_ids:
+        skipped = tuple(
+            CacheCleanupSkip(
+                candidate_id=entry.candidate_id,
+                path=entry.path,
+                reason=CACHE_REASON_NOT_SELECTED,
+                diagnostic="an explicit candidate ID is required for cleanup",
+            )
+            for entry in plan.entries
+            if entry.cleanup_allowed
+        )
+        timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        return CacheCleanupResult(
+            schema_version=CACHE_CLEANUP_SCHEMA_VERSION,
+            source=plan.source,
+            removed=(),
+            skipped=skipped,
+            reclaimed_bytes=0,
+            diagnostics=plan.diagnostics + ("cleanup skipped: explicit candidate selection is required",),
+            completed_at=timestamp,
+        )
     candidates = {
         entry.candidate_id.casefold(): entry
         for entry in plan.entries
-        if (use_all_eligible or entry.candidate_id.casefold() in requested_ids)
+        if entry.candidate_id.casefold() in requested_ids
     }
     skipped: list[CacheCleanupSkip] = []
     prepared: list[tuple[CacheCleanupEntry, tuple[tuple[Path, bool, int], ...]]] = []

@@ -22,6 +22,7 @@ from src.legacy_migration import (
     CACHE_KIND_TRANSCRIPT_METADATA,
     CACHE_REASON_MIGRATION_INCOMPLETE,
     CACHE_REASON_NOT_DISCOVERABLE,
+    CACHE_REASON_NOT_SELECTED,
     CACHE_REASON_PROJECT_PRESERVED,
     CACHE_STATE_PRESERVE,
     CACHE_STATE_REBUILD,
@@ -262,6 +263,28 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
                 set(result.removed),
                 {str(legacy / ".venv"), str(legacy / "src"), str(legacy / ".cache" / "audio-preview")},
             )
+
+    def test_cache_cleanup_without_selection_is_a_safe_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            legacy = self._fixture(Path(temporary))
+            (legacy / "src").mkdir()
+            (legacy / "src" / "launcher.py").write_bytes(b"source")
+
+            inventory = build_legacy_inventory(legacy)
+            plan = build_cache_cleanup_plan(
+                inventory,
+                options=CacheCleanupOptions(migration_completed=True, confirm=True),
+            )
+            result = apply_cache_cleanup(plan)
+
+            self.assertEqual(result.removed, ())
+            self.assertEqual(result.reclaimed_bytes, 0)
+            self.assertTrue((legacy / ".venv").exists())
+            self.assertTrue((legacy / "src").exists())
+            self.assertTrue((legacy / "cache").exists())
+            skipped_ids = {item.candidate_id for item in result.skipped}
+            self.assertTrue({"legacy:.venv", "legacy:src", "legacy:cache"} <= skipped_ids)
+            self.assertTrue(all(item.reason == CACHE_REASON_NOT_SELECTED for item in result.skipped))
 
     def test_cache_cleanup_rejects_path_escape_before_deleting_anything(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

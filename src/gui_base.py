@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -15,22 +14,17 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from .color_config import normalize_rgb_color, save_speaker_color
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
     resolve_alignment,
 )
 from .gui_state import (
-    AUDIO_EXTENSIONS,
-    VIDEO_EXTENSIONS,
     SourceSelection,
     build_gui_command,
-    build_speaker_entries_from_files,
 )
 from .gui_settings_controller import SettingsController
+from .gui_source_selection_controller import SourceSelectionController
 from .runtime_dependencies import check_runtime_dependencies
-from .media_probe import probe_media_stream_types
-from .transcribe import probe_audio_streams
 from .transcription_web_dictionary import (
     build_web_dictionary_candidate_metadata,
     fetch_web_dictionary_source,
@@ -76,11 +70,12 @@ class LegacyEditBayBackend(QApplication):
         self.workspace_root = (workspace_root or Path(__file__).resolve().parent.parent).resolve()
         self._application_info = resolve_application_info(self.workspace_root)
         self._settings_controller = SettingsController(self.workspace_root)
-        self.color_config_path = self.workspace_root / "assets" / "speaker_colors.json"
-        self._source_selection = SourceSelection()
+        self._color_config_path = self.workspace_root / "assets" / "speaker_colors.json"
+        self._source_selection_controller = SourceSelectionController(
+            self.workspace_root,
+            color_config_path=self._color_config_path,
+        )
         self._dependencies = check_runtime_dependencies(probe_nvenc=True)
-        self._speakers: list[dict[str, str]] = []
-        self._audio_tracks: list[dict[str, str]] = self._default_audio_tracks()
         self._alignment_result = self._empty_alignment_result()
         self._alignment_busy = False
         self._running = False
@@ -107,6 +102,41 @@ class LegacyEditBayBackend(QApplication):
         self.elapsed_timer.setInterval(1000)
         self.elapsed_timer.timeout.connect(self._tick_elapsed)
         self._update_source_status()
+
+    @property
+    def color_config_path(self) -> Path:
+        return self._color_config_path
+
+    @color_config_path.setter
+    def color_config_path(self, value: str | Path) -> None:
+        self._color_config_path = Path(value)
+        controller = getattr(self, "_source_selection_controller", None)
+        if controller is not None:
+            controller.color_config_path = self._color_config_path
+
+    @property
+    def _source_selection(self) -> SourceSelection:
+        return self._source_selection_controller.source_selection
+
+    @_source_selection.setter
+    def _source_selection(self, value: SourceSelection) -> None:
+        self._source_selection_controller.set_selection(value)
+
+    @property
+    def _speakers(self) -> list[dict[str, str]]:
+        return self._source_selection_controller.mutable_speakers
+
+    @_speakers.setter
+    def _speakers(self, value: list[dict[str, str]]) -> None:
+        self._source_selection_controller.set_speakers(value)
+
+    @property
+    def _audio_tracks(self) -> list[dict[str, str]]:
+        return self._source_selection_controller.audio_tracks
+
+    @_audio_tracks.setter
+    def _audio_tracks(self, value: list[dict[str, str]]) -> None:
+        self._source_selection_controller.set_audio_tracks(value)
 
     @property
     def gui_config_path(self) -> Path:
@@ -150,7 +180,7 @@ class LegacyEditBayBackend(QApplication):
 
     @staticmethod
     def _default_audio_tracks() -> list[dict[str, str]]:
-        return [{"selector": "", "label": "自動検出（推奨）"}]
+        return SourceSelectionController.default_audio_tracks()
 
     @staticmethod
     def _empty_alignment_result(status: str = "未解析") -> dict[str, Any]:
@@ -180,7 +210,7 @@ class LegacyEditBayBackend(QApplication):
 
     @Property("QVariantMap", notify=sourceSelectionChanged)
     def sourceSelection(self) -> dict[str, Any]:
-        return self._source_selection.to_dict()
+        return self._source_selection_controller.source_selection.to_dict()
 
     @Property("QVariantMap", notify=dependenciesChanged)
     def dependencyStatus(self) -> dict[str, Any]:
@@ -188,11 +218,11 @@ class LegacyEditBayBackend(QApplication):
 
     @Property("QVariantList", notify=speakersChanged)
     def speakers(self) -> list[dict[str, str]]:
-        return list(self._speakers)
+        return self._source_selection_controller.speakers
 
     @Property("QVariantList", notify=audioTracksChanged)
     def audioTracks(self) -> list[dict[str, str]]:
-        return list(self._audio_tracks)
+        return self._source_selection_controller.audio_tracks
 
     @Property("QVariantMap", notify=alignmentChanged)
     def alignmentResult(self) -> dict[str, Any]:
@@ -246,27 +276,33 @@ class LegacyEditBayBackend(QApplication):
 
     @Property(str, notify=sourceSelectionChanged)
     def previewUrl(self) -> str:
-        if not self._source_selection.video:
+        video = self._source_selection_controller.source_selection.video
+        if not video:
             return ""
-        return QUrl.fromLocalFile(self._source_selection.video).toString()
+        return QUrl.fromLocalFile(video).toString()
 
     def _set_source_selection(self, selection: SourceSelection) -> None:
-        previous = self._source_selection
-        video_changed = previous.video != selection.video
-        media_changed = video_changed or previous.audio_files != selection.audio_files
-        self._source_selection = selection
-        if media_changed:
-            self._speakers = build_speaker_entries_from_files(selection.audio_files, self.color_config_path)
+        update = self._source_selection_controller.set_selection(selection)
+        self._publish_source_selection_update(update)
 
-        if video_changed:
-            self._probe_audio_tracks(selection.video)
-        if media_changed:
+    def _publish_source_selection_update(self, update: Any) -> None:
+        """Publish a controller update through the legacy Qt contract."""
+
+        if not update.accepted or update.current is None:
+            return
+        if update.video_changed:
+            self._probe_audio_tracks(update.current.video)
+        if update.media_changed:
             self._alignment_result = self._empty_alignment_result()
             self.alignmentChanged.emit()
 
         self.sourceSelectionChanged.emit()
         self.speakersChanged.emit()
         self._update_source_status()
+        self._source_selection_updated(update)
+
+    def _source_selection_updated(self, update: Any) -> None:
+        """Hook for project-aware backends after source state is published."""
 
     def _update_source_status(self) -> None:
         if not self._dependencies.ready:
@@ -280,20 +316,12 @@ class LegacyEditBayBackend(QApplication):
             self._set_status(f"入力準備完了: {len(self._speakers)}人の話者音声", "READY")
 
     def _probe_audio_tracks(self, video_path: str) -> None:
-        tracks = self._default_audio_tracks()
-        if self._dependencies.ffprobe and video_path and Path(video_path).is_file():
-            try:
-                for audio_index, stream in enumerate(probe_audio_streams(video_path)):
-                    selector = f"0:a:{audio_index}"
-                    tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
-                    title = str(tags.get("title", "")).strip()
-                    codec = str(stream.get("codec_name", "audio"))
-                    channels = stream.get("channels", "?")
-                    detail = title or f"{codec} / {channels}ch"
-                    tracks.append({"selector": selector, "label": f"{selector}  {detail}"})
-            except (OSError, subprocess.SubprocessError, ValueError) as error:
-                self._set_status(f"動画音声トラックを取得できません: {error}", "CHECK")
-        self._audio_tracks = tracks
+        _tracks, error_message = self._source_selection_controller.probe_audio_tracks(
+            video_path,
+            ffprobe_available=self._dependencies.ffprobe,
+        )
+        if error_message:
+            self._set_status(error_message, "CHECK")
         self.audioTracksChanged.emit()
 
     def _is_supported_media_file(
@@ -302,17 +330,12 @@ class LegacyEditBayBackend(QApplication):
         required_streams: set[str],
         label: str,
     ) -> tuple[bool, str]:
-        if source.suffix.lower() not in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS:
-            return False, f"{label} の拡張子が対応していません"
-        if not self._dependencies.ffprobe:
-            return True, ""
-        try:
-            detected = probe_media_stream_types(str(source))
-        except (OSError, subprocess.CalledProcessError, ValueError) as error:
-            return False, f"{label} の検証に失敗しました: {error}"
-        if not required_streams.intersection(detected):
-            return False, f"{label} は指定された種類のメディアではありません"
-        return True, ""
+        return self._source_selection_controller.validate_media_file(
+            source,
+            required_streams,
+            label,
+            ffprobe_available=self._dependencies.ffprobe,
+        )
 
     @Slot()
     def refreshDependencies(self) -> None:
@@ -343,14 +366,15 @@ class LegacyEditBayBackend(QApplication):
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
         video = self._local_path(path)
-        if not video.is_file():
-            self._set_status("対応する動画ファイルを指定してください", "CHECK")
+        update = self._source_selection_controller.set_video_file(
+            video,
+            ffprobe_available=self._dependencies.ffprobe,
+            validator=self._is_supported_media_file,
+        )
+        if not update.accepted:
+            self._set_status(update.reason, "CHECK")
             return
-        valid, reason = self._is_supported_media_file(video, {"video"}, "動画ファイル")
-        if not valid:
-            self._set_status(reason or "対応する動画ファイルを指定してください", "CHECK")
-            return
-        self._set_source_selection(replace(self._source_selection, video=str(video.resolve())))
+        self._publish_source_selection_update(update)
 
     @Slot()
     def browseAudioFiles(self) -> None:
@@ -375,60 +399,39 @@ class LegacyEditBayBackend(QApplication):
         if self._running:
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
-        valid_files: list[str] = []
-        for value in paths:
-            audio = self._local_path(str(value))
-            if audio.is_file() and self._is_supported_media_file(audio, {"audio"}, "音声ファイル")[0]:
-                valid_files.append(str(audio.resolve()))
-        if not valid_files:
-            self._set_status("対応する話者音声ファイルを指定してください", "CHECK")
-            return
-
-        existing = list(self._source_selection.audio_files) if append else []
-        combined = sorted(
-            dict.fromkeys([*existing, *valid_files]),
-            key=lambda path: (Path(path).name.casefold(), path.casefold()),
+        update = self._source_selection_controller.set_audio_files(
+            (self._local_path(str(value)) for value in paths),
+            append,
+            ffprobe_available=self._dependencies.ffprobe,
+            validator=self._is_supported_media_file,
         )
-        self._set_source_selection(replace(self._source_selection, audio_files=tuple(combined)))
+        if not update.accepted:
+            self._set_status(update.reason, "CHECK")
+            return
+        self._publish_source_selection_update(update)
 
     @Slot("QVariantList")
     def importDroppedSourceFiles(self, values: list[Any]) -> None:
         if self._running:
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
-
-        video_files: list[str] = []
-        audio_files: list[str] = []
-        ignored_count = 0
-        for value in values:
-            source = self._local_path(value)
-            if not source.is_file():
-                ignored_count += 1
-                continue
-            resolved = str(source.resolve())
-            if self._is_supported_media_file(source, {"video"}, "動画ファイル")[0]:
-                video_files.append(resolved)
-            elif self._is_supported_media_file(source, {"audio"}, "音声ファイル")[0]:
-                audio_files.append(resolved)
-            else:
-                ignored_count += 1
-
-        if not video_files and not audio_files:
-            self._set_status("対応する動画または話者音声をドロップしてください", "CHECK")
+        result = self._source_selection_controller.import_dropped_source_files(
+            (self._local_path(value) for value in values),
+            ffprobe_available=self._dependencies.ffprobe,
+            validator=self._is_supported_media_file,
+        )
+        if not result.accepted:
+            self._set_status(result.reason, "CHECK")
             return
+        for update in result.updates:
+            self._publish_source_selection_update(update)
 
-        if video_files:
-            self.setVideoFile(video_files[0])
-        if audio_files:
-            self.setAudioFiles(audio_files, True)
-
-        skipped_videos = max(0, len(video_files) - 1)
-        if skipped_videos or ignored_count:
+        if result.skipped_videos or result.ignored_count:
             details: list[str] = []
-            if skipped_videos:
-                details.append(f"追加の動画{skipped_videos}件")
-            if ignored_count:
-                details.append(f"未対応ファイル{ignored_count}件")
+            if result.skipped_videos:
+                details.append(f"追加の動画{result.skipped_videos}件")
+            if result.ignored_count:
+                details.append(f"未対応ファイル{result.ignored_count}件")
             self._set_status(f"{'、'.join(details)}を無視し、対応する素材を追加しました", "CHECK")
 
     @Slot(int)
@@ -436,17 +439,16 @@ class LegacyEditBayBackend(QApplication):
         if self._running:
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
-        audio_files = list(self._source_selection.audio_files)
-        if not 0 <= index < len(audio_files):
+        update = self._source_selection_controller.remove_audio_file(index)
+        if update is None:
             return
-        audio_files.pop(index)
-        self._set_source_selection(replace(self._source_selection, audio_files=tuple(audio_files)))
+        self._publish_source_selection_update(update)
 
     @Slot()
     def clearAudioFiles(self) -> None:
         if self._running:
             return
-        self._set_source_selection(replace(self._source_selection, audio_files=()))
+        self._publish_source_selection_update(self._source_selection_controller.clear_audio_files())
 
     @Slot()
     def browseOutputDirectory(self) -> None:
@@ -464,18 +466,17 @@ class LegacyEditBayBackend(QApplication):
             self._set_status("処理中は出力先を変更できません", "BUSY")
             return
         output = self._local_path(path)
-        if not output.is_dir():
-            self._set_status("存在する出力フォルダを指定してください", "CHECK")
+        update = self._source_selection_controller.set_output_directory(output)
+        if not update.accepted:
+            self._set_status(update.reason, "CHECK")
             return
-        self._set_source_selection(replace(self._source_selection, output_dir=str(output.resolve())))
+        self._publish_source_selection_update(update)
 
     @Slot()
     def resetSources(self) -> None:
         if self._running:
             return
-        self._source_selection = SourceSelection()
-        self._speakers = []
-        self._audio_tracks = self._default_audio_tracks()
+        self._source_selection_controller.reset()
         self._alignment_result = self._empty_alignment_result()
         self.sourceSelectionChanged.emit()
         self.speakersChanged.emit()
@@ -488,23 +489,15 @@ class LegacyEditBayBackend(QApplication):
 
     @Slot(int, str)
     def updateSpeakerColor(self, index: int, color: str) -> None:
-        if self._running or not 0 <= index < len(self._speakers):
+        if self._running:
             return
-        speaker = self._speakers[index]
-        try:
-            normalized = normalize_rgb_color(color)
-            save_speaker_color(
-                self.color_config_path,
-                file_name=speaker.get("file_name", ""),
-                speaker_name=speaker.get("name", ""),
-                color=normalized,
-            )
-        except (OSError, ValueError, TypeError) as error:
-            self._set_status(f"話者色を保存できません: {error}", "ERROR")
+        update = self._source_selection_controller.update_speaker_color(index, color)
+        if not update.accepted:
+            if update.reason:
+                self._set_status(update.reason, "ERROR")
             return
-        updated = {**speaker, "color": normalized}
-        self._speakers[index] = updated
         self.speakersChanged.emit()
+        updated = update.speaker or {}
         self._source_speaker_color_updated(updated)
         self._set_status(f"{updated.get('name', '話者')} の字幕色を保存しました", "SAVED")
 

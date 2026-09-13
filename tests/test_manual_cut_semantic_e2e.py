@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.subtitle_project import create_project, derive_ass_path, load_project, save_project
 from src.subtitle_workflow import render_project_video
-from tests.media_test_utils import (
+from tests.media_test_helpers import (
     FrameRegion,
     MediaSegment,
     assert_frame_difference_absent,

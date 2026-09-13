@@ -149,7 +149,7 @@ and installer artifact inspection is owned by #262.
 
 ## Media semantic E2E contracts
 
-Use `tests/media_test_utils.py` for deterministic, download-free lavfi fixtures,
+Use `tests/media_test_helpers.py` for deterministic, download-free lavfi fixtures,
 bounded FFmpeg/FFprobe execution with process-tree termination on timeout, stream
 probing, RGB frame extraction, and region-level pixel comparison. Keep this helper
 outside the `test_*.py` discovery pattern. The owning test module belongs to
@@ -182,6 +182,24 @@ seconds. Compare the source with normalize-off output, then compare normalize-on
 output with the configured LUFS target. Assertion diagnostics must include
 measured frequency levels or integrated loudness, target and tolerance, the
 analysis command, and FFmpeg stderr.
+
+The required media coverage matrix is intentionally small and semantic:
+
+| Contract | Linux `ffmpeg-runtime` | Windows `windows-ffmpeg-runtime` |
+| --- | --- | --- |
+| Subtitle burn-in timing, line count, manual break | `test_media_semantic_e2e` | timing, line-count, manual-break selectors |
+| CPU fallback stream contract | `test_media_semantic_e2e` | `test_cpu_fallback_produces_compatible_h264_with_audio` |
+| Silence/manual cut duration, frame order, audio frequency, subtitle retime | `test_manual_cut_semantic_e2e` | duration, frame, audio, subtitle selectors |
+| Audio mixer mute, solo, gain, EBU R128 normalize | `test_audio_mix_semantic_e2e` | mute, solo, gain, normalize selectors |
+| Short resolution, duration, audio, subtitle frame | `test_short_video_semantic_e2e` and `test_short_video_ass` | source-order, media contract, subtitle, and Unicode smoke selectors |
+
+`windows-ffmpeg-runtime` reruns only these representative selectors; the full
+Linux matrix remains the required cross-platform semantic run. The fixture and
+probe generation is centralized in `tests/media_test_helpers.py`, including
+testsrc inputs and non-yuv420p source formats used by the burn-in smoke. This
+keeps the required matrix free of GPU/NVENC success mocks and large binary
+fixtures while allowing the longer fit/crossfade/BGM matrix to remain an
+optional Windows smoke case.
 
 Run the release workflow contract tests directly:
 

@@ -361,6 +361,8 @@ def create_lavfi_av_fixture(
     sample_rate: int = 48_000,
     audio_channel_layout: str = "mono",
     tone_volume_db: float = 0.0,
+    video_source: str = "color",
+    video_pix_fmt: str = "yuv420p",
 ) -> MediaFixture:
     require_media_tools()
     resolved_segments = tuple(segments)
@@ -370,6 +372,10 @@ def create_lavfi_av_fixture(
         raise ValueError("Fixture dimensions, fps, and sample rate must be positive.")
     if audio_channel_layout not in {"mono", "stereo"}:
         raise ValueError("Fixture audio channel layout must be mono or stereo.")
+    if video_source not in {"color", "testsrc"}:
+        raise ValueError("Fixture video source must be color or testsrc.")
+    if not video_pix_fmt or any(character.isspace() for character in video_pix_fmt):
+        raise ValueError("Fixture video pixel format must be a non-empty FFmpeg token.")
     if not math.isfinite(tone_volume_db):
         raise ValueError("Fixture tone volume must be finite.")
     if any(segment.duration_seconds <= 0 for segment in resolved_segments):
@@ -386,7 +392,11 @@ def create_lavfi_av_fixture(
                 "-f",
                 "lavfi",
                 "-i",
-                f"color=c={segment.color}:s={width}x{height}:r={fps}:d={duration}",
+                (
+                    f"color=c={segment.color}:s={width}x{height}:r={fps}:d={duration}"
+                    if video_source == "color"
+                    else f"testsrc=size={width}x{height}:rate={fps}:duration={duration}"
+                ),
                 "-f",
                 "lavfi",
                 "-i",
@@ -433,7 +443,7 @@ def create_lavfi_av_fixture(
             "-crf",
             "18",
             "-pix_fmt",
-            "yuv420p",
+            video_pix_fmt,
             "-c:a",
             "aac",
             "-b:a",

@@ -15,7 +15,7 @@ from src.short_video_schema import (
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_short_video
 from src.video_encoding import select_automatic_video_codec
-from tests.media_test_utils import (
+from tests.media_test_helpers import (
     AudioLevelMeasurement,
     FrameRegion,
     MediaFixture,

@@ -6,6 +6,8 @@ Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp
 
 アプリは `codex app-server --listen stdio://` を子プロセスとして起動します。待受ポートや外部WebSocketは開きません。通信仕様は[OpenAIのCodex App Serverドキュメント](https://developers.openai.com/codex/app-server)に従います。
 
+チャット画面はprovider-neutralな `AIProvider` 境界だけを参照します。現在の実装では `CodexAIProvider` がCodex App Serverの認証、モデル、thread、turn、ストリーミング通知を共通の状態・イベントへ変換します。GUIやQMLはCodex固有のRPC名を参照しないため、追加providerは同じ境界のadapterとして実装できます。
+
 ## ログインとログアウト
 
 1. 画面右上の `Codexチャット` で `ログイン` を押す

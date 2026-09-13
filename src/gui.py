@@ -2021,12 +2021,14 @@ class EditBayBackend(LegacyEditBayBackend):
         self._apply_project_speaker_color(index, normalized)
         self._set_status(f"{speaker.get('name', '話者')} の字幕色を保存しました", "SAVED")
 
-    def _set_source_selection(self, selection: Any) -> None:
-        previous = self._source_selection
-        super()._set_source_selection(selection)
+    def _source_selection_updated(self, update: Any) -> None:
+        previous = update.previous
+        selection = update.current
+        if previous is None or selection is None:
+            return
         if self._loading_project_sources or self._project is None:
             return
-        media_changed = previous.video != selection.video or previous.audio_files != selection.audio_files
+        media_changed = update.media_changed
         if not self._relinking_project_sources and media_changed and not self._project_source_selection_matches(selection):
             self._clear_project()
         elif previous.output_dir != selection.output_dir:

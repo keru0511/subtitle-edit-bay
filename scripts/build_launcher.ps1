@@ -125,19 +125,19 @@ if (-not (Test-Path -LiteralPath $resolvedOutputPath -PathType Leaf)) {
     throw "Launcher compilation completed without producing $resolvedOutputPath"
 }
 
-$verificationArguments = @(
-    "-Path", $resolvedOutputPath,
-    "-ExpectedVersion", $versionCore,
-    "-ExpectedFileVersion", $versionCore,
-    "-ExpectedFileDescription", "Subtitle Edit Bay launcher",
-    "-ExpectedProductName", "Subtitle Edit Bay",
-    "-ExpectedPublisher", $Publisher,
-    "-CheckDependencies"
-)
-if ($IconPath -or $RequireProductIcon) {
-    $verificationArguments += "-RequireProductIcon"
+$verificationParameters = @{
+    Path = $resolvedOutputPath
+    ExpectedVersion = $versionCore
+    ExpectedFileVersion = $versionCore
+    ExpectedFileDescription = "Subtitle Edit Bay launcher"
+    ExpectedProductName = "Subtitle Edit Bay"
+    ExpectedPublisher = $Publisher
+    CheckDependencies = $true
 }
-& "$PSScriptRoot/verify_windows_binary.ps1" @verificationArguments
+if ($IconPath -or $RequireProductIcon) {
+    $verificationParameters.RequireProductIcon = $true
+}
+& "$PSScriptRoot/verify_windows_binary.ps1" @verificationParameters
 if ($LASTEXITCODE -ne 0) {
     throw "Launcher binary contract verification failed with exit code $LASTEXITCODE."
 }

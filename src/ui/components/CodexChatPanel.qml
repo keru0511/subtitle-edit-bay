@@ -8,13 +8,13 @@ Rectangle {
     // qmllint disable unqualified
     property var backend
     property bool expanded: false
-    property color panelColor: "#101512"
-    property color raisedColor: "#19201D"
-    property color borderColor: "#2A3530"
-    property color textColor: "#F4F1E8"
-    property color mutedColor: "#8E9B94"
-    property color accentColor: "#C8FF3D"
-    property color errorColor: "#FF8A80"
+    property color panelColor: "#161B22"
+    property color raisedColor: "#21262D"
+    property color borderColor: "#30363D"
+    property color textColor: "#F0F6FC"
+    property color mutedColor: "#8B949E"
+    property color accentColor: "#6366F1"
+    property color errorColor: "#EF4444"
 
     implicitWidth: expanded ? 420 : 320
     implicitHeight: expanded ? Math.min(680, parent ? parent.height - 24 : 680) : 46

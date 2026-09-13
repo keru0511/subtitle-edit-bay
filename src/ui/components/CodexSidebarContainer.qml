@@ -11,8 +11,8 @@ Rectangle {
 
     objectName: "codexChatSidebarContainer"
     radius: 12
-    color: "#121715"
-    border.color: "#2A3530"
+    color: "#161B22"
+    border.color: "#30363D"
 
     Component.onCompleted: {
         wasAuthenticated = backend && backend.codexAuthState === "authenticated"
@@ -32,7 +32,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.maximumHeight: implicitHeight
                 text: "Codex"
-                color: "#F4F1E8"
+                color: "#F0F6FC"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 15
                 font.weight: Font.Bold
@@ -48,7 +48,7 @@ Rectangle {
             objectName: "codexChatSidebarSubtitle"
             Layout.maximumHeight: implicitHeight
             text: "チャット領域"
-            color: "#8E9B94"
+            color: "#8B949E"
             font.family: "Yu Gothic UI"
             font.pixelSize: 10
         }

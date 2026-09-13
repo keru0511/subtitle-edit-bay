@@ -58,7 +58,7 @@ ColumnLayout {
 
     Text {
         text: "ショート全体の設定"
-        color: "#E8EFEA"
+        color: "#F0F6FC"
         font.family: "Yu Gothic UI"
         font.pixelSize: 14
         font.weight: Font.Bold
@@ -66,7 +66,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: "画面構成"; color: "#F4F1E8"; Layout.fillWidth: true }
+        Text { text: "画面構成"; color: "#F0F6FC"; Layout.fillWidth: true }
         ComboBox {
             id: fitCombo
             objectName: "shortModeGlobalFitCombo"
@@ -83,7 +83,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: "背景色"; color: "#F4F1E8"; Layout.fillWidth: true }
+        Text { text: "背景色"; color: "#F0F6FC"; Layout.fillWidth: true }
         TextField {
             id: bgColorField
             objectName: "shortModeBackgroundColorField"
@@ -103,7 +103,7 @@ ColumnLayout {
             Layout.preferredHeight: 24
             radius: 4
             color: bgColorField.text.startsWith("#") ? bgColorField.text : "#" + bgColorField.text
-            border.color: "#2A3530"
+            border.color: "#30363D"
         }
         Button {
             text: "..."
@@ -124,7 +124,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: "トランジション"; color: "#F4F1E8"; Layout.fillWidth: true }
+        Text { text: "トランジション"; color: "#F0F6FC"; Layout.fillWidth: true }
         ComboBox {
             id: transitionCombo
             objectName: "shortModeTransitionCombo"
@@ -151,7 +151,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: "字幕スケール"; color: "#F4F1E8"; Layout.fillWidth: true }
+        Text { text: "字幕スケール"; color: "#F0F6FC"; Layout.fillWidth: true }
         SpinBox {
             id: scaleSpin
             objectName: "shortModeSubtitleScaleSpin"
@@ -169,12 +169,12 @@ ColumnLayout {
     Rectangle {
         Layout.fillWidth: true
         Layout.preferredHeight: 1
-        color: "#2A3530"
+        color: "#30363D"
     }
 
     Text {
         text: "BGM"
-        color: "#E8EFEA"
+        color: "#F0F6FC"
         font.family: "Yu Gothic UI"
         font.pixelSize: 14
         font.weight: Font.Bold
@@ -188,7 +188,7 @@ ColumnLayout {
             id: bgmFileLabel
             objectName: "shortModeBgmFileLabel"
             text: "BGMを選択"
-            color: "#F4F1E8"
+            color: "#F0F6FC"
             elide: Text.ElideMiddle
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignLeft
@@ -205,10 +205,10 @@ ColumnLayout {
         columnSpacing: 10
         rowSpacing: 6
 
-        Text { text: "開始位置"; color: "#F4F1E8" }
-        Text { text: "終了位置"; color: "#F4F1E8" }
-        Text { text: "動画内の開始"; color: "#F4F1E8" }
-        Text { text: "音量"; color: "#F4F1E8" }
+        Text { text: "開始位置"; color: "#F0F6FC" }
+        Text { text: "終了位置"; color: "#F0F6FC" }
+        Text { text: "動画内の開始"; color: "#F0F6FC" }
+        Text { text: "音量"; color: "#F0F6FC" }
 
         TimeField {
             id: bgmIn

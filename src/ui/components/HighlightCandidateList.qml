@@ -51,8 +51,8 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: "見どころ候補"; color: "#E8EFEA"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold }
-        Text { Layout.fillWidth: true; text: appBackend ? Math.round(appBackend.highlightAnalysisProgress * 100) + "%" : ""; color: "#AEBEB3"; font.pixelSize: 9 }
+        Text { text: "見どころ候補"; color: "#F0F6FC"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold }
+        Text { Layout.fillWidth: true; text: appBackend ? Math.round(appBackend.highlightAnalysisProgress * 100) + "%" : ""; color: "#8B949E"; font.pixelSize: 9 }
         ComboBox { objectName: "highlightSortCombo"; model: ["おすすめ順", "時間順"]; onActivated: candidateRoot.sortMode = currentIndex }
         ComboBox {
             objectName: "highlightCategoryCombo"
@@ -81,7 +81,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.highlightAnalysisState : "idle"); color: "#8E9B94"; font.pixelSize: 9 }
+        Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
         Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
         Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend; onClicked: appBackend.undoHighlightRejection() }
@@ -102,17 +102,17 @@ ColumnLayout {
             width: candidateListView.width
             height: 76
             radius: 7
-            color: "#121A15"
-            border.color: "#2A3530"
+            color: "#161B22"
+            border.color: "#30363D"
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 6
                 spacing: 6
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Text { Layout.fillWidth: true; text: (modelData.start || 0).toFixed(2) + " - " + (modelData.end || 0).toFixed(2) + "  " + candidateRoot.categoryLabel(modelData.category); color: "#C8FF3D"; font.family: "Cascadia Mono"; font.pixelSize: 9 }
-                    Text { Layout.fillWidth: true; text: modelData.subtitle_excerpt || ""; color: "#E8EFEA"; elide: Text.ElideRight; font.pixelSize: 10 }
-                    Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8E9B94"; elide: Text.ElideRight; font.pixelSize: 8 }
+                    Text { Layout.fillWidth: true; text: (modelData.start || 0).toFixed(2) + " - " + (modelData.end || 0).toFixed(2) + "  " + candidateRoot.categoryLabel(modelData.category); color: "#6366F1"; font.family: "Cascadia Mono"; font.pixelSize: 9 }
+                    Text { Layout.fillWidth: true; text: modelData.subtitle_excerpt || ""; color: "#F0F6FC"; elide: Text.ElideRight; font.pixelSize: 10 }
+                    Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
                 Button { objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0)) }
                 Button { objectName: "highlightAddButton"; text: "ショートに追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }

@@ -4,11 +4,11 @@ import QtQuick.Controls
 SpinBox {
     id: compactSpin
 
-    property color textPrimary: "#F4F1E8"
-    property color borderColor: "#2A3530"
-    property color focusColor: "#C8FF3D"
-    property color inputBackground: "#101512"
-    property color pressedBackground: "#303B35"
+    property color textPrimary: "#F0F6FC"
+    property color borderColor: "#30363D"
+    property color focusColor: "#6366F1"
+    property color inputBackground: "#161B22"
+    property color pressedBackground: "#30363D"
 
     implicitWidth: 106
     implicitHeight: 34
@@ -20,7 +20,7 @@ SpinBox {
         text: compactSpin.textFromValue(compactSpin.value, compactSpin.locale)
         color: compactSpin.textPrimary
         selectionColor: compactSpin.focusColor
-        selectedTextColor: "#10140F"
+        selectedTextColor: "#FFFFFF"
         horizontalAlignment: Qt.AlignHCenter
         verticalAlignment: Qt.AlignVCenter
         readOnly: !compactSpin.editable

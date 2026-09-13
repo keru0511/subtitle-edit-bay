@@ -1,6 +1,8 @@
 # subtitle-edit-bay ショートモード拡張 全体設計書
 
 > **履歴資料:** この文書は初期のショート機能追加時の設計です。現在の情報設計、状態境界、時刻基準は [ショート用ワークスペース](SHORT_WORKSPACE.md) を正本とします。特に、ショートを通常動画の編集modeや `activeOverlay` の値として扱う記述は廃止済みです。
+>
+> **PR #349の適用範囲:** このPRで追加・更新するカット、結合、マルチトラック操作の主な成果物は `docs/ui-redesign-mockup.html` の設計・操作モックです。production `src/ui` へのpalette/theme調整だけでproduction機能の完成とはみなしません。backend state、QML interaction、保存・undo/redo、render/exportへの接続は別Issue/PRで実施し、production化が完了するまでこの資料をリリース済み機能の説明として扱いません。
 
 ## 1. 背景と目的
 

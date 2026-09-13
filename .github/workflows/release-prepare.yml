@@ -91,7 +91,7 @@ jobs:
           ffmpeg -version
           ffprobe -version
       - name: Set up Python 3.10
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
           cache: pip
@@ -145,7 +145,7 @@ jobs:
           persist-credentials: false
           path: source
       - name: Set up Python 3.10
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Fix build artifact identity
@@ -279,7 +279,7 @@ jobs:
           persist-credentials: false
           path: release-tools
       - name: Set up Python 3.10
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install FFmpeg runtime

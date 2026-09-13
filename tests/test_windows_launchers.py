@@ -17,6 +17,39 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class WindowsLauncherTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows is required")
+    def test_native_launcher_build_verifies_x64_gui_and_static_crt(self) -> None:
+        powershell = self._require_windows_powershell()
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertTrue(version.startswith("v"), version)
+        version = version[1:]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "SubtitleEditBayLauncher.exe"
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "scripts" / "build_launcher.ps1"),
+                    "-OutputPath",
+                    str(output),
+                    "-Version",
+                    version,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(output.is_file(), result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_signing_uses_verifier_exceptions_not_stale_last_exit_code(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:

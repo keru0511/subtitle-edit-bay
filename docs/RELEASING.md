@@ -23,6 +23,10 @@ PRの準備処理は `contents: read` だけで動き、タグやReleaseを作�
 
 Windows launcherの静的CRT、version resource、import dependency、Authenticode署名とtimestampの契約は [Windows binary trust contract](WINDOWS_BINARY_TRUST.md) を参照してください。信頼済みsigning providerが未構成の間、VERSION-only候補はunsigned artifactを保存せず明示的に停止します。
 
+### Windows launcherのruntime配布契約
+
+正式配布するlauncherはMSVC `/MT`で静的CRTリンクし、配布先に別途Visual C++ Redistributableを要求しません。正式buildでは生成したPEを `scripts/verify_windows_binary.ps1 -CheckDependencies` に通し、`dumpbin /DEPENDENTS` でVC/UCRTの外部runtime依存を拒否します。この契約を満たさないlauncherは配布候補にしません。
+
 main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmpegとinstaller smokeをskipし、同じ仮マージに対する実行責務をRelease readinessへ一本化します。Release readinessが起動しない非main向けPRでは委譲せず、通常CIが全検証を実行します。通常CI固有のquality、Windows runtime、launcher、FFmpeg 6互換は引き続き必須です。分類失敗、必要ジョブの失敗・キャンセル・予期しないskip、または委譲対象の重複実行は集約で拒否します。対応表は [PR検証の実行責務](validation-ownership.md) を参照してください。
 
 ### v0.4.8で検出したGUIテスト失敗

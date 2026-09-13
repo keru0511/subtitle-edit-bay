@@ -159,6 +159,11 @@ class BlockingTurnStartClient(FakeChatClient):
         return {"turn": {"id": "turn-blocked", "status": "inProgress"}}
 
 
+class FailingStartClient(FakeChatClient):
+    def start(self) -> dict[str, object]:
+        raise OSError("接続に失敗しました")
+
+
 def wait_for(predicate, timeout: float = 2.0) -> None:
     deadline = time.time() + timeout
     while not predicate() and time.time() < deadline:
@@ -168,6 +173,30 @@ def wait_for(predicate, timeout: float = 2.0) -> None:
 
 
 class CodexChatControllerTests(unittest.TestCase):
+    def test_connection_error_clears_provider_and_normal_connect_retries(self) -> None:
+        first_client = FailingStartClient()
+        second_client = FakeChatClient()
+        second_client.authenticated = True
+        clients = iter((first_client, second_client))
+        controller = CodexChatController(
+            client_factory=lambda: next(clients),
+            workspace_root=Path.cwd(),
+        )
+        try:
+            controller.connect()
+            wait_for(
+                lambda: controller.snapshot.connection_state == "error"
+                and controller.snapshot.chat_state == "disconnected"
+            )
+            self.assertIsNone(controller._provider)
+
+            controller.connect()
+            wait_for(lambda: controller.snapshot.auth_state == "authenticated")
+            self.assertEqual(controller.snapshot.connection_state, "ready")
+            self.assertTrue(second_client.started)
+        finally:
+            controller.shutdown()
+
     def test_subtitle_proposal_is_recorded_in_the_shared_conversation(self) -> None:
         client = FakeChatClient()
         client.authenticated = True

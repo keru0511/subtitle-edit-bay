@@ -95,6 +95,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("audioMixProposal", panel)
         self.assertIn("update_audio_channel", panel)
         self.assertIn("applyAudioMixProposal", panel)
+        self.assertIn("card.selectedOperationIds().length > 0", panel)
         self.assertIn("codexAudioAllowSilenceButton", panel)
         self.assertIn("discardAudioMixProposal", panel)
 

@@ -155,7 +155,105 @@ if ($junctionLogText -notmatch "SILENT_MIGRATION_REJECTION") {
 if ((Get-Content -LiteralPath $legacySentinel -Raw) -ne "unchanged") { throw "Installer changed legacy data before junction rejection." }
 if (Test-Path -LiteralPath (Join-Path $junctionDestination "src\gui.py")) { throw "Installer copied product files before junction rejection." }
 
+function Invoke-CleanLauncherProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$LauncherPath,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$ProbeLogPath
+    )
+
+    # The installer smoke job builds with MSVC, but the product launcher must
+    # start without inheriting a developer toolchain or its PATH entries.
+    $systemRoot = [Environment]::GetEnvironmentVariable("SystemRoot", "Machine")
+    if (-not $systemRoot) { $systemRoot = $env:SystemRoot }
+    $systemDrive = [Environment]::GetEnvironmentVariable("SystemDrive", "Machine")
+    if (-not $systemDrive) { $systemDrive = "C:" }
+    if (-not $systemRoot) { throw "SystemRoot is required for the clean launcher probe." }
+
+    $cleanRoot = Join-Path $testRoot "clean-launcher-environment"
+    $cleanLocalAppData = Join-Path $cleanRoot "LocalAppData"
+    $cleanAppData = Join-Path $cleanRoot "AppData"
+    $cleanUserProfile = Join-Path $cleanRoot "UserProfile"
+    New-Item -ItemType Directory -Path $cleanLocalAppData, $cleanAppData, $cleanUserProfile -Force | Out-Null
+
+    # Keep normal Windows shell/module variables so Windows PowerShell can
+    # initialize deterministically, but remove every Visual Studio/MSVC/SDK
+    # variable and PATH entry. The launcher is therefore tested without the
+    # development toolchain while retaining only normal OS process context.
+    $toolchainPattern = "(?i)(Visual Studio|MSVC|VCTools|Windows Kits|WindowsSdk|MSBuild|DevEnv)"
+    $cleanEnvironment = @{}
+    foreach ($entry in [Environment]::GetEnvironmentVariables("Process").GetEnumerator()) {
+        if ($entry.Key -match "^(?i:VSCMD|VSINSTALL|VCINSTALL|VCTools|VisualStudioVersion|WindowsSDKVersion|WindowsSdkDir|UniversalCRTSdkDir|UCRTVersion|DevEnvDir|MSBuild|__VSCMD|INCLUDE|LIB|LIBPATH|VSLANG|CL|LINK)$") {
+            continue
+        }
+        if ($entry.Key -eq "Path" -or $entry.Key -eq "PSModulePath") {
+            continue
+        }
+        $cleanEnvironment[$entry.Key] = [string]$entry.Value
+    }
+    $cleanEnvironment["SystemRoot"] = $systemRoot
+    $cleanEnvironment["WINDIR"] = $systemRoot
+    $cleanEnvironment["SystemDrive"] = $systemDrive
+    $cleanEnvironment["ComSpec"] = Join-Path $systemRoot "System32\cmd.exe"
+    $cleanEnvironment["Path"] = @(
+        (Join-Path $systemRoot "System32"),
+        $systemRoot,
+        (Join-Path $systemRoot "System32\Wbem"),
+        (Join-Path $systemRoot "System32\WindowsPowerShell\v1.0")
+    ) -join ";"
+    $modulePaths = @(
+        [Environment]::GetEnvironmentVariable("PSModulePath", "Machine"),
+        [Environment]::GetEnvironmentVariable("PSModulePath", "User")
+    ) |
+        Where-Object { $_ } |
+        ForEach-Object { $_ -split ";" } |
+        Where-Object { $_ -and $_ -notmatch $toolchainPattern } |
+        Select-Object -Unique
+    $cleanEnvironment["PSModulePath"] = $modulePaths -join ";"
+    $cleanEnvironment["TEMP"] = $cleanRoot
+    $cleanEnvironment["TMP"] = $cleanRoot
+    $cleanEnvironment["LOCALAPPDATA"] = $cleanLocalAppData
+    $cleanEnvironment["APPDATA"] = $cleanAppData
+    $cleanEnvironment["USERPROFILE"] = $cleanUserProfile
+
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $LauncherPath
+    $psi.Arguments = "--probe-setup"
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.EnvironmentVariables.Clear()
+    foreach ($entry in $cleanEnvironment.GetEnumerator()) {
+        $psi.EnvironmentVariables[$entry.Key] = [string]$entry.Value
+    }
+
+    Write-Host "CLEAN_LAUNCHER_PROBE_START launcher=$LauncherPath"
+    try {
+        $process = [Diagnostics.Process]::Start($psi)
+    } catch {
+        throw "Clean launcher probe could not start the product EXE: $_"
+    }
+    if (-not $process.WaitForExit(30000)) {
+        try { $process.Kill() } catch {}
+        $process.WaitForExit()
+        throw "Clean launcher probe timed out after 30 seconds."
+    }
+    $exitCode = $process.ExitCode
+    if ($exitCode -ne 3) {
+        throw "Clean launcher probe returned $exitCode; expected setup-required exit code 3."
+    }
+    [IO.File]::WriteAllText(
+        $ProbeLogPath,
+        "exit_code=$exitCode" + [Environment]::NewLine,
+        [Text.UTF8Encoding]::new($false)
+    )
+    Write-Host "CLEAN_LAUNCHER_PROBE_END exit_code=$exitCode log=$ProbeLogPath"
+}
+
 $launcher = Join-Path $installDir "SubtitleEditBayLauncher.exe"
+$cleanLauncherProbeLog = Join-Path $testRoot "clean-launcher-probe.txt"
+Invoke-CleanLauncherProbe -LauncherPath $launcher -WorkingDirectory $installDir -ProbeLogPath $cleanLauncherProbeLog
+
 $hookPath = Join-Path $testRoot "installer-e2e-setup-hook.ps1"
 $hookCount = Join-Path $testRoot "installer-e2e-hook-count.txt"
 $hookStarted = Join-Path $testRoot "installer-e2e-hook-started.txt"

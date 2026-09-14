@@ -81,6 +81,8 @@ from .gui_codex_chat_state import (
     CodexChatError,
     CodexChatSnapshot,
 )
+from .gui_ai_chat_state import AIProviderChatRouter
+from .gemini_acp_provider import GeminiAcpProvider
 from .gui_audio_preview_controller import AudioPreviewController
 from .gui_project_editor_controller import ProjectEditorController
 from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
@@ -377,6 +379,7 @@ class EditBayBackend(LegacyEditBayBackend):
     codexProposalChanged = Signal()
     audioMixProposalChanged = Signal()
     codexChatChanged = Signal()
+    aiChatChanged = Signal()
     codexCallbackRequested = Signal(object)
     highlightCandidatesChanged = Signal()
     highlightAnalysisChanged = Signal()
@@ -802,12 +805,32 @@ class EditBayBackend(LegacyEditBayBackend):
             client_factory=self._create_codex_chat_client,
             workspace_root=self.workspace_root,
             preferred_model=str(self._settings.get("codex_model", "")),
-            on_state=self._on_codex_chat_state,
+            provider_id="codex",
+            provider_name="Codex",
+            on_state=self._on_codex_provider_state,
             on_selected_model=self._persist_codex_model,
             callback_dispatcher=self._dispatch_codex_callback,
         )
-        self.aboutToQuit.connect(self._codex_chat.shutdown)
-        self._codex_chat.connect()
+        self._gemini_chat = CodexChatController(
+            provider_factory=lambda: GeminiAcpProvider(workspace_root=self.workspace_root),
+            workspace_root=self.workspace_root,
+            preferred_model=str(self._settings.get("gemini_model", "")),
+            provider_id="gemini",
+            provider_name="Gemini",
+            initial_model_selection_supported=False,
+            initial_login_available=False,
+            on_state=self._on_gemini_provider_state,
+            on_selected_model=self._persist_gemini_model,
+            callback_dispatcher=self._dispatch_codex_callback,
+        )
+        self._ai_chat = AIProviderChatRouter(
+            {"codex": self._codex_chat, "gemini": self._gemini_chat},
+            preferred_provider=str(self._settings.get("ai_provider", "codex")),
+            on_state=self._on_codex_chat_state,
+            on_selected_provider=self._persist_ai_provider,
+        )
+        self.aboutToQuit.connect(self._ai_chat.shutdown)
+        self._ai_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
         self.updateDownloadFinished.connect(self._on_update_download_finished, Qt.ConnectionType.QueuedConnection)
         self._record_log(
@@ -984,43 +1007,70 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Property(str, notify=codexChatChanged)
     def codexConnectionState(self) -> str:
-        return self._codex_chat.snapshot.connection_state
+        return self._ai_chat.snapshot.connection_state
 
     @Property(str, notify=codexChatChanged)
     def codexAuthState(self) -> str:
-        return self._codex_chat.snapshot.auth_state
+        return self._ai_chat.snapshot.auth_state
 
     @Property(str, notify=codexChatChanged)
     def codexAuthLabel(self) -> str:
-        return self._codex_chat.snapshot.auth_label
+        return self._ai_chat.snapshot.auth_label
 
     @Property(str, notify=codexChatChanged)
     def codexLoginUrl(self) -> str:
-        return self._codex_chat.snapshot.login_url
+        return self._ai_chat.snapshot.login_url
 
     @Property(str, notify=codexChatChanged)
     def codexChatState(self) -> str:
-        return self._codex_chat.snapshot.chat_state
+        return self._ai_chat.snapshot.chat_state
 
     @Property(str, notify=codexChatChanged)
     def codexChatError(self) -> str:
-        return self._codex_chat.snapshot.error
+        return self._ai_chat.snapshot.error
 
     @Property("QVariantList", notify=codexChatChanged)
     def codexModels(self) -> list[dict[str, Any]]:
-        return [dict(item) for item in self._codex_chat.snapshot.models]
+        return [dict(item) for item in self._ai_chat.snapshot.models]
 
     @Property(str, notify=codexChatChanged)
     def codexSelectedModel(self) -> str:
-        return self._codex_chat.snapshot.selected_model
+        return self._ai_chat.snapshot.selected_model
 
     @Property(str, notify=codexChatChanged)
     def codexModelError(self) -> str:
-        return self._codex_chat.snapshot.model_error
+        return self._ai_chat.snapshot.model_error
 
     @Property("QVariantList", notify=codexChatChanged)
     def codexChatMessages(self) -> list[dict[str, Any]]:
-        return [dict(item) for item in self._codex_chat.snapshot.messages]
+        return [dict(item) for item in self._ai_chat.snapshot.messages]
+
+    @Property(str, notify=aiChatChanged)
+    def aiChatProviderId(self) -> str:
+        return self._ai_chat.active_provider_id
+
+    @Property(str, notify=aiChatChanged)
+    def aiChatProviderName(self) -> str:
+        return self._ai_chat.active_provider_name
+
+    @Property("QVariantList", notify=aiChatChanged)
+    def aiChatProviders(self) -> list[dict[str, Any]]:
+        return self._ai_chat.available_providers()
+
+    @Property(bool, notify=aiChatChanged)
+    def aiChatModelSelectionSupported(self) -> bool:
+        return self._ai_chat.snapshot.model_selection_supported
+
+    @Property(bool, notify=aiChatChanged)
+    def aiChatLoginAvailable(self) -> bool:
+        return self._ai_chat.snapshot.login_available
+
+    @Property(str, notify=aiChatChanged)
+    def aiChatAuthHint(self) -> str:
+        snapshot = self._ai_chat.snapshot
+        if snapshot.provider_id == "gemini" and not snapshot.login_available:
+            return "Gemini CLIでログインしてください"
+        return ""
 
     @Property(bool, notify=updateInfoChanged)
     def updateAvailable(self) -> bool:
@@ -3654,15 +3704,15 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def reconnectCodexChat(self) -> None:
-        self._codex_chat.reconnect()
+        self._ai_chat.reconnect()
 
     @Slot()
     def startCodexLogin(self) -> None:
-        self._codex_chat.login()
+        self._ai_chat.login()
 
     @Slot()
     def reloginCodex(self) -> None:
-        self._codex_chat.login(relogin=True)
+        self._ai_chat.login(relogin=True)
 
     @Slot()
     def logoutCodex(self) -> None:
@@ -3674,17 +3724,41 @@ class EditBayBackend(LegacyEditBayBackend):
         self.codexProposalChanged.emit()
         self._audio_mix_proposal = None
         self.audioMixProposalChanged.emit()
-        self._codex_chat.logout()
+        self._ai_chat.logout()
 
     @Slot()
     def openCodexLoginPage(self) -> None:
-        login_url = self._codex_chat.snapshot.login_url
+        login_url = self._ai_chat.snapshot.login_url
         if login_url:
             QDesktopServices.openUrl(QUrl(login_url))
 
     @Slot(str)
     def selectCodexModel(self, model: str) -> None:
-        self._codex_chat.select_model(model)
+        self._ai_chat.select_model(model)
+
+    @Slot(str, result=bool)
+    def selectAIProvider(self, provider_id: str) -> bool:
+        return self._ai_chat.select_provider(provider_id)
+
+    @Slot()
+    def reconnectAIChat(self) -> None:
+        self._ai_chat.reconnect()
+
+    @Slot()
+    def startAIProviderLogin(self) -> None:
+        self._ai_chat.login()
+
+    @Slot()
+    def reloginAIProvider(self) -> None:
+        self._ai_chat.login(relogin=True)
+
+    @Slot()
+    def logoutAIProvider(self) -> None:
+        self._ai_chat.logout()
+
+    @Slot()
+    def openAIProviderLoginPage(self) -> None:
+        self.openCodexLoginPage()
 
     @Slot(str)
     @Slot(str, str, float, float)
@@ -3708,9 +3782,15 @@ class EditBayBackend(LegacyEditBayBackend):
             range_end=range_end,
         )
         if route is None:
-            self._codex_chat.send_message(message)
+            self._ai_chat.send_message(message)
             return
-        if not self._codex_chat.begin_proposal(message):
+        # Typed edit proposals are a Codex action contract.  Gemini remains a
+        # normal chat provider until a provider-neutral proposal protocol is
+        # introduced; never route the same prompt to both providers.
+        if self._ai_chat.active_provider_id != "codex":
+            self._ai_chat.send_message(message)
+            return
+        if not self._ai_chat.begin_proposal(message):
             return
         if route.scope == "unavailable":
             self._codex_chat.fail_proposal("字幕を編集するには、先に編集プロジェクトを開いてください。")
@@ -3742,7 +3822,7 @@ class EditBayBackend(LegacyEditBayBackend):
             ),
         )
         if result.status.value != "success":
-            self._codex_chat.fail_proposal(
+            self._ai_chat.fail_proposal(
                 result.message or "字幕の変更案を開始できませんでした。"
             )
 
@@ -3811,7 +3891,10 @@ class EditBayBackend(LegacyEditBayBackend):
         )
 
     def _start_audio_mix_chat_proposal(self, message: str) -> None:
-        if not self._codex_chat.begin_proposal(
+        if self._ai_chat.active_provider_id != "codex":
+            self._ai_chat.send_message(message)
+            return
+        if not self._ai_chat.begin_proposal(
             message,
             content_type="audio_mix_proposal",
             pending_text="音量ミキサーの変更案を作成しています…",
@@ -3835,7 +3918,7 @@ class EditBayBackend(LegacyEditBayBackend):
             ),
         )
         if result.status.value != "success":
-            self._codex_chat.fail_proposal(
+            self._ai_chat.fail_proposal(
                 result.message or "音量ミキサーの変更案を開始できませんでした。"
             )
 
@@ -3849,9 +3932,9 @@ class EditBayBackend(LegacyEditBayBackend):
             self._codex_audio_mix_session.stop()
             stopped_proposal = True
         if stopped_proposal:
-            self._codex_chat.fail_proposal("", cancelled=True)
+            self._ai_chat.fail_proposal("", cancelled=True)
         else:
-            self._codex_chat.interrupt()
+            self._ai_chat.interrupt()
 
     @Slot()
     def startNewCodexChat(self) -> None:
@@ -3863,7 +3946,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.codexProposalChanged.emit()
         self._audio_mix_proposal = None
         self.audioMixProposalChanged.emit()
-        self._codex_chat.new_chat()
+        self._ai_chat.new_chat()
 
     def _queue_codex_system_log(self, message: object, *, severity: str = "INFO") -> None:
         safe_message = str(message)
@@ -4068,15 +4151,32 @@ class EditBayBackend(LegacyEditBayBackend):
         self._codex_chat.complete_proposal(str(stored.get("summary", "")))
         self._set_status("音量ミキサーの変更案を確認できます", "CODEX")
 
+    def _on_codex_provider_state(self, snapshot: CodexChatSnapshot) -> None:
+        if hasattr(self, "_ai_chat"):
+            self._ai_chat._provider_state_changed("codex", snapshot)
+        else:
+            self._on_codex_chat_state(snapshot)
+
+    def _on_gemini_provider_state(self, snapshot: CodexChatSnapshot) -> None:
+        if hasattr(self, "_ai_chat"):
+            self._ai_chat._provider_state_changed("gemini", snapshot)
+
+    def _persist_ai_provider(self, provider_id: str) -> None:
+        if self._settings.get("ai_provider") == provider_id:
+            return
+        self._save_settings({"ai_provider": provider_id}, announce=False)
+
     def _on_codex_chat_state(self, snapshot: CodexChatSnapshot) -> None:
         self.codexChatChanged.emit()
-        if snapshot.connection_state == "disconnected" and self._codex_session.running:
+        self.aiChatChanged.emit()
+        if snapshot.provider_id == "codex" and snapshot.connection_state == "disconnected" and self._codex_session.running:
             self._codex_session.stop()
             self._codex_chat.fail_proposal("Codexとの接続が切れたため、変更案の作成を停止しました。")
-        if snapshot.connection_state == "disconnected" and self._codex_audio_mix_session.running:
+        if snapshot.provider_id == "codex" and snapshot.connection_state == "disconnected" and self._codex_audio_mix_session.running:
             self._codex_audio_mix_session.stop()
             self._codex_chat.fail_proposal("Codexとの接続が切れたため、変更案の作成を停止しました。")
         log_state: tuple[object, ...] = (
+            snapshot.provider_id,
             snapshot.connection_state,
             snapshot.auth_state,
             snapshot.chat_state,
@@ -4088,7 +4188,7 @@ class EditBayBackend(LegacyEditBayBackend):
         if log_state != self._last_codex_log_state:
             self._last_codex_log_state = log_state
             detail = (
-                "Codex状態: "
+                f"{snapshot.provider_name}状態: "
                 f"connection={snapshot.connection_state}, "
                 f"auth={snapshot.auth_state}, "
                 f"chat={snapshot.chat_state}, "
@@ -4102,7 +4202,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._record_log(
                 detail,
                 severity="ERROR" if snapshot.error else "INFO",
-                component="codex",
+                component=snapshot.provider_id,
                 stage="CODEX",
             )
         if snapshot.login_url and snapshot.login_url != self._last_codex_login_url:
@@ -4113,6 +4213,11 @@ class EditBayBackend(LegacyEditBayBackend):
         if self._settings.get("codex_model") == model:
             return
         self._save_settings({"codex_model": model}, announce=False)
+
+    def _persist_gemini_model(self, model: str) -> None:
+        if self._settings.get("gemini_model") == model:
+            return
+        self._save_settings({"gemini_model": model}, announce=False)
 
     def _dispatch_codex_callback(self, callback: Callable[[], None]) -> None:
         self.codexCallbackRequested.emit(callback)

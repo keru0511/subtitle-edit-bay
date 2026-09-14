@@ -48,6 +48,9 @@ class AIProviderState:
     model_selection_supported: bool = True
     selected_model: str = ""
     error: str = ""
+    # True only when the provider exposes an official login action through
+    # this boundary.  The GUI must not invent credential or OAuth input UI.
+    login_available: bool = False
 
     @property
     def connection_state(self) -> str:

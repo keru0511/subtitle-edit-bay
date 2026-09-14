@@ -165,6 +165,8 @@ PERSISTED_RENDER_SETTING_KEYS = (
 
 GUI_SHARED_SETTING_KEYS = (
     "codex_model",
+    "gemini_model",
+    "ai_provider",
     "model",
     "device",
     "compute_type",

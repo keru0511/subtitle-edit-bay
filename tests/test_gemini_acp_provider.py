@@ -190,6 +190,7 @@ class GeminiAcpProviderTests(unittest.TestCase):
             self.assertEqual(state.auth_state, "unauthenticated")
             self.assertFalse(state.model_selection_supported)
             self.assertEqual(state.models, ())
+            self.assertTrue(state.login_available)
         finally:
             provider.close()
 

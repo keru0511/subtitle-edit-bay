@@ -590,6 +590,7 @@ class GeminiAcpProvider:
                 models=initial_models,
                 model_selection_supported=bool(initial_models),
                 selected_model=initial_selected if initial_models else "",
+                login_available=bool(self._auth_methods),
                 error="",
             )
         except Exception as error:
@@ -657,6 +658,7 @@ class GeminiAcpProvider:
             models=(),
             model_selection_supported=False,
             selected_model="",
+            login_available=bool(self._auth_methods),
             error="",
         )
 
@@ -894,6 +896,7 @@ class GeminiAcpProvider:
                 ),
                 selected_model=changes.get("selected_model", current.selected_model),
                 error=changes.get("error", current.error),
+                login_available=changes.get("login_available", current.login_available),
             )
             state = self._state
         self._emit(AIProviderEvent(kind="state_changed"))

@@ -49,6 +49,7 @@
         "test_editor_workspace",
         "test_gemini_acp_provider",
         "test_gemini_runtime",
+        "test_gui_ai_chat_state",
         "test_gui_codex_chat_state",
         "test_gui_codex_state",
         "test_gui_large_project_performance",

@@ -3183,24 +3183,87 @@ ApplicationWindow {
         onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
     }
 
+    ComboBox {
+        id: aiProviderLoginCombo
+        objectName: "aiProviderLoginCombo"
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.margins: 12
+        width: 108
+        height: 34
+        visible: !root.codexAuthenticated && root.appBackend
+            && root.appBackend.aiChatProviders.length > 1
+        model: root.appBackend ? root.appBackend.aiChatProviders : []
+        textRole: "label"
+        valueRole: "id"
+        enabled: root.appBackend && root.appBackend.codexChatState !== "streaming"
+            && root.appBackend.codexChatState !== "sending"
+            && root.appBackend.codexChatState !== "stopping"
+        Component.onCompleted: {
+            for (var index = 0; index < count; ++index) {
+                if (valueAt(index) === root.appBackend.aiChatProviderId) {
+                    currentIndex = index
+                    break
+                }
+            }
+        }
+        onActivated: root.appBackend.selectAIProvider(currentValue)
+        Connections {
+            target: root.appBackend
+            function onAiChatChanged() {
+                for (var index = 0; index < aiProviderLoginCombo.count; ++index) {
+                    if (aiProviderLoginCombo.valueAt(index) === root.appBackend.aiChatProviderId) {
+                        aiProviderLoginCombo.currentIndex = index
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    Text {
+        id: aiProviderAuthHint
+        objectName: "aiProviderAuthHint"
+        anchors.top: parent.top
+        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
+        anchors.leftMargin: 12
+        width: 240
+        height: 34
+        visible: !root.codexAuthenticated && root.appBackend
+            && root.appBackend.aiChatAuthHint
+            && !root.appBackend.aiChatLoginAvailable
+        z: 650
+        text: root.appBackend ? root.appBackend.aiChatAuthHint : ""
+        textFormat: Text.PlainText
+        color: root.textMuted
+        font.family: "Yu Gothic UI"
+        font.pixelSize: 10
+        verticalAlignment: Text.AlignVCenter
+        wrapMode: Text.Wrap
+    }
+
     SmallButton {
         id: codexLoginRoute
         objectName: "codexLoginRoute"
         anchors.top: parent.top
-        anchors.left: parent.left
+        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34
         visible: !root.codexAuthenticated
+            && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
         z: 650
-        text: root.appBackend && root.appBackend.codexAuthState === "login_pending"
+        text: root.appBackend && root.appBackend.aiChatAuthHint
+            ? root.appBackend.aiChatAuthHint
+            : (root.appBackend && root.appBackend.codexAuthState === "login_pending"
             ? "ブラウザを開く"
             : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0
-                ? "再接続" : "Codexログイン")
+                ? "再接続" : "Codexログイン"))
         enabled: root.appBackend
             && root.appBackend.codexConnectionState !== "connecting"
             && root.appBackend.codexAuthState !== "checking"
             && root.appBackend.codexAuthState !== "logging_in"
+            && root.appBackend.aiChatLoginAvailable
         onClicked: {
             if (root.appBackend.codexAuthState === "login_pending")
                 root.appBackend.openCodexLoginPage()

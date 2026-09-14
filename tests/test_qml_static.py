@@ -88,6 +88,18 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "codexChatEditScope"', panel)
         self.assertNotIn('objectName: "codexEditPanel"', workflow)
 
+    def test_ai_chat_exposes_provider_selector_and_official_login_capability(self) -> None:
+        panel = (COMPONENTS_ROOT / "CodexChatPanel.qml").read_text(encoding="utf-8")
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        self.assertIn('objectName: "aiProviderHeaderCombo"', panel)
+        self.assertIn("backend.aiChatModelSelectionSupported", panel)
+        self.assertIn("backend.aiChatLoginAvailable", panel)
+        self.assertIn("backend.aiChatAuthHint", panel)
+        self.assertIn('objectName: "aiProviderLoginCombo"', workflow)
+        self.assertIn('objectName: "aiProviderAuthHint"', workflow)
+        self.assertIn("root.appBackend.aiChatAuthHint", workflow)
+        self.assertIn("root.appBackend.aiChatLoginAvailable", workflow)
+
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
 

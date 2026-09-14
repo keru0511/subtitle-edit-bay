@@ -11,6 +11,18 @@ on:
         description: "Strict vX.Y.Z version to publish"
         required: true
         type: string
+      signed_artifact_id:
+        description: "Artifact ID produced by the protected formal signing preparation"
+        required: true
+        type: string
+      signed_artifact_name:
+        description: "Artifact name produced by the protected formal signing preparation"
+        required: true
+        type: string
+      signed_artifact_digest:
+        description: "Artifact digest produced by the protected formal signing preparation"
+        required: true
+        type: string
 
 concurrency:
   group: release-${{ inputs.release_version }}-${{ inputs.release_commit_sha }}
@@ -29,9 +41,9 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      artifact_id: ${{ steps.select.outputs.artifact_id }}
-      artifact_name: ${{ steps.select.outputs.artifact_name }}
-      artifact_digest: ${{ steps.select.outputs.artifact_digest }}
+      artifact_id: ${{ steps.download.outputs.artifact_id }}
+      artifact_name: ${{ steps.download.outputs.artifact_name }}
+      artifact_digest: ${{ steps.download.outputs.artifact_digest }}
       candidate_source_sha: ${{ steps.select.outputs.candidate_source_sha }}
       workflow_run_id: ${{ steps.select.outputs.workflow_run_id }}
       workflow_run_attempt: ${{ steps.select.outputs.workflow_run_attempt }}
@@ -78,16 +90,30 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          python release-tools/scripts/release_candidate.py download-artifact
-          --repository "$GITHUB_REPOSITORY"
-          --artifact-id "${{ steps.select.outputs.artifact_id }}"
-          --artifact-digest "${{ steps.select.outputs.artifact_digest }}"
-          --destination dist
-          --expected-file SubtitleEditBay-Setup.exe
-          --expected-file SubtitleEditBay-Setup.exe.sha256
-          --expected-file SubtitleEditBay-Setup.exe.manifest.json
-          --expected-file release-preparation.json
+        run: |
+          set -euo pipefail
+          artifact_id="${{ inputs.signed_artifact_id }}"
+          artifact_name="${{ inputs.signed_artifact_name }}"
+          artifact_digest="${{ inputs.signed_artifact_digest }}"
+          if [[ "${{ steps.select.outputs.decision_reused }}" == "true" ]]; then
+            artifact_id="$(jq -er '.promoted_artifact_id' saved-promotion/release-promotion.json)"
+            artifact_name="$(jq -er '.promoted_artifact_name' saved-promotion/release-promotion.json)"
+            artifact_digest="$(jq -er '.promoted_artifact_digest' saved-promotion/release-promotion.json)"
+          fi
+          python release-tools/scripts/release_candidate.py download-artifact \
+            --repository "$GITHUB_REPOSITORY" \
+            --artifact-id "$artifact_id" \
+            --artifact-digest "$artifact_digest" \
+            --destination dist \
+            --expected-file SubtitleEditBay-Setup.exe \
+            --expected-file SubtitleEditBay-Setup.exe.sha256 \
+            --expected-file SubtitleEditBay-Setup.exe.manifest.json \
+            --expected-file release-preparation.json
+          {
+            echo "artifact_id=$artifact_id"
+            echo "artifact_name=$artifact_name"
+            echo "artifact_digest=$artifact_digest"
+          } >> "$GITHUB_OUTPUT"
       - name: Download the CI validation identity
         shell: bash
         env:
@@ -103,16 +129,14 @@ jobs:
         id: verify
         shell: bash
         env:
-          CANDIDATE_SOURCE_SHA: ${{ steps.select.outputs.candidate_source_sha }}
+          SIGNED_SOURCE_SHA: ${{ inputs.release_commit_sha }}
         run: |
           set -euo pipefail
           python release-tools/scripts/release_contract.py verify-artifacts \
             --directory dist \
             --expected-version "${{ inputs.release_version }}" \
-            --expected-source-sha "$CANDIDATE_SOURCE_SHA"
-          python release-tools/scripts/release_candidate.py verify-preparation \
-            --candidate selected-candidate.json \
-            --preparation dist/release-preparation.json
+            --expected-source-sha "$SIGNED_SOURCE_SHA" \
+            --require-signature
           python release-tools/scripts/release_candidate.py verify-ci-validation \
             --candidate selected-candidate.json \
             --identity ci-identity/ci-validation-identity.json
@@ -121,6 +145,9 @@ jobs:
           python release-tools/scripts/release_candidate.py write-promotion \
             --candidate selected-candidate.json \
             --installer-sha256 "$installer_sha256" \
+            --promoted-artifact-id "${{ steps.download.outputs.artifact_id }}" \
+            --promoted-artifact-name "${{ steps.download.outputs.artifact_name }}" \
+            --promoted-artifact-digest "${{ steps.download.outputs.artifact_digest }}" \
             --output expected-release-promotion.json
           if [[ "${{ steps.select.outputs.decision_reused }}" == "true" ]]; then
             python release-tools/scripts/release_candidate.py verify-promotion \
@@ -241,17 +268,15 @@ jobs:
         id: verify
         shell: bash
         env:
-          CANDIDATE_SOURCE_SHA: ${{ needs.candidate.outputs.candidate_source_sha }}
+          SIGNED_SOURCE_SHA: ${{ inputs.release_commit_sha }}
           INSTALLER_SHA256: ${{ needs.candidate.outputs.installer_sha256 }}
         run: |
           set -euo pipefail
           python release-tools/scripts/release_contract.py verify-artifacts \
             --directory dist \
             --expected-version "${{ inputs.release_version }}" \
-            --expected-source-sha "$CANDIDATE_SOURCE_SHA"
-          python release-tools/scripts/release_candidate.py verify-preparation \
-            --candidate promotion/selected-candidate.json \
-            --preparation dist/release-preparation.json
+            --expected-source-sha "$SIGNED_SOURCE_SHA" \
+            --require-signature
           python release-tools/scripts/release_candidate.py verify-ci-validation \
             --candidate promotion/selected-candidate.json \
             --identity ci-identity/ci-validation-identity.json
@@ -260,6 +285,9 @@ jobs:
           python release-tools/scripts/release_candidate.py write-promotion \
             --candidate promotion/selected-candidate.json \
             --installer-sha256 "$actual_sha256" \
+            --promoted-artifact-id "${{ needs.candidate.outputs.artifact_id }}" \
+            --promoted-artifact-name "${{ needs.candidate.outputs.artifact_name }}" \
+            --promoted-artifact-digest "${{ needs.candidate.outputs.artifact_digest }}" \
             --output expected-release-promotion.json
           python release-tools/scripts/release_candidate.py verify-promotion \
             --actual promotion/release-promotion.json \

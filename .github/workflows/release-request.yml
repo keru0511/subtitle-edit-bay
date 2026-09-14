@@ -79,9 +79,21 @@ jobs:
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
+  prepare:
+    name: Build and verify signed formal release
+    needs: validate
+    uses: ./.github/workflows/release-prepare.yml
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      release_version: ${{ needs.validate.outputs.release_version }}
+      require_signature: true
+    secrets: inherit
+
   release:
     name: Promote candidate for exact merge
-    needs: validate
+    needs:
+      - validate
+      - prepare
     uses: ./.github/workflows/release.yml
     permissions:
       actions: read
@@ -90,3 +102,6 @@ jobs:
     with:
       release_commit_sha: ${{ needs.validate.outputs.source_sha }}
       release_version: ${{ needs.validate.outputs.release_version }}
+      signed_artifact_id: ${{ needs.prepare.outputs.artifact_id }}
+      signed_artifact_name: ${{ needs.prepare.outputs.artifact_name }}
+      signed_artifact_digest: ${{ needs.prepare.outputs.artifact_digest }}

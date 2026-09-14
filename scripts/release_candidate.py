@@ -754,9 +754,24 @@ def resolve_release_candidate(
     if not isinstance(promotion, dict):
         raise ReleaseCandidateError("saved promotion record must be an object")
     installer_sha256 = _string(promotion.get("installer_sha256"), "saved installer SHA-256")
+    promoted_artifact_id = promotion.get("promoted_artifact_id")
+    promoted_artifact_name = promotion.get("promoted_artifact_name", "")
+    promoted_artifact_digest = promotion.get("promoted_artifact_digest", "")
     with tempfile.TemporaryDirectory() as temp_dir:
         expected = Path(temp_dir) / "release-promotion.json"
-        write_promotion_record(expected, stored_path, installer_sha256)
+        if promoted_artifact_id is None:
+            # Keep legacy unsigned promotion records readable. Formal signed
+            # releases always persist the immutable artifact identity below.
+            write_promotion_record(expected, stored_path, installer_sha256)
+        else:
+            write_promotion_record(
+                expected,
+                stored_path,
+                installer_sha256,
+                _integer(promoted_artifact_id, "saved promoted artifact id"),
+                _string(promoted_artifact_name, "saved promoted artifact name"),
+                _string(promoted_artifact_digest, "saved promoted artifact digest"),
+            )
         verify_promotion_record(promotion_path, expected)
     shutil.copyfile(stored_path, output)
     return candidate, True
@@ -867,7 +882,14 @@ def verify_ci_validation_binding(candidate_path: Path, identity_path: Path) -> N
         raise ReleaseCandidateError("CI validation identity does not match the selected source")
 
 
-def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: str) -> None:
+def write_promotion_record(
+    path: Path,
+    candidate_path: Path,
+    installer_sha256: str,
+    promoted_artifact_id: int | None = None,
+    promoted_artifact_name: str = "",
+    promoted_artifact_digest: str = "",
+) -> None:
     if not re.fullmatch(r"[0-9a-f]{64}", installer_sha256):
         raise ReleaseCandidateError("installer SHA-256 must be 64 lowercase hexadecimal characters")
     try:
@@ -908,6 +930,19 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
         "artifact_expires_at": candidate.get("artifact_expires_at"),
         "installer_sha256": installer_sha256,
     }
+    if promoted_artifact_id is not None:
+        _integer(promoted_artifact_id, "promoted artifact id")
+        if not promoted_artifact_name:
+            raise ReleaseCandidateError("promoted artifact name is required")
+        if not ARTIFACT_DIGEST_PATTERN.fullmatch(promoted_artifact_digest):
+            raise ReleaseCandidateError("promoted artifact digest is invalid")
+        record.update(
+            {
+                "promoted_artifact_id": promoted_artifact_id,
+                "promoted_artifact_name": promoted_artifact_name,
+                "promoted_artifact_digest": promoted_artifact_digest,
+            }
+        )
     required_strings = (
         "repository",
         "release_version",
@@ -1009,6 +1044,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     record = subparsers.add_parser("write-promotion")
     record.add_argument("--candidate", type=Path, required=True)
     record.add_argument("--installer-sha256", required=True)
+    record.add_argument("--promoted-artifact-id", type=int)
+    record.add_argument("--promoted-artifact-name", default="")
+    record.add_argument("--promoted-artifact-digest", default="")
     record.add_argument("--output", type=Path, required=True)
     verify = subparsers.add_parser("verify-promotion")
     verify.add_argument("--actual", type=Path, required=True)
@@ -1078,7 +1116,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "verify-ci-validation":
             verify_ci_validation_binding(args.candidate, args.identity)
         elif args.command == "write-promotion":
-            write_promotion_record(args.output, args.candidate, args.installer_sha256)
+            write_promotion_record(
+                args.output,
+                args.candidate,
+                args.installer_sha256,
+                args.promoted_artifact_id,
+                args.promoted_artifact_name,
+                args.promoted_artifact_digest,
+            )
         else:
             verify_promotion_record(args.actual, args.expected)
     except ReleaseCandidateError as exc:

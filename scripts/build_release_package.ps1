@@ -24,6 +24,12 @@ param(
 
     [string]$PullRequestHeadBranch = "",
 
+    [switch]$RequireSignature,
+
+    [string]$ExpectedSignerSubject,
+
+    [string]$TimestampServer = "http://timestamp.digicert.com",
+
     [string]$SourceDirectory = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -33,10 +39,17 @@ $releaseDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $installerPath = Join-Path $releaseDirectory "SubtitleEditBay-Setup.exe"
 New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
 
+if ($RequireSignature -and [string]::IsNullOrWhiteSpace($ExpectedSignerSubject)) {
+    throw "ExpectedSignerSubject is required when formal Authenticode signing is enabled."
+}
+
 & "$PSScriptRoot/build_installer.ps1" `
     -Version $appVersion `
     -OutputPath $installerPath `
-    -ProjectRoot $SourceDirectory
+    -ProjectRoot $SourceDirectory `
+    -RequireSignature:$RequireSignature `
+    -ExpectedSignerSubject $ExpectedSignerSubject `
+    -TimestampServer $TimestampServer
 if ($LASTEXITCODE -ne 0) {
     throw "Installer build failed with exit code $LASTEXITCODE."
 }
@@ -80,6 +93,16 @@ $cudaLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/
         cpu_lock_sha256 = $cpuLockHash
         cu128_lock_sha256 = $cudaLockHash
     }
+    signing = @{
+        required = [bool]$RequireSignature
+        verified = [bool]$RequireSignature
+        signer_subject = if ($RequireSignature) { $ExpectedSignerSubject } else { "" }
+        timestamp_server = if ($RequireSignature) { $TimestampServer } else { "" }
+        files = @(
+            "SubtitleEditBayLauncher.exe",
+            "SubtitleEditBay-Setup.exe"
+        )
+    }
 } | ConvertTo-Json -Depth 5 | Set-Content `
     -LiteralPath "$installerPath.manifest.json" `
     -Encoding utf8
@@ -100,6 +123,16 @@ $cudaLockHash = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory "runtime/
         workflow_path = ".github/workflows/release-readiness.yml"
         workflow_run_id = $ProducerWorkflowRunId
         workflow_run_attempt = $ProducerWorkflowRunAttempt
+    }
+    signing = @{
+        required = [bool]$RequireSignature
+        verified = [bool]$RequireSignature
+        signer_subject = if ($RequireSignature) { $ExpectedSignerSubject } else { "" }
+        timestamp_server = if ($RequireSignature) { $TimestampServer } else { "" }
+        files = @(
+            "SubtitleEditBayLauncher.exe",
+            "SubtitleEditBay-Setup.exe"
+        )
     }
 } | ConvertTo-Json -Depth 5 | Set-Content `
     -LiteralPath (Join-Path $releaseDirectory "release-preparation.json") `

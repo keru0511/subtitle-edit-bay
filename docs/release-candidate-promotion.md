@@ -2,7 +2,7 @@
 
 ## 目的と境界
 
-マージ前に `Release readiness` がbuildし、独立runnerでinstall/startまで確認したWindows installerの同じbyte列を正式Releaseへ昇格する。公開側は候補の検索、承認済みマージとの対応確認、checksum確認、タグとReleaseの作成だけを担当し、テスト・依存解決・build・署名・installer加工を行わない。
+マージ前に `Release readiness` が候補の内容とinstall/startを確認し、マージ後のprotected preparationが同じsource treeから署名済みWindows installerを再生成する。公開側は候補の検索、承認済みマージとの対応確認、署名済みchecksum確認、タグとReleaseの作成を担当する。署名設定の欠落、Launcher/Setupの署名失敗、timestamp検証失敗はpublish前に停止する。
 
 候補生成側の正本は `release-prepare.yml`、成果物内契約は `release_contract.py` とする。公開側は成果物内の自己申告だけでなくGitHub APIのrun、job、PR、commit、artifact情報を照合する。
 
@@ -20,7 +20,7 @@
 - version、候補SHA、build attemptを含むartifactが1件だけ存在し、artifact ID、GitHub SHA-256 digest、期限を取得でき、未失効である
 - 候補SHAが最終base/headを親に持つ仮マージcommitで、候補treeと公開commitのtreeが一致する
 
-候補の `candidate_source_sha` とタグを付ける `release_commit_sha` は別に保存する。候補のmanifestや準備記録を正式マージSHAへ書き換えない。準備runの最新attempt、artifact生成attempt、install/start attempt、通常CIのrun/attemptと検証対象SHA/tree、artifact ID/digest、PR、installer checksumは `release-promotion.json` に記録する。
+候補の `candidate_source_sha` とタグを付ける `release_commit_sha` は別に保存する。候補のmanifestや準備記録を正式マージSHAへ書き換えない。正式準備は実マージSHAをsourceとして作成し、署名済みartifactのID/digest、署名subject、timestampを含むsigning contractと、通常CIのrun/attempt、検証対象SHA/tree、PR、installer checksumを `release-promotion.json` に記録する。
 
 最新の該当runが待機中、実行中、失敗、キャンセル、skipの場合、古い成功runへフォールバックしない。PR更新、base/head不一致、tree不一致、fork、未知のjob構成、重複artifact、digest欠落、期限切れ、APIエラーも公開不可とする。artifactはGitHub APIからZIPを取得し、展開前にZIP全体のSHA-256をAPIのdigestと一致させる。
 
@@ -28,23 +28,23 @@
 
 ## 信頼境界
 
-公開Workflowはマージ済みmain上の `job.workflow_sha` から公開ツールをcheckoutし、候補artifact内のコードを実行しない。VERSION-only PRであることと候補tree・公開treeの一致を確認するため、候補を生成したWorkflowおよびbuild定義も承認済みの公開treeと一致する。PR側へ `contents: write` や公開用資格情報は渡さない。
+公開Workflowはマージ済みmain上の `job.workflow_sha` から公開ツールをcheckoutし、候補artifact内のコードを実行しない。VERSION-only PRであることと候補tree・公開treeの一致を確認するため、候補を生成したWorkflowおよびbuild定義も承認済みの公開treeと一致する。署名用secretはPRの`Release readiness`へ渡さず、正式準備のprotected environmentだけで利用する。PR側へ `contents: write` や公開用資格情報は渡さない。
 
 tree一致だけでは履歴や外部入力を使うbuild一般の同一性を証明できない。本プロジェクトのinstaller buildでcommit SHAは配布binaryの入力ではなく不変のprovenance記録にだけ使う。依存・runner・署名等をbuild入力として固定する契約を候補生成側で追加した場合、公開側にも同じフィールドの照合を追加する。未知スキーマを黙って許容しない。
 
 ## 再実行と復旧
 
-準備Workflowで失敗jobだけを再実行した場合、成功済みbuild artifactとinstall/start結果は生成attemptのまま再利用し、準備runの最新attemptとは別に照合する。artifact名は生成attemptを含め、全job再実行で新しいbuildが作られた場合も既存artifactを上書きしない。公開Workflowの全job再実行では、最初に保存した不変の昇格判断artifactをdigest検証して再利用し、選択済みの候補run/attempt、通常CI run/attempt、artifact ID/digestを維持する。公開途中のAPI障害ではbuildやtestを起動しない。
+準備Workflowで失敗jobだけを再実行した場合、成功済みbuild artifactとinstall/start結果は生成attemptのまま再利用し、準備runの最新attemptとは別に照合する。正式署名artifactは署名・timestamp検証を通過したものだけを記録する。artifact名は生成attemptを含め、公開Workflowの全job再実行では、最初に保存した不変の昇格判断artifactをdigest検証して再利用する。公開途中のAPI障害では候補の検証を省略せず、unsigned artifactへフォールバックしない。
 
 - 既存タグが別commitを指す場合は停止し、削除・付け替えしない
 - 公開済みReleaseは全assetが候補とbyte単位で同じ場合だけ再利用する。欠落や差異があれば停止する
 - draftは既存assetを先にbyte単位で照合し、同一候補から不足分だけを追加して公開する。既存assetは上書きしない
 - artifact不在・期限切れ・候補不一致では停止し、別runへ自動フォールバックしない
 
-候補artifactと昇格判断記録の保持は14日とする。失効後は信頼済みの生成経路で明示的に再準備し、必要検証と公開承認をやり直す。
+候補artifact、正式署名artifact、昇格判断記録の保持は14日とする。失効後は信頼済みの生成経路で署名を含む検証を明示的にやり直し、必要な公開承認を改めて確認する。
 
 ## 計測
 
-変更前はマージ後にLinuxテスト1回、Windows build 1回、install/start 1回を再実行していた。変更後の通常公開処理はこれらを0回とし、候補検索、API照合、artifact download、checksum、タグ、Release APIだけを実行する。
+マージ前の候補検証に加えて、正式準備で署名済みartifactを生成し、Windows上で署名・timestamp・install/startを確認する。公開側は候補検索、API照合、署名済みartifact download、checksum、タグ、Release APIを実行し、unsigned候補を公開assetへ昇格しない。
 
 実runでは候補run ID/attempt、マージから公開完了まで、候補検索・download・照合・公開の各step時間、総runner時間、`release-promotion.json` のinstaller checksumを記録する。ネットワークとqueue待ちは別に扱い、固定秒数を成功条件にしない。

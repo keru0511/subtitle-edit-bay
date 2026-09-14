@@ -9,6 +9,12 @@ param(
 
     [string]$IsccPath,
 
+    [switch]$RequireSignature,
+
+    [string]$ExpectedSignerSubject,
+
+    [string]$TimestampServer = "http://timestamp.digicert.com",
+
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -16,6 +22,10 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = [IO.Path]::GetFullPath($ProjectRoot)
 $installerScript = Join-Path $projectRoot "installer\SubtitleEditBay.iss"
+
+if ($RequireSignature -and [string]::IsNullOrWhiteSpace($ExpectedSignerSubject)) {
+    throw "ExpectedSignerSubject is required when formal Authenticode signing is enabled."
+}
 
 function Find-InnoSetupCompiler {
     param([string]$ExplicitPath)
@@ -86,6 +96,20 @@ if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
     throw "Launcher build did not produce the required executable: $launcherPath"
 }
 
+if ($RequireSignature) {
+    $signingScript = Join-Path $projectRoot "scripts\sign_windows_artifacts.ps1"
+    if (-not (Test-Path -LiteralPath $signingScript -PathType Leaf)) {
+        throw "Windows signing script is missing: $signingScript"
+    }
+    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $signingScript `
+        -Path $launcherPath `
+        -ExpectedSignerSubject $ExpectedSignerSubject `
+        -TimestampServer $TimestampServer
+    if ($LASTEXITCODE -ne 0) {
+        throw "Launcher Authenticode signing failed with exit code $LASTEXITCODE."
+    }
+}
+
 $versionCore = ($Version -split '[-+]')[0]
 $versionParts = $versionCore.Split('.')
 $versionInfoVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2]).0"
@@ -112,6 +136,33 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not (Test-Path -LiteralPath $resolvedOutputPath -PathType Leaf)) {
     throw "Inno Setup completed without producing the expected file: $resolvedOutputPath"
+}
+
+if ($RequireSignature) {
+    $signingScript = Join-Path $projectRoot "scripts\sign_windows_artifacts.ps1"
+    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $signingScript `
+        -Path $resolvedOutputPath `
+        -ExpectedSignerSubject $ExpectedSignerSubject `
+        -TimestampServer $TimestampServer
+    if ($LASTEXITCODE -ne 0) {
+        throw "Installer Authenticode signing failed with exit code $LASTEXITCODE."
+    }
+    & "$PSScriptRoot\verify_windows_binary.ps1" `
+        -Path $launcherPath `
+        -ExpectedSignerSubject $ExpectedSignerSubject `
+        -RequireSignature `
+        -RequireTimestamp
+    if ($LASTEXITCODE -ne 0) {
+        throw "Signed launcher verification failed with exit code $LASTEXITCODE."
+    }
+    & "$PSScriptRoot\verify_windows_binary.ps1" `
+        -Path $resolvedOutputPath `
+        -ExpectedSignerSubject $ExpectedSignerSubject `
+        -RequireSignature `
+        -RequireTimestamp
+    if ($LASTEXITCODE -ne 0) {
+        throw "Signed installer verification failed with exit code $LASTEXITCODE."
+    }
 }
 
 $artifact = Get-Item -LiteralPath $resolvedOutputPath

@@ -23,11 +23,11 @@ Formal distribution requires SHA-256 Authenticode signatures on both the launche
 
 PR-controlled workflows must not receive a repository signing key. The current pre-merge artifact promotion architecture therefore cannot safely consume a normal repository secret: a same-repository PR can modify the workflow or signing script before secret use. The client trust policy currently pins the complete subject `CN=Subtitle Edit Bay`; no matching certificate, managed signing provider, protected signing environment or OIDC policy has been provisioned.
 
-Until that trust boundary is supplied, VERSION-only release preparation sets `require_signature: true` and fails before artifact upload with an explicit configuration error. Infrastructure PRs can still exercise unsigned build, runtime dependency and resource checks, but an unsigned formal candidate cannot become publishable.
+Until that trust boundary is supplied, the protected formal release preparation fails before artifact upload with an explicit configuration error. Pull Request `Release readiness` intentionally sets `require_signature: false` and never receives signing secrets; it only exercises the unsigned build, runtime dependency and resource checks. After the approved VERSION commit reaches `main`, `release-request.yml` runs a separate protected preparation with `require_signature: true`, and the publish workflow requires the resulting signed manifest before it can create or update a Release. An unsigned formal artifact cannot become publishable.
 
 To unblock signing, choose a managed signing provider or protected workflow whose policy pins trusted workflow code and candidate digest. Then connect the provided signing primitive in this order:
 
-1. build launcher, verify imports/resources, sign and verify launcher;
+1. build launcher, verify imports/resources, sign and verify launcher in the protected preparation;
 2. build installer containing that exact launcher;
 3. sign and verify installer with timestamp;
 4. generate checksum/manifest only after signing;

@@ -16,6 +16,15 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      WINDOWS_SIGNING_CERTIFICATE_BASE64:
+        required: false
+      WINDOWS_SIGNING_CERTIFICATE_PASSWORD:
+        required: false
+      WINDOWS_SIGNING_EXPECTED_SUBJECT:
+        required: false
+      WINDOWS_SIGNING_TIMESTAMP_SERVER:
+        required: false
     outputs:
       artifact_name:
         value: ${{ jobs.readiness.outputs.artifact_name }}
@@ -123,6 +132,8 @@ jobs:
     name: Build and verify Windows installer
     needs: validate
     runs-on: windows-latest
+    environment:
+      name: ${{ inputs.require_signature && 'release-signing' || 'release-readiness' }}
     timeout-minutes: 90
     outputs:
       artifact_name: ${{ steps.identity.outputs.artifact_name }}
@@ -193,6 +204,26 @@ jobs:
               if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Inno Setup compiler was not found: $candidate" }
               "INNO_SETUP_COMPILER=$candidate" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
+      - name: Require protected Authenticode signing configuration
+        id: signing
+        if: inputs.require_signature
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGNING_EXPECTED_SUBJECT: ${{ secrets.WINDOWS_SIGNING_EXPECTED_SUBJECT }}
+          WINDOWS_SIGNING_TIMESTAMP_SERVER: ${{ secrets.WINDOWS_SIGNING_TIMESTAMP_SERVER }}
+        run: |
+          $required = @{
+              WINDOWS_SIGNING_CERTIFICATE_BASE64 = $env:WINDOWS_SIGNING_CERTIFICATE_BASE64
+              WINDOWS_SIGNING_CERTIFICATE_PASSWORD = $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD
+              WINDOWS_SIGNING_EXPECTED_SUBJECT = $env:WINDOWS_SIGNING_EXPECTED_SUBJECT
+              WINDOWS_SIGNING_TIMESTAMP_SERVER = $env:WINDOWS_SIGNING_TIMESTAMP_SERVER
+          }
+          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object Key)
+          if ($missing.Count -gt 0) {
+              throw "Protected Authenticode signing configuration is incomplete ($($missing -join ', ')); refusing unsigned formal release."
+          }
       - name: Build release package
         id: package
         shell: pwsh
@@ -204,27 +235,55 @@ jobs:
           PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           PULL_REQUEST_HEAD_BRANCH: ${{ github.event.pull_request.head.ref || '' }}
-        run: >-
-          ./release-tools/scripts/build_release_package.ps1
-          -ReleaseVersion "${{ inputs.release_version }}"
-          -SourceSha "${{ inputs.source_sha }}"
-          -OutputDirectory "${{ runner.temp }}/subtitle-edit-bay-release"
-          -ProducerRepository "$env:PRODUCER_REPOSITORY"
-          -ProducerWorkflowRunId "$env:PRODUCER_WORKFLOW_RUN_ID"
-          -ProducerWorkflowRunAttempt "$env:PRODUCER_WORKFLOW_RUN_ATTEMPT"
-          -PullRequestNumber "$env:PULL_REQUEST_NUMBER"
-          -PullRequestHeadSha "$env:PULL_REQUEST_HEAD_SHA"
-          -PullRequestBaseSha "$env:PULL_REQUEST_BASE_SHA"
-          -PullRequestHeadBranch "$env:PULL_REQUEST_HEAD_BRANCH"
-          -SourceDirectory "${{ github.workspace }}/source"
+          REQUIRE_SIGNATURE: ${{ inputs.require_signature }}
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGNING_EXPECTED_SUBJECT: ${{ secrets.WINDOWS_SIGNING_EXPECTED_SUBJECT }}
+          WINDOWS_SIGNING_TIMESTAMP_SERVER: ${{ secrets.WINDOWS_SIGNING_TIMESTAMP_SERVER }}
+        run: |
+          $arguments = @(
+              "-ReleaseVersion", "${{ inputs.release_version }}",
+              "-SourceSha", "${{ inputs.source_sha }}",
+              "-OutputDirectory", "${{ runner.temp }}/subtitle-edit-bay-release",
+              "-ProducerRepository", "$env:PRODUCER_REPOSITORY",
+              "-ProducerWorkflowRunId", "$env:PRODUCER_WORKFLOW_RUN_ID",
+              "-ProducerWorkflowRunAttempt", "$env:PRODUCER_WORKFLOW_RUN_ATTEMPT",
+              "-PullRequestNumber", "$env:PULL_REQUEST_NUMBER",
+              "-PullRequestHeadSha", "$env:PULL_REQUEST_HEAD_SHA",
+              "-PullRequestBaseSha", "$env:PULL_REQUEST_BASE_SHA",
+              "-PullRequestHeadBranch", "$env:PULL_REQUEST_HEAD_BRANCH",
+              "-SourceDirectory", "${{ github.workspace }}/source"
+          )
+          if ($env:REQUIRE_SIGNATURE -eq "true") {
+              if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64) -or
+                  [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) -or
+                  [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_EXPECTED_SUBJECT) -or
+                  [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_TIMESTAMP_SERVER)) {
+                  throw "Protected Authenticode signing configuration is incomplete; refusing unsigned formal release."
+              }
+              $arguments += @(
+                  "-RequireSignature",
+                  "-ExpectedSignerSubject", $env:WINDOWS_SIGNING_EXPECTED_SUBJECT,
+                  "-TimestampServer", $env:WINDOWS_SIGNING_TIMESTAMP_SERVER
+              )
+          }
+          & ./release-tools/scripts/build_release_package.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Release package build failed with exit code $LASTEXITCODE." }
       - name: Verify release package
         id: verify
+        env:
+          REQUIRE_SIGNATURE: ${{ inputs.require_signature }}
         shell: pwsh
-        run: >-
-          python release-tools/scripts/release_contract.py verify-artifacts
-          --directory "${{ runner.temp }}/subtitle-edit-bay-release"
-          --expected-version "${{ needs.validate.outputs.app_version }}"
-          --expected-source-sha "${{ inputs.source_sha }}"
+        run: |
+          $arguments = @(
+              "release-tools/scripts/release_contract.py", "verify-artifacts",
+              "--directory", "${{ runner.temp }}/subtitle-edit-bay-release",
+              "--expected-version", "${{ needs.validate.outputs.app_version }}",
+              "--expected-source-sha", "${{ inputs.source_sha }}"
+          )
+          if ($env:REQUIRE_SIGNATURE -eq "true") { $arguments += "--require-signature" }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Release package verification failed with exit code $LASTEXITCODE." }
       - name: Verify launcher runtime and version resources
         id: binary
         shell: pwsh
@@ -235,13 +294,6 @@ jobs:
           -ExpectedProductName "Subtitle Edit Bay"
           -ExpectedPublisher "Subtitle Edit Bay"
           -CheckDependencies
-      - name: Refuse unsigned formal release candidates
-        id: signing
-        if: inputs.require_signature
-        shell: pwsh
-        run: >-
-          throw "Trusted Authenticode signing provider/certificate is not configured.
-          Formal release candidates remain blocked; do not publish unsigned artifacts."
       - name: Upload prepared installer
         id: upload
         uses: actions/upload-artifact@v7

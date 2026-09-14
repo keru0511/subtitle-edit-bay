@@ -6,6 +6,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/windows_signing_identity.ps1"
+if ($TimestampServer -notmatch '^https?://\S+$') {
+    throw "TimestampServer must be an HTTP(S) URL."
+}
 $encodedCertificate = $env:WINDOWS_SIGNING_CERTIFICATE_BASE64
 $certificatePassword = $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD
 if (-not $encodedCertificate -or -not $certificatePassword) {

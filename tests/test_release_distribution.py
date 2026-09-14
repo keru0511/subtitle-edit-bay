@@ -142,6 +142,10 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("[string]$ProjectRoot", build)
         self.assertIn("source_sha", package)
         self.assertIn("release-preparation.json", package)
+        self.assertIn("RequireSignature", package)
+        self.assertIn("signing", package)
+        self.assertIn("ExpectedSignerSubject", build)
+        self.assertIn("sign_windows_artifacts.ps1", build)
         self.assertIn("pull_request_number", package)
         self.assertIn("workflow_run_id", package)
         self.assertIn("[long]$ProducerWorkflowRunId = 0", package)
@@ -230,6 +234,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Get-AuthenticodeSignature", verifier)
         self.assertIn("TimeStamperCertificate", verifier)
         self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", signer)
+        self.assertIn("TimestampServer must be an HTTP(S) URL", signer)
         self.assertIn("EphemeralKeySet", signer)
         self.assertIn("Set-AuthenticodeSignature", signer)
         self.assertNotIn("$LASTEXITCODE", signer)
@@ -254,7 +259,16 @@ class ReleaseDistributionTests(unittest.TestCase):
         triggers = workflow["on"]
 
         self.assertEqual(set(triggers), {"workflow_call"})
-        self.assertEqual(set(triggers["workflow_call"]["inputs"]), {"release_commit_sha", "release_version"})
+        self.assertEqual(
+            set(triggers["workflow_call"]["inputs"]),
+            {
+                "release_commit_sha",
+                "release_version",
+                "signed_artifact_id",
+                "signed_artifact_name",
+                "signed_artifact_digest",
+            },
+        )
         validate_publish_gate(
             workflow,
             publish_job="publish",
@@ -268,7 +282,6 @@ class ReleaseDistributionTests(unittest.TestCase):
         )
         graph = build_job_graph(workflow)
         self.assertTrue({"candidate", "tag"}.issubset(job_ancestors(graph, "publish")))
-        self.assertNotIn("prepare", workflow["jobs"])
         self.assertEqual(
             workflow["jobs"]["candidate"]["permissions"],
             {"actions": "read", "contents": "read", "pull-requests": "read"},
@@ -292,6 +305,16 @@ class ReleaseDistributionTests(unittest.TestCase):
             reusable_release["with"]["release_version"],
             "${{ needs.validate.outputs.release_version }}",
         )
+        self.assertEqual(
+            reusable_release["with"]["signed_artifact_id"],
+            "${{ needs.prepare.outputs.artifact_id }}",
+        )
+        self.assertEqual(
+            reusable_release["with"]["signed_artifact_digest"],
+            "${{ needs.prepare.outputs.artifact_digest }}",
+        )
+        self.assertEqual(request["jobs"]["prepare"]["with"]["require_signature"], True)
+        self.assertEqual(request["jobs"]["prepare"]["with"]["source_sha"], "${{ needs.validate.outputs.source_sha }}")
         self.assertFalse(
             (ROOT / ".github" / "workflows" / "release-tag.yml").exists(),
             "direct tag push must not be a publishing entrypoint",
@@ -322,6 +345,8 @@ class ReleaseDistributionTests(unittest.TestCase):
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         self.assertEqual(preparation["on"]["workflow_call"]["inputs"]["require_signature"]["default"], False)
+        self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", preparation["on"]["workflow_call"]["secrets"])
+        self.assertIn("release-signing", str(preparation["jobs"]["build"]["environment"]))
         binary = step_by_id(preparation, "build", "binary")
         self.assertIn("verify_windows_binary.ps1", str(binary["run"]))
         signing = step_by_id(preparation, "build", "signing")
@@ -332,6 +357,7 @@ class ReleaseDistributionTests(unittest.TestCase):
             readiness["jobs"]["prepare"]["with"]["require_signature"],
             False,
         )
+        self.assertNotIn("secrets", readiness["jobs"]["prepare"])
         published_assets = str(step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
         self.assertIn("release-promotion.json", published_assets)
@@ -339,15 +365,16 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn('cmp "dist/$asset" "existing-release/$asset"', published_assets)
 
         candidate = workflow["jobs"]["candidate"]
-        self.assertNotIn("release-prepare.yml", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
         select_command = str(step_by_id(workflow, "candidate", "select")["run"])
         self.assertIn("release_candidate.py resolve", select_command)
         self.assertIn("--decision-artifact-name", select_command)
         download = step_by_id(workflow, "candidate", "download")
         download_command = str(download["run"])
         self.assertIn("release_candidate.py download-artifact", download_command)
-        self.assertIn('--artifact-id "${{ steps.select.outputs.artifact_id }}"', download_command)
-        self.assertIn('--artifact-digest "${{ steps.select.outputs.artifact_digest }}"', download_command)
+        self.assertIn('artifact_id="${{ inputs.signed_artifact_id }}"', download_command)
+        self.assertIn('artifact_digest="${{ inputs.signed_artifact_digest }}"', download_command)
+        self.assertIn(".promoted_artifact_id", download_command)
+        self.assertIn('echo "artifact_id=$artifact_id"', download_command)
         self.assertNotIn("actions/download-artifact", str(download))
         upload = next(step for step in candidate["steps"] if step.get("name") == "Upload promotion record")
         self.assertEqual(upload["if"], "steps.select.outputs.decision_reused != 'true'")
@@ -757,7 +784,8 @@ class WorkflowContractHelperTests(unittest.TestCase):
         command = str(step_by_id(workflow, "publish", "verify")["run"])
 
         self.assertIn('--expected-version "${{ inputs.release_version }}"', command)
-        self.assertIn('--expected-source-sha "$CANDIDATE_SOURCE_SHA"', command)
+        self.assertIn('--expected-source-sha "$SIGNED_SOURCE_SHA"', command)
+        self.assertIn("--require-signature", command)
         self.assertIn('[[ "$actual_sha256" == "$INSTALLER_SHA256" ]]', command)
         self.assertNotIn("|| true", command)
         self.assertEqual(step_by_id(workflow, "publish", "verify")["shell"], "bash")
@@ -1097,6 +1125,26 @@ class ReleaseCandidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
                 verify_promotion_record(actual, expected)
 
+    def test_promotion_record_binds_signed_artifact_identity(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            candidate_path = directory / "candidate.json"
+            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            record = directory / "promotion.json"
+            write_promotion_record(
+                record,
+                candidate_path,
+                "1" * 64,
+                promoted_artifact_id=999,
+                promoted_artifact_name="signed-installer",
+                promoted_artifact_digest="sha256:" + "2" * 64,
+            )
+            payload = json.loads(record.read_text(encoding="utf-8"))
+            self.assertEqual(payload["promoted_artifact_id"], 999)
+            self.assertEqual(payload["promoted_artifact_name"], "signed-installer")
+            self.assertEqual(payload["promoted_artifact_digest"], "sha256:" + "2" * 64)
+
     def test_generated_preparation_is_bound_to_pr_and_readiness_run(self) -> None:
         candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
         producer = {
@@ -1257,7 +1305,14 @@ class ReleaseCandidateTests(unittest.TestCase):
             candidate_path = directory / "selected-candidate.json"
             candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
             promotion_path = directory / "release-promotion.json"
-            write_promotion_record(promotion_path, candidate_path, "1" * 64)
+            write_promotion_record(
+                promotion_path,
+                candidate_path,
+                "1" * 64,
+                promoted_artifact_id=999,
+                promoted_artifact_name="signed-installer",
+                promoted_artifact_digest="sha256:" + "2" * 64,
+            )
             archive_path = directory / "decision.zip"
             with zipfile.ZipFile(archive_path, "w") as archive:
                 archive.write(candidate_path, candidate_path.name)
@@ -1300,6 +1355,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
         directory: Path,
         version: str = "1.2.3",
         source_sha: str = "a" * 40,
+        signed: bool = False,
     ) -> str:
         installer = directory / INSTALLER_NAME
         installer.write_bytes(b"deterministic installer bytes")
@@ -1338,6 +1394,13 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "cpu_lock_sha256": "2" * 64,
                         "cu128_lock_sha256": "3" * 64,
                     },
+                    "signing": {
+                        "required": signed,
+                        "verified": signed,
+                        "signer_subject": "CN=Subtitle Edit Bay" if signed else "",
+                        "timestamp_server": "http://timestamp.digicert.com" if signed else "",
+                        "files": ["SubtitleEditBayLauncher.exe", INSTALLER_NAME],
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1351,6 +1414,13 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                     "artifact_name": f"subtitle-edit-bay-{version}-windows-installer-{source_sha}",
                     "asset_name": INSTALLER_NAME,
                     "sha256": digest,
+                    "signing": {
+                        "required": signed,
+                        "verified": signed,
+                        "signer_subject": "CN=Subtitle Edit Bay" if signed else "",
+                        "timestamp_server": "http://timestamp.digicert.com" if signed else "",
+                        "files": ["SubtitleEditBayLauncher.exe", INSTALLER_NAME],
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1384,6 +1454,37 @@ class ReleaseArtifactContractTests(unittest.TestCase):
             digest = self._write_release_artifacts(directory)
 
             self.assertEqual(verify_release_artifacts(directory, "v1.2.3", "a" * 40), digest)
+
+    def test_formal_release_requires_verified_timestamped_signatures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            digest = self._write_release_artifacts(directory, signed=True)
+
+            self.assertEqual(
+                verify_release_artifacts(directory, "v1.2.3", "a" * 40, require_signature=True),
+                digest,
+            )
+
+            self._rewrite_manifest(
+                directory,
+                signing={
+                    "required": True,
+                    "verified": False,
+                    "signer_subject": "CN=Subtitle Edit Bay",
+                    "timestamp_server": "http://timestamp.digicert.com",
+                    "files": ["SubtitleEditBayLauncher.exe", INSTALLER_NAME],
+                },
+            )
+            with self.assertRaisesRegex(ReleaseContractError, "was not verified"):
+                verify_release_artifacts(directory, "v1.2.3", "a" * 40, require_signature=True)
+
+    def test_unsigned_formal_release_is_rejected_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            self._write_release_artifacts(directory)
+
+            with self.assertRaisesRegex(ReleaseContractError, "must require Authenticode signing"):
+                verify_release_artifacts(directory, "v1.2.3", "a" * 40, require_signature=True)
 
     def test_artifact_source_identity_must_match(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

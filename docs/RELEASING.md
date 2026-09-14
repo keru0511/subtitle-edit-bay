@@ -19,9 +19,11 @@
 4. SHA-256、manifest、対象SHA、準備記録を検証する
 5. そのインストーラーをサイレントインストールし、配置内容、VERSION、GUI起動を確認する
 
+ここで作るPR用artifactは署名しません。署名secretを持たないPR経路で安全に実行できることを優先し、正式な署名はマージ後の`release-request.yml`がprotected `release-signing` environmentで同じsource SHAから再準備するときだけ行います。
+
 PRの準備処理は `contents: read` だけで動き、タグやReleaseを作りません。`pull_request_target` や公開用資格情報も使いません。
 
-Windows launcherの静的CRT、version resource、import dependency、Authenticode署名とtimestampの契約は [Windows binary trust contract](WINDOWS_BINARY_TRUST.md) を参照してください。信頼済みsigning providerが未構成の間、VERSION-only候補はunsigned artifactを保存せず明示的に停止します。
+Windows launcherの静的CRT、version resource、import dependency、Authenticode署名とtimestampの契約は [Windows binary trust contract](WINDOWS_BINARY_TRUST.md) を参照してください。Pull Requestの`Release readiness`は署名secretを受け取らず、unsignedな準備artifactだけを検証します。マージ後の正式releaseはprotected `release-signing` environmentでLauncherとSetupを署名し、信頼済みsigning providerが未構成ならartifact upload前に明示的に停止します。
 
 ### Windows launcherのruntime配布契約
 
@@ -37,17 +39,17 @@ main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmp
 
 リリースPRをマージすると `release-request.yml` が、そのpushイベントの実際のマージSHAとVERSIONを固定します。待機中に `main` が進んでも対象を最新HEADへ差し替えません。
 
-公開処理は `release-prepare.yml` を再実行しません。マージ前の `Release readiness` が作成し、別runnerでインストール・起動確認したartifactを次の順で昇格します。
+公開処理は、マージ前の候補検証とマージ後の署名済みartifact生成を分離します。`release-request.yml`は、承認済み候補を確認した後、実際のマージSHAをsourceとしてprotected `release-prepare.yml`を実行し、署名・検証・インストール・起動確認を完了してから次の順で昇格します。
 
 1. 実際のマージSHAに対応する、マージ済みのVERSION-only PRを固定する
 2. そのPRの最終head/baseに対する未完了を含む最新の `Release readiness` runを特定する。APIのPR対応がマージ後に空でもhead branch/SHA、repository、workflow、候補commitの親/treeで結び、最新runが未完了・失敗・キャンセルなら過去の成功runへ戻らない
-3. readinessの必須7ジョブについて各ジョブの最新実行が成功したことを確認する。失敗jobだけの再実行では、準備runの最新attemptと、artifactを生成したbuild attempt、同じartifactを確認したinstall/start attemptを分けて保持する
-4. 同じ最終headの最新の通常CIで分類・quality・Windows runtime・launcher・FFmpeg 6が成功し、Release readinessへ委譲した2ジョブがskipされたことに加え、成功後に保存した検証プロファイルと仮マージSHA/tree/head/baseのidentity artifactがRelease readiness候補と一致することを確認する
-5. build attemptを含むartifact名、ID、digestが一意で未失効であることを確認し、APIから取得したZIP全体のSHA-256をdigestと照合してから展開する
-6. PR仮マージcommitの親が最終base/headであり、そのtreeが実際のマージcommitのtreeと一致することを確認する
-7. artifactをrun IDとartifact IDで取得し、候補SHA、VERSION、manifest、installer SHA-256を再検証する
+3. readinessの必須7ジョブについて各ジョブの最新実行が成功したことを確認する。失敗jobだけの再実行では、準備runの最新attemptとartifactを生成したbuild attemptを分けて保持する
+4. 同じ最終headの最新の通常CIで分類・quality・Windows runtime・launcher・FFmpeg 6が成功し、Release readinessへ委譲した2ジョブがskipされたことを確認する
+5. 実際のマージSHAをsourceに、protected environment上でLauncherを署名してからSetupへ梱包し、Setupも署名する。両方の署名、完全なX.500 subject、timestampをWindows上で検証する
+6. 署名済みartifactのID、digest、manifest、installer SHA-256をAPIから取得して再検証し、署名契約が欠落・未検証・対象不足ならpublish前に停止する
+7. 署名済みartifactを別runnerでインストール・起動確認する
 8. 対象の実マージSHAへ注釈付きタグを作る。既存タグなら同じSHAを指す場合だけ再利用する
-9. 検証済みのinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
+9. 検証済みの署名済みinstaller、SHA-256、manifest、`release-preparation.json` を変更せず公開し、候補と正式マージの対応は別の `release-promotion.json` に記録する
 
 この処理はテスト、依存解決、installer build、install/startを行いません。候補選択と照合の詳細は [リリース候補昇格契約](release-candidate-promotion.md) を参照してください。
 
@@ -60,9 +62,9 @@ main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmp
 - `source_sha`: 既に `main` に含まれる、VERSIONだけを変更したコミットの完全な40桁SHA
 - `release_version`: そのコミットのVERSIONと同じ `vX.Y.Z`
 
-この経路も指定したマージに対応する同じ候補artifactを再取得して昇格します。候補を再buildせず、別runや別SHAへ切り替えません。直接タグpushを公開入口にするWorkflowはありません。
+この経路も指定したマージに対応する候補検証と、同じSHAからのprotected署名準備を実行します。別runや別SHAへ切り替えず、署名設定が欠落した場合は公開しません。直接タグpushを公開入口にするWorkflowはありません。
 
-候補artifactの保持期間は14日です。不在・期限切れ・記録不整合の場合、公開Workflowは停止します。承認済み内容を再準備する場合は、同じ内容でも新しい候補として必要検証を完了し、対応する公開承認を改めて確認してください。公開処理内での自動再準備は行いません。
+候補artifactと正式releaseの署名済みartifactの保持期間は14日です。不在・期限切れ・記録不整合の場合、公開Workflowは停止します。承認済み内容を再準備する場合は、同じ内容でも署名を含む必要検証を完了し、対応する公開承認を改めて確認してください。
 
 ## 必須チェック設定
 

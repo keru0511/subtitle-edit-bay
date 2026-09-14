@@ -29,6 +29,10 @@ REQUIRED_INSTALLED_FILES = {
     "runtime/requirements-windows-cpu.lock",
     "runtime/requirements-windows-cu128.lock",
 }
+REQUIRED_SIGNED_FILES = (
+    "SubtitleEditBayLauncher.exe",
+    INSTALLER_NAME,
+)
 VERSION_PATTERN = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 TAG_PATTERN = re.compile(r"^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$")
 CHECKSUM_PATTERN = re.compile(rf"^([0-9a-fA-F]{{64}}) [ *]{re.escape(INSTALLER_NAME)}$")
@@ -92,10 +96,34 @@ def _read_manifest(path: Path) -> dict[str, object]:
     return payload
 
 
+def _verify_signing_contract(payload: object, *, required: bool) -> dict[str, object]:
+    if not required:
+        return {}
+    if not isinstance(payload, dict):
+        raise ReleaseContractError("signed release manifest has no signing contract")
+    if payload.get("required") is not True:
+        raise ReleaseContractError("signed release manifest must require Authenticode signing")
+    if payload.get("verified") is not True:
+        raise ReleaseContractError("signed release manifest was not verified before publication")
+    signer_subject = payload.get("signer_subject")
+    if not isinstance(signer_subject, str) or not signer_subject or "=" not in signer_subject:
+        raise ReleaseContractError("signed release manifest has no complete signer subject")
+    if "\n" in signer_subject or "\r" in signer_subject:
+        raise ReleaseContractError("signed release manifest signer subject contains a newline")
+    timestamp_server = payload.get("timestamp_server")
+    if not isinstance(timestamp_server, str) or not re.fullmatch(r"https?://[^\s]+", timestamp_server):
+        raise ReleaseContractError("signed release manifest has no valid timestamp server")
+    signed_files = payload.get("files")
+    if signed_files != list(REQUIRED_SIGNED_FILES):
+        raise ReleaseContractError("signed release manifest must cover launcher and installer")
+    return payload
+
+
 def verify_release_artifacts(
     directory: Path,
     expected_version: str,
     expected_source_sha: str = "",
+    require_signature: bool = False,
 ) -> str:
     normalized_expected_version = expected_version.removeprefix("v")
     if not VERSION_PATTERN.fullmatch(normalized_expected_version):
@@ -173,6 +201,11 @@ def verify_release_artifacts(
         for name in runtime_hash_names
     ):
         raise ReleaseContractError("manifest runtime_contract hashes are incomplete")
+    signing = _verify_signing_contract(manifest.get("signing"), required=require_signature)
+    if require_signature:
+        preparation_signing = preparation.get("signing")
+        if preparation_signing != signing:
+            raise ReleaseContractError("preparation signing contract does not match the manifest")
     return actual_digest
 
 
@@ -194,6 +227,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     artifacts_parser.add_argument("--directory", type=Path, required=True)
     artifacts_parser.add_argument("--expected-version", required=True)
     artifacts_parser.add_argument("--expected-source-sha", default="")
+    artifacts_parser.add_argument(
+        "--require-signature",
+        action="store_true",
+        help="Require the trusted, timestamped Authenticode contract before publication.",
+    )
     return parser.parse_args(argv)
 
 
@@ -208,6 +246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.directory,
                 args.expected_version,
                 args.expected_source_sha,
+                args.require_signature,
             )
             print(f"Release artifacts are valid: sha256={digest}")
     except ReleaseContractError as exc:

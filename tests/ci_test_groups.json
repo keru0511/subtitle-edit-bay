@@ -28,7 +28,6 @@
         "test_ass_template",
         "test_assemble_video",
         "test_audio_auto_mix",
-        "test_audio_mix_proposal",
         "test_audio_mixer",
         "test_audio_preview_cache",
         "test_batch",
@@ -47,6 +46,8 @@
         "test_craig_transcription_execution",
         "test_dependabot_config",
         "test_editor_workspace",
+        "test_gemini_acp_provider",
+        "test_gemini_runtime",
         "test_gui_codex_chat_state",
         "test_gui_codex_state",
         "test_gui_large_project_performance",
@@ -118,12 +119,14 @@
         "test_video_timeline",
         "test_workflow_actions",
         "test_youtube_package",
-        "test_youtube_text"
+        "test_youtube_text",
+        "test_audio_mix_proposal"
       ],
       "selectors": []
     },
     "qt-gui": {
       "modules": [
+        "test_gui_audio_preview_controller",
         "test_gui_backend_metaobject",
         "test_gui_editor",
         "test_gui_test_harness",

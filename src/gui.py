@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from array import array
 from bisect import bisect_left, bisect_right
 from dataclasses import replace
 import json
@@ -38,12 +37,11 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import QDesktopServices, QFontDatabase
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
+from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
 from .audio_mixer import (
-    AUDIO_MIX_MASTER_GAIN,
     DEFAULT_AUDIO_TRACK,
     MAX_VOLUME_PERCENT,
     active_audio_mix_channels,
@@ -63,11 +61,7 @@ from .audio_mix_proposal import (
 )
 from .audio_preview_cache import (
     AudioPreviewCacheResult,
-    AudioPreviewCacheStats,
-    audio_preview_cache_entries,
-    audio_preview_cache_stats,
     clear_audio_preview_cache,
-    cached_audio_preview_paths,
     prepare_audio_preview_cache,
 )
 from .gui_codex_state import (
@@ -87,6 +81,7 @@ from .gui_codex_chat_state import (
     CodexChatError,
     CodexChatSnapshot,
 )
+from .gui_audio_preview_controller import AudioPreviewController
 from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
@@ -141,16 +136,6 @@ def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
         {"label": "既定フォント", "family": ""},
         *({"label": family, "family": family} for family in families),
     ]
-
-
-def _format_bytes(value: int) -> str:
-    size = float(max(0, value))
-    units = ["B", "KB", "MB", "GB", "TB"]
-    index = 0
-    while size >= 1024 and index < len(units) - 1:
-        size /= 1024
-        index += 1
-    return f"{size:.1f} {units[index]}"
 
 
 class SubtitleListModel(QAbstractListModel):
@@ -401,6 +386,110 @@ class EditBayBackend(LegacyEditBayBackend):
     cutTimelineChanged = Signal()
     actionCapabilitiesChanged = Signal()
 
+    @property
+    def _project(self) -> dict[str, Any] | None:
+        return getattr(self, "_project_value", None)
+
+    @_project.setter
+    def _project(self, value: dict[str, Any] | None) -> None:
+        self._project_value = value
+        if hasattr(self, "_codex_audio_mix_session"):
+            self._codex_audio_mix_session.stop()
+        controller = getattr(self, "_audio_preview_controller", None)
+        if controller is not None:
+            controller.set_project(value)
+
+    @property
+    def audio_preview_cache_root(self) -> Path:
+        controller = getattr(self, "_audio_preview_controller", None)
+        if controller is not None:
+            return controller.cache_root
+        return getattr(self, "_audio_preview_cache_root", Path())
+
+    @audio_preview_cache_root.setter
+    def audio_preview_cache_root(self, value: str | Path) -> None:
+        root = Path(value)
+        self._audio_preview_cache_root = root
+        controller = getattr(self, "_audio_preview_controller", None)
+        if controller is not None:
+            controller.cache_root = root
+
+    @property
+    def _audio_preview_cache_paths(self) -> dict[str, str]:
+        return self._audio_preview_controller.cache_paths
+
+    @_audio_preview_cache_paths.setter
+    def _audio_preview_cache_paths(self, value: Mapping[str, str]) -> None:
+        self._audio_preview_controller.set_cache_paths(value)
+
+    @property
+    def _audio_preview_cache_future(self) -> Future[AudioPreviewCacheResult] | None:
+        return self._audio_preview_controller.cache_future
+
+    @_audio_preview_cache_future.setter
+    def _audio_preview_cache_future(self, value: Future[AudioPreviewCacheResult] | None) -> None:
+        self._audio_preview_controller.cache_future = value
+
+    @property
+    def _audio_preview_cache_request(self) -> int:
+        return self._audio_preview_controller.cache_request
+
+    @_audio_preview_cache_request.setter
+    def _audio_preview_cache_request(self, value: int) -> None:
+        self._audio_preview_controller.cache_request = value
+
+    @property
+    def _audio_preview_generation(self) -> int:
+        return self._audio_preview_controller.generation
+
+    @property
+    def _audio_preview_preparing(self) -> bool:
+        return self._audio_preview_controller.preparing
+
+    @_audio_preview_preparing.setter
+    def _audio_preview_preparing(self, value: bool) -> None:
+        self._audio_preview_controller.preparing = value
+
+    @property
+    def _audio_preview_outputs(self) -> dict[str, QAudioBufferOutput]:
+        return self._audio_preview_controller.outputs
+
+    @property
+    def _audio_master_mixer(self) -> RealtimeAudioMixer:
+        return self._audio_preview_controller.mixer
+
+    @property
+    def _audio_preview_gains(self) -> dict[str, float]:
+        return self._audio_preview_controller.gains
+
+    @property
+    def _audio_preview_levels(self) -> dict[str, float]:
+        return self._audio_preview_controller.levels
+
+    @property
+    def _audio_preview_pending_levels(self) -> dict[str, float]:
+        return self._audio_preview_controller.pending_levels
+
+    @property
+    def _audio_preview_level_timer(self) -> QTimer:
+        return self._audio_preview_controller.level_timer
+
+    @property
+    def _audio_master_level(self) -> float:
+        return self._audio_preview_controller.master_level
+
+    @_audio_master_level.setter
+    def _audio_master_level(self, value: float) -> None:
+        self._audio_preview_controller.master_level = value
+
+    @property
+    def _audio_limiter_reduction_db(self) -> float:
+        return self._audio_preview_controller.limiter_reduction_db
+
+    @_audio_limiter_reduction_db.setter
+    def _audio_limiter_reduction_db(self, value: float) -> None:
+        self._audio_preview_controller.limiter_reduction_db = value
+
     def __init__(self, argv: list[str], workspace_root: Path | None = None) -> None:
         resolved_workspace_root = (
             workspace_root or Path(__file__).resolve().parent.parent
@@ -480,36 +569,49 @@ class EditBayBackend(LegacyEditBayBackend):
         cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.GenericCacheLocation
         )
-        self.audio_preview_cache_root = (
-            Path(cache_location) / "Subtitle Edit Bay" / "audio-preview"
+        cache_root = Path(cache_location) / "Subtitle Edit Bay" / "audio-preview"
+        self._audio_preview_controller = AudioPreviewController(
+            cache_root,
+            parent=self,
+            # Keep the existing module-level call surface available to tests
+            # and callers while the controller owns the operation itself.
+            prepare_cache=lambda project, root, protected_paths=None: prepare_audio_preview_cache(
+                project,
+                root,
+                protected_paths=protected_paths,
+            ),
+            clear_cache=lambda root: clear_audio_preview_cache(root),
         )
-        self._audio_preview_cache_paths: dict[str, str] = {}
-        self._audio_preview_cache_future: Future[AudioPreviewCacheResult] | None = None
-        self._audio_preview_cache_request = 0
-        self._audio_preview_generation = 0
-        self._audio_preview_preparing = False
-        self._audio_preview_cache_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="audio-preview",
+        self.audio_preview_cache_root = cache_root
+        self._audio_preview_controller.cacheChanged.connect(
+            self.audioPreviewCacheChanged.emit
         )
-        self._audio_preview_outputs: dict[str, QAudioBufferOutput] = {}
-        self._audio_master_mixer = RealtimeAudioMixer(self)
-        self._audio_master_level = 0.0
-        self._audio_limiter_reduction_db = 0.0
-        self._audio_master_mixer.metricsChanged.connect(self._update_audio_master_metrics)
+        self._audio_preview_controller.previewChannelsChanged.connect(
+            self.audioMixerPreviewChannelsChanged.emit
+        )
+        self._audio_preview_controller.previewGainsChanged.connect(
+            self.audioMixerPreviewGainsChanged.emit
+        )
+        self._audio_preview_controller.levelsChanged.connect(
+            self.audioPreviewLevelsChanged.emit
+        )
+        self._audio_preview_controller.masterMetricsChanged.connect(
+            self.audioMasterMetricsChanged.emit
+        )
+        self._audio_preview_controller.projectDataChanged.connect(
+            self.projectDataChanged.emit
+        )
+        self._audio_preview_controller.statusChanged.connect(self._set_status)
+        self._audio_preview_controller.cacheCompleted.connect(
+            self.audioPreviewCacheCompleted.emit
+        )
+        self._audio_preview_controller.set_project(self._project)
         self._highlight_candidates: list[dict[str, Any]] = []
         self._highlight_rejected: list[dict[str, Any]] = []
         self._highlight_status = "idle"
         self._highlight_progress = 0.0
         self._highlight_cancel = threading.Event()
         self._highlight_generation = 0
-        self._audio_preview_gains: dict[str, float] = {}
-        self._audio_preview_levels: dict[str, float] = {}
-        self._audio_preview_pending_levels: dict[str, float] = {}
-        self._audio_preview_level_timer = QTimer(self)
-        self._audio_preview_level_timer.setInterval(33)
-        self._audio_preview_level_timer.timeout.connect(self._publish_audio_preview_levels)
-        self.audioPreviewCacheCompleted.connect(self._apply_audio_preview_cache)
         self.autosaveCompleted.connect(self._finish_autosave)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setSingleShot(True)
@@ -1514,92 +1616,20 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Property(str, notify=audioPreviewCacheChanged)
     def audioPreviewCacheSummary(self) -> str:
-        stats: AudioPreviewCacheStats = audio_preview_cache_stats(self.audio_preview_cache_root)
-        return f"{_format_bytes(stats.total_bytes)} / {_format_bytes(stats.max_bytes)}"
+        return self._audio_preview_controller.audio_preview_cache_summary
 
     @Property(str, notify=audioMixerPreviewChannelsChanged)
     def audioPreviewClockUrl(self) -> str:
-        if self._project is None:
-            return ""
-        channels = self._project.get("audio_mix", {}).get("channels", [])
-        ordered = sorted(
-            (channel for channel in channels if isinstance(channel, dict)),
-            key=lambda channel: channel.get("kind") == "external",
-        )
-        for channel in ordered:
-            cache_path = self._audio_preview_cache_paths.get(
-                str(channel.get("id", "")),
-                "",
-            )
-            if cache_path and Path(cache_path).is_file():
-                return QUrl.fromLocalFile(cache_path).toString()
-        return ""
+        return self._audio_preview_controller.audio_preview_clock_url
 
     def _reset_audio_preview_cache(self) -> None:
-        self._audio_master_mixer.stop()
-        self._audio_preview_cache_request += 1
-        self._audio_preview_generation += 1
-        self._audio_preview_cache_paths = {}
-        self._audio_preview_preparing = False
-        future = self._audio_preview_cache_future
-        if future is not None and not future.done():
-            future.cancel()
-        self._audio_preview_cache_future = None
-        self.audioPreviewCacheChanged.emit()
-        self._notify_audio_mixer_preview(structure_changed=True)
+        self._audio_preview_controller.reset_cache()
 
     @Slot()
     def prepareAudioMixerPreview(self) -> None:
-        if self._project is None:
-            return
-        entries = audio_preview_cache_entries(
-            self._project,
-            self.audio_preview_cache_root,
+        self._audio_preview_controller.prepare_preview(
+            ffmpeg_available=self._dependencies.ffmpeg,
         )
-        cached_paths = cached_audio_preview_paths(entries)
-        protected_paths = [Path(path) for path in cached_paths.values()]
-        required_ids = {entry.channel_id for entry in entries}
-        if cached_paths != self._audio_preview_cache_paths:
-            self._audio_preview_cache_paths = cached_paths
-            self._notify_audio_mixer_preview(structure_changed=True)
-            self.projectDataChanged.emit()
-        if required_ids.issubset(cached_paths):
-            if self._audio_preview_preparing:
-                self._audio_preview_preparing = False
-                self.audioPreviewCacheChanged.emit()
-            return
-        if not self._dependencies.ffmpeg:
-            self._audio_preview_preparing = False
-            self.audioPreviewCacheChanged.emit()
-            self._set_status("音声プレビューの準備にはFFmpegが必要です", "SETUP")
-            return
-        future = self._audio_preview_cache_future
-        if future is not None and not future.done():
-            return
-
-        self._audio_preview_cache_request += 1
-        request_id = self._audio_preview_cache_request
-        project_snapshot = deepcopy(self._project)
-        cache_root = self.audio_preview_cache_root
-        self._audio_preview_preparing = True
-        self.audioPreviewCacheChanged.emit()
-        self.projectDataChanged.emit()
-        future = self._audio_preview_cache_executor.submit(
-            prepare_audio_preview_cache,
-            project_snapshot,
-            cache_root,
-            protected_paths=protected_paths,
-        )
-        self._audio_preview_cache_future = future
-
-        def report_completion(done: Future[AudioPreviewCacheResult]) -> None:
-            try:
-                result = done.result()
-            except Exception as error:
-                result = AudioPreviewCacheResult({}, (str(error),))
-            self.audioPreviewCacheCompleted.emit(request_id, result)
-
-        future.add_done_callback(report_completion)
 
     @Slot(int, object)
     def _apply_audio_preview_cache(
@@ -1607,81 +1637,30 @@ class EditBayBackend(LegacyEditBayBackend):
         request_id: int,
         result: AudioPreviewCacheResult,
     ) -> None:
-        if request_id != self._audio_preview_cache_request or self._project is None:
-            return
-        self._audio_preview_cache_future = None
-        self._audio_preview_cache_paths = {
-            channel_id: path
-            for channel_id, path in result.paths.items()
-            if Path(path).is_file()
-        }
-        self._audio_preview_preparing = False
-        self.audioPreviewCacheChanged.emit()
-        self._notify_audio_mixer_preview(structure_changed=True)
-        self.projectDataChanged.emit()
-        if result.errors:
-            self._set_status(
-                "音声プレビューの準備に失敗しました: " + "; ".join(result.errors),
-                "CHECK",
-            )
-        else:
-            self._set_status("音声プレビューの準備が完了しました", "MIX")
+        self._audio_preview_controller.apply_audio_preview_cache(request_id, result)
 
     @Slot()
     def clearAudioPreviewCache(self) -> None:
-        self.stopAudioMixerPreview()
-        self._audio_preview_cache_request += 1
-        self._audio_preview_generation += 1
-        self._audio_preview_cache_paths.clear()
-        self._audio_preview_preparing = False
-        future = self._audio_preview_cache_future
-        if future is not None and not future.done():
-            future.cancel()
-        self._audio_preview_cache_future = None
-        clear_audio_preview_cache(self.audio_preview_cache_root)
-        self.audioPreviewCacheChanged.emit()
-        self.projectDataChanged.emit()
-        self._notify_audio_mixer_preview(structure_changed=True)
-        self._set_status("音声プレビューキャッシュをクリアしました", "CHECK")
+        self._audio_preview_controller.clear_cache()
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerChannels(self) -> list[dict[str, Any]]:
-        if self._project is None:
-            return []
-        return [
-            self._audio_mixer_channel_view(channel)
-            for channel in self._project.get("audio_mix", {}).get("channels", [])
-        ]
+        return self._audio_preview_controller.mixer_channels
 
     @Property(bool, notify=projectDataChanged)
     def audioMixerAvailable(self) -> bool:
         return bool(self.audioMixerChannels)
 
     def _enabled_audio_mixer_channel_ids(self) -> set[str]:
-        if self._project is None:
-            return set()
-        return {
-            str(channel.get("id", ""))
-            for channel in self._project.get("audio_mix", {}).get("channels", [])
-            if isinstance(channel, dict)
-            and bool(channel.get("enabled"))
-            and str(channel.get("id", "")).strip()
-        }
+        return self._audio_preview_controller.enabled_channel_ids()
 
     @Property(bool, notify=projectDataChanged)
     def audioMixerPreviewComplete(self) -> bool:
-        enabled_ids = self._enabled_audio_mixer_channel_ids()
-        if not enabled_ids:
-            return False
-        return all(
-            bool(path := self._audio_preview_cache_paths.get(channel_id))
-            and Path(path).is_file()
-            for channel_id in enabled_ids
-        )
+        return self._audio_preview_controller.preview_complete
 
     @Property(bool, notify=projectDataChanged)
     def audioMixerIntentionalSilence(self) -> bool:
-        return self.audioMixerAvailable and not self._enabled_audio_mixer_channel_ids()
+        return self._audio_preview_controller.intentional_silence
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
@@ -1733,169 +1712,36 @@ class EditBayBackend(LegacyEditBayBackend):
         return sequence
 
     def _audio_mixer_channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
-        project = self._project or {}
-        view = deepcopy(channel)
-        is_external = view.get("kind") == "external"
-        if is_external:
-            view["preview_object_id"] = str(view.get("id", ""))
-        else:
-            view["preview_object_id"] = f"video:{view.get('selector', '')}"
-        cache_path = self._audio_preview_cache_paths.get(str(view.get("id", "")), "")
-        view["preview_url"] = (
-            QUrl.fromLocalFile(cache_path).toString()
-            if cache_path and Path(cache_path).is_file()
-            else ""
-        )
-        view["preview_audio_track_index"] = 0
-        view["preview_offset_seconds"] = (
-            float(project.get("transcription", {}).get("offset_seconds", 0.0))
-            if is_external
-            else 0.0
-        )
-        return view
+        return self._audio_preview_controller.channel_view(channel)
 
     def _audio_mixer_preview_state(
         self,
     ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, float]]:
-        if self._project is None:
-            self._audio_preview_gains = {}
-            return [], {}
-        audio_mix = self._project.get("audio_mix", {})
-        available = [
-            (channel, self._audio_mixer_channel_view(channel))
-            for channel in audio_mix.get("channels", [])
-            if isinstance(channel, dict) and bool(channel.get("enabled"))
-        ]
-        available = [item for item in available if item[1]["preview_url"]]
-        active_ids = {
-            str(channel.get("id", ""))
-            for channel in active_audio_mix_channels(audio_mix)
-        }
-        gains = {
-            str(view.get("id", "")): (
-                min(
-                    MAX_VOLUME_PERCENT / 100.0,
-                    max(0.0, float(channel.get("volume_percent", 100.0)))
-                    / 100.0
-                    * AUDIO_MIX_MASTER_GAIN,
-                )
-                if str(view.get("id", "")) in active_ids
-                else 0.0
-            )
-            for channel, view in available
-        }
-        self._audio_preview_gains = gains
-        self._audio_master_mixer.set_channels(
-            gains,
-            {
-                str(view.get("id", "")): float(view.get("preview_offset_seconds", 0.0))
-                for _channel, view in available
-            },
-        )
-        if any(
-            channel_id not in gains or gains.get(channel_id, 0.0) <= 0.0
-            for channel_id in self._audio_preview_levels
-        ):
-            self._audio_preview_level_timer.start()
-        return available, gains
+        return self._audio_preview_controller.preview_state()
 
     def _notify_audio_mixer_preview(self, *, structure_changed: bool) -> None:
-        self._audio_mixer_preview_state()
-        if structure_changed:
-            self.audioMixerPreviewChannelsChanged.emit()
-        self.audioMixerPreviewGainsChanged.emit()
+        self._audio_preview_controller.notify_preview(structure_changed=structure_changed)
 
     @Property("QVariantList", notify=audioMixerPreviewChannelsChanged)
     def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
-        available, gains = self._audio_mixer_preview_state()
-        channels: list[dict[str, Any]] = []
-        for _channel, view in available:
-            channel_id = str(view.get("id", ""))
-            view["preview_volume"] = gains.get(channel_id, 0.0)
-            view["preview_buffer_output"] = self._audio_preview_output(channel_id)
-            channels.append(view)
-        return channels
+        return self._audio_preview_controller.preview_channels
 
     @Property("QVariantMap", notify=audioMixerPreviewGainsChanged)
     def audioMixerPreviewGains(self) -> dict[str, float]:
-        _available, gains = self._audio_mixer_preview_state()
-        return dict(gains)
+        return self._audio_preview_controller.preview_gains
 
     def _audio_preview_output(self, channel_id: str) -> QAudioBufferOutput:
-        output = self._audio_preview_outputs.get(channel_id)
-        if output is None:
-            output = QAudioBufferOutput(self._audio_master_mixer.audio_format, self)
-            output.audioBufferReceived.connect(
-                lambda buffer, current_id=channel_id: self._receive_audio_preview_buffer(
-                    current_id,
-                    buffer,
-                )
-            )
-            self._audio_preview_outputs[channel_id] = output
-        return output
+        return self._audio_preview_controller.preview_output(channel_id)
 
     @staticmethod
     def _audio_buffer_peak(buffer: QAudioBuffer) -> float:
-        if not buffer.isValid() or buffer.byteCount() <= 0:
-            return 0.0
-        raw = bytes(buffer.constData())
-        sample_format = buffer.format().sampleFormat()
-        if sample_format == QAudioFormat.UInt8:
-            values = (abs(value - 128) / 128.0 for value in raw)
-        elif sample_format == QAudioFormat.Int16:
-            samples = array("h")
-            samples.frombytes(raw[: len(raw) - len(raw) % 2])
-            stride = max(1, len(samples) // 4096)
-            values = (abs(value) / 32768.0 for value in samples[::stride])
-        elif sample_format == QAudioFormat.Int32:
-            samples = array("i")
-            samples.frombytes(raw[: len(raw) - len(raw) % 4])
-            stride = max(1, len(samples) // 4096)
-            values = (abs(value) / 2147483648.0 for value in samples[::stride])
-        elif sample_format == QAudioFormat.Float:
-            samples = array("f")
-            samples.frombytes(raw[: len(raw) - len(raw) % 4])
-            stride = max(1, len(samples) // 4096)
-            values = (
-                abs(float(value))
-                for value in samples[::stride]
-                if math.isfinite(float(value))
-            )
-        else:
-            return 0.0
-        return min(1.0, max(values, default=0.0))
+        return AudioPreviewController.audio_buffer_peak(buffer)
 
     def _receive_audio_preview_buffer(self, channel_id: str, buffer: QAudioBuffer) -> None:
-        decoded_peak = self._audio_master_mixer.push_buffer(channel_id, buffer)
-        gain = self._audio_preview_gains.get(channel_id, 0.0)
-        peak = decoded_peak * gain
-        self._audio_preview_pending_levels[channel_id] = max(
-            peak,
-            self._audio_preview_pending_levels.get(channel_id, 0.0),
-        )
-        if not self._audio_preview_level_timer.isActive():
-            self._audio_preview_level_timer.start()
+        self._audio_preview_controller.receive_preview_buffer(channel_id, buffer)
 
     def _publish_audio_preview_levels(self) -> None:
-        channel_ids = (
-            set(self._audio_preview_levels)
-            | set(self._audio_preview_pending_levels)
-            | set(self._audio_preview_gains)
-        )
-        levels: dict[str, float] = {}
-        for channel_id in channel_ids:
-            target = (
-                self._audio_preview_pending_levels.pop(channel_id, 0.0)
-                if channel_id in self._audio_preview_gains
-                else 0.0
-            )
-            level = max(target, self._audio_preview_levels.get(channel_id, 0.0) * 0.68)
-            levels[channel_id] = 0.0 if level < 0.002 else round(min(1.0, level), 4)
-        if levels != self._audio_preview_levels:
-            self._audio_preview_levels = levels
-            self.audioPreviewLevelsChanged.emit()
-        if not self._audio_preview_pending_levels and not any(levels.values()):
-            self._audio_preview_level_timer.stop()
+        self._audio_preview_controller.publish_levels()
 
     @Property("QVariantMap", notify=audioPreviewLevelsChanged)
     def audioPreviewLevels(self) -> dict[str, float]:
@@ -1903,42 +1749,31 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(float, float)
     def _update_audio_master_metrics(self, level: float, reduction_db: float) -> None:
-        next_level = round(max(0.0, min(1.0, float(level))), 4)
-        next_reduction = round(max(0.0, float(reduction_db)), 2)
-        if (
-            next_level == self._audio_master_level
-            and next_reduction == self._audio_limiter_reduction_db
-        ):
-            return
-        self._audio_master_level = next_level
-        self._audio_limiter_reduction_db = next_reduction
-        self.audioMasterMetricsChanged.emit()
+        self._audio_preview_controller._update_master_metrics(level, reduction_db)
 
     @Property(float, notify=audioMasterMetricsChanged)
     def audioMasterLevel(self) -> float:
-        return self._audio_master_level
+        return self._audio_preview_controller.master_level
 
     @Property(float, notify=audioMasterMetricsChanged)
     def audioLimiterReductionDb(self) -> float:
-        return self._audio_limiter_reduction_db
+        return self._audio_preview_controller.limiter_reduction_db
 
     @Slot(int)
     def startAudioMixerPreview(self, position_milliseconds: int) -> None:
-        self._audio_mixer_preview_state()
-        self._audio_master_mixer.play(position_milliseconds)
+        self._audio_preview_controller.start_preview(position_milliseconds)
 
     @Slot()
     def pauseAudioMixerPreview(self) -> None:
-        self._audio_master_mixer.stop()
+        self._audio_preview_controller.pause_preview()
 
     @Slot(int, bool)
     def seekAudioMixerPreview(self, position_milliseconds: int, playing: bool) -> None:
-        self._audio_mixer_preview_state()
-        self._audio_master_mixer.seek(position_milliseconds, playing)
+        self._audio_preview_controller.seek_preview(position_milliseconds, playing)
 
     @Slot()
     def stopAudioMixerPreview(self) -> None:
-        self._audio_master_mixer.stop()
+        self._audio_preview_controller.stop_preview()
 
     @Property(float, notify=segmentsChanged)
     def projectDuration(self) -> float:
@@ -3355,10 +3190,6 @@ class EditBayBackend(LegacyEditBayBackend):
         self._autosave_pending = False
 
     def _shutdown_executor(self) -> None:
-        if hasattr(self, "_codex_audio_mix_session"):
-            self._codex_audio_mix_session.stop()
-        if hasattr(self, "_audio_master_mixer"):
-            self._audio_master_mixer.stop()
         if hasattr(self, "autosave_timer"):
             self.autosave_timer.stop()
         if getattr(self, "_project_dirty", False) and getattr(self, "_project_path", ""):
@@ -3366,8 +3197,9 @@ class EditBayBackend(LegacyEditBayBackend):
         if hasattr(self, "_autosave_executor"):
             self._wait_for_autosave()
             self._autosave_executor.shutdown(wait=True, cancel_futures=False)
-        if hasattr(self, "_audio_preview_cache_executor"):
-            self._audio_preview_cache_executor.shutdown(wait=True, cancel_futures=True)
+        controller = getattr(self, "_audio_preview_controller", None)
+        if controller is not None:
+            controller.shutdown()
         super()._shutdown_executor()
 
     def _update_project_settings(self, settings: dict[str, Any]) -> None:

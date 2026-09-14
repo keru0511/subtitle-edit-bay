@@ -363,6 +363,9 @@ class CodexAIProvider:
                 login_url=changes.get("login_url", current.login_url),
                 login_id=changes.get("login_id", current.login_id),
                 models=changes.get("models", current.models),
+                model_selection_supported=changes.get(
+                    "model_selection_supported", current.model_selection_supported
+                ),
                 selected_model=changes.get("selected_model", current.selected_model),
                 error=changes.get("error", current.error),
             )

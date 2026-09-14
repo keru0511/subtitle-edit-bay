@@ -241,19 +241,19 @@ jobs:
           WINDOWS_SIGNING_EXPECTED_SUBJECT: ${{ secrets.WINDOWS_SIGNING_EXPECTED_SUBJECT }}
           WINDOWS_SIGNING_TIMESTAMP_SERVER: ${{ secrets.WINDOWS_SIGNING_TIMESTAMP_SERVER }}
         run: |
-          $arguments = @(
-              "-ReleaseVersion", "${{ inputs.release_version }}",
-              "-SourceSha", "${{ inputs.source_sha }}",
-              "-OutputDirectory", "${{ runner.temp }}/subtitle-edit-bay-release",
-              "-ProducerRepository", "$env:PRODUCER_REPOSITORY",
-              "-ProducerWorkflowRunId", "$env:PRODUCER_WORKFLOW_RUN_ID",
-              "-ProducerWorkflowRunAttempt", "$env:PRODUCER_WORKFLOW_RUN_ATTEMPT",
-              "-PullRequestNumber", "$env:PULL_REQUEST_NUMBER",
-              "-PullRequestHeadSha", "$env:PULL_REQUEST_HEAD_SHA",
-              "-PullRequestBaseSha", "$env:PULL_REQUEST_BASE_SHA",
-              "-PullRequestHeadBranch", "$env:PULL_REQUEST_HEAD_BRANCH",
-              "-SourceDirectory", "${{ github.workspace }}/source"
-          )
+          $arguments = @{
+              ReleaseVersion = "${{ inputs.release_version }}"
+              SourceSha = "${{ inputs.source_sha }}"
+              OutputDirectory = "${{ runner.temp }}/subtitle-edit-bay-release"
+              ProducerRepository = $env:PRODUCER_REPOSITORY
+              ProducerWorkflowRunId = $env:PRODUCER_WORKFLOW_RUN_ID
+              ProducerWorkflowRunAttempt = $env:PRODUCER_WORKFLOW_RUN_ATTEMPT
+              PullRequestNumber = $env:PULL_REQUEST_NUMBER
+              PullRequestHeadSha = $env:PULL_REQUEST_HEAD_SHA
+              PullRequestBaseSha = $env:PULL_REQUEST_BASE_SHA
+              PullRequestHeadBranch = $env:PULL_REQUEST_HEAD_BRANCH
+              SourceDirectory = "${{ github.workspace }}/source"
+          }
           if ($env:REQUIRE_SIGNATURE -eq "true") {
               if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64) -or
                   [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) -or
@@ -261,11 +261,9 @@ jobs:
                   [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_TIMESTAMP_SERVER)) {
                   throw "Protected Authenticode signing configuration is incomplete; refusing unsigned formal release."
               }
-              $arguments += @(
-                  "-RequireSignature",
-                  "-ExpectedSignerSubject", $env:WINDOWS_SIGNING_EXPECTED_SUBJECT,
-                  "-TimestampServer", $env:WINDOWS_SIGNING_TIMESTAMP_SERVER
-              )
+              $arguments.RequireSignature = $true
+              $arguments.ExpectedSignerSubject = $env:WINDOWS_SIGNING_EXPECTED_SUBJECT
+              $arguments.TimestampServer = $env:WINDOWS_SIGNING_TIMESTAMP_SERVER
           }
           & ./release-tools/scripts/build_release_package.ps1 @arguments
           if ($LASTEXITCODE -ne 0) { throw "Release package build failed with exit code $LASTEXITCODE." }

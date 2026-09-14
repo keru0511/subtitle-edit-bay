@@ -352,6 +352,12 @@ class ReleaseDistributionTests(unittest.TestCase):
         signing = step_by_id(preparation, "build", "signing")
         self.assertEqual(signing["if"], "inputs.require_signature")
         self.assertIn("unsigned", str(signing["run"]).lower())
+        package_run = str(step_by_id(preparation, "build", "package")["run"])
+        self.assertIn("$arguments = @{", package_run)
+        self.assertIn("ReleaseVersion =", package_run)
+        self.assertIn("$arguments.RequireSignature = $true", package_run)
+        self.assertIn("& ./release-tools/scripts/build_release_package.ps1 @arguments", package_run)
+        self.assertNotIn("$arguments = @(\n", package_run)
         readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
         self.assertEqual(
             readiness["jobs"]["prepare"]["with"]["require_signature"],

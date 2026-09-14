@@ -153,6 +153,13 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("Scripts\\pip.exe", smoke)
         self.assertIn('"SubtitleEditBayLauncher.exe"', smoke)
         self.assertIn("Start-Process -FilePath $launcher", smoke)
+        self.assertIn("Invoke-CleanLauncherProbe", smoke)
+        self.assertIn("EnvironmentVariables.Clear()", smoke)
+        self.assertIn("toolchainPattern", smoke)
+        self.assertIn('[Environment]::GetEnvironmentVariables("Process")', smoke)
+        self.assertIn("VSCMD", smoke)
+        self.assertIn("expected setup-required exit code 3", smoke)
+        self.assertIn("CLEAN_LAUNCHER_PROBE_START", smoke)
         self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", smoke)
         self.assertIn('"--probe-setup"', smoke)
         self.assertNotIn("installed-gui-smoke.py", smoke)
@@ -240,6 +247,9 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("MSVC `/MT`で静的CRTリンク", releasing)
         self.assertIn("Visual C++ Redistributable", releasing)
         self.assertIn("verify_windows_binary.ps1 -CheckDependencies", releasing)
+        self.assertIn("Windows launcherのclean起動・fresh installer E2E", releasing)
+        self.assertIn("MSVC開発環境のPATHやtoolchain用環境変数を引き継がない", releasing)
+        self.assertIn("entrypoint=SubtitleEditBayLauncher.exe", releasing)
         publisher_check = updater[
             updater.index("function Assert-InstallerPublisher") : updater.index("function Resolve-RestartCommand")
         ]

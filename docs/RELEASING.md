@@ -27,6 +27,12 @@ Windows launcherの静的CRT、version resource、import dependency、Authentico
 
 正式配布するlauncherはMSVC `/MT`で静的CRTリンクし、配布先に別途Visual C++ Redistributableを要求しません。正式buildでは生成したPEを `scripts/verify_windows_binary.ps1 -CheckDependencies` に通し、`dumpbin /DEPENDENTS` でVC/UCRTの外部runtime依存を拒否します。この契約を満たさないlauncherは配布候補にしません。
 
+### Windows launcherのclean起動・fresh installer E2E
+
+Windowsのinstaller smokeは、scripts/test_installer.ps1を正本として再利用します。インストール直後に SubtitleEditBayLauncher.exe --probe-setup を、MSVC開発環境のPATHやtoolchain用環境変数を引き継がない最小Windows環境から起動します。未セットアップ時の終了コード3（setup required）まで到達することを確認し、loaderがVC/UCRT依存で起動できないケースと区別して失敗させます。
+
+同じfresh installの後段では、製品launcherから実際のsetup/repairを実行し、runtime検証後にlauncher経由でGUIを起動します。GUI smoke結果の entrypoint=SubtitleEditBayLauncher.exe、distribution=installer、VERSION/QML読込を確認します。この経路は Release readiness のWindows smokeでも同じスクリプトを使うため、通常CIと候補artifactの両方で実行されます。Authenticode署名やupdater publisher検証はこのE2Eの前提にしません。
+
 main向けのリリースPRと基盤変更PRでは、通常CIのportable/Qt/FFmpegとinstaller smokeをskipし、同じ仮マージに対する実行責務をRelease readinessへ一本化します。Release readinessが起動しない非main向けPRでは委譲せず、通常CIが全検証を実行します。通常CI固有のquality、Windows runtime、launcher、FFmpeg 6互換は引き続き必須です。分類失敗、必要ジョブの失敗・キャンセル・予期しないskip、または委譲対象の重複実行は集約で拒否します。対応表は [PR検証の実行責務](validation-ownership.md) を参照してください。
 
 ### v0.4.8で検出したGUIテスト失敗

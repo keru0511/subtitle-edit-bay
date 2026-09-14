@@ -53,6 +53,7 @@
         "test_gui_codex_state",
         "test_gui_large_project_performance",
         "test_gui_performance_pipeline",
+        "test_gui_project_editor_controller",
         "test_gui_runtime_settings",
         "test_gui_settings_controller",
         "test_gui_source_selection_controller",

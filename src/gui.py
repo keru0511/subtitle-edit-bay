@@ -82,6 +82,7 @@ from .gui_codex_chat_state import (
     CodexChatSnapshot,
 )
 from .gui_audio_preview_controller import AudioPreviewController
+from .gui_project_editor_controller import ProjectEditorController
 from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
@@ -388,16 +389,143 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @property
     def _project(self) -> dict[str, Any] | None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is not None:
+            return controller.project
         return getattr(self, "_project_value", None)
 
     @_project.setter
     def _project(self, value: dict[str, Any] | None) -> None:
-        self._project_value = value
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._project_value = value
+        else:
+            controller.project = value
         if hasattr(self, "_codex_audio_mix_session"):
             self._codex_audio_mix_session.stop()
         controller = getattr(self, "_audio_preview_controller", None)
         if controller is not None:
             controller.set_project(value)
+
+    @property
+    def _project_path(self) -> str:
+        controller = getattr(self, "_project_editor_controller", None)
+        return controller.project_path if controller is not None else getattr(self, "_project_path_value", "")
+
+    @_project_path.setter
+    def _project_path(self, value: str | Path) -> None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._project_path_value = str(value)
+        else:
+            controller.project_path = value
+
+    @property
+    def _project_dirty(self) -> bool:
+        controller = getattr(self, "_project_editor_controller", None)
+        return controller.project_dirty if controller is not None else bool(getattr(self, "_project_dirty_value", False))
+
+    @_project_dirty.setter
+    def _project_dirty(self, value: bool) -> None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._project_dirty_value = bool(value)
+        else:
+            controller.project_dirty = value
+
+    @property
+    def _project_revision(self) -> int:
+        controller = getattr(self, "_project_editor_controller", None)
+        return controller.project_revision if controller is not None else int(getattr(self, "_project_revision_value", 0))
+
+    @_project_revision.setter
+    def _project_revision(self, value: int) -> None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._project_revision_value = int(value)
+        else:
+            controller.project_revision = value
+
+    @property
+    def _undo_stack(self) -> list[dict[str, Any]]:
+        controller = getattr(self, "_project_editor_controller", None)
+        return controller.undo_stack if controller is not None else getattr(self, "_undo_stack_value", [])
+
+    @_undo_stack.setter
+    def _undo_stack(self, value: list[dict[str, Any]]) -> None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._undo_stack_value = value
+        else:
+            controller.undo_stack.clear()
+            controller.undo_stack.extend(value)
+
+    @property
+    def _redo_stack(self) -> list[dict[str, Any]]:
+        controller = getattr(self, "_project_editor_controller", None)
+        return controller.redo_stack if controller is not None else getattr(self, "_redo_stack_value", [])
+
+    @_redo_stack.setter
+    def _redo_stack(self, value: list[dict[str, Any]]) -> None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._redo_stack_value = value
+        else:
+            controller.redo_stack.clear()
+            controller.redo_stack.extend(value)
+
+    @property
+    def _selected_segment_index(self) -> int:
+        controller = getattr(self, "_project_editor_controller", None)
+        return controller.selected_segment_index if controller is not None else int(getattr(self, "_selected_segment_index_value", -1))
+
+    @_selected_segment_index.setter
+    def _selected_segment_index(self, value: int) -> None:
+        controller = getattr(self, "_project_editor_controller", None)
+        if controller is None:
+            self._selected_segment_index_value = int(value)
+        else:
+            controller.selected_segment_index = value
+
+    @property
+    def _autosave_future(self) -> Future[Path] | None:
+        return self._project_editor_controller.autosave_future
+
+    @_autosave_future.setter
+    def _autosave_future(self, value: Future[Path] | None) -> None:
+        self._project_editor_controller.autosave_future = value
+
+    @property
+    def _autosave_revision(self) -> int:
+        return self._project_editor_controller.autosave_revision
+
+    @_autosave_revision.setter
+    def _autosave_revision(self, value: int) -> None:
+        self._project_editor_controller.autosave_revision = value
+
+    @property
+    def _autosave_path(self) -> str:
+        return self._project_editor_controller.autosave_path
+
+    @_autosave_path.setter
+    def _autosave_path(self, value: str | Path) -> None:
+        self._project_editor_controller.autosave_path = value
+
+    @property
+    def _autosave_pending(self) -> bool:
+        return self._project_editor_controller.autosave_pending
+
+    @_autosave_pending.setter
+    def _autosave_pending(self, value: bool) -> None:
+        self._project_editor_controller.autosave_pending = value
+
+    @property
+    def _ignored_autosaves(self) -> set[tuple[int, str]]:
+        return self._project_editor_controller.ignored_autosaves
+
+    @property
+    def _autosave_executor(self) -> ThreadPoolExecutor:
+        return self._project_editor_controller.autosave_executor
 
     @property
     def audio_preview_cache_root(self) -> Path:
@@ -505,12 +633,9 @@ class EditBayBackend(LegacyEditBayBackend):
             preserve_in_memory=True,
             pin_in_memory=True,
         )
-        self._project: dict[str, Any] | None = None
-        self._project_path = ""
-        self._project_dirty = False
-        self._undo_stack: list[dict[str, Any]] = []
-        self._redo_stack: list[dict[str, Any]] = []
-        self._selected_segment_index = -1
+        # Project document state is owned by ProjectEditorController.  Keep
+        # the facade properties below for the existing QML/test contract.
+        self._project_editor_controller: ProjectEditorController | None = None
         self._active_job = ""
         self._ass_path = ""
         self._loading_project_sources = False
@@ -554,18 +679,35 @@ class EditBayBackend(LegacyEditBayBackend):
         self._subtitle_preview_text_cache: dict[str, tuple[tuple[object, ...], str]] = {}
         self._segment_starts: list[float] = []
         self._segment_prefix_max_end: list[float] = []
-        self._project_revision = 0
-        self._autosave_future: Future[Path] | None = None
-        self._autosave_revision = -1
-        self._autosave_path = ""
-        self._autosave_pending = False
         self._transcription_merge_mode = ""
         self._transcription_preserved_segments: list[dict[str, Any]] = []
         self._transcription_preserved_project: dict[str, Any] | None = None
         self._transcription_preserved_project_path = ""
         self._transcription_generated_project_path = ""
-        self._ignored_autosaves: set[tuple[int, str]] = set()
-        self._autosave_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="project-save")
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setSingleShot(True)
+        self.autosave_timer.setInterval(700)
+        self.autosave_timer.timeout.connect(self._autosave_project)
+        self._project_editor_controller = ProjectEditorController(
+            resolved_workspace_root,
+            # Resolve these names at call time so existing tests can patch
+            # src.gui.save_project without changing the controller boundary.
+            load_project_fn=lambda path, **kwargs: load_project(path, **kwargs),
+            save_project_fn=lambda path, project, **kwargs: save_project(
+                path,
+                project,
+                **kwargs,
+            ),
+            on_project_changed=self.projectChanged.emit,
+            on_project_data_changed=self.projectDataChanged.emit,
+            on_segments_changed=self._on_project_segments_changed,
+            on_history_changed=self.historyChanged.emit,
+            on_selection_changed=self.selectionChanged.emit,
+            on_autosave_completed=self.autosaveCompleted.emit,
+            on_dirty=lambda: self.autosave_timer.start(),
+            on_autosave_retry=lambda: QTimer.singleShot(0, self._autosave_project),
+            on_history_applied=self._on_project_history_applied,
+        )
         cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.GenericCacheLocation
         )
@@ -613,10 +755,6 @@ class EditBayBackend(LegacyEditBayBackend):
         self._highlight_cancel = threading.Event()
         self._highlight_generation = 0
         self.autosaveCompleted.connect(self._finish_autosave)
-        self.autosave_timer = QTimer(self)
-        self.autosave_timer.setSingleShot(True)
-        self.autosave_timer.setInterval(700)
-        self.autosave_timer.timeout.connect(self._autosave_project)
 
         self._update_info: updater.UpdateInfo | None = None
         self._update_error = ""
@@ -1018,6 +1156,24 @@ class EditBayBackend(LegacyEditBayBackend):
             if segment_id in segment_ids
         }
         self._refresh_short_video_clip_data()
+
+    def _on_project_segments_changed(self) -> None:
+        """Publish controller segment changes through the existing QML facade."""
+
+        self._sync_subtitle_model()
+        self.segmentsChanged.emit()
+
+    def _on_project_history_applied(
+        self,
+        entry: dict[str, Any],
+        _state: str,
+    ) -> None:
+        """Refresh side effects that are intentionally owned by the facade."""
+
+        if entry.get("kind") == "audio_mix":
+            self._notify_audio_mixer_preview(structure_changed=True)
+        elif entry.get("kind") == "timeline":
+            self._sync_project_timeline()
 
     @staticmethod
     def _subtitle_preview_signature(segment: dict[str, Any]) -> tuple[object, ...]:
@@ -2110,7 +2266,7 @@ class EditBayBackend(LegacyEditBayBackend):
             self._mixer_video_tracks(),
         )
         try:
-            save_project(project_path, project)
+            self._project_editor_controller.save_new_project(project_path, project)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"空の編集プロジェクトを保存できません: {error}", "ERROR")
             return False
@@ -2120,6 +2276,7 @@ class EditBayBackend(LegacyEditBayBackend):
         return loaded
 
     def _clear_project(self) -> None:
+        self.autosave_timer.stop()
         if self._project_dirty:
             self.saveProject()
         if hasattr(self, "_codex_audio_mix_session"):
@@ -2131,15 +2288,11 @@ class EditBayBackend(LegacyEditBayBackend):
         if hasattr(self, "audioMixProposalChanged"):
             self.audioMixProposalChanged.emit()
         self._reset_transcription_integration_state()
-        self._project = None
-        self._project_path = ""
-        self._project_dirty = False
-        self._undo_stack.clear()
-        self._redo_stack.clear()
-        self._selected_segment_index = -1
+        self._project_editor_controller.clear(emit=False)
+        if hasattr(self, "_audio_preview_controller"):
+            self._audio_preview_controller.set_project(None)
         self._reset_editor_timing()
         self.cutTimelineChanged.emit()
-        self._project_revision += 1
         self._reset_audio_preview_cache()
         self._audio_preview_gains.clear()
         self._audio_preview_pending_levels.clear()
@@ -2232,6 +2385,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def saveProjectAs(self, path: str) -> bool:
         if self._running or not path:
             return False
+        self.autosave_timer.stop()
         target = self._local_path(path)
         if target.suffix.lower() != ".json":
             target = target.with_name(target.name + ".subtitle-project.json")
@@ -2243,16 +2397,11 @@ class EditBayBackend(LegacyEditBayBackend):
                 return False
         if self._project is None:
             return self._create_empty_project(target)
-        self.autosave_timer.stop()
-        self._wait_for_autosave()
         try:
-            save_project(target, self._project, project_is_validated=True)
+            self._project_editor_controller.save_as(target, emit=False)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
             return False
-        self._project_path = str(target.resolve())
-        self._project_revision += 1
-        self._project_dirty = False
         self.projectChanged.emit()
         self._set_status("別の場所に編集プロジェクトを保存しました", "SAVED")
         return True
@@ -2515,7 +2664,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project_path = preserved_project_path
         self._apply_project_subtitle_settings(self._project)
         self._selected_segment_index = 0 if self._project["segments"] else -1
-        save_project(preserved_project_path, self._project)
+        self._project_editor_controller.save(preserved_project_path, emit=False)
         self._project_dirty = False
         self._sync_project_timeline()
         self._sync_subtitle_model()
@@ -2531,7 +2680,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._project = deepcopy(self._transcription_preserved_project)
         self._project_path = self._transcription_preserved_project_path
         self._apply_project_subtitle_settings(self._project)
-        save_project(self._project_path, self._project)
+        self._project_editor_controller.save(self._project_path, emit=False)
         self._project_dirty = False
         self._selected_segment_index = 0 if self._project.get("segments") else -1
         self._sync_subtitle_model()
@@ -2624,8 +2773,9 @@ class EditBayBackend(LegacyEditBayBackend):
         self.settingsChanged.emit()
 
     def _load_project_path(self, path: Path, *, update_sources: bool) -> bool:
+        self.autosave_timer.stop()
         try:
-            project = load_project(path, resolve_video_duration=True)
+            project = self._project_editor_controller.load(path)
         except (OSError, json.JSONDecodeError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
             return False
@@ -2637,19 +2787,13 @@ class EditBayBackend(LegacyEditBayBackend):
         self._audio_mix_proposal = None
         if hasattr(self, "audioMixProposalChanged"):
             self.audioMixProposalChanged.emit()
-        self._project = project
         transcription = project.setdefault("transcription", {})
         transcription.setdefault("context_base_dir", str(Path(
             transcription.get("work_dir") or project.get("output_dir") or path.parent
         ).resolve()))
         self._apply_project_subtitle_settings(project)
-        self._project_path = str(path.resolve())
-        self._project_dirty = False
-        self._project_revision += 1
+        self._audio_preview_controller.set_project(project)
         self._reset_audio_preview_cache()
-        self._undo_stack.clear()
-        self._redo_stack.clear()
-        self._selected_segment_index = 0 if project.get("segments") else -1
         self._reset_editor_timing()
         self._sync_project_timeline()
         self._loading_project_sources = True
@@ -2683,46 +2827,20 @@ class EditBayBackend(LegacyEditBayBackend):
         after: list[dict[str, Any]],
         reflow_layout: bool = True,
     ) -> None:
-        if self._project is None or (not before and not after):
-            return
-        self._push_history(
-            {
-                "kind": "segments",
-                "before": deepcopy(before),
-                "after": deepcopy(after),
-                "reflow_layout": reflow_layout,
-            }
-        )
+        self._project_editor_controller.record_history(before, after, reflow_layout)
 
     def _record_timeline_history(
         self,
         before: dict[str, Any],
         after: dict[str, Any],
     ) -> None:
-        if self._project is None or before == after:
-            return
-        self._push_history(
-            {
-                "kind": "timeline",
-                "before": deepcopy(before),
-                "after": deepcopy(after),
-            }
-        )
+        self._project_editor_controller.record_timeline_history(before, after)
 
     def _push_history(self, entry: dict[str, Any]) -> None:
-        self._undo_stack.append(entry)
-        if len(self._undo_stack) > 100:
-            self._undo_stack.pop(0)
-        self._redo_stack.clear()
-        self.historyChanged.emit()
+        self._project_editor_controller.push_history(entry)
 
     def _mark_project_dirty(self) -> None:
-        if self._project is None:
-            return
-        self._project_revision += 1
-        self._project_dirty = True
-        self.projectChanged.emit()
-        self.autosave_timer.start()
+        self._project_editor_controller.mark_dirty()
 
     def _replace_segments(
         self,
@@ -2731,28 +2849,11 @@ class EditBayBackend(LegacyEditBayBackend):
         *,
         reflow_layout: bool = True,
     ) -> None:
-        if self._project is None:
-            return
-        if self._autosave_future is not None and not self._autosave_future.done():
-            segments = [dict(item) for item in segments]
-        ordered = sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
-        ids = [str(item["id"]) for item in ordered]
-        if len(ids) != len(set(ids)):
-            raise SubtitleProjectError("segment ids must be unique")
-        self._project["segments"] = (
-            assign_project_layout_rows(ordered) if reflow_layout else ordered
+        self._project_editor_controller.replace_segments(
+            segments,
+            selected_id,
+            reflow_layout=reflow_layout,
         )
-        if selected_id:
-            self._selected_segment_index = next(
-                (index for index, item in enumerate(self._project["segments"]) if item["id"] == selected_id),
-                -1,
-            )
-        elif self._selected_segment_index >= len(self._project["segments"]):
-            self._selected_segment_index = len(self._project["segments"]) - 1
-        self._sync_subtitle_model()
-        self.segmentsChanged.emit()
-        self.selectionChanged.emit()
-        self._mark_project_dirty()
 
     def _commit_segment_change(
         self,
@@ -2762,50 +2863,25 @@ class EditBayBackend(LegacyEditBayBackend):
         *,
         reflow_layout: bool = True,
     ) -> None:
-        if self._project is None:
-            return
-        affected_ids = {str(item["id"]) for item in [*before, *after]}
-        segments = [item for item in self._project["segments"] if str(item["id"]) not in affected_ids]
-        segments.extend(after)
-        self._record_history(before, after, reflow_layout)
-        self._replace_segments(segments, selected_id, reflow_layout=reflow_layout)
-
-    def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
-        if self._project is None:
-            return
-        if entry.get("kind") == "audio_mix":
-            self._project["audio_mix"] = deepcopy(entry.get(state, {}))
-            self.projectDataChanged.emit()
-            self._notify_audio_mixer_preview(structure_changed=True)
-            self._mark_project_dirty()
-            return
-        if entry.get("kind") == "timeline":
-            self._replace_timeline(deepcopy(entry.get(state, {})))
-            return
-        affected_ids = {
-            str(item["id"])
-            for item in [*entry.get("before", []), *entry.get("after", [])]
-        }
-        segments = [item for item in self._project["segments"] if str(item["id"]) not in affected_ids]
-        segments.extend(deepcopy(entry.get(state, [])))
-        self._replace_segments(
-            segments,
-            reflow_layout=bool(entry.get("reflow_layout", True)),
+        self._project_editor_controller.commit_segment_change(
+            before,
+            after,
+            selected_id,
+            reflow_layout=reflow_layout,
         )
 
+    def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
+        self._project_editor_controller.apply_history_entry(entry, state)
+
     def _replace_timeline(self, payload: dict[str, Any]) -> None:
-        if self._project is None:
-            return
         source_duration = self._cut_timeline_model().source_duration
         timeline = VideoTimeline.from_json(
             payload,
             source_duration=source_duration,
         )
-        self._project["timeline"] = timeline.to_json()
+        self._project_editor_controller.replace_timeline(timeline.to_json())
         self.set_editor_time_mapping(timeline)
         self.cutTimelineChanged.emit()
-        self.projectDataChanged.emit()
-        self._mark_project_dirty()
 
     def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:
         if self._project is None:
@@ -2878,11 +2954,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(int)
     def selectSegment(self, index: int) -> None:
-        count = len(self._project.get("segments", [])) if self._project else 0
-        resolved = index if 0 <= index < count else -1
-        if resolved != self._selected_segment_index:
-            self._selected_segment_index = resolved
-            self.selectionChanged.emit()
+        self._project_editor_controller.select_segment(index)
 
     @Slot(float, result=int)
     def segmentIndexAtTime(self, seconds: float) -> int:
@@ -3075,12 +3147,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def undoEdit(self) -> None:
-        if self._project is None or not self._undo_stack:
-            return
-        entry = self._undo_stack.pop()
-        self._redo_stack.append(entry)
-        self._apply_history_entry(entry, "before")
-        self.historyChanged.emit()
+        self._project_editor_controller.undo()
 
     @Slot()
     def redoSubtitleEdit(self) -> None:
@@ -3092,12 +3159,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def redoEdit(self) -> None:
-        if self._project is None or not self._redo_stack:
-            return
-        entry = self._redo_stack.pop()
-        self._undo_stack.append(entry)
-        self._apply_history_entry(entry, "after")
-        self.historyChanged.emit()
+        self._project_editor_controller.redo()
 
     @Slot(result=bool)
     def saveProject(self) -> bool:
@@ -3105,98 +3167,36 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("保存する字幕編集プロジェクトがありません", "CHECK")
             return False
         self.autosave_timer.stop()
-        self._wait_for_autosave()
         try:
-            save_project(self._project_path, self._project, project_is_validated=True)
+            self._project_editor_controller.save(emit=False)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
             return False
         self._sync_subtitle_model()
-        self._project_dirty = False
         self.projectChanged.emit()
         self._set_status("字幕編集を保存しました", "SAVED")
         return True
 
     def _autosave_project(self) -> None:
-        if not self._project_dirty or self._project is None or not self._project_path:
-            return
-        if self._autosave_future is not None:
-            self._autosave_pending = True
-            return
-
-        snapshot = {
-            key: (list(value) if key == "segments" else deepcopy(value))
-            for key, value in self._project.items()
-        }
-        revision = self._project_revision
-        path = self._project_path
-        self._autosave_revision = revision
-        self._autosave_path = path
-        self._autosave_pending = False
-        future = self._autosave_executor.submit(
-            save_project,
-            path,
-            snapshot,
-            project_is_validated=True,
-            update_project=False,
-        )
-        self._autosave_future = future
-
-        def report_completion(done: Future[Path]) -> None:
-            try:
-                done.result()
-                error = ""
-            except Exception as failure:
-                error = str(failure)
-            self.autosaveCompleted.emit(revision, path, error)
-
-        future.add_done_callback(report_completion)
+        self._project_editor_controller.autosave()
 
     @Slot(int, str, str)
     def _finish_autosave(self, revision: int, path: str, error: str) -> None:
-        token = (revision, path)
-        if token in self._ignored_autosaves:
-            self._ignored_autosaves.discard(token)
-            return
-        self._autosave_future = None
-        pending = self._autosave_pending
-        self._autosave_pending = False
-        if error:
+        ignored = (revision, path) in self._ignored_autosaves
+        self._project_editor_controller.finish_autosave(revision, path, error)
+        if error and not ignored:
             self._set_status(f"保存に失敗しました: {error}", "ERROR")
-            return
-        if (
-            self._project is not None
-            and path == self._project_path
-            and revision == self._project_revision
-        ):
-            self._project_dirty = False
-            self.projectChanged.emit()
-            return
-        if pending or self._project_dirty:
-            QTimer.singleShot(0, self._autosave_project)
 
     def _wait_for_autosave(self) -> None:
-        future = self._autosave_future
-        if future is None:
-            return
-        token = (self._autosave_revision, self._autosave_path)
-        self._ignored_autosaves.add(token)
-        try:
-            future.result()
-        except Exception:
-            pass
-        if self._autosave_future is future:
-            self._autosave_future = None
-        self._autosave_pending = False
+        self._project_editor_controller.wait_for_autosave()
 
     def _shutdown_executor(self) -> None:
         if hasattr(self, "autosave_timer"):
             self.autosave_timer.stop()
         if getattr(self, "_project_dirty", False) and getattr(self, "_project_path", ""):
             self.saveProject()
-        if hasattr(self, "_autosave_executor"):
-            self._wait_for_autosave()
-            self._autosave_executor.shutdown(wait=True, cancel_futures=False)
+        if hasattr(self, "_project_editor_controller"):
+            self._project_editor_controller.shutdown()
         controller = getattr(self, "_audio_preview_controller", None)
         if controller is not None:
             controller.shutdown()

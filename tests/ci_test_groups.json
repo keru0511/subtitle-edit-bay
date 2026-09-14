@@ -123,6 +123,7 @@
     },
     "qt-gui": {
       "modules": [
+        "test_gui_audio_preview_controller",
         "test_gui_backend_metaobject",
         "test_gui_editor",
         "test_gui_test_harness",

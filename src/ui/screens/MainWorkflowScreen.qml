@@ -2388,7 +2388,7 @@ ApplicationWindow {
                         required property int index
                         required property var modelData
                         property string previewChannelId: String(modelData.id || "")
-                        objectName: "mixerPreviewPlayer-" + previewChannelId
+                        objectName: "mixerPreviewPlayer-" + String(modelData.preview_object_id || previewChannelId)
                         property real previewOffsetMilliseconds: Number(modelData.preview_offset_seconds || 0) * 1000
                         property int requestedAudioTrack: Number(modelData.preview_audio_track_index || 0)
                         property real pendingSyncPosition: 0

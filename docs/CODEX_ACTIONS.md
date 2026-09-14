@@ -28,7 +28,11 @@ Codexからアプリ機能を利用するときは、`src/codex_actions.py` の�
 - `propose`: domain変更案の生成を開始するだけで、projectへ適用しない
 - `execute`: 既存backendの長時間jobを開始する
 
-`propose_subtitle_edit` はAction typeです。生成結果に含まれる `update_segment` や `delete_segment` はProposal operationであり、Action allowlistとは別に既存の `codex_edit_proposal` validatorが検証します。Proposal適用はこのAction境界に公開していません。GUI/チャットの明示的な適用操作で、stable ID、値、range、最新revisionを再検証してから適用します。
+`propose_subtitle_edit` と `propose_audio_mix` はAction typeです。生成結果に含まれる字幕operationや
+`update_audio_channel` はProposal operationであり、Action allowlistとは別に各domain validatorが検証します。
+Proposal適用はこのAction境界に公開していません。GUI/チャットの明示的な適用操作で、stable ID、値、range、
+最新revisionを再検証してから適用します。音量Proposalのinspect/contextにはsource pathを含めず、
+`audio:<opaque id>` と `volume_percent`、`muted`、`solo`、`enabled`だけを扱います。
 
 ## Revision、競合、確認
 

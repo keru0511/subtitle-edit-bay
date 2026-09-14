@@ -88,6 +88,17 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "codexChatEditScope"', panel)
         self.assertNotIn('objectName: "codexEditPanel"', workflow)
 
+    def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
+        panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
+
+        self.assertIn("property bool audioHasProposal: Boolean(backend && backend.audioMixProposal", panel)
+        self.assertIn("audioMixProposal", panel)
+        self.assertIn("update_audio_channel", panel)
+        self.assertIn("applyAudioMixProposal", panel)
+        self.assertIn("card.selectedOperationIds().length > 0", panel)
+        self.assertIn("codexAudioAllowSilenceButton", panel)
+        self.assertIn("discardAudioMixProposal", panel)
+
     def test_common_codex_sidebar_only_reserves_width_when_authenticated(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         sidebar = (COMPONENTS_ROOT / "CodexSidebarContainer.qml").read_text(encoding="utf-8")

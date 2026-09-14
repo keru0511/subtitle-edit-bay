@@ -343,6 +343,10 @@ class AudioPreviewController(QObject):
         project = self._project or {}
         view = deepcopy(channel)
         is_external = view.get("kind") == "external"
+        if is_external:
+            view["preview_object_id"] = str(view.get("id", ""))
+        else:
+            view["preview_object_id"] = f"video:{view.get('selector', '')}"
         cache_path = self._cache_paths.get(str(view.get("id", "")), "")
         view["preview_url"] = (
             QUrl.fromLocalFile(cache_path).toString() if cache_path and Path(cache_path).is_file() else ""

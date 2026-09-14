@@ -3,8 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from hashlib import sha256
 import math
 from typing import Any, Callable, Mapping, Protocol
+
+from .audio_mix_proposal import AudioMixProposalError, build_audio_mix_context
+from .audio_mixer import is_opaque_audio_channel_id
 
 ACTION_SCHEMA_VERSION = 1
 
@@ -428,6 +432,7 @@ class GuiActionBackend:
         }
         self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
+            "propose_audio_mix": self._propose_audio,
         }
         self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
@@ -449,6 +454,9 @@ class GuiActionBackend:
         codex_session = getattr(self._gui, "_codex_session", None)
         if codex_session is not None and bool(codex_session.running):
             return "subtitle_proposal"
+        audio_session = getattr(self._gui, "_codex_audio_mix_session", None)
+        if audio_session is not None and bool(audio_session.running):
+            return "audio_mix_proposal"
         return ""
 
     def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
@@ -487,11 +495,72 @@ class GuiActionBackend:
         return HandlerResult("subtitle state inspected", state={"segments": safe})
 
     def _inspect_audio(self, _args: Mapping[str, Any]) -> HandlerResult:
-        safe_fields = {"id", "label", "kind", "enabled", "volume_percent", "delay_seconds"}
-        channels = [
-            {key: value for key, value in item.items() if key in safe_fields} for item in self._gui.audioMixerChannels
-        ]
-        return HandlerResult("audio mix state inspected", state={"channels": channels})
+        channels = list(getattr(self._gui, "audioMixerChannels", ()))
+        raw_preview_levels = getattr(self._gui, "audioPreviewLevels", {})
+        preview_levels = raw_preview_levels if isinstance(raw_preview_levels, Mapping) else {}
+        try:
+            master_level = float(getattr(self._gui, "audioMasterLevel", 0.0))
+        except (TypeError, ValueError, OverflowError):
+            master_level = 0.0
+        try:
+            limiter_reduction_db = float(getattr(self._gui, "audioLimiterReductionDb", 0.0))
+        except (TypeError, ValueError, OverflowError):
+            limiter_reduction_db = 0.0
+        playhead = getattr(self._gui, "editorPlayhead", {})
+        try:
+            playhead_seconds = (
+                float(playhead.get("sourcePositionMs", 0)) / 1000.0
+                if isinstance(playhead, Mapping)
+                else 0.0
+            )
+        except (TypeError, ValueError, OverflowError):
+            playhead_seconds = 0.0
+        try:
+            context = build_audio_mix_context(
+                channels,
+                preview_levels=preview_levels,
+                master_level=master_level,
+                limiter_reduction_db=limiter_reduction_db,
+                playhead_seconds=playhead_seconds,
+                project_revision=self.current_revision,
+            )
+        except AudioMixProposalError:
+            # Keep inspect useful for older GUI adapters while never exposing a
+            # legacy/path-derived identifier to Codex.
+            safe_channels: list[dict[str, Any]] = []
+            for index, item in enumerate(channels):
+                if not isinstance(item, Mapping):
+                    continue
+                channel = dict(item)
+                channel_id = str(channel.get("id", "")).strip()
+                if not is_opaque_audio_channel_id(channel_id):
+                    identity = "|".join(
+                        (
+                            str(index),
+                            str(channel.get("kind", "")),
+                            str(channel.get("label", "")),
+                        )
+                    )
+                    channel["id"] = "audio:" + sha256(identity.encode("utf-8")).hexdigest()[:32]
+                safe_channels.append(channel)
+            try:
+                context = build_audio_mix_context(
+                    safe_channels,
+                    preview_levels=preview_levels,
+                    master_level=master_level,
+                    limiter_reduction_db=limiter_reduction_db,
+                    playhead_seconds=playhead_seconds,
+                    project_revision=self.current_revision,
+                )
+            except AudioMixProposalError:
+                context = {
+                    "channels": [],
+                    "master_level": 0.0,
+                    "limiter_reduction_db": 0.0,
+                    "audio_state_revision": "sha256:" + "0" * 64,
+                    "project_revision": self.current_revision,
+                }
+        return HandlerResult("audio mix state inspected", state=context)
 
     def _inspect_timeline(self, _args: Mapping[str, Any]) -> HandlerResult:
         return HandlerResult("timeline state inspected", state=deepcopy(dict(self._gui.cutTimeline)))
@@ -511,6 +580,16 @@ class GuiActionBackend:
             state = {
                 "active_job": active_job,
                 "running": bool(self._gui._codex_session.running),
+                "progress": None,
+                "progress_known": False,
+                "status": str(snapshot.state),
+                "steps": [],
+            }
+        elif active_job == "audio_mix_proposal":
+            snapshot = self._gui._codex_audio_mix_session.snapshot
+            state = {
+                "active_job": active_job,
+                "running": bool(self._gui._codex_audio_mix_session.running),
                 "progress": None,
                 "progress_known": False,
                 "status": str(snapshot.state),
@@ -564,6 +643,23 @@ class GuiActionBackend:
         if not self._gui._codex_session.running:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
+
+    def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
+        if self.active_job:
+            raise ActionRejected(ActionErrorCode.JOB_CONFLICT, "another job or proposal is already running")
+        inspected = self._inspect_audio({})
+        if inspected.state is None:
+            raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "audio mix state could not be inspected")
+        if not self._gui.start_codex_audio_mix_proposal(
+            intent=str(args["intent"]),
+            revision=revision,
+            context=inspected.state,
+        ):
+            raise ActionRejected(
+                ActionErrorCode.PRECONDITION_FAILED,
+                "audio mix proposal could not be started",
+            )
+        return HandlerResult("audio mix proposal generation started", state={"status": "running"})
 
     def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities

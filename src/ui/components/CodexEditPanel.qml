@@ -101,6 +101,7 @@ Rectangle {
                 objectName: "codexApplyButton"
                 text: "選択した変更を適用"
                 enabled: card.operations.length > 0
+                    && card.selectedOperationIds().length > 0
                     && (card.audioProposal
                         ? ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) < 0
                         : ["starting", "authenticating", "running"].indexOf(backend.codexState) < 0)
@@ -116,6 +117,7 @@ Rectangle {
                 visible: card.audioProposal
                 text: "無音化を許可して適用"
                 enabled: card.operations.length > 0
+                    && card.selectedOperationIds().length > 0
                     && ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) < 0
                 onClicked: backend.applyAudioMixProposal(card.selectedOperationIds(), true)
             }

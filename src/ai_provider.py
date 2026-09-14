@@ -45,6 +45,7 @@ class AIProviderState:
     login_url: str = ""
     login_id: str = ""
     models: tuple[AIModel, ...] = ()
+    model_selection_supported: bool = True
     selected_model: str = ""
     error: str = ""
 

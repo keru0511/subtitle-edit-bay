@@ -206,6 +206,29 @@ class AudioMixProposalTests(unittest.TestCase):
                 selected_operation_ids=set(),
             )
 
+    def test_empty_selection_does_not_apply_any_audio_operation(self) -> None:
+        current = channels()
+        proposal = stored_proposal(
+            current,
+            [
+                operation("mute-voice", VOICE_ID, {"muted": True}),
+                operation("mute-bgm", BGM_ID, {"muted": True}),
+            ],
+            revision=3,
+        )
+        mix = {"version": 1, "customized": False, "channels": current}
+        before = deepcopy(mix)
+
+        with self.assertRaisesRegex(AudioMixProposalError, "no audio operations"):
+            apply_audio_mix_proposal(
+                mix,
+                proposal,
+                current_revision=3,
+                selected_operation_ids=[],
+            )
+
+        self.assertEqual(mix, before)
+
     def test_stale_project_or_audio_state_is_rejected(self) -> None:
         current = channels()
         proposal = stored_proposal(

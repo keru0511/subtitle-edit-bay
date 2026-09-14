@@ -28,6 +28,25 @@ capabilityに合わせて補正した設定、旧workspace内の参照中デー�
 保留要求はInstallerがUTF-8 JSONとして保存するため、日本語を含む旧workspaceパスも再試行時に
 同じ値で読み込まれます。
 
+## 初回起動の確認画面
+
+Installerの初回起動では、fresh構築したInstaller runtimeから
+`src.installer_migration_entrypoint`を呼び出し、`pending-plan.json`へinventory、設定の差分、
+workspace参照、cleanup候補、診断を保存します。既存のsetup進捗画面とは別の確認画面で内容を
+確認してから「移行を適用」できます。既存ファイルの上書きは既定で行わず、cleanupもこの画面では
+実行しません。確認画面には「上書き: 行わない（既定）」と「cleanup: 自動実行しない」を明示し、
+上書きとcleanupは候補ごとの個別確認なしには適用されません。
+
+「キャンセル（後で再試行）」を選んだ場合は、新しいInstaller runtimeと旧workspaceの両方を残し、
+`pending-request.json`を削除しません。次回の初回セットアップ・修復で同じsourceと選択を読み直します。
+適用後は`latest-result.json`とUTC時刻付きのmigration recordへ結果と診断を書き出します。
+
+この画面は既存のWindows PowerShell setup UIを利用する薄いreview層です。移行の判断・検証・書込は
+#360〜#362の`legacy_migration` inventory/settings/cleanup plan/resultが正本であり、旧runtimeを
+import、起動、再利用しません。CIやサイレント実行では`SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES=1`
+または`SUBTITLE_EDIT_BAY_MIGRATION_AUTO_APPROVE=1`を指定して既存の明示的なInstaller task選択を
+再利用します。
+
 runtime config・話者色・dictionary・preset・user設定は、dry-runで差分とskip理由を確認してから
 1つの移行transactionとして反映します。既存Installer側データの上書きには、`overwrite`と明示的な
 `confirm`の両方が必要です。途中の保存に失敗した場合は、上書き前の内容を含めて開始前の状態へ戻します。

@@ -79,6 +79,7 @@ Source: "{#SourceRoot}\assets\*"; DestDir: "{app}\assets"; Excludes: "speaker_co
 Source: "{#SourceRoot}\scripts\setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_activation.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\setup_state.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#SourceRoot}\scripts\migration_review.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\windows_path_identity.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\runtime_contract.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceRoot}\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion

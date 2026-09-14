@@ -461,14 +461,28 @@ try {
 }
 
 if ($MigrationSource) {
-    Write-Host "Migrating settings from the BAT/ZIP workspace: $MigrationSource"
+    Write-Host "Preparing the migration plan from the BAT/ZIP workspace: $MigrationSource"
+    $migrationDirectory = Join-Path $projectRoot ".local\migration"
+    New-Item -ItemType Directory -Path $migrationDirectory -Force | Out-Null
+    $migrationPlanPath = Join-Path $migrationDirectory "pending-plan.json"
+    $migrationResultPath = Join-Path $migrationDirectory "latest-result.json"
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "旧環境の移行計画と診断を確認中..." -Details @{
+        migration_plan = $migrationPlanPath
+        migration_result = $migrationResultPath
+        migration_source = $MigrationSource
+    }
+    # installer_migration_entrypoint is intentionally only an adapter. The
+    # inventory, settings plan/result, and cleanup plan remain owned by the
+    # completed #360-#362 core in src.legacy_migration.
     $migrationArguments = @(
         "-m",
-        "src.installer_migration",
+        "src.installer_migration_entrypoint",
         "--source",
         $MigrationSource,
         "--destination",
-        (Get-Location).Path
+        (Get-Location).Path,
+        "--plan-output",
+        $migrationPlanPath
     )
     if ($SkipRuntimeConfig) { $migrationArguments += "--skip-runtime-config" }
     if ($SkipSpeakerColors) { $migrationArguments += "--skip-speaker-colors" }
@@ -477,9 +491,44 @@ if ($MigrationSource) {
     $nvencAvailableText = & $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; print('true' if check_runtime_dependencies(probe_nvenc=True).nvenc else 'false')"
     if ($LASTEXITCODE -ne 0) { throw "Runtime capability verification for migration failed." }
     if ($nvencAvailableText.Trim() -eq "true") { $migrationArguments += "--nvenc" }
-    & $venvPython @migrationArguments
+    & $venvPython @migrationArguments | Out-Null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $migrationPlanPath -PathType Leaf)) {
+        throw "BAT/ZIP workspace migration plan could not be created. The old workspace was not modified."
+    }
+
+    # The plan is reviewed after the fresh Installer runtime is verified. A
+    # cancelled review leaves both environments intact and, importantly, the
+    # UTF-8 pending request remains available for a later repair/setup retry.
+    $reviewPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $reviewScript = Join-Path $PSScriptRoot "migration_review.ps1"
+    if (-not (Test-Path -LiteralPath $reviewScript -PathType Leaf)) { throw "Migration review UI is missing: $reviewScript" }
+    $reviewArguments = @(
+        "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $reviewScript,
+        "-PlanPath", $migrationPlanPath
+    )
+    if ($env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES -eq "1" -or $env:SUBTITLE_EDIT_BAY_MIGRATION_AUTO_APPROVE -eq "1") {
+        $reviewArguments += "-NonInteractive"
+    }
+    & $reviewPowerShell @reviewArguments | Out-Null
+    if ($LASTEXITCODE -eq 3) {
+        Write-SetupStatus -ProjectRoot $projectRoot -Status "failed" -Stage "移行はキャンセルされました。後で再試行できます。" -Message "移行は適用されませんでした。旧環境と保留中の移行要求は保持されています。"
+        throw "Migration was cancelled; the pending request was preserved for retry."
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Migration review could not be completed. The old workspace was not modified." }
+
+    Write-Host "Applying the reviewed migration plan from the BAT/ZIP workspace: $MigrationSource"
+    $migrationArguments += @("--apply", "--result-output", $migrationResultPath)
+    & $venvPython @migrationArguments | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "BAT/ZIP workspace migration failed. The old workspace was not modified."
+    }
+    if (-not (Test-Path -LiteralPath $migrationResultPath -PathType Leaf)) {
+        throw "BAT/ZIP workspace migration did not publish a result diagnostic."
+    }
+    Write-SetupStatus -ProjectRoot $projectRoot -Status "running" -Stage "移行結果を確認しています..." -Details @{
+        migration_plan = $migrationPlanPath
+        migration_result = $migrationResultPath
+        migration_source = $MigrationSource
     }
     if ($clearPendingMigrationOnSuccess -and (Test-Path -LiteralPath $pendingMigrationPath -PathType Leaf)) {
         Remove-Item -LiteralPath $pendingMigrationPath -Force

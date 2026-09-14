@@ -92,9 +92,42 @@ if ($installedVersion -ne $expectedInstalledVersion) { throw "Installed VERSION 
 # setup must consume exactly the UTF-8 request written by Inno Setup.
 $migrationSource = Join-Path $testRoot "旧ワークスペース"
 $migrationInstallDir = Join-Path $testRoot "migration-probe-install"
-New-Item -ItemType Directory -Path (Join-Path $migrationSource "src") -Force | Out-Null
+New-Item -ItemType Directory -Path @(
+    (Join-Path $migrationSource "src"),
+    (Join-Path $migrationSource ".gui"),
+    (Join-Path $migrationSource "assets"),
+    (Join-Path $migrationSource ".venv\Scripts"),
+    (Join-Path $migrationSource "video_import"),
+    (Join-Path $migrationSource "video_export"),
+    (Join-Path $migrationSource "out"),
+    (Join-Path $migrationSource "project"),
+    (Join-Path $migrationSource ".cache\pip")
+) -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $migrationSource "setup.bat"), "setup")
 [IO.File]::WriteAllText((Join-Path $migrationSource "start.bat"), "start")
+[IO.File]::WriteAllText(
+    (Join-Path $migrationSource ".gui\runtime_config.json"),
+    '{"shared":{"device":"cuda","compute_type":"float16","language":"ja"},"craig_pipeline":{"video_codec":"h264_nvenc"}}'
+)
+[IO.File]::WriteAllText(
+    (Join-Path $migrationSource "assets\speaker_colors.json"),
+    '{"speakers":{"speaker-a":"#12ABEF"},"files":{}}'
+)
+$legacyVenvSentinel = Join-Path $migrationSource ".venv\Scripts\python.exe"
+$legacyMedia = Join-Path $migrationSource "video_import\capture.mp4"
+$legacyOutput = Join-Path $migrationSource "video_export\render.mp4"
+$legacyProject = Join-Path $migrationSource "project\episode.seb-project.json"
+$legacyCache = Join-Path $migrationSource ".cache\pip\download.whl"
+[IO.File]::WriteAllText($legacyVenvSentinel, "legacy runtime must never execute")
+[IO.File]::WriteAllBytes($legacyMedia, [Text.Encoding]::UTF8.GetBytes("media-fixture"))
+[IO.File]::WriteAllBytes($legacyOutput, [Text.Encoding]::UTF8.GetBytes("output-fixture"))
+[IO.File]::WriteAllText($legacyProject, "{}")
+[IO.File]::WriteAllBytes($legacyCache, [Text.Encoding]::UTF8.GetBytes("cache-fixture"))
+$legacyVenvBefore = [IO.File]::ReadAllText($legacyVenvSentinel)
+$legacyMediaBefore = [IO.File]::ReadAllBytes($legacyMedia)
+$legacyOutputBefore = [IO.File]::ReadAllBytes($legacyOutput)
+$legacyProjectBefore = [IO.File]::ReadAllBytes($legacyProject)
+$legacyCacheBefore = [IO.File]::ReadAllBytes($legacyCache)
 $migrationInstallLog = Join-Path $testRoot "subtitle-edit-bay-migration-install.log"
 $migrationInstall = Invoke-InstallerScenario -Name "migration-install" -LogPath $migrationInstallLog -Arguments @(
     "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$migrationInstallDir",
@@ -290,6 +323,7 @@ $env:SUBTITLE_EDIT_BAY_HOOK_STARTED = $hookStarted
 $env:SUBTITLE_EDIT_BAY_HOOK_GATE = $hookGate
 $env:SUBTITLE_EDIT_BAY_HOOK_MODE = "wait"
 $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES = "1"
+$env:SUBTITLE_EDIT_BAY_MIGRATION_SOURCE = $migrationSource
 $env:SUBTITLE_EDIT_BAY_MESSAGE_PROBE = $messageProbe
 $env:SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT = $smokeResult
 try {
@@ -330,9 +364,99 @@ try {
     }
     $runtimeManifest = Get-Content -LiteralPath (Join-Path $installDir ".local\runtime-manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     $runtimeDirectory = [IO.Path]::GetFullPath((Join-Path $installDir ([string]$runtimeManifest.runtime_directory)))
+    $runtimePython = Join-Path $runtimeDirectory "Scripts\python.exe"
     $venvPip = Join-Path $runtimeDirectory "Scripts\pip.exe"
     & $venvPip --version
     if ($LASTEXITCODE -ne 0) { throw "The activated runtime pip command is broken." }
+
+    # The real Installer setup consumed the BAT/ZIP fixture above through
+    # src.installer_migration_entrypoint. Verify the
+    # complete first-run contract on Windows: conservative CPU/NVENC repair,
+    # speaker colors, reference-only project/media/output handling, no legacy
+    # runtime execution, and an explicit post-success cleanup plan that has not
+    # deleted anything yet.
+    Remove-Item "Env:SUBTITLE_EDIT_BAY_MIGRATION_SOURCE" -ErrorAction SilentlyContinue
+    $migratedConfig = Get-Content -LiteralPath (Join-Path $installDir ".gui\runtime_config.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($migratedConfig.shared.device -ne "cpu" -or $migratedConfig.shared.compute_type -ne "int8") {
+        throw "CUDA migration fixture was not corrected to the CPU runtime."
+    }
+    if ($migratedConfig.craig_pipeline.video_codec -ne "libx264") {
+        throw "NVENC migration fixture was not corrected to libx264."
+    }
+    $migratedColors = Get-Content -LiteralPath (Join-Path $installDir "assets\speaker_colors.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($migratedColors.speakers.'speaker-a' -ne "#12ABEF") { throw "Speaker colors were not migrated." }
+    $migrationResultPath = Join-Path $installDir ".local\migration\latest-result.json"
+    if (-not (Test-Path -LiteralPath $migrationResultPath -PathType Leaf)) { throw "Migration result diagnostic is missing." }
+    $migrationResult = Get-Content -LiteralPath $migrationResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $expectedReferences = @(
+        (Split-Path -Parent $legacyMedia),
+        (Split-Path -Parent $legacyOutput),
+        (Split-Path -Parent $legacyProject)
+    )
+    foreach ($reference in $expectedReferences) {
+        if (-not @($migrationResult.workspace_references | Where-Object { [IO.Path]::GetFullPath([string]$_) -eq [IO.Path]::GetFullPath($reference) })) {
+            throw "Migration result did not retain the workspace reference: $reference"
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $installDir ".gui\legacy_workspaces.json") -PathType Leaf)) {
+        throw "Migration did not register the legacy workspace reference."
+    }
+    $cleanupById = @{}
+    foreach ($candidate in @($migrationResult.cleanup_candidates)) { $cleanupById[[string]$candidate.candidate_id] = $candidate }
+    if (-not $cleanupById.ContainsKey("legacy:.venv")) { throw "Post-success cleanup did not expose the old .venv candidate." }
+    if ($cleanupById["legacy:.venv"].state -ne "removable_after_success") {
+        throw "Old .venv cleanup candidate was not classified after success."
+    }
+    if ((Get-Content -LiteralPath $legacyVenvSentinel -Raw) -ne $legacyVenvBefore) { throw "The old .venv was executed or changed." }
+    if ([Convert]::ToBase64String($legacyMediaBefore) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($legacyMedia))) { throw "Legacy media was changed." }
+    if ([Convert]::ToBase64String($legacyOutputBefore) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($legacyOutput))) { throw "Legacy output was changed." }
+    if ([Convert]::ToBase64String($legacyProjectBefore) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($legacyProject))) { throw "Legacy project was changed." }
+    if ([Convert]::ToBase64String($legacyCacheBefore) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($legacyCache))) { throw "Legacy cache was changed." }
+    if (-not (Test-Path -LiteralPath $legacyVenvSentinel -PathType Leaf)) { throw "Unconfirmed cleanup removed the old .venv." }
+    if ($runtimeDirectory.StartsWith(
+            [IO.Path]::GetFullPath((Join-Path $migrationSource ".venv")),
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Installer runtime reused the legacy .venv."
+    }
+
+    # A verified external pip cache may be reused only when the caller passes
+    # its exact path and candidate identity. This keeps the cache decision in
+    # the #362 core while proving the representative Windows fixture path.
+    $externalCache = Join-Path $testRoot "verified-pip-cache"
+    New-Item -ItemType Directory -Path $externalCache -Force | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $externalCache "download.whl"), [Text.Encoding]::UTF8.GetBytes("verified-cache"))
+    $cacheProbeCode = @'
+import json
+import sys
+from pathlib import Path
+from src.legacy_migration import CacheCleanupOptions, build_cache_cleanup_plan, build_legacy_inventory
+inventory = build_legacy_inventory(Path(sys.argv[1]))
+plan = build_cache_cleanup_plan(
+    inventory,
+    options=CacheCleanupOptions(
+        migration_completed=True,
+        cache_paths={"pip-user-cache": Path(sys.argv[2])},
+        reusable_cache_ids=("pip-user-cache",),
+    ),
+)
+print(json.dumps({entry.candidate_id: entry.state for entry in plan.entries}, sort_keys=True))
+'@
+    Push-Location $installDir
+    try {
+        $cacheProbeOutput = & $runtimePython -c $cacheProbeCode $migrationSource $externalCache
+    } finally {
+        Pop-Location
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Verified cache reuse probe failed." }
+    $cacheProbe = ($cacheProbeOutput | Select-Object -Last 1) | ConvertFrom-Json
+    if ($cacheProbe.'pip-user-cache' -ne "reuse") { throw "Verified pip cache was not classified as reusable." }
+
+    # After the independent runtime has been verified, deleting the old venv
+    # must not affect Installer startup. The earlier assertions prove that no
+    # cleanup happened without a per-candidate confirmation.
+    Remove-Item -LiteralPath (Join-Path $migrationSource ".venv") -Recurse -Force
+    $postCleanupProbe = Start-Process -FilePath $launcher -ArgumentList "--probe-setup" -WorkingDirectory $installDir -Wait -PassThru
+    if ($postCleanupProbe.ExitCode -ne 0) { throw "Installer did not remain launchable after old .venv cleanup." }
 
     $readyProbe = Start-Process -FilePath $launcher -ArgumentList "--probe-setup" -WorkingDirectory $installDir -Wait -PassThru
     if ($readyProbe.ExitCode -ne 0) { throw "The setup-generated success record was rejected." }
@@ -371,6 +495,7 @@ try {
         "SUBTITLE_EDIT_BAY_SETUP_TEST_HOOK", "SUBTITLE_EDIT_BAY_HOOK_COUNT",
         "SUBTITLE_EDIT_BAY_HOOK_STARTED", "SUBTITLE_EDIT_BAY_HOOK_GATE",
         "SUBTITLE_EDIT_BAY_HOOK_MODE", "SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES",
+        "SUBTITLE_EDIT_BAY_MIGRATION_SOURCE",
         "SUBTITLE_EDIT_BAY_MESSAGE_PROBE", "SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT"
     )) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 }

@@ -1337,6 +1337,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                         "scripts/runtime_activation.ps1",
                         "scripts/setup.ps1",
                         "scripts/setup_state.ps1",
+                        "scripts/migration_review.ps1",
                         "scripts/windows_path_identity.ps1",
                         "scripts/runtime_contract.py",
                         "runtime/runtime-contract.json",

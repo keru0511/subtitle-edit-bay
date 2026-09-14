@@ -65,6 +65,7 @@
         "test_highlight_preferences",
         "test_highlight_visual_signals",
         "test_installer_migration",
+        "test_installer_migration_entrypoint",
         "test_legacy_migration",
         "test_media_probe",
         "test_merge_transcripts",

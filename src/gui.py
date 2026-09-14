@@ -4344,8 +4344,12 @@ class EditBayBackend(LegacyEditBayBackend):
         ):
             self._set_status("ログ保存先を開けませんでした", "ERROR")
 
-    def _read_process_output(self) -> None:
-        data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+    def _read_process_output(self, output: str | None = None) -> None:
+        data = (
+            output
+            if output is not None
+            else bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        )
         if not data:
             return
         normalized = data.replace("\r", "\n")

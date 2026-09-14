@@ -7,9 +7,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
-from PySide6.QtCore import Property, QProcess, QProcessEnvironment, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QProcess, QTimer, QUrl, Signal, Slot
 
-from src.qprocess_launcher import prepare_qprocess_launch
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
@@ -18,6 +17,7 @@ from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
     resolve_alignment,
 )
+from .gui_job_runner import GuiJobRunner
 from .gui_state import (
     SourceSelection,
     build_gui_command,
@@ -91,12 +91,15 @@ class LegacyEditBayBackend(QApplication):
         self.alignmentFailed.connect(self._apply_alignment_error)
         self.aboutToQuit.connect(self._shutdown_executor)
 
-        self.process = QProcess(self)
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self.process.readyReadStandardOutput.connect(self._read_process_output)
-        self.process.started.connect(self._process_started)
-        self.process.finished.connect(self._process_finished)
-        self.process.errorOccurred.connect(self._process_error)
+        self._job_runner = GuiJobRunner(self.workspace_root, parent=self)
+        self.process = self._job_runner.process
+        self._job_runner.started.connect(self._process_started)
+        self._job_runner.outputReceived.connect(self._read_process_output)
+        self._job_runner.finished.connect(self._process_finished)
+        self._job_runner.errorOccurred.connect(self._process_error)
+        self._job_runner.launchPreparationFailed.connect(
+            self._process_launch_preparation_failed
+        )
 
         self.elapsed_timer = QTimer(self)
         self.elapsed_timer.setInterval(1000)
@@ -692,22 +695,22 @@ class LegacyEditBayBackend(QApplication):
         self._start_process(command)
 
     def _start_process(self, command: list[str]) -> None:
-        environment = QProcessEnvironment.systemEnvironment()
-        environment.insert("PYTHONUTF8", "1")
-        environment.insert("PYTHONUNBUFFERED", "1")
-        self.process.setProcessEnvironment(environment)
+        self._job_runner.workspace_root = Path(self.workspace_root).resolve()
+        self._job_runner.start(command, job_id=getattr(self, "_active_job", "") or "legacy")
 
-        try:
-            launch = prepare_qprocess_launch(command, self.workspace_root)
-        except OSError as exc:
-            self._log += f"QProcess launch preparation failed: {exc}\n"
+    def _process_launch_preparation_failed(self, message: str) -> None:
+        detail = f"QProcess launch preparation failed: {message}"
+        if hasattr(self, "_record_log"):
+            self._record_log(
+                detail,
+                severity="WARNING",
+                component=getattr(self, "_active_job", "") or "process",
+                job=getattr(self, "_active_job", ""),
+                stage="STARTING",
+            )
+        else:
+            self._log += detail + "\n"
             self.logChanged.emit()
-            self.process.setWorkingDirectory(str(self.workspace_root))
-            self.process.start(command[0], command[1:])
-            return
-
-        self.process.setWorkingDirectory(launch.working_directory)
-        self.process.start(launch.program, list(launch.arguments))
 
     @Slot()
     def cancelProcessing(self) -> None:
@@ -715,31 +718,10 @@ class LegacyEditBayBackend(QApplication):
             return
         self._cancel_requested = True
         self._set_status("停止を要求しています", "STOPPING")
-        process_id = int(self.process.processId())
-        if os.name == "nt" and process_id:
-            subprocess.run(
-                ["taskkill", "/PID", str(process_id), "/T"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-            )
-        else:
-            self.process.terminate()
-        QTimer.singleShot(5000, lambda: self._kill_if_running(process_id))
+        self._job_runner.cancel(job_id=getattr(self, "_active_job", "") or "legacy")
 
     def _kill_if_running(self, expected_process_id: int = 0) -> None:
-        if expected_process_id and int(self.process.processId()) != expected_process_id:
-            return
-        if self.process.state() != QProcess.ProcessState.NotRunning:
-            if os.name == "nt" and self.process.processId():
-                subprocess.run(
-                    ["taskkill", "/PID", str(self.process.processId()), "/T", "/F"],
-                    capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                    check=False,
-                )
-            else:
-                self.process.kill()
+        self._job_runner.kill_if_running(expected_process_id)
 
     @Slot()
     def openOutputFolder(self) -> None:
@@ -761,8 +743,12 @@ class LegacyEditBayBackend(QApplication):
         self.elapsed_timer.start()
         self._set_status("音声と映像を解析しています", "ALIGN")
 
-    def _read_process_output(self) -> None:
-        data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+    def _read_process_output(self, output: str | None = None) -> None:
+        data = (
+            output
+            if output is not None
+            else bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        )
         if not data:
             return
         normalized = data.replace("\r", "\n")
@@ -814,7 +800,9 @@ class LegacyEditBayBackend(QApplication):
         self.statusChanged.emit()
 
     def _shutdown_executor(self) -> None:
+        self._job_runner.shutdown()
         self._alignment_executor.shutdown(wait=False, cancel_futures=True)
+
 
 
 # Keep the former import surface for callers that still use ``gui_base``

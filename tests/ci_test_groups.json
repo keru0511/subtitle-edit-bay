@@ -28,6 +28,7 @@
         "test_ass_template",
         "test_assemble_video",
         "test_audio_auto_mix",
+        "test_audio_mix_proposal",
         "test_audio_mixer",
         "test_audio_preview_cache",
         "test_batch",
@@ -119,8 +120,7 @@
         "test_video_timeline",
         "test_workflow_actions",
         "test_youtube_package",
-        "test_youtube_text",
-        "test_audio_mix_proposal"
+        "test_youtube_text"
       ],
       "selectors": []
     },

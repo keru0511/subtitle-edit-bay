@@ -25,6 +25,7 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QSignalSpy, QTest
 
 from scripts.generate_large_gui_fixture import generate_segments
+from src.audio_mix_proposal import audio_mix_state_revision, build_audio_mix_proposal
 from src.audio_preview_cache import (
     AudioPreviewCacheResult,
     audio_preview_cache_entries,
@@ -3849,6 +3850,69 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(
             self.app._codex_chat.snapshot.messages[-1]["content_type"],
             "subtitle_proposal",
+        )
+
+    def test_audio_mix_proposal_with_no_selected_operations_is_rejected(self) -> None:
+        self._load_project()
+        channels = self.app.audioMixerChannels
+        self.assertTrue(channels)
+        revision = self.app._project_revision
+        channel_id = str(channels[0]["id"])
+        raw_proposal = {
+            "schema_version": 1,
+            "summary": "音声を少し聞きやすくします",
+            "warnings": [],
+            "base_revision": revision,
+            "audio_state_revision": audio_mix_state_revision(channels),
+            "operations": [
+                {
+                    "id": "voice-up",
+                    "type": "update_audio_channel",
+                    "channel_id": channel_id,
+                    "changes": {"volume_percent": 110.0},
+                    "reason": "確認用の音量変更",
+                }
+            ],
+        }
+        self.app._audio_mix_proposal = build_audio_mix_proposal(
+            raw_proposal,
+            channels,
+            project_revision=revision,
+        )
+        before = deepcopy(self.app._project["audio_mix"])
+        self.assertFalse(self.app.applyAudioMixProposal([], False))
+        self.assertEqual(self.app._project["audio_mix"], before)
+
+    def test_audio_chat_natural_language_uses_typed_audio_proposal_path(self) -> None:
+        self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+
+        with (
+            patch.object(self.app._codex_chat, "send_message") as plain_chat,
+            patch.object(
+                self.app,
+                "dispatch_codex_action",
+                return_value=ActionResult(status=ActionStatus.SUCCESS),
+            ) as dispatch,
+        ):
+            self.app.sendCodexChatMessage("声を聞きやすくして", "auto", 0.0, 0.0)
+
+        plain_chat.assert_not_called()
+        dispatch.assert_called_once()
+        payload = dispatch.call_args.args[0]
+        trusted_scope = dispatch.call_args.kwargs["trusted_scope"]
+        self.assertEqual(payload["kind"], "propose")
+        self.assertEqual(payload["type"], "propose_audio_mix")
+        self.assertEqual(payload["args"]["intent"], "声を聞きやすくして")
+        self.assertEqual(trusted_scope.allowed_actions, frozenset({"propose_audio_mix"}))
+        self.assertEqual(
+            self.app._codex_chat.snapshot.messages[-1]["content_type"],
+            "audio_mix_proposal",
         )
 
     def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:

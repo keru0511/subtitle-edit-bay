@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,8 @@ class WindowsLauncherTests(unittest.TestCase):
         version = version[1:]
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "SubtitleEditBayLauncher.exe"
+            icon = Path(temp_dir) / "SubtitleEditBay.ico"
+            self._write_test_icon(icon)
             result = subprocess.run(
                 [
                     powershell,
@@ -38,6 +41,9 @@ class WindowsLauncherTests(unittest.TestCase):
                     str(output),
                     "-Version",
                     version,
+                    "-IconPath",
+                    str(icon),
+                    "-RequireProductIcon",
                 ],
                 cwd=ROOT,
                 capture_output=True,
@@ -48,6 +54,30 @@ class WindowsLauncherTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(output.is_file(), result.stdout + result.stderr)
+
+            mismatch = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "scripts" / "verify_windows_binary.ps1"),
+                    "-Path",
+                    str(output),
+                    "-ExpectedVersion",
+                    "0.0.0",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout + mismatch.stderr)
 
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_signing_uses_verifier_exceptions_not_stale_last_exit_code(self) -> None:
@@ -180,6 +210,29 @@ class WindowsLauncherTests(unittest.TestCase):
             if candidate.is_file():
                 return str(candidate.resolve())
         self.fail("Windows PowerShell is required")
+
+    def _write_test_icon(self, path: Path) -> None:
+        """Write a tiny valid ICO so Windows tests exercise the real icon path."""
+
+        bitmap_header = struct.pack(
+            "<IiiHHIIiiII",
+            40,
+            1,
+            2,
+            1,
+            32,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        xor_bitmap = bytes((0x20, 0xD0, 0xFF, 0xFF))
+        and_mask = b"\x00" * 4
+        image = bitmap_header + xor_bitmap + and_mask
+        directory = struct.pack("<BBBBHHII", 1, 1, 0, 0, 1, 32, len(image), 22)
+        path.write_bytes(struct.pack("<HHH", 0, 1, 1) + directory + image)
 
     def _seed_installer_distribution(self, install: Path, restart_marker: Path) -> None:
         (install / "scripts").mkdir(parents=True)

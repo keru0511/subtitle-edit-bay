@@ -4,7 +4,14 @@
 
 `SubtitleEditBayLauncher.exe` is compiled with MSVC `/MT`, so the launcher that reaches setup/repair does not require a separately installed Visual C++ runtime. The build embeds a VERSIONINFO resource containing ProductName, FileDescription, FileVersion, ProductVersion and CompanyName. `verify_windows_binary.ps1` checks these fields and uses `dumpbin /DEPENDENTS` to reject dynamic VC/UCRT imports.
 
-The resource compiler accepts an explicit `.ico` path. An approved product icon asset is not yet present in the repository, so icon selection remains an external design input and is not silently replaced with an arbitrary icon.
+The resource definition is kept in `launcher/SubtitleEditBayLauncher.rc`; the
+launcher build substitutes the release version and publisher at the resource
+compiler boundary. An approved product icon asset is not yet present in the
+repository, so icon selection remains an external design input and is not
+silently replaced with an arbitrary icon. A caller that has the approved
+existing product icon passes it with `-IconPath -RequireProductIcon`; the
+Windows build then extracts the icon from the generated PE and fails if the
+resource is absent.
 
 ## Authenticode contract
 

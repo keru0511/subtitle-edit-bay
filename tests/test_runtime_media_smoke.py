@@ -16,6 +16,7 @@ from tests.media_test_helpers import (
     assert_mp4_faststart,
     create_lavfi_audio_fixture,
     create_lavfi_av_fixture,
+    media_duration_seconds,
     probe_media,
     video_stream,
 )
@@ -81,6 +82,12 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
             self.assertEqual(stream["width"], 320)
             self.assertEqual(stream["height"], 180)
             self.assertEqual(stream["pix_fmt"], "yuv420p")
+            # The keep ranges total 64 * 0.08s. A 30 fps encode and MP4 muxing
+            # can round the boundary by a few frames, so use a bounded 0.25s
+            # tolerance rather than treating container duration as byte-exact.
+            output_duration = media_duration_seconds(probe_media(output))
+            expected_duration = sum(end - start for start, end in keep_ranges)
+            self.assertAlmostEqual(output_duration, expected_duration, delta=0.25)
             self._assert_faststart_moov_before_mdat(output)
 
     def test_burn_subtitles_converts_10bit_and_444_inputs_to_yuv420p(self) -> None:

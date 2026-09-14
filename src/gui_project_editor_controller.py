@@ -24,6 +24,7 @@ from .subtitle_project import (
 
 SaveProject = Callable[..., Path]
 LoadProject = Callable[..., dict[str, Any]]
+LayoutRows = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 Callback = Callable[..., None]
 
 
@@ -41,6 +42,7 @@ class ProjectEditorController:
         *,
         load_project_fn: LoadProject = load_project,
         save_project_fn: SaveProject = save_project,
+        assign_project_layout_rows_fn: LayoutRows = assign_project_layout_rows,
         on_project_changed: Callback | None = None,
         on_project_data_changed: Callback | None = None,
         on_segments_changed: Callback | None = None,
@@ -55,6 +57,7 @@ class ProjectEditorController:
         self.workspace_root = Path(workspace_root).resolve()
         self._load_project_fn = load_project_fn
         self._save_project_fn = save_project_fn
+        self._assign_project_layout_rows_fn = assign_project_layout_rows_fn
         self._on_project_changed = on_project_changed
         self._on_project_data_changed = on_project_data_changed
         self._on_segments_changed = on_segments_changed
@@ -333,7 +336,7 @@ class ProjectEditorController:
         if len(ids) != len(set(ids)):
             raise SubtitleProjectError("segment ids must be unique")
         self._project["segments"] = (
-            assign_project_layout_rows(ordered) if reflow_layout else ordered
+            self._assign_project_layout_rows_fn(ordered) if reflow_layout else ordered
         )
         if selected_id:
             self._selected_segment_index = next(
@@ -462,6 +465,17 @@ class ProjectEditorController:
                 error = ""
             except Exception as failure:  # pragma: no cover - exercised through Qt
                 error = str(failure)
+            # The Qt signal below is queued back to the facade's thread.  Mark
+            # a matching successful revision clean before emitting it so a
+            # caller observing a completed Future cannot see stale dirty
+            # state while that queued notification is waiting to run.
+            if (
+                not error
+                and self._project is not None
+                and path == self._project_path
+                and revision == self._project_revision
+            ):
+                self._project_dirty = False
             self._emit(self._on_autosave_completed, revision, path, error)
 
         future.add_done_callback(report_completion)

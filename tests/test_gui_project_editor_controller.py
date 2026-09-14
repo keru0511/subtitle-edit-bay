@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,59 @@ class ProjectEditorControllerTests(unittest.TestCase):
 
             self.assertFalse(controller.project_dirty)
             self.assertEqual(load_project(path)["segments"][0]["text"], "autosaved")
+
+    def test_autosave_completion_clears_matching_revision_before_facade_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "capture.subtitle-project.json"
+            completed = threading.Event()
+            notifications: list[tuple[int, str, str]] = []
+            controller = ProjectEditorController(
+                root,
+                on_autosave_completed=lambda *args: (
+                    notifications.append(args),
+                    completed.set(),
+                ),
+            )
+            self.addCleanup(controller.shutdown)
+            controller.adopt_loaded_project(self._project(root), path)
+            controller.project["segments"][0]["text"] = "queued completion"
+            controller.mark_dirty()
+            controller.autosave()
+
+            self.assertTrue(completed.wait(timeout=1))
+            self.assertFalse(controller.project_dirty)
+            revision, autosave_path, error = notifications[0]
+            self.assertEqual(error, "")
+            controller.finish_autosave(revision, autosave_path, error)
+
+    def test_reflow_uses_facade_layout_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls: list[list[dict[str, object]]] = []
+
+            def capture_layout(segments: list[dict[str, object]]) -> list[dict[str, object]]:
+                calls.append(segments)
+                return segments
+
+            controller = ProjectEditorController(
+                root,
+                assign_project_layout_rows_fn=capture_layout,
+            )
+            self.addCleanup(controller.shutdown)
+            controller.adopt_loaded_project(
+                self._project(root),
+                root / "capture.subtitle-project.json",
+            )
+
+            current = controller.project["segments"][0]
+            controller.commit_segment_change(
+                [current],
+                [{**current, "text": "reflowed"}],
+                reflow_layout=True,
+            )
+
+            self.assertEqual(len(calls), 1)
 
     def test_segment_crud_move_selection_and_undo_redo(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

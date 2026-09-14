@@ -698,6 +698,12 @@ class EditBayBackend(LegacyEditBayBackend):
                 project,
                 **kwargs,
             ),
+            # Keep the existing module-level patch/extension point used by
+            # the facade and GUI regression tests while the controller owns
+            # the project edit operation.
+            assign_project_layout_rows_fn=(
+                lambda segments: assign_project_layout_rows(segments)
+            ),
             on_project_changed=self.projectChanged.emit,
             on_project_data_changed=self.projectDataChanged.emit,
             on_segments_changed=self._on_project_segments_changed,

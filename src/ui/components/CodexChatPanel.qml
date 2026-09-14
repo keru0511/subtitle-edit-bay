@@ -30,7 +30,8 @@ Rectangle {
 
     function busy() {
         return backend && (["sending", "streaming", "stopping"].indexOf(backend.codexChatState) >= 0
-            || ["starting", "authenticating", "running"].indexOf(backend.codexState) >= 0)
+            || ["starting", "authenticating", "running"].indexOf(backend.codexState) >= 0
+            || ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) >= 0)
     }
 
     function authStateLabel() {

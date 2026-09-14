@@ -75,6 +75,7 @@ class CodexChatController:
         self._thread_needs_resume = False
         self._stop_requested = False
         self._local_proposal_active = False
+        self._local_proposal_content_type = "subtitle_proposal"
 
     @property
     def snapshot(self) -> CodexChatSnapshot:
@@ -154,8 +155,14 @@ class CodexChatController:
         self._update(messages=tuple(messages), chat_state="sending", error="")
         self._submit(self._send_worker, prompt, snapshot.selected_model)
 
-    def begin_proposal(self, text: str) -> bool:
-        """Append a subtitle request without starting a second plain-chat turn."""
+    def begin_proposal(
+        self,
+        text: str,
+        *,
+        content_type: str = "subtitle_proposal",
+        pending_text: str = "",
+    ) -> bool:
+        """Append a proposal request without starting a second plain-chat turn."""
 
         prompt = str(text).strip()
         snapshot = self.snapshot
@@ -174,6 +181,12 @@ class CodexChatController:
         assistant_id = f"local-assistant-{self._message_sequence}"
         self._active_assistant_id = assistant_id
         self._local_proposal_active = True
+        self._local_proposal_content_type = str(content_type).strip() or "subtitle_proposal"
+        pending = str(pending_text).strip() or (
+            "音量ミキサーの変更案を作成しています…"
+            if self._local_proposal_content_type == "audio_mix_proposal"
+            else "字幕の変更案を作成しています…"
+        )
         messages = list(snapshot.messages)
         messages.extend(
             [
@@ -181,9 +194,9 @@ class CodexChatController:
                 {
                     "id": assistant_id,
                     "role": "assistant",
-                    "text": "字幕の変更案を作成しています…",
+                    "text": pending,
                     "status": "streaming",
-                    "content_type": "subtitle_proposal",
+                    "content_type": self._local_proposal_content_type,
                 },
             ]
         )
@@ -193,10 +206,15 @@ class CodexChatController:
     def complete_proposal(self, summary: str) -> None:
         if not self._local_proposal_active:
             return
+        fallback = (
+            "音量ミキサーの変更案を作成しました。内容を確認してください。"
+            if self._local_proposal_content_type == "audio_mix_proposal"
+            else "字幕の変更案を作成しました。内容を確認してください。"
+        )
         self._replace_active_assistant(
-            text=str(summary).strip() or "字幕の変更案を作成しました。内容を確認してください。",
+            text=str(summary).strip() or fallback,
             status="completed",
-            content_type="subtitle_proposal",
+            content_type=self._local_proposal_content_type,
         )
         self._local_proposal_active = False
         self._active_assistant_id = ""
@@ -205,13 +223,19 @@ class CodexChatController:
     def fail_proposal(self, message: str, *, cancelled: bool = False) -> None:
         if not self._local_proposal_active:
             return
-        text = "字幕の変更案の作成を停止しました。" if cancelled else str(message)
+        fallback = (
+            "音量ミキサーの変更案の作成を停止しました。"
+            if self._local_proposal_content_type == "audio_mix_proposal"
+            else "字幕の変更案の作成を停止しました。"
+        )
+        text = fallback if cancelled else str(message)
         self._replace_active_assistant(
             text=text,
             status="cancelled" if cancelled else "failed",
-            content_type="subtitle_proposal",
+            content_type=self._local_proposal_content_type,
         )
         self._local_proposal_active = False
+        self._local_proposal_content_type = "subtitle_proposal"
         self._active_assistant_id = ""
         self._update(chat_state="idle", error="" if cancelled else text)
 
@@ -233,6 +257,7 @@ class CodexChatController:
             return
         self._active_assistant_id = ""
         self._local_proposal_active = False
+        self._local_proposal_content_type = "subtitle_proposal"
         with self._lock:
             self._thread_needs_resume = False
             self._stop_requested = False
@@ -565,6 +590,7 @@ class CodexChatController:
             self._thread_needs_resume = bool(self._snapshot.thread_id)
             self._stop_requested = False
             self._local_proposal_active = False
+            self._local_proposal_content_type = "subtitle_proposal"
         if current.chat_state in {"sending", "streaming", "stopping"}:
             self._finish_active_assistant("error")
         else:

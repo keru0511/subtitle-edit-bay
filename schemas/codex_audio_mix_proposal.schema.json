@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://subtitle-edit-bay.local/schemas/codex-audio-mix-proposal.schema.json",
+  "title": "Subtitle Edit Bay Codex Audio Mix Proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "summary",
+    "warnings",
+    "base_revision",
+    "audio_state_revision",
+    "operations"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "base_revision": {"type": "integer", "minimum": 0},
+    "audio_state_revision": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "channel_id", "changes", "reason"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "type": {"type": "string", "const": "update_audio_channel"},
+          "channel_id": {
+            "type": "string",
+            "pattern": "^audio:[0-9a-f]{32}$"
+          },
+          "changes": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "volume_percent": {"type": "number", "minimum": 0, "maximum": 200},
+              "muted": {"type": "boolean"},
+              "solo": {"type": "boolean"},
+              "enabled": {"type": "boolean"}
+            }
+          },
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

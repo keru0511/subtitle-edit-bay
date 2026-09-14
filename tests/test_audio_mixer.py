@@ -5,10 +5,15 @@ import unittest
 from pathlib import Path
 
 from src.audio_mixer import (
+    AUDIO_SOURCE_ID_FIELD,
+    AudioMixError,
     active_audio_mix_channels,
     build_audio_mix_filter,
+    is_opaque_audio_channel_id,
+    path_free_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,
+    update_audio_mix_channel,
 )
 from src.subtitle_project import create_project, load_project, save_project
 
@@ -40,6 +45,69 @@ class AudioMixerTests(unittest.TestCase):
             [False, True, False, False],
         )
         self.assertFalse(audio_mix["customized"])
+        self.assertTrue(all(is_opaque_audio_channel_id(channel["id"]) for channel in audio_mix["channels"]))
+
+    def test_legacy_channel_identity_migrates_without_losing_controls(self) -> None:
+        source_path = r"C:\Users\Alice\private\voice.wav"
+        project = {
+            "audio_sources": [{"path": source_path}],
+            "audio_mix": {
+                "customized": True,
+                "channels": [{
+                    "id": f"external:{source_path}",
+                    "kind": "external",
+                    "label": source_path,
+                    "path": source_path,
+                    "enabled": True,
+                    "muted": True,
+                    "solo": False,
+                    "volume_percent": 42,
+                }],
+            },
+        }
+
+        audio_mix = reconcile_audio_mix(project, video_tracks=[])
+        channel = audio_mix["channels"][0]
+
+        self.assertTrue(is_opaque_audio_channel_id(channel["id"]))
+        self.assertEqual(project["audio_sources"][0][AUDIO_SOURCE_ID_FIELD], channel["id"])
+        self.assertTrue(channel["muted"])
+        self.assertEqual(channel["volume_percent"], 42.0)
+        self.assertNotIn("Users", channel["id"])
+        self.assertNotIn(source_path, str(path_free_audio_mix_channels(audio_mix["channels"])))
+
+    def test_canonical_channel_update_rejects_invalid_changes(self) -> None:
+        project = self._project()
+        audio_mix = reconcile_audio_mix(project, [{"selector": "0:a:0", "label": "game"}])
+        channel_id = audio_mix["channels"][0]["id"]
+
+        updated = update_audio_mix_channel(audio_mix, channel_id, {"enabled": True, "volume_percent": 125})
+
+        self.assertTrue(updated["channels"][0]["enabled"])
+        self.assertEqual(updated["channels"][0]["volume_percent"], 125.0)
+        self.assertEqual(audio_mix["channels"][0]["volume_percent"], 100.0)
+        for changes in ({"volume_percent": 201}, {"muted": "yes"}, {"method": "delete"}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(AudioMixError):
+                    update_audio_mix_channel(audio_mix, channel_id, changes)
+        with self.assertRaises(AudioMixError):
+            update_audio_mix_channel(audio_mix, "external:C:/private/voice.wav", {"muted": True})
+
+    def test_duplicate_track_keys_receive_stable_distinct_ids(self) -> None:
+        project = {
+            "audio_sources": [
+                {"track_key": "craig:alice", "path": "one.flac"},
+                {"track_key": "craig:alice", "path": "two.flac"},
+            ],
+            "render_settings": {},
+        }
+
+        first = reconcile_audio_mix(project, video_tracks=[])
+        first_ids = [channel["id"] for channel in first["channels"]]
+        second = reconcile_audio_mix(project, video_tracks=[])
+
+        self.assertEqual(len(set(first_ids)), 2)
+        self.assertEqual([channel["id"] for channel in second["channels"]], first_ids)
 
     def test_reconcile_preserves_channel_controls_and_clamps_volume(self) -> None:
         project = self._project()

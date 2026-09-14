@@ -393,6 +393,59 @@ class GuiActionBackendTests(unittest.TestCase):
         self.assertEqual(gui.start_calls, 0)
         self.assertTrue(gui._codex_session.running)
 
+    def test_audio_proposal_inspects_state_before_starting_structured_turn(self) -> None:
+        class GuiStub:
+            _project_revision = 4
+            _running = False
+            _active_job = ""
+            highlightAnalysisState = "idle"
+            audioMixerChannels = [{
+                "id": "audio:" + "1" * 32,
+                "kind": "external",
+                "label": "声",
+                "enabled": True,
+                "muted": False,
+                "solo": False,
+                "volume_percent": 100.0,
+            }]
+            audioPreviewLevels = {"audio:" + "1" * 32: 0.5}
+            audioMasterLevel = 0.8
+            audioLimiterReductionDb = 1.0
+            editorPlayhead = {"sourcePositionMs": 1250}
+
+            def __init__(self) -> None:
+                self.start_args: dict[str, Any] | None = None
+
+            def start_codex_audio_mix_proposal(self, **kwargs: Any) -> bool:
+                self.start_args = kwargs
+                return True
+
+        gui = GuiStub()
+        backend = GuiActionBackend(gui)
+        dispatcher = ActionDispatcher(backend)
+        scope = ActionScope(
+            "audio-proposal",
+            frozenset({"propose_audio_mix"}),
+            project_revision=4,
+        )
+        result = dispatcher.dispatch(
+            request(
+                "propose",
+                "propose_audio_mix",
+                {"intent": "声を聞きやすくして"},
+                revision=4,
+                scope_id="audio-proposal",
+            ),
+            trusted_scope=scope,
+        )
+
+        self.assertEqual(result.status.value, "success")
+        self.assertIsNotNone(gui.start_args)
+        assert gui.start_args is not None
+        self.assertEqual(gui.start_args["revision"], 4)
+        self.assertEqual(gui.start_args["context"]["channels"][0]["preview_level"], 0.5)
+        self.assertNotIn("path", gui.start_args["context"]["channels"][0])
+
     def test_inspect_filters_local_paths_and_unknown_dispatch_is_rejected(self) -> None:
         class GuiStub:
             _project_revision = 4

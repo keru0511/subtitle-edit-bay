@@ -3910,26 +3910,67 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @staticmethod
     def _is_audio_mix_chat_request(message: str) -> bool:
-        prompt = str(message).casefold()
-        control_terms = (
+        # Route natural-language sound adjustments to the typed audio proposal.
+        prompt = str(message).strip().casefold()
+        if not prompt:
+            return False
+
+        # Explicit mixer controls remain unambiguous. For ordinary language,
+        # combine an audio target with an adjustment intent instead of requiring
+        # one exact phrase (for example, 「声を聞きやすくして」).
+        explicit_audio_controls = (
             "音量",
             "ミキサー",
             "ミックス",
             "ミュート",
-            "音声を大き",
-            "音声を小さ",
-            "声を大き",
-            "声を小さ",
             "bgm",
             "volume",
             "mute",
             "solo",
-            "louder",
-            "quieter",
             "audio mix",
             "audio mixer",
         )
-        return any(term in prompt for term in control_terms)
+        if any(term in prompt for term in explicit_audio_controls):
+            return True
+
+        audio_targets = (
+            "声",
+            "音声",
+            "音楽",
+            "ナレーション",
+            "ボーカル",
+            "voice",
+            "audio",
+            "sound",
+            "music",
+            "track",
+        )
+        adjustment_intents = (
+            "聞きやす",
+            "聞こえ",
+            "明瞭",
+            "クリア",
+            "大き",
+            "小さ",
+            "上げ",
+            "下げ",
+            "調整",
+            "整え",
+            "バランス",
+            "抑え",
+            "目立",
+            "clear",
+            "adjust",
+            "balance",
+            "raise",
+            "lower",
+            "louder",
+            "quieter",
+        )
+        return (
+            any(term in prompt for term in audio_targets)
+            and any(term in prompt for term in adjustment_intents)
+        )
 
     def _start_audio_mix_chat_proposal(self, message: str) -> None:
         if not self._codex_chat.begin_proposal(

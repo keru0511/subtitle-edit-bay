@@ -2532,7 +2532,11 @@ class EditBayBackend(LegacyEditBayBackend):
                 before,
                 self._audio_mix_proposal,
                 current_revision=self._project_revision,
-                selected_operation_ids={str(item) for item in (selected_operation_ids or [])} or None,
+                selected_operation_ids=(
+                    None
+                    if selected_operation_ids is None
+                    else {str(item) for item in selected_operation_ids}
+                ),
                 allow_silence=bool(allow_silence),
             )
         except (AudioMixProposalError, AudioMixError, ValueError, TypeError) as error:

@@ -58,6 +58,7 @@ from .audio_mix_proposal import (
     AudioMixProposalError,
     apply_audio_mix_proposal,
     build_audio_mix_context,
+    build_audio_mix_proposal,
     build_audio_mix_proposal_prompt,
 )
 from .audio_preview_cache import (

@@ -91,6 +91,7 @@ class QmlStaticTests(unittest.TestCase):
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
 
+        self.assertIn("property bool audioHasProposal: Boolean(backend && backend.audioMixProposal", panel)
         self.assertIn("audioMixProposal", panel)
         self.assertIn("update_audio_channel", panel)
         self.assertIn("applyAudioMixProposal", panel)

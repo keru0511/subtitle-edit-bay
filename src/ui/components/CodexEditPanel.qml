@@ -7,8 +7,8 @@ Rectangle {
     id: card
     // qmllint disable unqualified
     property var backend
-    property bool audioHasProposal: Boolean(backend) && backend.audioMixProposal
-        && backend.audioMixProposal.operations && backend.audioMixProposal.operations.length > 0
+    property bool audioHasProposal: Boolean(backend && backend.audioMixProposal
+        && backend.audioMixProposal.operations && backend.audioMixProposal.operations.length > 0)
     property bool audioBusy: Boolean(backend)
         && ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) >= 0
     property bool audioProposal: audioBusy || audioHasProposal

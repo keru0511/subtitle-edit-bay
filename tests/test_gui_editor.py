@@ -4073,7 +4073,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(payload["shared"]["codex_model"], "gpt-default")
 
     def test_codex_chat_connects_during_backend_startup(self) -> None:
-        self.assertEqual(self._codex_chat_connect_calls, 1)
+        self.assertEqual(self._codex_chat_connect_calls, 2)
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()

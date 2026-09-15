@@ -71,6 +71,12 @@ ApplicationWindow {
     readonly property bool shortWorkspaceActive: root.currentWorkspace === "short-artifact"
     readonly property bool codexAuthenticated: root.appBackend
         && root.appBackend.codexAuthState === "authenticated"
+    readonly property string aiProviderLoginLabel: {
+        var providerName = root.appBackend
+            ? String(root.appBackend.aiChatProviderName || "")
+            : ""
+        return providerName ? providerName + "ログイン" : "ログイン"
+    }
     readonly property bool codexSidebarOverlay: root.width < 1400
     readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
@@ -3258,7 +3264,7 @@ ApplicationWindow {
             : (root.appBackend && root.appBackend.codexAuthState === "login_pending"
             ? "ブラウザを開く"
             : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0
-                ? "再接続" : "Codexログイン"))
+                ? "再接続" : root.aiProviderLoginLabel))
         enabled: root.appBackend
             && root.appBackend.codexConnectionState !== "connecting"
             && root.appBackend.codexAuthState !== "checking"

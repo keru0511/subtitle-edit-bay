@@ -99,6 +99,10 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "aiProviderAuthHint"', workflow)
         self.assertIn("root.appBackend.aiChatAuthHint", workflow)
         self.assertIn("root.appBackend.aiChatLoginAvailable", workflow)
+        self.assertIn('readonly property string aiProviderLoginLabel', workflow)
+        self.assertIn('String(root.appBackend.aiChatProviderName || "")', workflow)
+        self.assertIn(": root.aiProviderLoginLabel", workflow)
+        self.assertIn('root.appBackend.startCodexLogin()', workflow)
 
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")

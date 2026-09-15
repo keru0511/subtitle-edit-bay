@@ -194,6 +194,39 @@ class GeminiAcpProviderTests(unittest.TestCase):
         finally:
             provider.close()
 
+    def test_connect_restores_saved_preferred_model_from_initial_inventory(self) -> None:
+        class InitialModelClient:
+            notification_callback = None
+            disconnect_callback = None
+
+            def start(self) -> dict[str, object]:
+                return {
+                    "protocolVersion": 1,
+                    "authState": "authenticated",
+                    "models": {
+                        "availableModels": [
+                            {"modelId": "gemini-default", "name": "Default"},
+                            {"modelId": "gemini-saved", "name": "Saved"},
+                        ],
+                        "currentModelId": "gemini-default",
+                    },
+                }
+
+            def stop(self) -> None:
+                return None
+
+        provider = GeminiAcpProvider(
+            workspace_root=ROOT,
+            client_factory=InitialModelClient,
+            preferred_model="gemini-saved",
+        )
+        try:
+            state = provider.connect()
+            self.assertEqual(state.selected_model, "gemini-saved")
+            self.assertEqual(provider.state.selected_model, "gemini-saved")
+        finally:
+            provider.close()
+
     def test_initialize_session_dynamic_models_stream_and_cancel(self) -> None:
         provider = self.provider(
             environment={

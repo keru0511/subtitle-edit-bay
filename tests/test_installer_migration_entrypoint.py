@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import contextlib
 import io
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
+from src.installer_migration import MigrationError
 from src.installer_migration_entrypoint import (
     InstallerMigrationRequest,
     apply_installer_migration,
@@ -106,6 +109,66 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
             self.assertTrue((source / ".venv").exists())
             self.assertFalse((destination / ".venv").exists())
             self.assertTrue(Path(result["record_path"]).is_file())
+
+    def test_plan_rejects_source_directory_link_before_snapshot_walk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._fixture(Path(temporary))
+            external = Path(temporary) / "external-source"
+            external.mkdir()
+            (external / "outside.json").write_text('{"outside": true}', encoding="utf-8")
+            link = source / ".gui" / "dictionaries"
+            try:
+                link.symlink_to(external, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+
+            with self.assertRaisesRegex(MigrationError, "symbolic link or junction"):
+                build_installer_migration_plan(
+                    InstallerMigrationRequest(source=str(source), destination=str(destination))
+                )
+
+    def test_plan_rejects_destination_parent_link_before_snapshot_walk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._fixture(Path(temporary))
+            external = Path(temporary) / "external-destination"
+            external.mkdir()
+            link = destination / ".gui"
+            try:
+                link.symlink_to(external, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+
+            with self.assertRaisesRegex(MigrationError, "symbolic link or junction"):
+                build_installer_migration_plan(
+                    InstallerMigrationRequest(source=str(source), destination=str(destination))
+                )
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction verification is Windows-only")
+    def test_plan_rejects_windows_junction_before_snapshot_walk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._fixture(Path(temporary))
+            external = Path(temporary) / "external-junction-target"
+            external.mkdir()
+            (external / "outside.json").write_text('{"outside": true}', encoding="utf-8")
+            junction = source / ".gui" / "dictionaries"
+            created = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(external)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr + created.stdout)
+            try:
+                with self.assertRaisesRegex(MigrationError, "symbolic link or junction"):
+                    build_installer_migration_plan(
+                        InstallerMigrationRequest(source=str(source), destination=str(destination))
+                    )
+            finally:
+                subprocess.run(
+                    ["cmd.exe", "/d", "/c", "rmdir", str(junction)],
+                    capture_output=True,
+                    check=False,
+                )
 
     def test_skip_workspace_reference_does_not_copy_project_or_media(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

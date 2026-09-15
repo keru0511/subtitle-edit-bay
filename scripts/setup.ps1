@@ -480,9 +480,7 @@ if ($MigrationSource) {
         "--source",
         $MigrationSource,
         "--destination",
-        (Get-Location).Path,
-        "--plan-output",
-        $migrationPlanPath
+        (Get-Location).Path
     )
     if ($SkipRuntimeConfig) { $migrationArguments += "--skip-runtime-config" }
     if ($SkipSpeakerColors) { $migrationArguments += "--skip-speaker-colors" }
@@ -491,7 +489,8 @@ if ($MigrationSource) {
     $nvencAvailableText = & $venvPython -c "from src.runtime_dependencies import check_runtime_dependencies; print('true' if check_runtime_dependencies(probe_nvenc=True).nvenc else 'false')"
     if ($LASTEXITCODE -ne 0) { throw "Runtime capability verification for migration failed." }
     if ($nvencAvailableText.Trim() -eq "true") { $migrationArguments += "--nvenc" }
-    & $venvPython @migrationArguments | Out-Null
+    $planArguments = @($migrationArguments + @("--plan-output", $migrationPlanPath))
+    & $venvPython @planArguments | Out-Null
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $migrationPlanPath -PathType Leaf)) {
         throw "BAT/ZIP workspace migration plan could not be created. The old workspace was not modified."
     }
@@ -517,8 +516,14 @@ if ($MigrationSource) {
     if ($LASTEXITCODE -ne 0) { throw "Migration review could not be completed. The old workspace was not modified." }
 
     Write-Host "Applying the reviewed migration plan from the BAT/ZIP workspace: $MigrationSource"
-    $migrationArguments += @("--apply", "--result-output", $migrationResultPath)
-    & $venvPython @migrationArguments | Out-Null
+    $applyArguments = @($migrationArguments + @(
+        "--apply",
+        "--plan-input",
+        $migrationPlanPath,
+        "--result-output",
+        $migrationResultPath
+    ))
+    & $venvPython @applyArguments | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "BAT/ZIP workspace migration failed. The old workspace was not modified."
     }

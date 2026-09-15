@@ -3191,7 +3191,7 @@ ApplicationWindow {
         anchors.margins: 12
         width: 108
         height: 34
-        visible: !root.codexAuthenticated && root.appBackend
+        visible: !root.codexAuthenticated && !root.shortWorkspaceActive && root.appBackend
             && root.appBackend.aiChatProviders.length > 1
         model: root.appBackend ? root.appBackend.aiChatProviders : []
         textRole: "label"
@@ -3229,7 +3229,7 @@ ApplicationWindow {
         anchors.leftMargin: 12
         width: 240
         height: 34
-        visible: !root.codexAuthenticated && root.appBackend
+        visible: !root.codexAuthenticated && !root.shortWorkspaceActive && root.appBackend
             && root.appBackend.aiChatAuthHint
             && !root.appBackend.aiChatLoginAvailable
         z: 650
@@ -3250,7 +3250,7 @@ ApplicationWindow {
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34
-        visible: !root.codexAuthenticated
+        visible: !root.codexAuthenticated && !root.shortWorkspaceActive
             && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
         z: 650
         text: root.appBackend && root.appBackend.aiChatAuthHint

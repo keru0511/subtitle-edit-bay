@@ -517,6 +517,7 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn('$migrationArguments += "--skip-speaker-colors"', setup)
         self.assertIn('$migrationArguments += "--skip-workspace-reference"', setup)
         self.assertIn("src.installer_migration_entrypoint", setup)
+        self.assertIn('"--plan-input"', setup)
         self.assertIn("migration_review.ps1", setup)
         self.assertIn("migration_plan = $migrationPlanPath", setup)
         self.assertIn("migration_result = $migrationResultPath", setup)

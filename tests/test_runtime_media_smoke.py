@@ -12,10 +12,14 @@ from src.subtitle_project import create_project, save_project
 from src.subtitle_workflow_transcription import _extract_video_audio_track
 from src.transcribe import probe_audio_streams
 from tests.media_test_helpers import (
+    FrameRegion,
     MediaSegment,
+    assert_frame_difference_present,
     assert_mp4_faststart,
+    compare_rgb_frames,
     create_lavfi_audio_fixture,
     create_lavfi_av_fixture,
+    extract_rgb_frame,
     media_duration_seconds,
     probe_media,
     video_stream,
@@ -27,6 +31,8 @@ def _has_tool(name: str) -> bool:
 
 
 class RuntimeMediaSmokeTests(unittest.TestCase):
+    _SUBTITLE_RENDER_REGION = FrameRegion(x=20, y=110, width=280, height=60)
+
     def _require_ffmpeg(self) -> None:
         if not (_has_tool("ffmpeg") and _has_tool("ffprobe")):
             self.skipTest("ffmpeg and ffprobe are required for runtime media smoke tests")
@@ -97,22 +103,25 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             subtitle = root / "caption.ass"
-            subtitle.write_text(
-                "\n".join([
-                    "[Script Info]",
-                    "ScriptType: v4.00+",
-                    "PlayResX: 320",
-                    "PlayResY: 180",
-                    "",
-                    "[V4+ Styles]",
-                    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-                    "Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1",
-                    "",
-                    "[Events]",
-                    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-                    "Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,smoke subtitle",
-                    "",
-                ]),
+            subtitle_lines = [
+                "[Script Info]",
+                "ScriptType: v4.00+",
+                "PlayResX: 320",
+                "PlayResY: 180",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                "Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,smoke subtitle",
+                "",
+            ]
+            subtitle.write_text("\n".join(subtitle_lines), encoding="utf-8")
+            control_subtitle = root / "caption-without-events.ass"
+            control_subtitle.write_text(
+                "\n".join(line for line in subtitle_lines if not line.startswith("Dialogue:")),
                 encoding="utf-8",
             )
 
@@ -132,6 +141,30 @@ class RuntimeMediaSmokeTests(unittest.TestCase):
                 self.assertEqual(stream["codec_name"], "h264")
                 self.assertEqual(stream.get("profile"), "High")
                 self.assertEqual(stream["pix_fmt"], "yuv420p")
+
+                if pix_fmt == "yuv420p10le":
+                    # Keep one representative semantic check while retaining the
+                    # second input format as a conversion-only compatibility guard.
+                    control = root / "burned-without-subtitles.mp4"
+                    run_ffmpeg_burn(
+                        str(video),
+                        str(control_subtitle),
+                        str(control),
+                        video_codec="libx264",
+                        audio_codec="aac",
+                    )
+                    # 0.4s is safely inside the 0.0s-0.8s dialogue interval.
+                    control_frame = extract_rgb_frame(control, 0.4)
+                    rendered_frame = extract_rgb_frame(output, 0.4)
+                    difference = compare_rgb_frames(
+                        control_frame,
+                        rendered_frame,
+                        region=self._SUBTITLE_RENDER_REGION,
+                    )
+                    assert_frame_difference_present(
+                        difference,
+                        context="subtitle burn-in at 0.4s",
+                    )
 
     def test_extract_video_audio_track_uses_distinct_cache_for_same_stem(self) -> None:
         if os.environ.get("RUN_FFMPEG_SMOKE") != "1":

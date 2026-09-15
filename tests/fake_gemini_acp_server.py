@@ -84,6 +84,9 @@ def handle(request: dict[str, Any]) -> None:
     if method == "initialize":
         auth_state = os.environ.get("FAKE_ACP_AUTH_STATE", "")
         protocol_version = int(os.environ.get("FAKE_ACP_PROTOCOL_VERSION", "1"))
+        auth_methods = [] if os.environ.get("FAKE_ACP_NO_AUTH_METHODS") == "1" else [
+            {"id": "oauth-personal", "name": "Log in with Google"},
+        ]
         result: dict[str, Any] = {
             "protocolVersion": protocol_version,
             "agentInfo": {"name": "fake-gemini", "version": "0.59.0"},
@@ -91,9 +94,7 @@ def handle(request: dict[str, Any]) -> None:
                 "loadSession": True,
                 "promptCapabilities": {"image": False},
             },
-            "authMethods": [
-                {"id": "oauth-personal", "name": "Log in with Google"},
-            ],
+            "authMethods": auth_methods,
         }
         if auth_state:
             result["authState"] = auth_state

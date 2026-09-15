@@ -323,14 +323,18 @@ $env:SUBTITLE_EDIT_BAY_HOOK_STARTED = $hookStarted
 $env:SUBTITLE_EDIT_BAY_HOOK_GATE = $hookGate
 $env:SUBTITLE_EDIT_BAY_HOOK_MODE = "wait"
 $env:SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES = "1"
-$env:SUBTITLE_EDIT_BAY_MIGRATION_SOURCE = $migrationSource
 $env:SUBTITLE_EDIT_BAY_MESSAGE_PROBE = $messageProbe
 $env:SUBTITLE_EDIT_BAY_STARTUP_SMOKE_RESULT = $smokeResult
 try {
     # Product EXE -> launch.ps1 -> real setup.ps1. Keep the pre-build hook paused,
     # then prove normal launch and an explicit repair both attach to that one
     # setup instead of starting another production dependency build.
-    $first = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -PassThru
+    # Pass the migration source only to the explicit setup request. Leaving it
+# in the parent environment would also make a normal product launch carry
+# a one-shot migration request after the setup mutex is released.
+$first = Start-Process -FilePath $launcher -ArgumentList @(
+    "--setup", "--migration-source", ('"{0}"' -f $migrationSource)
+) -WorkingDirectory $installDir -PassThru
     $deadline = [DateTime]::UtcNow.AddMinutes(2)
     while (-not (Test-Path -LiteralPath $hookStarted) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path -LiteralPath $hookStarted)) {
@@ -342,6 +346,7 @@ try {
     if ($runningStatus.status -ne "running" -or -not $runningStatus.process_id) { throw "The real setup did not publish its running state." }
     $runningProbe = Start-Process -FilePath $launcher -ArgumentList "--probe-setup-running" -WorkingDirectory $installDir -Wait -PassThru
     if ($runningProbe.ExitCode -ne 0) { throw "The process-aware setup lock was not observable." }
+    Remove-Item "Env:SUBTITLE_EDIT_BAY_MIGRATION_SOURCE" -ErrorAction SilentlyContinue
     $second = Start-Process -FilePath $launcher -ArgumentList "--setup" -WorkingDirectory $installDir -PassThru
     $normal = Start-Process -FilePath $launcher -WorkingDirectory $installDir -PassThru
     Start-Sleep -Seconds 2

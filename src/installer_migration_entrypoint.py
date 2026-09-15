@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import os
+import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,8 @@ from .legacy_migration import (
     LegacySettingsMigrationPlan,
     LegacySettingsMigrationResult,
     SettingsMigrationOptions,
+    _is_link_like,
+    _safe_lstat,
     apply_settings_migration,
     build_cache_cleanup_plan,
     build_legacy_inventory,
@@ -185,20 +188,56 @@ def _filesystem_snapshot_for_path(
 
     snapshots: list[dict[str, object]] = []
 
+    def inspect_components(candidate: Path) -> os.stat_result | None:
+        """Inspect every path component without following links.
+
+        ``Path.is_symlink()`` is not sufficient on Python 3.10 because a
+        Windows directory junction is a reparse point, not a POSIX symlink.
+        Reuse the migration core's lstat/reparse-point boundary so a snapshot
+        can never walk outside the selected source or destination root.
+        """
+
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError as exc:
+            raise MigrationError(f"migration snapshot path escapes selected root: {candidate}") from exc
+
+        root_metadata, error = _safe_lstat(root)
+        if error:
+            raise MigrationError(f"unable to inspect migration snapshot root: {root}")
+        if root_metadata is None:
+            return None
+        if _is_link_like(root, root_metadata):
+            raise MigrationError(f"migration snapshot root is a symbolic link or junction: {root}")
+
+        current = root
+        components = relative.parts
+        if components and not stat.S_ISDIR(root_metadata.st_mode):
+            raise MigrationError(f"migration snapshot root is not a directory: {root}")
+        for index, component in enumerate(components):
+            current = current / component
+            metadata, error = _safe_lstat(current)
+            if error:
+                raise MigrationError(f"unable to inspect migration snapshot path: {current}")
+            if metadata is None:
+                return None
+            if _is_link_like(current, metadata):
+                raise MigrationError(
+                    f"migration snapshot contains a symbolic link or junction: {current}"
+                )
+            if index < len(components) - 1 and not stat.S_ISDIR(metadata.st_mode):
+                raise MigrationError(f"migration snapshot parent is not a directory: {current}")
+
+        if not components:
+            return root_metadata
+        metadata, error = _safe_lstat(candidate)
+        if error:
+            raise MigrationError(f"unable to inspect migration snapshot path: {candidate}")
+        return metadata
+
     def record(candidate: Path, relative_path: str) -> None:
-        if candidate.is_symlink():
-            snapshots.append(
-                {
-                    "scope": scope,
-                    "relative_path": relative_path,
-                    "exists": True,
-                    "node_type": "symlink",
-                    "size_bytes": None,
-                    "sha256": None,
-                }
-            )
-            return
-        if not candidate.exists():
+        metadata = inspect_components(candidate)
+        if metadata is None:
             snapshots.append(
                 {
                     "scope": scope,
@@ -210,7 +249,11 @@ def _filesystem_snapshot_for_path(
                 }
             )
             return
-        if candidate.is_file():
+        if _is_link_like(candidate, metadata):
+            raise MigrationError(
+                f"migration snapshot contains a symbolic link or junction: {candidate}"
+            )
+        if stat.S_ISREG(metadata.st_mode):
             try:
                 payload = candidate.read_bytes()
             except OSError as exc:
@@ -226,7 +269,7 @@ def _filesystem_snapshot_for_path(
                 }
             )
             return
-        if not candidate.is_dir():
+        if not stat.S_ISDIR(metadata.st_mode):
             snapshots.append(
                 {
                     "scope": scope,

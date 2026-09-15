@@ -4,8 +4,11 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from src.gemini_acp_provider import GeminiAcpClient, GeminiAcpProvider
+from src.gui import EditBayBackend
 from src.gui_ai_chat_state import AIProviderChatRouter
 from src.gui_codex_chat_state import CodexChatController, CodexChatSnapshot
 
@@ -187,6 +190,50 @@ class AIProviderChatRouterTests(unittest.TestCase):
         self.assertEqual(self.router.snapshot.selected_model, "gpt")
 
 
+class GeminiAuthHintTests(unittest.TestCase):
+    @staticmethod
+    def _hint(*, auth_state: str, login_available: bool) -> str:
+        backend = SimpleNamespace(
+            _ai_chat=SimpleNamespace(
+                snapshot=CodexChatSnapshot(
+                    provider_id="gemini",
+                    provider_name="Gemini",
+                    auth_state=auth_state,
+                    login_available=login_available,
+                )
+            )
+        )
+        getter = EditBayBackend.aiChatAuthHint.fget
+        assert getter is not None
+        return getter(backend)
+
+    def test_authenticated_gemini_without_login_action_has_no_auth_hint(self) -> None:
+        self.assertEqual(
+            self._hint(auth_state="authenticated", login_available=False),
+            "",
+        )
+
+    def test_unauthenticated_gemini_without_login_action_keeps_auth_hint(self) -> None:
+        self.assertEqual(
+            self._hint(auth_state="unauthenticated", login_available=False),
+            "Gemini CLIでログインしてください",
+        )
+
+
+class GeminiProviderFactoryTests(unittest.TestCase):
+    def test_factory_passes_saved_model_to_gemini_provider(self) -> None:
+        backend = SimpleNamespace(
+            workspace_root=ROOT,
+            _settings={"gemini_model": "gemini-saved"},
+        )
+        with patch("src.gui.GeminiAcpProvider") as provider_class:
+            EditBayBackend._create_gemini_chat_provider(backend)
+        provider_class.assert_called_once_with(
+            workspace_root=ROOT,
+            preferred_model="gemini-saved",
+        )
+
+
 class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
     def test_gemini_chat_controller_streams_through_provider_router(self) -> None:
         provider = GeminiAcpProvider(
@@ -196,6 +243,7 @@ class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
                 cwd=ROOT,
                 environment={
                     "FAKE_ACP_AUTH_STATE": "authenticated",
+                    "FAKE_ACP_NO_AUTH_METHODS": "1",
                     "FAKE_ACP_MODELS": '[{"modelId":"router-model","name":"Router Model"}]',
                 },
                 request_timeout=2,
@@ -220,6 +268,11 @@ class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
             self.assertEqual(router.snapshot.provider_id, "gemini")
             self.assertEqual(router.snapshot.provider_name, "Gemini")
             self.assertEqual(router.snapshot.auth_state, "authenticated")
+            self.assertFalse(router.snapshot.login_available)
+            backend = SimpleNamespace(_ai_chat=router)
+            getter = EditBayBackend.aiChatAuthHint.fget
+            assert getter is not None
+            self.assertEqual(getter(backend), "")
             self.assertTrue(router.snapshot.model_selection_supported)
             self.assertEqual(router.snapshot.selected_model, "router-model")
             self.assertEqual([item["id"] for item in router.snapshot.models], ["router-model"])

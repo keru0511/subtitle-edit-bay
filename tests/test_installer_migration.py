@@ -494,7 +494,10 @@ class InstallerMigrationTests(unittest.TestCase):
     def test_installer_and_setup_preserve_and_preflight_migration_request(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         setup = (repository / "scripts" / "setup.ps1").read_text(encoding="utf-8-sig")
-        review = (repository / "scripts" / "migration_review.ps1").read_text(encoding="utf-8-sig")
+        review_path = repository / "scripts" / "migration_review.ps1"
+        review_bytes = review_path.read_bytes()
+        self.assertTrue(review_bytes.startswith(b"\xef\xbb\xbf"), "Windows PowerShell scripts with Japanese text need a UTF-8 BOM")
+        review = review_bytes.decode("utf-8-sig")
         installer_smoke = (repository / "scripts" / "test_installer.ps1").read_text(encoding="utf-8-sig")
         installer = (repository / "installer" / "SubtitleEditBay.iss").read_text(encoding="utf-8-sig")
         setup_batch = (repository / "setup.bat").read_text(encoding="utf-8-sig")

@@ -3973,6 +3973,31 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(sidebar.width(), 0)
         self.assertTrue(login_route.isVisible())
 
+    def test_gemini_top_login_route_uses_provider_label_and_login_target(self) -> None:
+        self._load_project()
+        self.app._gemini_chat._snapshot = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="unauthenticated",
+            provider_id="gemini",
+            provider_name="Gemini",
+            login_available=True,
+        )
+        self.app._ai_chat.select_provider("codex")
+        self.assertTrue(self.app._ai_chat.select_provider("gemini"))
+        self.addCleanup(self.app._ai_chat.select_provider, "codex")
+        self.app._on_codex_chat_state(self.app._ai_chat.snapshot)
+        _, window = self._load_qml()
+        login_route = self._quick_item(window, "codexLoginRoute")
+
+        self.assertTrue(login_route.isVisible())
+        self.assertTrue(login_route.property("enabled"))
+        self.assertEqual(login_route.property("text"), "Geminiログイン")
+
+        with patch.object(self.app._gemini_chat, "login") as gemini_login:
+            self._click(window, login_route)
+
+        gemini_login.assert_called_once_with(relogin=False)
+
     def test_codex_drawer_does_not_block_back_navigation_at_minimum_width(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -4073,7 +4098,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(payload["shared"]["codex_model"], "gpt-default")
 
     def test_codex_chat_connects_during_backend_startup(self) -> None:
-        self.assertEqual(self._codex_chat_connect_calls, 1)
+        self.assertEqual(self._codex_chat_connect_calls, 2)
 
     def test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size(self) -> None:
         self._load_project()

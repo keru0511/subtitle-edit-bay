@@ -88,6 +88,28 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "codexChatEditScope"', panel)
         self.assertNotIn('objectName: "codexEditPanel"', workflow)
 
+    def test_ai_chat_exposes_provider_selector_and_official_login_capability(self) -> None:
+        panel = (COMPONENTS_ROOT / "CodexChatPanel.qml").read_text(encoding="utf-8")
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        self.assertIn('objectName: "aiProviderHeaderCombo"', panel)
+        self.assertIn("backend.aiChatModelSelectionSupported", panel)
+        self.assertIn("backend.aiChatLoginAvailable", panel)
+        self.assertIn("backend.aiChatAuthHint", panel)
+        self.assertIn('objectName: "aiProviderLoginCombo"', workflow)
+        self.assertIn('objectName: "aiProviderAuthHint"', workflow)
+        self.assertIn("root.appBackend.aiChatAuthHint", workflow)
+        self.assertIn("root.appBackend.aiChatLoginAvailable", workflow)
+        self.assertIn('readonly property string aiProviderLoginLabel', workflow)
+        self.assertIn('String(root.appBackend.aiChatProviderName || "")', workflow)
+        self.assertIn(": root.aiProviderLoginLabel", workflow)
+        self.assertIn('root.appBackend.startCodexLogin()', workflow)
+
+    def test_ai_login_route_is_provider_neutral_when_login_action_is_available(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+
+        self.assertIn('? "再接続" : root.aiProviderLoginLabel))', workflow)
+        self.assertNotIn(': "再接続" : "Codexログイン"))', workflow)
+
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
 

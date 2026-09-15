@@ -36,6 +36,12 @@ class CodexChatSnapshot:
     turn_id: str = ""
     messages: tuple[Mapping[str, Any], ...] = ()
     error: str = ""
+    # Provider metadata is appended to preserve the original positional
+    # snapshot constructor used by existing integrations/tests.
+    provider_id: str = "codex"
+    provider_name: str = "Codex"
+    model_selection_supported: bool = True
+    login_available: bool = True
 
 
 class CodexChatController:
@@ -48,6 +54,10 @@ class CodexChatController:
         provider_factory: Callable[[], AIProvider] | None = None,
         workspace_root: str | Path,
         preferred_model: str = "",
+        provider_id: str = "codex",
+        provider_name: str = "Codex",
+        initial_model_selection_supported: bool = True,
+        initial_login_available: bool = True,
         on_state: Callable[[CodexChatSnapshot], None] | None = None,
         on_selected_model: Callable[[str], None] | None = None,
         callback_dispatcher: Callable[[Callable[[], None]], None] | None = None,
@@ -60,7 +70,15 @@ class CodexChatController:
         self.on_state = on_state
         self.on_selected_model = on_selected_model
         self._callback_dispatcher = callback_dispatcher or (lambda callback: callback())
-        self._snapshot = CodexChatSnapshot(selected_model=str(preferred_model).strip())
+        self.provider_id = str(provider_id).strip() or "codex"
+        self.provider_name = str(provider_name).strip() or self.provider_id
+        self._snapshot = CodexChatSnapshot(
+            provider_id=self.provider_id,
+            provider_name=self.provider_name,
+            model_selection_supported=bool(initial_model_selection_supported),
+            login_available=bool(initial_login_available),
+            selected_model=str(preferred_model).strip(),
+        )
         self._preferred_model = str(preferred_model).strip()
         self._provider: AIProvider | None = None
         self._lock = threading.RLock()
@@ -101,9 +119,13 @@ class CodexChatController:
 
     def select_model(self, model: str) -> None:
         selected = str(model).strip()
-        available = {str(item["id"]) for item in self.snapshot.models}
+        snapshot = self.snapshot
+        if not snapshot.model_selection_supported:
+            self._update(model_error="このプロバイダはモデル選択に対応していません", error="")
+            return
+        available = {str(item["id"]) for item in snapshot.models}
         if selected not in available:
-            error = f"選択したCodexモデルは現在利用できません: {selected or '（未選択）'}"
+            error = f"選択した{self.provider_name}モデルは現在利用できません: {selected or '（未選択）'}"
             self._update(model_error=error, error=error)
             return
         provider = self._provider_or_none()
@@ -126,16 +148,18 @@ class CodexChatController:
             return
         snapshot = self.snapshot
         if snapshot.auth_state != "authenticated":
-            self._update(error="Codexへログインしてからメッセージを送信してください")
+            self._update(error=f"{self.provider_name}へログインしてからメッセージを送信してください")
             return
         if snapshot.chat_state in {"sending", "streaming", "stopping"}:
-            self._update(error="Codexの応答が完了してから次のメッセージを送信してください")
+            self._update(error=f"{self.provider_name}の応答が完了してから次のメッセージを送信してください")
             return
         available = {str(item["id"]) for item in snapshot.models}
-        if not snapshot.selected_model or snapshot.selected_model not in available:
+        if snapshot.model_selection_supported and (
+            not snapshot.selected_model or snapshot.selected_model not in available
+        ):
             self._update(
-                model_error="利用可能なCodexモデルを選択してください",
-                error="利用可能なCodexモデルを選択してください",
+                model_error=f"利用可能な{self.provider_name}モデルを選択してください",
+                error=f"利用可能な{self.provider_name}モデルを選択してください",
             )
             return
         with self._lock:
@@ -170,10 +194,10 @@ class CodexChatController:
             self._update(error="メッセージを入力してください")
             return False
         if snapshot.auth_state != "authenticated":
-            self._update(error="Codexへログインしてからメッセージを送信してください")
+            self._update(error=f"{self.provider_name}へログインしてからメッセージを送信してください")
             return False
         if snapshot.chat_state in {"sending", "streaming", "stopping"}:
-            self._update(error="Codexの応答が完了してから次のメッセージを送信してください")
+            self._update(error=f"{self.provider_name}の応答が完了してから次のメッセージを送信してください")
             return False
         self._message_sequence += 1
         user_id = f"local-user-{self._message_sequence}"
@@ -313,7 +337,7 @@ class CodexChatController:
                 provider = self._provider
                 self._provider = None
             self._close_provider(provider)
-            message = f"Codexへ接続できません: {self._safe_error(error)}"
+            message = f"{self.provider_name}へ接続できません: {self._safe_error(error)}"
             self._update(
                 connection_state="error",
                 auth_state="error",
@@ -340,7 +364,7 @@ class CodexChatController:
         except Exception as error:
             self._update(
                 auth_state="error",
-                error=f"Codexのログインを開始できません: {self._safe_error(error)}",
+                error=f"{self.provider_name}のログインを開始できません: {self._safe_error(error)}",
             )
 
     def _logout_worker(self) -> None:
@@ -354,7 +378,7 @@ class CodexChatController:
         except Exception as error:
             self._update(
                 auth_state="error",
-                error=f"Codexからログアウトできません: {self._safe_error(error)}",
+                error=f"{self.provider_name}からログアウトできません: {self._safe_error(error)}",
             )
 
     def _refresh_provider_state(self) -> None:
@@ -364,7 +388,7 @@ class CodexChatController:
         except Exception as error:
             self._update(
                 auth_state="error",
-                error=f"Codexの認証状態を確認できません: {self._safe_error(error)}",
+                error=f"{self.provider_name}の認証状態を確認できません: {self._safe_error(error)}",
             )
 
     def _send_worker(self, prompt: str, model: str) -> None:
@@ -414,7 +438,7 @@ class CodexChatController:
                 "streaming",
                 "stopping",
             }:
-                raise CodexChatError("Codex turn IDが返されませんでした")
+                raise CodexChatError(f"{self.provider_name} turn IDが返されませんでした")
             changes: dict[str, Any] = {"thread_id": thread_id}
             if effective_turn_id and current.chat_state in {"sending", "streaming", "stopping"}:
                 changes["turn_id"] = effective_turn_id
@@ -426,7 +450,7 @@ class CodexChatController:
         except Exception as error:
             with self._lock:
                 self._stop_requested = False
-            message = f"Codexへメッセージを送信できません: {self._safe_error(error)}"
+            message = f"{self.provider_name}へメッセージを送信できません: {self._safe_error(error)}"
             self._finish_active_assistant("error")
             self._update(chat_state="send_failed", error=message)
 
@@ -449,7 +473,7 @@ class CodexChatController:
             self._finish_active_assistant("error")
             self._update(
                 chat_state="send_failed",
-                error=f"Codexの応答を停止できません: {self._safe_error(error)}",
+                error=f"{self.provider_name}の応答を停止できません: {self._safe_error(error)}",
             )
 
     def _schedule_interrupt_if_ready(self, thread_id: str, turn_id: str) -> None:
@@ -526,7 +550,7 @@ class CodexChatController:
     def _require_provider(self) -> AIProvider:
         provider = self._provider_or_none()
         if provider is None or self.snapshot.connection_state != "ready":
-            raise CodexChatError("Codex App Serverへ接続されていません")
+            raise CodexChatError(f"{self.provider_name}へ接続されていません")
         return provider
 
     def _on_provider_event(self, event: AIProviderEvent) -> None:
@@ -576,7 +600,7 @@ class CodexChatController:
                 self._update(
                     chat_state="send_failed",
                     turn_id="",
-                    error=f"Codexの応答に失敗しました: {event.error}",
+                    error=f"{self.provider_name}の応答に失敗しました: {event.error}",
                 )
             else:
                 self._finish_active_assistant(
@@ -601,7 +625,7 @@ class CodexChatController:
             auth_state="unknown",
             chat_state="disconnected",
             turn_id="",
-            error="Codexとの接続が切断されました。再接続してください",
+            error=f"{self.provider_name}との接続が切断されました。再接続してください",
         )
 
     def _apply_provider_state(
@@ -623,6 +647,8 @@ class CodexChatController:
             "login_url": state.login_url,
             "login_id": state.login_id,
             "models": models,
+            "model_selection_supported": state.model_selection_supported,
+            "login_available": state.login_available,
             "selected_model": state.selected_model,
             "model_error": model_error,
             "error": state.error,

@@ -116,6 +116,7 @@ class CodexAIProvider:
             return self._set_state(
                 availability="error",
                 auth_state="error",
+                login_available=True,
                 error=f"Codexへ接続できません: {self._safe_error(error)}",
             )
 
@@ -131,6 +132,7 @@ class CodexAIProvider:
                 models=(),
                 login_url="",
                 login_id="",
+                login_available=True,
                 error="",
             )
         model_result = client.model_list(limit=100, include_hidden=False)
@@ -156,6 +158,7 @@ class CodexAIProvider:
             login_id="",
             models=models,
             selected_model=selected,
+            login_available=True,
             error=model_error,
         )
 
@@ -177,6 +180,7 @@ class CodexAIProvider:
             auth_state="login_pending",
             login_id=login_id,
             login_url=login_url,
+            login_available=True,
             error="",
         )
 
@@ -188,6 +192,7 @@ class CodexAIProvider:
             auth_state="unauthenticated",
             auth_label="",
             models=(),
+            login_available=True,
             login_url="",
             login_id="",
             error="",
@@ -368,6 +373,7 @@ class CodexAIProvider:
                 ),
                 selected_model=changes.get("selected_model", current.selected_model),
                 error=changes.get("error", current.error),
+                login_available=changes.get("login_available", current.login_available),
             )
             state = self._state
         self._emit(AIProviderEvent(kind="state_changed"))

@@ -28,6 +28,10 @@ Rectangle {
         return backend && backend.codexAuthState === "authenticated"
     }
 
+    function providerName() {
+        return backend && backend.aiChatProviderName ? backend.aiChatProviderName : "Codex"
+    }
+
     function busy() {
         return backend && (["sending", "streaming", "stopping"].indexOf(backend.codexChatState) >= 0
             || ["starting", "authenticating", "running"].indexOf(backend.codexState) >= 0
@@ -80,6 +84,18 @@ Rectangle {
         modelCombo.currentIndex = -1
     }
 
+    function syncProviderSelection() {
+        if (!backend || providerCombo.count === 0)
+            return
+        for (var index = 0; index < providerCombo.count; ++index) {
+            if (providerCombo.valueAt(index) === backend.aiChatProviderId) {
+                providerCombo.currentIndex = index
+                return
+            }
+        }
+        providerCombo.currentIndex = -1
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 8
@@ -91,12 +107,24 @@ Rectangle {
             spacing: 6
 
             Text {
-                text: "Codexチャット"
+                text: panel.providerName() + "チャット"
                 textFormat: Text.PlainText
                 color: panel.textColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 12
                 font.weight: Font.Bold
+            }
+            ComboBox {
+                id: providerCombo
+                objectName: "aiProviderHeaderCombo"
+                Layout.preferredWidth: 88
+                Layout.minimumWidth: 70
+                model: backend ? backend.aiChatProviders : []
+                textRole: "label"
+                valueRole: "id"
+                enabled: backend && !panel.busy() && backend.aiChatProviders.length > 0
+                Component.onCompleted: panel.syncProviderSelection()
+                onActivated: backend.selectAIProvider(currentValue)
             }
             Text {
                 Layout.fillWidth: true
@@ -119,6 +147,7 @@ Rectangle {
                 Layout.preferredHeight: 30
                 Layout.maximumHeight: 30
                 visible: !panel.authenticated()
+                    && (!backend || backend.aiChatLoginAvailable)
                 text: backend && backend.codexAuthState === "login_pending"
                     ? "ブラウザを開く"
                     : (backend && ["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0
@@ -147,8 +176,8 @@ Rectangle {
             }
         }
 
-        ColumnLayout {
-            visible: panel.expanded
+            ColumnLayout {
+                visible: panel.expanded
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 7
@@ -164,9 +193,16 @@ Rectangle {
                     model: backend ? backend.codexModels : []
                     textRole: "label"
                     valueRole: "id"
-                    enabled: backend && backend.codexModels.length > 0
+                    visible: backend && backend.aiChatModelSelectionSupported
+                    enabled: visible && backend.codexModels.length > 0 && !panel.busy()
                     Component.onCompleted: panel.syncModelSelection()
                     onActivated: backend.selectCodexModel(currentValue)
+                }
+                Text {
+                    visible: backend && !backend.aiChatModelSelectionSupported
+                    text: "プロバイダ既定"
+                    color: panel.textColor
+                    font.pixelSize: 9
                 }
                 SmallButton {
                     objectName: "codexNewChatButton"
@@ -288,6 +324,17 @@ Rectangle {
             }
 
             Text {
+                Layout.fillWidth: true
+                visible: backend && backend.aiChatAuthHint
+                text: backend ? backend.aiChatAuthHint : ""
+                textFormat: Text.PlainText
+                color: panel.mutedColor
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 9
+                wrapMode: Text.Wrap
+            }
+
+            Text {
                 objectName: "codexLocalReadNotice"
                 Layout.fillWidth: true
                 text: "書き込みは禁止されていますが、Codexはローカルファイルを読み取る場合があります。"
@@ -322,7 +369,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     Layout.preferredHeight: 62
-                    placeholderText: "Codexへのメッセージ"
+                    placeholderText: panel.providerName() + "へのメッセージ"
                     textFormat: TextEdit.PlainText
                     wrapMode: TextEdit.Wrap
                     selectByMouse: true
@@ -364,10 +411,17 @@ Rectangle {
     Connections {
         target: backend
         function onCodexChatChanged() {
+            panel.syncProviderSelection()
             panel.syncModelSelection()
             if (!panel.authenticated())
                 panel.expanded = false
             Qt.callLater(function() { chatMessages.positionViewAtEnd() })
+        }
+        function onAiChatChanged() {
+            panel.syncProviderSelection()
+            panel.syncModelSelection()
+            if (!panel.authenticated())
+                panel.expanded = false
         }
     }
     // qmllint enable unqualified

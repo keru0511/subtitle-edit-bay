@@ -21,6 +21,8 @@ OBJECT = "object"
 # a null default does not describe the accepted non-null type.
 COMMON_RUNTIME_SETTINGS: dict[str, str] = {
     "codex_model": STRING,
+    "gemini_model": STRING,
+    "ai_provider": STRING,
     "model": STRING,
     "device": STRING,
     "compute_type": STRING,

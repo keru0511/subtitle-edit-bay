@@ -68,6 +68,8 @@ class SettingsController:
         craig = payload.get("craig_pipeline", {})
         return {
             "codex_model": shared.get("codex_model", ""),
+            "gemini_model": shared.get("gemini_model", ""),
+            "ai_provider": shared.get("ai_provider", "codex"),
             "model": shared.get("model", "large-v3"),
             "device": shared.get("device", "cuda"),
             "compute_type": shared.get("compute_type", "float16"),

@@ -494,6 +494,11 @@ class InstallerMigrationTests(unittest.TestCase):
     def test_installer_and_setup_preserve_and_preflight_migration_request(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         setup = (repository / "scripts" / "setup.ps1").read_text(encoding="utf-8-sig")
+        review_path = repository / "scripts" / "migration_review.ps1"
+        review_bytes = review_path.read_bytes()
+        self.assertTrue(review_bytes.startswith(b"\xef\xbb\xbf"), "Windows PowerShell scripts with Japanese text need a UTF-8 BOM")
+        review = review_bytes.decode("utf-8-sig")
+        installer_smoke = (repository / "scripts" / "test_installer.ps1").read_text(encoding="utf-8-sig")
         installer = (repository / "installer" / "SubtitleEditBay.iss").read_text(encoding="utf-8-sig")
         setup_batch = (repository / "setup.bat").read_text(encoding="utf-8-sig")
         launcher = (repository / "launcher" / "SubtitleEditBayLauncher.c").read_text(encoding="utf-8")
@@ -511,6 +516,31 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn('$migrationArguments += "--skip-runtime-config"', setup)
         self.assertIn('$migrationArguments += "--skip-speaker-colors"', setup)
         self.assertIn('$migrationArguments += "--skip-workspace-reference"', setup)
+        self.assertIn("src.installer_migration_entrypoint", setup)
+        self.assertIn('"--plan-input"', setup)
+        self.assertIn("migration_review.ps1", setup)
+        self.assertIn("migration_plan = $migrationPlanPath", setup)
+        self.assertIn("migration_result = $migrationResultPath", setup)
+        self.assertIn("Migration was cancelled", setup)
+        self.assertIn("SUBTITLE_EDIT_BAY_SUPPRESS_MESSAGES", setup)
+        self.assertIn(
+            '"-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $reviewScript',
+            setup,
+        )
+        self.assertNotIn(
+            '"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $reviewScript',
+            setup,
+        )
+        self.assertIn('$reviewArguments += "-NonInteractive"', setup)
+        self.assertIn("exit 3", review)
+        self.assertIn("キャンセル（後で再試行）", review)
+        self.assertIn("上書き: $overwriteText", review)
+        self.assertIn("cleanup: 自動実行しない", review)
+        self.assertIn("SUBTITLE_EDIT_BAY_MIGRATION_AUTO_APPROVE", review)
+        self.assertIn("src.installer_migration_entrypoint", installer_smoke)
+        self.assertIn("CUDA migration fixture was not corrected", installer_smoke)
+        self.assertIn("Verified pip cache was not classified as reusable", installer_smoke)
+        self.assertIn("Unconfirmed cleanup removed the old .venv", installer_smoke)
         self.assertIn('Name: "legacymigration"', installer)
         self.assertIn('Flags: unchecked checkedonce', installer)
         self.assertIn("WizardIsTaskSelected('legacymigration')", installer)
@@ -527,6 +557,7 @@ class InstallerMigrationTests(unittest.TestCase):
         self.assertIn("procedure SavePendingMigrationRequest", installer)
         self.assertIn("SaveStringsToUTF8FileWithoutBOM(PendingPath", installer)
         self.assertIn("pending-request.json", installer)
+        self.assertIn("migration_review.ps1", installer)
         self.assertIn("skip_workspace_reference", installer)
         self.assertLess(
             installer.index("procedure SavePendingMigrationRequest"),

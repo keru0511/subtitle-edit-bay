@@ -583,13 +583,21 @@ class GeminiAcpProvider:
             auth_state, auth_label = _auth_state_from_initialize(initialize_result)
             self._auth_methods = _normalize_auth_methods(initialize_result)
             initial_models, initial_selected = _normalize_models(initialize_result)
+            available_model_ids = {model.model_id for model in initial_models}
+            selected_model = (
+                self._preferred_model
+                if self._preferred_model in available_model_ids
+                else initial_selected
+            )
+            if initial_models:
+                self._preferred_model = selected_model
             return self._set_state(
                 availability="available",
                 auth_state=auth_state,
                 auth_label=auth_label,
                 models=initial_models,
                 model_selection_supported=bool(initial_models),
-                selected_model=initial_selected if initial_models else "",
+                selected_model=selected_model if initial_models else "",
                 login_available=bool(self._auth_methods),
                 error="",
             )

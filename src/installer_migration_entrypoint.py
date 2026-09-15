@@ -10,6 +10,8 @@ copies anything from the legacy runtime and it never removes legacy data.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass
@@ -37,6 +39,7 @@ from .legacy_migration import (
 
 
 ENTRYPOINT_SCHEMA_VERSION = 1
+PLAN_DIGEST_FIELD = "plan_sha256"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +94,7 @@ class InstallerMigrationPlan:
     cleanup_before_success: CacheCleanupPlan
     workspace_references: tuple[str, ...]
     diagnostics: tuple[str, ...]
+    filesystem_snapshot: tuple[dict[str, object], ...]
 
     def to_dict(self) -> dict[str, object]:
         request = {
@@ -116,6 +120,7 @@ class InstallerMigrationPlan:
             "cleanup": self.cleanup_before_success.to_dict(),
             "workspace_references": list(self.workspace_references),
             "diagnostics": list(self.diagnostics),
+            "filesystem_snapshot": [dict(item) for item in self.filesystem_snapshot],
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -124,6 +129,183 @@ class InstallerMigrationPlan:
 
 def _timestamp(now: datetime | None = None) -> str:
     return (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_json_bytes(payload: object) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _plan_identity_payload(payload: Mapping[str, object]) -> dict[str, object]:
+    """Normalize apply-time confirmation that has no effect without overwrite."""
+
+    normalized = dict(payload)
+    request = payload.get("request")
+    if isinstance(request, Mapping) and not bool(request.get("overwrite", False)):
+        normalized_request = dict(request)
+        normalized_request["confirm"] = False
+        normalized["request"] = normalized_request
+        settings = payload.get("settings")
+        if isinstance(settings, Mapping):
+            normalized_settings = dict(settings)
+            normalized_settings["confirm"] = False
+            normalized["settings"] = normalized_settings
+    return normalized
+
+
+def plan_sha256(payload: Mapping[str, object]) -> str:
+    """Return the stable identity of a reviewable plan payload."""
+
+    return hashlib.sha256(_canonical_json_bytes(_plan_identity_payload(payload))).hexdigest()
+
+
+def _plan_file_payload(plan: InstallerMigrationPlan) -> dict[str, object]:
+    payload = plan.to_dict()
+    payload[PLAN_DIGEST_FIELD] = plan_sha256(payload)
+    return payload
+
+
+def _filesystem_snapshot_for_path(
+    path: Path,
+    *,
+    scope: str,
+    root: Path,
+) -> list[dict[str, object]]:
+    """Capture only metadata/content hashes used by the migration transaction."""
+
+    try:
+        relative_root = path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise MigrationError(f"migration snapshot path escapes selected root: {path}") from exc
+
+    snapshots: list[dict[str, object]] = []
+
+    def record(candidate: Path, relative_path: str) -> None:
+        if candidate.is_symlink():
+            snapshots.append(
+                {
+                    "scope": scope,
+                    "relative_path": relative_path,
+                    "exists": True,
+                    "node_type": "symlink",
+                    "size_bytes": None,
+                    "sha256": None,
+                }
+            )
+            return
+        if not candidate.exists():
+            snapshots.append(
+                {
+                    "scope": scope,
+                    "relative_path": relative_path,
+                    "exists": False,
+                    "node_type": "missing",
+                    "size_bytes": None,
+                    "sha256": None,
+                }
+            )
+            return
+        if candidate.is_file():
+            try:
+                payload = candidate.read_bytes()
+            except OSError as exc:
+                raise MigrationError(f"unable to snapshot migration file: {candidate}") from exc
+            snapshots.append(
+                {
+                    "scope": scope,
+                    "relative_path": relative_path,
+                    "exists": True,
+                    "node_type": "file",
+                    "size_bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+            )
+            return
+        if not candidate.is_dir():
+            snapshots.append(
+                {
+                    "scope": scope,
+                    "relative_path": relative_path,
+                    "exists": True,
+                    "node_type": "other",
+                    "size_bytes": None,
+                    "sha256": None,
+                }
+            )
+            return
+
+        snapshots.append(
+            {
+                "scope": scope,
+                "relative_path": relative_path,
+                "exists": True,
+                "node_type": "directory",
+                "size_bytes": None,
+                "sha256": None,
+            }
+        )
+        try:
+            children = sorted(candidate.iterdir(), key=lambda item: item.name.casefold())
+        except OSError as exc:
+            raise MigrationError(f"unable to snapshot migration directory: {candidate}") from exc
+        for child in children:
+            child_relative = f"{relative_path}/{child.name}" if relative_path else child.name
+            record(child, child_relative)
+
+    record(path, relative_root)
+    return snapshots
+
+
+def _build_filesystem_snapshot(
+    settings: LegacySettingsMigrationPlan,
+    *,
+    source: Path,
+    destination: Path,
+    include_workspace_registry: bool,
+) -> tuple[dict[str, object], ...]:
+    paths: dict[tuple[str, str], Path] = {}
+    for item in settings.items:
+        paths[("source", item.source_path)] = Path(item.source_path)
+        paths[("destination", item.destination_path)] = Path(item.destination_path)
+    if include_workspace_registry:
+        registry = _workspace_registry_path(destination)
+        paths[("destination", str(registry))] = registry
+
+    snapshots: list[dict[str, object]] = []
+    for (scope, _path_text), path in sorted(paths.items(), key=lambda item: (item[0][0], item[0][1])):
+        root = source if scope == "source" else destination
+        snapshots.extend(_filesystem_snapshot_for_path(path, scope=scope, root=root))
+    return tuple(
+        sorted(
+            snapshots,
+            key=lambda item: (str(item["scope"]), str(item["relative_path"]), str(item["node_type"])),
+        )
+    )
+
+
+def _read_reviewed_plan_digest(path: Path) -> str:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise MigrationError(f"reviewed migration plan must be a regular file: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise MigrationError(f"reviewed migration plan could not be read: {path}") from exc
+    if not isinstance(payload, Mapping):
+        raise MigrationError("reviewed migration plan must contain an object")
+    if payload.get("schema_version") != ENTRYPOINT_SCHEMA_VERSION:
+        raise MigrationError("reviewed migration plan has an unsupported schema")
+    digest = payload.get(PLAN_DIGEST_FIELD)
+    if not isinstance(digest, str) or len(digest) != hashlib.sha256().digest_size * 2:
+        raise MigrationError("reviewed migration plan is missing a valid plan identity")
+    unsigned_payload = {key: value for key, value in payload.items() if key != PLAN_DIGEST_FIELD}
+    if not hmac.compare_digest(plan_sha256(unsigned_payload), digest):
+        raise MigrationError("reviewed migration plan identity is invalid")
+    return digest
 
 
 def _atomic_json_write(path: Path, payload: object) -> None:
@@ -240,6 +422,12 @@ def build_installer_migration_plan(request: InstallerMigrationRequest) -> Instal
         inventory,
         options=CacheCleanupOptions(migration_completed=False),
     )
+    filesystem_snapshot = _build_filesystem_snapshot(
+        settings,
+        source=source,
+        destination=destination,
+        include_workspace_registry=request.workspace_reference,
+    )
     references = _workspace_references(inventory) if request.workspace_reference else ()
     diagnostics = tuple(
         sorted(
@@ -259,6 +447,7 @@ def build_installer_migration_plan(request: InstallerMigrationRequest) -> Instal
         cleanup_before_success=cleanup,
         workspace_references=references,
         diagnostics=diagnostics,
+        filesystem_snapshot=filesystem_snapshot,
     )
 
 
@@ -266,6 +455,7 @@ def apply_installer_migration(
     plan: InstallerMigrationPlan,
     *,
     now: datetime | None = None,
+    expected_plan_sha256: str | None = None,
 ) -> dict[str, object]:
     """Apply only the reviewed settings and registry reference transaction.
 
@@ -276,8 +466,15 @@ def apply_installer_migration(
 
     if not isinstance(plan, InstallerMigrationPlan):
         raise MigrationError("installer migration apply requires an InstallerMigrationPlan")
+    reviewed_plan_sha256 = expected_plan_sha256 or plan_sha256(plan.to_dict())
+    if not hmac.compare_digest(plan_sha256(plan.to_dict()), reviewed_plan_sha256):
+        raise MigrationError("reviewed migration plan identity is invalid")
     request = plan.request
     _validate_request(request)
+    current_plan = build_installer_migration_plan(request)
+    if not hmac.compare_digest(plan_sha256(current_plan.to_dict()), reviewed_plan_sha256):
+        raise MigrationError("reviewed migration plan is stale; source or destination changed")
+    plan = current_plan
     # Validate and prepare the registry before the settings transaction starts.
     # A malformed existing registry must not leave a partially applied settings
     # migration behind; the core settings transaction remains the only writer
@@ -345,6 +542,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--skip-speaker-colors", action="store_true")
     parser.add_argument("--skip-workspace-reference", action="store_true")
     parser.add_argument("--plan-output")
+    parser.add_argument("--plan-input")
     parser.add_argument("--result-output")
     return parser.parse_args(argv)
 
@@ -364,13 +562,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         plan = build_installer_migration_plan(request)
+        reviewed_plan_sha256: str | None = None
+        if args.apply:
+            if not args.plan_input:
+                raise MigrationError("--plan-input is required when applying a migration plan")
+            reviewed_plan_sha256 = _read_reviewed_plan_digest(Path(args.plan_input))
+            if not hmac.compare_digest(plan_sha256(plan.to_dict()), reviewed_plan_sha256):
+                raise MigrationError("reviewed migration plan is stale; source or destination changed")
         plan_json = plan.to_json()
         if args.plan_output:
-            _atomic_json_write(Path(args.plan_output), plan.to_dict())
+            _atomic_json_write(Path(args.plan_output), _plan_file_payload(plan))
         print(plan_json, end="")
         if not args.apply:
             return 0
-        result = apply_installer_migration(plan)
+        result = apply_installer_migration(plan, expected_plan_sha256=reviewed_plan_sha256)
         result_json = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         if args.result_output:
             _atomic_json_write(Path(args.result_output), result)
@@ -392,4 +597,5 @@ __all__ = [
     "apply_installer_migration",
     "build_installer_migration_plan",
     "main",
+    "plan_sha256",
 ]

@@ -330,11 +330,11 @@ try {
     # then prove normal launch and an explicit repair both attach to that one
     # setup instead of starting another production dependency build.
     # Pass the migration source only to the explicit setup request. Leaving it
-# in the parent environment would also make a normal product launch carry
-# a one-shot migration request after the setup mutex is released.
-$first = Start-Process -FilePath $launcher -ArgumentList @(
-    "--setup", "--migration-source", ('"{0}"' -f $migrationSource)
-) -WorkingDirectory $installDir -PassThru
+    # in the parent environment would also make a normal product launch carry
+    # a one-shot migration request after the setup mutex is released.
+    $first = Start-Process -FilePath $launcher -ArgumentList @(
+        "--setup", "--migration-source", ('"{0}"' -f $migrationSource)
+    ) -WorkingDirectory $installDir -PassThru
     $deadline = [DateTime]::UtcNow.AddMinutes(2)
     while (-not (Test-Path -LiteralPath $hookStarted) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path -LiteralPath $hookStarted)) {
@@ -353,9 +353,28 @@ $first = Start-Process -FilePath $launcher -ArgumentList @(
     $runsBeforeRelease = @(Get-Content -LiteralPath $hookCount).Count
     if ($runsBeforeRelease -ne 1) { throw "Concurrent product launches started $runsBeforeRelease dependency builds." }
     [IO.File]::WriteAllText($hookGate, "continue")
-    foreach ($process in @($first, $second, $normal)) {
+    $concurrentProcesses = @(
+        @{ Name = "explicit-setup"; Process = $first },
+        @{ Name = "second-setup"; Process = $second },
+        @{ Name = "normal-launch"; Process = $normal }
+    )
+    foreach ($entry in $concurrentProcesses) {
+        $process = $entry.Process
         $process.WaitForExit()
-        if ($process.ExitCode -ne 0) { throw "Concurrent product path exited with code $($process.ExitCode)." }
+        Write-Host "CONCURRENT_PRODUCT_END name=$($entry.Name) exit_code=$($process.ExitCode)"
+        if ($process.ExitCode -ne 0) {
+            foreach ($log in @(
+                (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup.log"),
+                (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\setup-error.log"),
+                (Join-Path $env:LOCALAPPDATA "Subtitle Edit Bay\logs\latest-launch-error.log")
+            )) {
+                if (Test-Path -LiteralPath $log -PathType Leaf) {
+                    Write-Host "--- $log ---"
+                    Get-Content -LiteralPath $log -Tail 250 -ErrorAction Continue | ForEach-Object { Write-Host $_ }
+                }
+            }
+            throw "Concurrent product path '$($entry.Name)' exited with code $($process.ExitCode)."
+        }
     }
     $hookRuns = @(Get-Content -LiteralPath $hookCount).Count
     if ($hookRuns -ne 1) { throw "Expected one production dependency build, found $hookRuns." }

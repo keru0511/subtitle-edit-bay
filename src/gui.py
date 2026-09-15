@@ -812,7 +812,7 @@ class EditBayBackend(LegacyEditBayBackend):
             callback_dispatcher=self._dispatch_codex_callback,
         )
         self._gemini_chat = CodexChatController(
-            provider_factory=lambda: GeminiAcpProvider(workspace_root=self.workspace_root),
+            provider_factory=self._create_gemini_chat_provider,
             workspace_root=self.workspace_root,
             preferred_model=str(self._settings.get("gemini_model", "")),
             provider_id="gemini",
@@ -1068,7 +1068,11 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(str, notify=aiChatChanged)
     def aiChatAuthHint(self) -> str:
         snapshot = self._ai_chat.snapshot
-        if snapshot.provider_id == "gemini" and not snapshot.login_available:
+        if (
+            snapshot.provider_id == "gemini"
+            and snapshot.auth_state != "authenticated"
+            and not snapshot.login_available
+        ):
             return "Gemini CLIでログインしてください"
         return ""
 
@@ -3983,6 +3987,12 @@ class EditBayBackend(LegacyEditBayBackend):
             runtime.command,
             cwd=cwd or self.workspace_root,
             log_callback=record_app_server,
+        )
+
+    def _create_gemini_chat_provider(self) -> GeminiAcpProvider:
+        return GeminiAcpProvider(
+            workspace_root=self.workspace_root,
+            preferred_model=str(self._settings.get("gemini_model", "")),
         )
 
     @Slot(str, str, float, float)

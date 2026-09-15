@@ -179,6 +179,7 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
             self.assertTrue(plan_path.is_file())
             decoded = json.loads(plan_path.read_text(encoding="utf-8"))
             self.assertIn("cleanup", decoded)
+            self.assertRegex(decoded["plan_sha256"], r"^[0-9a-f]{64}$")
             self.assertNotIn("#12ABEF", output.getvalue())
             self.assertIn('"cuda": false', output.getvalue())
 
@@ -193,6 +194,8 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
                             str(destination),
                             "--apply",
                             "--confirm",
+                            "--plan-input",
+                            str(plan_path),
                             "--result-output",
                             str(result_path),
                         ]
@@ -214,6 +217,57 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
                     2,
                 )
             self.assertIn('"error"', output.getvalue())
+
+    def test_cli_apply_rejects_source_drift_against_reviewed_plan(self) -> None:
+        from src.installer_migration_entrypoint import main
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source, destination = self._fixture(Path(temporary))
+            plan_path = destination / ".local" / "migration" / "plan.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    main(
+                        [
+                            "--source",
+                            str(source),
+                            "--destination",
+                            str(destination),
+                            "--plan-output",
+                            str(plan_path),
+                        ]
+                    ),
+                    0,
+                )
+
+            runtime_config = json.loads((source / ".gui" / "runtime_config.json").read_text(encoding="utf-8"))
+            runtime_config["shared"]["language"] = "en"
+            (source / ".gui" / "runtime_config.json").write_text(
+                json.dumps(runtime_config),
+                encoding="utf-8",
+            )
+            result_path = destination / ".local" / "migration" / "latest-result.json"
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    main(
+                        [
+                            "--source",
+                            str(source),
+                            "--destination",
+                            str(destination),
+                            "--apply",
+                            "--confirm",
+                            "--plan-input",
+                            str(plan_path),
+                            "--result-output",
+                            str(result_path),
+                        ]
+                    ),
+                    2,
+                )
+            self.assertIn("stale", output.getvalue())
+            self.assertFalse((destination / ".gui" / "runtime_config.json").exists())
+            self.assertFalse(result_path.exists())
 
     def test_existing_registry_is_merged_once_and_written_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

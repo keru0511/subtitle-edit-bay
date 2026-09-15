@@ -219,6 +219,22 @@ class GeminiAuthHintTests(unittest.TestCase):
             "Gemini CLIでログインしてください",
         )
 
+    def test_unauthenticated_gemini_with_login_action_exposes_generic_login_route(self) -> None:
+        backend = SimpleNamespace(
+            _ai_chat=SimpleNamespace(
+                snapshot=CodexChatSnapshot(
+                    provider_id="gemini",
+                    provider_name="Gemini",
+                    auth_state="unauthenticated",
+                    login_available=True,
+                )
+            )
+        )
+        login_available = EditBayBackend.aiChatLoginAvailable.fget
+        assert login_available is not None
+        self.assertTrue(login_available(backend))
+        self.assertEqual(self._hint(auth_state="unauthenticated", login_available=True), "")
+
 
 class GeminiProviderFactoryTests(unittest.TestCase):
     def test_factory_passes_saved_model_to_gemini_provider(self) -> None:

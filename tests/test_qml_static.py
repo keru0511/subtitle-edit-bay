@@ -13,6 +13,7 @@ ENTRYPOINT_QML = UI_ROOT / "Main.qml"
 WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
+WORKSPACE_HEADER_QML = COMPONENTS_ROOT / "WorkspaceHeader.qml"
 SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "ContextActionBar.qml",
     COMPONENTS_ROOT / "PanelTitle.qml",
@@ -24,6 +25,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "CodexEditPanel.qml",
     COMPONENTS_ROOT / "CodexSidebarContainer.qml",
     COMPONENTS_ROOT / "EditorModeRail.qml",
+    WORKSPACE_HEADER_QML,
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
     COMPONENTS_ROOT / "CutModeSettings.qml",
@@ -42,6 +44,43 @@ QML_LINT_FILES = (
 
 
 class QmlStaticTests(unittest.TestCase):
+    def test_workspace_header_is_a_backend_bound_action_boundary(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        header = WORKSPACE_HEADER_QML.read_text(encoding="utf-8")
+
+        self.assertEqual(workflow.count("WorkspaceHeader {"), 1)
+        self.assertIn("workspaceKind: root.appBackend.currentWorkspace", workflow)
+        self.assertIn("currentEditMode: root.appBackend.currentEditMode", workflow)
+        for action in (
+            "onProjectOpenRequested: root.appBackend.browseProjectFile()",
+            "onSourceSettingsRequested: sourcePopup.open()",
+            "onSaveRequested: root.appBackend.saveProject()",
+            "onOutputFolderRequested: root.appBackend.openOutputFolder()",
+            "onShortWorkspaceRequested: root.openShortWorkspace()",
+            "onRenderRequested: root.appBackend.renderVideo(root.currentSettings())",
+        ):
+            with self.subTest(action=action):
+                self.assertIn(action, workflow)
+
+        for object_name in (
+            "workspaceHeader",
+            "workspaceHeaderModeIndicator",
+            "workspaceHeaderSaveButton",
+            "workspaceHeaderOutputButton",
+            "workspaceHeaderAiButton",
+            "workspaceHeaderShortButton",
+            "workspaceHeaderRenderButton",
+        ):
+            with self.subTest(object_name=object_name):
+                self.assertIn(f'objectName: "{object_name}"', header)
+
+        self.assertIn("property string workspaceKind", header)
+        self.assertNotIn("property string currentWorkspace", header)
+        self.assertNotIn("activeOverlay", header)
+        self.assertNotIn("MediaPlayer", header)
+        self.assertNotIn("QProcess", header)
+        self.assertNotIn("FileDialog", header)
+
     def test_start_screen_uses_project_actions_instead_of_workflow_steps(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "screens" / "MainWorkflowScreen.qml").read_text(encoding="utf-8")
         self.assertIn('objectName: "projectStartScreen"', source)

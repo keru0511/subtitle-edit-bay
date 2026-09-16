@@ -6057,8 +6057,16 @@ class GuiEditorRegressionTests(unittest.TestCase):
             lambda: len(self.app.sequenceClips) == before + 1,
             description="media-bin clip dispatch",
         )
-        self.assertEqual(self.app.sequenceClips[-1]["assetId"], second_asset_id)
-        self.gui.find_item(window, "sequenceClipDropArea")
+        added_clip = self.app.sequenceClips[-1]
+        self.assertEqual(added_clip["assetId"], second_asset_id)
+        added_clip_id = str(added_clip["clipId"])
+        self.gui.wait_until(
+            lambda: any(
+                item.property("clipId") == added_clip_id
+                for item in self.gui.visual_items_with_properties(panel, "clipId")
+            ),
+            description="sequence clip delegate creation",
+        )
 
         undo_button = self.gui.find_item(window, "sequenceUndoButton")
         self.gui.click(window, undo_button)
@@ -6071,6 +6079,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.wait_until(
             lambda: len(self.app.sequenceClips) == before + 1,
             description="sequence redo dispatch",
+        )
+        self.gui.wait_until(
+            lambda: any(
+                item.property("clipId") == added_clip_id
+                for item in self.gui.visual_items_with_properties(panel, "clipId")
+            ),
+            description="sequence clip delegate after redo",
         )
 
 

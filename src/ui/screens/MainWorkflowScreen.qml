@@ -1106,53 +1106,52 @@ ApplicationWindow {
         }
     }
 
-    header: Rectangle {
-        height: root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive ? 0 : 62
+    header: WorkspaceHeader {
+        objectName: "workspaceHeader"
         visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortWorkspaceActive
-        color: "#101512"
-        border.color: root.border
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 20
-            anchors.rightMargin: 20 + root.codexDrawerHeaderInset
-            spacing: 14
-            ColumnLayout {
-                spacing: 0
-                Text { text: "SUBTITLE EDIT BAY"; color: root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 18; font.weight: Font.Bold; font.letterSpacing: 1.5 }
-                Text { text: "プロジェクト中心の動画編集ワークスペース"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.letterSpacing: 1.0 }
-            }
-            Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 30; color: root.border }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 1
-                Text {
-                    Layout.fillWidth: true
-                    text: root.appBackend.projectLoaded ? root.appBackend.projectName : "編集プロジェクト未作成"
-                    color: root.appBackend.projectLoaded ? root.textPrimary : root.textMuted
-                    font.family: "Yu Gothic UI"; font.pixelSize: 12; elide: Text.ElideMiddle
-                }
-                Text {
-                    text: root.appBackend.projectDirty ? "● 保存待ち" : (root.appBackend.projectLoaded ? "✓ 保存済み" : "新規作成または既存プロジェクトを選択")
-                    color: root.appBackend.projectDirty ? root.amber : root.textMuted
-                    font.family: "Yu Gothic UI"; font.pixelSize: 9
-                }
-            }
-            ColumnLayout {
-                spacing: 1
-                Text {
-                    Layout.preferredWidth: 300
-                    text: "バージョン: " + root.appBackend.applicationInfo.version
-                    color: root.acid
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 10
-                    elide: Text.ElideRight
-                }
-            }
-            SmallButton { objectName: "checkForUpdatesButton"; text: "更新確認"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: root.appBackend.checkForUpdates() }
-            SmallButton { objectName: "projectOpenButton"; text: "プロジェクトを開く"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseProjectFile() }
-            SmallButton { objectName: "sourceSetupButton"; text: "素材設定"; enabled: !root.appBackend.running; onClicked: sourcePopup.open() }
-            Rectangle { Layout.preferredWidth: 9; Layout.preferredHeight: 9; radius: 5; color: root.appBackend.running ? root.amber : root.acid }
+        projectLoaded: root.appBackend.projectLoaded
+        projectName: root.appBackend.projectName
+        projectDirty: root.appBackend.projectDirty
+        sourcePath: root.appBackend.sourceSelection.video
+        workspaceKind: root.appBackend.currentWorkspace
+        currentEditMode: root.appBackend.currentEditMode
+        activityText: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status)
+        applicationVersion: root.appBackend.applicationInfo.version
+        running: root.appBackend.running
+        updateBusy: root.appBackend.updateBusy
+        rightInset: root.codexDrawerHeaderInset
+        outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
+        canRender: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
+        renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
+        renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
+        aiAuthenticated: root.codexAuthenticated
+        aiLoginAvailable: Boolean(root.appBackend.aiChatLoginAvailable)
+        aiAuthState: root.appBackend.codexAuthState
+        aiConnectionState: root.appBackend.codexConnectionState
+        panelColor: root.panel
+        raisedColor: root.raised
+        borderColor: root.border
+        textColor: root.textPrimary
+        mutedColor: root.textMuted
+        accentColor: root.acid
+        warningColor: root.amber
+        onUpdateCheckRequested: root.appBackend.checkForUpdates()
+        onProjectOpenRequested: root.appBackend.browseProjectFile()
+        onSourceSettingsRequested: sourcePopup.open()
+        onSaveRequested: root.appBackend.saveProject()
+        onOutputFolderRequested: root.appBackend.openOutputFolder()
+        onAiAssistantRequested: {
+            if (root.codexAuthenticated)
+                root.codexDrawerOpen = !root.codexDrawerOpen
+            else if (root.appBackend.codexAuthState === "login_pending")
+                root.appBackend.openCodexLoginPage()
+            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
+                root.appBackend.reconnectCodexChat()
+            else
+                root.appBackend.startCodexLogin()
         }
+        onShortWorkspaceRequested: root.openShortWorkspace()
+        onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
     }
 
     Dialog {

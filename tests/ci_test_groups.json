@@ -62,6 +62,7 @@
         "test_gui_state",
         "test_gui_state_commands",
         "test_gui_transcription_context_state",
+        "test_gui_workspace_controller",
         "test_highlight_candidates",
         "test_highlight_preferences",
         "test_highlight_visual_signals",

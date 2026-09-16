@@ -31,7 +31,9 @@ Rectangle {
                 objectName: "codexChatSidebarTitle"
                 Layout.fillWidth: true
                 Layout.maximumHeight: implicitHeight
-                text: "Codex"
+                text: sidebar.backend && sidebar.backend.aiChatProviderName
+                    ? sidebar.backend.aiChatProviderName + " AI"
+                    : "AI"
                 color: "#F0F6FC"
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 15

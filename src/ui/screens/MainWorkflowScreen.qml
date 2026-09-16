@@ -96,6 +96,12 @@ ApplicationWindow {
         ? root.codexSidebarWidth + 10 : 0
     readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
         + root.codexDrawerHeaderInset
+    // The provider-neutral login controls remain available while the short
+    // workspace is open. Reserve their small top strip so they do not cover
+    // the short workspace header; the common authenticated sidebar keeps its
+    // existing right-side boundary.
+    readonly property int shortWorkspaceAiAccessInset: root.shortWorkspaceActive
+        && !root.codexAuthenticated ? 58 : 0
     property bool codexDrawerOpen: true
     property bool previousCodexAuthenticated: false
     onEditorModeChanged: {
@@ -1144,11 +1150,11 @@ ApplicationWindow {
             if (root.codexAuthenticated)
                 root.codexDrawerOpen = !root.codexDrawerOpen
             else if (root.appBackend.codexAuthState === "login_pending")
-                root.appBackend.openCodexLoginPage()
+                root.appBackend.openAIProviderLoginPage()
             else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
-                root.appBackend.reconnectCodexChat()
+                root.appBackend.reconnectAIChat()
             else
-                root.appBackend.startCodexLogin()
+                root.appBackend.startAIProviderLogin()
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
         onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
@@ -3159,7 +3165,11 @@ ApplicationWindow {
     Rectangle {
         id: shortModePage
         objectName: "shortModePage"
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.topMargin: root.shortWorkspaceAiAccessInset
         property string workspaceKind: "short-artifact"
         anchors.rightMargin: root.codexWorkspaceRightInset
         visible: root.shortWorkspaceActive
@@ -3229,7 +3239,7 @@ ApplicationWindow {
         anchors.margins: 12
         width: 108
         height: 34
-        visible: !root.codexAuthenticated && !root.shortWorkspaceActive && root.appBackend
+        visible: !root.codexAuthenticated && root.appBackend
             && root.appBackend.aiChatProviders.length > 1
         model: root.appBackend ? root.appBackend.aiChatProviders : []
         textRole: "label"
@@ -3267,7 +3277,7 @@ ApplicationWindow {
         anchors.leftMargin: 12
         width: 240
         height: 34
-        visible: !root.codexAuthenticated && !root.shortWorkspaceActive && root.appBackend
+        visible: !root.codexAuthenticated && root.appBackend
             && root.appBackend.aiChatAuthHint
             && !root.appBackend.aiChatLoginAvailable
         z: 650
@@ -3288,7 +3298,7 @@ ApplicationWindow {
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34
-        visible: !root.codexAuthenticated && !root.shortWorkspaceActive
+        visible: !root.codexAuthenticated
             && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
         z: 650
         text: root.appBackend && root.appBackend.aiChatAuthHint
@@ -3304,11 +3314,11 @@ ApplicationWindow {
             && root.appBackend.aiChatLoginAvailable
         onClicked: {
             if (root.appBackend.codexAuthState === "login_pending")
-                root.appBackend.openCodexLoginPage()
+                root.appBackend.openAIProviderLoginPage()
             else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
-                root.appBackend.reconnectCodexChat()
+                root.appBackend.reconnectAIChat()
             else
-                root.appBackend.startCodexLogin()
+                root.appBackend.startAIProviderLogin()
         }
     }
 

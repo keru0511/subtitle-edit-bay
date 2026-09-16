@@ -141,13 +141,35 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('readonly property string aiProviderLoginLabel', workflow)
         self.assertIn('String(root.appBackend.aiChatProviderName || "")', workflow)
         self.assertIn(": root.aiProviderLoginLabel", workflow)
-        self.assertIn('root.appBackend.startCodexLogin()', workflow)
+        self.assertIn('root.appBackend.startAIProviderLogin()', workflow)
+        self.assertIn('root.appBackend.reconnectAIChat()', workflow)
+        self.assertIn('root.appBackend.openAIProviderLoginPage()', workflow)
+        for method in (
+            "backend.selectAIProvider(currentValue)",
+            "backend.startAIProviderLogin()",
+            "backend.reconnectAIChat()",
+            "backend.openAIProviderLoginPage()",
+            "backend.reloginAIProvider()",
+            "backend.logoutAIProvider()",
+        ):
+            with self.subTest(method=method):
+                self.assertIn(method, panel)
 
     def test_ai_login_route_is_provider_neutral_when_login_action_is_available(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
 
         self.assertIn('? "再接続" : root.aiProviderLoginLabel))', workflow)
         self.assertNotIn(': "再接続" : "Codexログイン"))', workflow)
+        self.assertIn(
+            "visible: !root.codexAuthenticated && root.appBackend",
+            workflow,
+        )
+        self.assertIn("readonly property int shortWorkspaceAiAccessInset", workflow)
+        self.assertIn("anchors.topMargin: root.shortWorkspaceAiAccessInset", workflow)
+        self.assertNotIn(
+            "visible: !root.codexAuthenticated && !root.shortWorkspaceActive",
+            workflow,
+        )
 
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
@@ -186,6 +208,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("Layout.rightMargin: root.codexDrawerBodyInset", workflow)
         self.assertIn("visible: !root.codexAuthenticated", workflow)
         self.assertIn("chatPanel.expanded = true", sidebar)
+        self.assertIn("sidebar.backend.aiChatProviderName", sidebar)
+        self.assertNotIn('text: "Codex"', sidebar)
 
     def test_user_facing_copy_avoids_internal_terms(self) -> None:
         qml_by_area = {

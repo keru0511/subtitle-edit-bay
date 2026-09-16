@@ -29,7 +29,7 @@ Rectangle {
     }
 
     function providerName() {
-        return backend && backend.aiChatProviderName ? backend.aiChatProviderName : "Codex"
+        return backend && backend.aiChatProviderName ? backend.aiChatProviderName : "AI"
     }
 
     function busy() {
@@ -156,11 +156,11 @@ Rectangle {
                     && backend.codexAuthState !== "logging_in"
                 onClicked: {
                     if (backend.codexAuthState === "login_pending")
-                        backend.openCodexLoginPage()
+                        backend.openAIProviderLoginPage()
                     else if (["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0)
-                        backend.reconnectCodexChat()
+                        backend.reconnectAIChat()
                     else
-                        backend.startCodexLogin()
+                        backend.startAIProviderLogin()
                 }
             }
             SmallButton {
@@ -254,7 +254,7 @@ Rectangle {
                     Layout.maximumWidth: 68
                     text: "再ログイン"
                     enabled: !panel.busy()
-                    onClicked: backend.reloginCodex()
+                    onClicked: backend.reloginAIProvider()
                 }
                 SmallButton {
                     objectName: "codexLogoutButton"
@@ -265,7 +265,7 @@ Rectangle {
                     enabled: !panel.busy()
                     onClicked: {
                         panel.expanded = false
-                        backend.logoutCodex()
+                        backend.logoutAIProvider()
                     }
                 }
             }

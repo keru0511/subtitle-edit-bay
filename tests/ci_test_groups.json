@@ -120,6 +120,7 @@
         "test_unittest_discovery",
         "test_validation_errors",
         "test_video_encoding",
+        "test_video_sequence",
         "test_video_timeline",
         "test_workflow_actions",
         "test_youtube_package",

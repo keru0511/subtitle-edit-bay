@@ -20,6 +20,7 @@ from .subtitle_project import (
     load_project,
     save_project,
 )
+from .video_sequence import VideoSequence, VideoSequenceError
 
 
 SaveProject = Callable[..., Path]
@@ -320,6 +321,23 @@ class ProjectEditorController:
             }
         )
 
+    def record_sequence_history(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        """Record a sequence transaction without coupling to the Qt facade."""
+
+        if self._project is None or before == after:
+            return
+        self.push_history(
+            {
+                "kind": "sequence",
+                "before": deepcopy(before),
+                "after": deepcopy(after),
+            }
+        )
+
     def replace_segments(
         self,
         segments: list[dict[str, Any]],
@@ -380,6 +398,65 @@ class ProjectEditorController:
         self._emit(self._on_project_data_changed)
         self.mark_dirty()
 
+    def sequence_model(self) -> VideoSequence:
+        """Return the current sequence domain model at the controller boundary."""
+
+        if self._project is None:
+            return VideoSequence()
+        video = self._project.get("video")
+        legacy_video = video if isinstance(video, dict) else None
+        try:
+            return VideoSequence.from_json(
+                self._project.get("sequence"),
+                legacy_video=legacy_video,
+            )
+        except VideoSequenceError as error:
+            raise SubtitleProjectError(str(error)) from error
+
+    def replace_sequence(self, payload: dict[str, Any]) -> None:
+        if self._project is None:
+            return
+        try:
+            sequence = VideoSequence.from_json(payload)
+        except VideoSequenceError as error:
+            raise SubtitleProjectError(str(error)) from error
+        self._project["sequence"] = sequence.to_json()
+        self._emit(self._on_project_data_changed)
+        self.mark_dirty()
+
+    def commit_sequence_change(
+        self,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        if self._project is None:
+            return
+        try:
+            before_payload = VideoSequence.from_json(before).to_json()
+            after_payload = VideoSequence.from_json(after).to_json()
+        except VideoSequenceError as error:
+            raise SubtitleProjectError(str(error)) from error
+        if before_payload == after_payload:
+            return
+        self.record_sequence_history(before_payload, after_payload)
+        self.replace_sequence(after_payload)
+
+    def apply_sequence_mutation(
+        self,
+        mutation: Callable[[VideoSequence], VideoSequence],
+    ) -> VideoSequence | None:
+        """Apply one pure sequence operation and connect it to history/dirty state."""
+
+        if self._project is None:
+            return None
+        before = self.sequence_model()
+        after = before.apply(mutation)
+        before_payload = before.to_json()
+        after_payload = after.to_json()
+        if before_payload != after_payload:
+            self.commit_sequence_change(before_payload, after_payload)
+        return after
+
     def apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
         if self._project is None:
             return
@@ -391,6 +468,10 @@ class ProjectEditorController:
             return
         if entry.get("kind") == "timeline":
             self.replace_timeline(deepcopy(entry.get(state, {})))
+            self._emit(self._on_history_applied, entry, state)
+            return
+        if entry.get("kind") == "sequence":
+            self.replace_sequence(deepcopy(entry.get(state, {})))
             self._emit(self._on_history_applied, entry, state)
             return
         affected_ids = {

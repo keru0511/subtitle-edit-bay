@@ -124,6 +124,7 @@ from .subtitle_workflow import build_project_ass
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
 from .video_timeline import VideoTimeline, VideoTimelineError, timeline_from_project
+from .video_sequence import VideoSequence, VideoSequenceError
 from . import update_manager, updater
 
 
@@ -2186,6 +2187,27 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("Relink requires a complete source selection", "CHECK")
             return
 
+        try:
+            project_sequence = VideoSequence.from_json(
+                self._project.get("sequence"),
+                legacy_video=project_video if isinstance(project_video, dict) else {},
+            )
+        except VideoSequenceError as error:
+            self._set_status(f"Project sequence is invalid: {error}", "CHECK")
+            return
+        project_video_path = self._normalized_source_path(
+            str(project_video.get("path", "")) if isinstance(project_video, dict) else ""
+        )
+        if (
+            not project_sequence.is_legacy_single_video()
+            and project_video_path != self._normalized_source_path(selected_video)
+        ):
+            self._set_status(
+                "複数clipのsequenceは単一動画のrelinkでは変更できません",
+                "CHECK",
+            )
+            return
+
         def _match(items: list[dict[str, Any]], **conditions: str) -> dict[str, Any] | None:
             for index, item in enumerate(items):
                 for key, value in conditions.items():
@@ -2250,6 +2272,16 @@ class EditBayBackend(LegacyEditBayBackend):
             self._project["video"]["duration_seconds"] = float(
                 self._project["video"].get("duration_seconds", 0.0)
             )
+
+        if project_sequence.is_legacy_single_video():
+            try:
+                self._project["sequence"] = project_sequence.sync_legacy_video(
+                    self._project["video"]
+                ).to_json()
+            except (KeyError, TypeError, VideoSequenceError) as error:
+                self._set_status(f"Project sequence could not be synchronized: {error}", "CHECK")
+                self._project = old_project
+                return
 
         reconcile_audio_mix(self._project, self._mixer_video_tracks())
 

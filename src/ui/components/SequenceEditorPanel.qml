@@ -37,6 +37,13 @@ Rectangle {
         field.focus = false
     }
 
+    // DropArea exposes drag.source as a QObject.  Bracket access keeps the
+    // dynamic delegate property out of qmllint's static QObject contract.
+    function clipIdFromDrag(dragEvent) {
+        var source = dragEvent ? dragEvent.source : null
+        return source ? String(source["clipId"] || "") : ""
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 10
@@ -336,14 +343,20 @@ Rectangle {
                                 anchors.fill: parent
                                 z: 5
                                 onEntered: function(drag) {
-                                    if (drag.source && root.activeDragClipId.length > 0)
+                                    var clipId = root.clipIdFromDrag(drag)
+                                    if (clipId.length > 0) {
+                                        root.activeDragClipId = clipId
                                         root.hoverIndex = clipItem.index
+                                    }
                                 }
                                 onExited: {
                                     if (root.hoverIndex === clipItem.index)
                                         root.hoverIndex = -1
                                 }
                                 onDropped: function(drop) {
+                                    var clipId = root.clipIdFromDrag(drop)
+                                    if (clipId.length > 0)
+                                        root.activeDragClipId = clipId
                                     if (root.activeDragClipId.length > 0 && root.backend)
                                         root.backend.moveSequenceClip(root.activeDragClipId, clipItem.index)
                                     root.activeDragClipId = ""

@@ -218,9 +218,6 @@ class EditBayGuiTestSession:
                     self.backend._codex_chat.shutdown()
                 finally:
                     self.backend._shutdown_executor()
-                    self.backend.deleteLater()
-                    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-                    QCoreApplication.processEvents()
         finally:
             self._workspace.cleanup()
             self._closed = True

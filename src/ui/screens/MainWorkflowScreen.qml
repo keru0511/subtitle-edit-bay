@@ -1795,7 +1795,10 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    height: visible ? 238 : 0
+                    // Keep the overlay inside the existing video panel at
+                    // compact heights; it must not participate in the outer
+                    // workspace layout or raise modeEditorSlot's bounds.
+                    height: visible ? Math.min(238, Math.max(0, parent.height)) : 0
                     z: 20
                     backend: root.appBackend
                     panelColor: root.panel

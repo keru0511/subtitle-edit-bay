@@ -90,9 +90,11 @@ class QmlStaticTests(unittest.TestCase):
             "project.",
             "joinClips",
             "mediaAssets",
+            "drag.source.clipId",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, panel)
+        self.assertIn('source["clipId"]', panel)
 
     def test_workspace_header_is_a_backend_bound_action_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")

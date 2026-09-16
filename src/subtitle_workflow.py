@@ -86,6 +86,12 @@ from .transcribe import probe_audio_streams
 from .transcription_context_config import transcription_context_from_runtime_config
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 from .video_timeline import intersect_ranges, timeline_from_project
+from .sequence_render import (
+    SequenceRenderError,
+    prepare_sequence_render,
+    render_sequence_video,
+)
+from .video_sequence import VideoSequence, VideoSequenceError
 
 
 DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284", "#81C8BE"]
@@ -599,6 +605,74 @@ def render_project_video(
 ) -> Path:
     project = load_project(project_path, resolve_video_duration=True)
     output = resolve_render_output_path(project_path, project, output_path)
+    try:
+        project_sequence = VideoSequence.from_json(
+            project.get("sequence"),
+            legacy_video=project.get("video"),
+        )
+    except VideoSequenceError as error:
+        raise SystemExit(f"Project sequence is invalid: {error}") from error
+    if len(project_sequence.clips) > 1:
+        try:
+            sequence_plan = prepare_sequence_render(
+                project,
+                probe_duration=probe_media_duration,
+                probe_audio_streams=probe_audio_streams,
+                output_audio_track=output_audio_track,
+                cut_no_speech=cut_no_speech,
+            )
+        except SequenceRenderError as error:
+            raise SystemExit(str(error)) from error
+        emit_progress_event("render", "prepare", phase="complete", progress=1.0)
+        emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
+        emit_progress_event("render", "audio", phase="start")
+        audio_filter = (
+            build_loudnorm_filter(
+                audio_target_lufs,
+                audio_loudness_range,
+                audio_true_peak_db,
+            )
+            if audio_normalize and sequence_plan.include_audio
+            else None
+        )
+        emit_progress_event("render", "audio", phase="complete", progress=1.0)
+        emit_progress_event(
+            "render",
+            "encode",
+            phase="metadata",
+            duration=sequence_plan.output_duration,
+        )
+        emit_progress_event("render", "encode", phase="start")
+        log_progress(f"Rendering multi-clip sequence to {output.name}")
+        render_sequence_video(
+            sequence_plan,
+            output,
+            video_codec=video_codec,
+            audio_codec=audio_codec,
+            nvenc_preset=nvenc_preset,
+            nvenc_cq=nvenc_cq,
+            x264_crf=x264_crf,
+            audio_filter=audio_filter,
+            progress_callback=log_progress,
+        )
+        emit_progress_event("render", "encode", phase="complete", progress=1.0)
+        emit_progress_event("render", "finalize", phase="start")
+        project["render_settings"] = {
+            **project.get("render_settings", {}),
+            "video_codec": video_codec,
+            "audio_codec": audio_codec,
+            "output_audio_track": output_audio_track,
+            "audio_normalize": audio_normalize,
+            "audio_target_lufs": audio_target_lufs,
+            "sequence_clip_count": len(sequence_plan.clips),
+            "manual_cut_count": 0,
+            "output_duration_seconds": sequence_plan.output_duration,
+            "last_output": str(output.resolve()),
+        }
+        save_project(project_path, project)
+        emit_progress_event("render", "finalize", phase="complete", progress=1.0)
+        log_progress(f"Render complete: {output}")
+        return output
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")

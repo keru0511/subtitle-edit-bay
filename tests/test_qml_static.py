@@ -53,7 +53,9 @@ class QmlStaticTests(unittest.TestCase):
         self.assertEqual(workflow.count("SequenceEditorPanel {"), 1)
         self.assertIn('objectName: "workspaceSequenceEditor"', workflow)
         self.assertIn(
-            'visible: root.appBackend.currentWorkspace === "normal-video"',
+            'visible: root.appBackend.currentWorkspace === "normal-video"\n'
+            '                        && root.appBackend.projectLoaded\n'
+            '                        && root.appBackend.currentEditMode === "cut"',
             workflow,
         )
         for binding in (

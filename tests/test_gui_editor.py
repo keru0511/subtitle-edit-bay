@@ -6035,16 +6035,39 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.sequenceError)
 
     def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         _project_path, _first_video, second_video = self._make_sequence_project()
         second_asset_id = self._add_second_sequence_asset(second_video)
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         _engine, window = self.gui.load_qml(qml_path, width=1_280, height=820)
 
         panel = self.gui.find_item(window, "workspaceSequenceEditor")
-        self.assertTrue(panel.isVisible())
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertFalse(panel.isVisible())
+        self.assertTrue(self.app.selectEditMode("audio"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "audio" and not panel.isVisible(),
+            description="sequence panel hidden in audio mode",
+        )
+        self.assertTrue(self.app.selectEditMode("cut"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
+            description="sequence panel visible in cut mode",
+        )
         self.gui.find_item(window, "mediaBinPanel")
         self.gui.find_item(window, "sequenceClipList")
         self.gui.find_item(window, "mediaBinDropArea")
+
+        self.assertTrue(self.app.selectEditMode("subtitle"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "subtitle" and not panel.isVisible(),
+            description="sequence panel hidden in subtitle mode",
+        )
+        self.assertTrue(self.app.selectEditMode("cut"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
+            description="sequence panel visible after returning to cut mode",
+        )
 
         add_button = self.gui.find_visual_item_by_properties(
             panel,

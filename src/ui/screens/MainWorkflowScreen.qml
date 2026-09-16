@@ -1792,6 +1792,7 @@ ApplicationWindow {
                     objectName: "workspaceSequenceEditor"
                     visible: root.appBackend.currentWorkspace === "normal-video"
                         && root.appBackend.projectLoaded
+                        && root.appBackend.currentEditMode === "cut"
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top

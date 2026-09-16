@@ -3963,6 +3963,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
         self.assertTrue(sidebar.isVisible())
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
+        self.assertEqual(self.app.aiChatProviderId, "codex")
+        self.assertEqual(self.app.codexSelectedModel, "gpt-test")
+        self.assertEqual(
+            self.app.codexChatMessages[0]["text"],
+            "keep this conversation",
+        )
 
         self.assertTrue(window.setProperty("currentWorkspace", "normal-video"))
         self.assertTrue(window.setProperty("activeOverlay", ""))
@@ -4789,6 +4795,67 @@ class GuiEditorRegressionTests(unittest.TestCase):
         back_button = self._quick_item(window, "shortModeBackButton")
         self._click(window, back_button)
         self.assertFalse(short_page.property("visible"))
+
+    def test_new_shell_short_workspace_restores_normal_player_and_isolates_preview(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        main_player = self.gui.find_object(window, "mainWorkspacePlayer", QMediaPlayer)
+        main_player.setPosition(4321)
+        self.app.processEvents()
+
+        header_open = self._quick_item(window, "workspaceHeaderShortButton")
+        self.assertTrue(header_open.isVisible())
+        self.assertTrue(header_open.property("enabled"))
+        self._click(window, header_open)
+
+        short_page = self._quick_item(window, "shortModePage")
+        short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
+        self.assertTrue(short_page.isVisible())
+        self.assertEqual(self.app.currentWorkspace, "short-artifact")
+        self.assertIsNot(short_player, main_player)
+        normal_position = self.app.workspacePlayerStates["normal-video"]["positionMs"]
+
+        short_player.setPosition(9876)
+        self.app.processEvents()
+        self.assertEqual(
+            self.app.workspacePlayerStates["normal-video"]["positionMs"],
+            normal_position,
+        )
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self.assertEqual(self.app.currentWorkspace, "normal-video")
+        self.assertEqual(main_player.position(), normal_position)
+
+    def test_short_workspace_keeps_provider_neutral_login_route_on_shared_router(self) -> None:
+        self._load_project()
+        self.app._gemini_chat._snapshot = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="unauthenticated",
+            provider_id="gemini",
+            provider_name="Gemini",
+            login_available=True,
+        )
+        self.assertTrue(self.app._ai_chat.select_provider("gemini"))
+        self.addCleanup(self.app._ai_chat.select_provider, "codex")
+        self.app._on_codex_chat_state(self.app._ai_chat.snapshot)
+        _, window = self._load_qml()
+
+        provider_combo = self._quick_item(window, "aiProviderLoginCombo")
+        login_route = self._quick_item(window, "codexLoginRoute")
+        self.assertTrue(provider_combo.isVisible())
+        self.assertEqual(provider_combo.property("currentValue"), "gemini")
+        self.assertTrue(login_route.isVisible())
+        self.assertEqual(login_route.property("text"), "Geminiログイン")
+
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
+        self.assertTrue(provider_combo.isVisible())
+        self.assertEqual(provider_combo.property("currentValue"), "gemini")
+        self.assertTrue(login_route.isVisible())
+
+        with patch.object(self.app._gemini_chat, "login") as gemini_login:
+            self._click(window, login_route)
+        gemini_login.assert_called_once_with(relogin=False)
 
     def test_short_workspace_is_separate_from_normal_edit_mode_and_chat_state(self) -> None:
         self._load_project()

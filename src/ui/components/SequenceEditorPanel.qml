@@ -17,6 +17,7 @@ Rectangle {
     required property color dangerColor
 
     property int hoverIndex: -1
+    property string activeDragClipId: ""
     property string selectedClipId: ""
 
     objectName: "sequenceEditorPanel"
@@ -319,8 +320,13 @@ Rectangle {
                                 id: reorderHandler
                                 target: null
                                 onActiveChanged: {
-                                    if (!active)
+                                    if (active) {
+                                        root.activeDragClipId = clipItem.clipId
+                                    } else {
+                                        if (root.activeDragClipId === clipItem.clipId)
+                                            root.activeDragClipId = ""
                                         root.hoverIndex = -1
+                                    }
                                 }
                             }
 
@@ -330,7 +336,7 @@ Rectangle {
                                 anchors.fill: parent
                                 z: 5
                                 onEntered: function(drag) {
-                                    if (drag.source && drag.source.clipId !== undefined)
+                                    if (drag.source && root.activeDragClipId.length > 0)
                                         root.hoverIndex = clipItem.index
                                 }
                                 onExited: {
@@ -338,9 +344,9 @@ Rectangle {
                                         root.hoverIndex = -1
                                 }
                                 onDropped: function(drop) {
-                                    var source = drop.source
-                                    if (source && source.clipId !== undefined && root.backend)
-                                        root.backend.moveSequenceClip(String(source.clipId), clipItem.index)
+                                    if (root.activeDragClipId.length > 0 && root.backend)
+                                        root.backend.moveSequenceClip(root.activeDragClipId, clipItem.index)
+                                    root.activeDragClipId = ""
                                     root.hoverIndex = -1
                                     drop.acceptProposedAction()
                                 }

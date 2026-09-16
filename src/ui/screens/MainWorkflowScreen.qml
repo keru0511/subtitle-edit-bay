@@ -1776,24 +1776,6 @@ ApplicationWindow {
                 }
                 onOutputFolderRequested: root.appBackend.openOutputFolder()
             }
-            SequenceEditorPanel {
-                id: sequenceEditorPanel
-                objectName: "workspaceSequenceEditor"
-                visible: root.appBackend.currentWorkspace === "normal-video"
-                    && root.appBackend.projectLoaded
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? 238 : 0
-                Layout.minimumHeight: visible ? 210 : 0
-                backend: root.appBackend
-                panelColor: root.panel
-                raisedColor: root.raised
-                borderColor: root.border
-                textColor: root.textPrimary
-                mutedColor: root.textMuted
-                accentColor: root.acid
-                warningColor: root.amber
-                dangerColor: root.danger
-            }
             Rectangle {
                 objectName: "mainVideoPanel"
                 Layout.fillWidth: true
@@ -1805,6 +1787,26 @@ ApplicationWindow {
                 color: "#080A09"
                 border.color: root.border
                 clip: true
+                SequenceEditorPanel {
+                    id: sequenceEditorPanel
+                    objectName: "workspaceSequenceEditor"
+                    visible: root.appBackend.currentWorkspace === "normal-video"
+                        && root.appBackend.projectLoaded
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: visible ? 238 : 0
+                    z: 20
+                    backend: root.appBackend
+                    panelColor: root.panel
+                    raisedColor: root.raised
+                    borderColor: root.border
+                    textColor: root.textPrimary
+                    mutedColor: root.textMuted
+                    accentColor: root.acid
+                    warningColor: root.amber
+                    dangerColor: root.danger
+                }
                 MediaPlayer {
                     id: mainPlayer
                     objectName: "mainWorkspacePlayer"

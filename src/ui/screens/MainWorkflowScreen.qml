@@ -45,9 +45,17 @@ ApplicationWindow {
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
-    // A short is a derived artifact workspace, not a normal-video edit mode
-    // or a transient editor overlay.
-    property string currentWorkspace: "normal-video"
+    // Compatibility mirror for callers that still inspect/set this QML
+    // property.  The backend owns the value; the mirror never drives
+    // visibility directly and forwards legacy writes through the guarded API.
+    property string currentWorkspace: root.appBackend
+        ? root.appBackend.currentWorkspace : "normal-video"
+    onCurrentWorkspaceChanged: {
+        if (!root.appBackend || root.currentWorkspace === root.appBackend.currentWorkspace)
+            return
+        if (!root.appBackend.switchWorkspace(root.currentWorkspace))
+            root.currentWorkspace = root.appBackend.currentWorkspace
+    }
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
     property string selectedCutId: ""
@@ -68,7 +76,8 @@ ApplicationWindow {
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
-    readonly property bool shortWorkspaceActive: root.currentWorkspace === "short-artifact"
+    readonly property bool shortWorkspaceActive: root.appBackend
+        && root.appBackend.currentWorkspace === "short-artifact"
     readonly property bool codexAuthenticated: root.appBackend
         && root.appBackend.codexAuthState === "authenticated"
     readonly property string aiProviderLoginLabel: {
@@ -471,6 +480,11 @@ ApplicationWindow {
 
     function syncEditorPlayhead(positionMs, syncSelection) {
         var resolvedPosition = Math.max(0, Math.round(Number(positionMs) || 0))
+        root.appBackend.setWorkspacePlayerState(
+            "normal-video",
+            resolvedPosition,
+            mainPlayer.playbackState === MediaPlayer.PlayingState
+        )
         if (root.pendingSharedSourcePosition >= 0) {
             if (Math.abs(resolvedPosition - root.pendingSharedSourcePosition) > 80)
                 return
@@ -560,12 +574,17 @@ ApplicationWindow {
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         root.appBackend.stopAudioMixerPreview()
-        root.currentWorkspace = "short-artifact"
+        root.appBackend.setWorkspacePlayerState("normal-video", mainPlayer.position, false)
+        root.appBackend.switchWorkspace("short-artifact")
     }
 
     function closeShortWorkspace() {
-        root.currentWorkspace = "normal-video"
-        mainPlayer.position = root.editorPositionCache
+        if (!root.appBackend.switchWorkspace("normal-video"))
+            return
+        var playerState = root.appBackend.workspacePlayerState
+        mainPlayer.position = playerState
+            ? Number(playerState.positionMs || 0)
+            : root.editorPositionCache
     }
 
     function volumePercentToDb(percent) {
@@ -3158,6 +3177,20 @@ ApplicationWindow {
             active: root.shortWorkspaceActive
             source: "ShortModeScreen.qml"
             onLoaded: shortModeLoader.item.mainRoot = root
+        }
+    }
+
+    Connections {
+        target: root.appBackend
+        function onWorkspaceChanged() {
+            var nextWorkspace = String(root.appBackend.currentWorkspace || "normal-video")
+            if (root.currentWorkspace !== nextWorkspace)
+                root.currentWorkspace = nextWorkspace
+            if (nextWorkspace === "normal-video") {
+                var playerState = root.appBackend.workspacePlayerState
+                if (playerState)
+                    mainPlayer.position = Number(playerState.positionMs || 0)
+            }
         }
     }
 

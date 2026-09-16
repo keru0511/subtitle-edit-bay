@@ -6068,6 +6068,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
             lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
             description="sequence panel visible after returning to cut mode",
         )
+        self.gui.wait_until(
+            lambda: any(
+                item.property("sequenceAssetId") == second_asset_id
+                for item in self.gui.visual_items_with_properties(panel, "sequenceAssetId")
+            ),
+            description="sequence asset delegate after returning to cut mode",
+        )
 
         add_button = self.gui.find_visual_item_by_properties(
             panel,

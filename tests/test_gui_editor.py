@@ -2695,6 +2695,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.sourceSelection["video"], str(new_video.resolve()))
         self.assertEqual(self.app.sourceSelection["output_dir"], str(new_output.resolve()))
         self.assertEqual(self.app._project["video"]["path"], str(new_video.resolve()))
+        self.assertEqual(
+            self.app._project["sequence"]["assets"][0]["path"],
+            str(new_video.resolve()),
+        )
         self.assertEqual(self.app._project["output_dir"], str(new_output.resolve()))
         self.assertEqual(
             [item["path"] for item in self.app._project["audio_sources"]],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.gui_project_editor_controller import ProjectEditorController
 from src.subtitle_project import SubtitleProject, create_project, load_project, save_project
@@ -196,6 +197,27 @@ class VideoSequenceTests(unittest.TestCase):
             ["clip-a"],
         )
         self.assertEqual(loaded["sequence"]["assets"][1]["id"], "asset-b")
+
+    def test_reloading_zero_duration_updates_legacy_sequence_from_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "capture.mp4"
+            video.write_bytes(b"video")
+            project = create_project(
+                video_path=video,
+                output_dir=root / "out",
+                duration_seconds=0.0,
+                segments=[],
+            )
+            path = save_project(root / "capture.subtitle-project.json", project)
+
+            with patch("src.subtitle_project.probe_media_duration", return_value=30.0):
+                loaded = load_project(path, resolve_video_duration=True)
+
+        self.assertEqual(loaded["video"]["duration_seconds"], 30.0)
+        self.assertEqual(loaded["sequence"]["assets"][0]["path"], str(video.resolve()))
+        self.assertEqual(loaded["sequence"]["assets"][0]["duration_seconds"], 30.0)
+        self.assertEqual(loaded["sequence"]["clips"][0]["source_end"], 30.0)
 
     def test_controller_sequence_mutation_is_one_undoable_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

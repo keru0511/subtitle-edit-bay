@@ -551,6 +551,70 @@ class VideoSequence:
             )
         return cls(assets=(asset,), clips=clips)
 
+    def is_legacy_single_video(self) -> bool:
+        """Return whether this is the compatibility sequence for ``video``.
+
+        A sequence created by the pre-sequence project schema has stable
+        ``asset-video``/``clip-video`` identities.  A trimmed singleton is no
+        longer treated as compatibility state, so an explicit edit cannot be
+        silently overwritten by a legacy source update.
+        """
+
+        if len(self.assets) != 1 or self.assets[0].id != "asset-video":
+            return False
+        if not self.clips:
+            return self.assets[0].duration_seconds <= _TIME_EPSILON
+        if len(self.clips) != 1:
+            return False
+        clip = self.clips[0]
+        return (
+            clip.id == "clip-video"
+            and clip.asset_id == self.assets[0].id
+            and abs(clip.source_start) <= _TIME_EPSILON
+            and abs(clip.source_end - self.assets[0].duration_seconds) <= _TIME_EPSILON
+            and clip.transition.type == "cut"
+            and clip.transition.duration <= _TIME_EPSILON
+        )
+
+    def sync_legacy_video(self, video: Mapping[str, Any]) -> "VideoSequence":
+        """Synchronize compatibility asset/clip fields with ``project.video``."""
+
+        if not self.is_legacy_single_video():
+            raise VideoSequenceError("explicit sequence cannot be synchronized as a legacy video")
+        if not isinstance(video, Mapping):
+            raise VideoSequenceError("legacy video must be an object")
+        path = str(video.get("path", "")).strip()
+        if not path:
+            raise VideoSequenceError("legacy video.path is required")
+        duration = _finite_seconds(video.get("duration_seconds", 0.0) or 0.0, "video.duration_seconds")
+        if duration < 0.0:
+            raise VideoSequenceError("video.duration_seconds must be non-negative")
+
+        asset = replace(
+            self.assets[0],
+            path=path,
+            duration_seconds=duration,
+        )
+        if duration <= _TIME_EPSILON:
+            clips: tuple[SequenceClip, ...] = ()
+        elif self.clips:
+            clips = (replace(self.clips[0], source_start=0.0, source_end=duration),)
+        else:
+            clips = (
+                SequenceClip(
+                    id="clip-video",
+                    asset_id=asset.id,
+                    source_start=0.0,
+                    source_end=duration,
+                ),
+            )
+        return VideoSequence(
+            assets=(asset,),
+            clips=clips,
+            schema_version=self.schema_version,
+            extras=deepcopy(self.extras),
+        )
+
     def to_json(self) -> dict[str, Any]:
         payload = {
             "schema_version": self.schema_version,

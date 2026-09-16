@@ -345,6 +345,8 @@ class SubtitleProject:
                 migrated.get("sequence"),
                 legacy_video=video,
             )
+            if sequence.is_legacy_single_video():
+                sequence = sequence.sync_legacy_video(video)
         except VideoSequenceError as error:
             raise SubtitleProjectError(str(error)) from error
         return cls(

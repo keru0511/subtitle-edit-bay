@@ -55,6 +55,11 @@ class SequenceRenderTests(unittest.TestCase):
                 {"sequence": sequence.to_json(), "segments": [], "timeline": {"cuts": []}},
                 probe_duration=lambda _path: 5.0,
                 probe_audio_streams=lambda _path: [{"codec_name": "aac"}],
+                probe_video_stream=lambda _path: {
+                    "width": 1920,
+                    "height": 1080,
+                    "sample_aspect_ratio": "1:1",
+                },
             )
 
         self.assertEqual([clip.id for clip in plan.clips], ["clip-a", "clip-b"])
@@ -97,6 +102,11 @@ class SequenceRenderTests(unittest.TestCase):
                     base,
                     probe_duration=lambda path: 3.0 if path == str(first) else 5.0,
                     probe_audio_streams=lambda _path: [{"codec_name": "aac"}],
+                    probe_video_stream=lambda _path: {
+                        "width": 1920,
+                        "height": 1080,
+                        "sample_aspect_ratio": "1:1",
+                    },
                 )
             base["segments"] = [{"start": 0.0, "end": 1.0, "text": "字幕"}]
             with self.assertRaisesRegex(SequenceRenderError, "subtitle mapping"):
@@ -104,7 +114,83 @@ class SequenceRenderTests(unittest.TestCase):
                     base,
                     probe_duration=lambda _path: 5.0,
                     probe_audio_streams=lambda _path: [{"codec_name": "aac"}],
+                    probe_video_stream=lambda _path: {
+                        "width": 1920,
+                        "height": 1080,
+                        "sample_aspect_ratio": "1:1",
+                    },
                 )
+
+    def test_mixed_video_resolution_or_sar_fails_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first, second = root / "a.mp4", root / "b.mp4"
+            first.write_bytes(b"a")
+            second.write_bytes(b"b")
+            sequence = self._sequence(first, second)
+            mismatches = {
+                "resolution": (
+                    {"width": 1920, "height": 1080, "sample_aspect_ratio": "1:1"},
+                    {"width": 1280, "height": 720, "sample_aspect_ratio": "1:1"},
+                ),
+                "sar": (
+                    {"width": 1920, "height": 1080, "sample_aspect_ratio": "1:1"},
+                    {"width": 1920, "height": 1080, "sample_aspect_ratio": "4:3"},
+                ),
+            }
+            for name, (first_stream, second_stream) in mismatches.items():
+                with self.subTest(mismatch=name):
+                    with self.assertRaisesRegex(SequenceRenderError, "mixed video resolution/SAR"):
+                        prepare_sequence_render(
+                            {"sequence": sequence.to_json(), "segments": [], "timeline": {"cuts": []}},
+                            probe_duration=lambda _path: 5.0,
+                            probe_audio_streams=lambda _path: [{"codec_name": "aac"}],
+                            probe_video_stream=lambda path: (
+                                first_stream if path == str(first) else second_stream
+                            ),
+                        )
+
+    def test_mixed_video_parameters_fail_before_render_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "legacy.mp4"
+            first, second = root / "a.mp4", root / "b.mp4"
+            video.write_bytes(b"legacy")
+            first.write_bytes(b"a")
+            second.write_bytes(b"b")
+            sequence = self._sequence(first, second)
+            project = create_project(
+                video_path=video,
+                output_dir=root,
+                duration_seconds=4.0,
+                segments=[],
+                sequence=sequence.to_json(),
+            )
+            project_path = save_project(root / "mixed.subtitle-project.json", project)
+            with (
+                patch("src.subtitle_workflow.probe_media_duration", return_value=5.0),
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[{"codec_name": "aac"}]),
+                patch(
+                    "src.subtitle_workflow.probe_video_stream",
+                    side_effect=[
+                        {"width": 1920, "height": 1080, "sample_aspect_ratio": "1:1"},
+                        {"width": 1280, "height": 720, "sample_aspect_ratio": "1:1"},
+                    ],
+                ),
+                patch("src.subtitle_workflow.render_sequence_video") as sequence_render,
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
+            ):
+                from src.subtitle_workflow import render_project_video
+
+                with self.assertRaisesRegex(SystemExit, "mixed video resolution/SAR"):
+                    render_project_video(
+                        project_path,
+                        output_path=root / "mixed.mp4",
+                        audio_normalize=False,
+                    )
+
+        sequence_render.assert_not_called()
+        legacy_render.assert_not_called()
 
     def test_project_render_routes_only_multi_clip_sequences(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from src.media_probe import probe_media_duration, probe_media_stream_types
+from src.media_probe import probe_media_duration, probe_media_stream_types, probe_video_stream
 
 
 class MediaProbeTests(unittest.TestCase):
@@ -57,6 +57,22 @@ class MediaProbeTests(unittest.TestCase):
             run.side_effect = subprocess.CalledProcessError(1, ["ffprobe"])
             with self.assertRaises(subprocess.CalledProcessError):
                 probe_media_stream_types("/tmp/video.mkv")
+
+    def test_probe_video_stream_returns_dimensions_and_sample_aspect_ratio(self) -> None:
+        stream = {"width": 1920, "height": 1080, "sample_aspect_ratio": "1:1"}
+        with mock.patch("src.media_probe.subprocess.run") as run:
+            run.return_value = mock.MagicMock(stdout=json.dumps({"streams": [stream]}))
+            result = probe_video_stream("/tmp/video.mkv")
+            self.assertEqual(result, stream)
+            command = run.call_args[0][0]
+            self.assertIn("v:0", command)
+            self.assertIn("stream=width,height,sample_aspect_ratio", command)
+
+    def test_probe_video_stream_raises_without_a_video_stream(self) -> None:
+        with mock.patch("src.media_probe.subprocess.run") as run:
+            run.return_value = mock.MagicMock(stdout=json.dumps({"streams": []}))
+            with self.assertRaisesRegex(ValueError, "No video stream found"):
+                probe_video_stream("/tmp/video.mkv")
 
 
 if __name__ == "__main__":

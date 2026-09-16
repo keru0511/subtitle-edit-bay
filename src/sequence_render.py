@@ -57,11 +57,42 @@ def _has_text_segments(project: Mapping[str, Any]) -> bool:
     )
 
 
+def _video_parameters(asset_id: str, stream: Mapping[str, Any]) -> tuple[int, int, str]:
+    if not isinstance(stream, Mapping):
+        raise SequenceRenderError(
+            f"sequence asset video metadata is incomplete: {asset_id}"
+        )
+    try:
+        width = int(stream["width"])
+        height = int(stream["height"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise SequenceRenderError(
+            f"sequence asset video metadata is incomplete: {asset_id}"
+        ) from error
+    sample_aspect_ratio = stream.get("sample_aspect_ratio")
+    sample_aspect_ratio_text = str(sample_aspect_ratio).strip() if sample_aspect_ratio is not None else ""
+    if sample_aspect_ratio_text.lower() in {"", "n/a", "na", "unknown", "0:1", "0/1"}:
+        raise SequenceRenderError(
+            f"sequence asset video metadata is incomplete: {asset_id}"
+        )
+    if width <= 0 or height <= 0:
+        raise SequenceRenderError(
+            f"sequence asset video metadata is invalid: {asset_id}"
+        )
+    return width, height, sample_aspect_ratio_text
+
+
+def _format_video_parameters(parameters: tuple[int, int, str]) -> str:
+    width, height, sample_aspect_ratio = parameters
+    return f"{width}x{height} SAR={sample_aspect_ratio}"
+
+
 def prepare_sequence_render(
     project: Mapping[str, Any],
     *,
     probe_duration: Callable[[str], float],
     probe_audio_streams: Callable[[str], list[dict[str, Any]]],
+    probe_video_stream: Callable[[str], Mapping[str, Any]],
     output_audio_track: str = "0:a:0",
     cut_no_speech: bool = False,
 ) -> SequenceRenderPlan:
@@ -119,6 +150,9 @@ def prepare_sequence_render(
     if len(assets) != len(sequence.assets):
         raise SequenceRenderError("sequence asset ids must be unique")
     audio_by_asset: dict[str, bool] = {}
+    video_parameters_by_asset: dict[str, tuple[int, int, str]] = {}
+    reference_video_asset: str | None = None
+    reference_video_parameters: tuple[int, int, str] | None = None
     for clip in sequence.clips:
         asset = assets.get(clip.asset_id)
         if asset is None:
@@ -140,6 +174,24 @@ def prepare_sequence_render(
             raise SequenceRenderError(
                 f"clip {clip.id!r} exceeds the probed asset duration"
             )
+        if asset.id not in video_parameters_by_asset:
+            try:
+                video_stream = probe_video_stream(asset.path)
+            except (OSError, ValueError, subprocess.CalledProcessError) as error:
+                raise SequenceRenderError(
+                    f"could not probe sequence asset video stream: {asset.path}"
+                ) from error
+            video_parameters = _video_parameters(asset.id, video_stream)
+            video_parameters_by_asset[asset.id] = video_parameters
+            if reference_video_parameters is None:
+                reference_video_asset = asset.id
+                reference_video_parameters = video_parameters
+            elif video_parameters != reference_video_parameters:
+                raise SequenceRenderError(
+                    "sequence clips have mixed video resolution/SAR; "
+                    f"{reference_video_asset}={_format_video_parameters(reference_video_parameters)}, "
+                    f"{asset.id}={_format_video_parameters(video_parameters)}; refusing to render"
+                )
         if asset.id not in audio_by_asset:
             try:
                 audio_by_asset[asset.id] = bool(probe_audio_streams(asset.path))

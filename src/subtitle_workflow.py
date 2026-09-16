@@ -49,6 +49,7 @@ from .craig_pipeline import (
     write_json,
 )
 from .merge_transcripts import refine_segments
+from .media_probe import probe_video_stream
 from .pipeline import build_ass_from_data
 from .processing_progress import progress_event_line
 from .render_ass import parse_track_color_args
@@ -623,6 +624,7 @@ def render_project_video(
                 project,
                 probe_duration=probe_media_duration,
                 probe_audio_streams=probe_audio_streams,
+                probe_video_stream=probe_video_stream,
                 output_audio_track=output_audio_track,
                 cut_no_speech=cut_no_speech,
             )

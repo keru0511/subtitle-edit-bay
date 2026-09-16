@@ -61,3 +61,34 @@ def probe_media_stream_types(input_path: str) -> set[str]:
         if isinstance(stream, dict)
     }
     return {value for value in media_types if value in {"audio", "video"}}
+
+
+def probe_video_stream(input_path: str) -> dict[str, object]:
+    """Return the first video stream's dimensions and sample aspect ratio."""
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,sample_aspect_ratio",
+        "-of",
+        "json",
+        input_path,
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        **hidden_subprocess_kwargs(),
+    )
+
+    payload = json.loads(result.stdout or "{}")
+    streams = payload.get("streams", []) if isinstance(payload, dict) else []
+    if not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
+        raise ValueError(f"No video stream found: {input_path}")
+    return streams[0]

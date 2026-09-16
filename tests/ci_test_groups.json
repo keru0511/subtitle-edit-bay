@@ -8,6 +8,7 @@
         "test_manual_cut_semantic_e2e",
         "test_media_semantic_e2e",
         "test_render_ass",
+        "test_sequence_render_semantic_e2e",
         "test_short_video_ass",
         "test_short_video_semantic_e2e",
         "test_workflow_action_semantic_e2e"
@@ -83,6 +84,7 @@
         "test_runtime_contract",
         "test_runtime_dependencies",
         "test_runtime_settings",
+        "test_sequence_render",
         "test_short_video",
         "test_short_video_schema",
         "test_short_workspace_mock",

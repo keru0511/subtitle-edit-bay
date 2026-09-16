@@ -1776,6 +1776,24 @@ ApplicationWindow {
                 }
                 onOutputFolderRequested: root.appBackend.openOutputFolder()
             }
+            SequenceEditorPanel {
+                id: sequenceEditorPanel
+                objectName: "workspaceSequenceEditor"
+                visible: root.appBackend.currentWorkspace === "normal-video"
+                    && root.appBackend.projectLoaded
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 238 : 0
+                Layout.minimumHeight: visible ? 210 : 0
+                backend: root.appBackend
+                panelColor: root.panel
+                raisedColor: root.raised
+                borderColor: root.border
+                textColor: root.textPrimary
+                mutedColor: root.textMuted
+                accentColor: root.acid
+                warningColor: root.amber
+                dangerColor: root.danger
+            }
             Rectangle {
                 objectName: "mainVideoPanel"
                 Layout.fillWidth: true

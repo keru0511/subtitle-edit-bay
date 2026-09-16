@@ -393,6 +393,7 @@ class EditBayBackend(LegacyEditBayBackend):
     actionCapabilitiesChanged = Signal()
     workspaceChanged = Signal()
     workspacePlayerStateChanged = Signal()
+    sequenceChanged = Signal()
 
     @property
     def _project(self) -> dict[str, Any] | None:
@@ -651,12 +652,19 @@ class EditBayBackend(LegacyEditBayBackend):
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._editor_workspace = EditorWorkspaceState()
         self._workspace_navigation = WorkspaceNavigationController()
+        self._sequence_playhead_seconds = 0.0
+        self._sequence_error = ""
         for signal in (
             self.dependenciesChanged, self.sourceSelectionChanged, self.speakersChanged,
             self.audioTracksChanged, self.settingsChanged, self.projectChanged,
             self.projectDataChanged, self.shortVideoChanged, self.runningChanged,
         ):
             signal.connect(self.actionCapabilitiesChanged.emit)
+        # The sequence view is a facade snapshot.  ProjectEditorController
+        # remains the only owner of persisted sequence mutations; these
+        # notifications only tell QML to read a fresh view.
+        self.projectChanged.connect(self.sequenceChanged.emit)
+        self.projectDataChanged.connect(self.sequenceChanged.emit)
         self._cut_editor_available = True
         self.projectChanged.connect(self._refresh_editor_workspace)
         self.projectDataChanged.connect(self._refresh_editor_workspace)
@@ -2052,6 +2060,289 @@ class EditBayBackend(LegacyEditBayBackend):
         video_duration = float(self._project.get("video", {}).get("duration_seconds", 0.0))
         segment_duration = max((float(item["end"]) for item in self._project.get("segments", [])), default=0.0)
         return max(video_duration, segment_duration)
+
+    def _sequence_model_for_facade(self) -> VideoSequence | None:
+        """Read the sequence through ProjectEditorController only.
+
+        QML never receives the mutable project dictionary.  The controller
+        validates the persisted payload and applies all mutations, while this
+        facade builds a detached view for presentation.
+        """
+
+        if self._project is None or self._project_editor_controller is None:
+            return None
+        try:
+            return self._project_editor_controller.sequence_model()
+        except SubtitleProjectError:
+            return None
+
+    def _sequence_view_payload(self) -> dict[str, Any]:
+        model = self._sequence_model_for_facade()
+        if model is None:
+            return {
+                "schemaVersion": 1,
+                "assets": [],
+                "clips": [],
+                "outputDuration": 0.0,
+                "isLegacySingleVideo": False,
+            }
+
+        asset_clip_counts = {
+            asset.id: sum(clip.asset_id == asset.id for clip in model.clips)
+            for asset in model.assets
+        }
+        assets = [
+            {
+                "id": asset.id,
+                "path": asset.path,
+                "name": Path(asset.path).name,
+                "duration": asset.duration_seconds,
+                "clipCount": asset_clip_counts.get(asset.id, 0),
+            }
+            for asset in model.assets
+        ]
+        timeline = model.timeline if model.clips else None
+        timeline_clips = timeline.clips if timeline is not None else ()
+        assets_by_id = {asset.id: asset for asset in model.assets}
+        clips: list[dict[str, Any]] = []
+        for entry in timeline_clips:
+            clip = entry.clip
+            asset = assets_by_id[clip.asset_id]
+            view = entry.as_view()
+            view.update(
+                {
+                    "assetPath": asset.path,
+                    "assetName": Path(asset.path).name,
+                    "audioLinked": clip.audio_linked,
+                    "volume": clip.volume,
+                    "audioOffset": clip.audio_offset_seconds,
+                    "muted": clip.muted,
+                }
+            )
+            clips.append(view)
+        return {
+            "schemaVersion": model.schema_version,
+            "assets": assets,
+            "clips": clips,
+            "outputDuration": timeline.total_duration if timeline is not None else 0.0,
+            "isLegacySingleVideo": model.is_legacy_single_video(),
+        }
+
+    def _sequence_failure(self, message: str) -> bool:
+        self._sequence_error = str(message)
+        self.sequenceChanged.emit()
+        self._set_status(self._sequence_error, "CHECK")
+        return False
+
+    def _apply_sequence_mutation(
+        self,
+        mutation: Callable[[VideoSequence], VideoSequence],
+        success_message: str,
+    ) -> bool:
+        if self._running:
+            return self._sequence_failure("処理中はsequenceを変更できません")
+        if self._project is None or self._project_editor_controller is None:
+            return self._sequence_failure("先に編集プロジェクトを開いてください")
+        self._sequence_error = ""
+        try:
+            updated = self._project_editor_controller.apply_sequence_mutation(mutation)
+        except (SubtitleProjectError, VideoSequenceError, TypeError, ValueError) as error:
+            return self._sequence_failure(f"sequenceを変更できません: {error}")
+        if updated is None:
+            return self._sequence_failure("sequenceを変更できません")
+        self._set_status(success_message, "EDIT")
+        return True
+
+    @Property("QVariantMap", notify=sequenceChanged)
+    def sequenceView(self) -> dict[str, Any]:
+        return deepcopy(self._sequence_view_payload())
+
+    @Property("QVariantList", notify=sequenceChanged)
+    def mediaBinAssets(self) -> list[dict[str, Any]]:
+        return deepcopy(self._sequence_view_payload()["assets"])
+
+    @Property("QVariantList", notify=sequenceChanged)
+    def sequenceClips(self) -> list[dict[str, Any]]:
+        return deepcopy(self._sequence_view_payload()["clips"])
+
+    @Property(float, notify=sequenceChanged)
+    def sequenceOutputDuration(self) -> float:
+        return float(self._sequence_view_payload()["outputDuration"])
+
+    @Property("QVariantMap", notify=sequenceChanged)
+    def sequencePlayhead(self) -> dict[str, Any]:
+        model = self._sequence_model_for_facade()
+        if model is None or not model.clips:
+            return {
+                "outputMs": 0,
+                "outputSeconds": 0.0,
+                "clipId": "",
+                "sourceTime": 0.0,
+            }
+        timeline = model.timeline
+        output_seconds = min(
+            max(0.0, self._sequence_playhead_seconds),
+            timeline.total_duration,
+        )
+        # Keep output-to-source mapping in the #404 domain API.  QML only
+        # renders this result and never reconstructs transition overlap.
+        position = timeline.output_to_source_seconds(output_seconds)
+        return {
+            "outputMs": int(round(output_seconds * 1000)),
+            "outputSeconds": output_seconds,
+            "clipId": position.clip_id,
+            "sourceTime": position.source_time,
+        }
+
+    @Property(str, notify=sequenceChanged)
+    def sequenceError(self) -> str:
+        return self._sequence_error
+
+    @Slot(str, result=bool)
+    def addSequenceAsset(self, path: str) -> bool:
+        if self._running:
+            return self._sequence_failure("処理中はsequence素材を変更できません")
+        candidate = self._local_path(path)
+        try:
+            candidate = candidate.expanduser().resolve(strict=True)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            return self._sequence_failure(f"動画素材を確認できません: {error}")
+        if not candidate.is_file():
+            return self._sequence_failure("動画素材ファイルが存在しません")
+        supported, reason = self._is_supported_media_file(
+            candidate,
+            {"video"},
+            "sequence動画素材",
+        )
+        if not supported:
+            return self._sequence_failure(reason or "動画素材として利用できません")
+        model = self._sequence_model_for_facade()
+        if model is None:
+            return self._sequence_failure("sequenceを読み込めません")
+        normalized = self._normalized_source_path(str(candidate))
+        if any(self._normalized_source_path(asset.path) == normalized for asset in model.assets):
+            return self._sequence_failure("同じ動画素材は既にmedia binにあります")
+        try:
+            duration = float(probe_media_duration(candidate))
+        except (OSError, ValueError, TypeError, subprocess.CalledProcessError) as error:
+            return self._sequence_failure(f"動画の長さを確認できません: {error}")
+        if not math.isfinite(duration) or duration <= 0.0:
+            return self._sequence_failure("動画の長さが不明なため追加できません")
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.add_asset(str(candidate), duration),
+            f"media binへ動画を追加しました: {candidate.name}",
+        )
+
+    @Slot("QVariantList", result=int)
+    def addSequenceAssets(self, paths: list[Any]) -> int:
+        added = 0
+        for path in paths or []:
+            if self.addSequenceAsset(path):
+                added += 1
+        return added
+
+    @Slot(result=str)
+    def browseSequenceAsset(self) -> str:
+        if self._running:
+            self._sequence_failure("処理中はsequence素材を変更できません")
+            return ""
+        start_dir = str(self.workspace_root)
+        model = self._sequence_model_for_facade()
+        if model and model.assets:
+            start_dir = str(Path(model.assets[-1].path).parent)
+        path, _ = QFileDialog.getOpenFileName(
+            None,
+            "sequenceへ追加する動画を選択",
+            start_dir,
+            "Video files (*.avi *.m2ts *.mkv *.mov *.mp4 *.mpeg *.mpg *.ts *.webm *.wmv);;All files (*)",
+        )
+        if path:
+            self.addSequenceAsset(path)
+        return path
+
+    @Slot(str, result=bool)
+    def addSequenceClip(self, asset_id: str) -> bool:
+        model = self._sequence_model_for_facade()
+        if model is None:
+            return self._sequence_failure("sequenceを読み込めません")
+        try:
+            asset = next(asset for asset in model.assets if asset.id == str(asset_id))
+        except StopIteration:
+            return self._sequence_failure("指定されたsequence素材が見つかりません")
+        if asset.duration_seconds <= 0.0:
+            return self._sequence_failure("動画の長さが不明なためclipを追加できません")
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.add_clip(
+                asset.id,
+                0.0,
+                asset.duration_seconds,
+            ),
+            f"sequenceへclipを追加しました: {asset.path}",
+        )
+
+    @Slot(str, int, result=bool)
+    def moveSequenceClip(self, clip_id: str, index: int) -> bool:
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.reorder_clip(clip_id, index),
+            "sequenceの順序を変更しました",
+        )
+
+    @Slot(str, result=bool)
+    def removeSequenceClip(self, clip_id: str) -> bool:
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.remove_clip(clip_id),
+            "sequenceからclipを削除しました",
+        )
+
+    @Slot(str, float, float, result=bool)
+    def trimSequenceClip(self, clip_id: str, source_start: float, source_end: float) -> bool:
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.trim_clip(clip_id, source_start, source_end),
+            "clipの範囲を更新しました",
+        )
+
+    @Slot(str, str, float, result=bool)
+    def setSequenceTransition(self, clip_id: str, transition_type: str, duration: float) -> bool:
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.set_transition(clip_id, transition_type, duration),
+            "clipの切り替えを更新しました",
+        )
+
+    @Slot(str, bool, float, float, bool, result=bool)
+    def setSequenceClipAudio(
+        self,
+        clip_id: str,
+        audio_linked: bool,
+        volume: float,
+        audio_offset_seconds: float,
+        muted: bool,
+    ) -> bool:
+        return self._apply_sequence_mutation(
+            lambda sequence: sequence.set_clip_audio(
+                clip_id,
+                audio_linked=audio_linked,
+                volume=volume,
+                audio_offset_seconds=audio_offset_seconds,
+                muted=muted,
+            ),
+            "clipの音声設定を更新しました",
+        )
+
+    @Slot(int, result=bool)
+    def setSequencePlayhead(self, output_milliseconds: int) -> bool:
+        model = self._sequence_model_for_facade()
+        if model is None or not model.clips:
+            return self._sequence_failure("sequenceに再生可能なclipがありません")
+        try:
+            requested = float(output_milliseconds) / 1000.0
+        except (TypeError, ValueError):
+            return self._sequence_failure("再生位置が不正です")
+        if not math.isfinite(requested):
+            return self._sequence_failure("再生位置が不正です")
+        self._sequence_playhead_seconds = min(max(0.0, requested), model.output_duration)
+        self._sequence_error = ""
+        self.sequenceChanged.emit()
+        return True
 
     @Property(bool, notify=historyChanged)
     def canUndo(self) -> bool:

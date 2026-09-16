@@ -5971,8 +5971,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
         # configure the transition after the order change on the new incoming
         # clip so the persisted boundary remains valid.
         self.assertTrue(self.app.moveSequenceClip(second_clip_id, 0))
-        first_clip = self.app.sequenceClips[0]
-        legacy_clip_id = str(first_clip["clipId"])
+        reordered_clips = self.app.sequenceClips
+        self.assertEqual(str(reordered_clips[0]["clipId"]), second_clip_id)
+        legacy_clip_id = str(reordered_clips[1]["clipId"])
         self.assertTrue(self.app.setSequenceTransition(legacy_clip_id, "crossfade", 0.5))
 
         view = self.app.sequenceView
@@ -6044,7 +6045,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.find_item(window, "mediaBinPanel")
         self.gui.find_item(window, "sequenceClipList")
         self.gui.find_item(window, "mediaBinDropArea")
-        self.gui.find_item(window, "sequenceClipDropArea")
 
         add_button = self.gui.find_visual_item_by_properties(
             panel,
@@ -6058,6 +6058,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="media-bin clip dispatch",
         )
         self.assertEqual(self.app.sequenceClips[-1]["assetId"], second_asset_id)
+        self.gui.find_item(window, "sequenceClipDropArea")
 
         undo_button = self.gui.find_item(window, "sequenceUndoButton")
         self.gui.click(window, undo_button)

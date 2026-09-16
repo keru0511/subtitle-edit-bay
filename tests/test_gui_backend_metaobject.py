@@ -27,6 +27,8 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "transcriptionProjectExists()",
             "saveSettings(QVariantMap)",
             "setTranscriptionContext(QVariantMap)",
+            "switchWorkspace(QString)",
+            "setWorkspacePlayerState(QString,int,bool)",
         ):
             with self.subTest(method=signature):
                 self.assertGreaterEqual(meta_object.indexOfMethod(signature), 0)
@@ -38,6 +40,9 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "actionCapabilities",
             "settings",
             "transcriptionContext",
+            "currentWorkspace",
+            "workspacePlayerState",
+            "workspacePlayerStates",
         ):
             with self.subTest(property=name):
                 self.assertGreaterEqual(meta_object.indexOfProperty(name), 0)
@@ -46,6 +51,8 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "editorPlayheadChanged()",
             "cutTimelineChanged()",
             "codexChatChanged()",
+            "workspaceChanged()",
+            "workspacePlayerStateChanged()",
         ):
             with self.subTest(signal=signature):
                 self.assertGreaterEqual(meta_object.indexOfSignal(signature), 0)

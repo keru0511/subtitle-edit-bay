@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QProcess
 from src.editor_workspace import EditorWorkspaceState
 from src.gui import EditBayBackend
 from src.gui_state import SourceSelection
+from src.gui_workspace_controller import WorkspaceNavigationController
 from src.runtime_dependencies import RuntimeDependencyStatus
 
 
@@ -56,6 +57,7 @@ class EditBayGuiTestSession:
         app._sync_subtitle_model()
         app._cut_editor_available = True
         app._editor_workspace = EditorWorkspaceState()
+        app._workspace_navigation = WorkspaceNavigationController()
 
         app._active_job = ""
         app._processing_progress.start("")

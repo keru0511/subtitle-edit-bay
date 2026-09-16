@@ -91,6 +91,7 @@ from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color, save_speaker_color
 from .gui_base import APP_TITLE, LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
+from .gui_workspace_controller import WorkspaceNavigationController
 from .editor_workspace import (
     EditModeCapabilities,
     EditorWorkspaceState,
@@ -390,6 +391,8 @@ class EditBayBackend(LegacyEditBayBackend):
     editorPlayheadChanged = Signal()
     cutTimelineChanged = Signal()
     actionCapabilitiesChanged = Signal()
+    workspaceChanged = Signal()
+    workspacePlayerStateChanged = Signal()
 
     @property
     def _project(self) -> dict[str, Any] | None:
@@ -647,6 +650,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self._relink_source_selection: SourceSelection | None = None
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._editor_workspace = EditorWorkspaceState()
+        self._workspace_navigation = WorkspaceNavigationController()
         for signal in (
             self.dependenciesChanged, self.sourceSelectionChanged, self.speakersChanged,
             self.audioTracksChanged, self.settingsChanged, self.projectChanged,
@@ -855,6 +859,55 @@ class EditBayBackend(LegacyEditBayBackend):
     @Property(bool, notify=projectChanged)
     def projectDirty(self) -> bool:
         return self._project_dirty
+
+    @Property(str, notify=workspaceChanged)
+    def currentWorkspace(self) -> str:
+        """Return the backend-owned workspace identity for QML."""
+
+        return self._workspace_navigation.current_workspace
+
+    @Property("QVariantMap", notify=workspacePlayerStateChanged)
+    def workspacePlayerState(self) -> dict[str, Any]:
+        """Return the active workspace player state at the navigation boundary."""
+
+        return self._workspace_navigation.current_player.as_dict()
+
+    @Property("QVariantMap", notify=workspacePlayerStateChanged)
+    def workspacePlayerStates(self) -> dict[str, dict[str, Any]]:
+        """Expose isolated transport snapshots for diagnostics and QML."""
+
+        return self._workspace_navigation.player_states()
+
+    @Slot(str, int, bool, result=bool)
+    def setWorkspacePlayerState(
+        self,
+        workspace: str,
+        position_ms: int,
+        playing: bool,
+    ) -> bool:
+        changed = self._workspace_navigation.update_player_state(
+            workspace,
+            position_ms,
+            playing=playing,
+        )
+        if changed:
+            self.workspacePlayerStateChanged.emit()
+        return changed
+
+    @Slot(str, result=bool)
+    def switchWorkspace(self, workspace: str) -> bool:
+        result = self._workspace_navigation.switch_workspace(
+            workspace,
+            running=self._running,
+            active_job=self._active_job,
+        )
+        if not result.accepted:
+            self._set_status(result.reason, "BUSY" if self._running or self._active_job else "CHECK")
+            return False
+        if result.changed:
+            self.workspaceChanged.emit()
+            self.workspacePlayerStateChanged.emit()
+        return True
 
     def _edit_mode_capabilities(self) -> EditModeCapabilities:
         return build_edit_mode_capabilities(

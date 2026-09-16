@@ -207,8 +207,11 @@ class QmlStaticTests(unittest.TestCase):
         )[0]
 
         self.assertIn('property string activeOverlay: ""', workflow)
-        self.assertIn('property string currentWorkspace: "normal-video"', workflow)
-        self.assertIn('root.currentWorkspace = "short-artifact"', workflow)
+        self.assertIn('root.appBackend.currentWorkspace', workflow)
+        self.assertIn('root.appBackend.setWorkspacePlayerState', workflow)
+        self.assertIn('root.appBackend.switchWorkspace("short-artifact")', workflow)
+        self.assertIn('root.appBackend.switchWorkspace("normal-video")', workflow)
+        self.assertIn('function onWorkspaceChanged()', workflow)
         self.assertNotIn('root.activeOverlay = "short"', workflow)
         self.assertNotIn("\n    property bool editorMode:", workflow)
         self.assertNotIn("\n    property bool mixerMode:", workflow)

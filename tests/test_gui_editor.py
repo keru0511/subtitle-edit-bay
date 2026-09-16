@@ -5988,6 +5988,202 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         restart_button = self._quick_item(window, "restartApplicationButton")
         self.assertTrue(restart_button.property("visible"))
+    def _make_sequence_project(self) -> tuple[Path, Path, Path]:
+        first_video = self.root / "first.mp4"
+        second_video = self.root / "second.mp4"
+        first_video.write_bytes(b"first video fixture")
+        second_video.write_bytes(b"second video fixture")
+        output_dir = self.root / "sequence-export"
+        output_dir.mkdir()
+        project = create_project(
+            video_path=first_video,
+            output_dir=output_dir,
+            segments=[],
+            duration_seconds=10.0,
+        )
+        project_path = output_dir / "sequence.subtitle-project.json"
+        save_project(project_path, project)
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        self.app.autosave_timer.stop()
+        return project_path, first_video, second_video
+
+    def _add_second_sequence_asset(self, second_video: Path, *, duration: float = 8.0) -> str:
+        with patch("src.gui.probe_media_duration", return_value=duration):
+            self.assertTrue(self.app.addSequenceAsset(str(second_video)))
+        assets = self.app.mediaBinAssets
+        self.assertEqual(len(assets), 2)
+        return str(assets[-1]["id"])
+
+    def test_sequence_edits_use_controller_history_and_persist_in_order(self) -> None:
+        project_path, _first_video, second_video = self._make_sequence_project()
+        second_asset_id = self._add_second_sequence_asset(second_video)
+
+        self.assertTrue(self.app.addSequenceClip(second_asset_id))
+        second_clip = next(
+            clip for clip in self.app.sequenceClips if clip["assetId"] == second_asset_id
+        )
+        second_clip_id = str(second_clip["clipId"])
+        self.assertTrue(self.app.trimSequenceClip(second_clip_id, 1.0, 4.0))
+        self.assertTrue(
+            self.app.setSequenceClipAudio(
+                second_clip_id,
+                False,
+                1.25,
+                -0.1,
+                True,
+            )
+        )
+
+        # Reordering resets only the moved clip's stale incoming transition;
+        # configure the transition after the order change on the new incoming
+        # clip so the persisted boundary remains valid.
+        self.assertTrue(self.app.moveSequenceClip(second_clip_id, 0))
+        reordered_clips = self.app.sequenceClips
+        self.assertEqual(str(reordered_clips[0]["clipId"]), second_clip_id)
+        legacy_clip_id = str(reordered_clips[1]["clipId"])
+        self.assertTrue(self.app.setSequenceTransition(legacy_clip_id, "crossfade", 0.5))
+
+        view = self.app.sequenceView
+        self.assertEqual(
+            [clip["clipId"] for clip in view["clips"]],
+            [second_clip_id, legacy_clip_id],
+        )
+        self.assertAlmostEqual(float(view["outputDuration"]), 12.5)
+        self.assertTrue(self.app.setSequencePlayhead(1500))
+        playhead = self.app.sequencePlayhead
+        self.assertEqual(playhead["clipId"], second_clip_id)
+        self.assertAlmostEqual(float(playhead["sourceTime"]), 2.5)
+        self.assertTrue(self.app.projectDirty)
+        self.assertTrue(self.app.canUndo)
+
+        saved_clip = next(clip for clip in view["clips"] if clip["clipId"] == second_clip_id)
+        self.assertAlmostEqual(float(saved_clip["sourceStart"]), 1.0)
+        self.assertAlmostEqual(float(saved_clip["sourceEnd"]), 4.0)
+        self.assertFalse(bool(saved_clip["audioLinked"]))
+        self.assertAlmostEqual(float(saved_clip["volume"]), 1.25)
+        self.assertAlmostEqual(float(saved_clip["audioOffset"]), -0.1)
+        self.assertTrue(bool(saved_clip["muted"]))
+
+        self.assertTrue(self.app.saveProject())
+        saved = load_project(project_path)
+        self.assertEqual(
+            [clip["id"] for clip in saved["sequence"]["clips"]],
+            [second_clip_id, legacy_clip_id],
+        )
+
+        self.app.undoCutEdit()
+        self.assertTrue(self.app.canRedo)
+        self.assertEqual(self.app.sequenceView["clips"][1]["transition"]["type"], "cut")
+        self.app.redoCutEdit()
+        self.assertEqual(
+            self.app.sequenceView["clips"][1]["transition"]["type"],
+            "crossfade",
+        )
+
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        reloaded = self.app.sequenceView
+        self.assertEqual(
+            [clip["clipId"] for clip in reloaded["clips"]],
+            [second_clip_id, legacy_clip_id],
+        )
+        self.assertAlmostEqual(float(reloaded["outputDuration"]), 12.5)
+
+    def test_sequence_asset_validation_fails_closed(self) -> None:
+        _project_path, _first_video, second_video = self._make_sequence_project()
+        missing = self.root / "missing.mp4"
+        self.assertFalse(self.app.addSequenceAsset(str(missing)))
+        self.assertEqual(self.app.mediaBinAssets[0]["id"], "asset-video")
+        self.assertTrue(self.app.sequenceError)
+
+        second_video.write_bytes(b"second video fixture")
+        with patch("src.gui.probe_media_duration", return_value=0.0):
+            self.assertFalse(self.app.addSequenceAsset(str(second_video)))
+        self.assertEqual(len(self.app.mediaBinAssets), 1)
+        self.assertTrue(self.app.sequenceError)
+
+    def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
+        _project_path, _first_video, second_video = self._make_sequence_project()
+        second_asset_id = self._add_second_sequence_asset(second_video)
+        qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
+        _engine, window = self.gui.load_qml(qml_path, width=1_280, height=820)
+
+        panel = self.gui.find_item(window, "workspaceSequenceEditor")
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertFalse(panel.isVisible())
+        self.assertTrue(self.app.selectEditMode("audio"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "audio" and not panel.isVisible(),
+            description="sequence panel hidden in audio mode",
+        )
+        self.assertTrue(self.app.selectEditMode("cut"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
+            description="sequence panel visible in cut mode",
+        )
+        self.gui.find_item(window, "mediaBinPanel")
+        self.gui.find_item(window, "sequenceClipList")
+        self.gui.find_item(window, "mediaBinDropArea")
+
+        self.assertTrue(self.app.selectEditMode("subtitle"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "subtitle" and not panel.isVisible(),
+            description="sequence panel hidden in subtitle mode",
+        )
+        self.assertTrue(self.app.selectEditMode("cut"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
+            description="sequence panel visible after returning to cut mode",
+        )
+        self.gui.wait_until(
+            lambda: any(
+                item.property("sequenceAssetId") == second_asset_id
+                for item in self.gui.visual_items_with_properties(panel, "sequenceAssetId")
+            ),
+            description="sequence asset delegate after returning to cut mode",
+        )
+
+        add_button = self.gui.find_visual_item_by_properties(
+            panel,
+            {"sequenceAssetId": second_asset_id},
+            required_properties=("sequenceAssetId",),
+        )
+        before = len(self.app.sequenceClips)
+        self.gui.click(window, add_button)
+        self.gui.wait_until(
+            lambda: len(self.app.sequenceClips) == before + 1,
+            description="media-bin clip dispatch",
+        )
+        added_clip = self.app.sequenceClips[-1]
+        self.assertEqual(added_clip["assetId"], second_asset_id)
+        added_clip_id = str(added_clip["clipId"])
+        self.gui.wait_until(
+            lambda: any(
+                item.property("clipId") == added_clip_id
+                for item in self.gui.visual_items_with_properties(panel, "clipId")
+            ),
+            description="sequence clip delegate creation",
+        )
+
+        undo_button = self.gui.find_item(window, "sequenceUndoButton")
+        self.gui.click(window, undo_button)
+        self.gui.wait_until(
+            lambda: len(self.app.sequenceClips) == before,
+            description="sequence undo dispatch",
+        )
+        redo_button = self.gui.find_item(window, "sequenceRedoButton")
+        self.gui.click(window, redo_button)
+        self.gui.wait_until(
+            lambda: len(self.app.sequenceClips) == before + 1,
+            description="sequence redo dispatch",
+        )
+        self.gui.wait_until(
+            lambda: any(
+                item.property("clipId") == added_clip_id
+                for item in self.gui.visual_items_with_properties(panel, "clipId")
+            ),
+            description="sequence clip delegate after redo",
+        )
 
 
 if __name__ == "__main__":

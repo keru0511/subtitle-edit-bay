@@ -14,6 +14,7 @@ WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
 WORKSPACE_HEADER_QML = COMPONENTS_ROOT / "WorkspaceHeader.qml"
+SEQUENCE_EDITOR_QML = COMPONENTS_ROOT / "SequenceEditorPanel.qml"
 SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "ContextActionBar.qml",
     COMPONENTS_ROOT / "PanelTitle.qml",
@@ -33,6 +34,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
     COMPONENTS_ROOT / "SubtitleOverlay.qml",
     COMPONENTS_ROOT / "ShortModePreview.qml",
+    SEQUENCE_EDITOR_QML,
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -44,6 +46,58 @@ QML_LINT_FILES = (
 
 
 class QmlStaticTests(unittest.TestCase):
+    def test_sequence_editor_uses_backend_view_and_mutation_boundary(self) -> None:
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8")
+
+        self.assertEqual(workflow.count("SequenceEditorPanel {"), 1)
+        self.assertIn('objectName: "workspaceSequenceEditor"', workflow)
+        self.assertIn(
+            'visible: root.appBackend.currentWorkspace === "normal-video"\n'
+            '                        && root.appBackend.projectLoaded\n'
+            '                        && root.appBackend.currentEditMode === "cut"',
+            workflow,
+        )
+        for binding in (
+            "backend.mediaBinAssets",
+            "backend.sequenceClips",
+            "backend.sequenceOutputDuration",
+            "backend.sequencePlayhead",
+            "backend.addSequenceAssets",
+            "backend.addSequenceClip",
+            "backend.moveSequenceClip",
+            "backend.trimSequenceClip",
+            "backend.setSequenceTransition",
+            "backend.setSequenceClipAudio",
+            "backend.setSequencePlayhead",
+            "backend.canUndo",
+            "backend.canRedo",
+        ):
+            with self.subTest(binding=binding):
+                self.assertIn(binding, panel)
+
+        for object_name in (
+            "mediaBinDropArea",
+            "sequenceClipDropArea",
+            "sequenceClipList",
+            "sequencePlayheadSlider",
+        ):
+            with self.subTest(object_name=object_name):
+                self.assertIn(f'objectName: "{object_name}"', panel)
+
+        for forbidden in (
+            "property var sequence",
+            "property var clips",
+            "project[",
+            "project.",
+            "joinClips",
+            "mediaAssets",
+            "drag.source.clipId",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, panel)
+        self.assertIn('source["clipId"]', panel)
+
     def test_workspace_header_is_a_backend_bound_action_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         header = WORKSPACE_HEADER_QML.read_text(encoding="utf-8")

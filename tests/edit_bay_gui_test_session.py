@@ -58,6 +58,8 @@ class EditBayGuiTestSession:
         app._cut_editor_available = True
         app._editor_workspace = EditorWorkspaceState()
         app._workspace_navigation = WorkspaceNavigationController()
+        app._sequence_playhead_seconds = 0.0
+        app._sequence_error = ""
 
         app._active_job = ""
         app._processing_progress.start("")

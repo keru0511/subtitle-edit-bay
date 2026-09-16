@@ -1793,6 +1793,30 @@ ApplicationWindow {
                 color: "#080A09"
                 border.color: root.border
                 clip: true
+                SequenceEditorPanel {
+                    id: sequenceEditorPanel
+                    objectName: "workspaceSequenceEditor"
+                    visible: root.appBackend.currentWorkspace === "normal-video"
+                        && root.appBackend.projectLoaded
+                        && root.appBackend.currentEditMode === "cut"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    // Keep the overlay inside the existing video panel at
+                    // compact heights; it must not participate in the outer
+                    // workspace layout or raise modeEditorSlot's bounds.
+                    height: visible ? Math.min(238, Math.max(0, parent.height)) : 0
+                    z: 20
+                    backend: root.appBackend
+                    panelColor: root.panel
+                    raisedColor: root.raised
+                    borderColor: root.border
+                    textColor: root.textPrimary
+                    mutedColor: root.textMuted
+                    accentColor: root.acid
+                    warningColor: root.amber
+                    dangerColor: root.danger
+                }
                 MediaPlayer {
                     id: mainPlayer
                     objectName: "mainWorkspacePlayer"

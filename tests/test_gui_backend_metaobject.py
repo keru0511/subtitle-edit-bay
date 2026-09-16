@@ -29,6 +29,16 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "setTranscriptionContext(QVariantMap)",
             "switchWorkspace(QString)",
             "setWorkspacePlayerState(QString,int,bool)",
+            "addSequenceAsset(QString)",
+            "addSequenceAssets(QVariantList)",
+            "browseSequenceAsset()",
+            "addSequenceClip(QString)",
+            "moveSequenceClip(QString,int)",
+            "removeSequenceClip(QString)",
+            "trimSequenceClip(QString,double,double)",
+            "setSequenceTransition(QString,QString,double)",
+            "setSequenceClipAudio(QString,bool,double,double,bool)",
+            "setSequencePlayhead(int)",
         ):
             with self.subTest(method=signature):
                 self.assertGreaterEqual(meta_object.indexOfMethod(signature), 0)
@@ -43,6 +53,12 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "currentWorkspace",
             "workspacePlayerState",
             "workspacePlayerStates",
+            "sequenceView",
+            "mediaBinAssets",
+            "sequenceClips",
+            "sequenceOutputDuration",
+            "sequencePlayhead",
+            "sequenceError",
         ):
             with self.subTest(property=name):
                 self.assertGreaterEqual(meta_object.indexOfProperty(name), 0)
@@ -53,6 +69,7 @@ class GuiBackendMetaObjectTests(unittest.TestCase):
             "codexChatChanged()",
             "workspaceChanged()",
             "workspacePlayerStateChanged()",
+            "sequenceChanged()",
         ):
             with self.subTest(signal=signature):
                 self.assertGreaterEqual(meta_object.indexOfSignal(signature), 0)

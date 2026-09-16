@@ -612,7 +612,12 @@ def render_project_video(
         )
     except VideoSequenceError as error:
         raise SystemExit(f"Project sequence is invalid: {error}") from error
-    if len(project_sequence.clips) > 1:
+    # Only the compatibility sequence synthesized from the legacy video may
+    # use the old single-source renderer.  An explicit sequence with one or
+    # zero clips must reach sequence preflight and fail closed until the
+    # single-clip renderer is implemented; falling through here would render
+    # project["video"] and silently discard the sequence edits.
+    if not project_sequence.is_legacy_single_video():
         try:
             sequence_plan = prepare_sequence_render(
                 project,

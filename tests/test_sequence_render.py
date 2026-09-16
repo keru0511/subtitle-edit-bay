@@ -136,5 +136,78 @@ class SequenceRenderTests(unittest.TestCase):
         render.assert_called_once()
 
 
+    def test_explicit_single_or_empty_sequence_fails_closed_without_legacy_render(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_video = root / "legacy.mp4"
+            edited_asset = root / "edited-asset.mp4"
+            legacy_video.write_bytes(b"legacy")
+            edited_asset.write_bytes(b"edited")
+            common_asset = {
+                "id": "asset-edited",
+                "path": str(edited_asset),
+                "duration_seconds": 4.0,
+            }
+            sequences = {
+                "explicit-single": {
+                    "schema_version": 1,
+                    "assets": [common_asset],
+                    "clips": [
+                        {
+                            "id": "clip-edited",
+                            "asset_id": "asset-edited",
+                            "source_start": 1.0,
+                            "source_end": 3.0,
+                            "volume": 0.25,
+                        }
+                    ],
+                },
+                "explicit-trimmed-single": {
+                    "schema_version": 1,
+                    "assets": [{**common_asset, "id": "asset-video"}],
+                    "clips": [
+                        {
+                            "id": "clip-video",
+                            "asset_id": "asset-video",
+                            "source_start": 1.0,
+                            "source_end": 3.0,
+                        }
+                    ],
+                },
+                "explicit-empty": {
+                    "schema_version": 1,
+                    "assets": [{**common_asset, "id": "asset-video"}],
+                    "clips": [],
+                },
+            }
+
+            for name, sequence in sequences.items():
+                with self.subTest(sequence=name):
+                    project = create_project(
+                        video_path=legacy_video,
+                        output_dir=root,
+                        duration_seconds=4.0,
+                        segments=[],
+                        sequence=sequence,
+                    )
+                    project_path = save_project(
+                        root / f"{name}.subtitle-project.json",
+                        project,
+                    )
+                    with patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render:
+                        with self.assertRaisesRegex(
+                            SystemExit,
+                            "sequence render requires at least two clips",
+                        ):
+                            from src.subtitle_workflow import render_project_video
+
+                            render_project_video(
+                                project_path,
+                                output_path=root / f"{name}.mp4",
+                                audio_normalize=False,
+                            )
+                    legacy_render.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

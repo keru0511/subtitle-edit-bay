@@ -20,6 +20,7 @@ from .short_video_schema import ShortVideo
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .video_timeline import VideoTimeline, VideoTimelineError
+from .video_sequence import VideoSequence, VideoSequenceError
 from .media_probe import probe_media_duration
 
 
@@ -310,6 +311,7 @@ class SubtitleProject:
     audio_mix: AudioMix | None
     segments: list[SubtitleSegment]
     timeline: VideoTimeline
+    sequence: VideoSequence = field(default_factory=VideoSequence)
     short_video: ShortVideo = field(default_factory=ShortVideo)
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -338,6 +340,13 @@ class SubtitleProject:
             )
         except VideoTimelineError as error:
             raise SubtitleProjectError(str(error)) from error
+        try:
+            sequence = VideoSequence.from_json(
+                migrated.get("sequence"),
+                legacy_video=video,
+            )
+        except VideoSequenceError as error:
+            raise SubtitleProjectError(str(error)) from error
         return cls(
             schema_version=int(migrated.get("schema_version", PROJECT_SCHEMA_VERSION)),
             project_type=str(migrated.get("project_type", PROJECT_TYPE)),
@@ -355,11 +364,13 @@ class SubtitleProject:
             audio_mix=AudioMix.from_json(migrated["audio_mix"]) if isinstance(migrated.get("audio_mix"), dict) else None,
             segments=segments,
             timeline=timeline,
+            sequence=sequence,
             short_video=ShortVideo.from_json(migrated.get("short_video")),
             extras=deepcopy({key: value for key, value in migrated.items() if key not in {
                 "schema_version", "project_type", "created_at", "updated_at", "video", "output_dir",
                 "audio_sources", "speakers", "waveforms", "subtitle_settings", "render_settings",
-                "transcription", "transcription_context", "audio_mix", "segments", "timeline", "short_video",
+                "transcription", "transcription_context", "audio_mix", "segments", "timeline", "sequence",
+                "short_video",
             }}),
         )
 
@@ -380,6 +391,7 @@ class SubtitleProject:
             "transcription_context": deepcopy(self.transcription_context),
             "segments": [segment.to_json() for segment in self.segments],
             "timeline": self.timeline.to_json(),
+            "sequence": self.sequence.to_json(),
         }
         if self.audio_mix is not None:
             payload["audio_mix"] = self.audio_mix.to_json()
@@ -691,6 +703,7 @@ def create_project(
     transcription_context: dict[str, Any] | None = None,
     audio_mix: dict[str, Any] | None = None,
     timeline: dict[str, Any] | None = None,
+    sequence: dict[str, Any] | None = None,
     duration_seconds: float | None = None,
 ) -> dict[str, Any]:
     now = utc_timestamp()
@@ -714,6 +727,7 @@ def create_project(
         "audio_mix": deepcopy(audio_mix or {}),
         "segments": [deepcopy(segment) for segment in segments],
         "timeline": deepcopy(timeline) if timeline is not None else None,
+        "sequence": deepcopy(sequence) if sequence is not None else None,
     }
     return validate_project(project)
 

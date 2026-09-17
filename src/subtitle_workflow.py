@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -548,6 +549,48 @@ def _is_mp4_output(output_path: str | Path) -> bool:
     return Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}
 
 
+def _legacy_singleton_sequence_keep_ranges(
+    project: dict[str, Any],
+    sequence: VideoSequence,
+) -> list[tuple[float, float]] | None:
+    """Return the source range for a safely compatible legacy singleton edit.
+
+    The sequence editor can materialize the legacy ``video`` value into an
+    explicit sequence before saving.  A source-only trim is still renderable
+    by the established single-source path, but other singleton edits must not
+    be silently discarded by that path.  Returning ``None`` keeps those
+    explicit sequences on sequence preflight, where they fail closed.
+    """
+
+    if sequence.is_legacy_single_video() or len(sequence.assets) != 1 or len(sequence.clips) != 1:
+        return None
+    asset = sequence.assets[0]
+    clip = sequence.clips[0]
+    video = project.get("video")
+    if not isinstance(video, dict):
+        return None
+    video_path = str(video.get("path", "")).strip()
+    if not video_path or Path(asset.path).resolve() != Path(video_path).resolve():
+        return None
+    if asset.id != "asset-video" or clip.id != "clip-video" or clip.asset_id != asset.id:
+        return None
+    if (
+        clip.transition.type != "cut"
+        or clip.transition.duration > 0.0005
+        or not clip.audio_linked
+        or abs(clip.volume - 1.0) > 0.0005
+        or abs(clip.audio_offset_seconds) > 0.0005
+        or clip.muted
+    ):
+        return None
+    duration = float(video.get("duration_seconds", 0.0) or 0.0)
+    if not math.isfinite(duration) or duration <= 0.0:
+        return None
+    if clip.source_start < 0.0 or clip.source_end > duration + 0.0005:
+        return None
+    return [(clip.source_start, min(clip.source_end, duration))]
+
+
 def build_project_ass(
     project_path: str | Path,
     output_path: str | Path | None = None,
@@ -613,12 +656,13 @@ def render_project_video(
         )
     except VideoSequenceError as error:
         raise SystemExit(f"Project sequence is invalid: {error}") from error
-    # Only the compatibility sequence synthesized from the legacy video may
-    # use the old single-source renderer.  An explicit sequence with one or
-    # zero clips must reach sequence preflight and fail closed until the
-    # single-clip renderer is implemented; falling through here would render
-    # project["video"] and silently discard the sequence edits.
-    if not project_sequence.is_legacy_single_video():
+    # A source-only trim made through SequenceEditorPanel is still compatible
+    # with the established single-source renderer.  Keep the explicit
+    # sequence in the saved project, but pass its source range through the
+    # same non-destructive cut/subtitle path.  Other explicit singleton edits
+    # must reach sequence preflight and fail closed rather than being lost.
+    legacy_singleton_keep_ranges = _legacy_singleton_sequence_keep_ranges(project, project_sequence)
+    if not project_sequence.is_legacy_single_video() and legacy_singleton_keep_ranges is None:
         try:
             sequence_plan = prepare_sequence_render(
                 project,
@@ -685,14 +729,30 @@ def render_project_video(
         raise SystemExit(f"Project video was not found: {video_path}")
     timeline = timeline_from_project(project)
     manual_keep_ranges = timeline.keep_ranges
-    render_keep_ranges = manual_keep_ranges if timeline.has_cuts else []
+    if legacy_singleton_keep_ranges is not None:
+        manual_keep_ranges = (
+            intersect_ranges(manual_keep_ranges, legacy_singleton_keep_ranges)
+            if timeline.has_cuts
+            else legacy_singleton_keep_ranges
+        )
+    has_legacy_singleton_trim = legacy_singleton_keep_ranges is not None
+    has_render_ranges = timeline.has_cuts or has_legacy_singleton_trim
+    render_keep_ranges = manual_keep_ranges if has_render_ranges else []
     emit_progress_event("render", "prepare", phase="complete", progress=1.0)
     emit_progress_event("render", "subtitle", phase="start")
     has_subtitles = any(
         isinstance(segment, dict) and str(segment.get("text", "")).strip()
         for segment in project.get("segments", [])
     )
-    ass_path = build_project_ass(project_path, _project=project) if has_subtitles else None
+    ass_path = (
+        build_project_ass(
+            project_path,
+            _project=project,
+            _keep_ranges=manual_keep_ranges if has_legacy_singleton_trim else None,
+        )
+        if has_subtitles
+        else None
+    )
     emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
     emit_progress_event("render", "audio", phase="start")
     loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
@@ -811,7 +871,7 @@ def render_project_video(
             padding=speech_padding_seconds,
             min_clip_duration=speech_min_clip_seconds,
         )
-        if timeline.has_cuts:
+        if timeline.has_cuts or has_legacy_singleton_trim:
             keep_ranges = intersect_ranges(manual_keep_ranges, keep_ranges)
         if not keep_ranges:
             raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
@@ -893,7 +953,7 @@ def render_project_video(
                 include_audio=has_audio_stream or use_audio_mix,
                 progress_callback=log_progress,
             )
-    elif timeline.has_cuts:
+    elif has_render_ranges:
         if not manual_keep_ranges:
             raise SystemExit("Manual cuts would remove the entire video; refusing to render.")
         if has_subtitles:
@@ -920,7 +980,7 @@ def render_project_video(
                 "render",
                 "encode",
                 phase="metadata",
-                duration=timeline.output_duration,
+                duration=sum(max(0.0, end - start) for start, end in manual_keep_ranges),
             )
             emit_progress_event("render", "encode", phase="start")
             log_progress(f"Rendering edited subtitles to {output.name}")
@@ -943,7 +1003,7 @@ def render_project_video(
                 "render",
                 "encode",
                 phase="metadata",
-                duration=timeline.output_duration,
+                duration=sum(max(0.0, end - start) for start, end in manual_keep_ranges),
             )
             emit_progress_event("render", "encode", phase="start")
             log_progress(f"Applying {len(timeline.cuts)} manual cuts to {output.name}")
@@ -1004,6 +1064,8 @@ def render_project_video(
         "speech_threshold_db": speech_threshold_db,
         "speech_min_clip_seconds": speech_min_clip_seconds,
         "manual_cut_count": len(timeline.cuts),
+        "sequence_clip_count": 1 if has_legacy_singleton_trim else 0,
+        "legacy_singleton_trim": has_legacy_singleton_trim,
         "output_duration_seconds": (
             round(sum(end - start for start, end in render_keep_ranges), 3)
             if render_keep_ranges

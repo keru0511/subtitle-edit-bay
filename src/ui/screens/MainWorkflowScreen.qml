@@ -45,17 +45,6 @@ ApplicationWindow {
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
     property string activeOverlay: ""
-    // Compatibility mirror for callers that still inspect/set this QML
-    // property.  The backend owns the value; the mirror never drives
-    // visibility directly and forwards legacy writes through the guarded API.
-    property string currentWorkspace: root.appBackend
-        ? root.appBackend.currentWorkspace : "normal-video"
-    onCurrentWorkspaceChanged: {
-        if (!root.appBackend || root.currentWorkspace === root.appBackend.currentWorkspace)
-            return
-        if (!root.appBackend.switchWorkspace(root.currentWorkspace))
-            root.currentWorkspace = root.appBackend.currentWorkspace
-    }
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
     property string selectedCutId: ""
@@ -3217,8 +3206,6 @@ ApplicationWindow {
         target: root.appBackend
         function onWorkspaceChanged() {
             var nextWorkspace = String(root.appBackend.currentWorkspace || "normal-video")
-            if (root.currentWorkspace !== nextWorkspace)
-                root.currentWorkspace = nextWorkspace
             if (nextWorkspace === "normal-video") {
                 var playerState = root.appBackend.workspacePlayerState
                 if (playerState)

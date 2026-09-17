@@ -128,7 +128,8 @@
         "test_video_timeline",
         "test_workflow_actions",
         "test_youtube_package",
-        "test_youtube_text"
+        "test_youtube_text",
+        "test_workspace_contract"
       ],
       "selectors": []
     },

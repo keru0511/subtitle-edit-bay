@@ -318,7 +318,7 @@ class SequenceRenderTests(unittest.TestCase):
                     "asset_id": "asset-video",
                     "clip_id": "clip-video",
                     "path": legacy_video,
-                    "transition": {"type": "crossfade", "duration": 0.25},
+                    "transition": {"type": "crossfade", "duration": 0.0},
                 },
                 "different-asset": {
                     "asset_id": "asset-edited",

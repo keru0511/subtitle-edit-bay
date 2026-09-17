@@ -85,7 +85,7 @@ QML lintの具体的な証跡は tests/test_qml_static.py::test_qml_files_pass_q
 
 ### 3.3 #422監査PR自身のCI
 
-#422自身のHEAD dfa771ecf04e4898432ae5a26e463605d1726dbb に対して、次の実runを確認した。
+#422監査の検証対象commit dfa771ecf04e4898432ae5a26e463605d1726dbb に対して、次の実runを確認した。
 
 | 検証 | 実run | 状態 |
 | --- | --- | --- |

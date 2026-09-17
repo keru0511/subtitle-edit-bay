@@ -574,6 +574,10 @@ class VideoSequence:
             and abs(clip.source_end - self.assets[0].duration_seconds) <= _TIME_EPSILON
             and clip.transition.type == "cut"
             and clip.transition.duration <= _TIME_EPSILON
+            and clip.audio_linked
+            and abs(clip.volume - 1.0) <= _TIME_EPSILON
+            and abs(clip.audio_offset_seconds) <= _TIME_EPSILON
+            and not clip.muted
         )
 
     def sync_legacy_video(self, video: Mapping[str, Any]) -> "VideoSequence":

@@ -562,7 +562,7 @@ def _legacy_singleton_sequence_keep_ranges(
     explicit sequences on sequence preflight, where they fail closed.
     """
 
-    if sequence.is_legacy_single_video() or len(sequence.assets) != 1 or len(sequence.clips) != 1:
+    if len(sequence.assets) != 1 or len(sequence.clips) != 1:
         return None
     asset = sequence.assets[0]
     clip = sequence.clips[0]
@@ -588,7 +588,24 @@ def _legacy_singleton_sequence_keep_ranges(
         return None
     if clip.source_start < 0.0 or clip.source_end > duration + 0.0005:
         return None
+    if abs(clip.source_start) <= 0.0005 and abs(clip.source_end - duration) <= 0.0005:
+        return None
     return [(clip.source_start, min(clip.source_end, duration))]
+
+
+def _is_safe_legacy_singleton_compatibility(
+    project: dict[str, Any],
+    sequence: VideoSequence,
+) -> bool:
+    """Keep an unchanged legacy singleton on the direct renderer path."""
+
+    if not sequence.is_legacy_single_video() or len(sequence.assets) != 1:
+        return False
+    video = project.get("video")
+    if not isinstance(video, dict):
+        return False
+    video_path = str(video.get("path", "")).strip()
+    return bool(video_path) and Path(sequence.assets[0].path).resolve() == Path(video_path).resolve()
 
 
 def build_project_ass(
@@ -662,7 +679,9 @@ def render_project_video(
     # same non-destructive cut/subtitle path.  Other explicit singleton edits
     # must reach sequence preflight and fail closed rather than being lost.
     legacy_singleton_keep_ranges = _legacy_singleton_sequence_keep_ranges(project, project_sequence)
-    if not project_sequence.is_legacy_single_video() and legacy_singleton_keep_ranges is None:
+    if legacy_singleton_keep_ranges is None and not _is_safe_legacy_singleton_compatibility(
+        project, project_sequence
+    ):
         try:
             sequence_plan = prepare_sequence_render(
                 project,

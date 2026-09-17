@@ -282,6 +282,153 @@ class SequenceRenderTests(unittest.TestCase):
                             )
                     legacy_render.assert_not_called()
 
+    def test_legacy_singleton_audio_and_transition_edits_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_video = root / "legacy.mp4"
+            edited_asset = root / "edited-asset.mp4"
+            legacy_video.write_bytes(b"legacy")
+            edited_asset.write_bytes(b"edited")
+            cases = {
+                "audio-unlinked": {
+                    "asset_id": "asset-video",
+                    "clip_id": "clip-video",
+                    "path": legacy_video,
+                    "audio_linked": False,
+                },
+                "volume": {
+                    "asset_id": "asset-video",
+                    "clip_id": "clip-video",
+                    "path": legacy_video,
+                    "volume": 0.25,
+                },
+                "audio-offset": {
+                    "asset_id": "asset-video",
+                    "clip_id": "clip-video",
+                    "path": legacy_video,
+                    "audio_offset_seconds": 0.25,
+                },
+                "muted": {
+                    "asset_id": "asset-video",
+                    "clip_id": "clip-video",
+                    "path": legacy_video,
+                    "muted": True,
+                },
+                "transition": {
+                    "asset_id": "asset-video",
+                    "clip_id": "clip-video",
+                    "path": legacy_video,
+                    "transition": {"type": "crossfade", "duration": 0.0},
+                },
+                "different-asset": {
+                    "asset_id": "asset-edited",
+                    "clip_id": "clip-edited",
+                    "path": edited_asset,
+                },
+            }
+
+            for name, overrides in cases.items():
+                with self.subTest(case=name):
+                    clip = {
+                        "id": overrides["clip_id"],
+                        "asset_id": overrides["asset_id"],
+                        "source_start": 0.0,
+                        "source_end": 4.0,
+                    }
+                    clip.update(
+                        {
+                            key: value
+                            for key, value in overrides.items()
+                            if key not in {"asset_id", "clip_id", "path"}
+                        }
+                    )
+                    sequence = {
+                        "schema_version": 1,
+                        "assets": [
+                            {
+                                "id": overrides["asset_id"],
+                                "path": str(overrides["path"]),
+                                "duration_seconds": 4.0,
+                            }
+                        ],
+                        "clips": [clip],
+                    }
+                    project = create_project(
+                        video_path=legacy_video,
+                        output_dir=root,
+                        duration_seconds=4.0,
+                        segments=[],
+                        sequence=sequence,
+                    )
+                    project_path = save_project(
+                        root / f"{name}.subtitle-project.json",
+                        project,
+                    )
+                    with patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render:
+                        with self.assertRaisesRegex(
+                            SystemExit,
+                            "sequence render requires at least two clips",
+                        ):
+                            from src.subtitle_workflow import render_project_video
+
+                            render_project_video(
+                                project_path,
+                                output_path=root / f"{name}.mp4",
+                                audio_normalize=False,
+                            )
+                    legacy_render.assert_not_called()
+
+    def test_full_length_legacy_singleton_uses_direct_render_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_video = root / "legacy.mp4"
+            legacy_video.write_bytes(b"legacy")
+            project = create_project(
+                video_path=legacy_video,
+                output_dir=root,
+                duration_seconds=4.0,
+                segments=[],
+                sequence={
+                    "schema_version": 1,
+                    "assets": [
+                        {
+                            "id": "asset-video",
+                            "path": str(legacy_video),
+                            "duration_seconds": 4.0,
+                        }
+                    ],
+                    "clips": [
+                        {
+                            "id": "clip-video",
+                            "asset_id": "asset-video",
+                            "source_start": 0.0,
+                            "source_end": 4.0,
+                        }
+                    ],
+                },
+            )
+            project_path = save_project(root / "full-length.subtitle-project.json", project)
+            output_path = root / "full-length.mp4"
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
+            ):
+                from src.subtitle_workflow import render_project_video
+
+                output = render_project_video(
+                    project_path,
+                    output_path=output_path,
+                    audio_normalize=False,
+                )
+                saved = load_project(project_path, resolve_video_duration=False)
+
+            self.assertEqual(output, output_path)
+            legacy_render.assert_called_once()
+            cut_media.assert_not_called()
+            self.assertFalse(saved["render_settings"]["legacy_singleton_trim"])
+            self.assertEqual(saved["render_settings"]["output_duration_seconds"], 4.0)
+
     def test_legacy_trimmed_singleton_uses_compatibility_render_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

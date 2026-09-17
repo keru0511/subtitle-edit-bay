@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -58,6 +60,27 @@ class CutoverAuditContractTests(unittest.TestCase):
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.document)
+
+
+    def test_audit_references_real_test_definitions(self) -> None:
+        module_names = set(
+            re.findall(r"tests/(test_[A-Za-z0-9_]+)\.py", self.document)
+        )
+        referenced_names = set(
+            re.findall(r"(?<![A-Za-z0-9_/])test_[A-Za-z0-9_]+", self.document)
+        ) - module_names
+
+        definitions = set()
+        for test_path in (REPOSITORY_ROOT / "tests").glob("test_*.py"):
+            tree = ast.parse(test_path.read_text(encoding="utf-8"), filename=str(test_path))
+            definitions.update(
+                node.name
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("test_")
+            )
+
+        self.assertEqual(sorted(referenced_names - definitions), [])
 
     def test_audit_preserves_non_scope_and_new_issue_boundary(self) -> None:
         for marker in (

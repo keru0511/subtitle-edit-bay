@@ -85,13 +85,13 @@ QML lintの具体的な証跡は tests/test_qml_static.py::test_qml_files_pass_q
 
 ### 3.3 #422監査PR自身のCI
 
-#422自身のHEAD e2878decf551480c72f233de4e284324429c5d1a に対して、次の実runを確認した。
+#422自身のHEAD dfa771ecf04e4898432ae5a26e463605d1726dbb に対して、次の実runを確認した。
 
 | 検証 | 実run | 状態 |
 | --- | --- | --- |
-| 通常CI | [CI run 35225396088](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35225396088) | success |
-| CodeQL | [CodeQL run 35225396087](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35225396087) | success |
-| Release readiness | [Release readiness run 35225396490](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35225396490) | success。Windows installer install/startを含む |
+| 通常CI | [CI run 35227037445](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35227037445) | success |
+| CodeQL | [CodeQL run 35227037504](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35227037504) | success |
+| Release readiness | [Release readiness run 35227038463](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35227038463) | success。Windows installer install/startを含む |
 | GUI performance | このHEADに紐づくrunなし | 対象workflowの実runは確認されなかった |
 
 上記は#422自身のPRに対する証跡であり、#424 PR時点およびmain pushのrunとは混同しない。

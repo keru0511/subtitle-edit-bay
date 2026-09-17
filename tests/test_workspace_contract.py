@@ -45,6 +45,15 @@ class WorkspaceContractTests(unittest.TestCase):
         self.assertIn("mainPlayer.position = Number(playerState.positionMs || 0)", workflow)
         self.assertNotIn("root.currentWorkspace", workflow)
 
+    def test_gui_workspace_callers_use_backend_api(self) -> None:
+        gui_tests = (REPOSITORY_ROOT / "tests" / "test_gui_editor.py").read_text(encoding="utf-8")
+
+        self.assertNotIn('window.setProperty("currentWorkspace"', gui_tests)
+        self.assertNotIn('window.property("currentWorkspace"', gui_tests)
+        self.assertIn('self.app.switchWorkspace("short-artifact")', gui_tests)
+        self.assertIn('self.app.switchWorkspace("normal-video")', gui_tests)
+        self.assertIn("self.app.currentWorkspace", gui_tests)
+
     def test_workspace_cutover_keeps_ai_state_on_backend_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
 

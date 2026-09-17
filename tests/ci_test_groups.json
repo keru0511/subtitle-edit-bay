@@ -46,6 +46,7 @@
         "test_color_config",
         "test_craig_pipeline",
         "test_craig_transcription_execution",
+        "test_cutover_audit",
         "test_dependabot_config",
         "test_editor_workspace",
         "test_gemini_acp_provider",

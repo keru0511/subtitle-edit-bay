@@ -10,7 +10,7 @@ from src.sequence_render import (
     build_sequence_filter_graph,
     prepare_sequence_render,
 )
-from src.subtitle_project import create_project, save_project
+from src.subtitle_project import create_project, load_project, save_project
 from src.video_sequence import VideoSequence
 
 
@@ -248,18 +248,6 @@ class SequenceRenderTests(unittest.TestCase):
                         }
                     ],
                 },
-                "explicit-trimmed-single": {
-                    "schema_version": 1,
-                    "assets": [{**common_asset, "id": "asset-video"}],
-                    "clips": [
-                        {
-                            "id": "clip-video",
-                            "asset_id": "asset-video",
-                            "source_start": 1.0,
-                            "source_end": 3.0,
-                        }
-                    ],
-                },
                 "explicit-empty": {
                     "schema_version": 1,
                     "assets": [{**common_asset, "id": "asset-video"}],
@@ -293,6 +281,60 @@ class SequenceRenderTests(unittest.TestCase):
                                 audio_normalize=False,
                             )
                     legacy_render.assert_not_called()
+
+    def test_legacy_trimmed_singleton_uses_compatibility_render_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_video = root / "legacy.mp4"
+            legacy_video.write_bytes(b"legacy")
+            project = create_project(
+                video_path=legacy_video,
+                output_dir=root,
+                duration_seconds=4.0,
+                segments=[],
+                sequence={
+                    "schema_version": 1,
+                    "assets": [
+                        {
+                            "id": "asset-video",
+                            "path": str(legacy_video),
+                            "duration_seconds": 4.0,
+                        }
+                    ],
+                    "clips": [
+                        {
+                            "id": "clip-video",
+                            "asset_id": "asset-video",
+                            "source_start": 1.0,
+                            "source_end": 3.0,
+                        }
+                    ],
+                },
+            )
+            project_path = save_project(root / "trimmed.subtitle-project.json", project)
+            output_path = root / "trimmed.mp4"
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
+            ):
+                from src.subtitle_workflow import render_project_video
+
+                output = render_project_video(
+                    project_path,
+                    output_path=output_path,
+                    audio_normalize=False,
+                )
+                saved = load_project(project_path, resolve_video_duration=False)
+
+            self.assertEqual(output, output_path)
+            cut_media.assert_called_once()
+            self.assertEqual(cut_media.call_args.args[2], [(1.0, 3.0)])
+            legacy_render.assert_not_called()
+
+        self.assertEqual(saved["sequence"]["clips"][0]["source_start"], 1.0)
+        self.assertEqual(saved["render_settings"]["output_duration_seconds"], 2.0)
+        self.assertTrue(saved["render_settings"]["legacy_singleton_trim"])
 
 
 if __name__ == "__main__":

@@ -345,6 +345,15 @@ class QmlStaticTests(unittest.TestCase):
         )
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
         self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
+        for stale_marker in (
+            "modeEditorFallback",
+            "modeSettingsFallback",
+            "openCurrentModeEditorButton",
+            "sourcePlayheadText",
+            "outputPlayheadText",
+        ):
+            with self.subTest(stale_marker=stale_marker):
+                self.assertNotIn(stale_marker, workflow)
         self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
         self.assertIn('objectName: "mainWorkspacePlayer"', main_workspace)
         self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)

@@ -1909,37 +1909,6 @@ ApplicationWindow {
                     sourceComponent: root.modeEditorContent
                 }
 
-                RowLayout {
-                    id: modeEditorFallback
-                    objectName: "modeEditorFallback"
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
-                    visible: !modeEditorContentLoader.active
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-                        Text { text: root.editModeTitle(root.appBackend.currentEditMode) + "編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 14; font.weight: Font.Bold }
-                        Text { Layout.fillWidth: true; text: root.editModeDescription(root.appBackend.currentEditMode); color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
-                        Text {
-                            Layout.fillWidth: true
-                            visible: root.appBackend.currentEditMode === "cut" && !root.appBackend.editorModeCapabilities.canCut
-                            text: root.appBackend.editorModeCapabilities.cutReason
-                            color: root.amber
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 10
-                        }
-                    }
-                    SmallButton {
-                        objectName: "openCurrentModeEditorButton"
-                        text: root.appBackend.currentEditMode === "audio" ? "音量調整を開く" : "字幕編集を開く"
-                        visible: root.appBackend.currentEditMode !== "cut"
-                        enabled: root.appBackend.currentEditMode === "audio"
-                            ? root.appBackend.editorModeCapabilities.canMixAudio
-                            : root.appBackend.editorModeCapabilities.canEditSubtitles
-                        onClicked: root.appBackend.currentEditMode === "audio" ? root.openMixerScreen() : root.openEditorScreen()
-                    }
-                }
             }
 
             Rectangle {
@@ -2007,27 +1976,6 @@ ApplicationWindow {
                 sourceComponent: root.modeSettingsContent
             }
 
-            ColumnLayout {
-                id: modeSettingsFallback
-                objectName: "modeSettingsFallback"
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 10
-                visible: !modeSettingsContentLoader.active
-                PanelTitle { text: root.editModeTitle(root.appBackend.currentEditMode) + "の設定" }
-                Text { Layout.fillWidth: true; text: root.editModeDescription(root.appBackend.currentEditMode); color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                Text { text: "共通の再生位置"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
-                Text { objectName: "sourcePlayheadText"; text: "素材  " + root.stamp(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 10 }
-                Text { objectName: "outputPlayheadText"; text: "出力  " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 10 }
-                Text { Layout.fillWidth: true; text: "カット適用後は素材時間と出力時間を対応付けます"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.Wrap }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                Text { text: "利用状況"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
-                Text { Layout.fillWidth: true; text: "字幕  利用可能"; color: root.appBackend.editorModeCapabilities.canEditSubtitles ? root.acid : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
-                Text { Layout.fillWidth: true; text: "カット  " + (root.appBackend.editorModeCapabilities.canCut ? "利用可能" : root.appBackend.editorModeCapabilities.cutReason); color: root.appBackend.editorModeCapabilities.canCut ? root.acid : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
-                Text { Layout.fillWidth: true; text: "音量  " + (root.appBackend.editorModeCapabilities.canMixAudio ? "利用可能" : root.appBackend.editorModeCapabilities.audioReason); color: root.appBackend.editorModeCapabilities.canMixAudio ? root.acid : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10; wrapMode: Text.Wrap }
-                Item { Layout.fillHeight: true }
-            }
         }
 
     }

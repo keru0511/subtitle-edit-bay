@@ -76,6 +76,7 @@
         "test_process_utils",
         "test_processing_progress",
         "test_processing_queue",
+        "test_production_entrypoint",
         "test_production_integration",
         "test_project_snapshots",
         "test_quality_entrypoint",

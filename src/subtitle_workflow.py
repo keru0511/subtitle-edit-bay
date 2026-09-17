@@ -562,7 +562,7 @@ def _legacy_singleton_sequence_keep_ranges(
     explicit sequences on sequence preflight, where they fail closed.
     """
 
-    if sequence.is_legacy_single_video() or len(sequence.assets) != 1 or len(sequence.clips) != 1:
+    if len(sequence.assets) != 1 or len(sequence.clips) != 1:
         return None
     asset = sequence.assets[0]
     clip = sequence.clips[0]
@@ -662,7 +662,9 @@ def render_project_video(
     # same non-destructive cut/subtitle path.  Other explicit singleton edits
     # must reach sequence preflight and fail closed rather than being lost.
     legacy_singleton_keep_ranges = _legacy_singleton_sequence_keep_ranges(project, project_sequence)
-    if not project_sequence.is_legacy_single_video() and legacy_singleton_keep_ranges is None:
+    if legacy_singleton_keep_ranges is None and not (
+        project_sequence.is_legacy_single_video() and not project_sequence.clips
+    ):
         try:
             sequence_plan = prepare_sequence_render(
                 project,

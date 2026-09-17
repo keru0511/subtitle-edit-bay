@@ -36,7 +36,12 @@ class CutoverAuditContractTests(unittest.TestCase):
             "35223701918",
             "35223701962",
             "#422監査PR自身のCI",
-            "未実行",
+            "e2878decf551480c72f233de4e284324429c5d1a",
+            "35225396088",
+            "35225396087",
+            "35225396490",
+            "success",
+
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.document)
@@ -81,6 +86,18 @@ class CutoverAuditContractTests(unittest.TestCase):
             )
 
         self.assertEqual(sorted(referenced_names - definitions), [])
+
+
+    def test_blocker_count_excludes_parent_and_audit_pr_states(self) -> None:
+        for marker in (
+            "### 4.0 監査対象のIssue/PR状態",
+            "#403 | open（親Epic、close待ち）",
+            "#418 / #419 / #420 / #421 | closed（cutover依存slice完了）",
+            "#422 | open（この監査PR、CI実績確認済み）",
+            "別のcutover blocker Issue/PR",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.document)
 
     def test_audit_preserves_non_scope_and_new_issue_boundary(self) -> None:
         for marker in (

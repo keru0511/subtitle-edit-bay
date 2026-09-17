@@ -85,9 +85,31 @@ QML lintの具体的な証跡は tests/test_qml_static.py::test_qml_files_pass_q
 
 ### 3.3 #422監査PR自身のCI
 
-この記録を作成した時点では、#422監査PR自身のCIは未実行である。PR作成後に起動するCI、CodeQL、必要なGUI performance、Release readinessの実runを別証跡として確認する。ここで先にgreenとは判定しない。
+#422自身のHEAD e2878decf551480c72f233de4e284324429c5d1a に対して、次の実runを確認した。
+
+| 検証 | 実run | 状態 |
+| --- | --- | --- |
+| 通常CI | [CI run 35225396088](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35225396088) | success |
+| CodeQL | [CodeQL run 35225396087](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35225396087) | success |
+| Release readiness | [Release readiness run 35225396490](https://github.com/keru0511/subtitle-edit-bay/actions/runs/35225396490) | success。Windows installer install/startを含む |
+| GUI performance | このHEADに紐づくrunなし | 対象workflowの実runは確認されなかった |
+
+上記は#422自身のPRに対する証跡であり、#424 PR時点およびmain pushのrunとは混同しない。
 
 ## 4. blocker判定
+
+### 4.0 監査対象のIssue/PR状態
+
+blocker=0の集計対象は、#403完了条件に対する未解決の実装欠落・不具合を持つIssue/PRである。親Epicのopen状態や、監査PRがレビュー中であること自体はcutover blockerに数えない。
+
+| 対象 | 監査時点のGitHub状態 | blocker集計上の扱い |
+| --- | --- | --- |
+| #403 | open（親Epic、close待ち） | blockerではない |
+| #418 / #419 / #420 / #421 | closed（cutover依存slice完了） | blockerではない |
+| #422 | open（この監査PR、CI実績確認済み） | blockerではない |
+| 別のcutover blocker Issue/PR | 確認されなかった | 0件 |
+
+blocker判定
 
 ### 4.1 open cutover blocker
 

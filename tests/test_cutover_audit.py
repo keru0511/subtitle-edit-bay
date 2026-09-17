@@ -99,6 +99,18 @@ class CutoverAuditContractTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.document)
 
+
+    def test_audit_assigns_manifest_owner_per_test_module(self) -> None:
+        for marker in (
+            "portable-unit（tests/test_sequence_render.py）",
+            "ffmpeg-runtime（tests/test_sequence_render_semantic_e2e.py）",
+            "portable-unit（tests/test_gui_workspace_controller.py）",
+            "qt-gui（tests/test_gui_editor.py）",
+            "ffmpeg-runtime（tests/test_short_video_semantic_e2e.py）",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.document)
+
     def test_audit_preserves_non_scope_and_new_issue_boundary(self) -> None:
         for marker in (
             "production codeの機能修正、visual polish、architecture refactor、新機能はこのPRへ追加しない。",

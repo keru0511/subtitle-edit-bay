@@ -62,7 +62,7 @@ class CutoverAuditContractTests(unittest.TestCase):
     def test_audit_preserves_non_scope_and_new_issue_boundary(self) -> None:
         for marker in (
             "production codeの機能修正、visual polish、architecture refactor、新機能はこのPRへ追加しない。",
-            "別Issueへ記録する",
+            "別Issueとして記録する",
             "tests/ci_test_groups.json",
             "docs/validation-ownership.md",
             "docs/CI_TEST_GROUPS.md",

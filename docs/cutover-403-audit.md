@@ -61,6 +61,8 @@
 
 正本は docs/validation-ownership.md と docs/CI_TEST_GROUPS.md である。テストモジュールの分類は tests/ci_test_groups.json、実行入口は scripts/run_ci_tests.py とする。
 
+QML lintの具体的な証跡は tests/test_qml_static.py::test_qml_files_pass_qmllint_without_warnings であり、CIではPortable, Qt, and FFmpeg testsのqt-guiグループが所有する。
+
 ### 3.1 基準mainで確認したCI
 
 次のrunは、#424 merge後main SHA 80ba9a557223939e96f1e04a5ae6ff00bd09077c を直接検証した実績である。

@@ -378,6 +378,57 @@ class SequenceRenderTests(unittest.TestCase):
                             )
                     legacy_render.assert_not_called()
 
+    def test_full_length_legacy_singleton_uses_direct_render_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_video = root / "legacy.mp4"
+            legacy_video.write_bytes(b"legacy")
+            project = create_project(
+                video_path=legacy_video,
+                output_dir=root,
+                duration_seconds=4.0,
+                segments=[],
+                sequence={
+                    "schema_version": 1,
+                    "assets": [
+                        {
+                            "id": "asset-video",
+                            "path": str(legacy_video),
+                            "duration_seconds": 4.0,
+                        }
+                    ],
+                    "clips": [
+                        {
+                            "id": "clip-video",
+                            "asset_id": "asset-video",
+                            "source_start": 0.0,
+                            "source_end": 4.0,
+                        }
+                    ],
+                },
+            )
+            project_path = save_project(root / "full-length.subtitle-project.json", project)
+            output_path = root / "full-length.mp4"
+            with (
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
+                patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
+            ):
+                from src.subtitle_workflow import render_project_video
+
+                output = render_project_video(
+                    project_path,
+                    output_path=output_path,
+                    audio_normalize=False,
+                )
+                saved = load_project(project_path, resolve_video_duration=False)
+
+            self.assertEqual(output, output_path)
+            legacy_render.assert_called_once()
+            cut_media.assert_not_called()
+            self.assertFalse(saved["render_settings"]["legacy_singleton_trim"])
+            self.assertEqual(saved["render_settings"]["output_duration_seconds"], 4.0)
+
     def test_legacy_trimmed_singleton_uses_compatibility_render_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

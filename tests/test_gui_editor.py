@@ -3958,7 +3958,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertIs(window.findChild(QQuickItem, "commonCodexSidebar"), sidebar)
         self.assertEqual(self.app._codex_chat.snapshot.messages[0]["text"], "keep this conversation")
 
-        self.assertTrue(window.setProperty("currentWorkspace", "short-artifact"))
+        self.assertTrue(self.app.switchWorkspace("short-artifact"))
         self.app.processEvents()
         self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
         self.assertTrue(sidebar.isVisible())
@@ -3970,7 +3970,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "keep this conversation",
         )
 
-        self.assertTrue(window.setProperty("currentWorkspace", "normal-video"))
+        self.assertTrue(self.app.switchWorkspace("normal-video"))
         self.assertTrue(window.setProperty("activeOverlay", ""))
         self.app.processEvents()
         self.assertFalse(self._quick_item(window, "shortModePage").isVisible())
@@ -4872,7 +4872,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
         self.assertTrue(short_page.property("visible"))
         self.assertEqual(short_page.property("workspaceKind"), "short-artifact")
-        self.assertEqual(window.property("currentWorkspace"), "short-artifact")
+        self.assertEqual(self.app.currentWorkspace, "short-artifact")
         self.assertEqual(self.app.currentEditMode, "audio")
         self.assertEqual(self.app.shortVideoSettings["time_basis"], "source")
         self.assertIsNot(short_player, main_player)
@@ -4880,7 +4880,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self._click(window, self._quick_item(window, "shortModeBackButton"))
 
-        self.assertEqual(window.property("currentWorkspace"), "normal-video")
+        self.assertEqual(self.app.currentWorkspace, "normal-video")
         self.assertEqual(self.app.currentEditMode, "audio")
         self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
 

@@ -109,8 +109,6 @@ blocker=0の集計対象は、#403完了条件に対する未解決の実装欠�
 | #422 | open（この監査PR、CI実績確認済み） | blockerではない |
 | 別のcutover blocker Issue/PR | 確認されなかった | 0件 |
 
-blocker判定
-
 ### 4.1 open cutover blocker
 
 監査で確認した実装・テスト・CIの対応に、#403の完了を妨げる未起票の欠落や不具合はない。
@@ -119,7 +117,7 @@ blocker判定
 open cutover blockers: 0
 ~~~
 
-この値は、既知のcutover欠落・不具合を表すblockerの件数である。#422監査PR自身のCIが未実行であることは、CI gateの状態であって、実装blockerを1件と数えるという意味ではない。CIが失敗した場合は、失敗原因を確認し、production機能の欠落なら#422へ取り込まず別Issueとして記録する。
+この値は、既知のcutover欠落・不具合を表すblockerの件数である。#422監査PR自身のCIがsuccessであることは、CI gateの実績であって、実装blockerを1件と数えるという意味ではない。CIが失敗した場合は、失敗原因を確認し、production機能の欠落なら#422へ取り込まず別Issueとして記録する。
 
 ### 4.2 未達時の扱い
 

@@ -150,7 +150,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 220
                     appBackend: shortRoot.appBackend
-                    onPreviewRequested: function (seconds) { shortPreview.previewAt(seconds) }
+                    onPreviewRequested: function (seconds, endSeconds) { shortPreview.previewAt(seconds, endSeconds) }
                 }
 
                 ShortModeClipList {

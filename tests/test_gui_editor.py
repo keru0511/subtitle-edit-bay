@@ -6209,12 +6209,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.resize(window, 1220, 760)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 300)
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 300)
 
 
 if __name__ == "__main__":

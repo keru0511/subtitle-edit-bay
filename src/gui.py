@@ -1217,6 +1217,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def highlightCandidates(self) -> list[dict[str, Any]]:
         return deepcopy(self._highlight_candidates)
 
+    @Property(bool, notify=highlightCandidatesChanged)
+    def highlightUndoAvailable(self) -> bool:
+        return bool(self._highlight_rejected)
+
     @Property(str, notify=highlightAnalysisChanged)
     def highlightAnalysisState(self) -> str:
         return self._highlight_status

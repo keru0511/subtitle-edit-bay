@@ -6180,5 +6180,57 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
 
 
+    def test_short_mode_mutation_controls_follow_running_state(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "running-guard",
+                    "start": 0.0,
+                    "end": 2.0,
+                    "text": "running guard",
+                    "speaker": "Speaker_Alice",
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        source_combo = self._quick_item(window, "shortModeClipSourceCombo")
+        source_combo.setProperty("currentIndex", 1)
+        self.app.processEvents()
+
+        control_names = [
+            "shortModeClipSourceCombo",
+            "shortModeRangeStartField",
+            "shortModeRangeEndField",
+            "shortModeAddClipButton",
+            "shortModeGlobalFitCombo",
+            "shortModeBackgroundColorField",
+            "shortModeTransitionCombo",
+            "shortModeTransitionDurationSlider",
+            "shortModeSubtitleScaleSpin",
+            "shortModeBgmBrowseButton",
+            "shortModeBgmInField",
+            "shortModeBgmOutField",
+            "shortModeBgmStartField",
+            "shortModeBgmVolumeSlider",
+        ]
+        controls = [self._quick_item(window, name) for name in control_names]
+        for name, control in zip(control_names, controls):
+            self.assertTrue(control.property("enabled"), name)
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(control_names, controls):
+            self.assertFalse(control.property("enabled"), name)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(control_names, controls):
+            self.assertTrue(control.property("enabled"), name)
+
+
 if __name__ == "__main__":
     unittest.main()

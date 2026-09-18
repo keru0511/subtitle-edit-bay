@@ -6180,5 +6180,42 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
 
 
+    def test_codex_header_ai_button_toggles_wide_and_overlay_sidebar(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        sidebar = self._quick_item(window, "commonCodexSidebar")
+        ai_button = self._quick_item(window, "workspaceHeaderAiButton")
+
+        self.gui.resize(window, 1520, 760)
+        self.app.processEvents()
+        self.assertTrue(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 300)
+        self._click(window, ai_button)
+        self.app.processEvents()
+        self.assertFalse(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 0)
+        self._click(window, ai_button)
+        self.app.processEvents()
+        self.assertTrue(sidebar.isVisible())
+        self.assertEqual(sidebar.width(), 300)
+
+        self.gui.resize(window, 1220, 760)
+        self.app.processEvents()
+        self.assertTrue(sidebar.isVisible())
+        self._click(window, ai_button)
+        self.app.processEvents()
+        self.assertFalse(sidebar.isVisible())
+        self._click(window, ai_button)
+        self.app.processEvents()
+        self.assertTrue(sidebar.isVisible())
+
+
 if __name__ == "__main__":
     unittest.main()

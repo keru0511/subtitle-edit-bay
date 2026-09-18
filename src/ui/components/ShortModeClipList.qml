@@ -69,7 +69,8 @@ ColumnLayout {
             text: clipListRoot.appBackend && clipListRoot.appBackend.projectDuration > 0
                   ? Math.min(5, clipListRoot.appBackend.projectDuration).toFixed(3)
                   : "1.000"
-            enabled: clipSourceCombo.currentValue === "range"
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                && clipSourceCombo.currentValue === "range"
         }
         Button {
             id: addButton

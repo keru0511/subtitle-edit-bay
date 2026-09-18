@@ -76,12 +76,12 @@ ApplicationWindow {
         return providerName ? providerName + "ログイン" : "ログイン"
     }
     readonly property bool codexSidebarOverlay: root.width < 1400
-    readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay && root.codexDrawerOpen ? 300 : 0
+    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
         ? (root.codexDrawerOpen ? 310 : 104) : 0
     readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
         && root.codexDrawerOpen ? 310 : 0
-    readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0
+    readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0 && !root.codexSidebarOverlay
         ? root.codexSidebarWidth + 10 : 0
     readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
         + root.codexDrawerHeaderInset

@@ -84,7 +84,7 @@ ColumnLayout {
         Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
         Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
-        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend; onClicked: appBackend.undoHighlightRejection() }
+        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.highlightUndoAvailable && !appBackend.running; onClicked: appBackend.undoHighlightRejection() }
     }
 
     ListView {

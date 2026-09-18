@@ -76,7 +76,7 @@ ApplicationWindow {
         return providerName ? providerName + "ログイン" : "ログイン"
     }
     readonly property bool codexSidebarOverlay: root.width < 1400
-    readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0
+    readonly property int codexSidebarWidth: root.codexAuthenticated && !root.codexSidebarOverlay && root.codexDrawerOpen ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
         ? (root.codexDrawerOpen ? 310 : 104) : 0
     readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
@@ -3169,8 +3169,8 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 10
-        width: root.codexAuthenticated ? 300 : 0
-        visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)
+        width: root.codexSidebarWidth
+        visible: root.codexAuthenticated && root.codexDrawerOpen
         z: 600
         backend: root.appBackend
         drawerMode: root.codexSidebarOverlay

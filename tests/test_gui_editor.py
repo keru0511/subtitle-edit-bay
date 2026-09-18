@@ -6179,6 +6179,32 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="sequence clip delegate after redo",
         )
 
+    def test_highlight_undo_button_reflects_rejected_candidate_state(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        undo_button = self._quick_item(window, "highlightUndoRejectButton")
+        self.app._highlight_candidates = [
+            {"id": "kept", "start": 0.0, "end": 1.0, "score": 0.9}
+        ]
+        self.app._highlight_rejected = []
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(undo_button.property("enabled"))
+
+        rejected = {"id": "rejected", "start": 2.0, "end": 3.0, "score": 0.8}
+        self.app._highlight_rejected = [rejected]
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(undo_button.property("enabled"))
+
+        self._click(window, undo_button)
+        self.app.processEvents()
+        self.assertEqual(self.app._highlight_rejected, [])
+        self.assertIn(rejected, self.app._highlight_candidates)
+        self.assertFalse(undo_button.property("enabled"))
+
 
 if __name__ == "__main__":
     unittest.main()

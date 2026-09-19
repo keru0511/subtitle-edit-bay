@@ -246,11 +246,11 @@ class QmlStaticTests(unittest.TestCase):
             'root.appBackend.codexAuthState === "authenticated"',
             workflow,
         )
-        self.assertIn("root.codexAuthenticated && !root.codexSidebarOverlay ? 300 : 0", workflow)
+        self.assertIn("root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0", workflow)
         self.assertIn("readonly property int codexDrawerHeaderInset", workflow)
         self.assertIn("readonly property int codexDrawerBodyInset", workflow)
         self.assertIn("readonly property int codexInteractiveRightInset", workflow)
-        self.assertIn("visible: root.codexAuthenticated && (!root.codexSidebarOverlay || root.codexDrawerOpen)", workflow)
+        self.assertIn("visible: root.codexAuthenticated && root.codexDrawerOpen", workflow)
         self.assertNotIn(
             "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode\n        }",
             workflow,

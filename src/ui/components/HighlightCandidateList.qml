@@ -8,7 +8,7 @@ ColumnLayout {
     property var appBackend: null
     property int sortMode: 0
     property string categoryFilter: "all"
-    signal previewRequested(real seconds)
+    signal previewRequested(real seconds, real endSeconds)
 
     function visibleCandidates() {
         var candidates = appBackend ? appBackend.highlightCandidates : []
@@ -114,7 +114,7 @@ ColumnLayout {
                     Text { Layout.fillWidth: true; text: modelData.subtitle_excerpt || ""; color: "#F0F6FC"; elide: Text.ElideRight; font.pixelSize: 10 }
                     Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
-                Button { objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0)) }
+                Button { objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0), Number(modelData.end || modelData.start || 0)) }
                 Button { objectName: "highlightAddButton"; text: "ショートに追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }
                 Button { objectName: "highlightRejectButton"; text: "候補から外す"; onClicked: appBackend.rejectHighlightCandidate(modelData.source_index) }
             }

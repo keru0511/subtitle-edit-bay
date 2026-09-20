@@ -13,6 +13,8 @@ Rectangle {
 
     property var appBackend: null
     property var clipData: null
+    property bool candidatePreviewActive: false
+    property real candidatePreviewEndSeconds: -1
     property string fallbackBackgroundColor: "#000000"
     property string activeClipKey: ""
     readonly property var shortSettings: appBackend ? appBackend.shortVideoSettings : ({})
@@ -26,6 +28,8 @@ Rectangle {
     }
 
     function syncClipPlayback(force) {
+        previewRoot.candidatePreviewActive = false
+        previewRoot.candidatePreviewEndSeconds = -1
         var nextKey = previewRoot.clipPlaybackKey(previewRoot.clipData)
         if (!force && nextKey === previewRoot.activeClipKey) return
         previewRoot.activeClipKey = nextKey
@@ -55,8 +59,12 @@ Rectangle {
     readonly property string subtitleOutlineColor: String(appSettings.subtitle_outline_color || "#000000")
     readonly property int subtitleOutlineThickness: Number(appSettings.subtitle_outline_thickness || 3)
 
-    function previewAt(seconds) {
-        previewPlayer.position = Math.max(0, Number(seconds)) * 1000
+    function previewAt(seconds, endSeconds) {
+        var start = Math.max(0, Number(seconds))
+        var end = Number(endSeconds)
+        previewRoot.candidatePreviewActive = isFinite(end) && end > start
+        previewRoot.candidatePreviewEndSeconds = previewRoot.candidatePreviewActive ? end : -1
+        previewPlayer.position = start * 1000
         previewPlayer.play()
     }
 
@@ -78,6 +86,15 @@ Rectangle {
         audioOutput: AudioOutput { volume: 0.7 }
 
         onPositionChanged: function(position) {
+            if (previewRoot.candidatePreviewActive) {
+                var candidateEndMs = previewRoot.candidatePreviewEndSeconds * 1000
+                if (position >= candidateEndMs) {
+                    previewRoot.candidatePreviewActive = false
+                    previewRoot.candidatePreviewEndSeconds = -1
+                    previewPlayer.pause()
+                }
+                return
+            }
             if (!previewRoot.clipData) {
                 return
             }
@@ -88,7 +105,7 @@ Rectangle {
         }
 
         onPlaybackStateChanged: function(playbackState) {
-            if (playbackState === MediaPlayer.StoppedState && previewRoot.clipData && previewRoot.appBackend && previewRoot.appBackend.previewUrl) {
+            if (playbackState === MediaPlayer.StoppedState && !previewRoot.candidatePreviewActive && previewRoot.clipData && previewRoot.appBackend && previewRoot.appBackend.previewUrl) {
                 previewPlayer.position = previewRoot.clipData.start * 1000
                 previewPlayer.play()
             }

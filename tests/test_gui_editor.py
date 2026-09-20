@@ -6179,7 +6179,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="sequence clip delegate after redo",
         )
 
-
     def test_codex_header_ai_button_toggles_wide_and_overlay_sidebar(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -6217,6 +6216,57 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
         self.assertEqual(sidebar.width(), 300)
+
+    def test_highlight_preview_uses_candidate_range_outside_selected_clip(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "selected-clip",
+                    "start": 0.0,
+                    "end": 2.0,
+                    "text": "selected clip",
+                    "speaker": "Speaker_Alice",
+                },
+                {
+                    "id": "candidate-clip",
+                    "start": 5.0,
+                    "end": 8.0,
+                    "text": "candidate clip",
+                    "speaker": "Speaker_Bob",
+                },
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        preview = self._quick_item(window, "shortModePreview")
+        self.assertEqual(preview.property("clipData").get("start"), 0.0)
+        self.assertEqual(preview.property("clipData").get("end"), 2.0)
+
+        self.app._highlight_candidates = [
+            {
+                "id": "candidate-outside-selected-clip",
+                "start": 5.0,
+                "end": 6.5,
+                "score": 0.9,
+                "category": "emphasis",
+                "reason": "candidate range",
+                "subtitle_excerpt": "candidate clip",
+            }
+        ]
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+
+        self._click(window, self._quick_item(window, "highlightPreviewButton"))
+        self.app.processEvents()
+        self.assertTrue(preview.property("candidatePreviewActive"))
+        self.assertAlmostEqual(float(preview.property("candidatePreviewEndSeconds")), 6.5)
+        player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
+        self.assertGreaterEqual(player.position(), 5000)
+
+        player.setPosition(6500)
+        self.app.processEvents()
+        self.assertFalse(preview.property("candidatePreviewActive"))
+        self.assertEqual(preview.property("candidatePreviewEndSeconds"), -1.0)
 
 
 if __name__ == "__main__":

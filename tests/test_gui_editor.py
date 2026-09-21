@@ -6238,6 +6238,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         video = Path(str(self.app._project["video"]["path"]))
         self._generate_test_video(video, duration=8.0)
+        self.app.setVideoFile(str(video))
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "shortModeOpenButton"))
         preview = self._quick_item(window, "shortModePreview")

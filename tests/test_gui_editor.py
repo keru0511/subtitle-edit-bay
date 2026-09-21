@@ -6256,16 +6256,26 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.highlightCandidatesChanged.emit()
         self.app.processEvents()
 
-        self._click(window, self._quick_item(window, "highlightPreviewButton"))
-        self.app.processEvents()
-        self.assertTrue(preview.property("candidatePreviewActive"))
-        self.assertAlmostEqual(float(preview.property("candidatePreviewEndSeconds")), 6.5)
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(candidate_list, "highlightPreviewButton") is not None,
+            description="highlight candidate preview delegate",
+        )
+        preview_button = self._quick_visual_item(candidate_list, "highlightPreviewButton")
         player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
+        self._click(window, preview_button)
+        self.gui.wait_until(
+            lambda: bool(preview.property("candidatePreviewActive"))
+            and float(preview.property("candidatePreviewEndSeconds")) == 6.5,
+            description="candidate preview start",
+        )
         self.assertGreaterEqual(player.position(), 5000)
 
         player.setPosition(6500)
-        self.app.processEvents()
-        self.assertFalse(preview.property("candidatePreviewActive"))
+        self.gui.wait_until(
+            lambda: not bool(preview.property("candidatePreviewActive")),
+            description="candidate preview end",
+        )
         self.assertEqual(preview.property("candidatePreviewEndSeconds"), -1.0)
 
     def test_short_mode_mutation_controls_follow_running_state(self) -> None:

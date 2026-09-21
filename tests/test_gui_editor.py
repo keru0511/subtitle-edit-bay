@@ -6353,10 +6353,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.emit_signal(fit_combo, "activated", 1)
         self.assertEqual(self.app.shortVideoClips[0]["fit"], "contain")
 
-        self._click(window, self._quick_visual_item(clip_list, "shortModeMoveDownButton0"))
-        self.assertEqual(
-            [clip["segment_id"] for clip in self.app.shortVideoClips],
-            ["runtime-clip-1", "runtime-clip-0", "runtime-clip-2"],
+        move_down_button = self._quick_visual_item(clip_list, "shortModeMoveDownButton0")
+        self.gui.emit_signal(move_down_button, "clicked")
+        self.gui.wait_until(
+            lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
+            == ["runtime-clip-1", "runtime-clip-0", "runtime-clip-2"],
+            description="short clip down reorder dispatch",
         )
 
         self.gui.set_property(clip_list, "contentY", 130)
@@ -6364,10 +6366,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
             lambda: self.gui.find_visual_item(clip_list, "shortModeMoveUpButton1") is not None,
             description="reordered second short clip visibility",
         )
-        self._click(window, self._quick_visual_item(clip_list, "shortModeMoveUpButton1"))
-        self.assertEqual(
-            [clip["segment_id"] for clip in self.app.shortVideoClips],
-            ["runtime-clip-0", "runtime-clip-1", "runtime-clip-2"],
+        move_up_button = self._quick_visual_item(clip_list, "shortModeMoveUpButton1")
+        self.gui.emit_signal(move_up_button, "clicked")
+        self.gui.wait_until(
+            lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
+            == ["runtime-clip-0", "runtime-clip-1", "runtime-clip-2"],
+            description="short clip up reorder dispatch",
         )
 
         self.gui.set_property(clip_list, "contentY", 260)
@@ -6375,10 +6379,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
             lambda: self.gui.find_visual_item(clip_list, "shortModeDeleteButton2") is not None,
             description="third short clip delegate visibility",
         )
-        self._click(window, self._quick_visual_item(clip_list, "shortModeDeleteButton2"))
-        self.assertEqual(
-            [clip["segment_id"] for clip in self.app.shortVideoClips],
-            ["runtime-clip-0", "runtime-clip-1"],
+        delete_button = self._quick_visual_item(clip_list, "shortModeDeleteButton2")
+        self.gui.emit_signal(delete_button, "clicked")
+        self.gui.wait_until(
+            lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
+            == ["runtime-clip-0", "runtime-clip-1"],
+            description="short clip delete dispatch",
         )
 
 

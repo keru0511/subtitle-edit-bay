@@ -4306,7 +4306,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertGreater(delegates, 0)
         self.assertLess(delegates, 100)
 
-    def _generate_test_video(self, path: Path) -> None:
+    def _generate_test_video(self, path: Path, *, duration: float = 1.0) -> None:
         subprocess.run(
             [
                 "ffmpeg",
@@ -4314,7 +4314,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc=duration=1:size=320x240:rate=1",
+                f"testsrc=duration={duration}:size=320x240:rate=1",
                 "-pix_fmt",
                 "yuv420p",
                 "-c:v",
@@ -6236,6 +6236,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 },
             ]
         )
+        video = Path(str(self.app._project["video"]["path"]))
+        self._generate_test_video(video, duration=8.0)
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "shortModeOpenButton"))
         preview = self._quick_item(window, "shortModePreview")
@@ -6263,13 +6265,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         preview_button = self._quick_visual_item(candidate_list, "highlightPreviewButton")
         player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
+        self.gui.wait_until(
+            lambda: player.duration() >= 6500,
+            description="short preview media metadata",
+            timeout_ms=10_000,
+        )
         self._click(window, preview_button)
         self.gui.wait_until(
             lambda: bool(preview.property("candidatePreviewActive"))
             and float(preview.property("candidatePreviewEndSeconds")) == 6.5,
             description="candidate preview start",
         )
-        self.assertGreaterEqual(player.position(), 5000)
+        self.gui.wait_until(
+            lambda: player.position() >= 5000,
+            description="candidate preview start position",
+        )
 
         player.setPosition(6500)
         self.gui.wait_until(

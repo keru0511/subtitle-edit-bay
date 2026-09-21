@@ -431,5 +431,17 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("previewPlayer.stop()\n            previewPlayer.position", preview)
 
 
+    def test_short_mutation_controls_have_a_running_state_guard(self) -> None:
+        clip_list = (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8")
+        settings = (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8")
+        short_screen = (UI_ROOT / "screens" / "ShortModeScreen.qml").read_text(encoding="utf-8")
+
+        self.assertIn("property bool editingEnabled", settings)
+        self.assertIn("enabled: settingsRoot.editingEnabled", settings)
+        self.assertIn("!settingsRoot.appBackend.running", settings)
+        self.assertIn("enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running", clip_list)
+        self.assertIn("!shortRoot.appBackend.running", short_screen)
+
+
 if __name__ == "__main__":
     unittest.main()

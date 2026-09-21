@@ -9,6 +9,7 @@ ColumnLayout {
     spacing: 10
 
     property var appBackend: null
+    readonly property bool editingEnabled: settingsRoot.appBackend && !settingsRoot.appBackend.running
     property var fitOptions: [
         { "label": "画面いっぱい", "value": "cover" },
         { "label": "全体を表示", "value": "contain" },
@@ -46,7 +47,7 @@ ColumnLayout {
     }
 
     function _sendBgmUpdate(changes) {
-        if (settingsRoot.appBackend) {
+        if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
             settingsRoot.appBackend.setShortVideoBgm(changes)
         }
     }
@@ -73,6 +74,7 @@ ColumnLayout {
             model: settingsRoot.fitOptions
             textRole: "label"
             valueRole: "value"
+            enabled: settingsRoot.editingEnabled
             onActivated: {
                 if (settingsRoot.appBackend) {
                     settingsRoot.appBackend.setShortVideoGlobalFit(fitCombo.currentValue)
@@ -89,6 +91,7 @@ ColumnLayout {
             objectName: "shortModeBackgroundColorField"
             Layout.preferredWidth: 80
             text: "000000"
+            enabled: settingsRoot.editingEnabled
             onEditingFinished: {
                 if (settingsRoot.appBackend) {
                     var raw = text.replace("#", "")
@@ -107,6 +110,7 @@ ColumnLayout {
         }
         Button {
             text: "..."
+            enabled: settingsRoot.editingEnabled
             onClicked: bgColorDialog.open()
         }
     }
@@ -115,7 +119,7 @@ ColumnLayout {
         id: bgColorDialog
         title: "背景色を選択"
         onAccepted: {
-            if (settingsRoot.appBackend) {
+            if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
                 var hex = selectedColor.toString().replace("#", "")
                 settingsRoot.appBackend.setShortVideoGlobalBackgroundColor(hex)
             }
@@ -131,8 +135,9 @@ ColumnLayout {
             model: settingsRoot.transitionOptions
             textRole: "label"
             valueRole: "value"
+            enabled: settingsRoot.editingEnabled
             onActivated: {
-                if (settingsRoot.appBackend) {
+                if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
                     settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, transitionDuration.value)
                 }
             }
@@ -141,8 +146,9 @@ ColumnLayout {
             id: transitionDuration
             objectName: "shortModeTransitionDurationSlider"
             from: 0; to: 2.0; stepSize: 0.1
+            enabled: settingsRoot.editingEnabled
             onValueChanged: {
-                if (settingsRoot.appBackend) {
+                if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
                     settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
             }
@@ -158,6 +164,7 @@ ColumnLayout {
             from: 50; to: 300
             textFromValue: function(value) { return value + "%" }
             valueFromText: function(text) { return parseInt(text) || 150 }
+            enabled: settingsRoot.editingEnabled
             onValueModified: {
                 if (settingsRoot.appBackend) {
                     settingsRoot.appBackend.setShortVideoSubtitleScale(value)
@@ -184,6 +191,7 @@ ColumnLayout {
         id: bgmBrowseButton
         objectName: "shortModeBgmBrowseButton"
         Layout.fillWidth: true
+        enabled: settingsRoot.editingEnabled
         contentItem: Text {
             id: bgmFileLabel
             objectName: "shortModeBgmFileLabel"
@@ -214,6 +222,7 @@ ColumnLayout {
             id: bgmIn
             objectName: "shortModeBgmInField"
             Layout.preferredWidth: 70
+            enabled: settingsRoot.editingEnabled
             text: "0"
             onEditingFinished: _sendBgmUpdate({"in": parseFloat(text) || 0})
         }
@@ -221,6 +230,7 @@ ColumnLayout {
             id: bgmOut
             objectName: "shortModeBgmOutField"
             Layout.preferredWidth: 70
+            enabled: settingsRoot.editingEnabled
             text: "0"
             onEditingFinished: _sendBgmUpdate({"out": parseFloat(text) || 0})
         }
@@ -228,6 +238,7 @@ ColumnLayout {
             id: bgmStart
             objectName: "shortModeBgmStartField"
             Layout.preferredWidth: 70
+            enabled: settingsRoot.editingEnabled
             text: "0"
             onEditingFinished: _sendBgmUpdate({"start": parseFloat(text) || 0})
         }
@@ -237,6 +248,7 @@ ColumnLayout {
                 id: bgmVolumeSlider
                 objectName: "shortModeBgmVolumeSlider"
                 from: 0.0; to: 1.0; stepSize: 0.05
+                enabled: settingsRoot.editingEnabled
                 onValueChanged: _sendBgmUpdate({"volume": value})
             }
         }

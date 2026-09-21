@@ -6179,7 +6179,6 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="sequence clip delegate after redo",
         )
 
-
     def test_codex_header_ai_button_toggles_wide_and_overlay_sidebar(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -6217,6 +6216,176 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
         self.assertEqual(sidebar.width(), 300)
+
+    def test_short_mode_mutation_controls_follow_running_state(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": "running-guard",
+                    "start": 0.0,
+                    "end": 2.0,
+                    "text": "running guard",
+                    "speaker": "Speaker_Alice",
+                }
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        source_combo = self._quick_item(window, "shortModeClipSourceCombo")
+        source_combo.setProperty("currentIndex", 1)
+        self.app.processEvents()
+
+        control_names = [
+            "shortModeClipSourceCombo",
+            "shortModeRangeStartField",
+            "shortModeRangeEndField",
+            "shortModeAddClipButton",
+            "shortModeGlobalFitCombo",
+            "shortModeBackgroundColorField",
+            "shortModeTransitionCombo",
+            "shortModeTransitionDurationSlider",
+            "shortModeSubtitleScaleSpin",
+            "shortModeBgmBrowseButton",
+            "shortModeBgmInField",
+            "shortModeBgmOutField",
+            "shortModeBgmStartField",
+            "shortModeBgmVolumeSlider",
+        ]
+        controls = [self._quick_item(window, name) for name in control_names]
+        for name, control in zip(control_names, controls):
+            self.assertTrue(control.property("enabled"), name)
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(control_names, controls):
+            self.assertFalse(control.property("enabled"), name)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(control_names, controls):
+            self.assertTrue(control.property("enabled"), name)
+
+    def test_short_mode_clip_mutation_controls_dispatch_runtime_actions(self) -> None:
+        self._load_project(
+            segments=[
+                {
+                    "id": f"runtime-clip-{index}",
+                    "start": float(index * 2),
+                    "end": float(index * 2 + 1),
+                    "text": f"runtime clip {index}",
+                    "speaker": "Speaker_Alice",
+                }
+                for index in range(3)
+            ]
+        )
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="short clip delegate creation",
+        )
+
+        clip_control_names = [
+            "shortModeStartTimeField0",
+            "shortModeEndTimeField0",
+            "shortModeFitCombo0",
+            "shortModeMoveDownButton0",
+            "shortModeDeleteButton0",
+        ]
+        clip_controls = [self._quick_visual_item(clip_list, name) for name in clip_control_names]
+        for name, control in zip(clip_control_names, clip_controls):
+            self.assertTrue(control.property("enabled"), name)
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(clip_control_names, clip_controls):
+            self.assertFalse(control.property("enabled"), name)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(clip_control_names, clip_controls):
+            self.assertTrue(control.property("enabled"), name)
+
+        self.gui.set_property(clip_list, "contentY", 130)
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeMoveUpButton1") is not None,
+            description="second short clip delegate creation",
+        )
+        move_up_button = self._quick_visual_item(clip_list, "shortModeMoveUpButton1")
+        self.assertTrue(move_up_button.property("enabled"), "shortModeMoveUpButton1")
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(move_up_button.property("enabled"), "shortModeMoveUpButton1")
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(move_up_button.property("enabled"), "shortModeMoveUpButton1")
+
+        self.gui.set_property(clip_list, "contentY", 0)
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="first short clip delegate visibility",
+        )
+
+        start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
+        start_field.forceActiveFocus()
+        start_field.setProperty("text", "0.250")
+        self.gui.emit_signal(start_field, "editingFinished")
+        self.assertAlmostEqual(self.app.shortVideoClips[0]["start"], 0.25)
+
+        end_field = self._quick_visual_item(clip_list, "shortModeEndTimeField0")
+        end_field.forceActiveFocus()
+        end_field.setProperty("text", "0.750")
+        self.gui.emit_signal(end_field, "editingFinished")
+        self.assertAlmostEqual(self.app.shortVideoClips[0]["end"], 0.75)
+
+        fit_combo = self._quick_visual_item(clip_list, "shortModeFitCombo0")
+        fit_combo.setProperty("currentIndex", 1)
+        self.gui.emit_signal(fit_combo, "activated", 1)
+        self.assertEqual(self.app.shortVideoClips[0]["fit"], "contain")
+
+        move_down_button = self._quick_visual_item(clip_list, "shortModeMoveDownButton0")
+        self.gui.emit_signal(move_down_button, "clicked")
+        self.gui.wait_until(
+            lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
+            == ["runtime-clip-1", "runtime-clip-0", "runtime-clip-2"],
+            description="short clip down reorder dispatch",
+        )
+
+        self.gui.set_property(clip_list, "contentY", 130)
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeMoveUpButton1") is not None,
+            description="reordered second short clip visibility",
+        )
+        move_up_button = self._quick_visual_item(clip_list, "shortModeMoveUpButton1")
+        self.gui.emit_signal(move_up_button, "clicked")
+        self.gui.wait_until(
+            lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
+            == ["runtime-clip-0", "runtime-clip-1", "runtime-clip-2"],
+            description="short clip up reorder dispatch",
+        )
+
+        self.gui.set_property(clip_list, "contentY", 260)
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeDeleteButton2") is not None,
+            description="third short clip delegate visibility",
+        )
+        delete_button = self._quick_visual_item(clip_list, "shortModeDeleteButton2")
+        self.gui.emit_signal(delete_button, "clicked")
+        self.gui.wait_until(
+            lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
+            == ["runtime-clip-0", "runtime-clip-1"],
+            description="short clip delete dispatch",
+        )
 
 
 if __name__ == "__main__":

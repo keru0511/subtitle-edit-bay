@@ -32,6 +32,7 @@ ColumnLayout {
             id: clipSourceCombo
             objectName: "shortModeClipSourceCombo"
             Layout.preferredWidth: 126
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
             model: [
                 { "label": "字幕セグメント", "value": "segment" },
                 { "label": "時間範囲を直接指定", "value": "range" }
@@ -48,7 +49,8 @@ ColumnLayout {
             model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitleModel : null
             textRole: "text"
             valueRole: "segmentId"
-            enabled: clipSourceCombo.currentValue === "segment"
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                && clipSourceCombo.currentValue === "segment"
         }
         Text { text: "範囲"; color: "#8E9B94"; font.pixelSize: 10 }
         TimeField {
@@ -56,7 +58,8 @@ ColumnLayout {
             objectName: "shortModeRangeStartField"
             Layout.preferredWidth: 76
             text: "0.000"
-            enabled: clipSourceCombo.currentValue === "range"
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                && clipSourceCombo.currentValue === "range"
         }
         Text { text: "-"; color: "#8E9B94"; font.pixelSize: 10 }
         TimeField {
@@ -66,7 +69,8 @@ ColumnLayout {
             text: clipListRoot.appBackend && clipListRoot.appBackend.projectDuration > 0
                   ? Math.min(5, clipListRoot.appBackend.projectDuration).toFixed(3)
                   : "1.000"
-            enabled: clipSourceCombo.currentValue === "range"
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                && clipSourceCombo.currentValue === "range"
         }
         Button {
             id: addButton
@@ -165,6 +169,7 @@ ColumnLayout {
                             id: startTimeField
                             objectName: "shortModeStartTimeField" + index
                             Layout.preferredWidth: 82
+                            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                             text: Number(clipItem.clipData.start).toFixed(3)
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
@@ -184,6 +189,7 @@ ColumnLayout {
                             id: endTimeField
                             objectName: "shortModeEndTimeField" + index
                             Layout.preferredWidth: 82
+                            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                             text: Number(clipItem.clipData.end).toFixed(3)
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
@@ -207,6 +213,7 @@ ColumnLayout {
                     model: clipListRoot.fitOptions
                     textRole: "label"
                     valueRole: "value"
+                    enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                     currentIndex: clipListRoot.indexForFit(clipItem.clipData.fit)
                     onActivated: function(_controlIndex) {
                         if (clipListRoot.appBackend) {
@@ -221,8 +228,9 @@ ColumnLayout {
                 ColumnLayout {
                     spacing: 2
                     Button {
+                        objectName: "shortModeMoveUpButton" + index
                         text: "▲"
-                        enabled: index > 0
+                        enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && index > 0
                         onClicked: {
                             if (clipListRoot.appBackend) {
                                 clipListRoot.appBackend.moveShortVideoClip(index, index - 1)
@@ -230,8 +238,10 @@ ColumnLayout {
                         }
                     }
                     Button {
+                        objectName: "shortModeMoveDownButton" + index
                         text: "▼"
-                        enabled: index < clipListView.count - 1
+                        enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                            && index < clipListView.count - 1
                         onClicked: {
                             if (clipListRoot.appBackend) {
                                 clipListRoot.appBackend.moveShortVideoClip(index, index + 2)
@@ -241,7 +251,9 @@ ColumnLayout {
                 }
 
                 Button {
+                    objectName: "shortModeDeleteButton" + index
                     text: "✕"
+                    enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                     onClicked: {
                         if (clipListRoot.appBackend) {
                             clipListRoot.appBackend.removeShortVideoClip(index)

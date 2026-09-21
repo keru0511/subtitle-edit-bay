@@ -75,7 +75,8 @@ Item {
                 id: exportButton
                 objectName: "shortModeExportButton"
                 implicitHeight: 32
-                enabled: shortRoot.appBackend && (shortRoot.appBackend.actionCapabilities.canRenderShort || shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput)
+                enabled: shortRoot.appBackend && !shortRoot.appBackend.running
+                    && (shortRoot.appBackend.actionCapabilities.canRenderShort || shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput)
                 ToolTip.visible: hovered && !enabled
                 ToolTip.text: shortRoot.appBackend ? shortRoot.appBackend.actionCapabilities.shortRenderReason : ""
                 text: shortRoot.appBackend && shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput

@@ -16,6 +16,8 @@ Rectangle {
     required property color warningColor
     required property color dangerColor
 
+    readonly property bool editingEnabled: root.backend && !root.backend.running
+
     property int hoverIndex: -1
     property string activeDragClipId: ""
     property string selectedClipId: ""
@@ -308,7 +310,7 @@ Rectangle {
                                 ? root.accentColor : root.borderColor
                             border.width: root.hoverIndex === clipItem.index ? 2 : 1
 
-                            Drag.active: reorderHandler.active
+                            Drag.active: root.editingEnabled && reorderHandler.active
                             Drag.source: clipItem
                             Drag.supportedActions: Qt.MoveAction
                             Drag.hotSpot.x: width / 2
@@ -325,6 +327,8 @@ Rectangle {
                             }
                             DragHandler {
                                 id: reorderHandler
+                                objectName: "sequenceReorderHandler"
+                                enabled: root.editingEnabled
                                 target: null
                                 onActiveChanged: {
                                     if (active) {
@@ -340,6 +344,7 @@ Rectangle {
                             DropArea {
                                 id: clipDropArea
                                 objectName: "sequenceClipDropArea"
+                                enabled: root.editingEnabled
                                 anchors.fill: parent
                                 z: 5
                                 onEntered: function(drag) {
@@ -357,7 +362,7 @@ Rectangle {
                                     var clipId = root.clipIdFromDrag(drop)
                                     if (clipId.length > 0)
                                         root.activeDragClipId = clipId
-                                    if (root.activeDragClipId.length > 0 && root.backend)
+                                    if (root.activeDragClipId.length > 0 && root.editingEnabled)
                                         root.backend.moveSequenceClip(root.activeDragClipId, clipItem.index)
                                     root.activeDragClipId = ""
                                     root.hoverIndex = -1
@@ -403,6 +408,7 @@ Rectangle {
                                     TimeField {
                                         id: clipStartField
                                         objectName: "sequenceClipStartField"
+                                        enabled: root.editingEnabled
                                         Layout.preferredWidth: 66
                                         text: Number(clipItem.modelData.sourceStart || 0).toFixed(3)
                                         onEditingFinished: {
@@ -422,6 +428,7 @@ Rectangle {
                                     TimeField {
                                         id: clipEndField
                                         objectName: "sequenceClipEndField"
+                                        enabled: root.editingEnabled
                                         Layout.preferredWidth: 66
                                         text: Number(clipItem.modelData.sourceEnd || 0).toFixed(3)
                                         onEditingFinished: {
@@ -441,6 +448,7 @@ Rectangle {
                                     ComboBox {
                                         id: transitionCombo
                                         objectName: "sequenceTransitionCombo"
+                                        enabled: root.editingEnabled
                                         Layout.preferredWidth: 92
                                         model: ["cut", "crossfade", "fade"]
                                         currentIndex: root.transitionIndex(clipItem.modelData.transition
@@ -454,6 +462,7 @@ Rectangle {
                                     SpinBox {
                                         id: transitionDuration
                                         objectName: "sequenceTransitionDuration"
+                                        enabled: root.editingEnabled
                                         from: 0
                                         to: 10000
                                         stepSize: 50
@@ -474,6 +483,7 @@ Rectangle {
                                     CheckBox {
                                         id: audioLinkedCheck
                                         objectName: "sequenceAudioLinkedCheck"
+                                        enabled: root.editingEnabled
                                         text: "音声連動"
                                         checked: Boolean(clipItem.modelData.audioLinked)
                                         onToggled: {
@@ -487,6 +497,7 @@ Rectangle {
                                     Slider {
                                         id: volumeSlider
                                         objectName: "sequenceClipVolumeSlider"
+                                        enabled: root.editingEnabled
                                         Layout.preferredWidth: 80
                                         from: 0
                                         to: 2
@@ -501,6 +512,7 @@ Rectangle {
                                     CheckBox {
                                         id: mutedCheck
                                         objectName: "sequenceClipMutedCheck"
+                                        enabled: root.editingEnabled
                                         text: "ミュート"
                                         checked: Boolean(clipItem.modelData.muted)
                                         onToggled: {
@@ -513,6 +525,7 @@ Rectangle {
                                     SpinBox {
                                         id: audioOffset
                                         objectName: "sequenceAudioOffset"
+                                        enabled: root.editingEnabled
                                         from: -10000
                                         to: 10000
                                         stepSize: 10
@@ -534,3 +547,4 @@ Rectangle {
         }
     }
 }
+

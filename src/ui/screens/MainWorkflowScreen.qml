@@ -525,6 +525,8 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
+        if (root.appBackend.running)
+            return
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         mainPlayer.videoOutput = mainVideo
@@ -1304,8 +1306,8 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 5
-                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
+                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: !root.appBackend.running && root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
+                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
                     SmallButton {
                         objectName: "workspaceSubtitleAddButton"
                         text: "+ 字幕追加"
@@ -1334,7 +1336,7 @@ ApplicationWindow {
                     player: mainPlayer
                     pixelsPerSecond: root.editorPixelsPerSecond
                     snapSeconds: root.snapMilliseconds / 1000
-                    editable: true
+                    editable: !root.appBackend.running
                     seekHandler: function(positionMilliseconds) {
                         root.seekSharedPlayer(positionMilliseconds, "source")
                     }
@@ -2855,13 +2857,13 @@ ApplicationWindow {
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
                 Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
-                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(mainPlayer.position / 1000) }
-                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.appBackend.splitSelectedSegment(mainPlayer.position / 1000) }
-                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
-                SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
-                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: !root.appBackend.running && root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
+                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
+                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.addSegment(mainPlayer.position / 1000) }
+                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: !root.appBackend.running && root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.appBackend.splitSelectedSegment(mainPlayer.position / 1000) }
+                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
+                SmallButton { objectName: "saveProjectButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
+                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; enabled: !root.appBackend.running; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
                 Button {
                     id: editorRenderButton
                     objectName: "editorRenderButton"
@@ -2872,7 +2874,7 @@ ApplicationWindow {
                     contentItem: Text { text: editorRenderButton.text; color: editorRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     background: Rectangle { radius: 7; color: editorRenderButton.enabled ? root.acid : "#252C28" }
                 }
-                SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; onClicked: root.closeEditorScreen() }
+                SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; enabled: !root.appBackend.running; onClicked: root.closeEditorScreen() }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
 
@@ -2928,7 +2930,7 @@ ApplicationWindow {
                         player: mainPlayer
                         pixelsPerSecond: root.editorPixelsPerSecond
                         snapSeconds: root.snapMilliseconds / 1000
-                        editable: true
+                        editable: !root.appBackend.running
                         Component.onCompleted: Qt.callLater(function() { viewportX = root.editorTimelineScrollX })
                         onViewportXChanged: root.editorTimelineScrollX = viewportX
                         onSegmentActivated: function(index) {
@@ -2991,6 +2993,7 @@ ApplicationWindow {
                             onCurrentIndexChanged: if (currentIndex >= 0) root.appBackend.selectSegment(currentIndex)
                             delegate: Rectangle {
                                 id: captionRow
+                                enabled: !root.appBackend.running
                                 required property int index
                                 objectName: "captionRow-" + index
                                 required property string segmentId
@@ -3343,10 +3346,10 @@ ApplicationWindow {
         onDropped: function(drop) { root.importSourceDrop(drop) }
     }
 
-    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.appBackend.saveProject() }
-    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: !root.appBackend.running && root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: !root.appBackend.running && root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
+    Shortcut { sequences: [StandardKey.Save]; enabled: !root.appBackend.running && (root.editorMode || root.mixerMode); onActivated: root.appBackend.saveProject() }
+    Shortcut { sequence: "Delete"; enabled: !root.appBackend.running && root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
 
     Connections {
         target: root.appBackend
@@ -3366,3 +3369,4 @@ ApplicationWindow {
         mainPlayer.stop()
     }
 }
+

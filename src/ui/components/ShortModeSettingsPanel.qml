@@ -147,7 +147,7 @@ ColumnLayout {
             objectName: "shortModeTransitionDurationSlider"
             from: 0; to: 2.0; stepSize: 0.1
             enabled: settingsRoot.editingEnabled
-            onValueChanged: {
+            onMoved: {
                 if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
                     settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
@@ -249,10 +249,11 @@ ColumnLayout {
                 objectName: "shortModeBgmVolumeSlider"
                 from: 0.0; to: 1.0; stepSize: 0.05
                 enabled: settingsRoot.editingEnabled
-                onValueChanged: _sendBgmUpdate({"volume": value})
+                onMoved: _sendBgmUpdate({"volume": value})
             }
         }
     }
 
     Component.onCompleted: refresh()
 }
+

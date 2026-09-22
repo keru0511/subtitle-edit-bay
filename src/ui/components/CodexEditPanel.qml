@@ -83,6 +83,7 @@ Rectangle {
             model: card.operations
             delegate: RowLayout {
                 required property var modelData
+                required property int index
                 property string operationId: card.operationIdFor(modelData, index)
                 width: proposalList.width
                 height: 28
@@ -100,7 +101,7 @@ Rectangle {
             Button {
                 objectName: "codexApplyButton"
                 text: "選択した変更を適用"
-                enabled: card.operations.length > 0
+                enabled: backend && !backend.running && card.operations.length > 0
                     && card.selectedOperationIds().length > 0
                     && (card.audioProposal
                         ? ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) < 0
@@ -116,7 +117,7 @@ Rectangle {
                 objectName: "codexAudioAllowSilenceButton"
                 visible: card.audioProposal
                 text: "無音化を許可して適用"
-                enabled: card.operations.length > 0
+                enabled: backend && !backend.running && card.operations.length > 0
                     && card.selectedOperationIds().length > 0
                     && ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) < 0
                 onClicked: backend.applyAudioMixProposal(card.selectedOperationIds(), true)
@@ -137,3 +138,4 @@ Rectangle {
     }
     // qmllint enable unqualified
 }
+

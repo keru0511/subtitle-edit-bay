@@ -4891,6 +4891,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(transition_combo.property("currentValue"), transition_type)
 
             duration_slider.setProperty("value", duration)
+            self.gui.emit_signal(duration_slider, "moved")
             self.app.processEvents()
 
             transition = self.app.shortVideoSettings["transition"]
@@ -6520,6 +6521,259 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="short clip delete dispatch",
         )
 
+    def _set_global_running(self, running: bool) -> None:
+        self.app._running = running
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+
+    def _project_mutation_snapshot(self) -> object:
+        return deepcopy((self.app._project, self.app._undo_stack, self.app._redo_stack,
+                         self.app._project_revision, self.app.projectDirty))
+
+    def test_global_running_blocks_subtitle_mutation_and_preserves_history(self) -> None:
+        self._load_project()
+        self.app.updateSegment(0, {"text": "first edit"})
+        self.app.updateSegment(0, {"text": "second edit"})
+        self.app.undoEdit()
+        self.app.selectSegment(0)
+        self.app.saveProject()
+        before = self._project_mutation_snapshot()
+        self._set_global_running(True)
+        actions = [
+            lambda: self.app.updateSegment(0, {"text": "blocked"}),
+            lambda: self.app.moveSegment(0, 1, 5, 0),
+            lambda: self.app.resizeSegmentStart(0, 1, 0),
+            lambda: self.app.resizeSegmentEnd(0, 3, 0),
+            lambda: self.app.addSegment(8),
+            self.app.deleteSelectedSegment,
+            lambda: self.app.splitSelectedSegment(2),
+            self.app.undoSubtitleEdit, self.app.redoSubtitleEdit,
+            self.app.undoCutEdit, self.app.redoCutEdit,
+            lambda: self.app.buildSubtitlePreview({}),
+        ]
+        for action in actions:
+            action()
+            self.assertEqual(self._project_mutation_snapshot(), before)
+        self._set_global_running(False)
+        self.app.updateSegment(0, {"text": "allowed"})
+        self.assertEqual(self.app.segmentAt(0)["text"], "allowed")
+        self.assertTrue(self.app.projectDirty)
+
+    def test_global_running_disables_subtitle_editors_and_restores_dispatch(self) -> None:
+        self._load_project()
+        self.app.updateSegment(0, {"text": "first edit"})
+        self.app.updateSegment(0, {"text": "second edit"})
+        self.app.undoEdit()
+        self.app.selectSegment(0)
+        _, window = self._load_qml()
+        window.setProperty("activeOverlay", "editor")
+        self.app.processEvents()
+        names = ["workspaceSubtitleUndoButton", "workspaceSubtitleRedoButton",
+                 "workspaceSubtitleStartField", "workspaceSubtitleEndField",
+                 "workspaceSubtitleSpeakerCombo", "workspaceSubtitleFontCombo",
+                 "workspaceSubtitleSpeakerColorButton", "workspaceSubtitleSizeSpin",
+                 "workspaceSubtitleTextArea", "undoCaptionButton", "redoCaptionButton",
+                 "addCaptionButton", "deleteCaptionButton", "saveProjectButton",
+                 "buildAssButton", "editorBackButton"]
+        controls = [self._quick_item(window, name) for name in names]
+        timelines = [self._quick_item(window, name) for name in
+                     ["workspaceSubtitleTimeline", "editorTimeline"]]
+        self._set_global_running(True)
+        for name, control in zip(names, controls):
+            self.assertFalse(control.property("enabled"), name)
+        for timeline in timelines:
+            self.assertFalse(timeline.property("editable"))
+        undo = controls[names.index("undoCaptionButton")]
+        with patch.object(self.app, "undoSubtitleEdit") as dispatch:
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                             pos=undo.mapToScene(QPointF(undo.width() / 2, undo.height() / 2)).toPoint())
+            self.app.processEvents()
+            dispatch.assert_not_called()
+            self._set_global_running(False)
+            for name, control in zip(names, controls):
+                self.assertTrue(control.property("enabled"), name)
+            for timeline in timelines:
+                self.assertTrue(timeline.property("editable"))
+            self.gui.emit_signal(undo, "clicked")
+            dispatch.assert_called_once()
+        window.setProperty("activeOverlay", "")
+        self.app.processEvents()
+        text = self._quick_item(window, "workspaceSubtitleTextArea")
+        text.forceActiveFocus()
+        text.setProperty("text", "resumed edit")
+        self._quick_item(window, "workspaceSubtitleStartField").forceActiveFocus()
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["text"], "resumed edit")
+
+    def test_global_running_disables_sequence_details_and_reorder(self) -> None:
+        self._make_sequence_project()
+        self.app.selectEditMode("cut")
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "workspaceSequenceEditor")
+        names = ["sequenceClipStartField", "sequenceClipEndField", "sequenceTransitionCombo",
+                 "sequenceTransitionDuration", "sequenceAudioLinkedCheck", "sequenceClipVolumeSlider",
+                 "sequenceClipMutedCheck", "sequenceAudioOffset", "sequenceClipDropArea"]
+        controls = [self._quick_visual_item(panel, name) for name in names]
+        delegate = controls[0].parentItem().parentItem().parentItem()
+        handler = self.gui.find_object(delegate, "sequenceReorderHandler")
+        self._set_global_running(True)
+        for name, control in zip(names, controls):
+            self.assertFalse(control.property("enabled"), name)
+        self.assertFalse(handler.property("enabled"))
+        checkbox = controls[names.index("sequenceAudioLinkedCheck")]
+        with patch.object(self.app, "setSequenceClipAudio") as dispatch:
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                             pos=checkbox.mapToScene(QPointF(checkbox.width() / 2, checkbox.height() / 2)).toPoint())
+            self.app.processEvents()
+            dispatch.assert_not_called()
+        before = self._project_mutation_snapshot()
+        clip_id = self.app.sequenceClips[0]["clipId"]
+        self.assertFalse(self.app.trimSequenceClip(clip_id, 1.0, 5.0))
+        self.assertFalse(self.app.setSequenceTransition(clip_id, "fade", 0.5))
+        self.assertFalse(self.app.setSequenceClipAudio(clip_id, False, 0.5, 0.1, True))
+        self.assertFalse(self.app.moveSequenceClip(clip_id, 1))
+        self.assertEqual(self._project_mutation_snapshot(), before)
+        self._set_global_running(False)
+        for name, control in zip(names, controls):
+            self.assertTrue(control.property("enabled"), name)
+        self.assertTrue(handler.property("enabled"))
+        for name, signal, method, args in [
+            ("sequenceClipStartField", "editingFinished", "trimSequenceClip", ()),
+            ("sequenceClipEndField", "editingFinished", "trimSequenceClip", ()),
+            ("sequenceTransitionCombo", "activated", "setSequenceTransition", (1,)),
+            ("sequenceTransitionDuration", "valueModified", "setSequenceTransition", ()),
+            ("sequenceAudioLinkedCheck", "toggled", "setSequenceClipAudio", ()),
+            ("sequenceClipVolumeSlider", "moved", "setSequenceClipAudio", ()),
+            ("sequenceClipMutedCheck", "toggled", "setSequenceClipAudio", ()),
+            ("sequenceAudioOffset", "valueModified", "setSequenceClipAudio", ()),
+        ]:
+            with self.subTest(control=name), patch.object(self.app, method, return_value=True) as dispatch:
+                self.gui.emit_signal(self._quick_visual_item(panel, name), signal, *args)
+                dispatch.assert_called_once()
+
+    def test_short_settings_refresh_stays_clean_and_user_moves_update(self) -> None:
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        self.app.setShortVideoTransition("fade", 0.8)
+        self.app.setShortVideoBgm({"volume": 0.65})
+        self.app.saveProject()
+        before = self._project_mutation_snapshot()
+        changes = QSignalSpy(self.app.shortVideoChanged)
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        panel = self._quick_item(window, "shortModeSettingsPanel")
+        for _ in range(3):
+            self.assertTrue(QMetaObject.invokeMethod(panel, "refresh"))
+        self.assertEqual(self._project_mutation_snapshot(), before)
+        self.assertEqual(changes.count(), 0)
+        for name, value, section, key in [
+            ("shortModeTransitionDurationSlider", 1.2, "transition", "duration"),
+            ("shortModeBgmVolumeSlider", 0.45, "bgm", "volume"),
+        ]:
+            slider = self._quick_item(window, name)
+            slider.setProperty("value", value)
+            self.assertEqual(changes.count(), 0)
+            self.gui.emit_signal(slider, "moved")
+            self.assertAlmostEqual(self.app.shortVideoSettings[section][key], value)
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(changes.count(), 1)
+            changes = QSignalSpy(self.app.shortVideoChanged)
+        self.app.saveProject()
+        self.app.setShortVideoTransition("fade", 1.2)
+        self.app.setShortVideoBgm({"volume": 0.45})
+        self.assertFalse(self.app.projectDirty)
+        self.assertEqual(changes.count(), 0)
+
+    def test_global_running_preserves_highlight_candidates_and_disables_actions(self) -> None:
+        self._load_project()
+        candidate = {"id": "candidate", "start": 0.0, "end": 3.0, "score": 0.8,
+                     "source_segment_ids": ["segment-a"]}
+        self.app._highlight_candidates = [candidate]
+        self.app._highlight_status = "completed"
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        controls = [self._quick_visual_item(window.contentItem(), name) for name in
+                    ["highlightRetryButton", "highlightAddButton", "highlightRejectButton"]]
+        before = self._project_mutation_snapshot()
+        self._set_global_running(True)
+        for control in controls:
+            self.assertFalse(control.property("enabled"))
+        for result in [self.app.retryHighlightAnalysis(), self.app.addHighlightCandidate(0),
+                       self.app.rejectHighlightCandidate(0), self.app.undoHighlightRejection()]:
+            self.assertFalse(result)
+        self.assertEqual(self.app._highlight_candidates, [candidate])
+        self.assertEqual(self._project_mutation_snapshot(), before)
+        self._set_global_running(False)
+        for control in controls:
+            self.assertTrue(control.property("enabled"))
+        with patch.object(self.app, "startHighlightAnalysis", return_value=False):
+            self.assertFalse(self.app.retryHighlightAnalysis())
+        self.assertEqual(self.app._highlight_candidates, [candidate])
+        self.app._project["short_video"]["clips"] = []
+        self.app.shortVideoChanged.emit()
+        self.gui.emit_signal(controls[1], "clicked")
+        self.assertEqual(self.app._project["short_video"]["clips"][-1]["highlight_candidate_id"], "candidate")
+        self.gui.emit_signal(controls[2], "clicked")
+        self.assertEqual(self.app._highlight_candidates, [])
+
+    def test_global_running_preserves_proposals_until_apply_resumes(self) -> None:
+        self._load_project()
+        engine, window = self._load_qml()
+        component = QQmlComponent(engine, QUrl.fromLocalFile(str(
+            Path(__file__).resolve().parents[1] / "src/ui/components/CodexEditPanel.qml")))
+        card = component.createWithInitialProperties({"backend": self.app})
+        self.assertIsNotNone(card, str(component.errors()))
+        card.setParent(window)
+        card.setParentItem(window.contentItem())
+        card.setWidth(700)
+        card.setHeight(220)
+        self.app._codex_proposal = {
+            "summary": "字幕修正", "base_revision": self.app._project_revision,
+            "operations": [{"id": "edit", "type": "update_segment", "segment_id": "segment-a",
+                            "changes": {"text": "proposal edit"}, "reason": "test"}],
+        }
+        self.app.codexProposalChanged.emit()
+        apply = self._quick_item(card, "codexApplyButton")
+        before = self._project_mutation_snapshot()
+        proposal = deepcopy(self.app.codexProposal)
+        self._set_global_running(True)
+        self.assertFalse(apply.property("enabled"))
+        self.app.applyCodexProposal(["edit"])
+        self.assertEqual(self.app.codexProposal, proposal)
+        self.assertEqual(self._project_mutation_snapshot(), before)
+        self._set_global_running(False)
+        self.assertTrue(apply.property("enabled"))
+        self.gui.emit_signal(apply, "clicked")
+        self.assertEqual(self.app.segmentAt(0)["text"], "proposal edit")
+        channels = self.app.audioMixerChannels
+        self.app._audio_mix_proposal = build_audio_mix_proposal({
+            "schema_version": 1, "summary": "音量修正", "warnings": [],
+            "base_revision": self.app._project_revision,
+            "audio_state_revision": audio_mix_state_revision(channels),
+            "operations": [{"id": "volume", "type": "update_audio_channel",
+                            "channel_id": channels[0]["id"], "changes": {"volume_percent": 110.0},
+                            "reason": "test"}],
+        }, channels, project_revision=self.app._project_revision)
+        self.app.audioMixProposalChanged.emit()
+        silence = self._quick_item(card, "codexAudioAllowSilenceButton")
+        before = self._project_mutation_snapshot()
+        proposal = deepcopy(self.app.audioMixProposal)
+        self._set_global_running(True)
+        self.assertFalse(apply.property("enabled"))
+        self.assertFalse(silence.property("enabled"))
+        self.assertTrue(self._quick_item(card, "codexDiscardButton").property("enabled"))
+        for allow_silence in [False, True]:
+            self.assertFalse(self.app.applyAudioMixProposal(["volume"], allow_silence))
+        self.assertEqual(self.app.audioMixProposal, proposal)
+        self.assertEqual(self._project_mutation_snapshot(), before)
+        self._set_global_running(False)
+        self.assertTrue(apply.property("enabled"))
+        self.assertTrue(silence.property("enabled"))
+        self.gui.emit_signal(silence, "clicked")
+        self.assertEqual(self.app.audioMixProposal, {})
+        self.assertEqual(self.app.audioMixerChannels[0]["volume_percent"], 110.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

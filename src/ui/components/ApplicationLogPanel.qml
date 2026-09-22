@@ -7,7 +7,8 @@ Rectangle {
     property var backend
     property bool userExpanded: false
     property bool expanded: userExpanded || (backend && backend.stage === "ERROR")
-    implicitHeight: expanded ? 280 : 118
+    property bool compact: false
+    implicitHeight: expanded ? 280 : (compact ? 56 : 118)
     radius: 12
     color: "#0B100D"
     border.color: "#27312C"
@@ -67,6 +68,7 @@ Rectangle {
 
         ScrollView {
             id: applicationLogScrollView
+            visible: !panel.compact || panel.expanded
             objectName: "applicationLogScrollView"
             Layout.fillWidth: true
             Layout.fillHeight: true

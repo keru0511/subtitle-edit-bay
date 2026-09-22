@@ -97,6 +97,8 @@ ApplicationWindow {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
     }
+    readonly property bool loginInInspector: mainWorkspace.visible && root.appBackend.projectLoaded
+    property string editTool: "cut"
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -1714,7 +1716,7 @@ ApplicationWindow {
             id: editorModeRail
             objectName: "editorModeRail"
             visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: 86
+            Layout.preferredWidth: 70
             Layout.minimumWidth: 86
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
@@ -1731,6 +1733,24 @@ ApplicationWindow {
             onModeRequested: function(mode) { root.selectWorkspaceMode(mode) }
         }
 
+        MediaBinPanel {
+            objectName: "workspaceMediaBin"
+            visible: root.appBackend.projectLoaded
+            Layout.preferredWidth: root.width >= 1400 ? 280 : 230
+            Layout.minimumWidth: 210
+            Layout.fillHeight: true
+            backend: root.appBackend
+            panelColor: root.panel
+            raisedColor: root.raised
+            borderColor: root.border
+            textColor: root.textPrimary
+            mutedColor: root.textMuted
+            accentColor: root.acid
+            warningColor: root.amber
+            dangerColor: root.danger
+            onSourceSettingsRequested: sourcePopup.open()
+        }
+
         ColumnLayout {
             visible: root.appBackend.projectLoaded
             Layout.fillWidth: true
@@ -1739,6 +1759,7 @@ ApplicationWindow {
 
             ContextActionBar {
                 id: contextActionBar
+                compact: true
                 objectName: "contextActionBar"
                 Layout.fillWidth: true
                 projectLoaded: root.appBackend.projectLoaded
@@ -1782,30 +1803,6 @@ ApplicationWindow {
                 color: "#080A09"
                 border.color: root.border
                 clip: true
-                SequenceEditorPanel {
-                    id: sequenceEditorPanel
-                    objectName: "workspaceSequenceEditor"
-                    visible: root.appBackend.currentWorkspace === "normal-video"
-                        && root.appBackend.projectLoaded
-                        && root.appBackend.currentEditMode === "cut"
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    // Keep the overlay inside the existing video panel at
-                    // compact heights; it must not participate in the outer
-                    // workspace layout or raise modeEditorSlot's bounds.
-                    height: visible ? Math.min(238, Math.max(0, parent.height)) : 0
-                    z: 20
-                    backend: root.appBackend
-                    panelColor: root.panel
-                    raisedColor: root.raised
-                    borderColor: root.border
-                    textColor: root.textPrimary
-                    mutedColor: root.textMuted
-                    accentColor: root.acid
-                    warningColor: root.amber
-                    dangerColor: root.danger
-                }
                 MediaPlayer {
                     id: mainPlayer
                     objectName: "mainWorkspacePlayer"
@@ -1886,10 +1883,45 @@ ApplicationWindow {
             }
 
 
+            RowLayout {
+                visible: root.appBackend.currentEditMode === "cut"
+                Layout.fillWidth: true
+                SmallButton {
+                    objectName: "cutToolButton"
+                    text: root.editTool === "cut" ? "● カット" : "カット"
+                    onClicked: root.editTool = "cut"
+                }
+                SmallButton {
+                    objectName: "sequenceToolButton"
+                    text: root.editTool === "sequence" ? "● 動画結合・並べ替え" : "動画結合・並べ替え"
+                    onClicked: root.editTool = "sequence"
+                }
+                Item { Layout.fillWidth: true }
+            }
+            SequenceEditorPanel {
+                id: sequenceEditorPanel
+                objectName: "workspaceSequenceEditor"
+                visible: root.appBackend.currentWorkspace === "normal-video"
+                    && root.appBackend.projectLoaded
+                    && root.appBackend.currentEditMode === "cut" && root.editTool === "sequence"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 285
+                Layout.minimumHeight: 265
+                backend: root.appBackend
+                panelColor: root.panel
+                raisedColor: root.raised
+                borderColor: root.border
+                textColor: root.textPrimary
+                mutedColor: root.textMuted
+                accentColor: root.acid
+                warningColor: root.amber
+                dangerColor: root.danger
+            }
+
             Rectangle {
                 id: modeEditorSlot
                 objectName: "modeEditorSlot"
-                visible: root.appBackend.projectLoaded
+                visible: root.appBackend.projectLoaded && (root.appBackend.currentEditMode !== "cut" || root.editTool === "cut")
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible
                     ? (root.appBackend.currentEditMode === "cut" ? 122 : 156)
@@ -1941,6 +1973,7 @@ ApplicationWindow {
 
             ApplicationLogPanel {
                 id: applicationLogPanel
+                compact: true
                 objectName: "applicationLogPanel"
                 Layout.fillWidth: true
                 Layout.fillHeight: root.appBackend.progressVisible
@@ -1948,7 +1981,7 @@ ApplicationWindow {
                 // The progress panel reserves 126px in this column.  At the
                 // 1220x760 minimum window, allow an expanded log to shrink
                 // to its collapsed minimum so its header remains reachable.
-                Layout.minimumHeight: root.appBackend.progressVisible ? 118 : implicitHeight
+                Layout.minimumHeight: root.appBackend.progressVisible ? 56 : implicitHeight
                 backend: root.appBackend
             }
         }
@@ -1958,7 +1991,7 @@ ApplicationWindow {
             id: modeSettingsSlot
             objectName: "modeSettingsSlot"
             visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: 210
+            Layout.preferredWidth: root.width >= 1400 ? 300 : 250
             Layout.minimumWidth: 200
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
@@ -1970,6 +2003,7 @@ ApplicationWindow {
 
             Loader {
                 id: modeSettingsContentLoader
+                anchors.bottomMargin: root.codexAuthenticated ? 0 : 60
                 objectName: "modeSettingsContentLoader"
                 anchors.fill: parent
                 active: root.appBackend.projectLoaded && root.modeSettingsContent !== null
@@ -3192,6 +3226,8 @@ ApplicationWindow {
 
     ComboBox {
         id: aiProviderLoginCombo
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
+        anchors.topMargin: root.loginInInspector ? Math.max(0, parent.height - 48) : 12
         objectName: "aiProviderLoginCombo"
         anchors.top: parent.top
         anchors.left: parent.left
@@ -3230,10 +3266,12 @@ ApplicationWindow {
 
     Text {
         id: aiProviderAuthHint
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
+        anchors.topMargin: root.loginInInspector ? Math.max(0, parent.height - 48) : 12
         objectName: "aiProviderAuthHint"
         anchors.top: parent.top
-        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
-        anchors.leftMargin: 12
+        anchors.left: parent.left
+        anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
         width: 240
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
@@ -3251,9 +3289,12 @@ ApplicationWindow {
 
     SmallButton {
         id: codexLoginRoute
+        anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
+        anchors.topMargin: root.loginInInspector ? Math.max(0, parent.height - 48) : 12
         objectName: "codexLoginRoute"
         anchors.top: parent.top
-        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
+        anchors.left: parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34

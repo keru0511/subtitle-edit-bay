@@ -132,65 +132,6 @@ Item {
 
             ColumnLayout {
                 Layout.fillHeight: true
-                Layout.preferredWidth: 340
-                Layout.minimumWidth: 280
-                Layout.maximumWidth: 380
-                spacing: 12
-
-                Text {
-                    text: "クリップ"
-                    color: "#E8EFEA"
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 13
-                    font.weight: Font.Bold
-                }
-
-                HighlightCandidateList {
-                    id: highlightCandidates
-                    objectName: "highlightCandidateList"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 220
-                    appBackend: shortRoot.appBackend
-                    onPreviewRequested: function (seconds, endSeconds) { shortPreview.previewAt(seconds, endSeconds) }
-                }
-
-                ShortModeClipList {
-                    id: clipList
-                    objectName: "shortModeClipList"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    appBackend: shortRoot.appBackend
-                    selectedIndex: shortRoot.currentClipIndex
-                    onSelected: function (index) { shortRoot.currentClipIndex = index }
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 8
-
-                Text {
-                    text: "ショートプレビュー"
-                    color: "#E8EFEA"
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 13
-                    font.weight: Font.Bold
-                }
-
-                ShortModePreview {
-                    id: shortPreview
-                    objectName: "shortModePreview"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumWidth: 220
-                    appBackend: shortRoot.appBackend
-                    clipData: shortRoot.currentClip()
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillHeight: true
                 Layout.preferredWidth: 300
                 Layout.minimumWidth: 260
                 Layout.maximumWidth: 340
@@ -228,6 +169,65 @@ Item {
                     appBackend: shortRoot.appBackend
                 }
             }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 8
+
+                Text {
+                    text: "ショートプレビュー"
+                    color: "#E8EFEA"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                }
+
+                ShortModePreview {
+                    id: shortPreview
+                    objectName: "shortModePreview"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumWidth: 220
+                    appBackend: shortRoot.appBackend
+                    clipData: shortRoot.currentClip()
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillHeight: true
+                Layout.preferredWidth: 340
+                Layout.minimumWidth: 280
+                Layout.maximumWidth: 380
+                spacing: 12
+
+                Text {
+                    text: "クリップ"
+                    color: "#E8EFEA"
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 13
+                    font.weight: Font.Bold
+                }
+
+                HighlightCandidateList {
+                    id: highlightCandidates
+                    objectName: "highlightCandidateList"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 220
+                    appBackend: shortRoot.appBackend
+                    onPreviewRequested: function (seconds, endSeconds) { shortPreview.previewAt(seconds, endSeconds) }
+                }
+
+                ShortModeClipList {
+                    id: clipList
+                    objectName: "shortModeClipList"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    appBackend: shortRoot.appBackend
+                    selectedIndex: shortRoot.currentClipIndex
+                    onSelected: function (index) { shortRoot.currentClipIndex = index }
+                }
+            }
+
         }
     }
 }

@@ -2269,6 +2269,10 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(str, result=bool)
     def addSequenceClip(self, asset_id: str) -> bool:
+        return self.insertSequenceClip(asset_id, len(self.sequenceClips))
+
+    @Slot(str, int, result=bool)
+    def insertSequenceClip(self, asset_id: str, index: int) -> bool:
         model = self._sequence_model_for_facade()
         if model is None:
             return self._sequence_failure("sequenceを読み込めません")
@@ -2283,6 +2287,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 asset.id,
                 0.0,
                 asset.duration_seconds,
+                index=index,
             ),
             f"sequenceへclipを追加しました: {asset.path}",
         )

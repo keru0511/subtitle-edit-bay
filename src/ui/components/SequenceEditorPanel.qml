@@ -32,6 +32,11 @@ Rectangle {
         return index >= 0 ? index : 0
     }
 
+    function assetIdFromDrag(event) {
+        var source = event ? event.source : null
+        return source ? String(source["assetId"] || "") : ""
+    }
+
     function resetTimeField(field, value) {
         field.text = Number(value || 0).toFixed(3)
         field.focus = false
@@ -58,7 +63,7 @@ Rectangle {
                 spacing: 1
                 Text {
                     objectName: "sequenceEditorTitle"
-                    text: "素材・シーケンス"
+                    text: "動画結合・シーケンス"
                     color: root.textColor
                     font.family: "Yu Gothic UI"
                     font.pixelSize: 12
@@ -111,126 +116,6 @@ Rectangle {
             spacing: 8
 
             Rectangle {
-                id: mediaBinPanel
-                objectName: "mediaBinPanel"
-                Layout.preferredWidth: 190
-                Layout.minimumWidth: 160
-                Layout.fillHeight: true
-                radius: 8
-                color: root.raisedColor
-                border.color: root.borderColor
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 7
-                    spacing: 5
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            objectName: "mediaBinTitle"
-                            text: "メディア bin"
-                            color: root.textColor
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                        }
-                        Item { Layout.fillWidth: true }
-                        Text {
-                            text: root.backend ? String(root.backend.mediaBinAssets.length) : "0"
-                            color: root.mutedColor
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: 9
-                        }
-                    }
-
-                    ListView {
-                        id: mediaBinList
-                        objectName: "mediaBinList"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        spacing: 4
-                        model: root.backend ? root.backend.mediaBinAssets : []
-
-                        delegate: Rectangle {
-                            id: assetItem
-                            required property var modelData
-                            width: mediaBinList.width
-                            height: 45
-                            radius: 6
-                            color: root.panelColor
-                            border.color: root.borderColor
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: 5
-                                spacing: 5
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 1
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: String(assetItem.modelData.name || assetItem.modelData.path || "動画")
-                                        color: root.textColor
-                                        font.family: "Yu Gothic UI"
-                                        font.pixelSize: 9
-                                        elide: Text.ElideMiddle
-                                    }
-                                    Text {
-                                        text: Number(assetItem.modelData.duration || 0).toFixed(2) + "秒  "
-                                            + String(assetItem.modelData.clipCount || 0) + " clip"
-                                        color: root.mutedColor
-                                        font.family: "Cascadia Mono"
-                                        font.pixelSize: 8
-                                    }
-                                }
-                                SmallButton {
-                                    objectName: "addSequenceClipButton"
-                                    property string sequenceAssetId: String(assetItem.modelData.id || "")
-                                    text: "+"
-                                    implicitWidth: 28
-                                    enabled: root.backend && !root.backend.running
-                                        && Number(assetItem.modelData.duration || 0) > 0
-                                    onClicked: root.backend.addSequenceClip(String(assetItem.modelData.id))
-                                }
-                            }
-                        }
-                    }
-
-                    DropArea {
-                        id: mediaBinDropArea
-                        objectName: "mediaBinDropArea"
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 30
-                        enabled: root.backend && !root.backend.running
-                        onEntered: function(drag) {
-                            drag.accepted = drag.hasUrls
-                        }
-                        onDropped: function(drop) {
-                            if (drop.hasUrls && root.backend)
-                                root.backend.addSequenceAssets(drop.urls)
-                            drop.acceptProposedAction()
-                        }
-
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 6
-                            color: mediaBinDropArea.containsDrag ? "#302A5A" : "transparent"
-                            border.color: mediaBinDropArea.containsDrag ? root.accentColor : root.borderColor
-                            Text {
-                                anchors.centerIn: parent
-                                text: mediaBinDropArea.containsDrag ? "ここへドロップ" : "動画をドロップして追加"
-                                color: mediaBinDropArea.containsDrag ? root.accentColor : root.mutedColor
-                                font.family: "Yu Gothic UI"
-                                font.pixelSize: 8
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
                 id: sequencePanel
                 objectName: "sequencePanel"
                 Layout.fillWidth: true
@@ -248,7 +133,7 @@ Rectangle {
                         Layout.fillWidth: true
                         Text {
                             objectName: "sequencePanelTitle"
-                            text: "シーケンス editor"
+                            text: "配置済みクリップ"
                             color: root.textColor
                             font.family: "Yu Gothic UI"
                             font.pixelSize: 10
@@ -290,7 +175,8 @@ Rectangle {
                         objectName: "sequenceClipList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.minimumHeight: 92
+                        Layout.minimumHeight: 138
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                         clip: true
                         spacing: 4
                         model: root.backend ? root.backend.sequenceClips : []
@@ -301,7 +187,7 @@ Rectangle {
                             required property var modelData
                             readonly property string clipId: String(clipItem.modelData.clipId || "")
                             width: sequenceClipList.width
-                            height: 84
+                            height: 132
                             radius: 6
                             color: root.selectedClipId === clipItem.clipId ? "#302A5A" : root.panelColor
                             border.color: root.hoverIndex === clipItem.index || root.selectedClipId === clipItem.clipId
@@ -325,6 +211,7 @@ Rectangle {
                             }
                             DragHandler {
                                 id: reorderHandler
+                                enabled: root.backend && !root.backend.running
                                 target: null
                                 onActiveChanged: {
                                     if (active) {
@@ -341,8 +228,13 @@ Rectangle {
                                 id: clipDropArea
                                 objectName: "sequenceClipDropArea"
                                 anchors.fill: parent
+                                enabled: root.backend && !root.backend.running
                                 z: 5
                                 onEntered: function(drag) {
+                                    var assetId = root.assetIdFromDrag(drag)
+                                    drag.accepted = assetId.length > 0 || root.clipIdFromDrag(drag).length > 0
+                                    if (assetId.length > 0)
+                                        root.hoverIndex = clipItem.index
                                     var clipId = root.clipIdFromDrag(drag)
                                     if (clipId.length > 0) {
                                         root.activeDragClipId = clipId
@@ -354,6 +246,13 @@ Rectangle {
                                         root.hoverIndex = -1
                                 }
                                 onDropped: function(drop) {
+                                    var assetId = root.assetIdFromDrag(drop)
+                                    if (assetId.length > 0) {
+                                        root.backend.insertSequenceClip(assetId, clipItem.index)
+                                        root.hoverIndex = -1
+                                        drop.acceptProposedAction()
+                                        return
+                                    }
                                     var clipId = root.clipIdFromDrag(drop)
                                     if (clipId.length > 0)
                                         root.activeDragClipId = clipId
@@ -366,6 +265,7 @@ Rectangle {
                             }
 
                             ColumnLayout {
+                                enabled: root.backend && !root.backend.running
                                 anchors.fill: parent
                                 anchors.margins: 5
                                 spacing: 3
@@ -453,6 +353,7 @@ Rectangle {
                                     }
                                     SpinBox {
                                         id: transitionDuration
+                                        Layout.preferredWidth: 110
                                         objectName: "sequenceTransitionDuration"
                                         from: 0
                                         to: 10000
@@ -512,6 +413,7 @@ Rectangle {
                                     }
                                     SpinBox {
                                         id: audioOffset
+                                        Layout.preferredWidth: 110
                                         objectName: "sequenceAudioOffset"
                                         from: -10000
                                         to: 10000

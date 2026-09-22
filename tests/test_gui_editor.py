@@ -2968,7 +2968,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         action_bar = self._quick_item(window, "contextActionBar")
         video_panel = self._quick_item(window, "mainVideoPanel")
         log_panel = self._quick_item(window, "applicationLogPanel")
-        central_column = action_bar.parentItem()
+        central_column = self._quick_item(window, "workspaceContent")
 
         for width, height in ((1220, 760), (1520, 940)):
             self.gui.resize(window, width, height)
@@ -2976,15 +2976,20 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(window.width(), width)
             self.assertGreaterEqual(window.height(), height)
             for item in (action_bar, video_panel, log_panel):
+                top_left = item.mapToItem(central_column, QPointF(0, 0))
                 self.assertGreater(item.width(), 0)
                 self.assertGreater(item.height(), 0)
-                self.assertGreaterEqual(item.x(), -1)
-                self.assertLessEqual(item.x() + item.width(), central_column.width() + 1)
-                self.assertGreaterEqual(item.y(), -1)
-                self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
+                self.assertGreaterEqual(top_left.x(), -1)
+                self.assertLessEqual(top_left.x() + item.width(), central_column.width() + 1)
+                self.assertGreaterEqual(top_left.y(), -1)
+                self.assertLessEqual(top_left.y() + item.height(), central_column.height() + 1)
 
-            self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
-            self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+            action_bottom = action_bar.mapToItem(central_column, QPointF(0, action_bar.height())).y()
+            video_top = video_panel.mapToItem(central_column, QPointF(0, 0)).y()
+            video_bottom = video_panel.mapToItem(central_column, QPointF(0, video_panel.height())).y()
+            log_top = log_panel.mapToItem(central_column, QPointF(0, 0)).y()
+            self.assertLessEqual(action_bottom, video_top + 1)
+            self.assertLessEqual(video_bottom, log_top + 1)
 
         self.gui.resize(window, 1220, 760)
         log_toggle = self._quick_item(window, "applicationLogToggleButton")
@@ -2993,7 +2998,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
             lambda: (
                 bool(log_panel.property("expanded"))
                 and video_panel.height() > 0
-                and log_panel.y() + log_panel.height() <= central_column.height() + 1
+                and log_panel.mapToItem(
+                    central_column, QPointF(0, log_panel.height())
+                ).y() <= central_column.height() + 1
             ),
             description="expanded application log layout",
         )
@@ -3001,8 +3008,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreater(log_panel.height(), 0)
         self.assertGreater(video_panel.height(), 0)
-        self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
-        self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+        self.assertLessEqual(
+            action_bar.mapToItem(central_column, QPointF(0, action_bar.height())).y(),
+            video_panel.mapToItem(central_column, QPointF(0, 0)).y() + 1,
+        )
+        self.assertLessEqual(
+            video_panel.mapToItem(central_column, QPointF(0, video_panel.height())).y(),
+            log_panel.mapToItem(central_column, QPointF(0, 0)).y() + 1,
+        )
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
         self._click(window, log_toggle)
@@ -3445,7 +3458,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.resize(window, 1220, 760)
         progress_panel = self._quick_item(window, "processingProgressOverlay")
         log_panel = self._quick_item(window, "applicationLogPanel")
-        central_column = self._quick_item(window, "contextActionBar").parentItem()
+        central_column = self._quick_item(window, "workspaceContent")
         layout_items = [
             self._quick_item(window, name)
             for name in (
@@ -3459,18 +3472,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(progress_panel.isVisible())
         self.assertGreater(progress_panel.height(), 0)
         for item in layout_items:
+            top_left = item.mapToItem(central_column, QPointF(0, 0))
             self.assertGreater(item.width(), 0)
             self.assertGreater(item.height(), 0)
-            self.assertGreaterEqual(item.y(), -1)
-            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
-        self.assertLessEqual(progress_panel.y() + progress_panel.height(), log_panel.y() + 1)
-        self.assertGreaterEqual(log_panel.y(), progress_panel.y() + progress_panel.height())
+            self.assertGreaterEqual(top_left.y(), -1)
+            self.assertLessEqual(top_left.y() + item.height(), central_column.height() + 1)
+        progress_bottom = progress_panel.mapToItem(
+            central_column, QPointF(0, progress_panel.height())
+        ).y()
+        log_top = log_panel.mapToItem(central_column, QPointF(0, 0)).y()
+        self.assertLessEqual(progress_bottom, log_top + 1)
+        self.assertGreaterEqual(log_top, progress_bottom)
 
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
         self.gui.wait_until(
             lambda: bool(log_panel.property("expanded"))
             and all(
-                item.y() + item.height() <= central_column.height() + 1
+                item.mapToItem(central_column, QPointF(0, item.height())).y()
+                <= central_column.height() + 1
                 for item in layout_items
             ),
             description="expanded application log below processing progress",
@@ -3478,8 +3497,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreater(log_panel.height(), 0)
         for item in layout_items:
-            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
-        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+            self.assertLessEqual(
+                item.mapToItem(central_column, QPointF(0, item.height())).y(),
+                central_column.height() + 1,
+            )
+        self.assertLessEqual(
+            log_panel.mapToItem(central_column, QPointF(0, log_panel.height())).y(),
+            central_column.height() + 1,
+        )
 
     def test_main_progress_stop_stays_clickable_beside_codex_drawer(self) -> None:
         self._load_project()
@@ -6127,8 +6152,22 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertGreater(preview.width(), 300)
                 if mode == "cut":
                     self.assertTrue(sequence.isVisible())
+                    media_top = media_bin.mapToScene(QPointF(0, 0))
+                    media_bottom = media_bin.mapToScene(QPointF(0, media_bin.height())).y()
                     sequence_top = sequence.mapToScene(QPointF(0, 0)).y()
                     self.assertLessEqual(preview_top.y() + preview.height(), sequence_top)
+                    self.assertLessEqual(media_bottom, sequence_top)
+                    self.assertAlmostEqual(
+                        media_bottom,
+                        preview_top.y() + preview.height(),
+                        delta=1.0,
+                    )
+                    sequence_left = sequence.mapToScene(QPointF(0, 0)).x()
+                    sequence_right = sequence.mapToScene(QPointF(sequence.width(), 0)).x()
+                    preview_right = preview.mapToScene(QPointF(preview.width(), 0)).x()
+                    self.assertLessEqual(sequence_left, media_top.x())
+                    self.assertGreaterEqual(sequence_right, preview_right)
+                    self.assertGreater(sequence.width(), preview.width())
                     self.assertLessEqual(sequence_top + sequence.height(), height)
         self.assertFalse(self.gui.find_item(window, "renderVideoButton").isVisible())
         self.assertTrue(self.gui.find_item(window, "workspaceHeaderRenderButton").isVisible())

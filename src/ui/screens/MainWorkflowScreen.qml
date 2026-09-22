@@ -1733,150 +1733,163 @@ ApplicationWindow {
             onModeRequested: function(mode) { root.selectWorkspaceMode(mode) }
         }
 
-        MediaBinPanel {
-            objectName: "workspaceMediaBin"
-            visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: root.width >= 1400 ? 280 : 230
-            Layout.minimumWidth: 210
-            Layout.fillHeight: true
-            backend: root.appBackend
-            panelColor: root.panel
-            raisedColor: root.raised
-            borderColor: root.border
-            textColor: root.textPrimary
-            mutedColor: root.textMuted
-            accentColor: root.acid
-            warningColor: root.amber
-            dangerColor: root.danger
-            onSourceSettingsRequested: sourcePopup.open()
-        }
-
         ColumnLayout {
+            id: workspaceContent
+            objectName: "workspaceContent"
             visible: root.appBackend.projectLoaded
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 10
 
-            ContextActionBar {
-                id: contextActionBar
-                compact: true
-                objectName: "contextActionBar"
-                Layout.fillWidth: true
-                projectLoaded: root.appBackend.projectLoaded
-                running: root.appBackend.running
-                activeJob: root.appBackend.activeJob
-                canCreateProject: Boolean(root.appBackend.sourceSelection.video)
-                canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
-                canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
-                renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
-                renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
-                blockReason: root.transcriptionBlockReason()
-                audioMixerAvailable: root.appBackend.audioMixerAvailable
-                mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
-                subtitleAvailable: root.appBackend.segmentCount > 0
-                outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
-                settingsExpanded: root.settingsExpanded
-                onSettingsRequested: root.toggleSettingsPopup()
-                onDictionaryRequested: root.openDictionaryScreen()
-                onCreateProjectRequested: root.appBackend.createEmptyProject()
-                onStartTranscriptionRequested: root.requestTranscription()
-                onEditorRequested: root.openEditorScreen()
-                onMixerRequested: root.openMixerScreen()
-                onShortModeRequested: root.openShortWorkspace()
-                onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
-                onSaveOrStopRequested: {
-                    if (!root.appBackend.running)
-                        root.appBackend.saveSettings(root.currentSettings())
-                    else if (root.appBackend.activeJob !== "update")
-                        root.appBackend.cancelProcessing()
-                }
-                onOutputFolderRequested: root.appBackend.openOutputFolder()
-            }
-            Rectangle {
-                objectName: "mainVideoPanel"
+            RowLayout {
+                id: workspaceUpperArea
+                objectName: "workspaceUpperArea"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: root.appBackend.progressVisible
-                    ? (root.height <= 800 ? 170 : 300)
-                    : (root.height <= 800 ? (applicationLogPanel.expanded ? 140 : 190) : 300)
-                radius: 12
-                color: "#080A09"
-                border.color: root.border
-                clip: true
-                MediaPlayer {
-                    id: mainPlayer
-                    objectName: "mainWorkspacePlayer"
-                    source: root.appBackend.previewUrl
-                    videoOutput: mainVideo
-                    audioOutput: AudioOutput {
-                        objectName: "mainWorkspaceAudioOutput"
-                        volume: 0.7
-                        muted: workspaceAudioBridge.muteSourceAudio
-                    }
-                    onPositionChanged: {
-                        if (!mainSeek.pressed)
-                            mainSeek.value = mainPlayer.position
-                        if (root.enforceCutPreview(mainPlayer.position))
-                            return
-                        var completedPendingSeek = false
-                        if (root.pendingSharedSourcePosition >= 0
-                                && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
-                            root.pendingSharedSourcePosition = -1
-                            sharedSeekGuardTimer.stop()
-                            completedPendingSeek = true
-                        }
-                        if (!completedPendingSeek
-                                && mainPlayer.playbackState !== MediaPlayer.PlayingState)
-                            root.syncEditorPlayhead(mainPlayer.position, true)
-                    }
-                    onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
-                    onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
+                Layout.minimumHeight: root.height <= 800 ? 190 : 300
+                spacing: 10
+
+                MediaBinPanel {
+                    objectName: "workspaceMediaBin"
+                    Layout.preferredWidth: root.width >= 1400 ? 280 : 230
+                    Layout.minimumWidth: 210
+                    Layout.fillHeight: true
+                    backend: root.appBackend
+                    panelColor: root.panel
+                    raisedColor: root.raised
+                    borderColor: root.border
+                    textColor: root.textPrimary
+                    mutedColor: root.textMuted
+                    accentColor: root.acid
+                    warningColor: root.amber
+                    dangerColor: root.danger
+                    onSourceSettingsRequested: sourcePopup.open()
                 }
-                Timer {
-                    // Keep the shared playhead current; the overlay handles exact subtitle changes.
-                    interval: 100
-                    repeat: true
-                    running: mainPlayer.playbackState === MediaPlayer.PlayingState
-                    onTriggered: {
-                        if (!root.enforceCutPreview(mainPlayer.position))
-                            root.syncEditorPlayhead(mainPlayer.position, false)
-                    }
-                }
-                VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
-                SubtitleOverlay {
-                    id: mainSubtitleOverlay
-                    anchors.fill: mainVideo
-                    appBackend: root.appBackend
-                    player: mainPlayer
-                    layoutMetrics: root.subtitleLayoutMetricsCache
-                    active: mainWorkspace.visible
-                    captionObjectPrefix: "mainSubtitleOverlayCaption"
-                    baseFontSize: root.selectedSubtitleFontSize
-                    defaultSubtitleFontSize: root.defaultSubtitleFontSize
-                    outlineColor: root.selectedSubtitleOutlineColor
-                    outlineThickness: root.selectedSubtitleOutlineThickness
-                    speakerColors: root.projectSpeakerCache
-                    subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
-                    onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
-                        mainSubtitleOverlay.activeSegments
-                    )
-                }
+
                 ColumnLayout {
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                    anchors.margins: 12; spacing: 2
-                    Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: root.seekSharedPlayer(value, "source") }
-                    RowLayout { Layout.fillWidth: true
-                        ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text {
-                            text: root.appBackend.cutTimeline.hasCuts
-                                ? ("素材 " + root.stamp(mainPlayer.position / 1000)
-                                    + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
-                                    + " / " + root.stamp(root.appBackend.cutOutputDuration))
-                                : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
-                            color: root.textMuted
-                            font.pixelSize: 10
-                            font.family: "Cascadia Mono"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 10
+
+                    ContextActionBar {
+                        id: contextActionBar
+                        compact: true
+                        objectName: "contextActionBar"
+                        Layout.fillWidth: true
+                        projectLoaded: root.appBackend.projectLoaded
+                        running: root.appBackend.running
+                        activeJob: root.appBackend.activeJob
+                        canCreateProject: Boolean(root.appBackend.sourceSelection.video)
+                        canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
+                        canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
+                        renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
+                        renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
+                        blockReason: root.transcriptionBlockReason()
+                        audioMixerAvailable: root.appBackend.audioMixerAvailable
+                        mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
+                        subtitleAvailable: root.appBackend.segmentCount > 0
+                        outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
+                        settingsExpanded: root.settingsExpanded
+                        onSettingsRequested: root.toggleSettingsPopup()
+                        onDictionaryRequested: root.openDictionaryScreen()
+                        onCreateProjectRequested: root.appBackend.createEmptyProject()
+                        onStartTranscriptionRequested: root.requestTranscription()
+                        onEditorRequested: root.openEditorScreen()
+                        onMixerRequested: root.openMixerScreen()
+                        onShortModeRequested: root.openShortWorkspace()
+                        onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
+                        onSaveOrStopRequested: {
+                            if (!root.appBackend.running)
+                                root.appBackend.saveSettings(root.currentSettings())
+                            else if (root.appBackend.activeJob !== "update")
+                                root.appBackend.cancelProcessing()
+                        }
+                        onOutputFolderRequested: root.appBackend.openOutputFolder()
+                    }
+                    Rectangle {
+                        objectName: "mainVideoPanel"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 12
+                        color: "#080A09"
+                        border.color: root.border
+                        clip: true
+                        MediaPlayer {
+                            id: mainPlayer
+                            objectName: "mainWorkspacePlayer"
+                            source: root.appBackend.previewUrl
+                            videoOutput: mainVideo
+                            audioOutput: AudioOutput {
+                                objectName: "mainWorkspaceAudioOutput"
+                                volume: 0.7
+                                muted: workspaceAudioBridge.muteSourceAudio
+                            }
+                            onPositionChanged: {
+                                if (!mainSeek.pressed)
+                                    mainSeek.value = mainPlayer.position
+                                if (root.enforceCutPreview(mainPlayer.position))
+                                    return
+                                var completedPendingSeek = false
+                                if (root.pendingSharedSourcePosition >= 0
+                                        && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
+                                    root.pendingSharedSourcePosition = -1
+                                    sharedSeekGuardTimer.stop()
+                                    completedPendingSeek = true
+                                }
+                                if (!completedPendingSeek
+                                        && mainPlayer.playbackState !== MediaPlayer.PlayingState)
+                                    root.syncEditorPlayhead(mainPlayer.position, true)
+                            }
+                            onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
+                            onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
+                        }
+                        Timer {
+                            // Keep the shared playhead current; the overlay handles exact subtitle changes.
+                            interval: 100
+                            repeat: true
+                            running: mainPlayer.playbackState === MediaPlayer.PlayingState
+                            onTriggered: {
+                                if (!root.enforceCutPreview(mainPlayer.position))
+                                    root.syncEditorPlayhead(mainPlayer.position, false)
+                            }
+                        }
+                        VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
+                        SubtitleOverlay {
+                            id: mainSubtitleOverlay
+                            anchors.fill: mainVideo
+                            appBackend: root.appBackend
+                            player: mainPlayer
+                            layoutMetrics: root.subtitleLayoutMetricsCache
+                            active: mainWorkspace.visible
+                            captionObjectPrefix: "mainSubtitleOverlayCaption"
+                            baseFontSize: root.selectedSubtitleFontSize
+                            defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                            outlineColor: root.selectedSubtitleOutlineColor
+                            outlineThickness: root.selectedSubtitleOutlineThickness
+                            speakerColors: root.projectSpeakerCache
+                            subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                            onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
+                                mainSubtitleOverlay.activeSegments
+                            )
+                        }
+                        ColumnLayout {
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                            anchors.margins: 12; spacing: 2
+                            Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: root.seekSharedPlayer(value, "source") }
+                            RowLayout { Layout.fillWidth: true
+                                ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
+                                Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
+                                Text {
+                                    text: root.appBackend.cutTimeline.hasCuts
+                                        ? ("素材 " + root.stamp(mainPlayer.position / 1000)
+                                            + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
+                                            + " / " + root.stamp(root.appBackend.cutOutputDuration))
+                                        : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
+                                    color: root.textMuted
+                                    font.pixelSize: 10
+                                    font.family: "Cascadia Mono"
+                                }
+                            }
                         }
                     }
                 }

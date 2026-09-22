@@ -212,7 +212,7 @@ Item {
                     id: highlightCandidates
                     objectName: "highlightCandidateList"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 220
+                    Layout.preferredHeight: 280
                     appBackend: shortRoot.appBackend
                     onPreviewRequested: function (seconds, endSeconds) { shortPreview.previewAt(seconds, endSeconds) }
                 }

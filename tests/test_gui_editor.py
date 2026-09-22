@@ -6200,6 +6200,25 @@ class GuiEditorRegressionTests(unittest.TestCase):
         clips = self.gui.find_item(window, "shortModeClipList")
         self.assertLess(settings.mapToScene(QPointF(0, 0)).x(), preview.mapToScene(QPointF(0, 0)).x())
         self.assertLess(preview.mapToScene(QPointF(0, 0)).x(), clips.mapToScene(QPointF(0, 0)).x())
+        for width, height in ((1220, 760), (1520, 940)):
+            self.gui.resize(window, width, height)
+            for name in ("shortModeClipSourceCombo", "shortModeSegmentCombo",
+                         "shortModeRangeStartField", "shortModeRangeEndField", "shortModeAddClipButton"):
+                control = self.gui.find_item(window, name)
+                self._assert_quick_item_within(clips, control)
+                self._assert_quick_item_within(window.contentItem(), control)
+            for owner, names in (
+                (settings, ("shortModeGlobalFitCombo", "shortModeBackgroundColorField",
+                            "shortModeTransitionCombo", "shortModeTransitionDurationSlider",
+                            "shortModeBgmStartField", "shortModeBgmVolumeSlider")),
+                (self.gui.find_item(window, "highlightCandidateList"),
+                 ("highlightSortCombo", "highlightCategoryCombo", "highlightAnalyzeButton",
+                  "highlightCancelButton", "highlightRetryButton", "highlightUndoRejectButton")),
+            ):
+                for name in names:
+                    control = self.gui.find_item(window, name)
+                    self._assert_quick_item_within(owner, control)
+                    self._assert_quick_item_within(window.contentItem(), control)
 
     def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]

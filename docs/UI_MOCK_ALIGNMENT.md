@@ -61,3 +61,9 @@ python -m ruff check src/gui.py tests/test_gui_editor.py tests/test_qml_static.p
 ### 1220×760
 
 ![最小サイズの素材一覧と下部編集領域](ui-mock-440-compact.png)
+
+### ショート画面（1220×760）
+
+設定・候補・クリップ追加フォームを複数行に配置し、右端の操作が画面外へ出ないようにする。
+
+![最小サイズのショート画面](ui-mock-440-short.png)

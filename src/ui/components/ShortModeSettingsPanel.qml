@@ -109,6 +109,7 @@ ColumnLayout {
             border.color: "#30363D"
         }
         Button {
+            Layout.preferredWidth: 32
             text: "..."
             enabled: settingsRoot.editingEnabled
             onClicked: bgColorDialog.open()
@@ -126,7 +127,8 @@ ColumnLayout {
         }
     }
 
-    RowLayout {
+    GridLayout {
+        columns: 2
         Layout.fillWidth: true
         Text { text: "トランジション"; color: "#F0F6FC"; Layout.fillWidth: true }
         ComboBox {
@@ -144,6 +146,9 @@ ColumnLayout {
         }
         Slider {
             id: transitionDuration
+            Layout.columnSpan: 2
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
             objectName: "shortModeTransitionDurationSlider"
             from: 0; to: 2.0; stepSize: 0.1
             enabled: settingsRoot.editingEnabled
@@ -160,6 +165,7 @@ ColumnLayout {
         Text { text: "字幕スケール"; color: "#F0F6FC"; Layout.fillWidth: true }
         SpinBox {
             id: scaleSpin
+            Layout.preferredWidth: 130
             objectName: "shortModeSubtitleScaleSpin"
             from: 50; to: 300
             textFromValue: function(value) { return value + "%" }
@@ -209,17 +215,21 @@ ColumnLayout {
     }
 
     GridLayout {
-        columns: 4
+        columns: 2
+        Layout.fillWidth: true
         columnSpacing: 10
         rowSpacing: 6
 
-        Text { text: "開始位置"; color: "#F0F6FC" }
-        Text { text: "終了位置"; color: "#F0F6FC" }
-        Text { text: "動画内の開始"; color: "#F0F6FC" }
-        Text { text: "音量"; color: "#F0F6FC" }
+        Text { Layout.row: 0; Layout.column: 0; text: "開始位置"; color: "#F0F6FC" }
+        Text { Layout.row: 0; Layout.column: 1; text: "終了位置"; color: "#F0F6FC" }
+        Text { Layout.row: 2; Layout.column: 0; text: "動画内の開始"; color: "#F0F6FC" }
+        Text { Layout.row: 2; Layout.column: 1; text: "音量"; color: "#F0F6FC" }
 
         TimeField {
             id: bgmIn
+            Layout.row: 1
+            Layout.column: 0
+            Layout.fillWidth: true
             objectName: "shortModeBgmInField"
             Layout.preferredWidth: 70
             enabled: settingsRoot.editingEnabled
@@ -228,6 +238,9 @@ ColumnLayout {
         }
         TimeField {
             id: bgmOut
+            Layout.row: 1
+            Layout.column: 1
+            Layout.fillWidth: true
             objectName: "shortModeBgmOutField"
             Layout.preferredWidth: 70
             enabled: settingsRoot.editingEnabled
@@ -236,6 +249,9 @@ ColumnLayout {
         }
         TimeField {
             id: bgmStart
+            Layout.row: 3
+            Layout.column: 0
+            Layout.fillWidth: true
             objectName: "shortModeBgmStartField"
             Layout.preferredWidth: 70
             enabled: settingsRoot.editingEnabled
@@ -243,9 +259,15 @@ ColumnLayout {
             onEditingFinished: _sendBgmUpdate({"start": parseFloat(text) || 0})
         }
         ColumnLayout {
+            Layout.row: 3
+            Layout.column: 1
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
             spacing: 2
             Slider {
                 id: bgmVolumeSlider
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 objectName: "shortModeBgmVolumeSlider"
                 from: 0.0; to: 1.0; stepSize: 0.05
                 enabled: settingsRoot.editingEnabled

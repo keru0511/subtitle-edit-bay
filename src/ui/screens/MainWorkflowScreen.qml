@@ -1927,8 +1927,8 @@ ApplicationWindow {
                     && root.appBackend.projectLoaded
                     && root.appBackend.currentEditMode === "cut" && root.editTool === "sequence"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 285
-                Layout.minimumHeight: 265
+                Layout.preferredHeight: 335
+                Layout.minimumHeight: 315
                 backend: root.appBackend
                 panelColor: root.panel
                 raisedColor: root.raised

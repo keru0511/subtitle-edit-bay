@@ -19,6 +19,7 @@ Rectangle {
     property int hoverIndex: -1
     property string activeDragClipId: ""
     property string selectedClipId: ""
+    property real sequencePixelsPerSecond: 34
 
     objectName: "sequenceEditorPanel"
     radius: 12
@@ -47,6 +48,35 @@ Rectangle {
     function clipIdFromDrag(dragEvent) {
         var source = dragEvent ? dragEvent.source : null
         return source ? String(source["clipId"] || "") : ""
+    }
+
+    function sequenceClipWidth(clip) {
+        return Math.max(120, Number(clip ? clip.duration : 0) * root.sequencePixelsPerSecond)
+    }
+
+    function assetDuration(assetId) {
+        var assets = root.backend ? root.backend.mediaBinAssets : []
+        for (var index = 0; index < assets.length; ++index) {
+            if (String(assets[index].id || "") === String(assetId || ""))
+                return Number(assets[index].duration || 0)
+        }
+        return 0
+    }
+
+    function sequenceTargetIndex(sceneX) {
+        var clips = root.backend ? root.backend.sequenceClips : []
+        if (clips.length === 0)
+            return 0
+        var localX = sequenceTimelineList.mapFromItem(null, sceneX, 0).x
+            + sequenceTimelineList.contentX
+        var cursor = 0
+        for (var index = 0; index < clips.length; ++index) {
+            var clipWidth = root.sequenceClipWidth(clips[index])
+            if (localX < cursor + clipWidth / 2)
+                return index
+            cursor += clipWidth + sequenceTimelineList.spacing
+        }
+        return clips.length - 1
     }
 
     ColumnLayout {
@@ -167,6 +197,309 @@ Rectangle {
                         onMoved: {
                             if (root.backend)
                                 root.backend.setSequencePlayhead(Math.round(value))
+                        }
+                    }
+
+                    Rectangle {
+                        id: sequenceTimelineViewport
+                        objectName: "sequenceTimelineViewport"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 86
+                        Layout.minimumHeight: 86
+                        radius: 6
+                        color: root.panelColor
+                        border.color: root.borderColor
+                        clip: true
+
+                        Text {
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.margins: 5
+                            text: "V1  映像シーケンス  ｜  中央をドラッグして移動・両端をドラッグして長さ変更"
+                            color: root.mutedColor
+                            font.family: "Yu Gothic UI"
+                            font.pixelSize: 8
+                        }
+
+                        ListView {
+                            id: sequenceTimelineList
+                            objectName: "sequenceTimelineList"
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.topMargin: 20
+                            anchors.margins: 5
+                            orientation: ListView.Horizontal
+                            spacing: 4
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                            model: root.backend ? root.backend.sequenceClips : []
+
+                            delegate: Rectangle {
+                                id: timelineClip
+                                required property int index
+                                required property var modelData
+                                readonly property string clipId: String(timelineClip.modelData.clipId || "")
+                                property real displaySourceStart: Number(timelineClip.modelData.sourceStart || 0)
+                                property real displaySourceEnd: Number(timelineClip.modelData.sourceEnd || 0)
+
+                                objectName: "sequenceTimelineClip-" + timelineClip.clipId
+                                width: Math.max(
+                                    120,
+                                    (timelineClip.displaySourceEnd - timelineClip.displaySourceStart)
+                                        * root.sequencePixelsPerSecond
+                                )
+                                height: sequenceTimelineList.height - 10
+                                radius: 5
+                                color: root.selectedClipId === timelineClip.clipId ? "#433878" : "#302A5A"
+                                border.color: root.selectedClipId === timelineClip.clipId
+                                    ? root.textColor : root.accentColor
+                                border.width: root.selectedClipId === timelineClip.clipId ? 2 : 1
+
+                                transform: Translate { x: timelineMoveArea.dragOffset }
+
+                                Binding {
+                                    target: timelineClip
+                                    property: "displaySourceStart"
+                                    value: Number(timelineClip.modelData.sourceStart || 0)
+                                    when: !timelineTrimStartArea.pressed
+                                }
+                                Binding {
+                                    target: timelineClip
+                                    property: "displaySourceEnd"
+                                    value: Number(timelineClip.modelData.sourceEnd || 0)
+                                    when: !timelineTrimEndArea.pressed
+                                }
+
+                                DropArea {
+                                    objectName: "sequenceTimelineClipDropArea"
+                                    anchors.fill: parent
+                                    z: 20
+                                    enabled: root.backend && !root.backend.running
+                                    onEntered: function(drag) {
+                                        var assetId = root.assetIdFromDrag(drag)
+                                        drag.accepted = assetId.length > 0
+                                        if (assetId.length > 0)
+                                            root.hoverIndex = timelineClip.index
+                                    }
+                                    onExited: if (root.hoverIndex === timelineClip.index) root.hoverIndex = -1
+                                    onDropped: function(drop) {
+                                        var assetId = root.assetIdFromDrag(drop)
+                                        if (assetId.length > 0 && root.backend) {
+                                            root.backend.insertSequenceClip(assetId, timelineClip.index)
+                                            root.hoverIndex = -1
+                                            drop.acceptProposedAction()
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.leftMargin: 15
+                                    anchors.rightMargin: 15
+                                    anchors.topMargin: 8
+                                    text: String(timelineClip.modelData.assetName || "動画")
+                                    color: root.textColor
+                                    font.family: "Yu Gothic UI"
+                                    font.pixelSize: 9
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideMiddle
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    anchors.leftMargin: 15
+                                    anchors.rightMargin: 15
+                                    anchors.bottomMargin: 7
+                                    text: Number(timelineClip.displaySourceStart).toFixed(2) + " - "
+                                        + Number(timelineClip.displaySourceEnd).toFixed(2) + "秒"
+                                    color: root.mutedColor
+                                    font.family: "Cascadia Mono"
+                                    font.pixelSize: 8
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                MouseArea {
+                                    id: timelineMoveArea
+                                    property real pressSceneX: 0
+                                    property real dragOffset: 0
+                                    property bool moved: false
+                                    property string clipId: timelineClip.clipId
+                                    objectName: "sequenceTimelineMoveArea-" + timelineClip.clipId
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    z: 10
+                                    enabled: root.backend && !root.backend.running
+                                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                                    onPressed: function(mouse) {
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        pressSceneX = scenePoint.x
+                                        dragOffset = 0
+                                        moved = false
+                                        root.selectedClipId = timelineClip.clipId
+                                    }
+                                    onPositionChanged: function(mouse) {
+                                        if (!pressed)
+                                            return
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        dragOffset = scenePoint.x - pressSceneX
+                                        moved = moved || Math.abs(dragOffset) >= 6
+                                    }
+                                    onReleased: function(mouse) {
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        if (moved && root.backend) {
+                                            root.backend.moveSequenceClip(
+                                                timelineClip.clipId,
+                                                root.sequenceTargetIndex(scenePoint.x)
+                                            )
+                                        } else if (root.backend) {
+                                            root.backend.setSequencePlayhead(
+                                                Math.round(Number(timelineClip.modelData.outputStart || 0) * 1000)
+                                            )
+                                        }
+                                        dragOffset = 0
+                                    }
+                                    onCanceled: dragOffset = 0
+                                }
+
+                                MouseArea {
+                                    id: timelineTrimStartArea
+                                    property real pressSceneX: 0
+                                    property real initialValue: 0
+                                    property string clipId: timelineClip.clipId
+                                    objectName: "sequenceTimelineTrimStart-" + timelineClip.clipId
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    width: 12
+                                    z: 30
+                                    enabled: root.backend && !root.backend.running
+                                    cursorShape: Qt.SizeHorCursor
+                                    onPressed: function(mouse) {
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        pressSceneX = scenePoint.x
+                                        initialValue = Number(timelineClip.modelData.sourceStart || 0)
+                                        root.selectedClipId = timelineClip.clipId
+                                    }
+                                    onPositionChanged: function(mouse) {
+                                        if (!pressed)
+                                            return
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        var candidate = initialValue
+                                            + (scenePoint.x - pressSceneX) / root.sequencePixelsPerSecond
+                                        candidate = Math.max(
+                                            0,
+                                            Math.min(timelineClip.displaySourceEnd - 0.1, candidate)
+                                        )
+                                        timelineClip.displaySourceStart = Math.round(candidate * 100) / 100
+                                    }
+                                    onReleased: {
+                                        if (root.backend
+                                                && Math.abs(timelineClip.displaySourceStart - initialValue) >= 0.001)
+                                            root.backend.trimSequenceClip(
+                                                timelineClip.clipId,
+                                                timelineClip.displaySourceStart,
+                                                Number(timelineClip.modelData.sourceEnd || 0)
+                                            )
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: timelineTrimEndArea
+                                    property real pressSceneX: 0
+                                    property real initialValue: 0
+                                    property string clipId: timelineClip.clipId
+                                    objectName: "sequenceTimelineTrimEnd-" + timelineClip.clipId
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    width: 12
+                                    z: 30
+                                    enabled: root.backend && !root.backend.running
+                                    cursorShape: Qt.SizeHorCursor
+                                    onPressed: function(mouse) {
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        pressSceneX = scenePoint.x
+                                        initialValue = Number(timelineClip.modelData.sourceEnd || 0)
+                                        root.selectedClipId = timelineClip.clipId
+                                    }
+                                    onPositionChanged: function(mouse) {
+                                        if (!pressed)
+                                            return
+                                        var scenePoint = mapToItem(null, mouse.x, mouse.y)
+                                        var candidate = initialValue
+                                            + (scenePoint.x - pressSceneX) / root.sequencePixelsPerSecond
+                                        var maximum = root.assetDuration(timelineClip.modelData.assetId)
+                                        candidate = Math.max(
+                                            timelineClip.displaySourceStart + 0.1,
+                                            Math.min(maximum, candidate)
+                                        )
+                                        timelineClip.displaySourceEnd = Math.round(candidate * 100) / 100
+                                    }
+                                    onReleased: {
+                                        if (root.backend
+                                                && Math.abs(timelineClip.displaySourceEnd - initialValue) >= 0.001)
+                                            root.backend.trimSequenceClip(
+                                                timelineClip.clipId,
+                                                Number(timelineClip.modelData.sourceStart || 0),
+                                                timelineClip.displaySourceEnd
+                                            )
+                                    }
+                                }
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 4
+                                    height: parent.height - 12
+                                    radius: 2
+                                    color: root.textColor
+                                    opacity: timelineTrimStartArea.containsMouse || timelineTrimStartArea.pressed ? 1 : 0.5
+                                }
+                                Rectangle {
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 4
+                                    height: parent.height - 12
+                                    radius: 2
+                                    color: root.textColor
+                                    opacity: timelineTrimEndArea.containsMouse || timelineTrimEndArea.pressed ? 1 : 0.5
+                                }
+                            }
+                        }
+
+                        DropArea {
+                            id: sequenceTimelineDropArea
+                            objectName: "sequenceTimelineDropArea"
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.topMargin: 20
+                            anchors.margins: 5
+                            z: 100
+                            enabled: root.backend && !root.backend.running
+                            onEntered: function(drag) {
+                                drag.accepted = root.assetIdFromDrag(drag).length > 0
+                            }
+                            onDropped: function(drop) {
+                                var assetId = root.assetIdFromDrag(drop)
+                                if (assetId.length > 0 && root.backend) {
+                                    var scenePoint = mapToItem(null, drop.x, drop.y)
+                                    root.backend.insertSequenceClip(
+                                        assetId,
+                                        root.sequenceTargetIndex(scenePoint.x)
+                                    )
+                                    drop.acceptProposedAction()
+                                }
+                            }
                         }
                     }
 

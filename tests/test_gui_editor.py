@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
+from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
@@ -6215,17 +6215,28 @@ class GuiEditorRegressionTests(unittest.TestCase):
         card = self.gui.find_visual_item_by_properties(
             window, {"assetId": asset_id}, required_properties=("assetId",)
         )
+        media_list = self._quick_item(window, "mediaBinList")
+        media_list.setProperty(
+            "contentY",
+            max(0.0, float(media_list.property("contentHeight")) - media_list.height()),
+        )
+        self.gui.process_events()
         self.gui.wait_until(
             lambda: bool(self.gui.visual_items_with_properties(window, "clipId")),
             description="sequence clip delegate",
         )
-        target = self.gui.find_visual_item(window.contentItem(), "sequenceClipDropArea")
+        target = self.gui.find_visual_item(window.contentItem(), "sequenceTimelineDropArea")
+        self.assertTrue(target.isVisible())
+        self.assertTrue(bool(target.property("enabled")))
+        self.assertGreater(target.width(), 100)
+        self.assertGreater(target.height(), 20)
         start = card.mapToScene(QPointF(25, 25)).toPoint()
         end = target.mapToScene(QPointF(25, 15)).toPoint()
         QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
         for fraction in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0):
             point = start + (end - start) * fraction
             QTest.mouseMove(window, point, 30)
+        self.assertTrue(target.property("containsDrag"))
         QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
         self.gui.wait_until(lambda: len(self.app.sequenceClips) == 2, description="asset drag insertion")
         self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
@@ -6240,13 +6251,136 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.runningChanged.emit()
         self.gui.process_events()
         for item in self.gui.visual_items(window):
-            if item.isVisible() and item.objectName() in {
+            control_name = item.objectName()
+            if item.isVisible() and (
+                control_name in {
                 "addSequenceClipButton", "mediaBinAddButton", "mediaAssetDragArea",
                 "sequenceClipStartField", "sequenceClipEndField", "sequenceAudioLinkedCheck",
                 "sequenceClipMutedCheck", "sequenceTransitionCombo", "sequenceTransitionDuration",
-                "sequenceAudioOffset", "removeSequenceClipButton",
-            }:
-                self.assertFalse(bool(item.property("enabled")), item.objectName())
+                "sequenceAudioOffset", "removeSequenceClipButton", "sequenceTimelineDropArea",
+                }
+                or control_name.startswith(
+                    (
+                        "sequenceTimelineMoveArea-",
+                        "sequenceTimelineTrimStart-",
+                        "sequenceTimelineTrimEnd-",
+                    )
+                )
+            ):
+                self.assertFalse(bool(item.property("enabled")), control_name)
+
+    def test_sequence_timeline_drag_trims_and_reorders_clips(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        second_asset_id = self._add_second_sequence_asset(second_video)
+        self.assertTrue(self.app.addSequenceClip(second_asset_id))
+        initial_clips = self.app.sequenceClips
+        first_clip_id = str(initial_clips[0]["clipId"])
+        second_clip_id = str(initial_clips[1]["clipId"])
+        initial_end = float(initial_clips[0]["sourceEnd"])
+
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        self.gui.wait_until(
+            lambda: (
+                self._quick_item(window, "sequenceTimelineList").isVisible()
+                and self.gui.find_visual_item(
+                    window.contentItem(), f"sequenceTimelineTrimEnd-{first_clip_id}"
+                ) is not None
+            ),
+            description="horizontal sequence timeline",
+        )
+
+        trim_end = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineTrimEnd-{first_clip_id}"
+        )
+        trim_start = trim_end.mapToScene(QPointF(trim_end.width() / 2, trim_end.height() / 2)).toPoint()
+        trim_finish = trim_start - QPoint(68, 0)
+        QTest.mousePress(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            trim_start,
+        )
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, trim_start + (trim_finish - trim_start) * fraction, 30)
+        QTest.mouseRelease(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            trim_finish,
+        )
+        self.gui.wait_until(
+            lambda: float(self.app.sequenceClips[0]["sourceEnd"]) < initial_end,
+            description="timeline edge trim",
+        )
+        trimmed_end = float(self.app.sequenceClips[0]["sourceEnd"])
+        self.assertAlmostEqual(trimmed_end, initial_end - 2.0, delta=0.25)
+        self.app.undoCutEdit()
+        self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceEnd"]), initial_end)
+
+        trim_begin = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineTrimStart-{first_clip_id}"
+        )
+        begin_start = trim_begin.mapToScene(
+            QPointF(trim_begin.width() / 2, trim_begin.height() / 2)
+        ).toPoint()
+        begin_finish = begin_start + QPoint(34, 0)
+        QTest.mousePress(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            begin_start,
+        )
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, begin_start + (begin_finish - begin_start) * fraction, 30)
+        QTest.mouseRelease(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            begin_finish,
+        )
+        self.gui.wait_until(
+            lambda: float(self.app.sequenceClips[0]["sourceStart"]) > 0,
+            description="timeline start edge trim",
+        )
+        self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceStart"]), 1.0, delta=0.25)
+        self.app.undoCutEdit()
+        self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceStart"]), 0.0)
+
+        move_area = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineMoveArea-{second_clip_id}"
+        )
+        first_timeline_clip = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineClip-{first_clip_id}"
+        )
+        move_start = move_area.mapToScene(
+            QPointF(move_area.width() / 2, move_area.height() / 2)
+        ).toPoint()
+        move_finish = first_timeline_clip.mapToScene(
+            QPointF(24, first_timeline_clip.height() / 2)
+        ).toPoint()
+        QTest.mousePress(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            move_start,
+        )
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, move_start + (move_finish - move_start) * fraction, 30)
+        QTest.mouseRelease(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            move_finish,
+        )
+        self.gui.wait_until(
+            lambda: str(self.app.sequenceClips[0]["clipId"]) == second_clip_id,
+            description="timeline center drag reorder",
+        )
+        self.app.undoCutEdit()
+        self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
 
     def test_short_workspace_places_settings_left_and_clips_right(self) -> None:
         self._load_project()

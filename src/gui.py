@@ -1641,7 +1641,10 @@ class EditBayBackend(LegacyEditBayBackend):
         if transition_type not in VALID_TRANSITION_TYPES:
             return False
         section = self._short_video_section()
-        section["transition"] = {"type": transition_type, "duration": max(0.0, round(float(duration), 3))}
+        transition = {"type": transition_type, "duration": max(0.0, round(float(duration), 3))}
+        if section.get("transition") == transition:
+            return True
+        section["transition"] = transition
         self._mark_project_dirty()
         self.projectDataChanged.emit()
         self.shortVideoChanged.emit()
@@ -1664,6 +1667,8 @@ class EditBayBackend(LegacyEditBayBackend):
         if "volume" in fields:
             volume = float(fields["volume"])
             bgm["volume"] = max(0.0, min(1.0, volume))
+        if section.get("bgm", {}) == bgm:
+            return True
         section["bgm"] = bgm
         self._mark_project_dirty()
         self.projectDataChanged.emit()
@@ -1765,8 +1770,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def retryHighlightAnalysis(self) -> bool:
         if self._highlight_status in {"running", "cancelling"}:
             return False
-        self._highlight_candidates = []
-        self.highlightCandidatesChanged.emit()
+        # Keep existing candidates until a successful analysis replaces them.
         return self.startHighlightAnalysis()
 
     @Slot(int, result=bool)
@@ -1806,6 +1810,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:
+        if self._running:
+            return False
         if not 0 <= index < len(self._highlight_candidates):
             return False
         self._highlight_rejected.append(self._highlight_candidates.pop(index))
@@ -1814,6 +1820,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(result=bool)
     def undoHighlightRejection(self) -> bool:
+        if self._running:
+            return False
         if not self._highlight_rejected:
             return False
         self._highlight_candidates.append(self._highlight_rejected.pop())
@@ -2947,6 +2955,8 @@ class EditBayBackend(LegacyEditBayBackend):
         selected_operation_ids: list[Any] | None = None,
         allow_silence: bool = False,
     ) -> bool:
+        if self._running:
+            return False
         if self._project is None or not self._audio_mix_proposal:
             self._set_status("適用する音量ミキサーの変更案がありません", "CHECK")
             return False
@@ -3432,6 +3442,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(int, "QVariantMap")
     def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+        if self._running:
+            return
         if self._project is None or not 0 <= index < len(self._project["segments"]):
             return
         current = self._project["segments"][index]
@@ -3505,6 +3517,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(int, float, float, float)
     def moveSegment(self, index: int, start: float, end: float, snap_seconds: float) -> None:
+        if self._running:
+            return
         if self._project is None or not 0 <= index < len(self._project["segments"]):
             return
         duration = max(MIN_SEGMENT_DURATION_SECONDS, end - start)
@@ -3514,6 +3528,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(int, float, float)
     def resizeSegmentStart(self, index: int, start: float, snap_seconds: float) -> None:
+        if self._running:
+            return
         if self._project is None or not 0 <= index < len(self._project["segments"]):
             return
         segment = self._project["segments"][index]
@@ -3522,6 +3538,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(int, float, float)
     def resizeSegmentEnd(self, index: int, end: float, snap_seconds: float) -> None:
+        if self._running:
+            return
         if self._project is None or not 0 <= index < len(self._project["segments"]):
             return
         segment = self._project["segments"][index]
@@ -3530,6 +3548,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(float)
     def addSegment(self, at_seconds: float) -> None:
+        if self._running:
+            return
         if self._project is None:
             return
         speakers = self._project.get("speakers", [])
@@ -3554,12 +3574,16 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def deleteSelectedSegment(self) -> None:
+        if self._running:
+            return
         if self._project is None or not 0 <= self._selected_segment_index < len(self._project["segments"]):
             return
         self._commit_segment_change([self._project["segments"][self._selected_segment_index]], [])
 
     @Slot(float)
     def splitSelectedSegment(self, at_seconds: float) -> None:
+        if self._running:
+            return
         if self._project is None or not 0 <= self._selected_segment_index < len(self._project["segments"]):
             return
         index = self._selected_segment_index
@@ -3590,6 +3614,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def undoEdit(self) -> None:
+        if self._running:
+            return
         self._project_editor_controller.undo()
 
     @Slot()
@@ -3602,6 +3628,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def redoEdit(self) -> None:
+        if self._running:
+            return
         self._project_editor_controller.redo()
 
     @Slot(result=bool)
@@ -3663,6 +3691,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot("QVariantMap")
     def buildSubtitlePreview(self, settings: dict[str, Any]) -> None:
+        if self._running:
+            return
         if self._project is None:
             return
         self._update_project_settings(settings)
@@ -4441,6 +4471,8 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot("QVariantList")
     def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
+        if self._running:
+            return
         if self._project is None or not self._codex_proposal:
             self._set_status("適用するCodex編集案がありません", "CHECK")
             return
@@ -5172,3 +5204,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

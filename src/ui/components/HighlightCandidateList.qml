@@ -68,7 +68,7 @@ ColumnLayout {
         Button {
             objectName: "highlightAnalyzeButton"
             text: appBackend && appBackend.highlightAnalysisState === "running" ? "探しています..." : "見どころを探す"
-            enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0 && !appBackend.running
+            enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0 && !appBackend.running
             onClicked: appBackend.startHighlightAnalysis()
         }
         Button {
@@ -83,7 +83,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
-        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
+        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
         Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.highlightUndoAvailable && !appBackend.running; onClicked: appBackend.undoHighlightRejection() }
     }
 
@@ -115,9 +115,10 @@ ColumnLayout {
                     Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
                 Button { objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0), Number(modelData.end || modelData.start || 0)) }
-                Button { objectName: "highlightAddButton"; text: "ショートに追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }
-                Button { objectName: "highlightRejectButton"; text: "候補から外す"; onClicked: appBackend.rejectHighlightCandidate(modelData.source_index) }
+                Button { objectName: "highlightAddButton"; enabled: appBackend && !appBackend.running; text: "ショートに追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }
+                Button { objectName: "highlightRejectButton"; enabled: appBackend && !appBackend.running; text: "候補から外す"; onClicked: appBackend.rejectHighlightCandidate(modelData.source_index) }
             }
         }
     }
 }
+

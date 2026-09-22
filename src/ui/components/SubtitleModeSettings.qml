@@ -89,7 +89,7 @@ Item {
             : field.editingSegmentIndex
         var selectedIndex = root.backend.selectedSegmentIndex
         var selectedId = root.segmentIdAt(selectedIndex)
-        if (editIndex >= 0 && field.acceptableInput) {
+        if (!root.backend.running && editIndex >= 0 && field.acceptableInput) {
             var changes = ({})
             changes[propertyName] = Number(field.text)
             root.backend.updateSegment(editIndex, changes)
@@ -118,7 +118,7 @@ Item {
             return
         var editedText = captionText.text
         var selectedIndex = root.backend.selectedSegmentIndex
-        if (editedText !== captionText.originalText) {
+        if (!root.backend.running && editedText !== captionText.originalText) {
             root.backend.updateSegment(index, {"text": editedText})
             if (selectedIndex >= 0 && selectedIndex !== index)
                 root.backend.selectSegment(selectedIndex)
@@ -235,6 +235,7 @@ Item {
 
             ColumnLayout {
                 id: selectedEditor
+                enabled: root.backend && !root.backend.running
                 width: parent.width
                 spacing: 6
                 RowLayout {
@@ -354,3 +355,4 @@ Item {
         }
     }
 }
+

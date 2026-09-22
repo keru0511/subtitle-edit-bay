@@ -1217,6 +1217,10 @@ class EditBayBackend(LegacyEditBayBackend):
     def highlightCandidates(self) -> list[dict[str, Any]]:
         return deepcopy(self._highlight_candidates)
 
+    @Property(bool, notify=highlightCandidatesChanged)
+    def highlightUndoAvailable(self) -> bool:
+        return bool(self._highlight_rejected)
+
     @Property(str, notify=highlightAnalysisChanged)
     def highlightAnalysisState(self) -> str:
         return self._highlight_status
@@ -1698,10 +1702,13 @@ class EditBayBackend(LegacyEditBayBackend):
         generation = self._highlight_generation
         cancel_event = threading.Event()
         self._highlight_cancel = cancel_event
+        had_rejected = bool(self._highlight_rejected)
         self._highlight_rejected = []
         self._highlight_status = "running"
         self._highlight_progress = 0.0
         self.highlightAnalysisChanged.emit()
+        if had_rejected:
+            self.highlightCandidatesChanged.emit()
         segments = deepcopy(self._project.get("segments", []))
         duration = self.projectDuration
         cache_directory = (

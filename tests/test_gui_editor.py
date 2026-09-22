@@ -6179,6 +6179,61 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="sequence clip delegate after redo",
         )
 
+    def test_highlight_retry_resets_rejected_candidates_before_worker_completion(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+
+        undo_button = self._quick_item(window, "highlightUndoRejectButton")
+        retry_button = self._quick_item(window, "highlightRetryButton")
+        self.app._highlight_status = "completed"
+        self.app.highlightAnalysisChanged.emit()
+        self.app._highlight_candidates = [
+            {"id": "rejected", "start": 2.0, "end": 3.0, "score": 0.8}
+        ]
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+
+        self.assertTrue(self.app.rejectHighlightCandidate(0))
+        self.gui.wait_until(
+            lambda: bool(undo_button.property("enabled")),
+            description="undo enabled after candidate rejection",
+        )
+
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocked_generate(*_args: object, **_kwargs: object) -> list[object]:
+            worker_started.set()
+            release_worker.wait()
+            return []
+
+        try:
+            with patch(
+                "src.highlight_candidates.generate_highlight_candidates",
+                side_effect=blocked_generate,
+            ):
+                self._click(window, retry_button)
+                self.gui.wait_until(
+                    lambda: worker_started.is_set()
+                    and self.app.highlightAnalysisState == "running",
+                    description="highlight retry worker started",
+                )
+                self.gui.wait_until(
+                    lambda: self.app._highlight_rejected == []
+                    and not bool(undo_button.property("enabled")),
+                    description="undo disabled while retry worker is blocked",
+                )
+        finally:
+            release_worker.set()
+
+        self.gui.wait_until(
+            lambda: self.app.highlightAnalysisState == "completed",
+            description="highlight retry completion",
+        )
+        self.assertEqual(self.app._highlight_rejected, [])
+        self.assertFalse(undo_button.property("enabled"))
+
     def test_codex_header_ai_button_toggles_wide_and_overlay_sidebar(self) -> None:
         self._load_project()
         _, window = self._load_qml()

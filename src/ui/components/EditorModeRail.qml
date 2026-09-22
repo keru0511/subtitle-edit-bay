@@ -78,18 +78,9 @@ Rectangle {
         anchors.margins: 8
         spacing: 8
 
-        Text {
-            Layout.fillWidth: true
-            text: "編集"
-            color: rail.mutedColor
-            font.family: "Yu Gothic UI"
-            font.pixelSize: 10
-            horizontalAlignment: Text.AlignHCenter
-        }
-
-        ModeButton { objectName: "editorModeButton-subtitle"; mode: "subtitle"; label: "字幕"; mark: "字" }
-        ModeButton { objectName: "editorModeButton-cut"; mode: "cut"; label: "カット"; mark: "✂" }
+        ModeButton { objectName: "editorModeButton-cut"; mode: "cut"; label: "編集"; mark: "✂" }
         Text { Layout.fillWidth: true; visible: !rail.capabilities.canCut; text: "準備中"; color: rail.mutedColor; font.family: "Yu Gothic UI"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter }
+        ModeButton { objectName: "editorModeButton-subtitle"; mode: "subtitle"; label: "字幕"; mark: "字" }
         ModeButton { objectName: "editorModeButton-audio"; mode: "audio"; label: "音量"; mark: "音" }
         Text { Layout.fillWidth: true; visible: !rail.capabilities.canMixAudio; text: "利用不可"; color: rail.mutedColor; font.family: "Yu Gothic UI"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter }
 

@@ -76,11 +76,13 @@ ApplicationWindow {
         return providerName ? providerName + "ログイン" : "ログイン"
     }
     readonly property bool codexSidebarOverlay: root.width < 1400
-    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0
+    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen
+        && !root.loginInInspector ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
+        && !root.loginInInspector
         ? (root.codexDrawerOpen ? 310 : 104) : 0
     readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
-        && root.codexDrawerOpen ? 310 : 0
+        && root.codexDrawerOpen && !root.loginInInspector ? 310 : 0
     readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0 && !root.codexSidebarOverlay
         ? root.codexSidebarWidth + 10 : 0
     readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
@@ -92,6 +94,7 @@ ApplicationWindow {
     readonly property int shortWorkspaceAiAccessInset: root.shortWorkspaceActive
         && !root.codexAuthenticated ? 58 : 0
     property bool codexDrawerOpen: true
+    property string inspectorTab: "settings"
     property bool previousCodexAuthenticated: false
     onEditorModeChanged: {
         if (root.editorMode)
@@ -1138,14 +1141,17 @@ ApplicationWindow {
         onSaveRequested: root.appBackend.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
-            if (root.codexAuthenticated)
+            if (root.loginInInspector) {
+                root.inspectorTab = root.inspectorTab === "codex" ? "settings" : "codex"
+            } else if (root.codexAuthenticated) {
                 root.codexDrawerOpen = !root.codexDrawerOpen
-            else if (root.appBackend.codexAuthState === "login_pending")
+            } else if (root.appBackend.codexAuthState === "login_pending") {
                 root.appBackend.openAIProviderLoginPage()
-            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
+            } else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0) {
                 root.appBackend.reconnectAIChat()
-            else
+            } else {
                 root.appBackend.startAIProviderLogin()
+            }
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
         onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
@@ -1557,8 +1563,11 @@ ApplicationWindow {
         }
 
         function onCodexChatChanged() {
-            if (root.codexAuthenticated && !root.previousCodexAuthenticated)
+            if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
                 root.codexDrawerOpen = true
+                if (root.loginInInspector)
+                    root.inspectorTab = "codex"
+            }
             root.previousCodexAuthenticated = root.codexAuthenticated
         }
     }
@@ -2013,12 +2022,78 @@ ApplicationWindow {
             radius: 12
             color: root.panel
             border.color: root.border
+            clip: true
+
+            Rectangle {
+                id: inspectorTabBar
+                objectName: "inspectorTabBar"
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 44
+                color: root.panel
+                border.color: root.border
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    spacing: 4
+
+                    Button {
+                        id: inspectorSettingsTabButton
+                        objectName: "inspectorSettingsTabButton"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: "編集プロパティ"
+                        onClicked: root.inspectorTab = "settings"
+                        contentItem: Text {
+                            text: inspectorSettingsTabButton.text
+                            color: root.inspectorTab === "settings" ? "#FFFFFF" : root.textMuted
+                            font.family: "Yu Gothic UI"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: root.inspectorTab === "settings" ? root.raised : "transparent"
+                            border.color: root.inspectorTab === "settings" ? root.border : "transparent"
+                        }
+                    }
+                    Button {
+                        id: inspectorCodexTabButton
+                        objectName: "inspectorCodexTabButton"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: "AI Codex"
+                        onClicked: root.inspectorTab = "codex"
+                        contentItem: Text {
+                            text: inspectorCodexTabButton.text
+                            color: root.inspectorTab === "codex" ? "#FFFFFF" : root.textMuted
+                            font.family: "Yu Gothic UI"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: root.inspectorTab === "codex" ? root.raised : "transparent"
+                            border.color: root.inspectorTab === "codex" ? root.border : "transparent"
+                        }
+                    }
+                }
+            }
 
             Loader {
                 id: modeSettingsContentLoader
-                anchors.bottomMargin: root.codexAuthenticated ? 0 : 60
                 objectName: "modeSettingsContentLoader"
-                anchors.fill: parent
+                anchors.top: inspectorTabBar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: root.inspectorTab === "settings"
                 active: root.appBackend.projectLoaded && root.modeSettingsContent !== null
                 sourceComponent: root.modeSettingsContent
             }
@@ -3212,15 +3287,18 @@ ApplicationWindow {
     CodexSidebarContainer {
         id: codexSidebar
         objectName: "commonCodexSidebar"
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: 10
-        width: root.codexSidebarWidth
-        visible: root.codexAuthenticated && root.codexDrawerOpen
+        anchors.margins: root.loginInInspector ? 0 : 10
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height : 10
+        width: root.loginInInspector ? parent.width : root.codexSidebarWidth
+        visible: root.codexAuthenticated
+            && (root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen)
         z: 600
         backend: root.appBackend
-        drawerMode: root.codexSidebarOverlay
+        drawerMode: !root.loginInInspector && root.codexSidebarOverlay
         onCloseRequested: root.codexDrawerOpen = false
     }
 
@@ -3231,7 +3309,8 @@ ApplicationWindow {
         anchors.margins: 12
         width: 86
         height: 34
-        visible: root.codexAuthenticated && root.codexSidebarOverlay && !root.codexDrawerOpen
+        visible: !root.loginInInspector && root.codexAuthenticated
+            && root.codexSidebarOverlay && !root.codexDrawerOpen
         z: 650
         text: root.codexDrawerOpen ? "Codexを閉じる" : "Codexを開く"
         onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
@@ -3240,14 +3319,15 @@ ApplicationWindow {
     ComboBox {
         id: aiProviderLoginCombo
         parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
-        anchors.topMargin: root.loginInInspector ? Math.max(0, parent.height - 48) : 12
         objectName: "aiProviderLoginCombo"
         anchors.top: parent.top
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
         anchors.left: parent.left
         anchors.margins: 12
         width: 108
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
+            && (!root.loginInInspector || root.inspectorTab === "codex")
             && root.appBackend.aiChatProviders.length > 1
         model: root.appBackend ? root.appBackend.aiChatProviders : []
         textRole: "label"
@@ -3280,14 +3360,15 @@ ApplicationWindow {
     Text {
         id: aiProviderAuthHint
         parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
-        anchors.topMargin: root.loginInInspector ? Math.max(0, parent.height - 48) : 12
         objectName: "aiProviderAuthHint"
         anchors.top: parent.top
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
         anchors.left: parent.left
         anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
         width: 240
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
+            && (!root.loginInInspector || root.inspectorTab === "codex")
             && root.appBackend.aiChatAuthHint
             && !root.appBackend.aiChatLoginAvailable
         z: 650
@@ -3304,14 +3385,15 @@ ApplicationWindow {
         id: codexLoginRoute
         anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
         parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
-        anchors.topMargin: root.loginInInspector ? Math.max(0, parent.height - 48) : 12
         objectName: "codexLoginRoute"
         anchors.top: parent.top
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
         anchors.left: parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34
         visible: !root.codexAuthenticated
+            && (!root.loginInInspector || root.inspectorTab === "codex")
             && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
         z: 650
         text: root.appBackend && root.appBackend.aiChatAuthHint

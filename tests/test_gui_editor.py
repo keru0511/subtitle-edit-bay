@@ -3071,6 +3071,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(subtitle_button.isEnabled())
         self.assertTrue(cut_button.isEnabled())
         self.assertTrue(audio_button.isEnabled())
+        self.assertEqual(cut_button.property("label"), "編集")
+        self.assertEqual(subtitle_button.property("label"), "字幕")
+        self.assertEqual(audio_button.property("label"), "音量")
+        self.assertLess(cut_button.y(), subtitle_button.y())
+        self.assertLess(subtitle_button.y(), audio_button.y())
         self.assertTrue(editor_loader.property("active"))
         self.assertTrue(settings_loader.property("active"))
         subtitle_editor = self._quick_item(window, "workspaceSubtitleEditor")
@@ -3948,9 +3953,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         sidebar = self._quick_item(window, "commonCodexSidebar")
         login_route = self._quick_item(window, "codexLoginRoute")
+        codex_tab = self._quick_item(window, "inspectorCodexTabButton")
+        settings_tab = self._quick_item(window, "inspectorSettingsTabButton")
 
         self.assertFalse(sidebar.isVisible())
+        self.assertFalse(login_route.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "settings")
+        self._click(window, codex_tab)
         self.assertTrue(login_route.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "codex")
 
         authenticated = CodexChatSnapshot(
             connection_state="ready",
@@ -3966,7 +3977,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertTrue(sidebar.isVisible())
         self.assertFalse(login_route.isVisible())
-        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(sidebar.width(), self._quick_item(window, "modeSettingsSlot").width())
         self.assertEqual(self.app._codex_chat.snapshot.thread_id, "thread-249")
 
         self.assertTrue(window.setProperty("activeOverlay", "editor"))
@@ -4004,8 +4015,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._on_codex_chat_state(unauthenticated)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 0)
         self.assertTrue(login_route.isVisible())
+        self._click(window, settings_tab)
+        self.assertFalse(login_route.isVisible())
+        self.assertTrue(self._quick_item(window, "modeSettingsContentLoader").isVisible())
 
     def test_gemini_top_login_route_uses_provider_label_and_login_target(self) -> None:
         self._load_project()
@@ -4023,6 +4036,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         login_route = self._quick_item(window, "codexLoginRoute")
 
+        self.assertFalse(login_route.isVisible())
+        self._click(window, self._quick_item(window, "inspectorCodexTabButton"))
         self.assertTrue(login_route.isVisible())
         self.assertTrue(login_route.property("enabled"))
         self.assertEqual(login_route.property("text"), "Geminiログイン")
@@ -4866,6 +4881,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         provider_combo = self._quick_item(window, "aiProviderLoginCombo")
         login_route = self._quick_item(window, "codexLoginRoute")
+        self.assertFalse(provider_combo.isVisible())
+        self.assertFalse(login_route.isVisible())
+        self._click(window, self._quick_item(window, "inspectorCodexTabButton"))
         self.assertTrue(provider_combo.isVisible())
         self.assertEqual(provider_combo.property("currentValue"), "gemini")
         self.assertTrue(login_route.isVisible())
@@ -6400,7 +6418,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._highlight_rejected, [])
         self.assertFalse(undo_button.property("enabled"))
 
-    def test_codex_header_ai_button_toggles_wide_and_overlay_sidebar(self) -> None:
+    def test_codex_header_ai_button_switches_inspector_tabs(self) -> None:
         self._load_project()
         _, window = self._load_qml()
         authenticated = CodexChatSnapshot(
@@ -6412,15 +6430,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._on_codex_chat_state(authenticated)
         sidebar = self._quick_item(window, "commonCodexSidebar")
         ai_button = self._quick_item(window, "workspaceHeaderAiButton")
+        settings_loader = self._quick_item(window, "modeSettingsContentLoader")
 
         self.gui.resize(window, 1520, 760)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
         self.assertEqual(sidebar.width(), 300)
+        self.assertFalse(settings_loader.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "codex")
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 0)
+        self.assertTrue(settings_loader.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "settings")
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
@@ -6429,14 +6451,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.resize(window, 1220, 760)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(sidebar.width(), 250)
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
+        self.assertTrue(settings_loader.isVisible())
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(sidebar.width(), 250)
 
     def test_highlight_preview_uses_candidate_range_outside_selected_clip(self) -> None:
         self._load_project(

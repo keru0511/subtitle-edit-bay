@@ -19,7 +19,8 @@ Rectangle {
     property int hoverIndex: -1
     property string activeDragClipId: ""
     property string selectedClipId: ""
-    property real sequencePixelsPerSecond: 34
+    property int sequenceZoomPercent: 100
+    readonly property real sequencePixelsPerSecond: 34 * root.sequenceZoomPercent / 100
 
     objectName: "sequenceEditorPanel"
     radius: 12
@@ -52,6 +53,10 @@ Rectangle {
 
     function sequenceClipWidth(clip) {
         return Math.max(120, Number(clip ? clip.duration : 0) * root.sequencePixelsPerSecond)
+    }
+
+    function setSequenceZoom(value) {
+        root.sequenceZoomPercent = Math.max(50, Math.min(250, Math.round(Number(value) / 10) * 10))
     }
 
     function assetDuration(assetId) {
@@ -211,14 +216,50 @@ Rectangle {
                         border.color: root.borderColor
                         clip: true
 
-                        Text {
+                        RowLayout {
                             anchors.top: parent.top
                             anchors.left: parent.left
-                            anchors.margins: 5
-                            text: "V1  映像シーケンス  ｜  中央をドラッグして移動・両端をドラッグして長さ変更"
-                            color: root.mutedColor
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 8
+                            anchors.right: parent.right
+                            anchors.topMargin: 3
+                            anchors.leftMargin: 5
+                            anchors.rightMargin: 5
+                            height: 19
+                            spacing: 5
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "V1  映像シーケンス  ｜  中央をドラッグして移動・両端をドラッグして長さ変更"
+                                color: root.mutedColor
+                                font.family: "Yu Gothic UI"
+                                font.pixelSize: 8
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                text: "ズーム"
+                                color: root.mutedColor
+                                font.family: "Yu Gothic UI"
+                                font.pixelSize: 8
+                            }
+                            Slider {
+                                id: sequenceTimelineZoomSlider
+                                objectName: "sequenceTimelineZoomSlider"
+                                Layout.preferredWidth: 96
+                                Layout.preferredHeight: 18
+                                from: 50
+                                to: 250
+                                stepSize: 10
+                                value: root.sequenceZoomPercent
+                                onMoved: root.setSequenceZoom(value)
+                            }
+                            Text {
+                                objectName: "sequenceTimelineZoomLabel"
+                                Layout.preferredWidth: 31
+                                text: root.sequenceZoomPercent + "%"
+                                color: root.textColor
+                                font.family: "Cascadia Mono"
+                                font.pixelSize: 8
+                                horizontalAlignment: Text.AlignRight
+                            }
                         }
 
                         ListView {
@@ -228,7 +269,7 @@ Rectangle {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            anchors.topMargin: 20
+                            anchors.topMargin: 24
                             anchors.margins: 5
                             orientation: ListView.Horizontal
                             spacing: 4
@@ -482,7 +523,7 @@ Rectangle {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            anchors.topMargin: 20
+                            anchors.topMargin: 24
                             anchors.margins: 5
                             z: 100
                             enabled: root.backend && !root.backend.running

@@ -6382,6 +6382,39 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.undoCutEdit()
         self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
 
+    def test_sequence_timeline_zoom_changes_clip_scale(self) -> None:
+        self._make_sequence_project()
+        first_clip_id = str(self.app.sequenceClips[0]["clipId"])
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        timeline_clip = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineClip-{first_clip_id}"
+        )
+        zoom_slider = self._quick_item(window, "sequenceTimelineZoomSlider")
+        zoom_label = self._quick_item(window, "sequenceTimelineZoomLabel")
+        self.gui.wait_until(timeline_clip.isVisible, description="zoomable timeline clip")
+        initial_width = timeline_clip.width()
+        self.assertEqual(zoom_label.property("text"), "100%")
+
+        zoom_slider.setProperty("value", 200)
+        self.assertTrue(QMetaObject.invokeMethod(zoom_slider, "moved"))
+        self.gui.wait_until(
+            lambda: timeline_clip.width() > initial_width * 1.8,
+            description="timeline zoom in",
+        )
+        zoomed_width = timeline_clip.width()
+        self.assertEqual(zoom_label.property("text"), "200%")
+
+        zoom_slider.setProperty("value", 50)
+        self.assertTrue(QMetaObject.invokeMethod(zoom_slider, "moved"))
+        self.gui.wait_until(
+            lambda: timeline_clip.width() < zoomed_width * 0.3,
+            description="timeline zoom out",
+        )
+        self.assertEqual(zoom_label.property("text"), "50%")
+
     def test_short_workspace_places_settings_left_and_clips_right(self) -> None:
         self._load_project()
         _, window = self._load_qml()

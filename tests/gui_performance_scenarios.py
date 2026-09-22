@@ -14,7 +14,7 @@ from typing import Any, Callable
 from unittest.mock import patch
 
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import Property, QObject, QUrl, Slot
+from PySide6.QtCore import Property, Q_ARG, QMetaObject, QObject, QUrl, Slot
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtQuick import QQuickItem
 
@@ -1101,9 +1101,14 @@ class GuiPerformanceScenarioRunner:
     def _open_short_mode(self) -> None:
         if _short_workspace_active(self._window()):
             return
+        # Use the production header route; older comparison revisions may
+        # still expose only the action-bar entry point.
+        button = self._window().findChild(QQuickItem, "workspaceHeaderShortButton")
+        if button is None or not button.isVisible():
+            button = self.harness.find_item(self._window(), "shortModeOpenButton")
         self.harness.click(
             self._window(),
-            self.harness.find_item(self._window(), "shortModeOpenButton"),
+            button,
         )
         self.harness.wait_until(
             lambda: (
@@ -1202,11 +1207,13 @@ class GuiPerformanceScenarioRunner:
         return delegate
 
     def _short_clip_delegate(self, clip_list_view: QQuickItem, index: int) -> QQuickItem:
-        target_y = min(
-            max(0.0, float(clip_list_view.property("contentHeight")) - clip_list_view.height()),
-            index * 130.0,
-        )
-        self.harness.set_property(clip_list_view, "contentY", target_y)
+        # ListView.Beginning is 0. Let Qt locate the row using the actual
+        # delegate height, which differs between current and baseline UIs.
+        if not QMetaObject.invokeMethod(
+            clip_list_view, "positionViewAtIndex", Q_ARG(int, index), Q_ARG(int, 0)
+        ):
+            raise AssertionError(f"Could not position short clip list at index {index}")
+        self.harness.process_events()
         self.harness.wait_until(
             lambda: any(
                 item.objectName() == f"shortModeClipItem{index}" for item in self.harness.visual_items(clip_list_view)

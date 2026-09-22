@@ -25,12 +25,17 @@ ColumnLayout {
     property int selectedIndex: 0
     signal selected(int index)
 
-    RowLayout {
+    GridLayout {
         Layout.fillWidth: true
-        spacing: 8
+        columns: 4
+        columnSpacing: 8
+        rowSpacing: 8
         ComboBox {
             id: clipSourceCombo
             objectName: "shortModeClipSourceCombo"
+            Layout.columnSpan: 2
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
             Layout.preferredWidth: 126
             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
             model: [
@@ -45,6 +50,8 @@ ColumnLayout {
         ComboBox {
             id: segmentCombo
             objectName: "shortModeSegmentCombo"
+            Layout.columnSpan: 2
+            Layout.minimumWidth: 0
             Layout.fillWidth: true
             model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitleModel : null
             textRole: "text"
@@ -75,6 +82,8 @@ ColumnLayout {
         Button {
             id: addButton
             objectName: "shortModeAddClipButton"
+            Layout.columnSpan: 4
+            Layout.fillWidth: true
             text: "ショートに追加"
             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && (
                 (clipSourceCombo.currentValue === "segment"
@@ -127,7 +136,7 @@ ColumnLayout {
             required property var clipData
             objectName: "shortModeClipItem" + index
             width: clipListView.width
-            height: 124
+            height: 174
             color: clipListRoot.selectedIndex === index ? "#21262D" : "#161B22"
             border.color: clipListRoot.selectedIndex === index ? "#6366F1" : "#30363D"
             radius: 8
@@ -137,12 +146,15 @@ ColumnLayout {
                 onClicked: clipListRoot.selected(index)
             }
 
-            RowLayout {
+            GridLayout {
+                columns: 2
                 anchors.fill: parent
                 anchors.margins: 8
-                spacing: 8
+                columnSpacing: 8
+                rowSpacing: 8
 
                 ColumnLayout {
+                    Layout.columnSpan: 2
                     Layout.fillWidth: true
                     spacing: 4
                     Text {
@@ -209,6 +221,8 @@ ColumnLayout {
 
                 ComboBox {
                     id: fitCombo
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     objectName: "shortModeFitCombo" + index
                     model: clipListRoot.fitOptions
                     textRole: "label"
@@ -225,7 +239,7 @@ ColumnLayout {
                     }
                 }
 
-                ColumnLayout {
+                RowLayout {
                     spacing: 2
                     Button {
                         objectName: "shortModeMoveUpButton" + index

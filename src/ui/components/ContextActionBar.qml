@@ -6,6 +6,7 @@ import QtQuick.Layouts
 Rectangle {
     id: actionBar
     objectName: "contextActionBar"
+    property bool compact: false
     property bool projectLoaded: false
     property bool running: false
     property string activeJob: ""
@@ -32,8 +33,8 @@ Rectangle {
     signal saveOrStopRequested()
     signal outputFolderRequested()
 
-    implicitHeight: 177
-    Layout.minimumHeight: 177
+    implicitHeight: compact ? 76 : 177
+    Layout.minimumHeight: implicitHeight
     radius: 12
     color: "#161B22"
     border.color: "#30363D"
@@ -74,6 +75,7 @@ Rectangle {
         anchors.margins: 6
         spacing: 3
         RowLayout {
+            visible: !actionBar.compact
             Layout.fillWidth: true
             Text {
                 objectName: "contextActionBarTitle"
@@ -94,7 +96,7 @@ Rectangle {
                 elide: Text.ElideRight
             }
             SmallButton {
-                objectName: "settingsToggleButton"
+                objectName: "legacySettingsToggleButton"
                 text: actionBar.settingsExpanded ? "設定を閉じる" : "文字起こし・出力設定"
                 onClicked: actionBar.settingsRequested()
             }
@@ -104,19 +106,32 @@ Rectangle {
             objectName: "transcriptionToolActions"
             Layout.fillWidth: true
             spacing: 6
-            CategoryLabel { text: "ツール" }
+            CategoryLabel { text: "ツール"; visible: !actionBar.compact }
+            SmallButton {
+                objectName: "settingsToggleButton"
+                visible: actionBar.compact
+                text: "設定"
+                onClicked: actionBar.settingsRequested()
+            }
+            SmallButton {
+                objectName: "saveSettingsButton"
+                visible: actionBar.compact && actionBar.running
+                text: actionBar.running ? "停止" : "設定を保存"
+                enabled: actionBar.activeJob !== "update"
+                onClicked: actionBar.saveOrStopRequested()
+            }
             ActionButton {
                 objectName: "transcribeButton"
                 primary: true
                 enabled: actionBar.canStartTranscription
-                text: actionBar.activeJob === "transcribe" ? "文字起こし中..." : (actionBar.projectLoaded ? "文字起こしを追加 / 更新" : "文字起こしを開始")
+                text: actionBar.activeJob === "transcribe" ? "文字起こし中..." : "文字起こし"
                 reason: actionBar.blockReason
                 onClicked: actionBar.startTranscriptionRequested()
             }
             ActionButton {
                 objectName: "transcriptionDictionaryOpenButton"
                 enabled: !actionBar.running
-                text: "文字起こし辞書を設定"
+                text: "文字起こし辞書"
                 onClicked: actionBar.dictionaryRequested()
             }
             ActionButton {
@@ -130,7 +145,7 @@ Rectangle {
         RowLayout {
             objectName: "derivedArtifactActions"
             Layout.fillWidth: true
-            visible: actionBar.projectLoaded
+            visible: actionBar.projectLoaded && !actionBar.compact
             spacing: 6
             CategoryLabel { text: "別成果物" }
             ActionButton {
@@ -143,7 +158,7 @@ Rectangle {
         RowLayout {
             objectName: "outputActions"
             Layout.fillWidth: true
-            visible: actionBar.projectLoaded
+            visible: actionBar.projectLoaded && !actionBar.compact
             spacing: 6
             CategoryLabel { text: "出力" }
             ActionButton {
@@ -158,7 +173,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
-            CategoryLabel { text: "表示"; visible: actionBar.projectLoaded }
+            CategoryLabel { text: "表示"; visible: actionBar.projectLoaded && !actionBar.compact }
             ActionButton {
                 objectName: "editSubtitlesButton"
                 visible: actionBar.projectLoaded
@@ -175,13 +190,15 @@ Rectangle {
                 onClicked: actionBar.mixerRequested()
             }
             SmallButton {
-                objectName: "saveSettingsButton"
+                objectName: "legacySaveSettingsButton"
+                visible: !actionBar.compact
                 text: actionBar.running ? (actionBar.activeJob === "update" ? "更新中..." : "停止") : "設定を保存"
                 enabled: !(actionBar.running && actionBar.activeJob === "update")
                 onClicked: actionBar.saveOrStopRequested()
             }
             SmallButton {
                 objectName: "outputFolderButton"
+                visible: !actionBar.compact
                 text: "出力先を開く"
                 enabled: actionBar.outputFolderAvailable
                 onClicked: actionBar.outputFolderRequested()
@@ -192,7 +209,7 @@ Rectangle {
             Layout.fillWidth: true
             text: actionBar.projectLoaded && actionBar.renderBlockReason.length > 0
                 ? actionBar.renderBlockReason : actionBar.blockReason
-            visible: text.length > 0
+            visible: text.length > 0 && !actionBar.compact
             color: "#F59E0B"
             font.family: "Yu Gothic UI"
             font.pixelSize: 9

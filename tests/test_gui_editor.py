@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QMetaObject, QObject, QPointF, QProcess, Qt, QUrl
+from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
@@ -215,6 +215,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         return self.gui.load_qml(qml_path)
 
+    @staticmethod
+    def _qml_value(item: QObject, name: str) -> object:
+        value = item.property(name)
+        return value.toVariant() if hasattr(value, "toVariant") else value
+
     def _quick_item(self, window: QObject, name: str) -> QQuickItem:
         return self.gui.find_item(window, name)
 
@@ -311,7 +316,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         transcribe = self._quick_item(window, "transcribeButton")
         edit = self._quick_item(window, "editSubtitlesButton")
-        render = self._quick_item(window, "renderVideoButton")
+        render = self._quick_item(window, "workspaceHeaderRenderButton")
         self.assertFalse(transcribe.isEnabled())
         self.assertTrue(edit.isEnabled())
         self.assertTrue(render.isEnabled())
@@ -480,7 +485,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.dependenciesChanged.emit()
         self.assertTrue(self.app.transcriptionProjectExists())
         _, window = self._load_qml()
-        self.assertTrue(window.property("workflowCapabilities")["canTranscribe"])
+        self.assertTrue(self._qml_value(window, "workflowCapabilities")["canTranscribe"])
 
         with patch.object(self.app, "_start_process") as start_process:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
@@ -777,8 +782,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.resize(window, 1220, 760)
         self.assertFalse(self.app.actionCapabilities["canRenderNormal"])
         self.assertTrue(self.app.actionCapabilities["normalRenderNeedsOutput"])
-        self.assertTrue(self._quick_item(window, "renderVideoButton").isEnabled())
-        self.assertIn("出力先を選んで", self._quick_item(window, "renderVideoButton").property("text"))
+        self.assertTrue(self._quick_item(window, "workspaceHeaderRenderButton").isEnabled())
+        self.assertIn("出力先を選択", self._quick_item(window, "workspaceHeaderRenderButton").property("text"))
 
         for dependencies, warning_visible in (
             (RuntimeDependencyStatus(True, True, False, cuda=False), True),
@@ -833,7 +838,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertIn("書き出すとき", self._quick_item(window, "videoOutputDirectoryText").property("text"))
                 flickable.setProperty("contentY", 0)
                 self._click(window, done_button)
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         self.assertTrue(self._quick_item(window, "shortModeExportButton").isEnabled())
 
     def test_video_only_empty_project_disables_mixer_before_normal_render(self) -> None:
@@ -878,7 +883,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         self.assertIsNone(window.findChild(QObject, "workflowStepper"))
         self.assertFalse(self._quick_item(window, "transcribeButton").isEnabled())
-        self.assertTrue(self._quick_item(window, "renderVideoButton").isEnabled())
+        self.assertTrue(self._quick_item(window, "workspaceHeaderRenderButton").isEnabled())
         self.assertTrue(self._quick_item(window, "transcriptionDictionaryOpenButton").isVisible())
         for mode in ("subtitle", "cut", "audio"):
             self.assertTrue(self._quick_item(window, f"editorModeButton-{mode}").isEnabled())
@@ -2730,7 +2735,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         start_transcription = self._quick_item(window, "startWithTranscriptionButton")
         transcribe = self._quick_item(window, "transcribeButton")
         edit = self._quick_item(window, "editSubtitlesButton")
-        render = self._quick_item(window, "renderVideoButton")
+        render = self._quick_item(window, "workspaceHeaderRenderButton")
         reason = self._quick_item(window, "workflowBlockReason")
 
         self.assertTrue(start_screen.isVisible())
@@ -2738,7 +2743,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(start_transcription.isEnabled())
         self.assertFalse(transcribe.isVisible())
         self.assertFalse(edit.isVisible())
-        self.assertFalse(render.isVisible())
+        self.assertFalse(render.isEnabled())
         self.assertFalse(reason.isVisible())
 
         self._set_ready_sources()
@@ -2755,11 +2760,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(start_screen.isVisible())
         self.assertTrue(transcribe.isVisible())
-        self.assertIn("追加 / 更新", transcribe.property("text"))
+        self.assertEqual(transcribe.property("text"), "文字起こし")
         self.assertFalse(transcribe.isEnabled())
         self.assertTrue(edit.isVisible())
         self.assertTrue(render.isVisible())
-        self.assertIn("焼き付け", render.property("text"))
+        self.assertEqual(render.property("text"), "動画を書き出す")
         self.assertTrue(edit.isEnabled())
         self.assertTrue(render.isEnabled())
 
@@ -2852,8 +2857,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self._assert_quick_item_within(window.contentItem(), panel)
             for group_name, button_names in (
                 ("transcriptionToolActions", ("transcribeButton", "transcriptionDictionaryOpenButton")),
-                ("derivedArtifactActions", ("shortModeOpenButton",)),
-                ("outputActions", ("renderVideoButton",)),
+
             ):
                 with self.subTest(size=(width, height), group=group_name):
                     group = self._quick_item(window, group_name)
@@ -2964,7 +2968,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         action_bar = self._quick_item(window, "contextActionBar")
         video_panel = self._quick_item(window, "mainVideoPanel")
         log_panel = self._quick_item(window, "applicationLogPanel")
-        central_column = action_bar.parentItem()
+        central_column = self._quick_item(window, "workspaceContent")
 
         for width, height in ((1220, 760), (1520, 940)):
             self.gui.resize(window, width, height)
@@ -2972,15 +2976,20 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(window.width(), width)
             self.assertGreaterEqual(window.height(), height)
             for item in (action_bar, video_panel, log_panel):
+                top_left = item.mapToItem(central_column, QPointF(0, 0))
                 self.assertGreater(item.width(), 0)
                 self.assertGreater(item.height(), 0)
-                self.assertGreaterEqual(item.x(), -1)
-                self.assertLessEqual(item.x() + item.width(), central_column.width() + 1)
-                self.assertGreaterEqual(item.y(), -1)
-                self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
+                self.assertGreaterEqual(top_left.x(), -1)
+                self.assertLessEqual(top_left.x() + item.width(), central_column.width() + 1)
+                self.assertGreaterEqual(top_left.y(), -1)
+                self.assertLessEqual(top_left.y() + item.height(), central_column.height() + 1)
 
-            self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
-            self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+            action_bottom = action_bar.mapToItem(central_column, QPointF(0, action_bar.height())).y()
+            video_top = video_panel.mapToItem(central_column, QPointF(0, 0)).y()
+            video_bottom = video_panel.mapToItem(central_column, QPointF(0, video_panel.height())).y()
+            log_top = log_panel.mapToItem(central_column, QPointF(0, 0)).y()
+            self.assertLessEqual(action_bottom, video_top + 1)
+            self.assertLessEqual(video_bottom, log_top + 1)
 
         self.gui.resize(window, 1220, 760)
         log_toggle = self._quick_item(window, "applicationLogToggleButton")
@@ -2989,7 +2998,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
             lambda: (
                 bool(log_panel.property("expanded"))
                 and video_panel.height() > 0
-                and log_panel.y() + log_panel.height() <= central_column.height() + 1
+                and log_panel.mapToItem(
+                    central_column, QPointF(0, log_panel.height())
+                ).y() <= central_column.height() + 1
             ),
             description="expanded application log layout",
         )
@@ -2997,8 +3008,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreater(log_panel.height(), 0)
         self.assertGreater(video_panel.height(), 0)
-        self.assertLessEqual(action_bar.y() + action_bar.height(), video_panel.y() + 1)
-        self.assertLessEqual(video_panel.y() + video_panel.height(), log_panel.y() + 1)
+        self.assertLessEqual(
+            action_bar.mapToItem(central_column, QPointF(0, action_bar.height())).y(),
+            video_panel.mapToItem(central_column, QPointF(0, 0)).y() + 1,
+        )
+        self.assertLessEqual(
+            video_panel.mapToItem(central_column, QPointF(0, video_panel.height())).y(),
+            log_panel.mapToItem(central_column, QPointF(0, 0)).y() + 1,
+        )
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
 
         self._click(window, log_toggle)
@@ -3054,6 +3071,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(subtitle_button.isEnabled())
         self.assertTrue(cut_button.isEnabled())
         self.assertTrue(audio_button.isEnabled())
+        self.assertEqual(cut_button.property("label"), "編集")
+        self.assertEqual(subtitle_button.property("label"), "字幕")
+        self.assertEqual(audio_button.property("label"), "音量")
+        self.assertLess(cut_button.y(), subtitle_button.y())
+        self.assertLess(subtitle_button.y(), audio_button.y())
         self.assertTrue(editor_loader.property("active"))
         self.assertTrue(settings_loader.property("active"))
         subtitle_editor = self._quick_item(window, "workspaceSubtitleEditor")
@@ -3441,7 +3463,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.resize(window, 1220, 760)
         progress_panel = self._quick_item(window, "processingProgressOverlay")
         log_panel = self._quick_item(window, "applicationLogPanel")
-        central_column = self._quick_item(window, "contextActionBar").parentItem()
+        central_column = self._quick_item(window, "workspaceContent")
         layout_items = [
             self._quick_item(window, name)
             for name in (
@@ -3455,18 +3477,24 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(progress_panel.isVisible())
         self.assertGreater(progress_panel.height(), 0)
         for item in layout_items:
+            top_left = item.mapToItem(central_column, QPointF(0, 0))
             self.assertGreater(item.width(), 0)
             self.assertGreater(item.height(), 0)
-            self.assertGreaterEqual(item.y(), -1)
-            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
-        self.assertLessEqual(progress_panel.y() + progress_panel.height(), log_panel.y() + 1)
-        self.assertGreaterEqual(log_panel.y(), progress_panel.y() + progress_panel.height())
+            self.assertGreaterEqual(top_left.y(), -1)
+            self.assertLessEqual(top_left.y() + item.height(), central_column.height() + 1)
+        progress_bottom = progress_panel.mapToItem(
+            central_column, QPointF(0, progress_panel.height())
+        ).y()
+        log_top = log_panel.mapToItem(central_column, QPointF(0, 0)).y()
+        self.assertLessEqual(progress_bottom, log_top + 1)
+        self.assertGreaterEqual(log_top, progress_bottom)
 
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
         self.gui.wait_until(
             lambda: bool(log_panel.property("expanded"))
             and all(
-                item.y() + item.height() <= central_column.height() + 1
+                item.mapToItem(central_column, QPointF(0, item.height())).y()
+                <= central_column.height() + 1
                 for item in layout_items
             ),
             description="expanded application log below processing progress",
@@ -3474,8 +3502,14 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(log_panel.property("expanded"))
         self.assertGreater(log_panel.height(), 0)
         for item in layout_items:
-            self.assertLessEqual(item.y() + item.height(), central_column.height() + 1)
-        self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
+            self.assertLessEqual(
+                item.mapToItem(central_column, QPointF(0, item.height())).y(),
+                central_column.height() + 1,
+            )
+        self.assertLessEqual(
+            log_panel.mapToItem(central_column, QPointF(0, log_panel.height())).y(),
+            central_column.height() + 1,
+        )
 
     def test_main_progress_stop_stays_clickable_beside_codex_drawer(self) -> None:
         self._load_project()
@@ -3519,7 +3553,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_short_mode_keeps_progress_controls_visible_during_export(self) -> None:
         self._load_project()
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
         self.app._processing_progress.start("render_short")
         self.app._running = True
@@ -3552,7 +3586,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
 
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "saveSettingsButton"))
+        self._click(window, self._quick_item(window, "settingsToggleButton"))
+        self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
         self.app.processEvents()
 
         self.assertEqual(self.app.settings["subtitle_max_gap_seconds"], 0.0)
@@ -3918,9 +3953,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         sidebar = self._quick_item(window, "commonCodexSidebar")
         login_route = self._quick_item(window, "codexLoginRoute")
+        codex_tab = self._quick_item(window, "inspectorCodexTabButton")
+        settings_tab = self._quick_item(window, "inspectorSettingsTabButton")
 
         self.assertFalse(sidebar.isVisible())
+        self.assertFalse(login_route.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "settings")
+        self._click(window, codex_tab)
         self.assertTrue(login_route.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "codex")
 
         authenticated = CodexChatSnapshot(
             connection_state="ready",
@@ -3936,7 +3977,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         self.assertTrue(sidebar.isVisible())
         self.assertFalse(login_route.isVisible())
-        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(sidebar.width(), self._quick_item(window, "modeSettingsSlot").width())
         self.assertEqual(self.app._codex_chat.snapshot.thread_id, "thread-249")
 
         self.assertTrue(window.setProperty("activeOverlay", "editor"))
@@ -3974,8 +4015,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._on_codex_chat_state(unauthenticated)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 0)
         self.assertTrue(login_route.isVisible())
+        self._click(window, settings_tab)
+        self.assertFalse(login_route.isVisible())
+        self.assertTrue(self._quick_item(window, "modeSettingsContentLoader").isVisible())
 
     def test_gemini_top_login_route_uses_provider_label_and_login_target(self) -> None:
         self._load_project()
@@ -3993,6 +4036,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         login_route = self._quick_item(window, "codexLoginRoute")
 
+        self.assertFalse(login_route.isVisible())
+        self._click(window, self._quick_item(window, "inspectorCodexTabButton"))
         self.assertTrue(login_route.isVisible())
         self.assertTrue(login_route.property("enabled"))
         self.assertEqual(login_route.property("text"), "Geminiログイン")
@@ -4044,7 +4089,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.app._codex_chat._snapshot = authenticated
         self.app._on_codex_chat_state(authenticated)
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
         self.app._processing_progress.start("render_short")
         self.app._running = True
@@ -4290,7 +4335,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._load_large_project()
         _, window = self._load_qml()
 
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         self.gui.wait_until(
             lambda: window.findChild(QQuickItem, "shortModeClipListView") is not None,
             description="large short clip list",
@@ -4591,7 +4636,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         finished = QSignalSpy(self.app.process.finished)
         with patch("src.workflow_actions.build_gui_render_command", side_effect=build_test_command):
-            self._click(window, self._quick_item(window, "renderVideoButton"))
+            self._click(window, self._quick_item(window, "workspaceHeaderRenderButton"))
             if finished.count() == 0:
                 self.assertTrue(finished.wait(60_000), self.app.process.errorString())
             self.app.processEvents()
@@ -4778,7 +4823,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._load_project()
         _, window = self._load_qml()
 
-        open_button = self._quick_item(window, "shortModeOpenButton")
+        open_button = self._quick_item(window, "workspaceHeaderShortButton")
         self.assertTrue(open_button.property("visible"))
         self.assertTrue(open_button.property("enabled"))
 
@@ -4836,6 +4881,9 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         provider_combo = self._quick_item(window, "aiProviderLoginCombo")
         login_route = self._quick_item(window, "codexLoginRoute")
+        self.assertFalse(provider_combo.isVisible())
+        self.assertFalse(login_route.isVisible())
+        self._click(window, self._quick_item(window, "inspectorCodexTabButton"))
         self.assertTrue(provider_combo.isVisible())
         self.assertEqual(provider_combo.property("currentValue"), "gemini")
         self.assertTrue(login_route.isVisible())
@@ -4859,8 +4907,8 @@ class GuiEditorRegressionTests(unittest.TestCase):
         chat_panel = self._quick_item(window, "codexChatPanel")
         main_player = self.gui.find_object(window, "mainWorkspacePlayer", QMediaPlayer)
 
-        self.assertIsNone(rail.findChild(QObject, "shortModeOpenButton"))
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self.assertIsNone(rail.findChild(QObject, "workspaceHeaderShortButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
         short_page = self._quick_item(window, "shortModePage")
         short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
@@ -4881,7 +4929,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_short_mode_transition_duration_uses_internal_values(self) -> None:
         self._load_project()
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
         transition_combo = self._quick_item(window, "shortModeTransitionCombo")
         duration_slider = self._quick_item(window, "shortModeTransitionDurationSlider")
@@ -4966,21 +5014,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
             ]
         )
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         short_screen = self._quick_item(window, "shortModeScreen")
         clip_list = self._quick_item(window, "shortModeClipList")
         preview = self._quick_item(window, "shortModePreview")
 
         self.gui.set_property(short_screen, "currentClipIndex", 1)
         self.assertEqual(clip_list.property("selectedIndex"), 1)
-        self.assertEqual(preview.property("clipData").get("segment_id"), "second")
+        self.assertEqual(self._qml_value(preview, "clipData").get("segment_id"), "second")
 
         self.assertTrue(self.app.removeShortVideoClip(1))
         self.gui.process_events()
 
         self.assertEqual(short_screen.property("currentClipIndex"), 0)
         self.assertEqual(clip_list.property("selectedIndex"), 0)
-        self.assertEqual(preview.property("clipData").get("segment_id"), "first")
+        self.assertEqual(self._qml_value(preview, "clipData").get("segment_id"), "first")
 
     def test_short_mode_clip_list_and_preview(self) -> None:
         segments = [
@@ -5004,7 +5052,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._load_project(segments=segments)
         _, window = self._load_qml()
 
-        open_button = self._quick_item(window, "shortModeOpenButton")
+        open_button = self._quick_item(window, "workspaceHeaderShortButton")
         self._click(window, open_button)
         QTest.qWait(100)
 
@@ -5022,7 +5070,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(clip_view.property("count"), 2)
 
         self.assertIsNotNone(preview.property("clipData"))
-        self.assertEqual(preview.property("clipData").get("segment_id"), "seg-1")
+        self.assertEqual(self._qml_value(preview, "clipData").get("segment_id"), "seg-1")
 
         self.assertEqual(len(self.app.shortVideoClips), 2)
         self.assertEqual(self.app.shortVideoClips[1]["segment_id"], "seg-2")
@@ -5111,7 +5159,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
 
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         source_combo = self._quick_item(window, "shortModeClipSourceCombo")
         source_combo.setProperty("currentIndex", 1)
         start_field = self._quick_item(window, "shortModeRangeStartField")
@@ -5143,7 +5191,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
 
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         segment_combo = self._quick_item(window, "shortModeSegmentCombo")
         add_button = self._quick_item(window, "shortModeAddClipButton")
 
@@ -5173,7 +5221,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.autosave_timer.stop()
 
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         clip_list = self._quick_item(window, "shortModeClipListView")
         self.gui.set_property(clip_list, "contentY", 3 * 130)
         self.gui.wait_until(
@@ -5211,7 +5259,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertTrue(self.app.createEmptyProject())
 
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         start_field = self._quick_item(window, "shortModeRangeStartField")
         end_field = self._quick_item(window, "shortModeRangeEndField")
         start_field.setProperty("text", "0.250")
@@ -5278,7 +5326,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.shortVideoChanged.emit()
 
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         self.app.processEvents()
         export_button = self._quick_item(window, "shortModeExportButton")
         self.assertTrue(export_button.property("enabled"))
@@ -6095,6 +6143,307 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(len(self.app.mediaBinAssets), 1)
         self.assertTrue(self.app.sequenceError)
 
+    def test_media_bin_is_permanent_and_does_not_cover_preview(self) -> None:
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "Game"}]
+        self._make_sequence_project()
+        _, window = self._load_qml()
+        media_bin = self.gui.find_item(window, "workspaceMediaBin")
+        preview = self.gui.find_item(window, "mainVideoPanel")
+        sequence = self.gui.find_item(window, "workspaceSequenceEditor")
+        for width, height in ((1220, 760), (1520, 940)):
+            window.setWidth(width)
+            window.setHeight(height)
+            for mode in ("subtitle", "audio", "cut"):
+                self.app.selectEditMode(mode)
+                self.assertEqual(self.app.currentEditMode, mode)
+                window.setProperty("editTool", "sequence")
+                self.gui.wait_until(
+                    lambda: mode != "cut" or sequence.mapToScene(QPointF(0, 0)).y()
+                    >= preview.mapToScene(QPointF(0, preview.height())).y(),
+                    description="workspace layout settled",
+                )
+                self.assertTrue(media_bin.isVisible())
+                bin_right = media_bin.mapToScene(QPointF(media_bin.width(), 0)).x()
+                preview_top = preview.mapToScene(QPointF(0, 0))
+                self.assertLessEqual(bin_right, preview_top.x())
+                self.assertGreater(preview.height(), 100)
+                self.assertGreater(preview.width(), 300)
+                if mode == "cut":
+                    self.assertTrue(sequence.isVisible())
+                    media_top = media_bin.mapToScene(QPointF(0, 0))
+                    media_bottom = media_bin.mapToScene(QPointF(0, media_bin.height())).y()
+                    sequence_top = sequence.mapToScene(QPointF(0, 0)).y()
+                    self.assertLessEqual(preview_top.y() + preview.height(), sequence_top)
+                    self.assertLessEqual(media_bottom, sequence_top)
+                    self.assertAlmostEqual(
+                        media_bottom,
+                        preview_top.y() + preview.height(),
+                        delta=1.0,
+                    )
+                    sequence_left = sequence.mapToScene(QPointF(0, 0)).x()
+                    sequence_right = sequence.mapToScene(QPointF(sequence.width(), 0)).x()
+                    preview_right = preview.mapToScene(QPointF(preview.width(), 0)).x()
+                    self.assertLessEqual(sequence_left, media_top.x())
+                    self.assertGreaterEqual(sequence_right, preview_right)
+                    self.assertGreater(sequence.width(), preview.width())
+                    self.assertLessEqual(sequence_top + sequence.height(), height)
+        self.assertFalse(self.gui.find_item(window, "renderVideoButton").isVisible())
+        self.assertTrue(self.gui.find_item(window, "workspaceHeaderRenderButton").isVisible())
+
+    def test_sequence_insert_at_index_is_atomic_and_rejects_invalid_or_busy_edits(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        asset_id = self._add_second_sequence_asset(second_video)
+        original = deepcopy(self.app.sequenceClips)
+        self.assertTrue(self.app.insertSequenceClip(asset_id, 0))
+        self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.app.undoCutEdit()
+        self.assertEqual(self.app.sequenceClips, original)
+        for index in (-1, 99):
+            self.assertFalse(self.app.insertSequenceClip(asset_id, index))
+            self.assertEqual(self.app.sequenceClips, original)
+        self.app._running = True
+        self.assertFalse(self.app.insertSequenceClip(asset_id, 0))
+        self.assertEqual(self.app.sequenceClips, original)
+
+    def test_media_bin_drag_inserts_clip_before_drop_target(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        asset_id = self._add_second_sequence_asset(second_video)
+        _, window = self._load_qml()
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        self.gui.wait_until(lambda: self.gui.find_item(window, "workspaceSequenceEditor").y() > 0, description="sequence layout")
+        card = self.gui.find_visual_item_by_properties(
+            window, {"assetId": asset_id}, required_properties=("assetId",)
+        )
+        media_list = self._quick_item(window, "mediaBinList")
+        media_list.setProperty(
+            "contentY",
+            max(0.0, float(media_list.property("contentHeight")) - media_list.height()),
+        )
+        self.gui.process_events()
+        self.gui.wait_until(
+            lambda: bool(self.gui.visual_items_with_properties(window, "clipId")),
+            description="sequence clip delegate",
+        )
+        target = self.gui.find_visual_item(window.contentItem(), "sequenceTimelineDropArea")
+        self.assertTrue(target.isVisible())
+        self.assertTrue(bool(target.property("enabled")))
+        self.assertGreater(target.width(), 100)
+        self.assertGreater(target.height(), 20)
+        start = card.mapToScene(QPointF(25, 25)).toPoint()
+        end = target.mapToScene(QPointF(25, 15)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        for fraction in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0):
+            point = start + (end - start) * fraction
+            QTest.mouseMove(window, point, 30)
+        self.assertTrue(target.property("containsDrag"))
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.gui.wait_until(lambda: len(self.app.sequenceClips) == 2, description="asset drag insertion")
+        self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.app.undoCutEdit()
+        self.assertEqual(len(self.app.sequenceClips), 1)
+        self.app.redoCutEdit()
+        self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.assertTrue(self.app.saveProject())
+        self.assertTrue(self.app._load_project_path(Path(self.app.projectPath), update_sources=False))
+        self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.gui.process_events()
+        for item in self.gui.visual_items(window):
+            control_name = item.objectName()
+            if item.isVisible() and (
+                control_name in {
+                "addSequenceClipButton", "mediaBinAddButton", "mediaAssetDragArea",
+                "sequenceClipStartField", "sequenceClipEndField", "sequenceAudioLinkedCheck",
+                "sequenceClipMutedCheck", "sequenceTransitionCombo", "sequenceTransitionDuration",
+                "sequenceAudioOffset", "removeSequenceClipButton", "sequenceTimelineDropArea",
+                }
+                or control_name.startswith(
+                    (
+                        "sequenceTimelineMoveArea-",
+                        "sequenceTimelineTrimStart-",
+                        "sequenceTimelineTrimEnd-",
+                    )
+                )
+            ):
+                self.assertFalse(bool(item.property("enabled")), control_name)
+
+    def test_sequence_timeline_drag_trims_and_reorders_clips(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        second_asset_id = self._add_second_sequence_asset(second_video)
+        self.assertTrue(self.app.addSequenceClip(second_asset_id))
+        initial_clips = self.app.sequenceClips
+        first_clip_id = str(initial_clips[0]["clipId"])
+        second_clip_id = str(initial_clips[1]["clipId"])
+        initial_end = float(initial_clips[0]["sourceEnd"])
+
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        self.gui.wait_until(
+            lambda: (
+                self._quick_item(window, "sequenceTimelineList").isVisible()
+                and self.gui.find_visual_item(
+                    window.contentItem(), f"sequenceTimelineTrimEnd-{first_clip_id}"
+                ) is not None
+            ),
+            description="horizontal sequence timeline",
+        )
+
+        trim_end = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineTrimEnd-{first_clip_id}"
+        )
+        trim_start = trim_end.mapToScene(QPointF(trim_end.width() / 2, trim_end.height() / 2)).toPoint()
+        trim_finish = trim_start - QPoint(68, 0)
+        QTest.mousePress(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            trim_start,
+        )
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, trim_start + (trim_finish - trim_start) * fraction, 30)
+        QTest.mouseRelease(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            trim_finish,
+        )
+        self.gui.wait_until(
+            lambda: float(self.app.sequenceClips[0]["sourceEnd"]) < initial_end,
+            description="timeline edge trim",
+        )
+        trimmed_end = float(self.app.sequenceClips[0]["sourceEnd"])
+        self.assertAlmostEqual(trimmed_end, initial_end - 2.0, delta=0.25)
+        self.app.undoCutEdit()
+        self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceEnd"]), initial_end)
+
+        trim_begin = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineTrimStart-{first_clip_id}"
+        )
+        begin_start = trim_begin.mapToScene(
+            QPointF(trim_begin.width() / 2, trim_begin.height() / 2)
+        ).toPoint()
+        begin_finish = begin_start + QPoint(34, 0)
+        QTest.mousePress(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            begin_start,
+        )
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, begin_start + (begin_finish - begin_start) * fraction, 30)
+        QTest.mouseRelease(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            begin_finish,
+        )
+        self.gui.wait_until(
+            lambda: float(self.app.sequenceClips[0]["sourceStart"]) > 0,
+            description="timeline start edge trim",
+        )
+        self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceStart"]), 1.0, delta=0.25)
+        self.app.undoCutEdit()
+        self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceStart"]), 0.0)
+
+        move_area = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineMoveArea-{second_clip_id}"
+        )
+        first_timeline_clip = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineClip-{first_clip_id}"
+        )
+        move_start = move_area.mapToScene(
+            QPointF(move_area.width() / 2, move_area.height() / 2)
+        ).toPoint()
+        move_finish = first_timeline_clip.mapToScene(
+            QPointF(24, first_timeline_clip.height() / 2)
+        ).toPoint()
+        QTest.mousePress(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            move_start,
+        )
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, move_start + (move_finish - move_start) * fraction, 30)
+        QTest.mouseRelease(
+            window,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            move_finish,
+        )
+        self.gui.wait_until(
+            lambda: str(self.app.sequenceClips[0]["clipId"]) == second_clip_id,
+            description="timeline center drag reorder",
+        )
+        self.app.undoCutEdit()
+        self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
+
+    def test_sequence_timeline_zoom_changes_clip_scale(self) -> None:
+        self._make_sequence_project()
+        first_clip_id = str(self.app.sequenceClips[0]["clipId"])
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        timeline_clip = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineClip-{first_clip_id}"
+        )
+        zoom_slider = self._quick_item(window, "sequenceTimelineZoomSlider")
+        zoom_label = self._quick_item(window, "sequenceTimelineZoomLabel")
+        self.gui.wait_until(timeline_clip.isVisible, description="zoomable timeline clip")
+        initial_width = timeline_clip.width()
+        self.assertEqual(zoom_label.property("text"), "100%")
+
+        zoom_slider.setProperty("value", 200)
+        self.assertTrue(QMetaObject.invokeMethod(zoom_slider, "moved"))
+        self.gui.wait_until(
+            lambda: timeline_clip.width() > initial_width * 1.8,
+            description="timeline zoom in",
+        )
+        zoomed_width = timeline_clip.width()
+        self.assertEqual(zoom_label.property("text"), "200%")
+
+        zoom_slider.setProperty("value", 50)
+        self.assertTrue(QMetaObject.invokeMethod(zoom_slider, "moved"))
+        self.gui.wait_until(
+            lambda: timeline_clip.width() < zoomed_width * 0.3,
+            description="timeline zoom out",
+        )
+        self.assertEqual(zoom_label.property("text"), "50%")
+
+    def test_short_workspace_places_settings_left_and_clips_right(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        settings = self.gui.find_item(window, "shortModeSettingsPanel")
+        preview = self.gui.find_item(window, "shortModePreview")
+        clips = self.gui.find_item(window, "shortModeClipList")
+        self.assertLess(settings.mapToScene(QPointF(0, 0)).x(), preview.mapToScene(QPointF(0, 0)).x())
+        self.assertLess(preview.mapToScene(QPointF(0, 0)).x(), clips.mapToScene(QPointF(0, 0)).x())
+        for width, height in ((1220, 760), (1520, 940)):
+            self.gui.resize(window, width, height)
+            for name in ("shortModeClipSourceCombo", "shortModeSegmentCombo",
+                         "shortModeRangeStartField", "shortModeRangeEndField", "shortModeAddClipButton"):
+                control = self.gui.find_item(window, name)
+                self._assert_quick_item_within(clips, control)
+                self._assert_quick_item_within(window.contentItem(), control)
+            for owner, names in (
+                (settings, ("shortModeGlobalFitCombo", "shortModeBackgroundColorField",
+                            "shortModeTransitionCombo", "shortModeTransitionDurationSlider",
+                            "shortModeBgmStartField", "shortModeBgmVolumeSlider")),
+                (self.gui.find_item(window, "highlightCandidateList"),
+                 ("highlightSortCombo", "highlightCategoryCombo", "highlightAnalyzeButton",
+                  "highlightCancelButton", "highlightRetryButton", "highlightUndoRejectButton")),
+            ):
+                for name in names:
+                    control = self.gui.find_item(window, name)
+                    self._assert_quick_item_within(owner, control)
+                    self._assert_quick_item_within(window.contentItem(), control)
+
     def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         _project_path, _first_video, second_video = self._make_sequence_project()
@@ -6111,11 +6460,12 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="sequence panel hidden in audio mode",
         )
         self.assertTrue(self.app.selectEditMode("cut"))
+        window.setProperty("editTool", "sequence")
         self.gui.wait_until(
             lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
             description="sequence panel visible in cut mode",
         )
-        self.gui.find_item(window, "mediaBinPanel")
+        self.gui.find_item(window, "workspaceMediaBin")
         self.gui.find_item(window, "sequenceClipList")
         self.gui.find_item(window, "mediaBinDropArea")
 
@@ -6125,6 +6475,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             description="sequence panel hidden in subtitle mode",
         )
         self.assertTrue(self.app.selectEditMode("cut"))
+        window.setProperty("editTool", "sequence")
         self.gui.wait_until(
             lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
             description="sequence panel visible after returning to cut mode",
@@ -6132,13 +6483,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.wait_until(
             lambda: any(
                 item.property("sequenceAssetId") == second_asset_id
-                for item in self.gui.visual_items_with_properties(panel, "sequenceAssetId")
+                for item in self.gui.visual_items_with_properties(window, "sequenceAssetId")
             ),
             description="sequence asset delegate after returning to cut mode",
         )
 
         add_button = self.gui.find_visual_item_by_properties(
-            panel,
+            window,
             {"sequenceAssetId": second_asset_id},
             required_properties=("sequenceAssetId",),
         )
@@ -6182,7 +6533,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_highlight_retry_resets_rejected_candidates_before_worker_completion(self) -> None:
         self._load_project()
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
         undo_button = self._quick_item(window, "highlightUndoRejectButton")
         retry_button = self._quick_item(window, "highlightRetryButton")
@@ -6234,7 +6585,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app._highlight_rejected, [])
         self.assertFalse(undo_button.property("enabled"))
 
-    def test_codex_header_ai_button_toggles_wide_and_overlay_sidebar(self) -> None:
+    def test_codex_header_ai_button_switches_inspector_tabs(self) -> None:
         self._load_project()
         _, window = self._load_qml()
         authenticated = CodexChatSnapshot(
@@ -6246,15 +6597,19 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._on_codex_chat_state(authenticated)
         sidebar = self._quick_item(window, "commonCodexSidebar")
         ai_button = self._quick_item(window, "workspaceHeaderAiButton")
+        settings_loader = self._quick_item(window, "modeSettingsContentLoader")
 
         self.gui.resize(window, 1520, 760)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
         self.assertEqual(sidebar.width(), 300)
+        self.assertFalse(settings_loader.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "codex")
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 0)
+        self.assertTrue(settings_loader.isVisible())
+        self.assertEqual(window.property("inspectorTab"), "settings")
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
@@ -6263,14 +6618,15 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui.resize(window, 1220, 760)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(sidebar.width(), 250)
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertFalse(sidebar.isVisible())
+        self.assertTrue(settings_loader.isVisible())
         self._click(window, ai_button)
         self.app.processEvents()
         self.assertTrue(sidebar.isVisible())
-        self.assertEqual(sidebar.width(), 300)
+        self.assertEqual(sidebar.width(), 250)
 
     def test_highlight_preview_uses_candidate_range_outside_selected_clip(self) -> None:
         self._load_project(
@@ -6301,10 +6657,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
             audio_files=tuple(str(item["path"]) for item in project["audio_sources"]),
         )
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         preview = self._quick_item(window, "shortModePreview")
-        self.assertEqual(preview.property("clipData").get("start"), 0.0)
-        self.assertEqual(preview.property("clipData").get("end"), 2.0)
+        self.assertEqual(self._qml_value(preview, "clipData").get("start"), 0.0)
+        self.assertEqual(self._qml_value(preview, "clipData").get("end"), 2.0)
 
         self.app._highlight_candidates = [
             {
@@ -6363,7 +6719,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             ]
         )
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
         source_combo = self._quick_item(window, "shortModeClipSourceCombo")
         source_combo.setProperty("currentIndex", 1)
@@ -6415,7 +6771,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         )
         self.app.initializeShortVideoClips()
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "shortModeOpenButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         clip_list = self._quick_item(window, "shortModeClipListView")
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,

@@ -35,6 +35,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "SubtitleOverlay.qml",
     COMPONENTS_ROOT / "ShortModePreview.qml",
     SEQUENCE_EDITOR_QML,
+    COMPONENTS_ROOT / "MediaBinPanel.qml",
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -48,16 +49,12 @@ QML_LINT_FILES = (
 class QmlStaticTests(unittest.TestCase):
     def test_sequence_editor_uses_backend_view_and_mutation_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
-        panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8")
+        panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "MediaBinPanel.qml").read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("SequenceEditorPanel {"), 1)
         self.assertIn('objectName: "workspaceSequenceEditor"', workflow)
-        self.assertIn(
-            'visible: root.appBackend.currentWorkspace === "normal-video"\n'
-            '                        && root.appBackend.projectLoaded\n'
-            '                        && root.appBackend.currentEditMode === "cut"',
-            workflow,
-        )
+        self.assertIn('objectName: "workspaceMediaBin"', workflow)
+        self.assertIn('root.editTool === "sequence"', workflow)
         for binding in (
             "backend.mediaBinAssets",
             "backend.sequenceClips",
@@ -246,11 +243,18 @@ class QmlStaticTests(unittest.TestCase):
             'root.appBackend.codexAuthState === "authenticated"',
             workflow,
         )
-        self.assertIn("root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0", workflow)
+        self.assertIn("&& !root.loginInInspector ? 300 : 0", workflow)
         self.assertIn("readonly property int codexDrawerHeaderInset", workflow)
         self.assertIn("readonly property int codexDrawerBodyInset", workflow)
         self.assertIn("readonly property int codexInteractiveRightInset", workflow)
-        self.assertIn("visible: root.codexAuthenticated && root.codexDrawerOpen", workflow)
+        self.assertIn(
+            'root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen',
+            workflow,
+        )
+        self.assertIn('objectName: "inspectorSettingsTabButton"', workflow)
+        self.assertIn('objectName: "inspectorCodexTabButton"', workflow)
+        self.assertIn('text: "編集プロパティ"', workflow)
+        self.assertIn('text: "AI Codex"', workflow)
         self.assertNotIn(
             "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode\n        }",
             workflow,

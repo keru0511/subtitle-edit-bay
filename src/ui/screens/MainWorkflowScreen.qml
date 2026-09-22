@@ -76,11 +76,13 @@ ApplicationWindow {
         return providerName ? providerName + "ログイン" : "ログイン"
     }
     readonly property bool codexSidebarOverlay: root.width < 1400
-    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0
+    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen
+        && !root.loginInInspector ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
+        && !root.loginInInspector
         ? (root.codexDrawerOpen ? 310 : 104) : 0
     readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
-        && root.codexDrawerOpen ? 310 : 0
+        && root.codexDrawerOpen && !root.loginInInspector ? 310 : 0
     readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0 && !root.codexSidebarOverlay
         ? root.codexSidebarWidth + 10 : 0
     readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
@@ -92,11 +94,14 @@ ApplicationWindow {
     readonly property int shortWorkspaceAiAccessInset: root.shortWorkspaceActive
         && !root.codexAuthenticated ? 58 : 0
     property bool codexDrawerOpen: true
+    property string inspectorTab: "settings"
     property bool previousCodexAuthenticated: false
     onEditorModeChanged: {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
     }
+    readonly property bool loginInInspector: mainWorkspace.visible && root.appBackend.projectLoaded
+    property string editTool: "cut"
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -1136,14 +1141,17 @@ ApplicationWindow {
         onSaveRequested: root.appBackend.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
-            if (root.codexAuthenticated)
+            if (root.loginInInspector) {
+                root.inspectorTab = root.inspectorTab === "codex" ? "settings" : "codex"
+            } else if (root.codexAuthenticated) {
                 root.codexDrawerOpen = !root.codexDrawerOpen
-            else if (root.appBackend.codexAuthState === "login_pending")
+            } else if (root.appBackend.codexAuthState === "login_pending") {
                 root.appBackend.openAIProviderLoginPage()
-            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
+            } else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0) {
                 root.appBackend.reconnectAIChat()
-            else
+            } else {
                 root.appBackend.startAIProviderLogin()
+            }
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
         onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
@@ -1555,8 +1563,11 @@ ApplicationWindow {
         }
 
         function onCodexChatChanged() {
-            if (root.codexAuthenticated && !root.previousCodexAuthenticated)
+            if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
                 root.codexDrawerOpen = true
+                if (root.loginInInspector)
+                    root.inspectorTab = "codex"
+            }
             root.previousCodexAuthenticated = root.codexAuthenticated
         }
     }
@@ -1714,7 +1725,7 @@ ApplicationWindow {
             id: editorModeRail
             objectName: "editorModeRail"
             visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: 86
+            Layout.preferredWidth: 70
             Layout.minimumWidth: 86
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
@@ -1732,70 +1743,26 @@ ApplicationWindow {
         }
 
         ColumnLayout {
+            id: workspaceContent
+            objectName: "workspaceContent"
             visible: root.appBackend.projectLoaded
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 10
 
-            ContextActionBar {
-                id: contextActionBar
-                objectName: "contextActionBar"
-                Layout.fillWidth: true
-                projectLoaded: root.appBackend.projectLoaded
-                running: root.appBackend.running
-                activeJob: root.appBackend.activeJob
-                canCreateProject: Boolean(root.appBackend.sourceSelection.video)
-                canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
-                canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
-                renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
-                renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
-                blockReason: root.transcriptionBlockReason()
-                audioMixerAvailable: root.appBackend.audioMixerAvailable
-                mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
-                subtitleAvailable: root.appBackend.segmentCount > 0
-                outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
-                settingsExpanded: root.settingsExpanded
-                onSettingsRequested: root.toggleSettingsPopup()
-                onDictionaryRequested: root.openDictionaryScreen()
-                onCreateProjectRequested: root.appBackend.createEmptyProject()
-                onStartTranscriptionRequested: root.requestTranscription()
-                onEditorRequested: root.openEditorScreen()
-                onMixerRequested: root.openMixerScreen()
-                onShortModeRequested: root.openShortWorkspace()
-                onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
-                onSaveOrStopRequested: {
-                    if (!root.appBackend.running)
-                        root.appBackend.saveSettings(root.currentSettings())
-                    else if (root.appBackend.activeJob !== "update")
-                        root.appBackend.cancelProcessing()
-                }
-                onOutputFolderRequested: root.appBackend.openOutputFolder()
-            }
-            Rectangle {
-                objectName: "mainVideoPanel"
+            RowLayout {
+                id: workspaceUpperArea
+                objectName: "workspaceUpperArea"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: root.appBackend.progressVisible
-                    ? (root.height <= 800 ? 170 : 300)
-                    : (root.height <= 800 ? (applicationLogPanel.expanded ? 140 : 190) : 300)
-                radius: 12
-                color: "#080A09"
-                border.color: root.border
-                clip: true
-                SequenceEditorPanel {
-                    id: sequenceEditorPanel
-                    objectName: "workspaceSequenceEditor"
-                    visible: root.appBackend.currentWorkspace === "normal-video"
-                        && root.appBackend.projectLoaded
-                        && root.appBackend.currentEditMode === "cut"
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    // Keep the overlay inside the existing video panel at
-                    // compact heights; it must not participate in the outer
-                    // workspace layout or raise modeEditorSlot's bounds.
-                    height: visible ? Math.min(238, Math.max(0, parent.height)) : 0
-                    z: 20
+                Layout.minimumHeight: root.height <= 800 ? 190 : 300
+                spacing: 10
+
+                MediaBinPanel {
+                    objectName: "workspaceMediaBin"
+                    Layout.preferredWidth: root.width >= 1400 ? 280 : 230
+                    Layout.minimumWidth: 210
+                    Layout.fillHeight: true
                     backend: root.appBackend
                     panelColor: root.panel
                     raisedColor: root.raised
@@ -1805,91 +1772,178 @@ ApplicationWindow {
                     accentColor: root.acid
                     warningColor: root.amber
                     dangerColor: root.danger
+                    onSourceSettingsRequested: sourcePopup.open()
                 }
-                MediaPlayer {
-                    id: mainPlayer
-                    objectName: "mainWorkspacePlayer"
-                    source: root.appBackend.previewUrl
-                    videoOutput: mainVideo
-                    audioOutput: AudioOutput {
-                        objectName: "mainWorkspaceAudioOutput"
-                        volume: 0.7
-                        muted: workspaceAudioBridge.muteSourceAudio
-                    }
-                    onPositionChanged: {
-                        if (!mainSeek.pressed)
-                            mainSeek.value = mainPlayer.position
-                        if (root.enforceCutPreview(mainPlayer.position))
-                            return
-                        var completedPendingSeek = false
-                        if (root.pendingSharedSourcePosition >= 0
-                                && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
-                            root.pendingSharedSourcePosition = -1
-                            sharedSeekGuardTimer.stop()
-                            completedPendingSeek = true
-                        }
-                        if (!completedPendingSeek
-                                && mainPlayer.playbackState !== MediaPlayer.PlayingState)
-                            root.syncEditorPlayhead(mainPlayer.position, true)
-                    }
-                    onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
-                    onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
-                }
-                Timer {
-                    // Keep the shared playhead current; the overlay handles exact subtitle changes.
-                    interval: 100
-                    repeat: true
-                    running: mainPlayer.playbackState === MediaPlayer.PlayingState
-                    onTriggered: {
-                        if (!root.enforceCutPreview(mainPlayer.position))
-                            root.syncEditorPlayhead(mainPlayer.position, false)
-                    }
-                }
-                VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
-                SubtitleOverlay {
-                    id: mainSubtitleOverlay
-                    anchors.fill: mainVideo
-                    appBackend: root.appBackend
-                    player: mainPlayer
-                    layoutMetrics: root.subtitleLayoutMetricsCache
-                    active: mainWorkspace.visible
-                    captionObjectPrefix: "mainSubtitleOverlayCaption"
-                    baseFontSize: root.selectedSubtitleFontSize
-                    defaultSubtitleFontSize: root.defaultSubtitleFontSize
-                    outlineColor: root.selectedSubtitleOutlineColor
-                    outlineThickness: root.selectedSubtitleOutlineThickness
-                    speakerColors: root.projectSpeakerCache
-                    subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
-                    onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
-                        mainSubtitleOverlay.activeSegments
-                    )
-                }
+
                 ColumnLayout {
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                    anchors.margins: 12; spacing: 2
-                    Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: root.seekSharedPlayer(value, "source") }
-                    RowLayout { Layout.fillWidth: true
-                        ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text {
-                            text: root.appBackend.cutTimeline.hasCuts
-                                ? ("素材 " + root.stamp(mainPlayer.position / 1000)
-                                    + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
-                                    + " / " + root.stamp(root.appBackend.cutOutputDuration))
-                                : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
-                            color: root.textMuted
-                            font.pixelSize: 10
-                            font.family: "Cascadia Mono"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 10
+
+                    ContextActionBar {
+                        id: contextActionBar
+                        compact: true
+                        objectName: "contextActionBar"
+                        Layout.fillWidth: true
+                        projectLoaded: root.appBackend.projectLoaded
+                        running: root.appBackend.running
+                        activeJob: root.appBackend.activeJob
+                        canCreateProject: Boolean(root.appBackend.sourceSelection.video)
+                        canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
+                        canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
+                        renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
+                        renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
+                        blockReason: root.transcriptionBlockReason()
+                        audioMixerAvailable: root.appBackend.audioMixerAvailable
+                        mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
+                        subtitleAvailable: root.appBackend.segmentCount > 0
+                        outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
+                        settingsExpanded: root.settingsExpanded
+                        onSettingsRequested: root.toggleSettingsPopup()
+                        onDictionaryRequested: root.openDictionaryScreen()
+                        onCreateProjectRequested: root.appBackend.createEmptyProject()
+                        onStartTranscriptionRequested: root.requestTranscription()
+                        onEditorRequested: root.openEditorScreen()
+                        onMixerRequested: root.openMixerScreen()
+                        onShortModeRequested: root.openShortWorkspace()
+                        onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
+                        onSaveOrStopRequested: {
+                            if (!root.appBackend.running)
+                                root.appBackend.saveSettings(root.currentSettings())
+                            else if (root.appBackend.activeJob !== "update")
+                                root.appBackend.cancelProcessing()
+                        }
+                        onOutputFolderRequested: root.appBackend.openOutputFolder()
+                    }
+                    Rectangle {
+                        objectName: "mainVideoPanel"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 12
+                        color: "#080A09"
+                        border.color: root.border
+                        clip: true
+                        MediaPlayer {
+                            id: mainPlayer
+                            objectName: "mainWorkspacePlayer"
+                            source: root.appBackend.previewUrl
+                            videoOutput: mainVideo
+                            audioOutput: AudioOutput {
+                                objectName: "mainWorkspaceAudioOutput"
+                                volume: 0.7
+                                muted: workspaceAudioBridge.muteSourceAudio
+                            }
+                            onPositionChanged: {
+                                if (!mainSeek.pressed)
+                                    mainSeek.value = mainPlayer.position
+                                if (root.enforceCutPreview(mainPlayer.position))
+                                    return
+                                var completedPendingSeek = false
+                                if (root.pendingSharedSourcePosition >= 0
+                                        && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
+                                    root.pendingSharedSourcePosition = -1
+                                    sharedSeekGuardTimer.stop()
+                                    completedPendingSeek = true
+                                }
+                                if (!completedPendingSeek
+                                        && mainPlayer.playbackState !== MediaPlayer.PlayingState)
+                                    root.syncEditorPlayhead(mainPlayer.position, true)
+                            }
+                            onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
+                            onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
+                        }
+                        Timer {
+                            // Keep the shared playhead current; the overlay handles exact subtitle changes.
+                            interval: 100
+                            repeat: true
+                            running: mainPlayer.playbackState === MediaPlayer.PlayingState
+                            onTriggered: {
+                                if (!root.enforceCutPreview(mainPlayer.position))
+                                    root.syncEditorPlayhead(mainPlayer.position, false)
+                            }
+                        }
+                        VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
+                        SubtitleOverlay {
+                            id: mainSubtitleOverlay
+                            anchors.fill: mainVideo
+                            appBackend: root.appBackend
+                            player: mainPlayer
+                            layoutMetrics: root.subtitleLayoutMetricsCache
+                            active: mainWorkspace.visible
+                            captionObjectPrefix: "mainSubtitleOverlayCaption"
+                            baseFontSize: root.selectedSubtitleFontSize
+                            defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                            outlineColor: root.selectedSubtitleOutlineColor
+                            outlineThickness: root.selectedSubtitleOutlineThickness
+                            speakerColors: root.projectSpeakerCache
+                            subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                            onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
+                                mainSubtitleOverlay.activeSegments
+                            )
+                        }
+                        ColumnLayout {
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                            anchors.margins: 12; spacing: 2
+                            Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: root.seekSharedPlayer(value, "source") }
+                            RowLayout { Layout.fillWidth: true
+                                ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
+                                Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
+                                Text {
+                                    text: root.appBackend.cutTimeline.hasCuts
+                                        ? ("素材 " + root.stamp(mainPlayer.position / 1000)
+                                            + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
+                                            + " / " + root.stamp(root.appBackend.cutOutputDuration))
+                                        : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
+                                    color: root.textMuted
+                                    font.pixelSize: 10
+                                    font.family: "Cascadia Mono"
+                                }
+                            }
                         }
                     }
                 }
             }
 
 
+            RowLayout {
+                visible: root.appBackend.currentEditMode === "cut"
+                Layout.fillWidth: true
+                SmallButton {
+                    objectName: "cutToolButton"
+                    text: root.editTool === "cut" ? "● カット" : "カット"
+                    onClicked: root.editTool = "cut"
+                }
+                SmallButton {
+                    objectName: "sequenceToolButton"
+                    text: root.editTool === "sequence" ? "● 動画結合・並べ替え" : "動画結合・並べ替え"
+                    onClicked: root.editTool = "sequence"
+                }
+                Item { Layout.fillWidth: true }
+            }
+            SequenceEditorPanel {
+                id: sequenceEditorPanel
+                objectName: "workspaceSequenceEditor"
+                visible: root.appBackend.currentWorkspace === "normal-video"
+                    && root.appBackend.projectLoaded
+                    && root.appBackend.currentEditMode === "cut" && root.editTool === "sequence"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 335
+                Layout.minimumHeight: 315
+                backend: root.appBackend
+                panelColor: root.panel
+                raisedColor: root.raised
+                borderColor: root.border
+                textColor: root.textPrimary
+                mutedColor: root.textMuted
+                accentColor: root.acid
+                warningColor: root.amber
+                dangerColor: root.danger
+            }
+
             Rectangle {
                 id: modeEditorSlot
                 objectName: "modeEditorSlot"
-                visible: root.appBackend.projectLoaded
+                visible: root.appBackend.projectLoaded && (root.appBackend.currentEditMode !== "cut" || root.editTool === "cut")
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible
                     ? (root.appBackend.currentEditMode === "cut" ? 122 : 156)
@@ -1941,6 +1995,7 @@ ApplicationWindow {
 
             ApplicationLogPanel {
                 id: applicationLogPanel
+                compact: true
                 objectName: "applicationLogPanel"
                 Layout.fillWidth: true
                 Layout.fillHeight: root.appBackend.progressVisible
@@ -1948,7 +2003,7 @@ ApplicationWindow {
                 // The progress panel reserves 126px in this column.  At the
                 // 1220x760 minimum window, allow an expanded log to shrink
                 // to its collapsed minimum so its header remains reachable.
-                Layout.minimumHeight: root.appBackend.progressVisible ? 118 : implicitHeight
+                Layout.minimumHeight: root.appBackend.progressVisible ? 56 : implicitHeight
                 backend: root.appBackend
             }
         }
@@ -1958,7 +2013,7 @@ ApplicationWindow {
             id: modeSettingsSlot
             objectName: "modeSettingsSlot"
             visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: 210
+            Layout.preferredWidth: root.width >= 1400 ? 300 : 250
             Layout.minimumWidth: 200
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
@@ -1967,11 +2022,78 @@ ApplicationWindow {
             radius: 12
             color: root.panel
             border.color: root.border
+            clip: true
+
+            Rectangle {
+                id: inspectorTabBar
+                objectName: "inspectorTabBar"
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: 44
+                color: root.panel
+                border.color: root.border
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    spacing: 4
+
+                    Button {
+                        id: inspectorSettingsTabButton
+                        objectName: "inspectorSettingsTabButton"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: "編集プロパティ"
+                        onClicked: root.inspectorTab = "settings"
+                        contentItem: Text {
+                            text: inspectorSettingsTabButton.text
+                            color: root.inspectorTab === "settings" ? "#FFFFFF" : root.textMuted
+                            font.family: "Yu Gothic UI"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: root.inspectorTab === "settings" ? root.raised : "transparent"
+                            border.color: root.inspectorTab === "settings" ? root.border : "transparent"
+                        }
+                    }
+                    Button {
+                        id: inspectorCodexTabButton
+                        objectName: "inspectorCodexTabButton"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: "AI Codex"
+                        onClicked: root.inspectorTab = "codex"
+                        contentItem: Text {
+                            text: inspectorCodexTabButton.text
+                            color: root.inspectorTab === "codex" ? "#FFFFFF" : root.textMuted
+                            font.family: "Yu Gothic UI"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: root.inspectorTab === "codex" ? root.raised : "transparent"
+                            border.color: root.inspectorTab === "codex" ? root.border : "transparent"
+                        }
+                    }
+                }
+            }
 
             Loader {
                 id: modeSettingsContentLoader
                 objectName: "modeSettingsContentLoader"
-                anchors.fill: parent
+                anchors.top: inspectorTabBar.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: root.inspectorTab === "settings"
                 active: root.appBackend.projectLoaded && root.modeSettingsContent !== null
                 sourceComponent: root.modeSettingsContent
             }
@@ -3165,15 +3287,18 @@ ApplicationWindow {
     CodexSidebarContainer {
         id: codexSidebar
         objectName: "commonCodexSidebar"
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: 10
-        width: root.codexSidebarWidth
-        visible: root.codexAuthenticated && root.codexDrawerOpen
+        anchors.margins: root.loginInInspector ? 0 : 10
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height : 10
+        width: root.loginInInspector ? parent.width : root.codexSidebarWidth
+        visible: root.codexAuthenticated
+            && (root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen)
         z: 600
         backend: root.appBackend
-        drawerMode: root.codexSidebarOverlay
+        drawerMode: !root.loginInInspector && root.codexSidebarOverlay
         onCloseRequested: root.codexDrawerOpen = false
     }
 
@@ -3184,7 +3309,8 @@ ApplicationWindow {
         anchors.margins: 12
         width: 86
         height: 34
-        visible: root.codexAuthenticated && root.codexSidebarOverlay && !root.codexDrawerOpen
+        visible: !root.loginInInspector && root.codexAuthenticated
+            && root.codexSidebarOverlay && !root.codexDrawerOpen
         z: 650
         text: root.codexDrawerOpen ? "Codexを閉じる" : "Codexを開く"
         onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
@@ -3192,13 +3318,16 @@ ApplicationWindow {
 
     ComboBox {
         id: aiProviderLoginCombo
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "aiProviderLoginCombo"
         anchors.top: parent.top
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
         anchors.left: parent.left
         anchors.margins: 12
         width: 108
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
+            && (!root.loginInInspector || root.inspectorTab === "codex")
             && root.appBackend.aiChatProviders.length > 1
         model: root.appBackend ? root.appBackend.aiChatProviders : []
         textRole: "label"
@@ -3230,13 +3359,16 @@ ApplicationWindow {
 
     Text {
         id: aiProviderAuthHint
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "aiProviderAuthHint"
         anchors.top: parent.top
-        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
-        anchors.leftMargin: 12
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
+        anchors.left: parent.left
+        anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
         width: 240
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
+            && (!root.loginInInspector || root.inspectorTab === "codex")
             && root.appBackend.aiChatAuthHint
             && !root.appBackend.aiChatLoginAvailable
         z: 650
@@ -3251,13 +3383,17 @@ ApplicationWindow {
 
     SmallButton {
         id: codexLoginRoute
+        anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "codexLoginRoute"
         anchors.top: parent.top
-        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
+        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
+        anchors.left: parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34
         visible: !root.codexAuthenticated
+            && (!root.loginInInspector || root.inspectorTab === "codex")
             && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
         z: 650
         text: root.appBackend && root.appBackend.aiChatAuthHint

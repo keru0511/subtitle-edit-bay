@@ -1101,9 +1101,14 @@ class GuiPerformanceScenarioRunner:
     def _open_short_mode(self) -> None:
         if _short_workspace_active(self._window()):
             return
+        # Use the production header route; older comparison revisions may
+        # still expose only the action-bar entry point.
+        button = self._window().findChild(QQuickItem, "workspaceHeaderShortButton")
+        if button is None or not button.isVisible():
+            button = self.harness.find_item(self._window(), "shortModeOpenButton")
         self.harness.click(
             self._window(),
-            self.harness.find_item(self._window(), "shortModeOpenButton"),
+            button,
         )
         self.harness.wait_until(
             lambda: (

@@ -16,6 +16,7 @@ SHORT_SCREEN_QML = REPOSITORY_ROOT / "src" / "ui" / "screens" / "ShortModeScreen
 HEADER_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "WorkspaceHeader.qml"
 ACTION_BAR_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "ContextActionBar.qml"
 SEQUENCE_PANEL_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "SequenceEditorPanel.qml"
+MEDIA_BIN_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "MediaBinPanel.qml"
 
 
 class ProductionIntegrationContractTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         header = HEADER_QML.read_text(encoding="utf-8")
         action_bar = ACTION_BAR_QML.read_text(encoding="utf-8")
         sequence_panel = SEQUENCE_PANEL_QML.read_text(encoding="utf-8")
+        media_bin = MEDIA_BIN_QML.read_text(encoding="utf-8")
 
         # The shared workflow is the only owner of navigation side effects.
         for route in (
@@ -73,13 +75,18 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         # Sequence data and mutations remain backend-owned in the production
         # panel; this cross-file check prevents a future UI-only integration.
         self.assertIn("backend.sequenceClips", sequence_panel)
-        self.assertIn("backend.addSequenceClip", sequence_panel)
+        self.assertIn("backend.insertSequenceClip", sequence_panel)
+        self.assertIn("backend.mediaBinAssets", media_bin)
+        self.assertIn("backend.addSequenceAssets", media_bin)
+        self.assertIn("backend.addSequenceClip", media_bin)
         self.assertIn("backend.moveSequenceClip", sequence_panel)
         self.assertIn("backend.trimSequenceClip", sequence_panel)
         self.assertIn("backend.setSequenceTransition", sequence_panel)
         self.assertIn("backend.setSequenceClipAudio", sequence_panel)
         self.assertNotIn("project[", sequence_panel)
         self.assertNotIn("project.", sequence_panel)
+        self.assertNotIn("project[", media_bin)
+        self.assertNotIn("project.", media_bin)
 
     def test_sequence_and_short_artifact_survive_autosave_reload_as_one_project_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

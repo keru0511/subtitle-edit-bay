@@ -113,21 +113,21 @@ ApplicationWindow {
     minimumHeight: 760
     visible: true
     title: "Subtitle Edit Bay"
-    color: "#0E1117"
-    palette.window: "#161B22"
-    palette.windowText: "#F0F6FC"
-    palette.base: "#161B22"
-    palette.text: "#F0F6FC"
-    palette.button: "#21262D"
-    palette.buttonText: "#F0F6FC"
+    color: "#0B0F17"
+    palette.window: "#131A26"
+    palette.windowText: "#F8FAFC"
+    palette.base: "#131A26"
+    palette.text: "#F8FAFC"
+    palette.button: "#1A2332"
+    palette.buttonText: "#F8FAFC"
     palette.highlight: "#6366F1"
     palette.highlightedText: "#FFFFFF"
 
-    readonly property color panel: "#161B22"
-    readonly property color raised: "#21262D"
-    readonly property color border: "#30363D"
-    readonly property color textPrimary: "#F0F6FC"
-    readonly property color textMuted: "#8B949E"
+    readonly property color panel: "#131A26"
+    readonly property color raised: "#1A2332"
+    readonly property color border: "#243044"
+    readonly property color textPrimary: "#F8FAFC"
+    readonly property color textMuted: "#94A3B8"
     readonly property color acid: "#6366F1"
     readonly property color amber: "#F59E0B"
     readonly property color danger: "#EF4444"
@@ -1778,7 +1778,7 @@ ApplicationWindow {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 10
+                    spacing: 6
 
                     ContextActionBar {
                         id: contextActionBar
@@ -1820,7 +1820,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 12
-                        color: "#080A09"
+                        color: "#06080D"
                         border.color: root.border
                         clip: true
                         MediaPlayer {
@@ -3299,6 +3299,12 @@ ApplicationWindow {
         z: 600
         backend: root.appBackend
         drawerMode: !root.loginInInspector && root.codexSidebarOverlay
+        panelColor: root.panel
+        raisedColor: root.raised
+        borderColor: root.border
+        textColor: root.textPrimary
+        mutedColor: root.textMuted
+        accentColor: root.acid
         onCloseRequested: root.codexDrawerOpen = false
     }
 

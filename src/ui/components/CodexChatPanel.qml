@@ -8,11 +8,11 @@ Rectangle {
     // qmllint disable unqualified
     property var backend
     property bool expanded: false
-    property color panelColor: "#161B22"
-    property color raisedColor: "#21262D"
-    property color borderColor: "#30363D"
-    property color textColor: "#F0F6FC"
-    property color mutedColor: "#8B949E"
+    property color panelColor: "#131A26"
+    property color raisedColor: "#1A2332"
+    property color borderColor: "#243044"
+    property color textColor: "#F8FAFC"
+    property color mutedColor: "#94A3B8"
     property color accentColor: "#6366F1"
     property color errorColor: "#EF4444"
 

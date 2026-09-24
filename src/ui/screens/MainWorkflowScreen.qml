@@ -3299,6 +3299,12 @@ ApplicationWindow {
         z: 600
         backend: root.appBackend
         drawerMode: !root.loginInInspector && root.codexSidebarOverlay
+        panelColor: root.panel
+        raisedColor: root.raised
+        borderColor: root.border
+        textColor: root.textPrimary
+        mutedColor: root.textMuted
+        accentColor: root.acid
         onCloseRequested: root.codexDrawerOpen = false
     }
 

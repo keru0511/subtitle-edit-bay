@@ -2892,6 +2892,56 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
         self.assertFalse(window.property("settingsExpanded"))
 
+    def test_qml_compact_action_bar_single_row_layout_and_palette(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        action_bar = self._quick_item(window, "contextActionBar")
+        self.assertTrue(action_bar.property("compact"))
+        self.assertEqual(action_bar.property("implicitHeight"), 36)
+        self.assertEqual(int(action_bar.height()), 36)
+
+        group = self._quick_item(window, "transcriptionToolActions")
+        self.assertTrue(group.isVisible())
+
+        buttons = [
+            "settingsToggleButton",
+            "transcribeButton",
+            "transcriptionDictionaryOpenButton",
+            "editSubtitlesButton",
+            "audioMixerOpenButton",
+        ]
+        for width, height in ((1220, 760), (1520, 940)):
+            self.gui.resize(window, width, height)
+            self._assert_quick_item_within(action_bar, group)
+            for button_name in buttons:
+                with self.subTest(size=(width, height), button=button_name):
+                    btn = self._quick_item(window, button_name)
+                    self.assertTrue(btn.isVisible())
+                    self._assert_quick_item_within(group, btn)
+                    self._assert_quick_item_within(action_bar, btn)
+
+        # running state shows stop button within single-row action bar
+        stop_btn = self._quick_item(window, "saveSettingsButton")
+        self.assertFalse(stop_btn.isVisible())
+        action_bar.setProperty("running", True)
+        self.assertTrue(stop_btn.isVisible())
+        self.assertEqual(stop_btn.property("text"), "停止")
+        self._assert_quick_item_within(group, stop_btn)
+        self._assert_quick_item_within(action_bar, stop_btn)
+
+        action_bar.setProperty("running", False)
+        self.assertFalse(stop_btn.isVisible())
+
+        # verify unified mock palette contracts
+        self.assertEqual(window.property("panel").name().lower(), "#131a26")
+        self.assertEqual(window.property("border").name().lower(), "#243044")
+        self.assertEqual(window.property("raised").name().lower(), "#1a2332")
+        self.assertEqual(action_bar.property("color").name().lower(), "#131a26")
+        codex_sidebar = self._quick_item(window, "commonCodexSidebar")
+        self.assertEqual(codex_sidebar.property("color").name().lower(), "#131a26")
+        media_bin = self._quick_item(window, "workspaceMediaBin")
+        self.assertEqual(media_bin.property("color").name().lower(), "#131a26")
+
     def test_qml_settings_popup_keeps_actions_visible_and_bottom_settings_scrollable(self) -> None:
         _, window = self._load_qml()
         toggle = self._quick_item(window, "startScreenSettingsButton")

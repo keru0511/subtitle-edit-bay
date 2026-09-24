@@ -124,8 +124,8 @@ Rectangle {
                 }
                 width: mediaBinList.width
                 height: 76
-                radius: 6
-                color: root.panelColor
+                radius: 8
+                color: root.raisedColor
                 border.color: root.borderColor
 
                 RowLayout {
@@ -182,8 +182,8 @@ Rectangle {
 
             Rectangle {
                 anchors.fill: parent
-                radius: 6
-                color: mediaBinDropArea.containsDrag ? "#302A5A" : "transparent"
+                radius: 8
+                color: mediaBinDropArea.containsDrag ? "#222044" : "#0F1622"
                 border.color: mediaBinDropArea.containsDrag ? root.accentColor : root.borderColor
                 Text {
                     anchors.centerIn: parent

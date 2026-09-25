@@ -367,7 +367,7 @@ def write_report(output: Path, report: dict) -> None:
         ]:
             lines.append(f"| {metric} | {report['baseline'][metric]:.4f} | {report['candidate'][metric]:.4f} |")
         if "conditions" in report["candidate"]:
-            lines += ["", "| 発話条件 | 比較対象CER | 変更後CER |", "| --- | ---: | ---: |"]
+            lines += ["", "| 発話条件 | 比較対象の区間内CER | 変更後の区間内CER |", "| --- | ---: | ---: |"]
             for condition, score in report["candidate"]["conditions"].items():
                 lines.append(
                     f"| {condition} | {report['baseline']['conditions'][condition]['cer']:.4f} | {score['cer']:.4f} |"
@@ -385,6 +385,7 @@ def write_report(output: Path, report: dict) -> None:
         "",
         "raw_cerは表記差を含む値、cerは素材で明示した同等表記だけを統一した値です。",
         "時刻評価は既知の録音配置区間からの逸脱です。単語の正解開始・終了時刻に対する誤差ではありません。",
+        "条件別の区間内CERは時刻で文字を振り分けるため、時刻ずれでも悪化します。本文認識だけのCERとは区別してください。",
         "",
     ]
     text = "\n".join(lines)

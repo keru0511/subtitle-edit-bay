@@ -223,6 +223,15 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
             any("low_volume" in failure for failure in quality_failures(baseline, candidate, self.manifest["limits"]))
         )
 
+    def test_word_stretched_across_silence_keeps_global_text_but_fails_timing(self):
+        baseline = score_recording(self.payload, self.manifest)
+        self.payload["segments"][0]["words"][0]["end"] = 12.2
+        candidate = score_recording(self.payload, self.manifest)
+        self.assertEqual(candidate["cer"], 0)
+        self.assertGreater(candidate["conditions"]["clean"]["cer"], 0)
+        self.assertGreater(candidate["timing_window_errors"], 0)
+        self.assertTrue(quality_failures(baseline, candidate, self.manifest["limits"]))
+
     def test_condition_scoring_does_not_hide_untimed_or_silent_text(self):
         baseline = score_recording(self.payload, self.manifest)
         self.payload["segments"].append({"text": "いいいい", "start": 7, "end": 8, "words": []})

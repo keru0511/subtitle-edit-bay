@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TypedDict
+
+from src.data_boundary import coerce_float, coerce_int, is_object_mapping, is_object_iterable
 
 DEFAULT_SHORT_WIDTH = 1080
 DEFAULT_SHORT_HEIGHT = 1920
@@ -11,6 +13,47 @@ SHORT_VIDEO_SCHEMA_VERSION = 2
 VALID_FIT_MODES = ("cover", "contain", "blur")
 VALID_TRANSITION_TYPES = ("crossfade", "fade", "cut")
 SHORT_VIDEO_TIME_BASIS = "source"
+
+
+class ShortVideoOutputPayload(TypedDict):
+    width: int
+    height: int
+    fps: int
+
+
+class ShortVideoTransitionPayload(TypedDict):
+    type: str
+    duration: float
+
+
+ShortVideoBgmPayload = TypedDict(
+    "ShortVideoBgmPayload",
+    {"path": str, "in": float, "out": float, "start": float, "volume": float},
+)
+
+
+class _ShortVideoClipRequired(TypedDict):
+    segment_id: str
+    start: float
+    end: float
+
+
+class ShortVideoClipPayload(_ShortVideoClipRequired, total=False):
+    fit: str
+    background_color: str
+
+
+class ShortVideoPayload(TypedDict):
+    schema_version: int
+    enabled: bool
+    time_basis: str
+    output: ShortVideoOutputPayload
+    global_fit: str
+    global_background_color: str
+    subtitle_scale_percent: float
+    transition: ShortVideoTransitionPayload
+    bgm: ShortVideoBgmPayload
+    clips: list[ShortVideoClipPayload]
 
 
 class ShortVideoError(ValueError):
@@ -24,19 +67,19 @@ class ShortVideoOutput:
     fps: int = DEFAULT_SHORT_FPS
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideoOutput":
+    def from_json(cls, payload: object) -> "ShortVideoOutput":
         if payload is None:
             return cls()
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise ShortVideoError("short_video.output must be an object")
-        width = int(payload.get("width", DEFAULT_SHORT_WIDTH))
-        height = int(payload.get("height", DEFAULT_SHORT_HEIGHT))
-        fps = int(payload.get("fps", DEFAULT_SHORT_FPS))
+        width = coerce_int(payload.get("width", DEFAULT_SHORT_WIDTH))
+        height = coerce_int(payload.get("height", DEFAULT_SHORT_HEIGHT))
+        fps = coerce_int(payload.get("fps", DEFAULT_SHORT_FPS))
         if width <= 0 or height <= 0 or fps <= 0:
             raise ShortVideoError("short_video.output width/height/fps must be positive")
         return cls(width=width, height=height, fps=fps)
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> ShortVideoOutputPayload:
         return {"width": self.width, "height": self.height, "fps": self.fps}
 
 
@@ -46,22 +89,20 @@ class ShortVideoTransition:
     duration: float = 0.5
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideoTransition":
+    def from_json(cls, payload: object) -> "ShortVideoTransition":
         if payload is None:
             return cls()
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise ShortVideoError("short_video.transition must be an object")
         transition_type = str(payload.get("type", "crossfade")).lower()
         if transition_type not in VALID_TRANSITION_TYPES:
-            raise ShortVideoError(
-                f"short_video.transition.type must be one of {VALID_TRANSITION_TYPES}"
-            )
+            raise ShortVideoError(f"short_video.transition.type must be one of {VALID_TRANSITION_TYPES}")
         duration = _finite_number(payload.get("duration", 0.5), "transition.duration")
         if duration < 0.0:
             duration = 0.0
         return cls(type=transition_type, duration=round(duration, 3))
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> ShortVideoTransitionPayload:
         return {"type": self.type, "duration": self.duration}
 
 
@@ -74,10 +115,10 @@ class ShortVideoBgm:
     volume: float = 0.3
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideoBgm":
+    def from_json(cls, payload: object) -> "ShortVideoBgm":
         if payload is None:
             return cls()
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise ShortVideoError("short_video.bgm must be an object")
         path = str(payload.get("path", ""))
         in_point = _finite_number(payload.get("in", 0.0), "bgm.in")
@@ -102,7 +143,7 @@ class ShortVideoBgm:
             volume=round(volume, 3),
         )
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> ShortVideoBgmPayload:
         return {
             "path": self.path,
             "in": self.in_point,
@@ -121,10 +162,10 @@ class ShortVideoClip:
     background_color: str | None = None
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any] | None) -> "ShortVideoClip":
+    def from_json(cls, payload: object) -> "ShortVideoClip":
         if payload is None:
             return cls()
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise ShortVideoError("clip must be an object")
         segment_id = str(payload.get("segment_id", ""))
         start = _finite_number(payload.get("start", 0.0), "clip.start")
@@ -134,9 +175,7 @@ class ShortVideoClip:
         if fit is not None and fit not in VALID_FIT_MODES:
             raise ShortVideoError(f"clip.fit must be one of {VALID_FIT_MODES}")
         raw_background_color = payload.get("background_color")
-        background_color = (
-            str(raw_background_color) if raw_background_color not in (None, "") else None
-        )
+        background_color = str(raw_background_color) if raw_background_color not in (None, "") else None
         if start < 0.0:
             start = 0.0
         if end < start:
@@ -149,8 +188,8 @@ class ShortVideoClip:
             background_color=background_color,
         )
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {
+    def to_json(self) -> ShortVideoClipPayload:
+        payload: ShortVideoClipPayload = {
             "segment_id": self.segment_id,
             "start": self.start,
             "end": self.end,
@@ -180,7 +219,7 @@ class ShortVideo:
     @classmethod
     def from_json(
         cls,
-        payload: dict[str, Any] | None,
+        payload: object,
         *,
         migrate_legacy_defaults: bool = False,
     ) -> "ShortVideo":
@@ -194,49 +233,47 @@ class ShortVideo:
         """
         if payload is None:
             return cls()
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise ShortVideoError("short_video must be an object")
         enabled = bool(payload.get("enabled", False))
         time_basis = str(payload.get("time_basis", SHORT_VIDEO_TIME_BASIS)).lower()
         if time_basis != SHORT_VIDEO_TIME_BASIS:
             raise ShortVideoError(
-                "short_video.time_basis must be 'source'; output-timeline clips "
-                "require an explicit conversion"
+                "short_video.time_basis must be 'source'; output-timeline clips require an explicit conversion"
             )
         try:
-            schema_version = int(payload.get("schema_version", 1))
+            schema_version = coerce_int(payload.get("schema_version", 1))
         except (TypeError, ValueError) as error:
             raise ShortVideoError("short_video.schema_version must be an integer") from error
         if schema_version > SHORT_VIDEO_SCHEMA_VERSION:
-            raise ShortVideoError(
-                f"unsupported short_video schema_version: {payload.get('schema_version')!r}"
-            )
+            raise ShortVideoError(f"unsupported short_video schema_version: {payload.get('schema_version')!r}")
         output = ShortVideoOutput.from_json(payload.get("output"))
         global_fit = str(payload.get("global_fit", "cover")).lower()
         if global_fit not in VALID_FIT_MODES:
-            raise ShortVideoError(
-                f"short_video.global_fit must be one of {VALID_FIT_MODES}"
-            )
+            raise ShortVideoError(f"short_video.global_fit must be one of {VALID_FIT_MODES}")
         global_background_color = str(payload.get("global_background_color", "000000"))
-        subtitle_scale_percent = _finite_number(
-            payload.get("subtitle_scale_percent", 150.0), "subtitle_scale_percent"
-        )
+        subtitle_scale_percent = _finite_number(payload.get("subtitle_scale_percent", 150.0), "subtitle_scale_percent")
         if subtitle_scale_percent < 0.0:
             subtitle_scale_percent = 0.0
         transition = ShortVideoTransition.from_json(payload.get("transition"))
         bgm = ShortVideoBgm.from_json(payload.get("bgm"))
-        clips = []
-        for index, raw_clip in enumerate(payload.get("clips", [])):
-            if isinstance(raw_clip, dict):
-                clip_payload = raw_clip
+        clips: list[ShortVideoClip] = []
+        raw_clips = payload.get("clips", [])
+        if not is_object_iterable(raw_clips):
+            raise TypeError(f"'{type(raw_clips).__name__}' object is not iterable")
+        for index, raw_clip in enumerate(raw_clips):
+            if isinstance(raw_clip, dict) and is_object_mapping(raw_clip):
+                clip_payload = dict(raw_clip)
                 # The pre-schema-version serializer wrote default values for every
                 # clip. Their meaning is ambiguous, so preserve them unless a
                 # caller explicitly opted into the lossy inheritance migration.
                 if schema_version < SHORT_VIDEO_SCHEMA_VERSION and migrate_legacy_defaults:
-                    clip_payload = dict(raw_clip)
                     if clip_payload.get("fit") == "cover":
                         clip_payload.pop("fit", None)
-                    if clip_payload.get("background_color", "").lower() == "000000":
+                    background_color = clip_payload.get("background_color", "")
+                    if not isinstance(background_color, str):
+                        raise ShortVideoError("clip.background_color must be a string when migrating legacy defaults")
+                    if background_color.lower() == "000000":
                         clip_payload.pop("background_color", None)
                 clips.append(ShortVideoClip.from_json(clip_payload))
             else:
@@ -253,7 +290,7 @@ class ShortVideo:
             clips=clips,
         )
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> ShortVideoPayload:
         return {
             "schema_version": SHORT_VIDEO_SCHEMA_VERSION,
             "enabled": self.enabled,
@@ -274,9 +311,9 @@ class ShortVideo:
         return None
 
 
-def _finite_number(value: Any, field: str) -> float:
+def _finite_number(value: object, field: str) -> float:
     try:
-        result = float(value)
+        result = coerce_float(value)
     except (TypeError, ValueError) as error:
         raise ShortVideoError(f"{field} must be a number") from error
     if not math.isfinite(result):

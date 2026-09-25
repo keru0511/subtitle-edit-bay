@@ -129,6 +129,7 @@
         "test_validation_errors",
         "test_video_encoding",
         "test_video_sequence",
+        "test_video_sequence_models",
         "test_video_timeline",
         "test_video_timeline_models",
         "test_workflow_actions",

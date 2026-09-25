@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Iterable
 
+from ..typed_cache import typed_lru_cache
 from . import rules, tokenize
 
 TARGET_READING_SPEED = 14.0
@@ -37,7 +37,7 @@ def display_width(char: str) -> int:
     return 2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1
 
 
-@lru_cache(maxsize=16384)
+@typed_lru_cache(maxsize=16384)
 def text_width(text: str) -> int:
     return sum(display_width(char) for char in text)
 
@@ -119,12 +119,12 @@ def chunk_boundaries(text: str, chunks: list[str]) -> set[int]:
     return boundaries
 
 
-@lru_cache(maxsize=4096)
+@typed_lru_cache(maxsize=4096)
 def budoux_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, tokenize.parse_budoux_chunks(text))
 
 
-@lru_cache(maxsize=4096)
+@typed_lru_cache(maxsize=4096)
 def morpheme_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, tokenize.parse_morpheme_chunks(text))
 
@@ -310,4 +310,8 @@ def explain_split_candidates(
         )
         is not None
     ]
-    return sorted(explanations, key=lambda explanation: explanation.score)
+    return sorted(explanations, key=_explanation_score)
+
+
+def _explanation_score(explanation: SplitCandidateExplanation) -> BreakScore:
+    return explanation.score

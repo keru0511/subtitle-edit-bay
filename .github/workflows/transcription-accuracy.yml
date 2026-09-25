@@ -40,7 +40,6 @@ jobs:
     env:
       PYTHONUTF8: '1'
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
-      HF_HOME: ${{ runner.temp }}/asr-models
       TOKENIZERS_PARALLELISM: 'false'
 
     steps:
@@ -68,6 +67,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          "HF_HOME=$env:RUNNER_TEMP/asr-models" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           choco install ffmpeg --yes --no-progress
           ffmpeg -version
 

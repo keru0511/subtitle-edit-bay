@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.gemini_acp_provider import GeminiAcpClient, GeminiAcpProvider
-from src.gui import EditBayBackend
+from src.gui_ai_facade import AIChatFacade
 from src.gui_ai_chat_state import AIProviderChatRouter
 from src.gui_codex_chat_state import CodexChatController, CodexChatSnapshot
 
@@ -203,9 +203,9 @@ class GeminiAuthHintTests(unittest.TestCase):
                 )
             )
         )
-        getter = EditBayBackend.aiChatAuthHint.fget
+        getter = AIChatFacade.aiChatAuthHint.fget
         assert getter is not None
-        return getter(backend)
+        return getter(SimpleNamespace(_backend=backend))
 
     def test_authenticated_gemini_without_login_action_has_no_auth_hint(self) -> None:
         self.assertEqual(
@@ -230,9 +230,9 @@ class GeminiAuthHintTests(unittest.TestCase):
                 )
             )
         )
-        login_available = EditBayBackend.aiChatLoginAvailable.fget
+        login_available = AIChatFacade.aiChatLoginAvailable.fget
         assert login_available is not None
-        self.assertTrue(login_available(backend))
+        self.assertTrue(login_available(SimpleNamespace(_backend=backend)))
         self.assertEqual(self._hint(auth_state="unauthenticated", login_available=True), "")
 
 
@@ -242,8 +242,8 @@ class GeminiProviderFactoryTests(unittest.TestCase):
             workspace_root=ROOT,
             _settings={"gemini_model": "gemini-saved"},
         )
-        with patch("src.gui.GeminiAcpProvider") as provider_class:
-            EditBayBackend._create_gemini_chat_provider(backend)
+        with patch("src.gui_ai_facade.GeminiAcpProvider") as provider_class:
+            AIChatFacade._create_gemini_chat_provider(SimpleNamespace(_backend=backend))
         provider_class.assert_called_once_with(
             workspace_root=ROOT,
             preferred_model="gemini-saved",
@@ -286,9 +286,9 @@ class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
             self.assertEqual(router.snapshot.auth_state, "authenticated")
             self.assertFalse(router.snapshot.login_available)
             backend = SimpleNamespace(_ai_chat=router)
-            getter = EditBayBackend.aiChatAuthHint.fget
+            getter = AIChatFacade.aiChatAuthHint.fget
             assert getter is not None
-            self.assertEqual(getter(backend), "")
+            self.assertEqual(getter(SimpleNamespace(_backend=backend)), "")
             self.assertTrue(router.snapshot.model_selection_supported)
             self.assertEqual(router.snapshot.selected_model, "router-model")
             self.assertEqual([item["id"] for item in router.snapshot.models], ["router-model"])

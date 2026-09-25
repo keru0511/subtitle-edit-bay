@@ -714,6 +714,10 @@ class LegacyEditBayBackend(QApplication):
 
     @Slot()
     def cancelProcessing(self) -> None:
+        self._cancel_processing()
+
+    def _cancel_processing(self) -> None:
+        """旧APIと機能別窓口で共通の停止要求を実行する。"""
         if not self._running:
             return
         self._cancel_requested = True

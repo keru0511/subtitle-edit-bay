@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
@@ -157,7 +158,14 @@ class InstrumentedEditBayBackend(EditBayBackend):
         self.gui_boundary_calls: Counter[str] = Counter()
         self.gui_diagnostics: Counter[str] = Counter()
         self.qml_select_segment_arguments: list[int] = []
-        super().__init__(argv, workspace_root=workspace_root)
+        self._uses_feature_facades = hasattr(EditBayBackend, "subtitles")
+        with ExitStack() as factories:
+            if self._uses_feature_facades:
+                # 生成時だけ計測版へ差し替える。製品のSlot・Property・通知を継承する。
+                factories.enter_context(patch("src.gui.SubtitleFacade", InstrumentedSubtitleFacade))
+                factories.enter_context(patch("src.gui.ShortVideoFacade", InstrumentedShortVideoFacade))
+                factories.enter_context(patch("src.gui.WorkspaceFacade", InstrumentedWorkspaceFacade))
+            super().__init__(argv, workspace_root=workspace_root)
 
     def reset_gui_diagnostics(self) -> None:
         self.gui_boundary_calls.clear()
@@ -192,10 +200,14 @@ class InstrumentedEditBayBackend(EditBayBackend):
         segment: dict[str, Any],
         source_index: int | None = None,
     ) -> dict[str, Any]:
+        if self._uses_feature_facades:
+            return super()._segment_view(segment, source_index)
         self.gui_diagnostics["segment_views"] += 1
         return super()._segment_view(segment, source_index)
 
     def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
+        if self._uses_feature_facades:
+            return super()._preview_text_for_segment(segment)
         self.gui_diagnostics["preview_format_requests"] += 1
         cache = getattr(self, "_subtitle_preview_text_cache", {})
         segment_id = str(segment.get("id", ""))
@@ -216,21 +228,29 @@ class InstrumentedEditBayBackend(EditBayBackend):
         clip: dict[str, Any],
         index: int,
     ) -> dict[str, Any]:
+        if self._uses_feature_facades:
+            return super()._build_short_video_clip_view(clip, index)
         self.gui_diagnostics["short_clip_materializations"] += 1
         return super()._build_short_video_clip_view(clip, index)
 
     @Slot(str, result=bool)
     def selectEditMode(self, mode: str) -> bool:
+        if self._uses_feature_facades:
+            return super().selectEditMode(mode)
         self.gui_boundary_calls["selectEditMode"] += 1
         return super().selectEditMode(mode)
 
     @Slot(int, str, result=bool)
     def setEditorPlayhead(self, position_ms: int, basis: str) -> bool:
+        if self._uses_feature_facades:
+            return super().setEditorPlayhead(position_ms, basis)
         self.gui_boundary_calls["setEditorPlayhead"] += 1
         return super().setEditorPlayhead(position_ms, basis)
 
     @Slot(int, result="QVariantMap")
     def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+        if self._uses_feature_facades:
+            return super().shortVideoClipAt(index)
         self.gui_boundary_calls["shortVideoClipAt"] += 1
         resolver = getattr(super(), "shortVideoClipAt", None)
         if callable(resolver):
@@ -242,75 +262,258 @@ class InstrumentedEditBayBackend(EditBayBackend):
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:
+        if self._uses_feature_facades:
+            return super().segmentAt(index)
         self.gui_boundary_calls["segmentAt"] += 1
         return super().segmentAt(index)
 
     @Slot(int, str, result=str)
     def formatSubtitlePreview(self, index: int, text: str) -> str:
+        if self._uses_feature_facades:
+            return super().formatSubtitlePreview(index, text)
         self.gui_boundary_calls["formatSubtitlePreview"] += 1
         return super().formatSubtitlePreview(index, text)
 
     @Slot(float, result="QVariantList")
     def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
+        if self._uses_feature_facades:
+            return super().activeSubtitleSegments(seconds)
         self.gui_boundary_calls["activeSubtitleSegments"] += 1
         return super().activeSubtitleSegments(seconds)
 
     @Slot(float, float, result="QVariantList")
     def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
+        if self._uses_feature_facades:
+            return super().visibleSubtitleSegments(start, end)
         self.gui_boundary_calls["visibleSubtitleSegments"] += 1
         return super().visibleSubtitleSegments(start, end)
 
     @Slot(int)
     def selectSegment(self, index: int) -> None:
+        if self._uses_feature_facades:
+            return super().selectSegment(index)
         self.gui_boundary_calls["selectSegment"] += 1
         self.qml_select_segment_arguments.append(index)
         super().selectSegment(index)
 
     @Slot(float)
     def selectSegmentAtTime(self, seconds: float) -> None:
+        if self._uses_feature_facades:
+            return super().selectSegmentAtTime(seconds)
         self.gui_boundary_calls["selectSegmentAtTime"] += 1
         super().selectSegmentAtTime(seconds)
 
     @Slot(int, "QVariantMap")
     def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+        if self._uses_feature_facades:
+            return super().updateSegment(index, changes)
         self.gui_boundary_calls["updateSegment"] += 1
         super().updateSegment(index, changes)
 
     @Slot(int, "QVariantMap", result=bool)
     def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+        if self._uses_feature_facades:
+            return super().updateShortVideoClip(index, fields)
         self.gui_boundary_calls["updateShortVideoClip"] += 1
         return super().updateShortVideoClip(index, fields)
 
     @Slot(int, int, result=bool)
     def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
+        if self._uses_feature_facades:
+            return super().moveShortVideoClip(from_index, to_index)
         self.gui_boundary_calls["moveShortVideoClip"] += 1
         return super().moveShortVideoClip(from_index, to_index)
 
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
+        if self._uses_feature_facades:
+            return super().removeShortVideoClip(index)
         self.gui_boundary_calls["removeShortVideoClip"] += 1
         return super().removeShortVideoClip(index)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalFit(self, fit: str) -> bool:
+        if self._uses_feature_facades:
+            return super().setShortVideoGlobalFit(fit)
         self.gui_boundary_calls["setShortVideoGlobalFit"] += 1
         return super().setShortVideoGlobalFit(fit)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
+        if self._uses_feature_facades:
+            return super().setShortVideoGlobalBackgroundColor(color)
         self.gui_boundary_calls["setShortVideoGlobalBackgroundColor"] += 1
         return super().setShortVideoGlobalBackgroundColor(color)
 
     @Slot(str, float, result=bool)
     def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
+        if self._uses_feature_facades:
+            return super().setShortVideoTransition(transition_type, duration)
         self.gui_boundary_calls["setShortVideoTransition"] += 1
         return super().setShortVideoTransition(transition_type, duration)
 
     @Slot(float, result=bool)
     def setShortVideoSubtitleScale(self, percent: float) -> bool:
+        if self._uses_feature_facades:
+            return super().setShortVideoSubtitleScale(percent)
         self.gui_boundary_calls["setShortVideoSubtitleScale"] += 1
         return super().setShortVideoSubtitleScale(percent)
 
+
+# 比較対象の旧リビジョンには窓口クラスがないため、旧計測も同じハーネスに残す。
+if hasattr(EditBayBackend, "subtitles"):
+    from src.gui_subtitles_facade import SubtitleFacade
+    from src.gui_short_video_facade import ShortVideoFacade
+    from src.gui_workspace_facade import WorkspaceFacade
+
+    class InstrumentedSubtitleFacade(SubtitleFacade):
+        """機能別窓口を通る操作とデータ生成を計測する。"""
+
+        @Property("QVariantList", notify=SubtitleFacade.segmentsChanged)
+        def subtitleSegments(self) -> list[dict[str, Any]]:
+            self._backend.gui_boundary_calls["property.subtitleSegments"] += 1
+            self._backend.gui_diagnostics["full_segment_materializations"] += 1
+            if self._backend._project is None:
+                return []
+            return deepcopy(self._backend._project.get("segments", []))
+
+        def _segment_view(
+            self,
+            segment: dict[str, Any],
+            source_index: int | None = None,
+        ) -> dict[str, Any]:
+            self._backend.gui_diagnostics["segment_views"] += 1
+            return super()._segment_view(segment, source_index)
+
+        def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
+            self._backend.gui_diagnostics["preview_format_requests"] += 1
+            cache = getattr(self._backend, "_subtitle_preview_text_cache", {})
+            segment_id = str(segment.get("id", ""))
+            signature_builder = getattr(self, "_subtitle_preview_signature", None)
+            signature = signature_builder(segment) if callable(signature_builder) else None
+            cached = cache.get(segment_id) if isinstance(cache, dict) else None
+            if cached is None or signature is None or cached[0] != signature:
+                self._backend.gui_diagnostics["preview_format_cache_misses"] += 1
+            resolver = getattr(super(), "_preview_text_for_segment", None)
+            if callable(resolver):
+                return resolver(segment)
+            from src.subtitle_line_count import segment_preview_text
+
+            return segment_preview_text(segment)
+
+        @Slot(int, result="QVariantMap")
+        def segmentAt(self, index: int) -> dict[str, Any]:
+            self._backend.gui_boundary_calls["segmentAt"] += 1
+            return super().segmentAt(index)
+
+        @Slot(int, str, result=str)
+        def formatSubtitlePreview(self, index: int, text: str) -> str:
+            self._backend.gui_boundary_calls["formatSubtitlePreview"] += 1
+            return super().formatSubtitlePreview(index, text)
+
+        @Slot(float, result="QVariantList")
+        def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
+            self._backend.gui_boundary_calls["activeSubtitleSegments"] += 1
+            return super().activeSubtitleSegments(seconds)
+
+        @Slot(float, float, result="QVariantList")
+        def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
+            self._backend.gui_boundary_calls["visibleSubtitleSegments"] += 1
+            return super().visibleSubtitleSegments(start, end)
+
+        @Slot(int)
+        def selectSegment(self, index: int) -> None:
+            self._backend.gui_boundary_calls["selectSegment"] += 1
+            self._backend.qml_select_segment_arguments.append(index)
+            super().selectSegment(index)
+
+        @Slot(float)
+        def selectSegmentAtTime(self, seconds: float) -> None:
+            self._backend.gui_boundary_calls["selectSegmentAtTime"] += 1
+            super().selectSegmentAtTime(seconds)
+
+        @Slot(int, "QVariantMap")
+        def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+            self._backend.gui_boundary_calls["updateSegment"] += 1
+            super().updateSegment(index, changes)
+
+    class InstrumentedShortVideoFacade(ShortVideoFacade):
+        """機能別窓口を通る操作とデータ生成を計測する。"""
+
+        @Property("QVariantList", notify=ShortVideoFacade.shortVideoChanged)
+        def shortVideoClips(self) -> list[dict[str, Any]]:
+            self._backend.gui_boundary_calls["property.shortVideoClips"] += 1
+            self._backend.gui_diagnostics["full_clip_materializations"] += 1
+            return [
+                self._build_short_video_clip_view(clip, index) for index, clip in enumerate(self._backend._raw_short_video_clips())
+            ]
+
+        def _build_short_video_clip_view(
+            self,
+            clip: dict[str, Any],
+            index: int,
+        ) -> dict[str, Any]:
+            self._backend.gui_diagnostics["short_clip_materializations"] += 1
+            return super()._build_short_video_clip_view(clip, index)
+
+        @Slot(int, result="QVariantMap")
+        def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+            self._backend.gui_boundary_calls["shortVideoClipAt"] += 1
+            resolver = getattr(super(), "shortVideoClipAt", None)
+            if callable(resolver):
+                return resolver(index)
+            clips = self._backend._raw_short_video_clips()
+            if not 0 <= index < len(clips):
+                return {}
+            return self._build_short_video_clip_view(clips[index], index)
+
+        @Slot(int, "QVariantMap", result=bool)
+        def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+            self._backend.gui_boundary_calls["updateShortVideoClip"] += 1
+            return super().updateShortVideoClip(index, fields)
+
+        @Slot(int, int, result=bool)
+        def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
+            self._backend.gui_boundary_calls["moveShortVideoClip"] += 1
+            return super().moveShortVideoClip(from_index, to_index)
+
+        @Slot(int, result=bool)
+        def removeShortVideoClip(self, index: int) -> bool:
+            self._backend.gui_boundary_calls["removeShortVideoClip"] += 1
+            return super().removeShortVideoClip(index)
+
+        @Slot(str, result=bool)
+        def setShortVideoGlobalFit(self, fit: str) -> bool:
+            self._backend.gui_boundary_calls["setShortVideoGlobalFit"] += 1
+            return super().setShortVideoGlobalFit(fit)
+
+        @Slot(str, result=bool)
+        def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
+            self._backend.gui_boundary_calls["setShortVideoGlobalBackgroundColor"] += 1
+            return super().setShortVideoGlobalBackgroundColor(color)
+
+        @Slot(str, float, result=bool)
+        def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
+            self._backend.gui_boundary_calls["setShortVideoTransition"] += 1
+            return super().setShortVideoTransition(transition_type, duration)
+
+        @Slot(float, result=bool)
+        def setShortVideoSubtitleScale(self, percent: float) -> bool:
+            self._backend.gui_boundary_calls["setShortVideoSubtitleScale"] += 1
+            return super().setShortVideoSubtitleScale(percent)
+
+    class InstrumentedWorkspaceFacade(WorkspaceFacade):
+        """機能別窓口を通る操作とデータ生成を計測する。"""
+
+        @Slot(str, result=bool)
+        def selectEditMode(self, mode: str) -> bool:
+            self._backend.gui_boundary_calls["selectEditMode"] += 1
+            return super().selectEditMode(mode)
+
+        @Slot(int, str, result=bool)
+        def setEditorPlayhead(self, position_ms: int, basis: str) -> bool:
+            self._backend.gui_boundary_calls["setEditorPlayhead"] += 1
+            return super().setEditorPlayhead(position_ms, basis)
 
 class GuiPerformanceScenarioRunner:
     def __init__(

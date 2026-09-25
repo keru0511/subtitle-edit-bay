@@ -45,7 +45,7 @@ ColumnLayout {
             textRole: "label"
             valueRole: "value"
             currentIndex: clipListRoot.appBackend
-                && clipListRoot.appBackend.segmentCount > 0 ? 0 : 1
+                && clipListRoot.appBackend.subtitles.segmentCount > 0 ? 0 : 1
         }
         ComboBox {
             id: segmentCombo
@@ -53,7 +53,7 @@ ColumnLayout {
             Layout.columnSpan: 2
             Layout.minimumWidth: 0
             Layout.fillWidth: true
-            model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitleModel : null
+            model: clipListRoot.appBackend ? clipListRoot.appBackend.subtitles.subtitleModel : null
             textRole: "text"
             valueRole: "segmentId"
             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
@@ -97,10 +97,10 @@ ColumnLayout {
             onClicked: {
                 if (clipListRoot.appBackend) {
                     if (clipSourceCombo.currentValue === "range") {
-                        clipListRoot.appBackend.addShortVideoClipByRange(
+                        clipListRoot.appBackend.shortVideo.addShortVideoClipByRange(
                             Number(rangeStartField.text), Number(rangeEndField.text))
                     } else if (segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "") {
-                        clipListRoot.appBackend.addShortVideoClip(segmentCombo.currentValue)
+                        clipListRoot.appBackend.shortVideo.addShortVideoClip(segmentCombo.currentValue)
                     }
                 }
             }
@@ -127,7 +127,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
-        model: clipListRoot.appBackend ? clipListRoot.appBackend.shortVideoClipModel : null
+        model: clipListRoot.appBackend ? clipListRoot.appBackend.shortVideo.shortVideoClipModel : null
         spacing: 6
 
         delegate: Rectangle {
@@ -185,7 +185,7 @@ ColumnLayout {
                             text: Number(clipItem.clipData.start).toFixed(3)
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
-                                    && clipListRoot.appBackend.updateShortVideoClip(index, {"start": Number(text)})
+                                    && clipListRoot.appBackend.shortVideo.updateShortVideoClip(index, {"start": Number(text)})
                                 if (!accepted) text = Number(clipItem.clipData.start).toFixed(3)
                                 focus = false
                             }
@@ -205,7 +205,7 @@ ColumnLayout {
                             text: Number(clipItem.clipData.end).toFixed(3)
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
-                                    && clipListRoot.appBackend.updateShortVideoClip(index, {"end": Number(text)})
+                                    && clipListRoot.appBackend.shortVideo.updateShortVideoClip(index, {"end": Number(text)})
                                 if (!accepted) text = Number(clipItem.clipData.end).toFixed(3)
                                 focus = false
                             }
@@ -231,7 +231,7 @@ ColumnLayout {
                     currentIndex: clipListRoot.indexForFit(clipItem.clipData.fit)
                     onActivated: function(_controlIndex) {
                         if (clipListRoot.appBackend) {
-                            clipListRoot.appBackend.updateShortVideoClip(
+                            clipListRoot.appBackend.shortVideo.updateShortVideoClip(
                                 clipItem.index,
                                 {"fit": fitCombo.currentValue}
                             )
@@ -247,7 +247,7 @@ ColumnLayout {
                         enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && index > 0
                         onClicked: {
                             if (clipListRoot.appBackend) {
-                                clipListRoot.appBackend.moveShortVideoClip(index, index - 1)
+                                clipListRoot.appBackend.shortVideo.moveShortVideoClip(index, index - 1)
                             }
                         }
                     }
@@ -258,7 +258,7 @@ ColumnLayout {
                             && index < clipListView.count - 1
                         onClicked: {
                             if (clipListRoot.appBackend) {
-                                clipListRoot.appBackend.moveShortVideoClip(index, index + 2)
+                                clipListRoot.appBackend.shortVideo.moveShortVideoClip(index, index + 2)
                             }
                         }
                     }
@@ -270,7 +270,7 @@ ColumnLayout {
                     enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                     onClicked: {
                         if (clipListRoot.appBackend) {
-                            clipListRoot.appBackend.removeShortVideoClip(index)
+                            clipListRoot.appBackend.shortVideo.removeShortVideoClip(index)
                         }
                     }
                 }

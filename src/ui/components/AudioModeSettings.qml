@@ -37,13 +37,13 @@ Item {
 
     function updateChannel(index, changes) {
         root.preserveChannelScroll()
-        root.backend.updateAudioMixChannel(index, changes)
+        root.backend.audio.updateAudioMixChannel(index, changes)
         channelScrollRestoreTimer.restart()
     }
 
     function resetMixer() {
         root.preserveChannelScroll()
-        root.backend.resetAudioMixer()
+        root.backend.audio.resetAudioMixer()
         channelScrollRestoreTimer.restart()
     }
 
@@ -56,7 +56,7 @@ Item {
             Layout.fillWidth: true
             Text { text: "音量設定"; color: root.textColor; font.family: "Yu Gothic UI"; font.pixelSize: 13; font.weight: Font.Bold }
             Item { Layout.fillWidth: true }
-            Text { text: root.backend.audioMixerChannels.length + "トラック"; color: root.accentColor; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+            Text { text: root.backend.audio.audioMixerChannels.length + "トラック"; color: root.accentColor; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
         }
         Text {
             Layout.fillWidth: true
@@ -86,9 +86,9 @@ Item {
         SmallButton {
             objectName: "workspaceAudioRebuildPreviewButton"
             Layout.fillWidth: true
-            text: root.backend.audioPreviewPreparing ? "準備中…" : "音声プレビューを作り直す"
-            enabled: !root.backend.running && !root.backend.audioPreviewPreparing
-            onClicked: root.backend.clearAudioPreviewCache()
+            text: root.backend.audio.audioPreviewPreparing ? "準備中…" : "音声プレビューを作り直す"
+            enabled: !root.backend.running && !root.backend.audio.audioPreviewPreparing
+            onClicked: root.backend.audio.clearAudioPreviewCache()
         }
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
 
@@ -100,7 +100,7 @@ Item {
             clip: true
             spacing: 8
             boundsBehavior: Flickable.StopAtBounds
-            model: root.backend.audioMixerChannels
+            model: root.backend.audio.audioMixerChannels
             onContentYChanged: {
                 if (!root.restoringContentY)
                     root.contentYChangedByUser(contentY)
@@ -201,16 +201,16 @@ Item {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 anchors.margins: 2
-                width: Math.max(0, (parent.width - 4) * Number(root.backend.audioMasterLevel || 0))
+                width: Math.max(0, (parent.width - 4) * Number(root.backend.audio.audioMasterLevel || 0))
                 radius: 2
-                color: root.backend.audioLimiterReductionDb > 0.01 ? root.warningColor : root.accentColor
+                color: root.backend.audio.audioLimiterReductionDb > 0.01 ? root.warningColor : root.accentColor
                 Behavior on width { NumberAnimation { duration: 45 } }
             }
         }
         Text {
             Layout.fillWidth: true
-            text: "自動調整 " + Number(root.backend.audioLimiterReductionDb || 0).toFixed(1) + " dB"
-            color: root.backend.audioLimiterReductionDb > 0.01 ? root.warningColor : root.mutedColor
+            text: "自動調整 " + Number(root.backend.audio.audioLimiterReductionDb || 0).toFixed(1) + " dB"
+            color: root.backend.audio.audioLimiterReductionDb > 0.01 ? root.warningColor : root.mutedColor
             font.family: "Yu Gothic UI"
             font.pixelSize: 8
             horizontalAlignment: Text.AlignRight

@@ -21,7 +21,7 @@ Rectangle {
     border.color: borderColor
 
     Component.onCompleted: {
-        wasAuthenticated = backend && backend.codexAuthState === "authenticated"
+        wasAuthenticated = backend && backend.ai.codexAuthState === "authenticated"
         if (wasAuthenticated)
             chatPanel.expanded = true
     }
@@ -37,8 +37,8 @@ Rectangle {
                 objectName: "codexChatSidebarTitle"
                 Layout.fillWidth: true
                 Layout.maximumHeight: implicitHeight
-                text: sidebar.backend && sidebar.backend.aiChatProviderName
-                    ? sidebar.backend.aiChatProviderName + " AI"
+                text: sidebar.backend && sidebar.backend.ai.aiChatProviderName
+                    ? sidebar.backend.ai.aiChatProviderName + " AI"
                     : "AI"
                 color: sidebar.textColor
                 font.family: "Yu Gothic UI"
@@ -85,11 +85,11 @@ Rectangle {
     }
 
     Connections {
-        target: sidebar.backend
+        target: sidebar.backend ? sidebar.backend.ai : null
 
         function onCodexChatChanged() {
             var authenticated = sidebar.backend
-                && sidebar.backend.codexAuthState === "authenticated"
+                && sidebar.backend.ai.codexAuthState === "authenticated"
             if (authenticated && !sidebar.wasAuthenticated)
                 chatPanel.expanded = true
             else if (!authenticated)

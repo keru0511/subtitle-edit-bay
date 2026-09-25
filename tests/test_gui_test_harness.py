@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -327,6 +329,93 @@ class GuiTestHarnessTests(unittest.TestCase):
         self.assertFalse(_short_visual_update_contract_passed(result))
         result["position_after_ms"] = 625
         self.assertTrue(_short_visual_update_contract_passed(result))
+
+class GuiPerformanceInstrumentationTests(unittest.TestCase):
+    def test_qml_facades_count_operations_materialization_and_cache_misses(self) -> None:
+        # QApplicationを既存ハーネスと共有しない別プロセスで実際のQML境界を通す。
+        script = r'''
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from PySide6.QtCore import QMetaObject, QUrl
+from PySide6.QtQml import QQmlApplicationEngine
+
+from src.subtitle_project import create_project
+from tests.gui_performance_scenarios import InstrumentedEditBayBackend
+
+with TemporaryDirectory() as directory:
+    root = Path(directory)
+    with patch("src.gui.CodexChatController.connect"):
+        backend = InstrumentedEditBayBackend([], workspace_root=root)
+    try:
+        backend._project = create_project(
+            video_path=root / "video.mp4", output_dir=root,
+            duration_seconds=5,
+            segments=[{"id": "a", "start": 0, "end": 2, "text": "before", "speaker": "Default", "words": []}],
+        )
+        backend._sync_subtitle_model()
+        backend.shortVideo.initializeShortVideoClips()
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("backend", backend)
+        engine.loadData(b"""
+import QtQml
+QtObject {
+    property int arrayRows: 0
+    function edit() {
+        backend.subtitles.selectSegment(0)
+        backend.subtitles.updateSegment(0, {text: "after"})
+        backend.shortVideo.updateShortVideoClip(0, {fit: "contain"})
+        backend.workspace.selectEditMode("subtitle")
+    }
+    function readArrays() {
+        arrayRows = backend.subtitles.subtitleSegments.length
+            + backend.shortVideo.shortVideoClips.length
+    }
+    function preview() { backend.subtitles.activeSubtitleSegments(1) }
+}
+""", QUrl("instrumentation.qml"))
+        assert engine.rootObjects(), "計測用QMLの読み込みに失敗"
+        view = engine.rootObjects()[0]
+        backend.reset_gui_diagnostics()
+        assert QMetaObject.invokeMethod(view, "edit")
+        for name in ("selectSegment", "updateSegment", "updateShortVideoClip", "selectEditMode"):
+            assert backend.gui_boundary_calls[name] == 1, (name, backend.gui_boundary_calls)
+        assert backend.qml_select_segment_arguments == [0]
+        assert backend._project["segments"][0]["text"] == "after"
+        # 互換API経由の呼び出しも、実装側で一度だけ数える。
+        backend.selectSegment(0)
+        assert backend.gui_boundary_calls["selectSegment"] == 2
+        backend.reset_gui_diagnostics()
+        assert QMetaObject.invokeMethod(view, "readArrays")
+        assert view.property("arrayRows") == 2
+        assert backend.gui_diagnostics["full_segment_materializations"] == 1, backend.gui_diagnostics
+        assert backend.gui_diagnostics["full_clip_materializations"] == 1
+        assert backend.gui_diagnostics["short_clip_materializations"] == 1
+        backend._subtitle_preview_text_cache.clear()
+        backend.reset_gui_diagnostics()
+        assert QMetaObject.invokeMethod(view, "preview")
+        assert QMetaObject.invokeMethod(view, "preview")
+        assert backend.gui_boundary_calls["activeSubtitleSegments"] == 2
+        assert backend.gui_diagnostics["segment_views"] == 2
+        assert backend.gui_diagnostics["preview_format_requests"] == 2
+        assert backend.gui_diagnostics["preview_format_cache_misses"] == 1
+        print("機能別窓口の計測を確認")
+    finally:
+        backend._ai_chat.shutdown()
+        backend._shutdown_executor()
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

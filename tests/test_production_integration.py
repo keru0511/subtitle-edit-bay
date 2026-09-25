@@ -33,7 +33,7 @@ class ProductionIntegrationContractTests(unittest.TestCase):
             "onSourceSettingsRequested: sourcePopup.open()",
             "onSaveRequested: root.appBackend.saveProject()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
-            "onRenderRequested: root.appBackend.renderVideo(root.currentSettings())",
+            "onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
         ):
             with self.subTest(route=route):
@@ -43,10 +43,10 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         # restores the backend-owned position when the workspace closes.
         self.assertRegex(
             workflow,
-            r'root\.appBackend\.setWorkspacePlayerState\(\s*"normal-video",\s*mainPlayer\.position,\s*false\s*\)',
+            r'root\.appBackend\.workspace\.setWorkspacePlayerState\(\s*"normal-video",\s*mainPlayer\.position,\s*false\s*\)',
         )
-        self.assertIn('root.appBackend.switchWorkspace("short-artifact")', workflow)
-        self.assertIn('var playerState = root.appBackend.workspacePlayerState', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("short-artifact")', workflow)
+        self.assertIn('var playerState = root.appBackend.workspace.workspacePlayerState', workflow)
         self.assertIn('mainPlayer.position = Number(playerState.positionMs || 0)', workflow)
         self.assertIn('if (nextWorkspace === "normal-video")', workflow)
 
@@ -54,7 +54,7 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         # of truth for project, render, or navigation state.
         self.assertIn("visible: root.shortWorkspaceActive", workflow)
         self.assertIn("active: root.shortWorkspaceActive", workflow)
-        self.assertIn("shortRoot.appBackend.renderShortVideo()", short_screen)
+        self.assertIn("shortRoot.appBackend.workflow.renderShortVideo()", short_screen)
         self.assertIn("onClicked: shortRoot.mainRoot.closeShortWorkspace()", short_screen)
         self.assertIn('property string workspaceKind: "short-artifact"', workflow)
 
@@ -73,15 +73,15 @@ class ProductionIntegrationContractTests(unittest.TestCase):
 
         # Sequence data and mutations remain backend-owned in the production
         # panel; this cross-file check prevents a future UI-only integration.
-        self.assertIn("backend.sequenceClips", sequence_panel)
-        self.assertIn("backend.insertSequenceClip", sequence_panel)
-        self.assertIn("backend.mediaBinAssets", media_bin)
-        self.assertIn("backend.addSequenceAssets", media_bin)
-        self.assertIn("backend.addSequenceClip", media_bin)
-        self.assertIn("backend.moveSequenceClip", sequence_panel)
-        self.assertIn("backend.trimSequenceClip", sequence_panel)
-        self.assertIn("backend.setSequenceTransition", sequence_panel)
-        self.assertIn("backend.setSequenceClipAudio", sequence_panel)
+        self.assertIn("backend.sequence.sequenceClips", sequence_panel)
+        self.assertIn("backend.sequence.insertSequenceClip", sequence_panel)
+        self.assertIn("backend.sequence.mediaBinAssets", media_bin)
+        self.assertIn("backend.sequence.addSequenceAssets", media_bin)
+        self.assertIn("backend.sequence.addSequenceClip", media_bin)
+        self.assertIn("backend.sequence.moveSequenceClip", sequence_panel)
+        self.assertIn("backend.sequence.trimSequenceClip", sequence_panel)
+        self.assertIn("backend.sequence.setSequenceTransition", sequence_panel)
+        self.assertIn("backend.sequence.setSequenceClipAudio", sequence_panel)
         self.assertNotIn("project[", sequence_panel)
         self.assertNotIn("project.", sequence_panel)
         self.assertNotIn("project[", media_bin)

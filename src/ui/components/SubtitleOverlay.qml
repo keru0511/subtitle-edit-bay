@@ -92,7 +92,7 @@ Item {
 
     function refreshActiveSegments() {
         var candidates = overlayRoot.active && overlayRoot.appBackend && overlayRoot.player
-            ? overlayRoot.appBackend.activeSubtitleSegments(overlayRoot.player.position / 1000)
+            ? overlayRoot.appBackend.subtitles.activeSubtitleSegments(overlayRoot.player.position / 1000)
             : []
         var signature = JSON.stringify(candidates)
         if (signature !== overlayRoot.activeSignature) {
@@ -108,7 +108,7 @@ Item {
         function onPositionChanged() { overlayRoot.refreshActiveSegments() }
     }
     Connections {
-        target: overlayRoot.active ? overlayRoot.appBackend : null
+        target: overlayRoot.active ? overlayRoot.appBackend.subtitles : null
         function onSegmentsChanged() { overlayRoot.refreshActiveSegments() }
     }
 

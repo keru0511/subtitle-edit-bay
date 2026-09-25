@@ -130,6 +130,8 @@ def run(args: argparse.Namespace) -> Path:
         del model
         _release_memory(args.device)
 
+    for segment in result["segments"]:
+        print(f"初回認識区間: {segment['start']:.3f}〜{segment['end']:.3f}秒", flush=True)
     language = result["language"]
     if result["segments"]:
         align_model, metadata = whisperx.load_align_model(language_code=language, device=args.device)

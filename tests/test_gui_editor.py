@@ -6091,8 +6091,21 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._update_package_ready = False
         self.app.updatePackageReadyChanged.emit()
 
-        with patch.object(self.app.process, "start"):
+        # 成功フローは対応OSとして実行する。未対応OSの拒否は別テストで検証する。
+        with (
+            patch("sys.platform", "win32"),
+            patch("shutil.which", return_value="powershell.exe"),
+            patch.object(self.app.process, "start") as start,
+        ):
             self._click(window, apply_button)
+            start.assert_called_once()
+            program, args = start.call_args[0]
+            self.assertEqual(program, "powershell.exe")
+            self.assertIn("-File", args)
+            self.assertTrue(args[args.index("-File") + 1].endswith("update.ps1"))
+            self.app.process.started.emit()
+            self.assertEqual(self.app._active_job, "update")
+            self.assertTrue(self.app.running)
 
         self.app.process.finished.emit(0, QProcess.ExitStatus.NormalExit)
         self.app.processEvents()

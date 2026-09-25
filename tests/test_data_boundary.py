@@ -4,7 +4,7 @@ import json
 import unittest
 from collections import UserDict
 
-from src.data_boundary import decode_json, is_object_mapping, is_object_sequence
+from src.data_boundary import coerce_float, coerce_int, decode_json, is_object_mapping, is_object_sequence
 
 
 class DataBoundaryTests(unittest.TestCase):
@@ -44,6 +44,46 @@ class DataBoundaryTests(unittest.TestCase):
         self.assertTrue(decode_json("true"))
         with self.assertRaises(json.JSONDecodeError):
             decode_json("{")
+
+    def test_numeric_coercion_preserves_builtin_json_input_semantics(self) -> None:
+        values: tuple[object, ...] = (2, 2.0, "2", b"2", bytearray(b"2"), memoryview(b"2"))
+        for value in values:
+            with self.subTest(value=value):
+                self.assertEqual(coerce_float(value), 2.0)
+                self.assertEqual(coerce_int(value), 2)
+        self.assertEqual(coerce_int(1.9), 1)
+        self.assertEqual(coerce_int(True), 1)
+        self.assertEqual(coerce_float(False), 0.0)
+        for invalid in (None, object(), [], {}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(TypeError):
+                    coerce_float(invalid)
+                with self.assertRaises(TypeError):
+                    coerce_int(invalid)
+        with self.assertRaises(ValueError):
+            coerce_int("1.5")
+        with self.assertRaises(ValueError):
+            coerce_float("invalid")
+        with self.assertRaises(OverflowError):
+            coerce_int(float("inf"))
+
+    def test_numeric_coercion_accepts_explicit_numeric_protocols(self) -> None:
+        class FloatValue:
+            def __float__(self) -> float:
+                return 2.5
+
+        class IntegerValue:
+            def __int__(self) -> int:
+                return 3
+
+        class IndexValue:
+            def __index__(self) -> int:
+                return 4
+
+        self.assertEqual(coerce_float(FloatValue()), 2.5)
+        self.assertEqual(coerce_int(IntegerValue()), 3)
+        self.assertEqual(coerce_float(IndexValue()), 4.0)
+        self.assertEqual(coerce_int(IndexValue()), 4)
 
 
 if __name__ == "__main__":

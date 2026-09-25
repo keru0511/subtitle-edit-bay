@@ -130,6 +130,7 @@
         "test_video_encoding",
         "test_video_sequence",
         "test_video_timeline",
+        "test_video_timeline_models",
         "test_workflow_actions",
         "test_workspace_contract",
         "test_youtube_package",

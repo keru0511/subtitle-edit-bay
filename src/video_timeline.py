@@ -3,8 +3,10 @@ from __future__ import annotations
 import math
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, TypedDict
 from uuid import uuid4
+
+from .data_boundary import coerce_float, coerce_int, is_object_mapping, is_object_sequence
 
 
 VIDEO_TIMELINE_SCHEMA_VERSION = 1
@@ -13,13 +15,39 @@ _TIME_PRECISION = 3
 _TIME_EPSILON = 0.0005
 
 
+class CutRangeView(TypedDict):
+    """GUIへ渡す、拡張フィールドを含まないカット表示データ。"""
+
+    id: str
+    source_start: float
+    source_end: float
+    duration: float
+
+
+class KeepRangeView(TypedDict):
+    source_start: float
+    source_end: float
+    output_start: float
+    output_end: float
+
+
+class VideoTimelineView(TypedDict):
+    schemaVersion: int
+    sourceDuration: float
+    outputDuration: float
+    removedDuration: float
+    hasCuts: bool
+    cuts: list[CutRangeView]
+    keepRanges: list[KeepRangeView]
+
+
 class VideoTimelineError(ValueError):
     """Raised when a non-destructive video timeline is malformed."""
 
 
-def _finite_seconds(value: Any, field_name: str) -> float:
+def _finite_seconds(value: object, field_name: str) -> float:
     try:
-        result = float(value)
+        result = coerce_float(value)
     except (TypeError, ValueError) as error:
         raise VideoTimelineError(f"{field_name} must be a number") from error
     if not math.isfinite(result):
@@ -36,17 +64,17 @@ class CutRange:
     id: str
     source_start: float
     source_end: float
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[object, object] = field(default_factory=dict)
 
     @classmethod
     def from_json(
         cls,
-        payload: dict[str, Any],
+        payload: object,
         *,
         source_duration: float,
         fallback_id: str,
     ) -> "CutRange":
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise VideoTimelineError("timeline cuts must be objects")
         cut_id = str(payload.get("id", "")).strip() or fallback_id
         source_start = max(
@@ -75,8 +103,8 @@ class CutRange:
     def duration(self) -> float:
         return self.source_end - self.source_start
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {
+    def to_json(self) -> dict[object, object]:
+        payload: dict[object, object] = {
             "id": self.id,
             "source_start": self.source_start,
             "source_end": self.source_end,
@@ -85,7 +113,7 @@ class CutRange:
         return payload
 
 
-def _normalized_source_duration(value: Any) -> float:
+def _normalized_source_duration(value: object) -> float:
     duration = _finite_seconds(value, "video.duration_seconds")
     return round(max(0.0, duration), _TIME_PRECISION)
 
@@ -96,7 +124,10 @@ def _normalize_cuts(
     *,
     preferred_id: str = "",
 ) -> tuple[CutRange, ...]:
-    ordered = sorted(cuts, key=lambda cut: (cut.source_start, cut.source_end, cut.id))
+    def cut_order(cut: CutRange) -> tuple[float, float, str]:
+        return (cut.source_start, cut.source_end, cut.id)
+
+    ordered = sorted(cuts, key=cut_order)
     ids = [cut.id for cut in ordered]
     if len(ids) != len(set(ids)):
         raise VideoTimelineError("timeline cut ids must be unique")
@@ -152,28 +183,28 @@ class VideoTimeline:
     source_duration: float
     cuts: tuple[CutRange, ...] = ()
     schema_version: int = VIDEO_TIMELINE_SCHEMA_VERSION
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[object, object] = field(default_factory=dict)
 
     @classmethod
     def from_json(
         cls,
-        payload: dict[str, Any] | None,
+        payload: object,
         *,
         source_duration: float,
     ) -> "VideoTimeline":
         duration = _normalized_source_duration(source_duration)
         if payload is None:
             return cls(source_duration=duration)
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not is_object_mapping(payload):
             raise VideoTimelineError("timeline must be an object")
         try:
-            schema_version = int(payload.get("schema_version", VIDEO_TIMELINE_SCHEMA_VERSION))
+            schema_version = coerce_int(payload.get("schema_version", VIDEO_TIMELINE_SCHEMA_VERSION))
         except (TypeError, ValueError) as error:
             raise VideoTimelineError("timeline.schema_version must be an integer") from error
         if schema_version > VIDEO_TIMELINE_SCHEMA_VERSION or schema_version <= 0:
             raise VideoTimelineError(f"unsupported timeline.schema_version: {payload.get('schema_version')!r}")
         raw_cuts = payload.get("cuts", [])
-        if not isinstance(raw_cuts, list):
+        if not isinstance(raw_cuts, list) or not is_object_sequence(raw_cuts):
             raise VideoTimelineError("timeline.cuts must be an array")
         if raw_cuts and duration <= 0.0:
             raise VideoTimelineError("video duration is required when timeline cuts exist")
@@ -217,17 +248,17 @@ class VideoTimeline:
             kept.append((round(cursor, _TIME_PRECISION), self.source_duration))
         return kept
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {
+    def to_json(self) -> dict[object, object]:
+        payload: dict[object, object] = {
             "schema_version": self.schema_version,
             "cuts": [cut.to_json() for cut in self.cuts],
         }
         payload.update(deepcopy(self.extras))
         return payload
 
-    def as_view(self) -> dict[str, Any]:
+    def as_view(self) -> VideoTimelineView:
         output_cursor = 0.0
-        keep_ranges: list[dict[str, float]] = []
+        keep_ranges: list[KeepRangeView] = []
         for source_start, source_end in self.keep_ranges:
             duration = source_end - source_start
             keep_ranges.append(
@@ -257,7 +288,7 @@ class VideoTimeline:
             "keepRanges": keep_ranges,
         }
 
-    def _validated_edit_range(self, source_start: Any, source_end: Any) -> tuple[float, float]:
+    def _validated_edit_range(self, source_start: object, source_end: object) -> tuple[float, float]:
         if self.source_duration <= 0.0:
             raise VideoTimelineError("video duration is required before editing cuts")
         start = max(0.0, _finite_seconds(source_start, "cut.source_start"))
@@ -269,8 +300,8 @@ class VideoTimeline:
 
     def add_cut(
         self,
-        source_start: Any,
-        source_end: Any,
+        source_start: object,
+        source_end: object,
         *,
         cut_id: str | None = None,
     ) -> "VideoTimeline":
@@ -298,7 +329,7 @@ class VideoTimeline:
             extras=deepcopy(self.extras),
         )
 
-    def update_cut(self, cut_id: str, source_start: Any, source_end: Any) -> "VideoTimeline":
+    def update_cut(self, cut_id: str, source_start: object, source_end: object) -> "VideoTimeline":
         target = next((cut for cut in self.cuts if cut.id == cut_id), None)
         if target is None:
             raise VideoTimelineError(f"timeline cut was not found: {cut_id}")
@@ -334,8 +365,8 @@ class VideoTimeline:
 
     def restore_range(
         self,
-        source_start: Any,
-        source_end: Any,
+        source_start: object,
+        source_end: object,
         *,
         id_factory: Callable[[], str] = _new_cut_id,
     ) -> "VideoTimeline":
@@ -382,7 +413,7 @@ class VideoTimeline:
             extras=deepcopy(self.extras),
         )
 
-    def source_to_output_seconds(self, source_position: Any) -> float:
+    def source_to_output_seconds(self, source_position: object) -> float:
         position = min(
             self.source_duration,
             max(0.0, _finite_seconds(source_position, "source position")),
@@ -396,7 +427,7 @@ class VideoTimeline:
             removed_before += cut.duration
         return round(position - removed_before, _TIME_PRECISION)
 
-    def output_to_source_seconds(self, output_position: Any) -> float:
+    def output_to_source_seconds(self, output_position: object) -> float:
         position = min(
             self.output_duration,
             max(0.0, _finite_seconds(output_position, "output position")),
@@ -413,11 +444,11 @@ class VideoTimeline:
             output_cursor = output_end
         return self.source_duration
 
-    def contains_source_seconds(self, source_position: Any) -> bool:
+    def contains_source_seconds(self, source_position: object) -> bool:
         position = _finite_seconds(source_position, "source position")
         return any(cut.source_start <= position < cut.source_end for cut in self.cuts)
 
-    def next_playable_source_seconds(self, source_position: Any) -> float:
+    def next_playable_source_seconds(self, source_position: object) -> float:
         position = min(
             self.source_duration,
             max(0.0, _finite_seconds(source_position, "source position")),
@@ -437,12 +468,12 @@ class VideoTimeline:
         return int(round(self.output_to_source_seconds(int(position_ms) / 1000.0) * 1000))
 
 
-def timeline_from_project(project: Mapping[str, Any]) -> VideoTimeline:
+def timeline_from_project(project: Mapping[str, object]) -> VideoTimeline:
     """Build the normal-video timeline without consulting short-video state."""
 
     video = project.get("video", {})
     video_duration = 0.0
-    if isinstance(video, Mapping):
+    if is_object_mapping(video):
         video_duration = _finite_seconds(
             video.get("duration_seconds", 0.0) or 0.0,
             "video.duration_seconds",

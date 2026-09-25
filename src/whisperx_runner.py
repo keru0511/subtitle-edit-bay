@@ -42,10 +42,12 @@ def _release_memory(device: str) -> None:
         torch.cuda.empty_cache()
 
 
-def merge_chunks_with_gap(merge_chunks, max_gap: float, *args, **kwargs):
+def merge_chunks_with_gap(merge_chunks, max_gap: float, *args, padding: float = 0.0, **kwargs):
     """VADが保持した発話境界で分割し、長い無音を初回認識に含めない。"""
     if not math.isfinite(max_gap) or max_gap <= 0:
         raise ValueError("発話を結合する無音の上限は正の有限値にしてください。")
+    if not math.isfinite(padding) or not 0 <= padding <= max_gap / 2:
+        raise ValueError("発話の余裕は0以上、無音上限の半分以下にしてください。")
     output = []
     for chunk in merge_chunks(*args, **kwargs):
         groups = []
@@ -66,7 +68,14 @@ def merge_chunks_with_gap(merge_chunks, max_gap: float, *args, **kwargs):
             raise ValueError("VADチャンクに発話区間がありません。")
         groups.append(current)
         for group in groups:
-            output.append({**chunk, "start": group[0][0], "end": max(stop for _, stop in group), "segments": group})
+            output.append(
+                {
+                    **chunk,
+                    "start": max(chunk["start"], group[0][0] - padding),
+                    "end": min(chunk["end"], max(stop for _, stop in group) + padding),
+                    "segments": group,
+                }
+            )
     return output
 
 
@@ -82,6 +91,8 @@ def run(args: argparse.Namespace) -> Path:
         raise ValueError("反復ペナルティは1〜2、反復禁止の長さは0以上にしてください。")
     if not math.isfinite(args.max_speech_gap) or args.max_speech_gap <= 0:
         raise ValueError("発話を結合する無音の上限は正の有限値にしてください。")
+    if not math.isfinite(args.speech_pad) or not 0 <= args.speech_pad <= args.max_speech_gap / 2:
+        raise ValueError("発話の余裕は0以上、無音上限の半分以下にしてください。")
     if args.diarize and not os.environ.get("HF_TOKEN", "").strip():
         raise ValueError("話者分離にはHF_TOKENが必要です。")
 
@@ -111,7 +122,9 @@ def run(args: argparse.Namespace) -> Path:
     )
     try:
         # このモデルのVADだけに適用する。VAD検出・生成・時刻合わせはそれぞれ一度のまま。
-        model.vad_model.merge_chunks = partial(merge_chunks_with_gap, model.vad_model.merge_chunks, args.max_speech_gap)
+        model.vad_model.merge_chunks = partial(
+            merge_chunks_with_gap, model.vad_model.merge_chunks, args.max_speech_gap, padding=args.speech_pad
+        )
         result = model.transcribe(audio, batch_size=args.batch_size, chunk_size=args.chunk_size, print_progress=True)
     finally:
         del model

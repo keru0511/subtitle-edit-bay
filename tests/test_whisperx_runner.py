@@ -75,6 +75,18 @@ class WhisperxRunnerTests(unittest.TestCase):
         self.assertEqual(json.loads(json.dumps(chunks)), original)
         merge.assert_called_once_with("scores", 15, onset=0.5, offset=0.363)
 
+    def test_gap_padding_preserves_weak_onsets_without_crossing_long_silence(self):
+        chunk = {"start": 74.2, "end": 88.0, "segments": [(74.2, 77.4), (84.3, 88.0)]}
+        result = merge_chunks_with_gap(lambda: [chunk], 1.0, padding=0.3)
+        self.assertEqual([(item["start"], item["end"]) for item in result], [(74.2, 77.7), (84.0, 88.0)])
+        self.assertLess(result[0]["end"], result[1]["start"])
+        self.assertEqual(
+            merge_chunks_with_gap(lambda: [{**chunk, "segments": [(74.2, 88.0)]}], 1.0, padding=0.3),
+            [{**chunk, "segments": [(74.2, 88.0)]}],
+        )
+        with self.assertRaises(ValueError):
+            merge_chunks_with_gap(lambda: [chunk], 1.0, padding=0.6)
+
     def test_gap_split_handles_silence_overlaps_and_exact_boundary(self):
         self.assertEqual(merge_chunks_with_gap(lambda: [], 1.0), [])
         chunk = {"start": 0.0, "end": 5.0, "segments": [(0.0, 3.0), (1.0, 2.0), (4.0, 5.0)]}

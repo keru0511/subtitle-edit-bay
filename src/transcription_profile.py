@@ -11,6 +11,7 @@ def first_pass_profile() -> dict[str, str | int | float]:
         "vad_method": "pyannote",
         "chunk_size": 15,
         "max_speech_gap": 1.0,
+        "speech_pad": 0.3,
         "beam_size": 10,
         "repetition_penalty": 1.1,
         "no_repeat_ngram_size": 0,

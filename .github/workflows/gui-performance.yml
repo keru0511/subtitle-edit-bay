@@ -30,7 +30,7 @@ on:
         required: true
         default: "30"
       compare_ref:
-        description: "Reference revision (pre-#302 by default)"
+        description: "手動実行の比較対象（既定は#302適用前）"
         required: true
         default: "b600e90"
       max_regression_percent:
@@ -74,6 +74,8 @@ jobs:
         env:
           INPUT_REPETITIONS: ${{ inputs.repetitions || '3' }}
           INPUT_PLAYBACK_SECONDS: ${{ inputs.playback_seconds || '30' }}
+          BENCHMARK_EVENT_NAME: ${{ github.event_name }}
+          BENCHMARK_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           INPUT_COMPARE_REF: ${{ inputs.compare_ref || 'b600e90' }}
           INPUT_MAX_REGRESSION: ${{ inputs.max_regression_percent || '20' }}
           INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression || 'false' }}
@@ -82,6 +84,8 @@ jobs:
             --repetitions "$INPUT_REPETITIONS" \
             --playback-seconds "$INPUT_PLAYBACK_SECONDS" \
             --compare-ref "$INPUT_COMPARE_REF" \
+            --event-name "$BENCHMARK_EVENT_NAME" \
+            --base-sha "$BENCHMARK_BASE_SHA" \
             --max-regression-percent "$INPUT_MAX_REGRESSION" \
             --fail-on-regression "$INPUT_FAIL_ON_REGRESSION" \
             --github-output "$GITHUB_OUTPUT"

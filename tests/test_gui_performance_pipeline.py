@@ -14,7 +14,7 @@ from unittest.mock import patch
 from scripts.aggregate_gui_performance import ReportValidationError, aggregate_shards
 from scripts.compare_gui_performance import compare_reports, main as compare_main
 from scripts.gui_performance_report import SCENARIO_NAMES
-from scripts.plan_gui_performance import validate_inputs
+from scripts.plan_gui_performance import validate_inputs, select_comparison_commit, main as plan_main
 from scripts.run_gui_performance import parse_args, _run_controller
 from tests.workflow_contracts import load_workflow
 
@@ -95,6 +95,72 @@ class GuiPerformanceInputPlanTests(unittest.TestCase):
                         for index in range(1, repetitions + 1)
                     },
                 )
+
+    def test_pull_request_uses_event_base_sha_even_with_manual_reference(self) -> None:
+        with patch("scripts.plan_gui_performance.resolve_commit", return_value=BASELINE_SHA) as resolve:
+            selected = select_comparison_commit(
+                event_name="pull_request",
+                base_sha=BASELINE_SHA,
+                compare_ref="b600e90",
+                repository=ROOT,
+            )
+        self.assertEqual(selected, BASELINE_SHA)
+        resolve.assert_called_once_with(BASELINE_SHA, repository=ROOT)
+
+    def test_manual_comparison_keeps_requested_reference(self) -> None:
+        for reference in ("b600e90", "custom-reference"):
+            with (
+                self.subTest(reference=reference),
+                patch("scripts.plan_gui_performance.resolve_commit", return_value=BASELINE_SHA) as resolve,
+            ):
+                self.assertEqual(
+                    select_comparison_commit(
+                        event_name="workflow_dispatch",
+                        base_sha=CURRENT_SHA,
+                        compare_ref=reference,
+                        repository=ROOT,
+                    ),
+                    BASELINE_SHA,
+                )
+                resolve.assert_called_once_with(reference, repository=ROOT)
+
+    def test_invalid_pr_base_does_not_fall_back_or_write_plan(self) -> None:
+        for base in ("", "main", "b600e90", "x" * 40):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "outputs"
+                with redirect_stdout(io.StringIO()), patch("scripts.plan_gui_performance.resolve_commit") as resolve:
+                    status = plan_main(
+                        [
+                            "--event-name",
+                            "pull_request",
+                            "--base-sha",
+                            base,
+                            "--github-output",
+                            str(output),
+                        ]
+                    )
+                self.assertEqual(status, 2)
+                self.assertFalse(output.exists())
+                resolve.assert_not_called()
+
+    def test_pr_base_resolves_to_real_commit_and_unknown_commit_is_rejected(self) -> None:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        self.assertEqual(
+            select_comparison_commit(
+                event_name="pull_request",
+                base_sha=sha,
+                compare_ref="b600e90",
+                repository=ROOT,
+            ),
+            sha,
+        )
+        with self.assertRaises(ValueError):
+            select_comparison_commit(
+                event_name="pull_request",
+                base_sha="0" * 40,
+                compare_ref="b600e90",
+                repository=ROOT,
+            )
 
     def test_invalid_manual_inputs_are_rejected(self) -> None:
         invalid = (
@@ -386,6 +452,15 @@ class GuiPerformanceWorkflowContractTests(unittest.TestCase):
         self.assertIn("aggregate_gui_performance.py", aggregate_commands)
         self.assertIn("BENCHMARK_JOB_RESULT", aggregate_commands)
         self.assertIn("compare_gui_performance.py", aggregate_commands)
+
+    def test_workflow_passes_frozen_pr_base_and_keeps_manual_reference(self) -> None:
+        workflow = load_workflow(WORKFLOW)
+        plan = next(step for step in workflow["jobs"]["prepare"]["steps"] if step.get("id") == "plan")
+        self.assertEqual(plan["env"]["BENCHMARK_EVENT_NAME"], "${{ github.event_name }}")
+        self.assertEqual(plan["env"]["BENCHMARK_BASE_SHA"], "${{ github.event.pull_request.base.sha }}")
+        self.assertIn('--event-name "$BENCHMARK_EVENT_NAME"', plan["run"])
+        self.assertIn('--base-sha "$BENCHMARK_BASE_SHA"', plan["run"])
+        self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["compare_ref"]["default"], "b600e90")
 
     def test_workflow_tracks_pipeline_code_and_tests(self) -> None:
         paths = set(load_workflow(WORKFLOW)["on"]["pull_request"]["paths"])

@@ -77,7 +77,7 @@ python scripts/compare_gui_performance.py `
 
 - 通常の`CI`では`tests/test_gui_large_project_performance.py`でfixtureの再現性とレポート診断を、`tests/test_gui_editor.py`で3,000件のListView virtualizationと編集画面でのMediaPlayer再利用を、時間閾値なしで検証します。
 - `GUI performance` workflowは反復番号と測定種別ごとのWindows matrixを最大6並列で実行し、JSONを30日間Artifactとして保存します。`paired` shardは現行版と比較版の3,000件を直列に測定し、`large` shardは現行版10,000件だけを別runnerで測定します。既定3反復で6ジョブとなり、比較ペアは必ず同じrunner、依存関係、ハーネスを使います。同じrunner内でGUI測定を同時実行しません。
-- workflowは既定で#302適用前の`b600e90`を別worktreeへ展開します。各shardは`--repetitions 1`で実行しますが、JSONには全体の反復番号、予定反復数、現行版・比較版・ハーネスのSHA、run ID、run attempt、Python・PySide6・FFmpeg・runner環境を記録します。
+- 通常PRではイベントに記録された`pull_request.base.sha`を別worktreeへ展開し、PRの仮マージとの比較を行います。動く`main`参照やmerge-baseへ置き換えず、SHAが欠けた場合は準備段階で失敗させます。手動実行では`compare_ref`を利用し、既定は#302適用前の`b600e90`です。各shardは`--repetitions 1`で実行しますが、JSONには全体の反復番号、予定反復数、現行版・比較版・ハーネスのSHA、run ID、run attempt、Python・PySide6・FFmpeg・runner環境を記録します。
 - 最終jobは全shardの生データを再集計し、反復・シナリオの欠落や重複、不正JSON、SHA・入力・環境・run attemptの不一致を拒否してから既存の絶対上限・相対比較を適用します。matrix jobの失敗、キャンセル、予期しないskipは、残ったartifactが正常でも最終checkを成功させません。
 - 通常のPRでは時間差をレポートだけに残し、不安定なrunner時間でマージを止めません。基準runnerで連続3回以上の分布を確認した後、手動実行の`fail_on_regression`を有効にして予算変更を検証します。
 - baselineを更新する際は、workflow run URL、commit SHA、Windows image、Python・PySide6・FFmpegバージョン、各回のJSONを残します。異なるrunnerや依存バージョンの結果を同じbaselineとして混ぜません。
@@ -90,7 +90,7 @@ shard artifact名は`run_id`、`run_attempt`、測定種別、反復番号を含
 
 ### #302前後の比較
 
-比較元`b600e90`は#302直前、`4968485`は#302のmerge commitです。専用workflowが両者を同一環境で再実行するため、古い測定値を新しいrunnerへ流用しません。主に次の変化を確認します。
+比較元`b600e90`は#302直前、`4968485`は#302のmerge commitです。手動実行の専用workflowで同一環境の比較を行うため、古い測定値を新しいrunnerへ流用しません。主に次の変化を確認します。
 
 - `property.subtitleSegments`と`property.shortVideoClips`の全件materialize回数
 - 編集画面を開いた時のMediaPlayer数、source変更、Loading遷移
@@ -107,3 +107,9 @@ shard artifact名は`run_id`、`run_attempt`、測定種別、反復番号を含
 素材の共有は同じハーネス・再生時間・ランナーに限定します。共有先は各ジョブの`RUNNER_TEMP`で、再生時間に応じた素材名を使います。依存は各ランナーに個別導入し、既存のpip/FFmpegキャッシュを維持します。共通の依存準備ジョブを追加して全測定の開始を待たせる構成にはしていません。
 
 比較ペアと10,000件が同時に実行できれば待ち時間は短縮しますが、Windowsの同時実行枠と環境準備の重複が増えるため、短縮率は実測で判断します。直列3シナリオ版の実績は約5分44秒でしたが、これは今回と同条件で繰り返した比較結果ではありません。総runner時間とqueue待ちも併せて確認してください。
+
+### 通常PRの比較対象
+
+通常PRでは古い固定版の性能を毎回測り直す代わりに、そのPRイベントのbase SHAを比較対象にします。同じランナーでbaseと仮マージを測るため、PRによる変化を観測できます。30秒再生・3反復・測定シナリオ・閾値は変更しません。過去の固定版との比較が必要な場合は、手動実行の`compare_ref`を指定します。
+
+比較対象の選択は`plan_gui_performance.py`で検証し、PRのbase SHAは40桁のcommit SHAであることと、checkout内で実在するcommitへ解決できることを確認します。未取得・不正なSHAを古い固定版へフォールバックさせません。

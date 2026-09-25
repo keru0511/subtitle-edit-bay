@@ -2035,6 +2035,57 @@ Window {
             self.assertEqual(updated[0]["text"], "updated preview")
             self.assertEqual(formatter.call_count, 2)
 
+    def test_subtitle_display_state_tracks_timing_edits_and_undo_redo(self) -> None:
+        self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 2, "text": "before", "speaker": "Speaker_Alice"},
+            {"id": "later", "start": 5, "end": 7, "text": "later", "speaker": "Speaker_Bob"},
+        ])
+        subtitles = self.app.subtitles
+        self.assertEqual(subtitles.activeSubtitleSegments(1)[0]["preview_text"], "before")
+        subtitles.updateSegment(0, {"start": 8, "end": 10, "text": "after", "subtitle_font_scale": 3.0})
+        self.assertEqual(subtitles.activeSubtitleSegments(1), [])
+        self.assertEqual(subtitles.segmentIndexAtTime(9), 1)
+        self.assertEqual(subtitles.visibleSubtitleSegments(8, 10)[0]["preview_text"], "after")
+        self.assertEqual(subtitles.subtitleLayoutMetrics["maxFontScale"], 3.0)
+        subtitles.undoEdit()
+        self.assertEqual(subtitles.segmentIndexAtTime(1), 0)
+        self.assertEqual(subtitles.activeSubtitleSegments(1)[0]["preview_text"], "before")
+        self.assertEqual(subtitles.activeSubtitleSegments(9), [])
+        self.assertEqual(subtitles.subtitleLayoutMetrics["maxFontScale"], 1.0)
+        subtitles.redoEdit()
+        self.assertEqual(subtitles.activeSubtitleSegments(9)[0]["preview_text"], "after")
+        self.assertEqual(subtitles.subtitleLayoutMetrics["maxFontScale"], 3.0)
+        # ショート側も字幕窓口の最新ID索引を利用する。
+        self.assertTrue(self.app.shortVideo.addShortVideoClip("first"))
+        self.assertEqual(self.app.shortVideo.shortVideoClipAt(0)["preview_text"], "after")
+
+    def test_subtitle_display_state_rebuilds_when_project_reuses_ids_or_is_empty(self) -> None:
+        self._load_project(segments=[
+            {"id": "shared", "start": 0, "end": 2, "text": "old", "subtitle_font_scale": 3.0},
+            {"id": "removed", "start": 0, "end": 2, "text": "removed"},
+        ])
+        subtitles = self.app.subtitles
+        self.assertEqual({item["preview_text"] for item in subtitles.activeSubtitleSegments(1)}, {"old", "removed"})
+        path = self._load_project(segments=[
+            {"id": "shared", "start": 5, "end": 7, "text": "new", "subtitle_font_scale": 1.5},
+        ])
+        self.assertEqual(subtitles.activeSubtitleSegments(1), [])
+        self.assertEqual(subtitles.segmentIndexAtTime(1), -1)
+        self.assertEqual(subtitles.visibleSubtitleSegments(5, 7)[0]["preview_text"], "new")
+        self.assertEqual(subtitles.subtitleLayoutMetrics, {"maxFontScale": 1.5, "maxLayoutRow": 0})
+        self.assertFalse(self.app.shortVideo.addShortVideoClip("removed"))
+        self.assertTrue(self.app.shortVideo.addShortVideoClip("shared"))
+        self.assertEqual(self.app.shortVideo.shortVideoClipAt(0)["preview_text"], "new")
+        empty_project = load_project(path)
+        empty_project["segments"] = []
+        save_project(path, empty_project)
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.assertEqual(subtitles.activeSubtitleSegments(6), [])
+        self.assertEqual(subtitles.visibleSubtitleSegments(0, 10), [])
+        self.assertEqual(subtitles.segmentIndexAtTime(6), -1)
+        self.assertEqual(subtitles.subtitleLayoutMetrics, {"maxFontScale": 1.0, "maxLayoutRow": 0})
+        self.assertFalse(self.app.shortVideo.addShortVideoClip("shared"))
+
     def test_playback_time_selects_latest_active_subtitle_and_keeps_last_in_gaps(self) -> None:
         self._load_project(
             segments=[

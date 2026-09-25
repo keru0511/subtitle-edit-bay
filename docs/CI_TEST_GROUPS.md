@@ -73,3 +73,7 @@ GitHub Actionsでは同じ情報とスキップ理由ごとの件数をStep Summ
 4. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
 
 モジュール単位の所有先を決められない場合は、テスト責務を分けてから登録してください。
+
+## 実音声の文字起こし精度
+
+`.github/workflows/transcription-accuracy.yml` は、通常グループから独立した重い検証です。固定した日本語実録音を `large-v3` で認識し、PR baseと変更後を比較します。評価器の単体テスト `test_transcription_benchmark` はportable-unitに所属します。認識JSON・ログ・比較表と評価範囲は [実音声による文字起こしCI](TRANSCRIPTION_ACCURACY_CI.md) を参照してください。

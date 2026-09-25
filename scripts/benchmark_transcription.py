@@ -84,18 +84,49 @@ def transcript_characters(payload: dict, duration: float) -> tuple[str, list[tup
     return "".join(text_parts), timings, invalid_segments
 
 
+def canonical_spelling(text: str, timings: list, equivalents: dict[str, str]) -> tuple[str, list]:
+    """固定素材で明示した表記だけを統一し、元の時間区間を保つ。"""
+    result, result_times = [], []
+    index = 0
+    keys = sorted(equivalents, key=len, reverse=True)
+    if any(not key or not equivalents[key] for key in keys):
+        raise ValueError("表記揺れの定義に空文字は使えません。")
+    while index < len(text):
+        matched = next((key for key in keys if text.startswith(key, index)), None)
+        if matched is None:
+            result.append(text[index])
+            result_times.append(timings[index])
+            index += 1
+            continue
+        replacement = equivalents[matched]
+        original_times = timings[index : index + len(matched)]
+        timing = None
+        if all(value is not None for value in original_times):
+            timing = (min(value[0] for value in original_times), max(value[1] for value in original_times))
+        result.append(replacement)
+        result_times.extend([timing] * len(replacement))
+        index += len(matched)
+    return "".join(result), result_times
+
+
 def score_transcript(payload: dict, manifest: dict) -> dict:
     reference, reference_windows = "", []
+    raw_reference = ""
+    equivalents = manifest.get("equivalent_spellings", {})
     windows = []
     for clip in manifest["clips"]:
         text = normalize_text(clip["text"])
+        raw_reference += text
+        text, _ = canonical_spelling(text, [None] * len(text), equivalents)
         window = (clip["start"], clip["start"] + clip["duration"])
         reference += text
         reference_windows.extend([window] * len(text))
         windows.append(window)
     if not reference:
         raise ValueError("正解文が空です。")
-    hypothesis, times, invalid_segments = transcript_characters(payload, manifest["duration"])
+    raw_hypothesis, times, invalid_segments = transcript_characters(payload, manifest["duration"])
+    raw_operations = align_characters(raw_reference, raw_hypothesis)
+    hypothesis, times = canonical_spelling(raw_hypothesis, times, equivalents)
     operations = align_characters(reference, hypothesis)
     counts = {
         name: sum(operation == name for operation, _, _ in operations) for name in ["insert", "delete", "substitute"]
@@ -118,6 +149,10 @@ def score_transcript(payload: dict, manifest: dict) -> dict:
     return {
         "reference": reference,
         "hypothesis": hypothesis,
+        "raw_reference": raw_reference,
+        "raw_hypothesis": raw_hypothesis,
+        "raw_cer": sum(operation != "equal" for operation, _, _ in raw_operations) / len(raw_reference),
+        "raw_deletions": sum(operation == "delete" for operation, _, _ in raw_operations),
         "reference_characters": len(reference),
         "hypothesis_characters": len(hypothesis),
         "insertions": counts["insert"],
@@ -247,6 +282,8 @@ def write_report(output: Path, report: dict) -> None:
     if "baseline" in report and "candidate" in report:
         lines += ["| 指標 | 比較対象 | 変更後 |", "| --- | ---: | ---: |"]
         for metric in [
+            "raw_cer",
+            "raw_deletions",
             "cer",
             "insertions",
             "deletions",
@@ -265,6 +302,7 @@ def write_report(output: Path, report: dict) -> None:
     )
     lines += [
         "",
+        "raw_cerは表記差を含む値、cerは素材で明示した同等表記だけを統一した値です。",
         "時刻評価は既知の録音配置区間からの逸脱です。単語の正解開始・終了時刻に対する誤差ではありません。",
         "",
     ]

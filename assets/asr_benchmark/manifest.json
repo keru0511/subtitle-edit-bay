@@ -56,5 +56,12 @@
     "max_outside_speech_characters": 0,
     "max_untimed_characters": 0,
     "max_timing_window_errors": 0
+  },
+  "equivalent_spellings": {
+    "耳に入る": "耳にはいる",
+    "家だから": "うちだから",
+    "と言って": "といって",
+    "後から": "あとから",
+    "おじは": "叔父は"
   }
 }

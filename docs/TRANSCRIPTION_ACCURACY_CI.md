@@ -33,3 +33,7 @@ python scripts/benchmark_transcription.py --baseline-root ../baseline --candidat
 ```
 
 評価器の単体テストは通常のportable-unitグループに含めます。実認識ジョブには推論モックを使いません。
+
+## 表記差と発言の欠落の区別
+
+初回実行では生のCERは両版とも7.69%でしたが、「あとから→後から」の表記差が1文字の脱落として扱われました。そこで元の正解文と生のCERを保持した上で、固定素材に明記した5組の同等表記だけを揃えたCER・編集操作数を判定に使用します。詳細は [素材の表記差の扱い](../assets/asr_benchmark/README.md) を参照してください。合否の数値上限は変更していません。

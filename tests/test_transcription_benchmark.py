@@ -115,6 +115,30 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
         self.payload["segments"][0]["words"][0].update(start=1.5)
         self.assertEqual(score_transcript(self.payload, self.manifest)["timing_window_errors"], 4)
 
+    def test_equivalent_spelling_is_not_a_spoken_deletion(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["clips"] = [{"text": "あとから進みます", "start": 2, "duration": 3}]
+        manifest["equivalent_spellings"] = {"後から": "あとから"}
+        payload = {
+            "segments": [
+                {
+                    "text": "後から進みます",
+                    "start": 2,
+                    "end": 4,
+                    "words": [{"word": "後から進みます", "start": 2, "end": 4}],
+                }
+            ]
+        }
+        result = score_transcript(payload, manifest)
+        self.assertGreater(result["raw_cer"], 0)
+        self.assertEqual(result["cer"], 0)
+        self.assertEqual(result["untimed_characters"], 0)
+        payload["segments"][0]["text"] = "後からます"
+        payload["segments"][0]["words"][0]["word"] = "後からます"
+        missing = score_transcript(payload, manifest)
+        self.assertEqual(missing["deletions"], 2)
+        self.assertTrue(quality_failures(result, missing, manifest["limits"]))
+
     def test_checked_in_audio_hashes_match(self) -> None:
         directory = Path(__file__).resolve().parents[1] / "assets/asr_benchmark"
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))

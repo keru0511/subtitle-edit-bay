@@ -47,6 +47,12 @@ files = [
   "src/project_snapshots.py",
   "src/project_recovery.py",
   "src/audio_mixer.py",
+  "src/typed_cache.py",
+  "tests/test_typed_cache.py",
+  "src/subtitle_layout/tokenize.py",
+  "src/subtitle_layout/scoring.py",
+  "src/subtitle_layout/rules.py",
+  "tests/test_subtitle_layout_boundaries.py",
   "tests/test_audio_mixer_models.py",
   "tests/test_subtitle_project_model.py",
   "tests/test_project_snapshots.py",
@@ -63,6 +69,8 @@ files = [
   "tests/test_transcription_dictionary.py",
 ]
 explicit_package_bases = true
+# 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
+mypy_path = "$MYPY_CONFIG_FILE_DIR/typings"
 
 [[tool.mypy.overrides]]
 module = ["src.platform_paths", "src.platform_updates", "src.process_utils", "src.qprocess_launcher"]
@@ -92,6 +100,12 @@ module = [
   "src.project_snapshots",
   "src.project_recovery",
   "src.audio_mixer",
+  "src.typed_cache",
+  "tests.test_typed_cache",
+  "src.subtitle_layout.tokenize",
+  "src.subtitle_layout.scoring",
+  "src.subtitle_layout.rules",
+  "tests.test_subtitle_layout_boundaries",
   "tests.test_audio_mixer_models",
   "tests.test_subtitle_project_model",
   "tests.test_project_snapshots",

@@ -9,7 +9,9 @@ import tempfile
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
+
+from .data_boundary import coerce_int, decode_json, is_object_mapping
 
 from src.project_snapshots import (
     _merge_media_references,
@@ -18,11 +20,14 @@ from src.project_snapshots import (
 )
 
 
+_ProjectKey = TypeVar("_ProjectKey")
+
+
 class RecoveryError(ValueError):
     """Raised when recovery state is invalid."""
 
 
-def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _atomic_json(path: Path, payload: Mapping[object, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
@@ -40,11 +45,11 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
-def _revision_number(value: Any) -> int | None:
+def _revision_number(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     try:
-        return int(value)
+        return coerce_int(value)
     except (TypeError, ValueError):
         return None
 
@@ -54,11 +59,11 @@ class RecoveryJournal:
         self.root = Path(root)
         self.path = self.root / "pending-recovery.json"
 
-    def record(self, project: Mapping[str, Any], revision: Any, reason: str = "crash") -> None:
+    def record(self, project: Mapping[_ProjectKey, object], revision: object, reason: str = "crash") -> None:
         clean_project = sanitize_project(project)
-        if not isinstance(clean_project, Mapping):
+        if not is_object_mapping(clean_project):
             raise RecoveryError("project must be an object")
-        payload = {
+        payload: dict[object, object] = {
             "schema_version": 1,
             "revision": revision,
             "reason": reason,
@@ -71,21 +76,23 @@ class RecoveryJournal:
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)
 
-    def pending(self) -> dict[str, Any] | None:
+    def pending(self) -> dict[object, object] | None:
         if not self.path.exists():
             return None
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            payload = decode_json(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RecoveryError("unable to read recovery journal") from exc
+        if not is_object_mapping(payload):
+            raise RecoveryError("invalid recovery journal")
         project = payload.get("project")
-        if payload.get("schema_version") != 1 or not isinstance(project, Mapping):
+        if payload.get("schema_version") != 1 or not is_object_mapping(project):
             raise RecoveryError("invalid recovery journal")
         if payload.get("checksum") != project_checksum(project):
             raise RecoveryError("recovery checksum mismatch")
-        return copy.deepcopy(payload)
+        return copy.deepcopy(dict(payload))
 
-    def candidate(self, current_revision: Any) -> dict[str, Any] | None:
+    def candidate(self, current_revision: object) -> dict[object, object] | None:
         payload = self.pending()
         if payload is None:
             return None
@@ -95,10 +102,14 @@ class RecoveryJournal:
             return None
         return payload
 
-    def restore_if_newer(self, current_project: Mapping[str, Any], current_revision: Any) -> dict[str, Any] | None:
+    def restore_if_newer(
+        self, current_project: Mapping[_ProjectKey, object], current_revision: object
+    ) -> dict[object, object] | None:
         payload = self.candidate(current_revision)
         if payload is None:
             return None
         restored = _merge_media_references(payload["project"], current_project)
+        if not is_object_mapping(restored):
+            raise RecoveryError("restored project must be an object")
         self.clear()
-        return restored
+        return dict(restored)

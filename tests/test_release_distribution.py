@@ -509,17 +509,19 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("release_state.py ensure-available", collision)
         self.assertNotIn("gh release view", collision)
 
-    def test_ci_cancels_only_superseded_automatic_runs(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        expected_group = (
-            "group: ci-${{ github.workflow }}-${{ github.event_name }}-"
-            "${{ github.event_name == 'pull_request' && github.event.pull_request.number || "
-            "github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}"
+    def test_ci_isolates_push_and_manual_runs_from_other_executions(self) -> None:
+        concurrency = load_workflow(CI_WORKFLOW)["concurrency"]
+        # pushは直前のpushとの差分だけを検証するため、後続実行とグループを共有しない。
+        # cancel-in-progressだけをfalseにしても、同じグループの待機中実行は置換される。
+        self.assertEqual(
+            concurrency["group"],
+            "ci-${{ github.workflow }}-${{ github.event_name }}-"
+            "${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}",
         )
 
-        self.assertIn("concurrency:", workflow)
-        self.assertIn(expected_group, workflow)
-        self.assertIn("cancel-in-progress: true", workflow)
+    def test_ci_cancels_only_superseded_pull_request_runs(self) -> None:
+        concurrency = load_workflow(CI_WORKFLOW)["concurrency"]
+        self.assertEqual(concurrency["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
 
     def test_local_release_artifacts_are_ignored(self) -> None:
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")

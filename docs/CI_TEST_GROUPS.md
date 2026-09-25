@@ -79,6 +79,10 @@ GitHub Actionsでは同じ情報とスキップ理由ごとの件数をStep Summ
 CIとCodeQLはPR・mainへのpushで起動し、`scripts/ci_impact.py` がジョブの実行範囲を決めます。
 PRはbase SHAとマージ候補、pushはbefore SHAと現在のSHAを比較します。改名は旧・新両パスを評価し、複数領域は和集合にします。
 
+PR内の更新は同じPRの古いCIをキャンセルします。mainへのpushと手動実行はrun IDごとに独立した同時実行グループを使います。
+コード変更の直後にドキュメント変更がpushされても、先行するコードの検証を完了させます。
+`cancel-in-progress: false`だけでは同じグループの待機中実行が置換されるため、グループ自体を分けています。
+
 | 変更範囲 | 実行する検証 |
 | --- | --- |
 | README.md、AGENTS.md、LICENSE、docs内のMarkdownのみ | Python品質チェック |

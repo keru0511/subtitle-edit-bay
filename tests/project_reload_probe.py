@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -23,7 +24,9 @@ def main() -> None:
 
     repository_root = Path(__file__).resolve().parents[1]
     project_path = Path(args.project).resolve()
-    backend = EditBayBackend([], workspace_root=repository_root)
+    # 再読込の検証を外部AIプロセスの接続・終了待ちに依存させない。
+    with patch("src.gui.CodexChatController.connect"):
+        backend = EditBayBackend([], workspace_root=project_path.parent)
     engine = QQmlApplicationEngine()
     try:
         backend.loadProject(str(project_path))

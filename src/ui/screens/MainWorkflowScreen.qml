@@ -530,6 +530,7 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
+        root.commitPendingEdits()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         mainPlayer.videoOutput = mainVideo
@@ -597,9 +598,34 @@ ApplicationWindow {
         return value <= -60 ? 0 : Math.max(0, Math.min(200, 100 * Math.pow(10, value / 20)))
     }
 
+    function commitPendingEdits() {
+        // IMEの未確定文字も含め、既存のフォーカス終了処理で入力を確定する。
+        // ボタンクリックによるフォーカス移動はOSによって異なるため明示する。
+        // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
+        // qmllint disable missing-property
+        Qt.inputMethod.commit()
+        // qmllint enable missing-property
+        root.contentItem.forceActiveFocus()
+    }
+
+    function saveProject() {
+        root.commitPendingEdits()
+        return root.appBackend.saveProject()
+    }
+
+    function renderVideo() {
+        root.commitPendingEdits()
+        root.appBackend.renderVideo(root.currentSettings())
+    }
+
+    function buildSubtitlePreview() {
+        root.commitPendingEdits()
+        root.appBackend.buildSubtitlePreview(root.currentSettings())
+    }
+
     function renderFromEditor() {
         root.closeEditorScreen()
-        root.appBackend.renderVideo(root.currentSettings())
+        root.renderVideo()
     }
 
     function stamp(seconds) {
@@ -1138,7 +1164,7 @@ ApplicationWindow {
         onUpdateCheckRequested: root.appBackend.checkForUpdates()
         onProjectOpenRequested: root.appBackend.browseProjectFile()
         onSourceSettingsRequested: sourcePopup.open()
-        onSaveRequested: root.appBackend.saveProject()
+        onSaveRequested: root.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
             if (root.loginInInspector) {
@@ -1154,7 +1180,7 @@ ApplicationWindow {
             }
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
-        onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
+        onRenderRequested: root.renderVideo()
     }
 
     Dialog {
@@ -1329,8 +1355,8 @@ ApplicationWindow {
                     }
                     SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
                     Item { Layout.fillWidth: true }
-                    SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
-                    SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                    SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveProject() }
+                    SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.buildSubtitlePreview() }
                 }
 
                 SubtitleTimeline {
@@ -1806,7 +1832,7 @@ ApplicationWindow {
                         onEditorRequested: root.openEditorScreen()
                         onMixerRequested: root.openMixerScreen()
                         onShortModeRequested: root.openShortWorkspace()
-                        onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
+                        onRenderRequested: root.renderVideo()
                         onSaveOrStopRequested: {
                             if (!root.appBackend.running)
                                 root.appBackend.saveSettings(root.currentSettings())
@@ -2610,7 +2636,7 @@ ApplicationWindow {
                             }
                         }
                         SmallButton { objectName: "mixerResetButton"; text: "すべての音声トラックをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
-                        SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
+                        SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveProject() }
                         SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
                         Button {
                             id: mixerRenderButton
@@ -2619,7 +2645,7 @@ ApplicationWindow {
                             text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
                             enabled: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
                             onClicked: {
-                                root.appBackend.renderVideo(root.currentSettings())
+                                root.renderVideo()
                             }
                             contentItem: Text { text: mixerRenderButton.text; color: mixerRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             background: Rectangle { radius: 7; color: mixerRenderButton.enabled ? root.acid : "#252C28" }
@@ -2982,8 +3008,8 @@ ApplicationWindow {
                 SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(mainPlayer.position / 1000) }
                 SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.appBackend.splitSelectedSegment(mainPlayer.position / 1000) }
                 SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
-                SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.appBackend.saveProject() }
-                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
+                SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.saveProject() }
+                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.buildSubtitlePreview() }
                 Button {
                     id: editorRenderButton
                     objectName: "editorRenderButton"
@@ -3487,7 +3513,7 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
     Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.appBackend.saveProject() }
+    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProject() }
     Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
 
     Connections {
@@ -3504,7 +3530,7 @@ ApplicationWindow {
             close.accepted = false
             return
         }
-        root.appBackend.saveProject()
+        root.saveProject()
         mainPlayer.stop()
     }
 }

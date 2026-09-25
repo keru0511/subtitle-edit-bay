@@ -19,6 +19,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
+from PySide6.QtGui import QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -3387,6 +3388,96 @@ class GuiEditorRegressionTests(unittest.TestCase):
         subtitle_settings = self._quick_item(window, "workspaceSubtitleSettings")
         text_area = self._quick_visual_item(subtitle_settings, "workspaceSubtitleTextArea")
         self.assertTrue(text_area.isVisible())
+
+    def _assert_caption_input_committed_before_action(self, *, expanded: bool, action: str) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        else:
+            caption = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+        # 本文はプロパティ代入ではなくキー入力で変更し、入力欄から移動せずに操作する。
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            self.assertTrue(caption.hasActiveFocus())
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            for char in "edited caption":
+                QTest.keyClick(window, Qt.Key(ord(char.upper())))
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            for char in "second line":
+                QTest.keyClick(window, Qt.Key(ord(char.upper())))
+            self.app.processEvents()
+            expected = "edited caption\nsecond line"
+            self.assertEqual(caption.property("text"), expected)
+            self.assertTrue(caption.hasActiveFocus())
+            if action == "render":
+                captured_texts = []
+
+                def capture_render(*_args: object, **_kwargs: object) -> None:
+                    captured_texts.append(load_project(path)["segments"][0]["text"])
+
+                button_name = "editorRenderButton" if expanded else "workspaceHeaderRenderButton"
+                with patch.object(self.app, "_start_command", side_effect=capture_render) as start:
+                    self._click(window, self._quick_item(window, button_name))
+                start.assert_called_once()
+                self.assertEqual(captured_texts, [expected])
+            elif action == "preview":
+                button_name = "buildAssButton" if expanded else "workspaceSubtitlePreviewButton"
+                self._click(window, self._quick_item(window, button_name))
+                self.assertEqual(self.app.stage, "ASS", self.app.status)
+                ass_text = Path(self.app._ass_path).read_text(encoding="utf-8-sig")
+                self.assertIn("edited caption", ass_text)
+                self.assertIn("second line", ass_text)
+            elif action == "save_failure":
+                button_name = "saveProjectButton" if expanded else "workspaceSubtitleSaveButton"
+                with patch("src.gui.save_project", side_effect=OSError("保存失敗の再現")):
+                    self._click(window, self._quick_item(window, button_name))
+                self.assertEqual(self.app.stage, "ERROR")
+                self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+                self.assertEqual(self.app.segmentAt(0)["text"], expected)
+                self.assertTrue(self.app.projectDirty)
+                self._click(window, self._quick_item(window, button_name))
+            elif action == "shortcut":
+                QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+                self.app.processEvents()
+            else:
+                button_name = "saveProjectButton" if expanded else "workspaceSubtitleSaveButton"
+                if action == "header_save":
+                    button_name = "workspaceHeaderSaveButton"
+                self._click(window, self._quick_item(window, button_name))
+            self.assertEqual(load_project(path)["segments"][0]["text"], expected)
+            self.assertEqual(self.app.segmentAt(0)["text"], expected)
+            self.assertFalse(self.app.projectDirty)
+
+    def test_expanded_caption_key_input_is_committed_before_save(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="save")
+
+    def test_expanded_caption_key_input_is_committed_before_render(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="render")
+
+    def test_expanded_caption_key_input_is_committed_before_save_shortcut(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="shortcut")
+
+    def test_workspace_caption_key_input_is_committed_before_save(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="save")
+
+    def test_workspace_caption_key_input_is_committed_before_render(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="render")
+
+    def test_expanded_caption_key_input_is_committed_before_preview(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="preview")
+
+    def test_workspace_caption_key_input_is_committed_before_preview(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="preview")
+
+    def test_caption_key_input_survives_failed_save_and_retry(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="save_failure")
+
+    def test_workspace_header_save_commits_caption_key_input(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="header_save")
 
     def test_workspace_subtitle_delete_undo_redo_and_save_round_trip(self) -> None:
         """削除・履歴・保存を通常編集画面の実クリックで検証する。"""

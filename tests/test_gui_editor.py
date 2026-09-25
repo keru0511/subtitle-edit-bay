@@ -3582,6 +3582,75 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(field.hasActiveFocus())
         return path, window
 
+    def test_expanded_pending_text_survives_reorder_without_selection_loop(self) -> None:
+        path, window = self._prepare_pending_subtitle_text(expanded=True)
+        self.app.updateSegment(0, {"start": 9.0, "end": 12.0})
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(
+            [(segment["id"], segment["text"]) for segment in load_project(path)["segments"]],
+            [("second", "second"), ("first", "edited")],
+        )
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
+    def test_expanded_list_arrow_keys_keep_backend_selection(self) -> None:
+        _, window = self._prepare_pending_subtitle_text(expanded=True)
+        table = self._quick_item(window, "captionTable")
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        table.forceActiveFocus()
+        self.app.processEvents()
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        self.app.processEvents()
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        QTest.keyClick(window, Qt.Key.Key_Up)
+        self.app.processEvents()
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        QTest.keyClick(window, Qt.Key.Key_Up)
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+
+    def test_expanded_edit_selects_scrolled_row_and_keeps_following_controls(self) -> None:
+        self._load_large_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        table = self._quick_item(window, "captionTable")
+        self.app.selectSegment(2_999)
+        self.gui.wait(100)
+        # 別の選択行を残してスクロールし、本文→時刻→サイズを続けて編集する。
+        table.setProperty("contentY", 1_500 * 127.0)
+        self.gui.wait(100)
+        row = self._quick_visual_item(table, "captionRow-1500")
+        field = self._quick_visual_item(row, "captionTextArea")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, field)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_X)
+            self.assertTrue(field.hasActiveFocus())
+            self.assertEqual(field.property("text"), "x")
+            self.assertEqual(self.app.selectedSegmentIndex, 1_500)
+            time_fields = [
+                item for item in self.gui.visual_items(row)
+                if item.metaObject().className() == "TimeField"
+            ]
+            time_fields.sort(key=lambda item: item.x())
+            start = float(self.app.segmentAt(1_500)["start"]) + 0.01
+            self._click(window, time_fields[0])
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            for char in f"{start:.3f}":
+                QTest.keyClick(window, Qt.Key(ord(char)))
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            size = self._quick_visual_item(row, "captionSizeSpin")
+            size.setProperty("value", 125)
+            self.gui.emit_signal(size, "valueModified")
+            self.app.processEvents()
+        updated = self.app.segmentAt(1_500)
+        self.assertEqual(updated["text"], "x")
+        self.assertAlmostEqual(updated["start"], start, places=3)
+        self.assertEqual(updated["subtitle_font_scale"], 1.25)
+        self.assertEqual(self.app.selectedSegmentIndex, 1_500)
+
     def _assert_pending_text_delete_preserves_neighbor(self, *, expanded: bool) -> None:
         path, window = self._prepare_pending_subtitle_text(expanded=expanded)
         names = ("deleteCaptionButton", "saveProjectButton", "undoCaptionButton") if expanded else (

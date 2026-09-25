@@ -3238,15 +3238,13 @@ ApplicationWindow {
                                     positionViewAtIndex(selectedIndex, ListView.Contain)
                             }
                             model: root.appBackend.subtitleModel
-                            currentIndex: root.appBackend.selectedSegmentIndex
+                            // モデルの移動・復元中の一時的な行番号を選択状態へ逆流させない。
+                            currentIndex: -1
+                            keyNavigationEnabled: false
                             Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
+                            Keys.onUpPressed: root.appBackend.selectSegment(Math.max(0, root.appBackend.selectedSegmentIndex - 1))
+                            Keys.onDownPressed: root.appBackend.selectSegment(Math.min(count - 1, root.appBackend.selectedSegmentIndex + 1))
                             onContentYChanged: root.editorCaptionScrollY = contentY
-                            function syncSelectedIndex() {
-                                if (currentIndex >= 0 && currentIndex !== root.appBackend.selectedSegmentIndex)
-                                    root.appBackend.selectSegment(currentIndex)
-                            }
-                            // Undoによる行の復元中は、一時的な行番号を同期して再入しない。
-                            onCurrentIndexChanged: Qt.callLater(captionTable.syncSelectedIndex)
                             delegate: Rectangle {
                                 id: captionRow
                                 required property int index
@@ -3333,6 +3331,7 @@ ApplicationWindow {
                                         }
                                         onActiveFocusChanged: {
                                             if (activeFocus) {
+                                                root.appBackend.selectSegment(captionRow.index)
                                                 editingSegmentId = captionRow.segmentId
                                                 root.beginSubtitleDraft(captionRow.index, text)
                                             } else {

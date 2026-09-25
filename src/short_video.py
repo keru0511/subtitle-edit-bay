@@ -14,7 +14,7 @@ from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .ffmpeg_filter_script import (
     LEGACY_FILTER_SCRIPT_OPTION,
     detect_filter_complex_script_option as _detected_filter_complex_script_option,
-    filter_complex_script_option,
+    filter_complex_script_option as filter_complex_script_option,
 )
 from .media_probe import probe_media_duration, probe_media_stream_types
 from .processing_progress import progress_event_line
@@ -195,7 +195,6 @@ def build_short_video_filter_complex(
     fps = short_video.output.fps
     global_fit = short_video.global_fit
     global_background_color = _normalize_hex_color(short_video.global_background_color)
-    transition = short_video.transition
     use_bgm = include_bgm and bool(short_video.bgm.path)
 
     stream_filters: list[str] = []

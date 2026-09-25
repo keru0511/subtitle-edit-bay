@@ -139,7 +139,6 @@ def _manual_segment_lines(segment: dict[str, Any], max_width: int, display_durat
 
     lines: list[str] = []
     current: list[str] = []
-    current_width = 0
     for word in text.split():
         if not current:
             candidate = word
@@ -148,7 +147,6 @@ def _manual_segment_lines(segment: dict[str, Any], max_width: int, display_durat
         if text_width(candidate) > max_width and current:
             lines.append(" ".join(current))
             current = [word]
-            current_width = text_width(word)
             continue
         if text_width(candidate) > max_width:
             for segment_text in normalize_text(
@@ -160,10 +158,8 @@ def _manual_segment_lines(segment: dict[str, Any], max_width: int, display_durat
                 if segment_text:
                     lines.append(segment_text)
             current = []
-            current_width = 0
             continue
         current.append(word)
-        current_width = text_width(candidate)
     if current:
         lines.append(" ".join(current))
     return [line for line in lines if line.strip()]

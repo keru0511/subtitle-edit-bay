@@ -1,7 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import TypedDict
+
+from .data_boundary import is_object_mapping, is_object_sequence
+from .transcription_metadata import WebDictionaryCandidate, normalize_web_dictionary_candidate_metadata
+
+
+class TranscriptionContextPayload(TypedDict):
+    """検証済みコンテキストの保存形式。"""
+
+    game_title: str
+    game_notes: str
+    creator_terms: list[str]
+    dictionary_path: str | None
+    dictionary_confirmed: bool
+    web_dictionary_enabled: bool
+    web_dictionary_candidates: list[str]
+    web_dictionary_terms: list[str]
+    web_dictionary_candidate_metadata: list[WebDictionaryCandidate]
 
 
 class TranscriptionContextError(ValueError):
@@ -18,9 +35,9 @@ class TranscriptionContext:
     web_dictionary_enabled: bool = False
     web_dictionary_candidates: tuple[str, ...] = ()
     web_dictionary_terms: tuple[str, ...] = ()
-    web_dictionary_candidate_metadata: tuple[dict[str, str], ...] = ()
+    web_dictionary_candidate_metadata: tuple[WebDictionaryCandidate, ...] = ()
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> TranscriptionContextPayload:
         return {
             "game_title": self.game_title,
             "game_notes": self.game_notes,
@@ -30,9 +47,7 @@ class TranscriptionContext:
             "web_dictionary_enabled": self.web_dictionary_enabled,
             "web_dictionary_candidates": list(self.web_dictionary_candidates),
             "web_dictionary_terms": list(self.web_dictionary_terms),
-            "web_dictionary_candidate_metadata": [
-                dict(item) for item in self.web_dictionary_candidate_metadata
-            ],
+            "web_dictionary_candidate_metadata": [item.copy() for item in self.web_dictionary_candidate_metadata],
         }
 
 
@@ -60,7 +75,7 @@ def _bool(value: object, field: str) -> bool:
 def _creator_terms(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
-    if isinstance(value, str) or not isinstance(value, Sequence):
+    if isinstance(value, str) or not is_object_sequence(value):
         raise TranscriptionContextError("transcription_context.creator_terms must be an array of strings")
 
     terms: list[str] = []
@@ -80,7 +95,7 @@ def _creator_terms(value: object) -> tuple[str, ...]:
 def _normalize_term_sequence(value: object, field: str, *, max_terms: int = 256) -> tuple[str, ...]:
     if value is None:
         return ()
-    if isinstance(value, str) or not isinstance(value, Sequence):
+    if isinstance(value, str) or not is_object_sequence(value):
         raise TranscriptionContextError(f"transcription_context.{field} must be an array of strings")
 
     terms: list[str] = []
@@ -102,16 +117,14 @@ def _normalize_term_sequence(value: object, field: str, *, max_terms: int = 256)
 def _normalize_web_dictionary_metadata(
     value: object,
     field: str,
-) -> tuple[dict[str, str], ...]:
-    from .transcription_web_dictionary import normalize_web_dictionary_candidate_metadata
-
+) -> tuple[WebDictionaryCandidate, ...]:
     return normalize_web_dictionary_candidate_metadata(value, field, max_items=256)
 
 
-def transcription_context_from_mapping(payload: Mapping[str, Any] | None = None) -> TranscriptionContext:
+def transcription_context_from_mapping(payload: object = None) -> TranscriptionContext:
     if payload is None:
         payload = {}
-    if not isinstance(payload, Mapping):
+    if not is_object_mapping(payload):
         raise TranscriptionContextError("transcription_context must be an object")
 
     return TranscriptionContext(
@@ -121,7 +134,9 @@ def transcription_context_from_mapping(payload: Mapping[str, Any] | None = None)
         dictionary_path=_clean_optional_path(payload.get("dictionary_path"), "dictionary_path"),
         dictionary_confirmed=_bool(payload.get("dictionary_confirmed", False), "dictionary_confirmed"),
         web_dictionary_enabled=_bool(payload.get("web_dictionary_enabled", False), "web_dictionary_enabled"),
-        web_dictionary_candidates=_normalize_term_sequence(payload.get("web_dictionary_candidates", ()), "web_dictionary_candidates"),
+        web_dictionary_candidates=_normalize_term_sequence(
+            payload.get("web_dictionary_candidates", ()), "web_dictionary_candidates"
+        ),
         web_dictionary_terms=_normalize_term_sequence(payload.get("web_dictionary_terms", ()), "web_dictionary_terms"),
         web_dictionary_candidate_metadata=_normalize_web_dictionary_metadata(
             payload.get("web_dictionary_candidate_metadata"),
@@ -130,5 +145,5 @@ def transcription_context_from_mapping(payload: Mapping[str, Any] | None = None)
     )
 
 
-def normalize_transcription_context(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def normalize_transcription_context(payload: object = None) -> TranscriptionContextPayload:
     return transcription_context_from_mapping(payload).to_dict()

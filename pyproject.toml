@@ -13,16 +13,72 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# Start with rules that catch broken Python without forcing a large style-only rewrite.
-# Broader style/import/format enforcement should be enabled in follow-up PRs.
-select = [
-  "E9",   # syntax errors
-  "F63",  # invalid print/raise-style checks from Pyflakes
-  "F7",   # logic errors in comprehensions/control flow
-  "F82",  # undefined names
-]
+# 構文エラーとPyflakesの全ルールを検証する。
+# 互換性のための再公開は同名aliasで明示する。
+select = ["E9", "F"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
+
+# 小さなOS境界から型チェックを段階的に厳格化する。
+[tool.mypy]
+python_version = "3.10"
+# CIとローカルが同じ対象を使う。全体移行に伴ってこの一覧を拡張する。
+files = [
+  "scripts/check_quality.py",
+  "src/platform_paths.py",
+  "src/platform_updates.py",
+  "src/process_utils.py",
+  "src/qprocess_launcher.py",
+  "src/data_boundary.py",
+  "src/runtime_config.py",
+  "src/runtime_config_schema.py",
+  "tests/test_data_boundary.py",
+  "tests/test_runtime_config.py",
+  "src/transcription_context.py",
+  "src/transcription_context_config.py",
+  "src/transcription_dictionary.py",
+  "src/transcription_metadata.py",
+  "src/video_timeline.py",
+  "tests/test_video_timeline_models.py",
+  "tests/test_transcription_context_models.py",
+  "tests/test_transcription_context_config.py",
+  "tests/test_transcription_dictionary.py",
+]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["src.platform_paths", "src.platform_updates", "src.process_utils", "src.qprocess_launcher"]
+strict = true
+disallow_any_explicit = true
+
+# 品質チェックのジョブではGUI本体を導入しない。
+[[tool.mypy.overrides]]
+module = ["PySide6", "PySide6.*"]
+ignore_missing_imports = true
+
+# 移行済みのデータ境界・モデルでは明示・暗黙のAnyを禁止する。
+[[tool.mypy.overrides]]
+module = [
+  "src.data_boundary",
+  "src.runtime_config",
+  "src.runtime_config_schema",
+  "tests.test_data_boundary",
+  "tests.test_runtime_config",
+  "src.transcription_context",
+  "src.transcription_context_config",
+  "src.transcription_dictionary",
+  "src.transcription_metadata",
+  "src.video_timeline",
+  "tests.test_video_timeline_models",
+  "tests.test_transcription_context_models",
+  "tests.test_transcription_context_config",
+  "tests.test_transcription_dictionary",
+]
+strict = true
+disallow_any_explicit = true
+disallow_any_expr = true
+disallow_any_unimported = true
+disallow_any_decorated = true

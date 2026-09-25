@@ -27,7 +27,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--type-only",
         action="store_true",
-        help="Run only mypy type checks.",
+        help="pyproject.tomlで指定した対象の型チェックを実行する。--pathsで対象を上書きできる。",
     )
     parser.add_argument(
         "--tests-only",
@@ -85,6 +85,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         metavar="PATH",
         help="Limit Ruff or mypy checks to specific files or directories.",
     )
+    parser.add_argument(
+        "--type-platform",
+        choices=("linux", "win32", "darwin"),
+        help="型チェックで評価するOS。--type-onlyまたは--include-type-checkと併用する。",
+    )
     args = parser.parse_args(argv)
 
     exclusive_modes = (args.lint_only, args.format_only, args.type_only, args.tests_only)
@@ -94,6 +99,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--include-format cannot be used with --lint-only, --type-only, or --tests-only")
     if args.include_type_check and (args.lint_only or args.format_only or args.tests_only):
         parser.error("--include-type-check cannot be used with --lint-only, --format-only, or --tests-only")
+    if args.type_platform and not (args.type_only or args.include_type_check):
+        parser.error("--type-platform requires --type-only or --include-type-check")
     if args.fix_format and not (args.include_format or args.format_only):
         parser.error("--fix-format requires --include-format or --format-only")
 
@@ -138,8 +145,8 @@ def build_steps(args: argparse.Namespace) -> list[list[str]]:
                 sys.executable,
                 "-m",
                 "mypy",
-                "--ignore-missing-imports",
-                *quality_targets(args),
+                *(["--platform", args.type_platform] if args.type_platform else []),
+                *(args.paths or []),
             ]
         )
     if not args.skip_tests:

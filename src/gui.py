@@ -29,7 +29,6 @@ from PySide6.QtCore import (
     QModelIndex,
     QObject,
     QProcess,
-    QStandardPaths,
     QTimer,
     Qt,
     QUrl,
@@ -41,9 +40,12 @@ from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
+from .platform_updates import installer_download_name
+from .platform_paths import audio_preview_directory
+from .process_utils import detached_subprocess_kwargs
+
 from .audio_mixer import (
     DEFAULT_AUDIO_TRACK,
-    MAX_VOLUME_PERCENT,
     active_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,
@@ -730,10 +732,7 @@ class EditBayBackend(LegacyEditBayBackend):
             on_autosave_retry=lambda: QTimer.singleShot(0, self._autosave_project),
             on_history_applied=self._on_project_history_applied,
         )
-        cache_location = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.GenericCacheLocation
-        )
-        cache_root = Path(cache_location) / "Subtitle Edit Bay" / "audio-preview"
+        cache_root = audio_preview_directory()
         self._audio_preview_controller = AudioPreviewController(
             cache_root,
             parent=self,
@@ -3956,7 +3955,7 @@ class EditBayBackend(LegacyEditBayBackend):
         try:
             expected_sha256 = update_manager.resolve_expected_sha256(info)
             destination = update_manager.update_download_directory(self.workspace_root) / (
-                f"SubtitleEditBay-{info.latest_version.lstrip('v')}.exe"
+                installer_download_name(info.latest_version)
             )
             package_path = update_manager.download_package(
                 info,
@@ -4033,10 +4032,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.DEVNULL,
                 "stderr": subprocess.DEVNULL,
-                "start_new_session": True,
+                **detached_subprocess_kwargs(),
             }
-            if sys.platform == "win32":
-                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             subprocess.Popen(command, **popen_kwargs)
         except (OSError, update_manager.UpdatePackageError) as error:
             self._set_status(f"更新helperを起動できませんでした: {error}", "ERROR")
@@ -4061,13 +4058,17 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self.downloadUpdate()
             return
+        try:
+            command = updater.launch_update_script(
+                self.workspace_root, self._update_info.download_url
+            )
+        except updater.UpdaterError as error:
+            self._set_status(str(error), "ERROR")
+            return
         if self._project is not None and not self.saveProject():
             self._set_status("プロジェクトを保存できませんでした", "ERROR")
             return
         self.saveSettings(self._settings)
-        command = updater.launch_update_script(
-            self.workspace_root, self._update_info.download_url
-        )
         self._start_command(command, "update", "アプリケーションを更新しています")
 
     @Slot()
@@ -4083,7 +4084,7 @@ class EditBayBackend(LegacyEditBayBackend):
             subprocess.Popen(
                 [sys.executable, "-m", "src.gui"],
                 cwd=str(self.workspace_root),
-                start_new_session=True,
+                **detached_subprocess_kwargs(),
             )
         except OSError as error:
             self._set_status(f"再起動に失敗しました: {error}", "ERROR")

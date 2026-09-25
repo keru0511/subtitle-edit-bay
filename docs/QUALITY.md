@@ -262,23 +262,58 @@ Install dependencies and then run checks from a fresh environment:
 python scripts/check_quality.py --install-runtime --install-dev
 ```
 
-The CI Python quality job uses the same script with `--lint-only`, runs a scoped format check against `scripts/check_quality.py`, and runs a scoped mypy check against `scripts/check_quality.py`. Windows CI keeps separate jobs for runtime-heavy smoke checks.
+CIのPython品質ジョブは共通の`check_quality.py`を使い、Ruff、同スクリプトの整形確認、設定した対象の型チェックを実行します。Windows上の実プロセス・GUI・メディア検証は別ジョブで維持します。
 
-## Current Ruff scope
+## Ruffの対象範囲
 
-Ruff is currently configured to catch broken Python only:
+`E9`（構文エラー）と`F`（Pyflakes全ルール）をPython全体へ適用します。未定義名に加えて、未使用import・未使用変数・重複定義などを検出します。互換APIとして再公開する名前は同名aliasを使い、再公開の意図を明示します。外部から使われる名前を機械的に削除しません。
 
-- syntax errors
-- undefined names
-- severe Pyflakes control-flow errors
+全体の整形・import並び替え・広範なスタイルルールは別変更で扱います。今回、全体への整形適用は行いません。
 
-Ruff format is available through the shared quality entrypoint. CI currently enforces a scoped format check for the quality entrypoint itself, but repository-wide formatting is not enforced yet. Repository-wide format enforcement should be enabled in a separate formatting-only pull request to avoid mixing behavior work with large formatting diffs.
+## 型チェックの対象範囲
 
-## Current type-check scope
+CIとローカルの既定対象は`pyproject.toml`の`tool.mypy.files`に集約しています。`--paths`を指定すると、その実行に限って対象を上書きできます。
 
-mypy is available through the shared quality entrypoint. CI currently enforces a scoped mypy check for `scripts/check_quality.py` only. Repository-wide type checking is not enforced yet because the broader codebase still needs typed settings and domain model boundaries.
+```sh
+# 設定済みの対象をまとめて確認
+python scripts/check_quality.py --type-only
+# Windowsの条件分岐で確認（CIではlinux・win32・darwinを順に実行）
+python scripts/check_quality.py --type-only --type-platform win32
+# 未移行コードを含めて調査するときの例
+python scripts/check_quality.py --type-only --paths src scripts tests
+```
 
-Import sorting and broad style rules are not enforced yet. They should be enabled in separate follow-up changes after the existing hot spots are cleaned up.
+既存の品質チェック用スクリプトとOS境界4モジュールに加え、実行設定の読み込み・検証・データ境界、文字起こしコンテキスト・辞書・非破壊カットのタイムラインモデルと対応するテストを対象にしています（計19ファイル）。OS境界はstrictと明示的な`Any`禁止を継続します。移行済みのデータ境界・モデル・対応テストの14ファイルでは、次の規則をすべて適用します。
+
+- `strict`: 注釈のない関数、型引数のないジェネリックなどを禁止
+- `disallow_any_explicit`: 明示的な`Any`を禁止
+- `disallow_any_expr`: 式に含まれる暗黙の`Any`を禁止
+- `disallow_any_unimported`: 型情報のないimport由来の`Any`を禁止
+- `disallow_any_decorated`: デコレーター適用後の関数型に含まれる`Any`を禁止
+
+標準ライブラリのJSONデコード結果は`object`で受けます。コンテナを読み取る前に実際の形を検証し、各要素も`object`として扱います。`object`は任意の演算や属性アクセスを許可しないため、利用前の型の絞り込みが必要です。`cast`・`type: ignore`・検査除外を増やして通す方針は採りません。実行設定は未知のキーやセクションを保持する互換契約があるため、固定フィールドのモデルとして扱える領域とは分けて移行します。
+
+CIの3つのOS設定は静的な条件分岐の検証であり、各OSでの実行テストの代わりではありません。mypy全体への`--ignore-missing-imports`は使いません。品質ジョブにGUI実行環境を導入しないため、既存のPySide6未導入許容は維持しています。未導入時はQt APIの型を保証しません。今回移行したデータ境界はPySide6に依存しません。
+
+## Any禁止への全体移行
+
+最終対象は本体・スクリプト・テスト全体です。初回診断は271ファイル中248ファイルに21,582件のエラーがあり、明示的な`Any`だけでなく、モック・JSON・Qt・外部ライブラリからの伝播も含んでいます。この件数はmacOS / Python 3.13のローカル環境での調査値で、未導入ライブラリの診断も含みます。Python 3.10のCI基準での固定件数ではありません。
+
+レビュー可能な単位で順に移行し、移行済みファイルはそのPRでCIの対象に追加します。
+
+1. 実行設定とデータ境界、そのテスト（#448で完了）
+2. 字幕プロジェクト・文字起こし・辞書などのデータモデルとJSON契約（#449で文字起こしコンテキスト・辞書を移行、今回は非破壊カットのタイムラインを移行。字幕セグメント・複数クリップのシーケンスは後続）
+3. パイプライン・CLI・配布スクリプトと外部プロセス境界
+4. Qt・機械学習などの外部ライブラリ境界、GUI、対応するモック・テスト
+5. 全対象へ規則を適用し、段階移行用の対象一覧・限定設定を撤去
+
+文字起こしコンテキスト、辞書エントリー・出典、辞書候補の保存形式は`TypedDict`でフィールドの型を定義しています。入力は`object`として受け、既存の正規化で検証してからデータクラスへ変換します。辞書候補の正規化は`transcription_metadata.py`へ分離し、ネットワーク取得処理から独立させています。既存の`transcription_web_dictionary`からのimportも維持します。Qtやネットワーク取得自体のAny禁止はまだ完了していません。
+
+コンテキストの単体テストは`test_transcription_context_models.py`へ分けてAny禁止の対象とし、字幕プロジェクトとの保存・読込の統合テストは`test_transcription_context.py`に維持しています。
+
+非破壊カットの`video_timeline.py`では、入力をobjectから検証し、表示用の固定形式を`VideoTimelineView`などのTypedDictで定義しています。保存データは未知の拡張キー・値を保持するため`dict[object, object]`とし、固定形式と区別します。数値化は共通境界に集約し、従来の数値文字列・bool・整数への切り捨てを維持します。有限値や範囲の検証はタイムライン側で行います。タイムラインの単体テストは`test_video_timeline_models.py`でAnyを禁止し、字幕プロジェクトとの統合テストは既存ファイルに残しています。
+
+進捗は診断件数だけでなく、Any禁止をCIで保証する対象が増えたかで確認します。全体移行は未完了です。
 
 ## Heavier Windows checks
 

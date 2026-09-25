@@ -19,8 +19,8 @@ from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-    MAX_LINES,
-    normalize_text,
+    MAX_LINES as MAX_LINES,
+    normalize_text as normalize_text,
 )
 
 DEFAULT_SPEAKER_STYLE = {

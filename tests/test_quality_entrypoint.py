@@ -92,7 +92,7 @@ class QualityEntrypointTests(unittest.TestCase):
 
         self.assertEqual(steps, [[sys.executable, "-m", "ruff", "format", "."]])
 
-    def test_type_only_runs_only_mypy(self) -> None:
+    def test_type_only_uses_configured_mypy_targets(self) -> None:
         quality = load_quality_module()
 
         args = quality.parse_args(["--type-only"])
@@ -100,7 +100,7 @@ class QualityEntrypointTests(unittest.TestCase):
 
         self.assertEqual(
             steps,
-            [[sys.executable, "-m", "mypy", "--ignore-missing-imports", "."]],
+            [[sys.executable, "-m", "mypy"]],
         )
 
     def test_type_only_can_be_scoped_to_explicit_paths(self) -> None:
@@ -116,7 +116,6 @@ class QualityEntrypointTests(unittest.TestCase):
                     sys.executable,
                     "-m",
                     "mypy",
-                    "--ignore-missing-imports",
                     "scripts/check_quality.py",
                 ]
             ],
@@ -151,9 +150,7 @@ class QualityEntrypointTests(unittest.TestCase):
         steps = quality.build_steps(args)
 
         self.assertEqual(steps[0], [sys.executable, "-m", "ruff", "check", "."])
-        self.assertEqual(
-            steps[1], [sys.executable, "-m", "ruff", "format", "--check", "."]
-        )
+        self.assertEqual(steps[1], [sys.executable, "-m", "ruff", "format", "--check", "."])
         self.assertEqual(steps[2][1:4], ["-m", "unittest", "discover"])
 
     def test_include_type_check_runs_lint_mypy_then_unittest(self) -> None:
@@ -169,7 +166,6 @@ class QualityEntrypointTests(unittest.TestCase):
                 sys.executable,
                 "-m",
                 "mypy",
-                "--ignore-missing-imports",
                 "scripts/check_quality.py",
             ],
         )
@@ -181,9 +177,7 @@ class QualityEntrypointTests(unittest.TestCase):
         args = quality.parse_args(["--install-runtime", "--install-dev", "--tests-only"])
         steps = quality.build_steps(args)
 
-        self.assertEqual(
-            steps[0], [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
-        )
+        self.assertEqual(steps[0], [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
         self.assertEqual(
             steps[1],
             [sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"],
@@ -195,6 +189,35 @@ class QualityEntrypointTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             quality.parse_args(["--fix-format"])
+
+    def test_type_platform_is_forwarded_and_requires_type_checks(self) -> None:
+        quality = load_quality_module()
+        for platform in ("linux", "win32", "darwin"):
+            with self.subTest(platform=platform):
+                args = quality.parse_args(
+                    [
+                        "--type-only",
+                        "--type-platform",
+                        platform,
+                        "--paths",
+                        "src/process_utils.py",
+                    ]
+                )
+                self.assertEqual(
+                    quality.build_steps(args),
+                    [
+                        [
+                            sys.executable,
+                            "-m",
+                            "mypy",
+                            "--platform",
+                            platform,
+                            "src/process_utils.py",
+                        ]
+                    ],
+                )
+        with self.assertRaises(SystemExit):
+            quality.parse_args(["--lint-only", "--type-platform", "win32"])
 
     def test_type_only_cannot_be_combined_with_other_single_check_modes(self) -> None:
         quality = load_quality_module()

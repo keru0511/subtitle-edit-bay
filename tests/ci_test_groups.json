@@ -32,6 +32,7 @@
         "test_audio_auto_mix",
         "test_audio_mix_proposal",
         "test_audio_mixer",
+        "test_audio_mixer_models",
         "test_audio_preview_cache",
         "test_batch",
         "test_burn_subs",

@@ -14,6 +14,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
+from .audio_mixer import AUDIO_CHANNEL_CHANGE_FIELDS
 from .subtitle_project import (
     SubtitleProjectError,
     assign_project_layout_rows,
@@ -475,6 +476,22 @@ class ProjectEditorController:
             self.commit_sequence_change(before_payload, after_payload)
         return after
 
+    def _restore_audio_mix_settings(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """履歴の操作値だけを戻し、再リンク後の素材参照とチャンネル構成を維持する。"""
+        restored = deepcopy(self._project.get("audio_mix", {}))
+        historical_channels = {
+            channel["id"]: channel for channel in snapshot.get("channels", [])
+        }
+        for channel in restored.get("channels", []):
+            historical = historical_channels.get(channel["id"])
+            if historical is None:
+                continue
+            for field in AUDIO_CHANNEL_CHANGE_FIELDS:
+                if field in historical:
+                    channel[field] = historical[field]
+        restored["customized"] = bool(snapshot.get("customized", False))
+        return restored
+
     def apply_history_entry(
         self, entry: dict[str, Any], state: str, *, history_move: str | None = None,
     ) -> None:
@@ -487,6 +504,8 @@ class ProjectEditorController:
             if state == "before" and entry.get("before_missing"):
                 updates = {}
                 remove_fields = (kind,)
+            elif kind == "audio_mix":
+                updates = {kind: self._restore_audio_mix_settings(entry.get(state, {}))}
             else:
                 updates = {kind: deepcopy(entry.get(state, {}))}
         elif kind == "timeline":

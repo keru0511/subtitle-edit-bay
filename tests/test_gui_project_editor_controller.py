@@ -271,6 +271,27 @@ class ProjectEditorControllerTests(unittest.TestCase):
         self.assertEqual(controller.project["short_video"]["clips"][0]["end"], 1)
         self.assertEqual(events, ["dirty"] * 3)
 
+    def test_audio_history_keeps_current_channel_topology(self) -> None:
+        controller = self._editing_controller()
+        controller.project["audio_mix"] = {"customized": False, "channels": [
+            {"id": "kept", "path": "old.wav", "volume_percent": 100},
+            {"id": "removed", "path": "removed.wav", "volume_percent": 100},
+        ]}
+        edited = deepcopy(controller.project["audio_mix"])
+        edited["channels"][0]["volume_percent"] = 130
+        edited["customized"] = True
+        controller.commit_section_change("audio_mix", edited)
+        controller.project["audio_mix"]["channels"] = [
+            {"id": "kept", "path": "new.wav", "volume_percent": 130},
+            {"id": "added", "path": "added.wav", "volume_percent": 80},
+        ]
+        for action, volume in ((controller.undo, 100), (controller.redo, 130)):
+            action()
+            self.assertEqual(controller.project["audio_mix"]["channels"], [
+                {"id": "kept", "path": "new.wav", "volume_percent": volume},
+                {"id": "added", "path": "added.wav", "volume_percent": 80},
+            ])
+
     def test_invalid_short_edit_does_not_create_history(self) -> None:
         controller = self._editing_controller()
         before = deepcopy(controller.project)

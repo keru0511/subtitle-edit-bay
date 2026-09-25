@@ -1517,6 +1517,33 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.saveProject())
         self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["audio_mix"], edited)
 
+    def test_audio_undo_redo_preserves_relinked_source_paths(self) -> None:
+        path = self._load_project()
+        old_source = Path(self.app._project["audio_sources"][0]["path"])
+        self.app._project["audio_sources"][0]["file_name"] = old_source.name
+        self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
+        relocated = self.root / "relocated"
+        relocated.mkdir()
+        new_source = relocated / old_source.name
+        new_source.write_bytes(b"audio")
+        self.app.beginSourceRelink()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(self.app._project["video"]["path"])
+            self.app.setAudioFiles([str(new_source)], False)
+            self.app.setOutputDirectory(self.app._project["output_dir"])
+        self.app.relinkProjectSources()
+        self.app.finishSourceRelink()
+        for action, volume in ((self.app.undoEdit, 100), (self.app.redoEdit, 135)):
+            action()
+            channel = next(item for item in self.app.audioMixerChannels if item["kind"] == "external")
+            self.assertEqual(channel["path"], str(new_source.resolve()))
+            self.assertEqual(channel["volume_percent"], volume)
+            self.assertEqual(self.app._project["audio_sources"][0]["path"], str(new_source.resolve()))
+        self.assertTrue(self.app.saveProject())
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        channel = next(item for item in saved["audio_mix"]["channels"] if item["kind"] == "external")
+        self.assertEqual(channel["path"], str(new_source.resolve()))
+
     def test_short_edit_undo_redo_updates_clip_model_and_saved_project(self) -> None:
         path = self._load_project()
         before = deepcopy(self.app._project)

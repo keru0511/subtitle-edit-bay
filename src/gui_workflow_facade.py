@@ -713,8 +713,4 @@ class WorkflowFacade(FeatureFacade):
         if backend._running and backend._active_job == "update":
             backend._set_status("更新処理は途中で停止できません", "UPDATE")
             return
-        if not backend._running:
-            return
-        backend._cancel_requested = True
-        backend._set_status("停止を要求しています", "STOPPING")
-        backend._job_runner.cancel(job_id=backend._active_job or "legacy")
+        backend._cancel_processing()

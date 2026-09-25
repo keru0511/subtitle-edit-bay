@@ -384,7 +384,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Property(QObject, constant=True)
     def shortVideo(self) -> ShortVideoFacade:
-        return self._shortVideo_facade
+        return self._short_video_facade
 
     @Property(QObject, constant=True)
     def audio(self) -> AudioFacade:
@@ -663,7 +663,7 @@ class EditBayBackend(LegacyEditBayBackend):
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._workspace_facade = WorkspaceFacade(self)
         self._subtitles_facade = SubtitleFacade(self)
-        self._shortVideo_facade = ShortVideoFacade(self)
+        self._short_video_facade = ShortVideoFacade(self)
         self._audio_facade = AudioFacade(self)
         self._sequence_facade = SequenceFacade(self)
         self._workflow_facade = WorkflowFacade(self)
@@ -1136,27 +1136,27 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Property("QVariantList", notify=shortVideoChanged)
     def shortVideoClips(self) -> list[dict[str, Any]]:
-        return self._shortVideo_facade.shortVideoClips
+        return self._short_video_facade.shortVideoClips
 
     @Property("QVariantMap", notify=shortVideoChanged)
     def shortVideoSettings(self) -> dict[str, Any]:
-        return self._shortVideo_facade.shortVideoSettings
+        return self._short_video_facade.shortVideoSettings
 
     @Property("QVariantList", notify=highlightCandidatesChanged)
     def highlightCandidates(self) -> list[dict[str, Any]]:
-        return self._shortVideo_facade.highlightCandidates
+        return self._short_video_facade.highlightCandidates
 
     @Property(bool, notify=highlightCandidatesChanged)
     def highlightUndoAvailable(self) -> bool:
-        return self._shortVideo_facade.highlightUndoAvailable
+        return self._short_video_facade.highlightUndoAvailable
 
     @Property(str, notify=highlightAnalysisChanged)
     def highlightAnalysisState(self) -> str:
-        return self._shortVideo_facade.highlightAnalysisState
+        return self._short_video_facade.highlightAnalysisState
 
     @Property(float, notify=highlightAnalysisChanged)
     def highlightAnalysisProgress(self) -> float:
-        return self._shortVideo_facade.highlightAnalysisProgress
+        return self._short_video_facade.highlightAnalysisProgress
 
     @Property(QObject, constant=True)
     def subtitleModel(self) -> QObject:
@@ -1164,15 +1164,15 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Property(QObject, constant=True)
     def shortVideoClipModel(self) -> QObject:
-        return self._shortVideo_facade.shortVideoClipModel
+        return self._short_video_facade.shortVideoClipModel
 
     @Property(int, notify=shortVideoClipDataChanged)
     def shortVideoClipCount(self) -> int:
-        return self._shortVideo_facade.shortVideoClipCount
+        return self._short_video_facade.shortVideoClipCount
 
     @Slot(int, result="QVariantMap")
     def shortVideoClipAt(self, index: int) -> dict[str, Any]:
-        return self._shortVideo_facade.shortVideoClipAt(index)
+        return self._short_video_facade.shortVideoClipAt(index)
 
     @Property("QVariantList", constant=True)
     def fontChoices(self) -> list[dict[str, str]]:
@@ -1212,94 +1212,94 @@ class EditBayBackend(LegacyEditBayBackend):
         return self._subtitles_facade._find_segment_by_id(segment_id)
 
     def _short_video_clip_count(self) -> int:
-        return self._shortVideo_facade._short_video_clip_count()
+        return self._short_video_facade._short_video_clip_count()
 
     def _short_video_clip_view_at(self, index: int) -> dict[str, Any]:
-        return self._shortVideo_facade._short_video_clip_view_at(index)
+        return self._short_video_facade._short_video_clip_view_at(index)
 
     def _refresh_short_video_clip_data(self) -> None:
-        return self._shortVideo_facade._refresh_short_video_clip_data()
+        return self._short_video_facade._refresh_short_video_clip_data()
 
     def _build_short_video_clip_view(self, clip: dict[str, Any], index: int) -> dict[str, Any]:
-        return self._shortVideo_facade._build_short_video_clip_view(clip, index)
+        return self._short_video_facade._build_short_video_clip_view(clip, index)
 
     @Slot()
     def initializeShortVideoClips(self) -> None:
-        return self._shortVideo_facade.initializeShortVideoClips()
+        return self._short_video_facade.initializeShortVideoClips()
 
     @Slot(str, result=bool)
     def addShortVideoClip(self, segment_id: str) -> bool:
-        return self._shortVideo_facade.addShortVideoClip(segment_id)
+        return self._short_video_facade.addShortVideoClip(segment_id)
 
     @Slot(float, float, result=bool)
     def addShortVideoClipByRange(self, start: float, end: float) -> bool:
-        return self._shortVideo_facade.addShortVideoClipByRange(start, end)
+        return self._short_video_facade.addShortVideoClipByRange(start, end)
 
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
-        return self._shortVideo_facade.removeShortVideoClip(index)
+        return self._short_video_facade.removeShortVideoClip(index)
 
     @Slot(int, int, result=bool)
     def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
-        return self._shortVideo_facade.moveShortVideoClip(from_index, to_index)
+        return self._short_video_facade.moveShortVideoClip(from_index, to_index)
 
     @Slot(int, "QVariantMap", result=bool)
     def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
-        return self._shortVideo_facade.updateShortVideoClip(index, fields)
+        return self._short_video_facade.updateShortVideoClip(index, fields)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalFit(self, fit: str) -> bool:
-        return self._shortVideo_facade.setShortVideoGlobalFit(fit)
+        return self._short_video_facade.setShortVideoGlobalFit(fit)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
-        return self._shortVideo_facade.setShortVideoGlobalBackgroundColor(color)
+        return self._short_video_facade.setShortVideoGlobalBackgroundColor(color)
 
     @Slot(str, float, result=bool)
     def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
-        return self._shortVideo_facade.setShortVideoTransition(transition_type, duration)
+        return self._short_video_facade.setShortVideoTransition(transition_type, duration)
 
     @Slot("QVariantMap", result=bool)
     def setShortVideoBgm(self, fields: dict[str, Any]) -> bool:
-        return self._shortVideo_facade.setShortVideoBgm(fields)
+        return self._short_video_facade.setShortVideoBgm(fields)
 
     @Slot(int, int, int, result=bool)
     def setShortVideoOutput(self, width: int, height: int, fps: int) -> bool:
-        return self._shortVideo_facade.setShortVideoOutput(width, height, fps)
+        return self._short_video_facade.setShortVideoOutput(width, height, fps)
 
     @Slot(float, result=bool)
     def setShortVideoSubtitleScale(self, percent: float) -> bool:
-        return self._shortVideo_facade.setShortVideoSubtitleScale(percent)
+        return self._short_video_facade.setShortVideoSubtitleScale(percent)
 
     @Slot(result=bool)
     def startHighlightAnalysis(self) -> bool:
-        return self._shortVideo_facade.startHighlightAnalysis()
+        return self._short_video_facade.startHighlightAnalysis()
 
     @Slot(result=bool)
     def cancelHighlightAnalysis(self) -> bool:
-        return self._shortVideo_facade.cancelHighlightAnalysis()
+        return self._short_video_facade.cancelHighlightAnalysis()
 
     @Slot(result=bool)
     def retryHighlightAnalysis(self) -> bool:
-        return self._shortVideo_facade.retryHighlightAnalysis()
+        return self._short_video_facade.retryHighlightAnalysis()
 
     @Slot(int, result=bool)
     def addHighlightCandidate(self, index: int) -> bool:
-        return self._shortVideo_facade.addHighlightCandidate(index)
+        return self._short_video_facade.addHighlightCandidate(index)
 
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:
-        return self._shortVideo_facade.rejectHighlightCandidate(index)
+        return self._short_video_facade.rejectHighlightCandidate(index)
 
     @Slot(result=bool)
     def undoHighlightRejection(self) -> bool:
-        return self._shortVideo_facade.undoHighlightRejection()
+        return self._short_video_facade.undoHighlightRejection()
 
     def _is_current_highlight_run(self, generation: int) -> bool:
-        return self._shortVideo_facade._is_current_highlight_run(generation)
+        return self._short_video_facade._is_current_highlight_run(generation)
 
     def _update_highlight_progress(self, generation: int, value: float) -> None:
-        return self._shortVideo_facade._update_highlight_progress(generation, value)
+        return self._short_video_facade._update_highlight_progress(generation, value)
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:
@@ -1922,7 +1922,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(result=str)
     def browseShortModeBgm(self) -> str:
-        return self._shortVideo_facade.browseShortModeBgm()
+        return self._short_video_facade.browseShortModeBgm()
 
     @Slot()
     def browseProjectFile(self) -> None:

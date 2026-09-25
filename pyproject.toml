@@ -37,6 +37,13 @@ files = [
   "src/runtime_config_schema.py",
   "tests/test_data_boundary.py",
   "tests/test_runtime_config.py",
+  "src/transcription_context.py",
+  "src/transcription_context_config.py",
+  "src/transcription_dictionary.py",
+  "src/transcription_metadata.py",
+  "tests/test_transcription_context_models.py",
+  "tests/test_transcription_context_config.py",
+  "tests/test_transcription_dictionary.py",
 ]
 explicit_package_bases = true
 
@@ -50,7 +57,7 @@ disallow_any_explicit = true
 module = ["PySide6", "PySide6.*"]
 ignore_missing_imports = true
 
-# 全体移行の第1段。外部データをobjectで受け、検証後に型を絞る。
+# 移行済みのデータ境界・モデルでは明示・暗黙のAnyを禁止する。
 [[tool.mypy.overrides]]
 module = [
   "src.data_boundary",
@@ -58,6 +65,13 @@ module = [
   "src.runtime_config_schema",
   "tests.test_data_boundary",
   "tests.test_runtime_config",
+  "src.transcription_context",
+  "src.transcription_context_config",
+  "src.transcription_dictionary",
+  "src.transcription_metadata",
+  "tests.test_transcription_context_models",
+  "tests.test_transcription_context_config",
+  "tests.test_transcription_dictionary",
 ]
 strict = true
 disallow_any_explicit = true

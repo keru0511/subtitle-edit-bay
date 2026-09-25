@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
-from .transcription_context import TranscriptionContext, transcription_context_from_mapping
+from .data_boundary import decode_json, is_object_mapping
+from .transcription_context import (
+    TranscriptionContext,
+    TranscriptionContextPayload,
+    transcription_context_from_mapping,
+)
 
 
 class TranscriptionContextConfigError(ValueError):
@@ -17,7 +21,7 @@ def _context_from_value(value: object) -> TranscriptionContext:
         return TranscriptionContext()
     if isinstance(value, TranscriptionContext):
         return value
-    if isinstance(value, Mapping):
+    if is_object_mapping(value):
         return transcription_context_from_mapping(value)
     raise TranscriptionContextConfigError("transcription_context must be an object")
 
@@ -51,10 +55,10 @@ def load_transcription_context_file(
     if not path.is_file():
         raise TranscriptionContextConfigError(f"transcription context file was not found: {path}")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        payload = decode_json(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         raise TranscriptionContextConfigError(f"transcription context file is invalid JSON: {path}") from exc
-    if not isinstance(payload, Mapping):
+    if not is_object_mapping(payload):
         raise TranscriptionContextConfigError("transcription context file must contain an object")
 
     context_payload: object = payload.get("transcription_context", payload)
@@ -62,7 +66,7 @@ def load_transcription_context_file(
 
 
 def transcription_context_from_runtime_config(
-    config: Mapping[str, Any] | None,
+    config: Mapping[str, object] | None,
     *,
     cli_context_file: str | None = None,
     base_dir: str | Path | None = None,
@@ -89,11 +93,11 @@ def transcription_context_from_runtime_config(
 
 
 def normalized_transcription_context_from_runtime_config(
-    config: Mapping[str, Any] | None,
+    config: Mapping[str, object] | None,
     *,
     cli_context_file: str | None = None,
     base_dir: str | Path | None = None,
-) -> dict[str, Any]:
+) -> TranscriptionContextPayload:
     return transcription_context_from_runtime_config(
         config,
         cli_context_file=cli_context_file,

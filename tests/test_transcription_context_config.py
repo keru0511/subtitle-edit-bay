@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from src.transcription_context import TranscriptionContextPayload
+
 from src.transcription_context_config import (
     TranscriptionContextConfigError,
     load_transcription_context_file,
@@ -16,19 +18,20 @@ class TranscriptionContextConfigTests(unittest.TestCase):
     def test_missing_context_returns_default_shape(self) -> None:
         context = normalized_transcription_context_from_runtime_config({})
 
+        expected: TranscriptionContextPayload = {
+            "game_title": "",
+            "game_notes": "",
+            "creator_terms": [],
+            "dictionary_path": None,
+            "dictionary_confirmed": False,
+            "web_dictionary_enabled": False,
+            "web_dictionary_candidates": [],
+            "web_dictionary_terms": [],
+            "web_dictionary_candidate_metadata": [],
+        }
         self.assertEqual(
             context,
-            {
-                "game_title": "",
-                "game_notes": "",
-                "creator_terms": [],
-                "dictionary_path": None,
-                "dictionary_confirmed": False,
-                "web_dictionary_enabled": False,
-                "web_dictionary_candidates": [],
-                "web_dictionary_terms": [],
-                "web_dictionary_candidate_metadata": [],
-            },
+            expected,
         )
 
     def test_inline_runtime_context_is_normalized(self) -> None:
@@ -58,13 +61,14 @@ class TranscriptionContextConfigTests(unittest.TestCase):
     def test_loads_raw_context_file(self) -> None:
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "context.json"
+            payload: dict[str, object] = {
+                "game_title": "Apex Legends",
+                "game_notes": "ranked",
+                "creator_terms": ["フラトラ"],
+            }
             path.write_text(
                 json.dumps(
-                    {
-                        "game_title": "Apex Legends",
-                        "game_notes": "ranked",
-                        "creator_terms": ["フラトラ"],
-                    },
+                    payload,
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
@@ -79,15 +83,13 @@ class TranscriptionContextConfigTests(unittest.TestCase):
     def test_loads_runtime_shaped_context_file(self) -> None:
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "runtime.json"
+            payload: dict[str, object] = {
+                "model": "large-v3",
+                "transcription_context": {"game_title": "Minecraft", "creator_terms": ["エンダードラゴン"]},
+            }
             path.write_text(
                 json.dumps(
-                    {
-                        "model": "large-v3",
-                        "transcription_context": {
-                            "game_title": "Minecraft",
-                            "creator_terms": ["エンダードラゴン"],
-                        },
-                    },
+                    payload,
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
@@ -104,8 +106,9 @@ class TranscriptionContextConfigTests(unittest.TestCase):
     def test_cli_context_file_overrides_inline_config(self) -> None:
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "cli.json"
+            payload: dict[str, object] = {"game_title": "CLI Game"}
             path.write_text(
-                json.dumps({"game_title": "CLI Game"}, ensure_ascii=False),
+                json.dumps(payload, ensure_ascii=False),
                 encoding="utf-8",
             )
 

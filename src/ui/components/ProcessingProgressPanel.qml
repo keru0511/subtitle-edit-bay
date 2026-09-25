@@ -16,7 +16,7 @@ Rectangle {
     property color warningColor: "#F59E0B"
     property color errorColor: "#EF4444"
 
-    visible: backend && backend.progressVisible
+    visible: backend && backend.workflow.progressVisible
     implicitHeight: 126
     radius: 12
     color: panel.panelColor
@@ -41,8 +41,8 @@ Rectangle {
             Text {
                 objectName: "processingProgressStatus"
                 Layout.fillWidth: true
-                text: backend && backend.progressCurrentStepDisplay
-                    ? backend.progressCurrentStepDisplay + "：" + backend.status
+                text: backend && backend.workflow.progressCurrentStepDisplay
+                    ? backend.workflow.progressCurrentStepDisplay + "：" + backend.status
                     : (backend ? backend.status : "")
                 color: panel.mutedColor
                 font.family: "Yu Gothic UI"
@@ -51,7 +51,7 @@ Rectangle {
             }
             Text {
                 objectName: "processingProgressPercent"
-                text: backend ? String(backend.progressPercent) + "%" : "0%"
+                text: backend ? String(backend.workflow.progressPercent) + "%" : "0%"
                 color: panel.accentColor
                 font.family: "Cascadia Mono"
                 font.pixelSize: 16
@@ -63,7 +63,7 @@ Rectangle {
                 text: "停止"
                 visible: backend && backend.running
                 enabled: visible
-                onClicked: backend.cancelProcessing()
+                onClicked: backend.workflow.cancelProcessing()
                 contentItem: Text {
                     text: "停止"
                     color: panel.errorColor
@@ -111,7 +111,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 5
             Repeater {
-                model: backend ? backend.progressSteps : []
+                model: backend ? backend.workflow.progressSteps : []
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true

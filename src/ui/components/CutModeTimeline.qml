@@ -8,7 +8,7 @@ Item {
 
     required property var backend
     required property var player
-    property var timeline: root.backend.cutTimeline
+    property var timeline: root.backend.workspace.cutTimeline
     property real selectionStartMs: 0
     property real selectionEndMs: 0
     property string selectedCutId: ""

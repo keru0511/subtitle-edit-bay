@@ -56,19 +56,19 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "workspaceMediaBin"', workflow)
         self.assertIn('root.editTool === "sequence"', workflow)
         for binding in (
-            "backend.mediaBinAssets",
-            "backend.sequenceClips",
-            "backend.sequenceOutputDuration",
-            "backend.sequencePlayhead",
-            "backend.addSequenceAssets",
-            "backend.addSequenceClip",
-            "backend.moveSequenceClip",
-            "backend.trimSequenceClip",
-            "backend.setSequenceTransition",
-            "backend.setSequenceClipAudio",
-            "backend.setSequencePlayhead",
-            "backend.canUndo",
-            "backend.canRedo",
+            "backend.sequence.mediaBinAssets",
+            "backend.sequence.sequenceClips",
+            "backend.sequence.sequenceOutputDuration",
+            "backend.sequence.sequencePlayhead",
+            "backend.sequence.addSequenceAssets",
+            "backend.sequence.addSequenceClip",
+            "backend.sequence.moveSequenceClip",
+            "backend.sequence.trimSequenceClip",
+            "backend.sequence.setSequenceTransition",
+            "backend.sequence.setSequenceClipAudio",
+            "backend.sequence.setSequencePlayhead",
+            "backend.subtitles.canUndo",
+            "backend.subtitles.canRedo",
         ):
             with self.subTest(binding=binding):
                 self.assertIn(binding, panel)
@@ -100,15 +100,15 @@ class QmlStaticTests(unittest.TestCase):
         header = WORKSPACE_HEADER_QML.read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("WorkspaceHeader {"), 1)
-        self.assertIn("workspaceKind: root.appBackend.currentWorkspace", workflow)
-        self.assertIn("currentEditMode: root.appBackend.currentEditMode", workflow)
+        self.assertIn("workspaceKind: root.appBackend.workspace.currentWorkspace", workflow)
+        self.assertIn("currentEditMode: root.appBackend.workspace.currentEditMode", workflow)
         for action in (
             "onProjectOpenRequested: root.appBackend.browseProjectFile()",
             "onSourceSettingsRequested: sourcePopup.open()",
             "onSaveRequested: root.appBackend.saveProject()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
-            "onRenderRequested: root.appBackend.renderVideo(root.currentSettings())",
+            "onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())",
         ):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
@@ -182,26 +182,26 @@ class QmlStaticTests(unittest.TestCase):
         panel = (COMPONENTS_ROOT / "CodexChatPanel.qml").read_text(encoding="utf-8")
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         self.assertIn('objectName: "aiProviderHeaderCombo"', panel)
-        self.assertIn("backend.aiChatModelSelectionSupported", panel)
-        self.assertIn("backend.aiChatLoginAvailable", panel)
-        self.assertIn("backend.aiChatAuthHint", panel)
+        self.assertIn("backend.ai.aiChatModelSelectionSupported", panel)
+        self.assertIn("backend.ai.aiChatLoginAvailable", panel)
+        self.assertIn("backend.ai.aiChatAuthHint", panel)
         self.assertIn('objectName: "aiProviderLoginCombo"', workflow)
         self.assertIn('objectName: "aiProviderAuthHint"', workflow)
-        self.assertIn("root.appBackend.aiChatAuthHint", workflow)
-        self.assertIn("root.appBackend.aiChatLoginAvailable", workflow)
+        self.assertIn("root.appBackend.ai.aiChatAuthHint", workflow)
+        self.assertIn("root.appBackend.ai.aiChatLoginAvailable", workflow)
         self.assertIn('readonly property string aiProviderLoginLabel', workflow)
-        self.assertIn('String(root.appBackend.aiChatProviderName || "")', workflow)
+        self.assertIn('String(root.appBackend.ai.aiChatProviderName || "")', workflow)
         self.assertIn(": root.aiProviderLoginLabel", workflow)
-        self.assertIn('root.appBackend.startAIProviderLogin()', workflow)
-        self.assertIn('root.appBackend.reconnectAIChat()', workflow)
-        self.assertIn('root.appBackend.openAIProviderLoginPage()', workflow)
+        self.assertIn('root.appBackend.ai.startAIProviderLogin()', workflow)
+        self.assertIn('root.appBackend.ai.reconnectAIChat()', workflow)
+        self.assertIn('root.appBackend.ai.openAIProviderLoginPage()', workflow)
         for method in (
-            "backend.selectAIProvider(currentValue)",
-            "backend.startAIProviderLogin()",
-            "backend.reconnectAIChat()",
-            "backend.openAIProviderLoginPage()",
-            "backend.reloginAIProvider()",
-            "backend.logoutAIProvider()",
+            "backend.ai.selectAIProvider(currentValue)",
+            "backend.ai.startAIProviderLogin()",
+            "backend.ai.reconnectAIChat()",
+            "backend.ai.openAIProviderLoginPage()",
+            "backend.ai.reloginAIProvider()",
+            "backend.ai.logoutAIProvider()",
         ):
             with self.subTest(method=method):
                 self.assertIn(method, panel)
@@ -225,7 +225,7 @@ class QmlStaticTests(unittest.TestCase):
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
 
-        self.assertIn("property bool audioHasProposal: Boolean(backend && backend.audioMixProposal", panel)
+        self.assertIn("property bool audioHasProposal: Boolean(backend && backend.audio.audioMixProposal", panel)
         self.assertIn("audioMixProposal", panel)
         self.assertIn("update_audio_channel", panel)
         self.assertIn("applyAudioMixProposal", panel)
@@ -240,7 +240,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertEqual(workflow.count("CodexSidebarContainer {"), 1)
         self.assertIn('objectName: "commonCodexSidebar"', workflow)
         self.assertIn(
-            'root.appBackend.codexAuthState === "authenticated"',
+            'root.appBackend.ai.codexAuthState === "authenticated"',
             workflow,
         )
         self.assertIn("&& !root.loginInInspector ? 300 : 0", workflow)
@@ -266,7 +266,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("Layout.rightMargin: root.codexDrawerBodyInset", workflow)
         self.assertIn("visible: !root.codexAuthenticated", workflow)
         self.assertIn("chatPanel.expanded = true", sidebar)
-        self.assertIn("sidebar.backend.aiChatProviderName", sidebar)
+        self.assertIn("sidebar.backend.ai.aiChatProviderName", sidebar)
         self.assertNotIn('text: "Codex"', sidebar)
 
     def test_user_facing_copy_avoids_internal_terms(self) -> None:
@@ -328,10 +328,10 @@ class QmlStaticTests(unittest.TestCase):
         )[0]
 
         self.assertIn('property string activeOverlay: ""', workflow)
-        self.assertIn('root.appBackend.currentWorkspace', workflow)
-        self.assertIn('root.appBackend.setWorkspacePlayerState', workflow)
-        self.assertIn('root.appBackend.switchWorkspace("short-artifact")', workflow)
-        self.assertIn('root.appBackend.switchWorkspace("normal-video")', workflow)
+        self.assertIn('root.appBackend.workspace.currentWorkspace', workflow)
+        self.assertIn('root.appBackend.workspace.setWorkspacePlayerState', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("short-artifact")', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("normal-video")', workflow)
         self.assertIn('function onWorkspaceChanged()', workflow)
         self.assertNotIn('root.activeOverlay = "short"', workflow)
         self.assertNotIn("\n    property bool editorMode:", workflow)
@@ -365,7 +365,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("editorPlayer", workflow)
         self.assertIn("mainPlayer.videoOutput = editorVideo", editor_content)
         self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
-        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', workflow)
+        self.assertIn('String(root.appBackend.workspace.editorPlayhead.basis || "source")', workflow)
         self.assertIn("interval: 100", main_workspace)
         self.assertIn("if (!root.enforceCutPreview(mainPlayer.position))", main_workspace)
         self.assertIn(
@@ -416,12 +416,12 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("shortVideoClips", short_clip_list)
         self.assertNotIn("shortVideoClips", short_screen)
         self.assertIn("property var layoutMetrics", overlay)
-        self.assertIn("appBackend.activeSubtitleSegments", overlay)
-        self.assertIn("appBackend.segmentCount", workflow)
-        self.assertIn("appBackend.subtitleModel", short_clip_list)
-        self.assertIn("appBackend.shortVideoClipModel", short_clip_list)
-        self.assertIn("appBackend.shortVideoClipCount", short_screen)
-        self.assertIn("appBackend.shortVideoClipAt", short_screen)
+        self.assertIn("appBackend.subtitles.activeSubtitleSegments", overlay)
+        self.assertIn("appBackend.subtitles.segmentCount", workflow)
+        self.assertIn("appBackend.subtitles.subtitleModel", short_clip_list)
+        self.assertIn("appBackend.shortVideo.shortVideoClipModel", short_clip_list)
+        self.assertIn("appBackend.shortVideo.shortVideoClipCount", short_screen)
+        self.assertIn("appBackend.shortVideo.shortVideoClipAt", short_screen)
         self.assertIn("function clampCurrentClipIndex()", short_screen)
         self.assertNotIn("function clampSelected()", short_clip_list)
         self.assertNotIn("shortVideoClipCount", short_clip_list)

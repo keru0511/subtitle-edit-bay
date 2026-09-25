@@ -31,7 +31,7 @@ ColumnLayout {
 
     function refresh() {
         if (!settingsRoot.appBackend) return
-        var s = settingsRoot.appBackend.shortVideoSettings
+        var s = settingsRoot.appBackend.shortVideo.shortVideoSettings
         fitCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.fitOptions, s.global_fit)
         bgColorField.text = s.global_background_color
         transitionCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.transitionOptions, s.transition.type)
@@ -48,12 +48,12 @@ ColumnLayout {
 
     function _sendBgmUpdate(changes) {
         if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
-            settingsRoot.appBackend.setShortVideoBgm(changes)
+            settingsRoot.appBackend.shortVideo.setShortVideoBgm(changes)
         }
     }
 
     Connections {
-        target: settingsRoot.appBackend
+        target: settingsRoot.appBackend.shortVideo
         function onShortVideoChanged() { settingsRoot.refresh() }
     }
 
@@ -77,7 +77,7 @@ ColumnLayout {
             enabled: settingsRoot.editingEnabled
             onActivated: {
                 if (settingsRoot.appBackend) {
-                    settingsRoot.appBackend.setShortVideoGlobalFit(fitCombo.currentValue)
+                    settingsRoot.appBackend.shortVideo.setShortVideoGlobalFit(fitCombo.currentValue)
                 }
             }
         }
@@ -96,7 +96,7 @@ ColumnLayout {
                 if (settingsRoot.appBackend) {
                     var raw = text.replace("#", "")
                     if (raw.length === 6) {
-                        settingsRoot.appBackend.setShortVideoGlobalBackgroundColor(raw)
+                        settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(raw)
                     }
                 }
             }
@@ -122,7 +122,7 @@ ColumnLayout {
         onAccepted: {
             if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
                 var hex = selectedColor.toString().replace("#", "")
-                settingsRoot.appBackend.setShortVideoGlobalBackgroundColor(hex)
+                settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(hex)
             }
         }
     }
@@ -140,7 +140,7 @@ ColumnLayout {
             enabled: settingsRoot.editingEnabled
             onActivated: {
                 if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
-                    settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, transitionDuration.value)
+                    settingsRoot.appBackend.shortVideo.setShortVideoTransition(transitionCombo.currentValue, transitionDuration.value)
                 }
             }
         }
@@ -154,7 +154,7 @@ ColumnLayout {
             enabled: settingsRoot.editingEnabled
             onValueChanged: {
                 if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
-                    settingsRoot.appBackend.setShortVideoTransition(transitionCombo.currentValue, value)
+                    settingsRoot.appBackend.shortVideo.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
             }
         }
@@ -173,7 +173,7 @@ ColumnLayout {
             enabled: settingsRoot.editingEnabled
             onValueModified: {
                 if (settingsRoot.appBackend) {
-                    settingsRoot.appBackend.setShortVideoSubtitleScale(value)
+                    settingsRoot.appBackend.shortVideo.setShortVideoSubtitleScale(value)
                 }
             }
         }
@@ -209,7 +209,7 @@ ColumnLayout {
         }
         onClicked: {
             if (settingsRoot.appBackend) {
-                settingsRoot.appBackend.browseShortModeBgm()
+                settingsRoot.appBackend.shortVideo.browseShortModeBgm()
             }
         }
     }

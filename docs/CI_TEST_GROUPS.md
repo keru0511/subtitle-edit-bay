@@ -73,3 +73,27 @@ GitHub Actionsでは同じ情報とスキップ理由ごとの件数をStep Summ
 4. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
 
 モジュール単位の所有先を決められない場合は、テスト責務を分けてから登録してください。
+
+## 変更範囲に応じたジョブ選択
+
+CIとCodeQLはPR・mainへのpushで起動し、`scripts/ci_impact.py` がジョブの実行範囲を決めます。
+PRはbase SHAとマージ候補、pushはbefore SHAと現在のSHAを比較します。改名は旧・新両パスを評価し、複数領域は和集合にします。
+
+| 変更範囲 | 実行する検証 |
+| --- | --- |
+| README.md、AGENTS.md、LICENSE、docs内のMarkdownのみ | Python品質チェック |
+| src | 品質、Portable・Qt・FFmpeg、Windows実行時、ランチャー、FFmpeg 6互換性 |
+| assets、schemas | 品質、Portable・Qt・FFmpeg、Windows実行時、FFmpeg 6互換性 |
+| 分類済みのtest_*.pyのみ | 品質と、そのテストが所属するジョブ（Windows再実行用selectorも評価） |
+| CI設定、依存関係、VERSION、installer、launcher、runtime、scripts、未分類のパス | 全検証 |
+
+通常のアプリ変更ではWindowsインストーラービルドを省略します。アプリ内の間接依存を見落とさないよう、src内の変更では実行時テストを広く維持します。
+テスト共通ヘルパーや削除済みの未分類テストは全検証です。差分取得失敗、初回push、手動CI実行は全検証へ倒します。
+CodeQLはドキュメントのみの変更では解析ジョブを省略しますが、定期実行は全解析します。GUI性能検証の既存パス条件と手動deep runtime検証は維持します。
+
+`CI validation result` は分類の成功と計画どおりの結果を必須とし、選択されたジョブの失敗・キャンセル・予期しないスキップを拒否します。
+ジョブ名は維持し、ワークフロー全体のパスフィルターによる必須チェックのPendingを避けます。
+VERSION・リリース基盤変更では従来どおり全検証し、Portableとインストーラーの検証はRelease readinessへ委譲します。
+
+判定の回帰テストは `python -m unittest tests.test_ci_impact tests.test_ci_test_groups tests.test_release_distribution` で実行します。
+GitHub Actionsの条件仕様: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions

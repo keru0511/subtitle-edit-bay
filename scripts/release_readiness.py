@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.ci_impact import JOBS
 from scripts.release_contract import ReleaseContractError, release_version_from_tag
 
 
@@ -159,9 +160,7 @@ def write_github_outputs(
         "kind": classification.kind,
         "release_version": classification.release_version,
         "requires_preparation": str(classification.requires_preparation).lower(),
-        "delegates_to_readiness": str(
-            delegates_to_readiness(classification, event_name, base_ref)
-        ).lower(),
+        "delegates_to_readiness": str(delegates_to_readiness(classification, event_name, base_ref)).lower(),
         "changed_files_json": json.dumps(classification.changed_files, ensure_ascii=False),
     }
     with path.open("a", encoding="utf-8") as output:
@@ -202,6 +201,7 @@ def assert_ci_validation_results(
     classify_result: str,
     always_required_results: Sequence[str],
     delegated_results: Sequence[str],
+    impact_plan: dict[str, bool] | None = None,
 ) -> None:
     if classify_result != "success":
         raise ReleaseReadinessError("CI validation ownership classification did not succeed")
@@ -209,15 +209,24 @@ def assert_ci_validation_results(
         raise ReleaseReadinessError("CI validation cannot delegate a normal change")
     if len(always_required_results) != len(CI_ALWAYS_REQUIRED_JOB_NAMES) - 1:
         raise ReleaseReadinessError("CI validation has an unexpected required-job result count")
-    failed = [result for result in always_required_results if result != "success"]
+    plan = dict.fromkeys(JOBS, True) if impact_plan is None else impact_plan
+    if not isinstance(plan, dict) or set(plan) != set(JOBS) or any(type(value) is not bool for value in plan.values()):
+        raise ReleaseReadinessError("invalid CI impact plan")
+    if not plan["python-quality"] or (requires_preparation and not all(plan.values())):
+        raise ReleaseReadinessError("required validation cannot be omitted from CI impact plan")
+    failed = [
+        result
+        for job, result in zip(JOBS[:4], always_required_results)
+        if result != ("success" if plan[job] else "skipped")
+    ]
     if failed:
         raise ReleaseReadinessError("required CI validation failed or skipped: " + ", ".join(failed))
     if len(delegated_results) != len(CI_DELEGATED_JOB_NAMES):
         raise ReleaseReadinessError("CI validation has an unexpected delegated-job result count")
-    expected = "skipped" if delegates_to_readiness else "success"
-    unexpected = [result for result in delegated_results if result != expected]
-    if unexpected:
-        raise ReleaseReadinessError(f"CI delegated validation must be {expected}: " + ", ".join(unexpected))
+    for job, result in zip(JOBS[4:], delegated_results):
+        expected = "skipped" if delegates_to_readiness or not plan[job] else "success"
+        if result != expected:
+            raise ReleaseReadinessError(f"CI delegated validation must be {expected}: {result}")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -240,6 +249,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ci_validation.add_argument("--requires-preparation", required=True, choices=("true", "false"))
     ci_validation.add_argument("--delegates-to-readiness", required=True, choices=("true", "false"))
     ci_validation.add_argument("--classify-result", required=True)
+    ci_validation.add_argument("--impact-plan", type=json.loads)
     ci_validation.add_argument("--required-result", action="append", required=True)
     ci_validation.add_argument("--delegated-result", action="append", required=True)
     return parser.parse_args(argv)
@@ -269,6 +279,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.classify_result,
                 args.required_result,
                 args.delegated_result,
+                args.impact_plan,
             )
     except (ReleaseReadinessError, ReleaseContractError) as exc:
         print(f"Release readiness error: {exc}", file=sys.stderr)

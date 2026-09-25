@@ -35,6 +35,7 @@
         "test_batch",
         "test_burn_subs",
         "test_channel_presets",
+        "test_ci_impact",
         "test_ci_test_groups",
         "test_codex_actions",
         "test_codex_ai_provider",

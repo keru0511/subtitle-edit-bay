@@ -27,7 +27,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--type-only",
         action="store_true",
-        help="Run only mypy type checks.",
+        help="pyproject.tomlで指定した対象の型チェックを実行する。--pathsで対象を上書きできる。",
     )
     parser.add_argument(
         "--tests-only",
@@ -146,7 +146,7 @@ def build_steps(args: argparse.Namespace) -> list[list[str]]:
                 "-m",
                 "mypy",
                 *(["--platform", args.type_platform] if args.type_platform else []),
-                *quality_targets(args),
+                *(args.paths or []),
             ]
         )
     if not args.skip_tests:

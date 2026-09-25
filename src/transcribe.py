@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET, first_pass_profile
 from .process_utils import hidden_subprocess_kwargs
 
 
@@ -102,7 +103,7 @@ def build_whisperx_command(
     command = [
         sys.executable,
         "-m",
-        "whisperx",
+        "src.whisperx_runner",
         audio_path,
         "--model",
         model,
@@ -115,12 +116,13 @@ def build_whisperx_command(
         "--output_format",
         "json",
     ]
+    for key, value in first_pass_profile().items():
+        if key != "version":
+            command.extend([f"--{key}", str(value)])
     if language:
         command.extend(["--language", language])
-    if vad_onset is not None:
-        command.extend(["--vad_onset", str(vad_onset)])
-    if vad_offset is not None:
-        command.extend(["--vad_offset", str(vad_offset)])
+    command.extend(["--vad_onset", str(DEFAULT_VAD_ONSET if vad_onset is None else vad_onset)])
+    command.extend(["--vad_offset", str(DEFAULT_VAD_OFFSET if vad_offset is None else vad_offset)])
     cleaned_prompt = "".join(char for char in str(initial_prompt or "").strip() if char >= " " and char != "\x7f")
     if cleaned_prompt:
         command.extend(["--initial_prompt", cleaned_prompt])
@@ -148,6 +150,11 @@ def run_command_with_utf8_log(command: list[str], log_path: str) -> None:
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    if command[1:3] == ["-m", "src.whisperx_runner"]:
+        project_root = str(Path(__file__).resolve().parent.parent)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            value for value in (project_root, environment.get("PYTHONPATH", "")) if value
+        )
     try:
         process = subprocess.Popen(
             command,
@@ -225,8 +232,8 @@ def main() -> None:
     run_parser.add_argument("--min-speakers", type=int, help="Minimum speaker count for diarization.")
     run_parser.add_argument("--max-speakers", type=int, help="Maximum speaker count for diarization.")
     run_parser.add_argument("--language", default="ja", help="Language code passed to WhisperX.")
-    run_parser.add_argument("--vad-onset", type=float, default=0.35, help="VAD onset threshold passed to WhisperX.")
-    run_parser.add_argument("--vad-offset", type=float, default=0.2, help="VAD offset threshold passed to WhisperX.")
+    run_parser.add_argument("--vad-onset", type=float, default=DEFAULT_VAD_ONSET, help="VAD onset threshold passed to WhisperX.")
+    run_parser.add_argument("--vad-offset", type=float, default=DEFAULT_VAD_OFFSET, help="VAD offset threshold passed to WhisperX.")
     run_parser.add_argument("--initial-prompt", default="", help="Optional context prompt passed to WhisperX.")
     run_parser.add_argument(
         "--hotword",

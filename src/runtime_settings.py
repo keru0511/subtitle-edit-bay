@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .runtime_config import load_command_runtime_config
 
@@ -21,8 +22,8 @@ class TranscriptionSettings:
     device: str = "cpu"
     compute_type: str = "int8"
     language: str | None = "ja"
-    vad_onset: float | None = 0.35
-    vad_offset: float | None = 0.2
+    vad_onset: float | None = DEFAULT_VAD_ONSET
+    vad_offset: float | None = DEFAULT_VAD_OFFSET
     skip_existing_transcripts: bool = True
 
 

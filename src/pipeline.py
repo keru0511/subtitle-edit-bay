@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import (
     DEFAULT_SUBTITLE_FONT_SIZE,
     DEFAULT_SUBTITLE_OUTLINE_COLOR,
@@ -37,8 +38,6 @@ DEFAULT_HEIGHT = 1080
 DEFAULT_MIN_SPEAKERS = 3
 DEFAULT_MAX_SPEAKERS = 3
 DEFAULT_LANGUAGE = "ja"
-DEFAULT_VAD_ONSET = 0.35
-DEFAULT_VAD_OFFSET = 0.2
 
 
 def build_ass_from_data(
@@ -130,8 +129,8 @@ def run_media_to_ass(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     track_color_map: dict[str, str] | None = None,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
@@ -185,8 +184,8 @@ def run_media_to_ass_many(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
@@ -231,8 +230,8 @@ def run_media_to_merged_ass(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     track_color_map: dict[str, str] | None = None,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,

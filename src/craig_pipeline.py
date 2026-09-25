@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .assemble_video import build_loudnorm_filter
 from .burn_subs import build_ass_filter, run_ffmpeg_burn
@@ -44,8 +45,6 @@ DEFAULT_MODEL = "large-v3"
 DEFAULT_DEVICE = "cpu"
 DEFAULT_COMPUTE_TYPE = "int8"
 DEFAULT_LANGUAGE = "ja"
-DEFAULT_VAD_ONSET = 0.35
-DEFAULT_VAD_OFFSET = 0.2
 DEFAULT_VIDEO_CODEC = "libx264"
 DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_OUTPUT_AUDIO_TRACK = "0:a:0"
@@ -643,8 +642,8 @@ def transcribe_audio_file(
     device: str = "cpu",
     compute_type: str = "int8",
     language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     skip_existing: bool = True,
     *,
     hint: CraigTranscriptionHint | None = None,
@@ -868,8 +867,8 @@ def run_craig_pipeline(
     device: str = "cpu",
     compute_type: str = "int8",
     language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     alignment_sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE,
     video_codec: str = "libx264",
     audio_codec: str = "copy",

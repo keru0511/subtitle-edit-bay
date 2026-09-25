@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import unittest
 
 from src.subtitle_review import SubtitleReviewCancelled, SubtitleReviewQueue, generate_review_queue
@@ -55,29 +54,6 @@ class SubtitleReviewTests(unittest.TestCase):
         self.assertEqual(queue.issues[issue.issue_id].status, "stale")
         self.assertEqual(replacement.status, "open")
         self.assertEqual(replacement.supersedes, issue.issue_id)
-
-    def test_repeated_character_is_reviewed_without_changing_subtitles(self) -> None:
-        segments = [{"id": "repeat", "start": 2.0, "end": 4.0, "text": "いいい\nいい", "speaker": "A"}]
-        original = copy.deepcopy(segments)
-        issues = [item for item in generate_review_queue(segments) if item.rule_id == "repeated_character"]
-        self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0].evidence, {"character": "い", "count": 5})
-        self.assertEqual(issues[0].segment_ids, ("repeat",))
-        self.assertEqual(segments, original)
-
-    def test_normal_text_numbers_and_punctuation_do_not_trigger_repetition(self) -> None:
-        for text in ["いいですね", "ああああ", "1000000", "!!!!!", "……", "すごーーーーーい", "々々々々々"]:
-            with self.subTest(text=text):
-                issues = generate_review_queue([{"id": "normal", "start": 0, "end": 5, "text": text}])
-                self.assertFalse(any(item.rule_id == "repeated_character" for item in issues))
-
-    def test_real_shouts_can_be_marked_false_positive_and_keep_that_decision(self) -> None:
-        segments = [{"id": "shout", "start": 0, "end": 3, "text": "あああああ！"}]
-        issue = next(item for item in generate_review_queue(segments) if item.rule_id == "repeated_character")
-        queue = SubtitleReviewQueue([issue])
-        queue.update_status(issue.issue_id, "false_positive")
-        queue.reconcile(generate_review_queue(segments))
-        self.assertEqual(queue.issues[issue.issue_id].status, "false_positive")
 
     def test_filter_and_cancel(self) -> None:
         issues = generate_review_queue(self.segments)

@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import re
-
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 
-RULE_VERSION = "subtitle-review-v2"
-
-# 数字・句読点・長音符は対象外。実際の発声との区別は音声確認で行う。
-_REPEATED_CHARACTER = re.compile(r"([^\W\d_])\1{4,}")
+RULE_VERSION = "subtitle-review-v1"
 
 
 @dataclass(frozen=True)
@@ -26,19 +21,6 @@ def review_segment_rules(segment: Mapping[str, Any], previous: Mapping[str, Any]
     end = float(segment.get("end", start))
     duration = max(0.0, end - start)
     text = str(segment.get("text", "")).replace("\n", "")
-    repeated = next(
-        (match for match in _REPEATED_CHARACTER.finditer(text) if match.group(1) not in "ー々ゝゞヽヾ"),
-        None,
-    )
-    if repeated is not None:
-        findings.append(
-            ReviewFinding(
-                "repeated_character",
-                "medium",
-                "同じ文字が連続しています。実際の発声か、文字起こしの誤生成かを音声で確認してください",
-                {"character": repeated.group(1), "count": len(repeated.group(0))},
-            )
-        )
     confidence = segment.get("confidence", segment.get("avg_confidence"))
     if confidence is not None and float(confidence) < 0.55:
         findings.append(ReviewFinding("low_confidence", "high", "認識信頼度が低い字幕です", {"confidence": float(confidence)}))

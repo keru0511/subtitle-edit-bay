@@ -257,7 +257,7 @@ print(json.dumps(build_whisperx_command(sys.argv[1],sys.argv[2],model='large-v3'
     started = time.perf_counter()
     with (output / "recognition.log").open("w", encoding="utf-8") as log:
         subprocess.run(
-            command, cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=2400
+            command, cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600
         )
     elapsed = time.perf_counter() - started
     transcript = json.loads((output / f"{audio.stem}.json").read_text(encoding="utf-8"))

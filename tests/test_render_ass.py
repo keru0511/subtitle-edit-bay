@@ -924,7 +924,7 @@ class RenderAssTests(unittest.TestCase):
                 vad_onset=0.3,
                 vad_offset=0.15,
             )
-        self.assertEqual(command[:3], [sys.executable, "-m", "whisperx"])
+        self.assertEqual(command[:3], [sys.executable, "-m", "src.whisperx_runner"])
         self.assertIn("--diarize", command)
         self.assertNotIn("--hf_token", command)
         self.assertNotIn("secret-token", command)

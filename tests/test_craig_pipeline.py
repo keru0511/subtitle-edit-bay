@@ -89,15 +89,19 @@ class CraigPipelineTests(unittest.TestCase):
         self.assertEqual(len(merged["segments"]), 2)
         self.assertEqual(len(filtered["segments"]), 0)
 
-    def test_transcribe_audio_file_skips_existing_transcript(self) -> None:
+    def test_transcribe_audio_file_regenerates_legacy_cache(self) -> None:
         import tempfile
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as temp_dir:
             transcript = Path(temp_dir) / "1-speaker-a.json"
             transcript.write_text("{}", encoding="utf-8")
-            result = transcribe_audio_file("1-speaker-a.flac", temp_dir, skip_existing=True)
+            with mock.patch("src.transcription_execution.run_command_with_utf8_log") as run:
+                result = transcribe_audio_file("1-speaker-a.flac", temp_dir, skip_existing=True)
+                cached = transcribe_audio_file("1-speaker-a.flac", temp_dir, skip_existing=True)
+            run.assert_called_once()
             self.assertEqual(result, transcript)
+            self.assertEqual(cached, transcript)
 
     def test_build_craig_segments_for_transcript_builds_shifted_segments(self) -> None:
         import json

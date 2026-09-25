@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .assemble_video import assemble_video, optional_clip, probe_media_duration
 from .burn_subs import run_ffmpeg_burn
@@ -24,8 +25,6 @@ DEFAULT_HEIGHT = 1080
 DEFAULT_MIN_SPEAKERS = 3
 DEFAULT_MAX_SPEAKERS = 3
 DEFAULT_LANGUAGE = "ja"
-DEFAULT_VAD_ONSET = 0.35
-DEFAULT_VAD_OFFSET = 0.2
 DEFAULT_OP_FILE = "video_import/op.mp4"
 DEFAULT_ED_FILE = "video_import/ed.mp4"
 DEFAULT_VIDEO_CODEC = "libx264"

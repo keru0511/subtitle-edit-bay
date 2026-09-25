@@ -6,101 +6,93 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.transcript_cache import write_transcript_cache_metadata
+from src.transcript_cache import transcript_cache_metadata_path, write_transcript_cache_metadata
 from src.transcription_execution import transcribe_audio_with_cache
 
 
 class TranscriptionExecutionTests(unittest.TestCase):
-    def test_reuses_legacy_transcript_when_no_fingerprint_is_expected(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output = Path(temp_dir)
-            transcript = output / "voice.json"
-            transcript.write_text('{"segments": []}', encoding="utf-8")
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.output = Path(self.directory.name)
+        self.audio = self.output / "voice.wav"
+        self.audio.write_bytes(b"test audio")
+        self.transcript = self.output / "voice.json"
+        self.runner = patch(
+            "src.transcription_execution.run_command_with_utf8_log", side_effect=self.write_result
+        ).start()
+        self.addCleanup(patch.stopall)
 
-            with patch("src.transcription_execution.run_command_with_utf8_log") as run:
-                result = transcribe_audio_with_cache("voice.wav", str(output))
+    def write_result(self, *args) -> None:
+        self.transcript.write_text('{"segments": []}', encoding="utf-8")
 
-            self.assertTrue(result.cache_hit)
-            self.assertEqual(result.transcript_path, transcript)
-            run.assert_not_called()
+    def transcribe(self, **kwargs):
+        return transcribe_audio_with_cache(str(self.audio), str(self.output), **kwargs)
 
-    def test_missing_metadata_is_cache_miss_when_fingerprint_is_expected(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output = Path(temp_dir)
-            transcript = output / "voice.json"
-            transcript.write_text('{"segments": []}', encoding="utf-8")
+    def test_legacy_transcript_is_regenerated_once_then_reused(self) -> None:
+        self.transcript.write_text('{"segments": [{"text": "いいいいいい"}]}')
+        first = self.transcribe()
+        second = self.transcribe()
+        self.assertFalse(first.cache_hit)
+        self.assertTrue(second.cache_hit)
+        self.runner.assert_called_once()
+        self.assertIsNotNone(first.cache_metadata_path)
 
-            with patch("src.transcription_execution.run_command_with_utf8_log") as run:
-                result = transcribe_audio_with_cache(
-                    "voice.wav",
-                    str(output),
-                    cache_fingerprint="fingerprint-v1",
-                    cache_settings={"model": "large-v3"},
-                )
+    def test_context_metadata_is_not_enough_without_execution_settings(self) -> None:
+        self.write_result()
+        write_transcript_cache_metadata(self.transcript, fingerprint="context-v1")
+        self.assertFalse(self.transcribe(cache_fingerprint="context-v1").cache_hit)
+        self.assertTrue(self.transcribe(cache_fingerprint="context-v1").cache_hit)
 
-            self.assertFalse(result.cache_hit)
-            run.assert_called_once()
-            self.assertIsNotNone(result.cache_metadata_path)
-            metadata = json.loads(result.cache_metadata_path.read_text(encoding="utf-8"))
-            self.assertEqual(metadata["fingerprint"], "fingerprint-v1")
-            self.assertEqual(metadata["settings"]["model"], "large-v3")
+    def test_model_vad_and_hints_invalidate_cache(self) -> None:
+        for changed in [
+            {"model": "large-v2"},
+            {"vad_onset": 0.6},
+            {"vad_offset": 0.3},
+            {"initial_prompt": "ゲーム実況"},
+            {"hotwords": ["クラベス"]},
+            {"cache_fingerprint": "new"},
+        ]:
+            with self.subTest(changed=changed):
+                self.transcribe()
+                self.assertFalse(self.transcribe(**changed).cache_hit)
+                self.assertTrue(self.transcribe(**changed).cache_hit)
 
-    def test_reuses_transcript_when_metadata_matches_expected_fingerprint(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output = Path(temp_dir)
-            transcript = output / "voice.json"
-            transcript.write_text('{"segments": []}', encoding="utf-8")
-            write_transcript_cache_metadata(transcript, fingerprint="fingerprint-v1")
+    def test_changed_input_invalidates_cache(self) -> None:
+        self.transcribe()
+        self.audio.write_bytes(b"different audio contents")
+        self.assertFalse(self.transcribe().cache_hit)
 
-            with patch("src.transcription_execution.run_command_with_utf8_log") as run:
-                result = transcribe_audio_with_cache(
-                    "voice.wav",
-                    str(output),
-                    cache_fingerprint="fingerprint-v1",
-                )
+    def test_changed_profile_or_runtime_invalidates_cache(self) -> None:
+        self.transcribe()
+        with patch("src.transcription_execution.first_pass_profile", return_value={"version": "next"}):
+            self.assertFalse(self.transcribe().cache_hit)
+        with patch("src.transcription_execution.version", return_value="next-runtime"):
+            self.assertFalse(self.transcribe().cache_hit)
 
-            self.assertTrue(result.cache_hit)
-            run.assert_not_called()
+    def test_metadata_keeps_execution_and_caller_settings(self) -> None:
+        result = self.transcribe(cache_settings={"model": "large-v3"})
+        metadata = json.loads(result.cache_metadata_path.read_text())
+        self.assertEqual(metadata["settings"]["model"], "large-v3")
+        self.assertEqual(metadata["settings"]["execution"]["profile"]["repetition_penalty"], 1.1)
 
-    def test_mismatched_metadata_forces_retranscription(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output = Path(temp_dir)
-            transcript = output / "voice.json"
-            transcript.write_text('{"segments": []}', encoding="utf-8")
-            write_transcript_cache_metadata(transcript, fingerprint="old")
+    def test_failure_invalidates_previous_metadata(self) -> None:
+        self.transcribe()
+        self.runner.side_effect = RuntimeError("failed")
+        with self.assertRaises(RuntimeError):
+            self.transcribe(skip_existing=False)
+        self.assertFalse(transcript_cache_metadata_path(self.transcript).exists())
+        self.runner.side_effect = self.write_result
+        self.assertFalse(self.transcribe().cache_hit)
 
-            with patch("src.transcription_execution.run_command_with_utf8_log") as run:
-                result = transcribe_audio_with_cache(
-                    "voice.wav",
-                    str(output),
-                    cache_fingerprint="new",
-                )
+    def test_missing_output_never_creates_valid_metadata(self) -> None:
+        self.runner.side_effect = None
+        with self.assertRaises(FileNotFoundError):
+            self.transcribe()
+        self.assertFalse(transcript_cache_metadata_path(self.transcript).exists())
 
-            self.assertFalse(result.cache_hit)
-            run.assert_called_once()
-            self.assertEqual(
-                json.loads((output / "voice.json.cache.json").read_text(encoding="utf-8"))["fingerprint"],
-                "new",
-            )
-
-    def test_command_receives_transcription_hints_on_cache_miss(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch("src.transcription_execution.run_command_with_utf8_log") as run:
-                result = transcribe_audio_with_cache(
-                    "voice.wav",
-                    temp_dir,
-                    initial_prompt="Game context",
-                    hotwords=["ナワバリバトル", "ナワバリバトル", "スプラシューター"],
-                    skip_existing=False,
-                )
-
-            self.assertFalse(result.cache_hit)
-            command = run.call_args.args[0]
-            self.assertIn("--initial_prompt", command)
-            self.assertIn("Game context", command)
-            self.assertIn("--hotwords", command)
-            self.assertIn("ナワバリバトル, スプラシューター", command)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_hints_reach_first_pass_command(self) -> None:
+        self.transcribe(initial_prompt="ゲーム実況", hotwords=["クラベス", "クラベス"], skip_existing=False)
+        command = self.runner.call_args.args[0]
+        self.assertIn("ゲーム実況", command)
+        self.assertEqual(command[command.index("--hotwords") + 1], "クラベス")

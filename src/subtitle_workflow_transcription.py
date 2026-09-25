@@ -182,9 +182,8 @@ def build_default_workflow_transcription_hint(
 ) -> CraigTranscriptionHint | None:
     """Build the shared Craig transcription hint used by the editable workflow.
 
-    Empty contexts intentionally return ``None`` so existing projects keep the
-    legacy transcript cache behavior until the user provides or confirms game
-    dictionary context.
+    空のコンテキストではヒントを追加しない。実行設定と入力音声のキャッシュ検証は
+    ヒントの有無にかかわらず、下位の実行処理で行う。
     """
     context = transcription_context_from_mapping(transcription_context) if not isinstance(transcription_context, TranscriptionContext) else transcription_context
     if not _context_has_active_hint_inputs(context):

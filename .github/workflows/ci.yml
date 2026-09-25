@@ -17,10 +17,16 @@ concurrency:
 jobs:
   classify-validation:
     name: Classify validation ownership
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
+      impact_plan: ${{ steps.impact.outputs.impact_plan }}
+      python-quality: ${{ steps.impact.outputs.python-quality }}
+      windows-tests: ${{ steps.impact.outputs.windows-tests }}
+      windows-launcher-tests: ${{ steps.impact.outputs.windows-launcher-tests }}
+      ffmpeg6-compat: ${{ steps.impact.outputs.ffmpeg6-compat }}
+      portable-tests: ${{ steps.impact.outputs.portable-tests }}
+      windows-installer-smoke: ${{ steps.impact.outputs.windows-installer-smoke }}
       requires_preparation: ${{ steps.classify.outputs.requires_preparation }}
       delegates_to_readiness: ${{ steps.classify.outputs.delegates_to_readiness }}
     steps:
@@ -30,7 +36,18 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Plan validation by changed paths
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: >-
+          python scripts/ci_impact.py
+          --base-sha "$BASE_SHA"
+          --source-sha "${{ github.sha }}"
+          --event-name "${{ github.event_name }}"
+          --github-output "$GITHUB_OUTPUT"
       - name: Select the single validation owner
+        if: github.event_name == 'pull_request'
         id: classify
         shell: bash
         run: >-
@@ -86,6 +103,8 @@ jobs:
     needs: classify-validation
     if: >-
       !cancelled() &&
+      needs.classify-validation.result == 'success' &&
+      needs.classify-validation.outputs.portable-tests == 'true' &&
       (github.event_name != 'pull_request' ||
       needs.classify-validation.outputs.delegates_to_readiness != 'true')
     runs-on: ubuntu-latest
@@ -142,6 +161,8 @@ jobs:
 
   windows-tests:
     name: Windows runtime tests
+    needs: classify-validation
+    if: needs.classify-validation.outputs.windows-tests == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -271,6 +292,8 @@ jobs:
 
   windows-launcher-tests:
     name: Windows launcher tests
+    needs: classify-validation
+    if: needs.classify-validation.outputs.windows-launcher-tests == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -293,6 +316,8 @@ jobs:
 
   ffmpeg6-compat:
     name: FFmpeg 6 compatibility
+    needs: classify-validation
+    if: needs.classify-validation.outputs.ffmpeg6-compat == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -347,6 +372,8 @@ jobs:
     needs: classify-validation
     if: >-
       !cancelled() &&
+      needs.classify-validation.result == 'success' &&
+      needs.classify-validation.outputs.windows-installer-smoke == 'true' &&
       (github.event_name != 'pull_request' ||
       needs.classify-validation.outputs.delegates_to_readiness != 'true')
     runs-on: windows-latest
@@ -432,8 +459,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
       - name: Enforce validation ownership and results
+        env:
+          CI_IMPACT_PLAN: ${{ needs.classify-validation.outputs.impact_plan }}
         run: >-
           python scripts/release_readiness.py assert-ci-validation
+          --impact-plan "$CI_IMPACT_PLAN"
           --requires-preparation "${{ needs.classify-validation.outputs.requires_preparation }}"
           --delegates-to-readiness "${{ needs.classify-validation.outputs.delegates_to_readiness }}"
           --classify-result "${{ needs.classify-validation.result }}"

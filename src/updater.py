@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .platform_updates import installer_asset_name
 from .application_info import normalize_version, resolve_application_version
 
 GITHUB_API_HOST = "api.github.com"
@@ -93,13 +94,14 @@ def fetch_latest_release(
     manifest_url = ""
     package_type = "archive"
     assets = data.get("assets", [])
-    if isinstance(assets, list):
+    supported_installer = installer_asset_name()
+    if isinstance(assets, list) and supported_installer:
         installer_asset = next(
             (
                 asset
                 for asset in assets
                 if isinstance(asset, dict)
-                and str(asset.get("name", "")).lower() == "subtitleeditbay-setup.exe"
+                and str(asset.get("name", "")).lower() == supported_installer.lower()
             ),
             None,
         )

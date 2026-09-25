@@ -90,7 +90,7 @@ class UpdateManagerTests(unittest.TestCase):
     def test_installer_helper_command_is_hidden_and_carries_transaction_context(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
-            with patch("src.update_manager.sys.platform", "win32"):
+            with patch("sys.platform", "win32"):
                 command = build_installer_helper_command(
                     tmp_path,
                     tmp_path / "package.exe",
@@ -131,6 +131,7 @@ class UpdateManagerTests(unittest.TestCase):
             ],
         }
         with (
+            patch("sys.platform", "win32"),
             patch("src.updater.resolve_application_version", return_value="v1.0.0"),
             patch("src.updater.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(payload).encode("utf-8"))),
         ):
@@ -139,3 +140,39 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertEqual(info.package_size, 42)
         self.assertTrue(info.checksum_url.endswith("setup.exe.sha256"))
         self.assertTrue(info.manifest_url.endswith("setup.exe.manifest.json"))
+
+
+class PlatformUpdateTests(unittest.TestCase):
+    def test_non_windows_does_not_select_windows_installer(self):
+        payload = {
+            "tag_name": "v1.2.3",
+            "assets": [{"name": "SubtitleEditBay-Setup.exe", "browser_download_url": "https://example.test/setup.exe"}],
+        }
+        for platform in ("darwin", "linux"):
+            with (
+                self.subTest(platform=platform),
+                patch("sys.platform", platform),
+                patch(
+                    "src.updater.urllib.request.urlopen",
+                    return_value=io.BytesIO(json.dumps(payload).encode()),
+                ),
+            ):
+                info = updater.fetch_latest_release(Path("."))
+                self.assertEqual(info.package_type, "archive")
+                self.assertTrue(info.download_url.endswith(".zip"))
+
+    def test_unsupported_installer_handoff_fails_before_launch(self):
+        from src.update_manager import UpdatePackageError
+
+        with patch("sys.platform", "darwin"), self.assertRaises(UpdatePackageError):
+            build_installer_helper_command(
+                Path("."),
+                Path("setup.exe"),
+                expected_version="1.2.3",
+                expected_sha256="a" * 64,
+                result_path=Path("result.json"),
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

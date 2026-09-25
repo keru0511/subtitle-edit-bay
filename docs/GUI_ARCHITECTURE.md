@@ -30,16 +30,37 @@ Issue #2 is being handled in small compatibility-preserving steps. The first ste
 
 The first shared controls now exist as standalone QML files and are covered by the static QML lint tests. Replacing the remaining inline component definitions in `MainWorkflowScreen.qml` should be done in a separate PR so behavior review is limited to usage replacement.
 
-## Next QML steps
+## 字幕編集画面の境界
 
-QML should be split after the Python source/runtime-state boundaries and top-level QML entrypoint are stable. Recommended order:
+`MainWorkflowScreen.qml`は画面の切り替え、共有プレイヤーの所有、
+保存・書き出し・色選択ダイアログとの接続を担当する。
+字幕編集の実装は次のQMLへ分離する。
 
-1. Replace common visual controls in `screens/MainWorkflowScreen.qml` with `components/*` controls.
-2. Extract subtitle overlay and timeline components.
-3. Extract editor and mixer screens.
-4. Keep `Main.qml` focused on backend injection and entrypoint loading.
+| ファイル | 担当 |
+| --- | --- |
+| `components/SubtitleEditorScreen.qml` | 専用字幕編集画面、プレビュー、字幕一覧、編集操作 |
+| `components/SubtitleWorkspaceEditor.qml` | 通常ワークスペースの字幕操作とタイムライン |
+| `components/SubtitleTimeline.qml` | 可視区間の字幕・波形描画、移動・リサイズ、再生追従。音量画面でも共有 |
+| `components/SubtitleEditorState.qml` | 再生位置、表示倍率、スナップ、スクロール位置、編集中の字幕とプレビュー判定 |
+| `components/SubtitleEditorButton.qml` | 既存の色・寸法を保つ字幕編集用ボタン |
 
-Each step should keep existing GUI behavior unchanged and rely on the Windows GUI smoke tests for regression coverage.
+各画面はバックエンド、プレイヤー、編集状態、配色などをプロパティで受け取る。
+親画面のIDや暗黙のコンテキスト変数を参照しない。
+画面をまたぐシーク、色選択、プレビュー更新、書き出し、閉じる操作はシグナルで親へ伝える。
+`SubtitleEditorState`は親画面に1個だけ置き、Loaderで字幕画面を破棄・再生成しても
+両画面の表示倍率・スナップ・スクロール位置を維持する。
+既存の親画面の状態プロパティは同じ状態へのaliasとして残す。
+
+専用字幕編集画面は新たなMediaPlayerを作らない。生成時にVideoOutputを通知し、
+親画面が共有プレイヤーの出力先を切り替える。破棄時は親のプレビューへ戻す。
+字幕の保存データとUndo/Redoは引き続き`backend.subtitles`を通じて操作する。
+
+確認は既存の編集・画面切替・仮想化テストに加え、親画面のないWindowへ
+字幕画面を読み込む回帰テストで行う。独立した状態での編集・Undo、編集中プレビュー、
+画面再生成後の設定保持、プレイヤー表示先の通知を確認する。
+`test_qml_static.py`のqmllint対象にもすべての分離先を含める。
+
+次のQML整理では、残る音量画面や共通コントロールの置き換えを別PRとして扱う。
 
 ## 編集確定の共通境界
 

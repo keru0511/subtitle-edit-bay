@@ -844,12 +844,20 @@ class GuiPerformanceScenarioRunner:
             caption_table = self.harness.find_item(self._window(), "captionTable")
             delegate = self._caption_delegate(caption_table, index)
 
+            field_candidates = self.harness.visual_items_with_properties(
+                delegate, "validator", "background", "text"
+            )
             time_fields = [
-                item
-                for item in self.harness.visual_items_with_properties(delegate, "validator", "background", "text")
-                if item.metaObject().className() == "TimeField"
-                if callable(getattr(getattr(item, "editingFinished", None), "emit", None))
+                item for item in field_candidates
+                if item.objectName() in {"captionStartTimeField", "captionEndTimeField"}
             ]
+            if not time_fields:
+                # 比較対象の旧QMLにはobjectNameがないため、従来の探索を残す。
+                time_fields = [
+                    item for item in field_candidates
+                    if item.metaObject().className() == "TimeField"
+                    if callable(getattr(getattr(item, "editingFinished", None), "emit", None))
+                ]
             time_fields.sort(key=lambda item: item.x())
             if len(time_fields) != 2:
                 raise AssertionError(f"Expected two caption time fields, found {len(time_fields)}")

@@ -3916,6 +3916,112 @@ Window {
         self.assertEqual(self.app.settings["audio_target_lufs"], 0.0)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 0)
 
+    def test_subtitle_editors_work_without_main_workflow_context(self) -> None:
+        self._load_project()
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentSubtitleEditor.qml"
+        qml.write_text(
+            'import QtQuick\nimport QtMultimedia\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1600
+    height: 1000
+    visible: true
+    property var appBackend: backend
+    property bool expandedEditor: false
+    property var colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+        textPrimary: "#F8FAFC", textMuted: "#94A3B8", acid: "#6366F1", amber: "#F59E0B", danger: "#EF4444"})
+    property int attachments: 0
+    property int detachments: 0
+    property int previews: 0
+    property int renders: 0
+    property int draftIndex: editorSession.draftSegmentIndex
+    property string draftPreview: editorSession.subtitlePreviewText({sourceIndex: 0, text: "保存済み"})
+    function prepareDraft() { editorSession.beginSubtitleDraft(0, "編集中の字幕") }
+    function clearDraft() { editorSession.clearSubtitleDraft(0) }
+    function stamp(seconds) { return String(seconds) }
+    SubtitleEditorState {
+        id: editorSession
+        objectName: "independentEditorState"
+        subtitles: host.appBackend.subtitles
+        previewEnabled: true
+    }
+    MediaPlayer { id: sharedPlayer }
+    VideoOutput { id: originalOutput; visible: false }
+    Loader {
+        anchors.fill: parent
+        sourceComponent: host.expandedEditor ? fullEditor : workspaceEditor
+    }
+    Component {
+        id: workspaceEditor
+        SubtitleWorkspaceEditor {
+            appBackend: host.appBackend
+            player: sharedPlayer
+            editorState: editorSession
+            colors: host.colors
+            formatTimestamp: host.stamp
+            onSeekRequested: function(positionMs) { sharedPlayer.position = positionMs }
+            onPreviewRequested: host.previews += 1
+        }
+    }
+    Component {
+        id: fullEditor
+        SubtitleEditorScreen {
+            appBackend: host.appBackend
+            player: sharedPlayer
+            editorState: editorSession
+            colors: host.colors
+            formatTimestamp: host.stamp
+            projectSpeakerCache: host.appBackend.subtitles.projectSpeakers
+            subtitleLayoutMetricsCache: host.appBackend.subtitles.subtitleLayoutMetrics
+            selectedSubtitleFontSize: 50
+            defaultSubtitleFontSize: 50
+            selectedSubtitleOutlineColor: "#000000"
+            selectedSubtitleOutlineThickness: 3
+            statusText: "独立した字幕編集画面"
+            onPreviewAttached: function(output) { sharedPlayer.videoOutput = output; host.attachments += 1 }
+            onPreviewDetached: { sharedPlayer.videoOutput = originalOutput; host.detachments += 1 }
+            onPreviewRequested: host.previews += 1
+            onRenderRequested: host.renders += 1
+            onCloseRequested: host.expandedEditor = false
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        original_count = self.app.segmentCount
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self.assertEqual(self.app.segmentCount, original_count + 1)
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, original_count)
+        self.assertTrue(QMetaObject.invokeMethod(window, "prepareDraft"))
+        self.assertEqual(window.property("draftIndex"), 0)
+        self.assertEqual(window.property("draftPreview"), self.app.formatSubtitlePreview(0, "編集中の字幕"))
+        editor_state = window.findChild(QObject, "independentEditorState")
+        self.assertIsNotNone(editor_state)
+        editor_state.setProperty("pixelsPerSecond", 96)
+        editor_state.setProperty("snapMilliseconds", 250)
+        for expected_attachment_count in (1, 2):
+            window.setProperty("expandedEditor", True)
+            self.gui.wait_until(lambda: window.property("attachments") == expected_attachment_count,
+                                description="独立編集画面の生成")
+            timeline = self._quick_item(window, "editorTimeline")
+            self.assertEqual(timeline.property("pixelsPerSecond"), 96)
+            self.assertEqual(timeline.property("snapSeconds"), 0.25)
+            self._click(window, self._quick_item(window, "buildAssButton"))
+            self.assertEqual(window.property("previews"), expected_attachment_count)
+            self._click(window, self._quick_item(window, "editorRenderButton"))
+            self.assertEqual(window.property("renders"), expected_attachment_count)
+            self._click(window, self._quick_item(window, "editorBackButton"))
+            self.gui.wait_until(lambda: window.property("detachments") == expected_attachment_count,
+                                description="共有プレイヤーの表示先を復元")
+            self.assertEqual(self._quick_item(window, "workspaceSubtitleTimeline").property("pixelsPerSecond"), 96)
+        self.assertTrue(QMetaObject.invokeMethod(window, "clearDraft"))
+        self.assertEqual(window.property("draftIndex"), -1)
+        self.assertEqual(window.property("draftPreview"), "保存済み")
+
     def test_qml_editor_content_is_loaded_only_when_opened(self) -> None:
         self._load_project()
         _, window = self._load_qml()

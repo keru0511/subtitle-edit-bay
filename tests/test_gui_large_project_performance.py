@@ -164,7 +164,11 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
         self.assertNotIn("run_gui_performance.py", regular_ci)
         self.assertIn("runs-on: windows-latest", performance_ci)
         self.assertIn("--segment-count 3000", performance_ci)
-        self.assertIn("--segment-count 10000", performance_ci)
+        from scripts.plan_gui_performance import validate_inputs
+
+        plan = validate_inputs("3", "30", "20", "false")
+        self.assertEqual({item["segment_count"] for item in plan["matrix"]["include"]}, {3000, 10000})
+        self.assertIn("--segment-count ${{ matrix.segment_count }}", performance_ci)
         self.assertIn('default: "b600e90"', performance_ci)
         self.assertIn("actions/upload-artifact", performance_ci)
         self.assertIn('"git", "rev-parse", "--verify"', performance_plan)

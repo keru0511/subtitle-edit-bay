@@ -119,7 +119,12 @@ def _run_controller(args: argparse.Namespace) -> int:
     output_path = args.output.resolve()
     fixture_dir = (args.fixture_dir or output_path.parent / "gui-performance-fixtures").resolve()
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    media_path = fixture_dir / "synthetic-gui-performance.mp4"
+    # 比較ペアの素材だけを共有し、プロジェクトと測定結果は別ディレクトリに保つ。
+    media_dir = (args.media_dir or fixture_dir).resolve()
+    media_path = (
+        media_dir
+        / f"synthetic-gui-performance-{max(DEFAULT_MEDIA_DURATION_SECONDS, args.playback_seconds + 3.0):g}.mp4"
+    )
     generate_synthetic_media(
         media_path,
         duration_seconds=max(DEFAULT_MEDIA_DURATION_SECONDS, args.playback_seconds + 3.0),
@@ -230,6 +235,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--settle-ms", type=int, default=100)
     parser.add_argument("--output", type=Path, default=Path("artifacts/gui-performance.json"))
     parser.add_argument("--fixture-dir", type=Path)
+    parser.add_argument("--media-dir", type=Path, help="同じジョブ内の比較ペアで共有する生成素材の保存先")
     parser.add_argument("--revision-label", default=os.environ.get("GITHUB_SHA", "local"))
     parser.add_argument("--harness-revision", default=os.environ.get("GITHUB_SHA", "local"))
     parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))

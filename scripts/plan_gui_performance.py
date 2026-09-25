@@ -43,7 +43,13 @@ def validate_inputs(
         "playback_seconds": format(parsed_playback, "g"),
         "max_regression_percent": format(parsed_regression, "g"),
         "fail_on_regression": parsed_fail,
-        "matrix": {"repetition": list(range(1, parsed_repetitions + 1))},
+        "matrix": {
+            "include": [
+                {"repetition": repetition, "suite": suite, "segment_count": count}
+                for suite, count in (("paired", 3000), ("large", 10000))
+                for repetition in range(1, parsed_repetitions + 1)
+            ]
+        },
     }
 
 

@@ -17,6 +17,9 @@ from scripts.gui_performance_report import (
 )
 
 
+SEGMENT_COUNTS = {"current": 3000, "large": 10000, "baseline": 3000}
+
+
 class ReportValidationError(ValueError):
     pass
 
@@ -38,12 +41,12 @@ def _expected_configuration(
     playback_seconds: float,
 ) -> dict[str, object]:
     return {
-        "segment_counts": [3000, 10000] if kind == "current" else [3000],
+        "segment_counts": [SEGMENT_COUNTS[kind]],
         "repetitions": 1,
         "total_repetitions": repetitions,
         "playback_seconds": playback_seconds,
         "settle_ms": 100,
-        "contracts_enforced": kind == "current",
+        "contracts_enforced": kind != "baseline",
         "media_generated_at_runtime": True,
     }
 
@@ -71,7 +74,7 @@ def aggregate_shards(
                 repetitions=repetitions,
                 playback_seconds=playback_seconds,
             )
-            for kind in ("current", "baseline")
+            for kind in ("current", "large", "baseline")
         }
         matching_kinds = [
             kind
@@ -81,7 +84,7 @@ def aggregate_shards(
         if len(matching_kinds) != 1:
             raise ReportValidationError(f"could not identify shard kind from configuration in {path}")
         kind = matching_kinds[0]
-        expected_revision = current_revision if kind == "current" else baseline_revision
+        expected_revision = baseline_revision if kind == "baseline" else current_revision
         if report.get("revision_label") != expected_revision:
             raise ReportValidationError(f"unexpected {kind} revision in {path}")
         expected = _expected_configuration(
@@ -112,7 +115,7 @@ def aggregate_shards(
             raise ReportValidationError(f"invalid run attempt in {path}") from error
         if (
             provenance.get("run_id") != run_id
-            or provenance.get("shard_id") != str(repetition)
+            or provenance.get("shard_id") != f"{'large' if kind == 'large' else 'paired'}-{repetition}"
             or not 1 <= source_attempt <= requested_attempt
         ):
             raise ReportValidationError(f"provenance mismatch in {path}")
@@ -140,31 +143,34 @@ def aggregate_shards(
                 raise ReportValidationError(f"raw scenario coverage mismatch in {path}")
             if not isinstance(run.get("contracts"), list) or not isinstance(run.get("contracts_passed"), bool):
                 raise ReportValidationError(f"invalid contract results in {path}")
-            if kind == "current" and not run["contracts_passed"]:
-                raise ReportValidationError(f"current revision contract failure in {path}")
         if not isinstance(report.get("environment"), dict):
             raise ReportValidationError(f"missing environment information in {path}")
         candidates[key] = report
 
     reports: dict[tuple[str, int], dict[str, Any]] = {}
-    source_attempts: dict[int, int] = {}
+    source_attempts: dict[str, dict[str, int]] = {kind: {} for kind in ("current", "large", "baseline")}
     for repetition in range(1, repetitions + 1):
-        complete_attempts = sorted(
-            attempt
-            for attempt in range(1, int(run_attempt) + 1)
-            if ("current", repetition, attempt) in candidates and ("baseline", repetition, attempt) in candidates
-        )
-        if not complete_attempts:
-            raise ReportValidationError(f"missing complete shard pair for repetition {repetition}")
-        source_attempt = complete_attempts[-1]
-        source_attempts[repetition] = source_attempt
-        for kind in ("current", "baseline"):
-            reports[(kind, repetition)] = candidates[(kind, repetition, source_attempt)]
+        for kind in ("current", "large", "baseline"):
+            attempts = [
+                attempt
+                for candidate_kind, index, attempt in candidates
+                if candidate_kind == kind and index == repetition
+            ]
+            if not attempts:
+                raise ReportValidationError(f"missing {kind} report for repetition {repetition}")
+            attempt = max(attempts)
+            reports[(kind, repetition)] = candidates[(kind, repetition, attempt)]
+            if kind != "baseline" and any(not run["contracts_passed"] for run in reports[(kind, repetition)]["runs"]):
+                raise ReportValidationError(f"current revision contract failure for {kind} repetition {repetition}")
+            source_attempts[kind][str(repetition)] = attempt
+        if source_attempts["current"][str(repetition)] != source_attempts["baseline"][str(repetition)]:
+            raise ReportValidationError(f"incomplete latest shard pair for repetition {repetition}")
         if reports[("current", repetition)]["environment"] != reports[("baseline", repetition)]["environment"]:
             raise ReportValidationError(f"paired environment mismatch for repetition {repetition}")
 
     def merge(kind: str, revision: str) -> dict[str, Any]:
-        shard_reports = [reports[(kind, repetition)] for repetition in range(1, repetitions + 1)]
+        kinds = ("current", "large") if kind == "current" else ("baseline",)
+        shard_reports = [reports[(part, repetition)] for part in kinds for repetition in range(1, repetitions + 1)]
         runs = [run for report in shard_reports for run in report["runs"]]
         return {
             "schema_version": REPORT_SCHEMA_VERSION,
@@ -174,17 +180,21 @@ def aggregate_shards(
             "provenance": {
                 "run_id": run_id,
                 "run_attempt": run_attempt,
-                "source_attempts_by_repetition": {
-                    str(repetition): source_attempts[repetition] for repetition in range(1, repetitions + 1)
-                },
+                "source_attempts_by_repetition": source_attempts[kind],
+                "source_attempts_by_fixture": {str(SEGMENT_COUNTS[part]): source_attempts[part] for part in kinds},
             },
             "configuration": {
                 **_expected_configuration(kind, repetitions=repetitions, playback_seconds=playback_seconds),
+                "segment_counts": [3000, 10000] if kind == "current" else [3000],
                 "repetitions": repetitions,
                 "repetition_indices": list(range(1, repetitions + 1)),
             },
-            "environments_by_repetition": {
-                str(repetition): reports[(kind, repetition)]["environment"] for repetition in range(1, repetitions + 1)
+            "environments_by_fixture": {
+                str(SEGMENT_COUNTS[part]): {
+                    str(repetition): reports[(part, repetition)]["environment"]
+                    for repetition in range(1, repetitions + 1)
+                }
+                for part in kinds
             },
             "runs": sorted(runs, key=lambda run: (int(run["segment_count"]), int(run["repetition"]))),
             "summary": aggregate_runs(runs),

@@ -87,13 +87,13 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   benchmark:
-    name: Windows benchmark (repetition ${{ matrix.repetition }})
+    name: Windows benchmark (${{ matrix.suite }}, repetition ${{ matrix.repetition }})
     needs: prepare
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 6
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       PYTHONUTF8: "1"
@@ -156,17 +156,17 @@ jobs:
         shell: pwsh
         run: python -m pip install -r requirements.txt
 
-      - name: Run current 3,000 and 10,000 subtitle scenarios
+      - name: Run current subtitle scenario
         shell: pwsh
         env:
           BENCHMARK_REPETITIONS: ${{ needs.prepare.outputs.repetitions }}
           BENCHMARK_PLAYBACK_SECONDS: ${{ needs.prepare.outputs.playback_seconds }}
           BENCHMARK_CURRENT_SHA: ${{ github.sha }}
           BENCHMARK_REPETITION: ${{ matrix.repetition }}
+          BENCHMARK_SUITE: ${{ matrix.suite }}
         run: |
           python scripts/run_gui_performance.py `
-            --segment-count 3000 `
-            --segment-count 10000 `
+            --segment-count ${{ matrix.segment_count }} `
             --repetitions 1 `
             --repetition-index $env:BENCHMARK_REPETITION `
             --total-repetitions $env:BENCHMARK_REPETITIONS `
@@ -175,12 +175,13 @@ jobs:
             --harness-revision $env:BENCHMARK_CURRENT_SHA `
             --run-id $env:GITHUB_RUN_ID `
             --run-attempt $env:GITHUB_RUN_ATTEMPT `
-            --shard-id $env:BENCHMARK_REPETITION `
-            --output "artifacts/gui-performance-current-$env:BENCHMARK_REPETITION.json" `
+            --shard-id "$env:BENCHMARK_SUITE-$env:BENCHMARK_REPETITION" `
+            --output "artifacts/gui-performance-current-$env:BENCHMARK_SUITE-$env:BENCHMARK_REPETITION.json" `
+            --media-dir "$env:RUNNER_TEMP/gui-performance-media" `
             --fixture-dir "$env:RUNNER_TEMP/gui-performance-current"
 
       - name: Run reference 3,000 subtitle scenario with the same harness
-        if: always()
+        if: ${{ !cancelled() && matrix.suite == 'paired' }}
         shell: pwsh
         env:
           BENCHMARK_REPETITIONS: ${{ needs.prepare.outputs.repetitions }}
@@ -188,6 +189,7 @@ jobs:
           BENCHMARK_COMPARE_SHA: ${{ needs.prepare.outputs.compare_ref }}
           BENCHMARK_CURRENT_SHA: ${{ github.sha }}
           BENCHMARK_REPETITION: ${{ matrix.repetition }}
+          BENCHMARK_SUITE: ${{ matrix.suite }}
         run: |
           $referenceRoot = Join-Path $env:RUNNER_TEMP "gui-performance-reference"
           git worktree add --detach $referenceRoot $env:BENCHMARK_COMPARE_SHA
@@ -210,9 +212,10 @@ jobs:
                 --harness-revision $env:BENCHMARK_CURRENT_SHA `
                 --run-id $env:GITHUB_RUN_ID `
                 --run-attempt $env:GITHUB_RUN_ATTEMPT `
-                --shard-id $env:BENCHMARK_REPETITION `
+                --shard-id "$env:BENCHMARK_SUITE-$env:BENCHMARK_REPETITION" `
                 --no-enforce-contracts `
                 --output "$env:GITHUB_WORKSPACE/artifacts/gui-performance-reference-$env:BENCHMARK_REPETITION.json" `
+                --media-dir "$env:RUNNER_TEMP/gui-performance-media" `
                 --fixture-dir "$env:RUNNER_TEMP/gui-performance-reference-fixtures"
           } finally {
               Pop-Location
@@ -222,7 +225,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gui-performance-shard-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.repetition }}
+          name: gui-performance-shard-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}-${{ matrix.repetition }}
           path: artifacts/gui-performance-*.json
           if-no-files-found: error
           retention-days: 30

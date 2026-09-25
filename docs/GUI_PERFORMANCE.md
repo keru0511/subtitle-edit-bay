@@ -76,7 +76,7 @@ python scripts/compare_gui_performance.py `
 ## CIとbaseline運用
 
 - 通常の`CI`では`tests/test_gui_large_project_performance.py`でfixtureの再現性とレポート診断を、`tests/test_gui_editor.py`で3,000件のListView virtualizationと編集画面でのMediaPlayer再利用を、時間閾値なしで検証します。
-- `GUI performance` workflowは反復番号ごとのWindows matrixを最大3並列で実行し、JSONを30日間Artifactとして保存します。各shardは現行版の3,000件・10,000件と比較版の3,000件を直列に測定するため、比較ペアは必ず同じrunner、依存関係、ハーネスを使います。同じrunner内でGUI測定を同時実行しません。
+- `GUI performance` workflowは反復番号と測定種別ごとのWindows matrixを最大6並列で実行し、JSONを30日間Artifactとして保存します。`paired` shardは現行版と比較版の3,000件を直列に測定し、`large` shardは現行版10,000件だけを別runnerで測定します。既定3反復で6ジョブとなり、比較ペアは必ず同じrunner、依存関係、ハーネスを使います。同じrunner内でGUI測定を同時実行しません。
 - workflowは既定で#302適用前の`b600e90`を別worktreeへ展開します。各shardは`--repetitions 1`で実行しますが、JSONには全体の反復番号、予定反復数、現行版・比較版・ハーネスのSHA、run ID、run attempt、Python・PySide6・FFmpeg・runner環境を記録します。
 - 最終jobは全shardの生データを再集計し、反復・シナリオの欠落や重複、不正JSON、SHA・入力・環境・run attemptの不一致を拒否してから既存の絶対上限・相対比較を適用します。matrix jobの失敗、キャンセル、予期しないskipは、残ったartifactが正常でも最終checkを成功させません。
 - 通常のPRでは時間差をレポートだけに残し、不安定なrunner時間でマージを止めません。基準runnerで連続3回以上の分布を確認した後、手動実行の`fail_on_regression`を有効にして予算変更を検証します。
@@ -84,7 +84,7 @@ python scripts/compare_gui_performance.py `
 
 ### Artifactと再実行
 
-shard artifact名は`run_id`、`run_attempt`、反復番号を含み、統合artifactもrun attemptごとに分離されます。GitHub Actionsで失敗したmatrix jobだけを再実行した場合、最終jobは同じrunから各反復の最新の完全な現行版・比較版ペアを選びます。これにより成功済みshardを再測定せず利用でき、片側だけの不完全なattempt、別run・SHA・入力の結果、同じattemptの重複サンプルは拒否されます。個別JSONから判定せず、`Integrated benchmark gate`と`gui-performance-integrated-*`を確認してください。
+shard artifact名は`run_id`、`run_attempt`、測定種別、反復番号を含み、統合artifactもrun attemptごとに分離されます。GitHub Actionsで失敗したmatrix jobだけを再実行した場合、最終jobは同じrunから各反復・測定種別の最新結果を選びます。3,000件は現行版と比較版の最新attemptが一致しなければ拒否し、10,000件は独立して再実行できます。統合JSONの`source_attempts_by_fixture`と`environments_by_fixture`には件数・反復ごとの取得元と実行環境を記録します。これにより成功済みshardを再測定せず利用でき、片側だけの不完全なattempt、別run・SHA・入力の結果、同じattemptの重複サンプルは拒否されます。個別JSONから判定せず、`Integrated benchmark gate`と`gui-performance-integrated-*`を確認してください。
 
 並列化の効果を評価するときは、同じ現行SHA、比較SHA、入力で直列版とmatrix版をそれぞれ3回以上実行し、workflow経過時間、queue待ち、各shard、準備・集約時間、総runner時間、p50・最大値とばらつきをPRへ記録します。Windows runnerの混雑やsetup重複で総runner時間が増えるため、待ち時間だけでなく通常CIへの影響も確認して`max-parallel`を調整します。
 
@@ -99,3 +99,11 @@ shard artifact名は`run_id`、`run_attempt`、反復番号を含み、統合art
 - プロジェクト読込、字幕編集、ショート設定変更の操作時間とpeak RSS
 
 新しいQML構造でobject名が変わる場合は、製品コード、シナリオrunner、通常CI契約を同じPRで更新してください。計測不能を性能改善として扱わないためです。
+
+### 10,000件の測定分離と準備処理
+
+3回の反復・30秒再生・全シナリオ・判定閾値を維持したまま、3,000件の比較ペアから10,000件を別ジョブへ分離しました。比較ペアの動画素材は`--media-dir`を介して同じジョブ内で1回だけ生成します。字幕プロジェクト・worker結果・レポートは従来どおり分離し、過去のランナーの測定値は再利用しません。
+
+素材の共有は同じハーネス・再生時間・ランナーに限定します。共有先は各ジョブの`RUNNER_TEMP`で、再生時間に応じた素材名を使います。依存は各ランナーに個別導入し、既存のpip/FFmpegキャッシュを維持します。共通の依存準備ジョブを追加して全測定の開始を待たせる構成にはしていません。
+
+比較ペアと10,000件が同時に実行できれば待ち時間は短縮しますが、Windowsの同時実行枠と環境準備の重複が増えるため、短縮率は実測で判断します。直列3シナリオ版の実績は約5分44秒でしたが、これは今回と同条件で繰り返した比較結果ではありません。総runner時間とqueue待ちも併せて確認してください。

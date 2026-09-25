@@ -18,8 +18,11 @@ from .subtitle_project import (
     SubtitleProjectError,
     assign_project_layout_rows,
     load_project,
+    normalize_segment,
     save_project,
 )
+from .video_timeline import VideoTimeline, timeline_from_project
+from .short_video_schema import ShortVideo
 from .video_sequence import VideoSequence, VideoSequenceError
 
 
@@ -282,121 +285,136 @@ class ProjectEditorController:
         self._emit(self._on_project_changed)
         self._emit(self._on_dirty)
 
-    def push_history(self, entry: dict[str, Any]) -> None:
-        self._undo_stack.append(entry)
-        if len(self._undo_stack) > 100:
-            self._undo_stack.pop(0)
-        self._redo_stack.clear()
-        self._emit(self._on_history_changed)
-
-    def record_history(
+    def _commit_edit(
         self,
-        before: list[dict[str, Any]],
-        after: list[dict[str, Any]],
-        reflow_layout: bool = True,
-    ) -> None:
-        if self._project is None or (not before and not after):
-            return
-        self.push_history(
-            {
-                "kind": "segments",
-                "before": deepcopy(before),
-                "after": deepcopy(after),
-                "reflow_layout": reflow_layout,
-            }
-        )
-
-    def record_timeline_history(
-        self,
-        before: dict[str, Any],
-        after: dict[str, Any],
-    ) -> None:
-        if self._project is None or before == after:
-            return
-        self.push_history(
-            {
-                "kind": "timeline",
-                "before": deepcopy(before),
-                "after": deepcopy(after),
-            }
-        )
-
-    def record_sequence_history(
-        self,
-        before: dict[str, Any],
-        after: dict[str, Any],
-    ) -> None:
-        """Record a sequence transaction without coupling to the Qt facade."""
-
-        if self._project is None or before == after:
-            return
-        self.push_history(
-            {
-                "kind": "sequence",
-                "before": deepcopy(before),
-                "after": deepcopy(after),
-            }
-        )
-
-    def replace_segments(
-        self,
-        segments: list[dict[str, Any]],
-        selected_id: str | None = None,
+        updates: dict[str, Any],
         *,
-        reflow_layout: bool = True,
-    ) -> None:
+        history: dict[str, Any] | None = None,
+        selected_index: int | None = None,
+        remove_fields: tuple[str, ...] = (),
+        history_move: str | None = None,
+    ) -> bool:
+        """準備・検証済みの変更を確定し、履歴・保存予約・通知を一括更新する。"""
         if self._project is None:
-            return
-        if self._autosave_future is not None and not self._autosave_future.done():
-            segments = [dict(item) for item in segments]
-        ordered = sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
+            return False
+        changed = any(key not in self._project or self._project[key] != value for key, value in updates.items())
+        changed = changed or any(key in self._project for key in remove_fields)
+        if not changed and history_move is None:
+            return False
+        self._project.update(updates)
+        for key in remove_fields:
+            self._project.pop(key, None)
+        if selected_index is not None:
+            self._selected_segment_index = selected_index
+        if history is not None:
+            self._undo_stack.append(history)
+            del self._undo_stack[:-100]
+            self._redo_stack.clear()
+        if history_move == "undo":
+            self._redo_stack.append(self._undo_stack.pop())
+        elif history_move == "redo":
+            self._undo_stack.append(self._redo_stack.pop())
+        # 通知先が参照する文書・履歴・revisionをすべて確定してから公開する。
+        self._project_revision += 1
+        self._project_dirty = True
+        self._emit(self._on_project_changed)
+        if "segments" in updates:
+            self._emit(self._on_segments_changed)
+            self._emit(self._on_selection_changed)
+        else:
+            self._emit(self._on_project_data_changed)
+        if history is not None or history_move is not None:
+            self._emit(self._on_history_changed)
+        self._emit(self._on_dirty)
+        return True
+
+    def commit_section_change(self, section: str, payload: dict[str, Any]) -> bool:
+        """音量・ショート編集を、呼び出し元の辞書から切り離して確定する。"""
+        if self._project is None:
+            return False
+        if section not in {"audio_mix", "short_video"}:
+            raise SubtitleProjectError(f"未対応の編集対象です: {section}")
+        after = deepcopy(payload)
+        if section == "short_video":
+            ShortVideo.from_json(after)
+        before = deepcopy(self._project.get(section, {}))
+        return self._commit_edit(
+            {section: after},
+            history={
+                "kind": section, "before": before, "after": deepcopy(after),
+                "before_missing": section not in self._project,
+            },
+        )
+
+    def _prepare_segments(
+        self, segments: list[dict[str, Any]], selected_id: str | None,
+        *, reflow_layout: bool,
+    ) -> tuple[list[dict[str, Any]], int]:
+        # レイアウト計算は辞書を更新するため、保存中・編集中の正本に触れない。
+        ordered = sorted(
+            (dict(item) for item in segments),
+            key=lambda item: (item["start"], item["end"], item["id"]),
+        )
         ids = [str(item["id"]) for item in ordered]
         if len(ids) != len(set(ids)):
             raise SubtitleProjectError("segment ids must be unique")
-        self._project["segments"] = (
-            self._assign_project_layout_rows_fn(ordered) if reflow_layout else ordered
-        )
+        if reflow_layout:
+            ordered = self._assign_project_layout_rows_fn(ordered)
+        originals = {str(item["id"]): item for item in segments}
+        ordered = [originals[str(item["id"])] if item == originals[str(item["id"])] else item for item in ordered]
+        selected = self._selected_segment_index
         if selected_id:
-            self._selected_segment_index = next(
-                (
-                    index
-                    for index, item in enumerate(self._project["segments"])
-                    if item["id"] == selected_id
-                ),
-                -1,
-            )
-        elif self._selected_segment_index >= len(self._project["segments"]):
-            self._selected_segment_index = len(self._project["segments"]) - 1
-        self._emit(self._on_segments_changed)
-        self._emit(self._on_selection_changed)
-        self.mark_dirty()
+            selected = next((index for index, item in enumerate(ordered) if item["id"] == selected_id), -1)
+        elif selected >= len(ordered):
+            selected = len(ordered) - 1
+        return ordered, selected
 
-    def commit_segment_change(
-        self,
-        before: list[dict[str, Any]],
-        after: list[dict[str, Any]],
-        selected_id: str | None = None,
-        *,
-        reflow_layout: bool = True,
+    def replace_segments(
+        self, segments: list[dict[str, Any]], selected_id: str | None = None,
+        *, reflow_layout: bool = True,
     ) -> None:
         if self._project is None:
             return
-        affected_ids = {str(item["id"]) for item in [*before, *after]}
-        segments = [
-            item
-            for item in self._project["segments"]
-            if str(item["id"]) not in affected_ids
-        ]
-        segments.extend(after)
-        self.record_history(before, after, reflow_layout)
-        self.replace_segments(segments, selected_id, reflow_layout=reflow_layout)
+        ordered, selected = self._prepare_segments(segments, selected_id, reflow_layout=reflow_layout)
+        self._commit_edit({"segments": ordered}, selected_index=selected)
 
-    def replace_timeline(self, payload: dict[str, Any]) -> None:
+    def commit_segment_change(
+        self, before: list[dict[str, Any]], after: list[dict[str, Any]],
+        selected_id: str | None = None, *, reflow_layout: bool = True,
+    ) -> None:
         if self._project is None:
             return
-        self._project["timeline"] = deepcopy(payload)
-        self._emit(self._on_project_data_changed)
-        self.mark_dirty()
+        normalized = [normalize_segment(item, index) for index, item in enumerate(after)]
+        affected_ids = {str(item["id"]) for item in [*before, *normalized]}
+        current = self._project["segments"]
+        segments = [item for item in current if str(item["id"]) not in affected_ids]
+        segments.extend(normalized)
+        ordered, selected = self._prepare_segments(segments, selected_id, reflow_layout=reflow_layout)
+        history = {
+            "kind": "segments",
+            "before": deepcopy([item for item in current if str(item["id"]) in affected_ids]),
+            "after": deepcopy(normalized),
+            "reflow_layout": reflow_layout,
+        }
+        self._commit_edit({"segments": ordered}, history=history, selected_index=selected)
+
+    def _prepare_timeline(self, payload: dict[str, Any]) -> dict[str, Any]:
+        duration = timeline_from_project(self._project).source_duration
+        return VideoTimeline.from_json(payload, source_duration=duration).to_json()
+
+    def replace_timeline(self, payload: dict[str, Any]) -> None:
+        if self._project is not None:
+            self._commit_edit({"timeline": self._prepare_timeline(payload)})
+
+    def commit_timeline_change(self, payload: dict[str, Any]) -> bool:
+        if self._project is None:
+            return False
+        after = self._prepare_timeline(payload)
+        return self._commit_edit(
+            {"timeline": after},
+            history={"kind": "timeline", "before": deepcopy(self._project.get("timeline", {})),
+                     "after": deepcopy(after)},
+        )
 
     def sequence_model(self) -> VideoSequence:
         """Return the current sequence domain model at the controller boundary."""
@@ -420,9 +438,7 @@ class ProjectEditorController:
             sequence = VideoSequence.from_json(payload)
         except VideoSequenceError as error:
             raise SubtitleProjectError(str(error)) from error
-        self._project["sequence"] = sequence.to_json()
-        self._emit(self._on_project_data_changed)
-        self.mark_dirty()
+        self._commit_edit({"sequence": sequence.to_json()})
 
     def commit_sequence_change(
         self,
@@ -438,8 +454,10 @@ class ProjectEditorController:
             raise SubtitleProjectError(str(error)) from error
         if before_payload == after_payload:
             return
-        self.record_sequence_history(before_payload, after_payload)
-        self.replace_sequence(after_payload)
+        self._commit_edit(
+            {"sequence": after_payload},
+            history={"kind": "sequence", "before": before_payload, "after": deepcopy(after_payload)},
+        )
 
     def apply_sequence_mutation(
         self,
@@ -457,55 +475,51 @@ class ProjectEditorController:
             self.commit_sequence_change(before_payload, after_payload)
         return after
 
-    def apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
+    def apply_history_entry(
+        self, entry: dict[str, Any], state: str, *, history_move: str | None = None,
+    ) -> None:
         if self._project is None:
             return
-        if entry.get("kind") == "audio_mix":
-            self._project["audio_mix"] = deepcopy(entry.get(state, {}))
-            self._emit(self._on_project_data_changed)
-            self.mark_dirty()
-            self._emit(self._on_history_applied, entry, state)
-            return
-        if entry.get("kind") == "timeline":
-            self.replace_timeline(deepcopy(entry.get(state, {})))
-            self._emit(self._on_history_applied, entry, state)
-            return
-        if entry.get("kind") == "sequence":
-            self.replace_sequence(deepcopy(entry.get(state, {})))
-            self._emit(self._on_history_applied, entry, state)
-            return
-        affected_ids = {
-            str(item["id"])
-            for item in [*entry.get("before", []), *entry.get("after", [])]
-        }
-        segments = [
-            item
-            for item in self._project["segments"]
-            if str(item["id"]) not in affected_ids
-        ]
-        segments.extend(deepcopy(entry.get(state, [])))
-        self.replace_segments(
-            segments,
-            reflow_layout=bool(entry.get("reflow_layout", True)),
+        kind = entry.get("kind")
+        selected = None
+        remove_fields: tuple[str, ...] = ()
+        if kind in {"audio_mix", "short_video"}:
+            if state == "before" and entry.get("before_missing"):
+                updates = {}
+                remove_fields = (kind,)
+            else:
+                updates = {kind: deepcopy(entry.get(state, {}))}
+        elif kind == "timeline":
+            updates = {"timeline": self._prepare_timeline(entry.get(state, {}))}
+        elif kind == "sequence":
+            try:
+                updates = {"sequence": VideoSequence.from_json(entry.get(state, {})).to_json()}
+            except VideoSequenceError as error:
+                raise SubtitleProjectError(str(error)) from error
+        else:
+            affected_ids = {str(item["id"]) for item in [*entry.get("before", []), *entry.get("after", [])]}
+            segments = [item for item in self._project["segments"] if str(item["id"]) not in affected_ids]
+            segments.extend(deepcopy(entry.get(state, [])))
+            ordered, selected = self._prepare_segments(
+                segments, None, reflow_layout=bool(entry.get("reflow_layout", True)),
+            )
+            updates = {"segments": ordered}
+        # 復元候補の検証が完了するまでは文書も履歴スタックも変更しない。
+        self._commit_edit(
+            updates, selected_index=selected, remove_fields=remove_fields, history_move=history_move,
         )
         self._emit(self._on_history_applied, entry, state)
 
     def undo(self) -> bool:
         if self._project is None or not self._undo_stack:
             return False
-        entry = self._undo_stack.pop()
-        self._redo_stack.append(entry)
-        self.apply_history_entry(entry, "before")
-        self._emit(self._on_history_changed)
+        self.apply_history_entry(self._undo_stack[-1], "before", history_move="undo")
         return True
 
     def redo(self) -> bool:
         if self._project is None or not self._redo_stack:
             return False
-        entry = self._redo_stack.pop()
-        self._undo_stack.append(entry)
-        self.apply_history_entry(entry, "after")
-        self._emit(self._on_history_changed)
+        self.apply_history_entry(self._redo_stack[-1], "after", history_move="redo")
         return True
 
     def select_segment(self, index: int) -> None:

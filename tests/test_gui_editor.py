@@ -1478,6 +1478,64 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app._project["audio_mix"]["customized"])
         self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
 
+    def test_ai_subtitle_edit_uses_shared_history_without_replacing_project(self) -> None:
+        self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 1, "text": "修正前"},
+            {"id": "second", "start": 2, "end": 3, "text": "維持"},
+        ])
+        project = self.app._project
+        revision = self.app._project_revision
+        self.app._codex_proposal = {
+            "summary": "字幕を修正", "warnings": [], "base_revision": revision,
+            "operations": [{"type": "update_segment", "segment_id": "first", "changes": {"text": "修正後"}}],
+        }
+        self.app.applyCodexProposal()
+        self.assertIs(self.app._project, project)
+        self.assertEqual(self.app._project_revision, revision + 1)
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "修正後")
+        self.assertEqual([item["id"] for item in self.app._undo_stack[-1]["before"]], ["first"])
+        self.app.undoEdit()
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "修正前")
+        self.app.redoEdit()
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "修正後")
+
+    def test_manual_audio_edits_and_reset_share_undo_redo_and_save(self) -> None:
+        path = self._load_project()
+        before = deepcopy(self.app._project["audio_mix"])
+        revision = self.app._project_revision
+        self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
+        edited = deepcopy(self.app._project["audio_mix"])
+        self.assertEqual(self.app._project_revision, revision + 1)
+        self.assertEqual(len(self.app._undo_stack), 1)
+        self.app.undoEdit()
+        self.assertEqual(self.app._project["audio_mix"], before)
+        self.app.redoEdit()
+        self.assertEqual(self.app._project["audio_mix"], edited)
+        self.app.resetAudioMixer()
+        self.app.undoEdit()
+        self.assertEqual(self.app._project["audio_mix"], edited)
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["audio_mix"], edited)
+
+    def test_short_edit_undo_redo_updates_clip_model_and_saved_project(self) -> None:
+        path = self._load_project()
+        before = deepcopy(self.app._project)
+        # 表示の読み取りだけでは保存データを追加しない。
+        self.app.shortVideoSettings
+        self.assertEqual(self.app._project, before)
+        original_count = self.app.shortVideoClipCount
+        self.assertTrue(self.app.addShortVideoClipByRange(1, 2))
+        self.assertEqual(self.app.shortVideoClipCount, original_count + 1)
+        self.app.undoEdit()
+        self.assertEqual(self.app.shortVideoClipCount, original_count)
+        self.assertEqual(self.app._project, before)
+        self.app.redoEdit()
+        self.assertEqual(self.app._short_video_clip_model.rowCount(), original_count + 1)
+        self.assertTrue(self.app.saveProject())
+        clips = json.loads(path.read_text(encoding="utf-8"))["short_video"]["clips"]
+        self.assertEqual(clips[-1]["start"], 1)
+        self.assertEqual(clips[-1]["end"], 2)
+
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()
 

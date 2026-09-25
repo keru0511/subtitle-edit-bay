@@ -1299,6 +1299,8 @@ class EditBayBackend(LegacyEditBayBackend):
             self._notify_audio_mixer_preview(structure_changed=True)
         elif entry.get("kind") == "timeline":
             self._sync_project_timeline()
+        elif entry.get("kind") == "short_video":
+            self.shortVideoChanged.emit()
 
     @staticmethod
     def _subtitle_preview_signature(segment: dict[str, Any]) -> tuple[object, ...]:
@@ -1337,36 +1339,34 @@ class EditBayBackend(LegacyEditBayBackend):
             view["sourceIndex"] = source_index
         return view
 
-    def _short_video_section(self) -> dict[str, Any]:
+    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, Any]:
+        """編集準備だけコピーし、表示ではクリップ全体の複製と正本の変更を避ける。"""
         if self._project is None:
             return {}
-        section = self._project.setdefault(
-            "short_video",
-            {
-                "enabled": False,
-                "time_basis": "source",
-                "output": {"width": 1080, "height": 1920, "fps": 30},
-                "global_fit": "cover",
-                "global_background_color": "000000",
-                "subtitle_scale_percent": 150.0,
-                "transition": {"type": "crossfade", "duration": 0.5},
-                "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
-                "clips": [],
-            },
-        )
-        if not isinstance(section, dict):
-            section = self._project["short_video"] = {
-                "enabled": False,
-                "time_basis": "source",
-                "output": {"width": 1080, "height": 1920, "fps": 30},
-                "global_fit": "cover",
-                "global_background_color": "000000",
-                "subtitle_scale_percent": 150.0,
-                "transition": {"type": "crossfade", "duration": 0.5},
-                "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
-                "clips": [],
-            }
-        return section
+        section = self._project.get("short_video")
+        if isinstance(section, dict):
+            return deepcopy(section) if for_edit else section
+        return {
+            "enabled": False,
+            "time_basis": "source",
+            "output": {"width": 1080, "height": 1920, "fps": 30},
+            "global_fit": "cover",
+            "global_background_color": "000000",
+            "subtitle_scale_percent": 150.0,
+            "transition": {"type": "crossfade", "duration": 0.5},
+            "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
+            "clips": [],
+        }
+
+    def _commit_short_video(self, section: dict[str, Any]) -> bool:
+        try:
+            changed = self._project_editor_controller.commit_section_change("short_video", section)
+        except (ValueError, TypeError, OverflowError) as error:
+            self._set_status(f"ショート編集を適用できません: {error}", "CHECK")
+            return False
+        if changed:
+            self.shortVideoChanged.emit()
+        return True
 
     def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
         return self._segment_by_id.get(str(segment_id))
@@ -1424,7 +1424,7 @@ class EditBayBackend(LegacyEditBayBackend):
     def initializeShortVideoClips(self) -> None:
         if self._project is None:
             return
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         if section.get("clips"):
             return
         clips: list[dict[str, Any]] = []
@@ -1441,9 +1441,7 @@ class EditBayBackend(LegacyEditBayBackend):
             )
         section["enabled"] = True
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
+        self._commit_short_video(section)
 
     @Slot(str, result=bool)
     def addShortVideoClip(self, segment_id: str) -> bool:
@@ -1452,7 +1450,7 @@ class EditBayBackend(LegacyEditBayBackend):
         segment = self._find_segment_by_id(segment_id)
         if segment is None:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         clips.append(
             {
@@ -1462,10 +1460,7 @@ class EditBayBackend(LegacyEditBayBackend):
             }
         )
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(float, float, result=bool)
     def addShortVideoClipByRange(self, start: float, end: float) -> bool:
@@ -1481,36 +1476,30 @@ class EditBayBackend(LegacyEditBayBackend):
         duration = max(0.0, float(self.projectDuration))
         if start < 0.0 or start >= end or (duration > 0.0 and end > duration):
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         clips.append({"segment_id": "", "start": round(start, 3), "end": round(end, 3)})
         section["enabled"] = True
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         if not 0 <= index < len(clips):
             return False
         clips.pop(index)
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, int, result=bool)
     def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         if not (0 <= from_index < len(clips)):
             return False
@@ -1525,10 +1514,7 @@ class EditBayBackend(LegacyEditBayBackend):
             to_index -= 1
         clips.insert(to_index, clip)
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, "QVariantMap", result=bool)
     def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
@@ -1536,7 +1522,7 @@ class EditBayBackend(LegacyEditBayBackend):
             return False
         if not isinstance(fields, dict) or not fields:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         if not 0 <= index < len(clips):
             return False
@@ -1598,10 +1584,7 @@ class EditBayBackend(LegacyEditBayBackend):
                 return False
         clips[index] = clip
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalFit(self, fit: str) -> bool:
@@ -1610,12 +1593,9 @@ class EditBayBackend(LegacyEditBayBackend):
         fit = str(fit).lower()
         if fit not in VALID_FIT_MODES:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["global_fit"] = fit
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
@@ -1625,12 +1605,9 @@ class EditBayBackend(LegacyEditBayBackend):
             normalized = normalize_rgb_color(color)
         except (TypeError, ValueError, OverflowError):
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["global_background_color"] = normalized
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(str, float, result=bool)
     def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
@@ -1639,18 +1616,15 @@ class EditBayBackend(LegacyEditBayBackend):
         transition_type = str(transition_type).lower()
         if transition_type not in VALID_TRANSITION_TYPES:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["transition"] = {"type": transition_type, "duration": max(0.0, round(float(duration), 3))}
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot("QVariantMap", result=bool)
     def setShortVideoBgm(self, fields: dict[str, Any]) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         bgm = dict(section.get("bgm", {}))
         if "path" in fields:
             bgm["path"] = str(fields["path"])
@@ -1664,32 +1638,23 @@ class EditBayBackend(LegacyEditBayBackend):
             volume = float(fields["volume"])
             bgm["volume"] = max(0.0, min(1.0, volume))
         section["bgm"] = bgm
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, int, int, result=bool)
     def setShortVideoOutput(self, width: int, height: int, fps: int) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["output"] = {"width": max(1, int(width)), "height": max(1, int(height)), "fps": max(1, int(fps))}
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(float, result=bool)
     def setShortVideoSubtitleScale(self, percent: float) -> bool:
         if self._project is None or self._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["subtitle_scale_percent"] = max(0.0, float(percent))
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(result=bool)
     def startHighlightAnalysis(self) -> bool:
@@ -1776,7 +1741,7 @@ class EditBayBackend(LegacyEditBayBackend):
         source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
         if not source_ids:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         candidate_start = float(candidate.get("start", 0.0))
         candidate_end = float(candidate.get("end", candidate_start))
@@ -1798,10 +1763,7 @@ class EditBayBackend(LegacyEditBayBackend):
             }
         )
         section["clips"] = clips
-        self._mark_project_dirty()
-        self.projectDataChanged.emit()
-        self.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:
@@ -2868,7 +2830,8 @@ class EditBayBackend(LegacyEditBayBackend):
     def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
         if self._project is None or self._running:
             return
-        audio_mix = reconcile_audio_mix(self._project, self._mixer_video_tracks())
+        draft = {**self._project, "audio_sources": deepcopy(self._project.get("audio_sources", []))}
+        audio_mix = reconcile_audio_mix(draft, self._mixer_video_tracks())
         channels = audio_mix["channels"]
         if not 0 <= index < len(channels):
             self._set_status("動画内または外部の音声トラックがありません", "CHECK")
@@ -2881,13 +2844,11 @@ class EditBayBackend(LegacyEditBayBackend):
         except AudioMixError:
             self._set_status("音量ミキサーの変更内容を確認してください", "CHECK")
             return
-        self._project["audio_mix"] = updated_audio_mix
-        self.projectDataChanged.emit()
+        self._project_editor_controller.commit_section_change("audio_mix", updated_audio_mix)
         self._notify_audio_mixer_preview(
             structure_changed=enabled_before
             != bool(updated_audio_mix["channels"][index].get("enabled"))
         )
-        self._mark_project_dirty()
         self._set_status("音量ミキサー設定を更新しました", "EDIT")
 
     def start_codex_audio_mix_proposal(
@@ -2976,11 +2937,8 @@ class EditBayBackend(LegacyEditBayBackend):
         if updated == before:
             self._set_status("音量ミキサーの変更はありません", "CHECK")
             return False
-        self._project["audio_mix"] = updated
-        self._push_history({"kind": "audio_mix", "before": before, "after": deepcopy(updated)})
-        self.projectDataChanged.emit()
+        self._project_editor_controller.commit_section_change("audio_mix", updated)
         self._notify_audio_mixer_preview(structure_changed=True)
-        self._mark_project_dirty()
         self._audio_mix_proposal = None
         self.audioMixProposalChanged.emit()
         self._set_status("音量ミキサーの変更案を適用しました。内容を確認して保存してください", "EDIT")
@@ -2996,13 +2954,13 @@ class EditBayBackend(LegacyEditBayBackend):
     def resetAudioMixer(self) -> None:
         if self._project is None or self._running:
             return
-        audio_mix = reset_audio_mix(self._project, self._mixer_video_tracks())
+        draft = {**self._project, "audio_sources": deepcopy(self._project.get("audio_sources", []))}
+        audio_mix = reset_audio_mix(draft, self._mixer_video_tracks())
         if not audio_mix["channels"]:
             self._set_status("動画内または外部の音声トラックがありません", "CHECK")
             return
-        self.projectDataChanged.emit()
+        self._project_editor_controller.commit_section_change("audio_mix", audio_mix)
         self._notify_audio_mixer_preview(structure_changed=True)
-        self._mark_project_dirty()
         self._set_status("音量ミキサーを既定値へ戻しました", "EDIT")
 
     @Slot(str)
@@ -3268,39 +3226,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
         return True
 
-    def _record_history(
-        self,
-        before: list[dict[str, Any]],
-        after: list[dict[str, Any]],
-        reflow_layout: bool = True,
-    ) -> None:
-        self._project_editor_controller.record_history(before, after, reflow_layout)
-
-    def _record_timeline_history(
-        self,
-        before: dict[str, Any],
-        after: dict[str, Any],
-    ) -> None:
-        self._project_editor_controller.record_timeline_history(before, after)
-
-    def _push_history(self, entry: dict[str, Any]) -> None:
-        self._project_editor_controller.push_history(entry)
-
     def _mark_project_dirty(self) -> None:
         self._project_editor_controller.mark_dirty()
-
-    def _replace_segments(
-        self,
-        segments: list[dict[str, Any]],
-        selected_id: str | None = None,
-        *,
-        reflow_layout: bool = True,
-    ) -> None:
-        self._project_editor_controller.replace_segments(
-            segments,
-            selected_id,
-            reflow_layout=reflow_layout,
-        )
 
     def _commit_segment_change(
         self,
@@ -3317,19 +3244,6 @@ class EditBayBackend(LegacyEditBayBackend):
             reflow_layout=reflow_layout,
         )
 
-    def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
-        self._project_editor_controller.apply_history_entry(entry, state)
-
-    def _replace_timeline(self, payload: dict[str, Any]) -> None:
-        source_duration = self._cut_timeline_model().source_duration
-        timeline = VideoTimeline.from_json(
-            payload,
-            source_duration=source_duration,
-        )
-        self._project_editor_controller.replace_timeline(timeline.to_json())
-        self.set_editor_time_mapping(timeline)
-        self.cutTimelineChanged.emit()
-
     def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:
         if self._project is None:
             return False
@@ -3337,8 +3251,8 @@ class EditBayBackend(LegacyEditBayBackend):
         after = timeline.to_json()
         if before == after:
             return False
-        self._record_timeline_history(before, after)
-        self._replace_timeline(after)
+        self._project_editor_controller.commit_timeline_change(after)
+        self._sync_project_timeline()
         self._set_status(status, "EDIT")
         return True
 
@@ -4458,23 +4372,21 @@ class EditBayBackend(LegacyEditBayBackend):
                 selected_operation_ids={str(item) for item in (selected_operation_ids or [])} or None,
                 current_revision=self._project_revision,
             )
+            after = result.project.get("segments", [])
+            before_by_id = {item["id"]: item for item in before}
+            after_by_id = {item["id"]: item for item in after}
+            changed_ids = {
+                segment_id for segment_id in before_by_id.keys() | after_by_id.keys()
+                if before_by_id.get(segment_id) != after_by_id.get(segment_id)
+            }
+            self._project_editor_controller.commit_segment_change(
+                [item for item in before if item["id"] in changed_ids],
+                [item for item in after if item["id"] in changed_ids],
+                result.changed_segment_ids[0] if result.changed_segment_ids else None,
+            )
         except (CodexSessionError, ValueError, TypeError) as error:
             self._set_status(f"Codex編集案を適用できません: {error}", "ERROR")
             return
-        self._project = result.project
-        after = deepcopy(self._project.get("segments", []))
-        self._record_history(before, after)
-        self._sync_subtitle_model()
-        self.projectDataChanged.emit()
-        self.segmentsChanged.emit()
-        self._mark_project_dirty()
-        if result.changed_segment_ids:
-            first_id = result.changed_segment_ids[0]
-            self._selected_segment_index = next(
-                (index for index, item in enumerate(after) if str(item.get("id")) == first_id),
-                -1,
-            )
-            self.selectionChanged.emit()
         self._codex_proposal = None
         self.codexProposalChanged.emit()
         self._set_status("Codex編集案を適用しました。内容を確認して保存してください", "EDIT")

@@ -34,7 +34,11 @@ concurrency:
 
 jobs:
   real-asr:
-    name: 日本語実録音をlarge-v3で比較
+    name: 日本語実録音の認識 (${{ matrix.revision }})
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [baseline, candidate]
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -110,13 +114,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          python scripts/benchmark_transcription.py --baseline-root ../baseline --candidate-root . --output ../asr-report
+          python scripts/benchmark_transcription.py --baseline-root ../baseline --candidate-root . --revision ${{ matrix.revision }} --output ../asr-report
 
       - name: 認識結果と比較レポートを保存
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: transcription-accuracy-${{ github.run_id }}
+          name: transcription-accuracy-${{ matrix.revision }}-${{ github.run_id }}
           path: asr-report/
           if-no-files-found: warn
           retention-days: 14
@@ -127,3 +131,36 @@ jobs:
         with:
           path: ${{ github.workspace }}/.asr-venv
           key: ${{ steps.runtime-cache.outputs.cache-primary-key }}
+
+  compare:
+    name: 日本語実録音をlarge-v3で比較
+    needs: real-asr
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+      - name: 両版の実認識結果を取得
+        uses: actions/download-artifact@v8
+        with:
+          pattern: transcription-accuracy-*-${{ github.run_id }}
+          path: recognition-results
+      - name: 実認識の完了と比較条件を検証して判定
+        env:
+          RECOGNITION_RESULT: ${{ needs.real-asr.result }}
+        run: |
+          test "$RECOGNITION_RESULT" = success
+          python scripts/benchmark_transcription.py --merge-reports recognition-results/transcription-accuracy-baseline-${{ github.run_id }}/report.json recognition-results/transcription-accuracy-candidate-${{ github.run_id }}/report.json --output asr-comparison
+      - name: 比較レポートを保存
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: transcription-accuracy-${{ github.run_id }}
+          path: asr-comparison/
+          if-no-files-found: warn
+          retention-days: 14

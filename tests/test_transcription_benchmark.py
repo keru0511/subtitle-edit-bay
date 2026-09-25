@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from scripts.benchmark_transcription import (
     align_characters,
+    merge_reports,
     normalize_text,
     prepare_audio,
     quality_failures,
@@ -50,6 +51,50 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
                 },
             ]
         }
+
+    def paired_reports(self):
+        common = {
+            "schema_version": 1,
+            "manifest": self.manifest,
+            "audio_sha256": "same-audio",
+            "versions": {"whisperx": "3.8.6"},
+            "model_snapshots": ["model/revision"],
+            "python": "3.10",
+            "platform": "Windows",
+            "failures": [],
+        }
+        score = score_transcript(self.payload, self.manifest)
+        return (
+            {**copy.deepcopy(common), "baseline": score},
+            {**copy.deepcopy(common), "candidate": copy.deepcopy(score)},
+        )
+
+    def test_parallel_results_reject_different_inputs_and_models(self):
+        for key in ["schema_version", "manifest", "audio_sha256", "versions", "model_snapshots"]:
+            with self.subTest(key=key):
+                baseline, candidate = self.paired_reports()
+                candidate[key] = "different"
+                with self.assertRaisesRegex(ValueError, key):
+                    merge_reports(baseline, candidate)
+
+    def test_parallel_results_require_both_successful_recognitions(self):
+        for name in ["baseline", "candidate"]:
+            for failure in [False, True]:
+                with self.subTest(name=name, failure=failure):
+                    baseline, candidate = self.paired_reports()
+                    report = baseline if name == "baseline" else candidate
+                    if failure:
+                        report["failures"] = ["推論に失敗"]
+                    else:
+                        del report[name]
+                    with self.assertRaises(ValueError):
+                        merge_reports(baseline, candidate)
+
+    def test_parallel_comparison_keeps_quality_gate(self):
+        baseline, candidate = self.paired_reports()
+        self.assertEqual(merge_reports(baseline, candidate)["failures"], [])
+        candidate["candidate"] = score_transcript({"segments": []}, self.manifest)
+        self.assertTrue(merge_reports(baseline, candidate)["failures"])
 
     def test_normalization_keeps_repetition(self) -> None:
         self.assertEqual(normalize_text("Ａ　はい、はい！いいいいいい"), "aはいはいいいいいいい")

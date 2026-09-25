@@ -298,7 +298,11 @@ def write_report(output: Path, report: dict) -> None:
         lines += ["", f"比較対象: `{report['baseline']['commit']}`", f"変更後: `{report['candidate']['commit']}`", ""]
     lines += ["## 判定", ""] + (
         report.get("failures")
-        or ["この固定素材での回帰検査に合格。実際のゲーム実況における改善を証明するものではありません。"]
+        or (
+            ["この固定素材での回帰検査に合格。実際のゲーム実況における改善を証明するものではありません。"]
+            if "baseline" in report and "candidate" in report
+            else ["片側の実認識を完了。比較判定は集約ジョブで行います。"]
+        )
     )
     lines += [
         "",
@@ -314,19 +318,49 @@ def write_report(output: Path, report: dict) -> None:
             handle.write(text)
 
 
+def merge_reports(baseline: dict, candidate: dict) -> dict:
+    """別ランナーの実認識結果を、同一条件を確認して比較する。"""
+    for name, report in [("baseline", baseline), ("candidate", candidate)]:
+        if report.get("failures") or name not in report:
+            raise ValueError(f"{name}の実認識が完了していません")
+    for key in ["schema_version", "manifest", "audio_sha256", "versions", "model_snapshots"]:
+        if key not in baseline or key not in candidate or baseline[key] != candidate[key]:
+            raise ValueError(f"比較条件が一致しません: {key}")
+    result = {**candidate, "baseline": baseline["baseline"]}
+    result["execution_environments"] = {
+        name: {key: report[key] for key in ["python", "platform"]}
+        for name, report in [("baseline", baseline), ("candidate", candidate)]
+    }
+    result["failures"] = quality_failures(result["baseline"], result["candidate"], result["manifest"]["limits"])
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="実モデルの初回認識を2つのcheckoutで比較します。")
-    parser.add_argument("--baseline-root", type=Path, required=True)
-    parser.add_argument("--candidate-root", type=Path, required=True)
+    parser.add_argument("--baseline-root", type=Path)
+    parser.add_argument("--candidate-root", type=Path)
+    parser.add_argument("--revision", choices=["baseline", "candidate"])
+    parser.add_argument("--merge-reports", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"))
     parser.add_argument(
         "--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "assets/asr_benchmark/manifest.json"
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.merge_reports and args.revision:
+        parser.error("--merge-reportsと--revisionは同時指定できません")
+    revisions = [("baseline", args.baseline_root), ("candidate", args.candidate_root)]
+    if args.revision:
+        revisions = [(name, root) for name, root in revisions if name == args.revision]
+    if not args.merge_reports and any(root is None for _, root in revisions):
+        parser.error("認識対象のcheckoutを指定してください")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     report = {"schema_version": 1, "python": sys.version, "platform": platform.platform(), "failures": []}
     try:
+        if args.merge_reports:
+            report = merge_reports(*(json.loads(path.read_text(encoding="utf-8")) for path in args.merge_reports))
+            write_report(output, report)
+            return 1 if report["failures"] else 0
         report["versions"] = {
             name: importlib.metadata.version(name) for name in ["whisperx", "faster-whisper", "ctranslate2", "torch"]
         }
@@ -334,7 +368,7 @@ def main() -> int:
         manifest = prepare_audio(args.manifest.resolve(), audio)
         report["manifest"] = manifest
         report["audio_sha256"] = hashlib.sha256(audio.read_bytes()).hexdigest()
-        for name, root in [("baseline", args.baseline_root), ("candidate", args.candidate_root)]:
+        for name, root in revisions:
             print(f"{name}: large-v3の実認識と時刻合わせを開始します。", flush=True)
             run = run_revision(root.resolve(), audio, output / name)
             report[name] = {
@@ -345,7 +379,8 @@ def main() -> int:
         report["model_snapshots"] = sorted(
             str(path.relative_to(cache_root)) for path in cache_root.glob("hub/models--*/snapshots/*") if path.is_dir()
         )
-        report["failures"] = quality_failures(report["baseline"], report["candidate"], manifest["limits"])
+        if not args.revision:
+            report["failures"] = quality_failures(report["baseline"], report["candidate"], manifest["limits"])
     except Exception as error:
         report["failures"].append(f"実認識検証が完了しませんでした: {type(error).__name__}: {error}")
     write_report(output, report)

@@ -114,6 +114,7 @@
         "test_transcribe",
         "test_transcribe_hints",
         "test_transcript_cache",
+        "test_transcription_benchmark",
         "test_transcription_context",
         "test_transcription_context_config",
         "test_transcription_dictionary",

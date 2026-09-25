@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/kaiidams/Kokoro-Speech-Dataset/releases/tag/1.3",
+  "sample_archive_sha256": "e3e6e76675d7fa9bf5aca0d857c610ea6583be2c6c0ec28d1e7bc0b1a094d0f6",
+  "sample_rate": 16000,
+  "duration": 70,
+  "noise_intervals": [
+    [
+      23,
+      28
+    ],
+    [
+      58,
+      63
+    ]
+  ],
+  "noise_seed": 446,
+  "clips": [
+    {
+      "id": "inakakyoshi-by-katai-tayama-03416",
+      "audio": "inakakyoshi-by-katai-tayama-03416.flac",
+      "sha256": "79ce683785cffef5290a0647e8495921d5d051c45e1fcb5ccfe9725175688e62",
+      "text": "聞くともなしに村のいろいろな話が耳にはいる。",
+      "start": 2,
+      "duration": 3.436553
+    },
+    {
+      "id": "kokoro-by-soseki-natsume-03253",
+      "audio": "kokoro-by-soseki-natsume-03253.flac",
+      "sha256": "3bdea401178a4b58284da85323443b7e28d5d661b4a209e84ea4b3d52eaf53f9",
+      "text": "叔父はお前のうちだからといって、聞きませんでした。",
+      "start": 14,
+      "duration": 4.028662
+    },
+    {
+      "id": "kokoro-by-soseki-natsume-03491",
+      "audio": "kokoro-by-soseki-natsume-03491.flac",
+      "sha256": "842defbacf39bcbdef3abe9bda4173b6e089551ca45d7fe76f682ab390cbe50b",
+      "text": "あとからこの友人に送ってもらった金だけなのです。",
+      "start": 32,
+      "duration": 3.541043
+    },
+    {
+      "id": "kokoro-by-soseki-natsume-04773",
+      "audio": "kokoro-by-soseki-natsume-04773.flac",
+      "sha256": "91447901661a178ca587f6a340ea1b5cec85372fed0d9595873ac1490df96603",
+      "text": "うんうん汗を流しながら歩き出したのです。しかし私は",
+      "start": 46,
+      "duration": 4.493061
+    }
+  ],
+  "limits": {
+    "max_cer": 0.25,
+    "max_cer_regression": 0.0,
+    "timing_tolerance_seconds": 0.4,
+    "max_outside_speech_characters": 0,
+    "max_untimed_characters": 0,
+    "max_timing_window_errors": 0
+  }
+}

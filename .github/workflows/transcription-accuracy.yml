@@ -1,0 +1,97 @@
+name: 実音声の文字起こし精度
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/transcription-accuracy.yml'
+      - 'assets/asr_benchmark/**'
+      - 'assets/runtime_config.json'
+      - 'runtime/**'
+      - 'scripts/benchmark_transcription.py'
+      - 'src/transcrib*.py'
+      - 'src/whisperx_runner.py'
+      - 'src/craig_transcription_execution.py'
+      - 'src/runtime_settings.py'
+      - 'tests/test_transcription_benchmark.py'
+  workflow_dispatch:
+    inputs:
+      compare_ref:
+        description: '比較対象のコミットまたはブランチ'
+        required: true
+        default: 'main'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transcription-accuracy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-asr:
+    name: 日本語実録音をlarge-v3で比較
+    runs-on: windows-latest
+    timeout-minutes: 100
+    defaults:
+      run:
+        working-directory: candidate
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      HF_HOME: ${{ runner.temp }}/asr-models
+      TOKENIZERS_PARALLELISM: 'false'
+
+    steps:
+      - name: 変更後のコードを取得
+        uses: actions/checkout@v7
+        with:
+          path: candidate
+          persist-credentials: false
+
+      - name: 比較対象のコードを取得
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || inputs.compare_ref }}
+          path: baseline
+          persist-credentials: false
+
+      - name: Python 3.10を準備
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: candidate/runtime/requirements-windows-cpu.lock
+
+      - name: FFmpegを準備
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          choco install ffmpeg --yes --no-progress
+          ffmpeg -version
+
+      - name: 製品と同じ固定CPUランタイムを導入
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/runtime_contract.py validate
+          $contract = Get-Content runtime/runtime-contract.json -Raw | ConvertFrom-Json
+          python -m pip install "pip==$($contract.python.pip_version)"
+          python -m pip install --require-hashes --index-url https://pypi.org/simple -r runtime/requirements-windows-cpu.lock
+          python -m pip check
+
+      - name: 実録音を初回認識し誤りと時刻を比較
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/benchmark_transcription.py --baseline-root ../baseline --candidate-root . --output ../asr-report
+
+      - name: 認識結果と比較レポートを保存
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: transcription-accuracy-${{ github.run_id }}
+          path: asr-report/
+          if-no-files-found: warn
+          retention-days: 14

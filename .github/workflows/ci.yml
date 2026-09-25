@@ -75,13 +75,10 @@ jobs:
       - name: Run scoped Ruff format check
         run: python scripts/check_quality.py --format-only --paths scripts/check_quality.py
 
-      - name: Run OS boundary type checks
+      - name: Run configured type checks
         run: |
           for platform in linux win32 darwin; do
-            python scripts/check_quality.py --type-only --type-platform "$platform" --paths \
-              scripts/check_quality.py \
-              src/platform_paths.py src/platform_updates.py \
-              src/process_utils.py src/qprocess_launcher.py
+            python scripts/check_quality.py --type-only --type-platform "$platform"
           done
 
   portable-tests:

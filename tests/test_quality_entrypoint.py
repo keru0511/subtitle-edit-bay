@@ -92,7 +92,7 @@ class QualityEntrypointTests(unittest.TestCase):
 
         self.assertEqual(steps, [[sys.executable, "-m", "ruff", "format", "."]])
 
-    def test_type_only_runs_only_mypy(self) -> None:
+    def test_type_only_uses_configured_mypy_targets(self) -> None:
         quality = load_quality_module()
 
         args = quality.parse_args(["--type-only"])
@@ -100,7 +100,7 @@ class QualityEntrypointTests(unittest.TestCase):
 
         self.assertEqual(
             steps,
-            [[sys.executable, "-m", "mypy", "."]],
+            [[sys.executable, "-m", "mypy"]],
         )
 
     def test_type_only_can_be_scoped_to_explicit_paths(self) -> None:

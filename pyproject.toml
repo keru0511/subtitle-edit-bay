@@ -25,6 +25,20 @@ line-ending = "lf"
 # 小さなOS境界から型チェックを段階的に厳格化する。
 [tool.mypy]
 python_version = "3.10"
+# CIとローカルが同じ対象を使う。全体移行に伴ってこの一覧を拡張する。
+files = [
+  "scripts/check_quality.py",
+  "src/platform_paths.py",
+  "src/platform_updates.py",
+  "src/process_utils.py",
+  "src/qprocess_launcher.py",
+  "src/data_boundary.py",
+  "src/runtime_config.py",
+  "src/runtime_config_schema.py",
+  "tests/test_data_boundary.py",
+  "tests/test_runtime_config.py",
+]
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = ["src.platform_paths", "src.platform_updates", "src.process_utils", "src.qprocess_launcher"]
@@ -35,3 +49,18 @@ disallow_any_explicit = true
 [[tool.mypy.overrides]]
 module = ["PySide6", "PySide6.*"]
 ignore_missing_imports = true
+
+# 全体移行の第1段。外部データをobjectで受け、検証後に型を絞る。
+[[tool.mypy.overrides]]
+module = [
+  "src.data_boundary",
+  "src.runtime_config",
+  "src.runtime_config_schema",
+  "tests.test_data_boundary",
+  "tests.test_runtime_config",
+]
+strict = true
+disallow_any_explicit = true
+disallow_any_expr = true
+disallow_any_unimported = true
+disallow_any_decorated = true

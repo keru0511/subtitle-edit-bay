@@ -262,7 +262,7 @@ Install dependencies and then run checks from a fresh environment:
 python scripts/check_quality.py --install-runtime --install-dev
 ```
 
-CIのPython品質ジョブは共通の`check_quality.py`を使い、Ruff、同スクリプトの整形確認、OS境界の型チェックを実行します。Windows上の実プロセス・GUI・メディア検証は別ジョブで維持します。
+CIのPython品質ジョブは共通の`check_quality.py`を使い、Ruff、同スクリプトの整形確認、設定した対象の型チェックを実行します。Windows上の実プロセス・GUI・メディア検証は別ジョブで維持します。
 
 ## Ruffの対象範囲
 
@@ -272,20 +272,42 @@ CIのPython品質ジョブは共通の`check_quality.py`を使い、Ruff、同�
 
 ## 型チェックの対象範囲
 
-既存の`scripts/check_quality.py`に加え、以下のOS境界をmypyのstrict設定で検証します。明示的な`Any`も許可しません。
-
-- `src/platform_paths.py`
-- `src/platform_updates.py`
-- `src/process_utils.py`
-- `src/qprocess_launcher.py`
-
-CIでは同じ品質ジョブで`linux`・`win32`・`darwin`の各条件分岐を静的に評価します。これは各OSでの実行テストの代わりではありません。
+CIとローカルの既定対象は`pyproject.toml`の`tool.mypy.files`に集約しています。`--paths`を指定すると、その実行に限って対象を上書きできます。
 
 ```sh
-python scripts/check_quality.py --type-only --type-platform win32 --paths scripts/check_quality.py src/platform_paths.py src/platform_updates.py src/process_utils.py src/qprocess_launcher.py
+# 設定済みの対象をまとめて確認
+python scripts/check_quality.py --type-only
+# Windowsの条件分岐で確認（CIではlinux・win32・darwinを順に実行）
+python scripts/check_quality.py --type-only --type-platform win32
+# 未移行コードを含めて調査するときの例
+python scripts/check_quality.py --type-only --paths src scripts tests
 ```
 
-mypy全体への`--ignore-missing-imports`は使いません。品質ジョブに大きなGUI実行環境を導入しないため、PySide6の未導入だけはモジュールを限定して許容します。PySide6がない環境ではQt API自体の型までは保証しません。PySide6のあるGUIテストと併用します。本体全体の型チェックは、設定・ドメインモデルの境界を整えながら段階的に広げます。
+既存の品質チェック用スクリプトとOS境界4モジュールに加え、実行設定の読み込み・検証・データ境界と対応するテストを対象にしています。OS境界はstrictと明示的な`Any`禁止を継続します。今回移行した5ファイルでは、次の規則をすべて適用します。
+
+- `strict`: 注釈のない関数、型引数のないジェネリックなどを禁止
+- `disallow_any_explicit`: 明示的な`Any`を禁止
+- `disallow_any_expr`: 式に含まれる暗黙の`Any`を禁止
+- `disallow_any_unimported`: 型情報のないimport由来の`Any`を禁止
+- `disallow_any_decorated`: デコレーター適用後の関数型に含まれる`Any`を禁止
+
+標準ライブラリのJSONデコード結果は`object`で受けます。コンテナを読み取る前に実際の形を検証し、各要素も`object`として扱います。`object`は任意の演算や属性アクセスを許可しないため、利用前の型の絞り込みが必要です。`cast`・`type: ignore`・検査除外を増やして通す方針は採りません。実行設定は未知のキーやセクションを保持する互換契約があるため、固定フィールドのモデルとして扱える領域とは分けて移行します。
+
+CIの3つのOS設定は静的な条件分岐の検証であり、各OSでの実行テストの代わりではありません。mypy全体への`--ignore-missing-imports`は使いません。品質ジョブにGUI実行環境を導入しないため、既存のPySide6未導入許容は維持しています。未導入時はQt APIの型を保証しません。今回移行したデータ境界はPySide6に依存しません。
+
+## Any禁止への全体移行
+
+最終対象は本体・スクリプト・テスト全体です。初回診断は271ファイル中248ファイルに21,582件のエラーがあり、明示的な`Any`だけでなく、モック・JSON・Qt・外部ライブラリからの伝播も含んでいます。この件数はmacOS / Python 3.13のローカル環境での調査値で、未導入ライブラリの診断も含みます。Python 3.10のCI基準での固定件数ではありません。
+
+レビュー可能な単位で順に移行し、移行済みファイルはそのPRでCIの対象に追加します。
+
+1. 実行設定とデータ境界、そのテスト（今回）
+2. 字幕プロジェクト・文字起こし・辞書などのデータモデルとJSON契約
+3. パイプライン・CLI・配布スクリプトと外部プロセス境界
+4. Qt・機械学習などの外部ライブラリ境界、GUI、対応するモック・テスト
+5. 全対象へ規則を適用し、段階移行用の対象一覧・限定設定を撤去
+
+進捗は診断件数だけでなく、Any禁止をCIで保証する対象が増えたかで確認します。全体移行は未完了です。
 
 ## Heavier Windows checks
 

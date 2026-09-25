@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Mapping
+
+from .data_boundary import is_object_mapping, is_object_sequence
 
 
 STRING = "string"
@@ -123,9 +124,9 @@ def _validate_value(value: object, kind: str, path: str) -> None:
     elif kind == NULLABLE_NUMBER:
         valid = value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
     elif kind == STRING_ARRAY:
-        valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
+        valid = is_object_sequence(value) and isinstance(value, list) and all(isinstance(item, str) for item in value)
     elif kind == OBJECT:
-        valid = isinstance(value, Mapping)
+        valid = is_object_mapping(value)
     if not valid:
         raise ValueError(f"Runtime config value has invalid type: {path} ({kind})")
 
@@ -134,24 +135,24 @@ def validate_runtime_config_payload(
     payload: object,
     *,
     discard_unknown: bool,
-) -> dict[str, Any]:
-    if not isinstance(payload, Mapping):
+) -> dict[str, object]:
+    if not is_object_mapping(payload):
         raise ValueError("Runtime config root must be an object")
-    result: dict[str, Any] = {}
+    result: dict[str, object] = {}
     for section_name, section in payload.items():
         schema = RUNTIME_CONFIG_SCHEMA.get(str(section_name))
         if schema is None:
             if not discard_unknown:
                 result[str(section_name)] = deepcopy(section)
             continue
-        if not isinstance(section, Mapping):
+        if not is_object_mapping(section):
             if discard_unknown:
                 raise ValueError(f"Runtime config section must be an object: {section_name}")
             # Preserve the application's longstanding behaviour: command
             # loading ignores non-object sections. Migrations remain strict.
             result[str(section_name)] = deepcopy(section)
             continue
-        migrated_section: dict[str, Any] = {}
+        migrated_section: dict[str, object] = {}
         for key, value in section.items():
             kind = schema.get(str(key))
             if kind is None:

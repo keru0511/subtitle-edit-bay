@@ -33,6 +33,11 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
     COMPONENTS_ROOT / "SubtitleOverlay.qml",
+    COMPONENTS_ROOT / "SubtitleTimeline.qml",
+    COMPONENTS_ROOT / "SubtitleEditorState.qml",
+    COMPONENTS_ROOT / "SubtitleEditorButton.qml",
+    COMPONENTS_ROOT / "SubtitleEditorScreen.qml",
+    COMPONENTS_ROOT / "SubtitleWorkspaceEditor.qml",
     COMPONENTS_ROOT / "ShortModePreview.qml",
     SEQUENCE_EDITOR_QML,
     COMPONENTS_ROOT / "MediaBinPanel.qml",
@@ -274,7 +279,7 @@ class QmlStaticTests(unittest.TestCase):
             "codex edit": (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8"),
             "highlight": (COMPONENTS_ROOT / "HighlightCandidateList.qml").read_text(encoding="utf-8"),
             "dictionary": (COMPONENTS_ROOT / "TranscriptionContextPanel.qml").read_text(encoding="utf-8"),
-            "workflow": WORKFLOW_QML.read_text(encoding="utf-8"),
+            "workflow": WORKFLOW_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8"),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
         }
@@ -363,7 +368,10 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)
         self.assertNotIn("MediaPlayer {", editor_content)
         self.assertNotIn("editorPlayer", workflow)
-        self.assertIn("mainPlayer.videoOutput = editorVideo", editor_content)
+        screen = (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8")
+        self.assertNotIn("MediaPlayer {", screen)
+        self.assertIn("root.previewAttached(editorVideo)", screen)
+        self.assertIn("mainPlayer.videoOutput = output", editor_content)
         self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
         self.assertIn('String(root.appBackend.workspace.editorPlayhead.basis || "source")', workflow)
         self.assertIn("interval: 100", main_workspace)
@@ -372,7 +380,7 @@ class QmlStaticTests(unittest.TestCase):
             "root.syncEditorPlayhead(mainPlayer.position, false)",
             main_workspace,
         )
-        self.assertIn("onActiveSegmentsChanged:", editor_content)
+        self.assertIn("onActiveSegmentsChanged:", screen)
         self.assertIn("syncEditorSelectionFromActiveSegments", editor_content)
 
     def test_cut_mode_uses_the_shared_player_and_backend_time_mapping(self) -> None:
@@ -398,7 +406,7 @@ class QmlStaticTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('objectName: "workspaceSubtitleEditor"', workflow)
+        self.assertIn('objectName: "workspaceSubtitleEditor"', (COMPONENTS_ROOT / "SubtitleWorkspaceEditor.qml").read_text(encoding="utf-8"))
         self.assertIn('objectName: "workspaceAudioEditor"', workflow)
         self.assertEqual(workflow.count("AudioPreviewBridge {"), 1)
         self.assertNotIn("videoOutput", audio_bridge)

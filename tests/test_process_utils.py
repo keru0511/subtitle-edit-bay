@@ -87,5 +87,37 @@ class HiddenSubprocessOptionsTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["creationflags"], 4)
 
 
+class ProcessBoundaryTests(unittest.TestCase):
+    def test_windows_stop_targets_tree_and_force_is_explicit(self):
+        from src.process_utils import stop_process
+
+        process = mock.Mock()
+        with mock.patch("src.process_utils.os.name", "nt"), mock.patch("src.process_utils.subprocess.run") as run:
+            stop_process(process, 123)
+            self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "123", "/T"])
+            stop_process(process, 123, force=True)
+            self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "123", "/T", "/F"])
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+    def test_posix_stop_preserves_terminate_then_kill_contract(self):
+        from src.process_utils import stop_process
+
+        process = mock.Mock()
+        with mock.patch("src.process_utils.os.name", "posix"), mock.patch("src.process_utils.subprocess.run") as run:
+            stop_process(process, 123)
+            process.terminate.assert_called_once_with()
+            process.kill.assert_not_called()
+            stop_process(process, 123, force=True)
+            process.kill.assert_called_once_with()
+            run.assert_not_called()
+
+    def test_detached_options_include_platform_console_policy(self):
+        from src.process_utils import detached_subprocess_kwargs
+
+        with mock.patch("src.process_utils.hidden_subprocess_kwargs", return_value={"creationflags": 8}):
+            self.assertEqual(detached_subprocess_kwargs(), {"start_new_session": True, "creationflags": 8})
+
+
 if __name__ == "__main__":
     unittest.main()

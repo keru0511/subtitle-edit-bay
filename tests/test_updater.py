@@ -29,6 +29,11 @@ class VersionComparisonTests(unittest.TestCase):
 
 
 class FetchLatestReleaseTests(unittest.TestCase):
+    def setUp(self) -> None:
+        platform = patch("sys.platform", "win32")
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def test_fetch_latest_release_parses_github_response(self) -> None:
         payload = {
             "tag_name": "v0.2.0",
@@ -92,6 +97,12 @@ class FetchLatestReleaseTests(unittest.TestCase):
 
 
 class ApplyZipUpdateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # ここでは既存の更新・復元処理を検証する。OS拒否は別テストで検証する。
+        support = patch("src.updater.require_supported_update")
+        support.start()
+        self.addCleanup(support.stop)
+
     @staticmethod
     def _setup_script_content(*, fail: bool = False) -> str:
         if sys.platform == "win32" and shutil.which("powershell.exe"):
@@ -168,10 +179,37 @@ class LaunchUpdateScriptTests(unittest.TestCase):
         self.assertNotIn("https://example.com/app.zip", command)
 
     def test_launch_update_script_falls_back_to_python_module(self) -> None:
-        with patch("sys.platform", "linux"), patch("shutil.which", return_value=None):
+        with patch("sys.platform", "win32"), patch("shutil.which", return_value=None):
             command = updater.launch_update_script(Path("/app"), "https://example.com/app.zip")
         self.assertEqual(command[1:-2], ["-m", "src.updater", "apply"])
         self.assertEqual(command[-2:], ["--archive-url", "https://example.com/app.zip"])
+
+
+class UnsupportedUpdateTests(unittest.TestCase):
+    def test_zip_apply_rejects_before_touching_files_or_downloading(self):
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                (root / "VERSION").write_bytes(b"v0.1.0\n")
+                backup = root / ".local/update_backups/pending"
+                backup.mkdir(parents=True)
+                (backup / "keep.txt").write_bytes(b"existing backup")
+
+                def snapshot():
+                    return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
+
+                before = snapshot()
+                with patch("sys.platform", platform), patch("src.updater.urllib.request.urlopen") as urlopen:
+                    with self.assertRaisesRegex(updater.UpdaterError, "未対応"):
+                        updater.apply_zip_update(root, "https://example.test/release.zip")
+                    urlopen.assert_not_called()
+                self.assertEqual(snapshot(), before)
+
+    def test_launch_rejects_unsupported_os(self):
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), patch("sys.platform", platform):
+                with self.assertRaisesRegex(updater.UpdaterError, "未対応"):
+                    updater.launch_update_script(Path("."), "https://example.test/release.zip")
 
 
 if __name__ == "__main__":

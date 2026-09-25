@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 
+from .process_utils import stop_process
 from .processing_progress import parse_progress_events
 from .qprocess_launcher import prepare_qprocess_launch
 
@@ -108,15 +107,7 @@ class GuiJobRunner(QObject):
         expected_process_id = self.process_id
         expected_job_id = self._active_job_id
         self._cancel_process_id = expected_process_id
-        if os.name == "nt" and expected_process_id:
-            subprocess.run(
-                ["taskkill", "/PID", str(expected_process_id), "/T"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-            )
-        else:
-            self._process.terminate()
+        stop_process(self._process, expected_process_id)
         QTimer.singleShot(
             5000,
             lambda process_id=expected_process_id, active_job_id=expected_job_id: self.kill_if_running(
@@ -139,15 +130,7 @@ class GuiJobRunner(QObject):
             return False
         if not self.running:
             return False
-        if os.name == "nt" and current_process_id:
-            subprocess.run(
-                ["taskkill", "/PID", str(current_process_id), "/T", "/F"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-            )
-        else:
-            self._process.kill()
+        stop_process(self._process, current_process_id, force=True)
         return True
 
     def _read_process_output(self) -> None:

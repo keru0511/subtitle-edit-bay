@@ -68,10 +68,9 @@ def redact_text(value: object, *, paths: bool = False) -> str:
 
 
 def default_log_directory(workspace_root: str | Path) -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "Subtitle Edit Bay" / "logs"
-    return Path(workspace_root) / ".local" / "logs"
+    from .platform_paths import log_directory
+
+    return log_directory(workspace_root)
 
 
 class ApplicationLogger:

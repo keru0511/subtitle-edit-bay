@@ -7,8 +7,6 @@ import json
 import os
 import re
 import shutil
-import sys
-import tempfile
 import time
 import urllib.request
 import zipfile
@@ -32,8 +30,9 @@ EXPECTED_WINDOWS_SIGNER_SUBJECT = "CN=Subtitle Edit Bay"
 def update_download_directory(project_root: Path) -> Path:
     """Return a user-data directory outside the installed application."""
 
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME") or tempfile.gettempdir()
-    return Path(base) / "SubtitleEditBay" / "updates"
+    from .platform_paths import update_directory
+
+    return update_directory()
 
 
 def _info_value(info: Any, name: str, default: Any = None) -> Any:
@@ -215,36 +214,16 @@ def build_installer_helper_command(
     result_path: Path,
     expected_signer_subject: str = EXPECTED_WINDOWS_SIGNER_SUBJECT,
 ) -> list[str]:
-    helper = project_root / "scripts" / "apply_installer_update.ps1"
-    if sys.platform == "win32":
-        powershell = "powershell.exe"
-        return [
-            powershell,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(helper),
-            "-PackagePath",
-            str(package_path),
-            "-ParentPid",
-            str(os.getpid()),
-            "-InstallRoot",
-            str(project_root),
-            "-ExpectedVersion",
-            expected_version,
-            "-ExpectedSha256",
-            expected_sha256,
-            "-ExpectedSignerSubject",
-            expected_signer_subject,
-            "-ResultPath",
-            str(result_path),
-        ]
-    return [sys.executable, "-m", "src.updater", "apply", "--archive-url", str(package_path)]
+    from .platform_updates import build_installer_command
+
+    try:
+        return build_installer_command(
+            project_root, package_path, expected_version=expected_version,
+            expected_sha256=expected_sha256, result_path=result_path,
+            expected_signer_subject=expected_signer_subject,
+        )
+    except ValueError as error:
+        raise UpdatePackageError(str(error)) from error
 
 
 def read_update_result(path: Path) -> dict[str, Any] | None:

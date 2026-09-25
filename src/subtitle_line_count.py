@@ -247,7 +247,7 @@ def pack_segments_with_line_count(
             pages = _repack_segment(segment)
         else:
             pages = pack_segment_pages(
-                segment,
+                {**segment, "max_width": int(segment.get("max_width", default_max_width))},
                 subtitle_max_gap_seconds=subtitle_max_gap_seconds,
                 subtitle_end_padding_seconds=subtitle_end_padding_seconds,
                 subtitle_min_duration_seconds=subtitle_min_duration_seconds,

@@ -817,6 +817,12 @@ def finalize_group_segment(
     }
 
 
+def _page_preserves_text(text: str, max_width: int, max_lines: int = MAX_LINES) -> bool:
+    """実際の整形で省略される組み合わせを、ページ確定前に除外する。"""
+    rendered = normalize_text(text, max_width=max_width, max_lines=max_lines)
+    return normalize_alignment_text(rendered.replace(r"\N", "")) == normalize_alignment_text(text.replace(r"\N", ""))
+
+
 def pack_segment_pages(
     segment: dict,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
@@ -833,7 +839,24 @@ def pack_segment_pages(
     end = float(segment["end"])
     has_word_timing = bool(segment.get("words"))
     forced_boundaries = gap_boundary_indices(segment.get("words"), subtitle_max_gap_seconds) if has_word_timing else set()
-    unit_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
+    max_width = int(segment.get("max_width", DEFAULT_PAGE_WIDTH))
+    max_lines = 1 if str(segment.get("subtitle_line_count")) == "1" else MAX_LINES
+    # 分割時と描画時の幅を一致させる。呼び出し側の既定幅へ戻ると文字が欠ける。
+    segment = {**segment, "max_width": max_width}
+    raw_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
+    unit_entries = []
+    for entry in raw_entries:
+        parts = (
+            [entry["text"]]
+            if _page_preserves_text(entry["text"], max_width, max_lines)
+            else split_by_width_naturally(entry["text"], max_width)
+        )
+        for index, part in enumerate(parts):
+            unit_entries.append({
+                **entry,
+                "text": part,
+                "force_break_before": index == 0 and entry.get("force_break_before", False),
+            })
     if not unit_entries:
         return []
 
@@ -847,7 +870,7 @@ def pack_segment_pages(
     current_duration = 0.0
     current_width = 0
     current_sentences = 0
-    max_group_width = int(segment.get("max_width", DEFAULT_PAGE_WIDTH)) * MAX_LINES
+    max_group_width = max_width * max_lines
 
     for unit in timed_units:
         unit_duration = float(unit["end"]) - float(unit["start"])
@@ -880,34 +903,31 @@ def pack_segment_pages(
         subtitle_max_gap_seconds,
     )
 
+    # 幅の合計が収まっても、自然な改行候補が偏ると整形器が省略する場合がある。
+    # 短い断片の再結合後も確認し、語時刻を持つ単位のまま次ページへ送る。
+    fitting_groups: list[list[dict]] = []
+    duration_groups: list[list[dict]] = []
+    for group in grouped:
+        if float(group[-1]["end"]) - float(group[0]["start"]) > ABSOLUTE_MAX_DURATION and len(group) > 1:
+            midpoint = len(group) // 2
+            duration_groups.extend([group[:midpoint], group[midpoint:]])
+        else:
+            duration_groups.append(group)
+    for group in duration_groups:
+        fitting: list[dict] = []
+        for unit in group:
+            combined = "".join(item["text"] for item in fitting) + unit["text"]
+            if fitting and not _page_preserves_text(combined, max_width, max_lines):
+                fitting_groups.append(fitting)
+                fitting = []
+            fitting.append(unit)
+        if fitting:
+            fitting_groups.append(fitting)
+    grouped = fitting_groups
+
     results: list[dict] = []
     for index, group in enumerate(grouped):
         next_group_start = float(grouped[index + 1][0]["start"]) if index + 1 < len(grouped) else None
-        group_start = float(group[0]["start"])
-        group_end = float(group[-1]["end"])
-        if group_end - group_start > ABSOLUTE_MAX_DURATION and len(group) > 1:
-            midpoint = len(group) // 2
-            results.append(
-                finalize_group_segment(
-                    segment,
-                    group[:midpoint],
-                    float(group[midpoint]["start"]),
-                    subtitle_end_padding_seconds,
-                    subtitle_min_duration_seconds,
-                    has_word_timing,
-                )
-            )
-            results.append(
-                finalize_group_segment(
-                    segment,
-                    group[midpoint:],
-                    next_group_start,
-                    subtitle_end_padding_seconds,
-                    subtitle_min_duration_seconds,
-                    has_word_timing,
-                )
-            )
-            continue
         results.append(
             finalize_group_segment(
                 segment,
@@ -961,7 +981,7 @@ def pack_segments(
     events: list[SubtitleEvent] = []
     for segment in data.get("segments", []):
         pages = [segment] if segment.get("layout_packed") else pack_segment_pages(
-            segment,
+            {**segment, "max_width": int(segment.get("max_width", default_max_width))},
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,

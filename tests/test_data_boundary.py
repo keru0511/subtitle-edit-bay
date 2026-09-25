@@ -4,7 +4,14 @@ import json
 import unittest
 from collections import UserDict
 
-from src.data_boundary import coerce_float, coerce_int, decode_json, is_object_mapping, is_object_sequence
+from src.data_boundary import (
+    coerce_float,
+    coerce_int,
+    decode_json,
+    is_object_iterable,
+    is_object_mapping,
+    is_object_sequence,
+)
 
 
 class DataBoundaryTests(unittest.TestCase):
@@ -29,6 +36,15 @@ class DataBoundaryTests(unittest.TestCase):
         self.assertIsNone(payload[1])
         self.assertFalse(is_object_sequence(object()))
         self.assertFalse(is_object_mapping(object()))
+
+    def test_iterable_guard_preserves_lazy_values(self) -> None:
+        values: object = (value for value in (1, "two", None))
+        if not is_object_iterable(values):
+            self.fail("ジェネレーターを受け入れる必要があります")
+        actual = list(values)
+        expected: list[object] = [1, "two", None]
+        self.assertEqual(actual, expected)
+        self.assertFalse(is_object_iterable(None))
 
     def test_decode_leaves_domain_validation_to_caller(self) -> None:
         payload = decode_json('{"items": [1, null, "日本語"]}')

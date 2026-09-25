@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import SupportsFloat, SupportsIndex, SupportsInt, TypeGuard
 
 
@@ -39,3 +39,8 @@ def coerce_int(value: object) -> int:
     if isinstance(value, (str, bytes, bytearray, SupportsInt, SupportsIndex)):
         return int(value)
     raise TypeError("value must be convertible to int")
+
+
+def is_object_iterable(value: object) -> TypeGuard[Iterable[object]]:
+    """要素の型を仮定せず、反復可能な入力として扱う。"""
+    return isinstance(value, Iterable)

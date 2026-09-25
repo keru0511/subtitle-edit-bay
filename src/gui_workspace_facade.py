@@ -207,17 +207,6 @@ class WorkspaceFacade(FeatureFacade):
         backend._editor_workspace.reset_playhead()
         backend.editorPlayheadChanged.emit()
 
-    def _replace_timeline(self, payload: dict[str, Any]) -> None:
-        backend = self._backend
-        source_duration = self._cut_timeline_model().source_duration
-        timeline = VideoTimeline.from_json(
-            payload,
-            source_duration=source_duration,
-        )
-        backend._project_editor_controller.replace_timeline(timeline.to_json())
-        self.set_editor_time_mapping(timeline)
-        backend.cutTimelineChanged.emit()
-
     def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:
         backend = self._backend
         if backend._project is None:
@@ -226,8 +215,8 @@ class WorkspaceFacade(FeatureFacade):
         after = timeline.to_json()
         if before == after:
             return False
-        backend.subtitles._record_timeline_history(before, after)
-        self._replace_timeline(after)
+        backend._project_editor_controller.commit_timeline_change(after)
+        self._sync_project_timeline()
         backend._set_status(status, "EDIT")
         return True
 

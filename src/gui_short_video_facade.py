@@ -100,37 +100,36 @@ class ShortVideoFacade(FeatureFacade):
     def shortVideoClipAt(self, index: int) -> dict[str, Any]:
         return self._short_video_clip_view_at(index)
 
-    def _short_video_section(self) -> dict[str, Any]:
+    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, Any]:
+        """編集準備だけコピーし、表示ではクリップ全体の複製と正本の変更を避ける。"""
         backend = self._backend
         if backend._project is None:
             return {}
-        section = backend._project.setdefault(
-            "short_video",
-            {
-                "enabled": False,
-                "time_basis": "source",
-                "output": {"width": 1080, "height": 1920, "fps": 30},
-                "global_fit": "cover",
-                "global_background_color": "000000",
-                "subtitle_scale_percent": 150.0,
-                "transition": {"type": "crossfade", "duration": 0.5},
-                "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
-                "clips": [],
-            },
-        )
-        if not isinstance(section, dict):
-            section = backend._project["short_video"] = {
-                "enabled": False,
-                "time_basis": "source",
-                "output": {"width": 1080, "height": 1920, "fps": 30},
-                "global_fit": "cover",
-                "global_background_color": "000000",
-                "subtitle_scale_percent": 150.0,
-                "transition": {"type": "crossfade", "duration": 0.5},
-                "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
-                "clips": [],
-            }
-        return section
+        section = backend._project.get("short_video")
+        if isinstance(section, dict):
+            return deepcopy(section) if for_edit else section
+        return {
+            "enabled": False,
+            "time_basis": "source",
+            "output": {"width": 1080, "height": 1920, "fps": 30},
+            "global_fit": "cover",
+            "global_background_color": "000000",
+            "subtitle_scale_percent": 150.0,
+            "transition": {"type": "crossfade", "duration": 0.5},
+            "bgm": {"path": "", "in": 0.0, "out": 0.0, "start": 0.0, "volume": 0.3},
+            "clips": [],
+        }
+
+    def _commit_short_video(self, section: dict[str, Any]) -> bool:
+        backend = self._backend
+        try:
+            changed = backend._project_editor_controller.commit_section_change("short_video", section)
+        except (ValueError, TypeError, OverflowError) as error:
+            backend._set_status(f"ショート編集を適用できません: {error}", "CHECK")
+            return False
+        if changed:
+            backend.shortVideoChanged.emit()
+        return True
 
     def _short_video_clip_count(self) -> int:
         backend = self._backend
@@ -192,7 +191,7 @@ class ShortVideoFacade(FeatureFacade):
         backend = self._backend
         if backend._project is None:
             return
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         if section.get("clips"):
             return
         clips: list[dict[str, Any]] = []
@@ -209,9 +208,7 @@ class ShortVideoFacade(FeatureFacade):
             )
         section["enabled"] = True
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
+        self._commit_short_video(section)
 
     @Slot(str, result=bool)
     def addShortVideoClip(self, segment_id: str) -> bool:
@@ -221,7 +218,7 @@ class ShortVideoFacade(FeatureFacade):
         segment = backend.subtitles._find_segment_by_id(segment_id)
         if segment is None:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         clips.append(
             {
@@ -231,10 +228,7 @@ class ShortVideoFacade(FeatureFacade):
             }
         )
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(float, float, result=bool)
     def addShortVideoClipByRange(self, start: float, end: float) -> bool:
@@ -251,38 +245,32 @@ class ShortVideoFacade(FeatureFacade):
         duration = max(0.0, float(backend.projectDuration))
         if start < 0.0 or start >= end or (duration > 0.0 and end > duration):
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         clips.append({"segment_id": "", "start": round(start, 3), "end": round(end, 3)})
         section["enabled"] = True
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
         backend = self._backend
         if backend._project is None or backend._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         if not 0 <= index < len(clips):
             return False
         clips.pop(index)
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, int, result=bool)
     def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
         backend = self._backend
         if backend._project is None or backend._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         if not (0 <= from_index < len(clips)):
             return False
@@ -297,10 +285,7 @@ class ShortVideoFacade(FeatureFacade):
             to_index -= 1
         clips.insert(to_index, clip)
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, "QVariantMap", result=bool)
     def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
@@ -309,13 +294,15 @@ class ShortVideoFacade(FeatureFacade):
             return False
         if not isinstance(fields, dict) or not fields:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         if not 0 <= index < len(clips):
             return False
         clip = dict(clips[index])
         trim_requested = "start" in fields or "end" in fields
-        if not trim_requested and not any(key in fields for key in ("fit", "background_color")):
+        if not trim_requested and not any(
+            key in fields for key in ("fit", "background_color")
+        ):
             return False
 
         if trim_requested:
@@ -334,14 +321,26 @@ class ShortVideoFacade(FeatureFacade):
                     segment_end = float(segment.get("end", segment_start))
                 start = float(fields.get("start", clip.get("start", segment_start)))
                 end = float(fields.get("end", clip.get("end", segment_end)))
-                if not all(math.isfinite(value) for value in (segment_start, segment_end, start, end)):
+                if not all(
+                    math.isfinite(value)
+                    for value in (segment_start, segment_end, start, end)
+                ):
                     return False
             except (TypeError, ValueError):
                 return False
             video_duration = backend.projectDuration
-            upper_bound = min(segment_end, video_duration) if video_duration > 0.0 else segment_end
+            upper_bound = (
+                min(segment_end, video_duration)
+                if video_duration > 0.0
+                else segment_end
+            )
             lower_bound = max(0.0, segment_start)
-            if upper_bound <= lower_bound or start < lower_bound or end > upper_bound or start >= end:
+            if (
+                upper_bound <= lower_bound
+                or start < lower_bound
+                or end > upper_bound
+                or start >= end
+            ):
                 return False
             clip["start"] = start
             clip["end"] = end
@@ -357,10 +356,7 @@ class ShortVideoFacade(FeatureFacade):
                 return False
         clips[index] = clip
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalFit(self, fit: str) -> bool:
@@ -370,12 +366,9 @@ class ShortVideoFacade(FeatureFacade):
         fit = str(fit).lower()
         if fit not in VALID_FIT_MODES:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["global_fit"] = fit
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(str, result=bool)
     def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
@@ -386,12 +379,9 @@ class ShortVideoFacade(FeatureFacade):
             normalized = normalize_rgb_color(color)
         except (TypeError, ValueError, OverflowError):
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["global_background_color"] = normalized
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(str, float, result=bool)
     def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
@@ -401,19 +391,16 @@ class ShortVideoFacade(FeatureFacade):
         transition_type = str(transition_type).lower()
         if transition_type not in VALID_TRANSITION_TYPES:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["transition"] = {"type": transition_type, "duration": max(0.0, round(float(duration), 3))}
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot("QVariantMap", result=bool)
     def setShortVideoBgm(self, fields: dict[str, Any]) -> bool:
         backend = self._backend
         if backend._project is None or backend._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         bgm = dict(section.get("bgm", {}))
         if "path" in fields:
             bgm["path"] = str(fields["path"])
@@ -427,34 +414,25 @@ class ShortVideoFacade(FeatureFacade):
             volume = float(fields["volume"])
             bgm["volume"] = max(0.0, min(1.0, volume))
         section["bgm"] = bgm
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, int, int, result=bool)
     def setShortVideoOutput(self, width: int, height: int, fps: int) -> bool:
         backend = self._backend
         if backend._project is None or backend._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["output"] = {"width": max(1, int(width)), "height": max(1, int(height)), "fps": max(1, int(fps))}
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(float, result=bool)
     def setShortVideoSubtitleScale(self, percent: float) -> bool:
         backend = self._backend
         if backend._project is None or backend._running:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         section["subtitle_scale_percent"] = max(0.0, float(percent))
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(result=bool)
     def startHighlightAnalysis(self) -> bool:
@@ -539,13 +517,14 @@ class ShortVideoFacade(FeatureFacade):
         source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
         if not source_ids:
             return False
-        section = self._short_video_section()
+        section = self._short_video_section(for_edit=True)
         clips = list(section.get("clips", []))
         candidate_start = float(candidate.get("start", 0.0))
         candidate_end = float(candidate.get("end", candidate_start))
         if any(
             str(clip.get("segment_id", "")) in source_ids
-            and min(float(clip.get("end", 0.0)), candidate_end) > max(float(clip.get("start", 0.0)), candidate_start)
+            and min(float(clip.get("end", 0.0)), candidate_end)
+            > max(float(clip.get("start", 0.0)), candidate_start)
             for clip in clips
         ):
             backend._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
@@ -560,10 +539,7 @@ class ShortVideoFacade(FeatureFacade):
             }
         )
         section["clips"] = clips
-        backend.subtitles._mark_project_dirty()
-        backend.projectDataChanged.emit()
-        backend.shortVideoChanged.emit()
-        return True
+        return self._commit_short_video(section)
 
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:

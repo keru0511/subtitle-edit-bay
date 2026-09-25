@@ -118,13 +118,14 @@ class SubtitleFacade(FeatureFacade):
         _state: str,
     ) -> None:
         """Refresh side effects that are intentionally owned by the facade."""
-
         backend = self._backend
 
         if entry.get("kind") == "audio_mix":
             backend.audio._notify_audio_mixer_preview(structure_changed=True)
         elif entry.get("kind") == "timeline":
             backend.workspace._sync_project_timeline()
+        elif entry.get("kind") == "short_video":
+            backend.shortVideoChanged.emit()
 
     @staticmethod
     def _subtitle_preview_signature(segment: dict[str, Any]) -> tuple[object, ...]:
@@ -320,44 +321,9 @@ class SubtitleFacade(FeatureFacade):
         self._apply_project_speaker_color(index, normalized)
         backend._set_status(f"{speaker.get('name', '話者')} の字幕色を保存しました", "SAVED")
 
-    def _record_history(
-        self,
-        before: list[dict[str, Any]],
-        after: list[dict[str, Any]],
-        reflow_layout: bool = True,
-    ) -> None:
-        backend = self._backend
-        backend._project_editor_controller.record_history(before, after, reflow_layout)
-
-    def _record_timeline_history(
-        self,
-        before: dict[str, Any],
-        after: dict[str, Any],
-    ) -> None:
-        backend = self._backend
-        backend._project_editor_controller.record_timeline_history(before, after)
-
-    def _push_history(self, entry: dict[str, Any]) -> None:
-        backend = self._backend
-        backend._project_editor_controller.push_history(entry)
-
     def _mark_project_dirty(self) -> None:
         backend = self._backend
         backend._project_editor_controller.mark_dirty()
-
-    def _replace_segments(
-        self,
-        segments: list[dict[str, Any]],
-        selected_id: str | None = None,
-        *,
-        reflow_layout: bool = True,
-    ) -> None:
-        backend = self._backend
-        backend._project_editor_controller.replace_segments(
-            segments,
-            selected_id,
-            reflow_layout=reflow_layout,
-        )
 
     def _commit_segment_change(
         self,
@@ -374,10 +340,6 @@ class SubtitleFacade(FeatureFacade):
             selected_id,
             reflow_layout=reflow_layout,
         )
-
-    def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
-        backend = self._backend
-        backend._project_editor_controller.apply_history_entry(entry, state)
 
     @Slot(int)
     def selectSegment(self, index: int) -> None:

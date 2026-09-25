@@ -546,23 +546,21 @@ class AIChatFacade(FeatureFacade):
                 selected_operation_ids={str(item) for item in (selected_operation_ids or [])} or None,
                 current_revision=backend._project_revision,
             )
+            after = result.project.get("segments", [])
+            before_by_id = {item["id"]: item for item in before}
+            after_by_id = {item["id"]: item for item in after}
+            changed_ids = {
+                segment_id for segment_id in before_by_id.keys() | after_by_id.keys()
+                if before_by_id.get(segment_id) != after_by_id.get(segment_id)
+            }
+            backend._project_editor_controller.commit_segment_change(
+                [item for item in before if item["id"] in changed_ids],
+                [item for item in after if item["id"] in changed_ids],
+                result.changed_segment_ids[0] if result.changed_segment_ids else None,
+            )
         except (CodexSessionError, ValueError, TypeError) as error:
             backend._set_status(f"Codex編集案を適用できません: {error}", "ERROR")
             return
-        backend._project = result.project
-        after = deepcopy(backend._project.get("segments", []))
-        backend.subtitles._record_history(before, after)
-        backend.subtitles._sync_subtitle_model()
-        backend.projectDataChanged.emit()
-        backend.segmentsChanged.emit()
-        backend.subtitles._mark_project_dirty()
-        if result.changed_segment_ids:
-            first_id = result.changed_segment_ids[0]
-            backend._selected_segment_index = next(
-                (index for index, item in enumerate(after) if str(item.get("id")) == first_id),
-                -1,
-            )
-            backend.selectionChanged.emit()
         backend._codex_proposal = None
         backend.codexProposalChanged.emit()
         backend._set_status("Codex編集案を適用しました。内容を確認して保存してください", "EDIT")

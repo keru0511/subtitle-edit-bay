@@ -290,7 +290,8 @@ class AudioFacade(FeatureFacade):
         backend = self._backend
         if backend._project is None or backend._running:
             return
-        audio_mix = reconcile_audio_mix(backend._project, self._mixer_video_tracks())
+        draft = {**backend._project, "audio_sources": deepcopy(backend._project.get("audio_sources", []))}
+        audio_mix = reconcile_audio_mix(draft, self._mixer_video_tracks())
         channels = audio_mix["channels"]
         if not 0 <= index < len(channels):
             backend._set_status("動画内または外部の音声トラックがありません", "CHECK")
@@ -303,12 +304,11 @@ class AudioFacade(FeatureFacade):
         except AudioMixError:
             backend._set_status("音量ミキサーの変更内容を確認してください", "CHECK")
             return
-        backend._project["audio_mix"] = updated_audio_mix
-        backend.projectDataChanged.emit()
+        backend._project_editor_controller.commit_section_change("audio_mix", updated_audio_mix)
         self._notify_audio_mixer_preview(
-            structure_changed=enabled_before != bool(updated_audio_mix["channels"][index].get("enabled"))
+            structure_changed=enabled_before
+            != bool(updated_audio_mix["channels"][index].get("enabled"))
         )
-        backend.subtitles._mark_project_dirty()
         backend._set_status("音量ミキサー設定を更新しました", "EDIT")
 
     def start_codex_audio_mix_proposal(
@@ -393,7 +393,9 @@ class AudioFacade(FeatureFacade):
                 backend._audio_mix_proposal,
                 current_revision=backend._project_revision,
                 selected_operation_ids=(
-                    None if selected_operation_ids is None else {str(item) for item in selected_operation_ids}
+                    None
+                    if selected_operation_ids is None
+                    else {str(item) for item in selected_operation_ids}
                 ),
                 allow_silence=bool(allow_silence),
             )
@@ -403,11 +405,8 @@ class AudioFacade(FeatureFacade):
         if updated == before:
             backend._set_status("音量ミキサーの変更はありません", "CHECK")
             return False
-        backend._project["audio_mix"] = updated
-        backend.subtitles._push_history({"kind": "audio_mix", "before": before, "after": deepcopy(updated)})
-        backend.projectDataChanged.emit()
+        backend._project_editor_controller.commit_section_change("audio_mix", updated)
         self._notify_audio_mixer_preview(structure_changed=True)
-        backend.subtitles._mark_project_dirty()
         backend._audio_mix_proposal = None
         backend.audioMixProposalChanged.emit()
         backend._set_status("音量ミキサーの変更案を適用しました。内容を確認して保存してください", "EDIT")
@@ -425,11 +424,11 @@ class AudioFacade(FeatureFacade):
         backend = self._backend
         if backend._project is None or backend._running:
             return
-        audio_mix = reset_audio_mix(backend._project, self._mixer_video_tracks())
+        draft = {**backend._project, "audio_sources": deepcopy(backend._project.get("audio_sources", []))}
+        audio_mix = reset_audio_mix(draft, self._mixer_video_tracks())
         if not audio_mix["channels"]:
             backend._set_status("動画内または外部の音声トラックがありません", "CHECK")
             return
-        backend.projectDataChanged.emit()
+        backend._project_editor_controller.commit_section_change("audio_mix", audio_mix)
         self._notify_audio_mixer_preview(structure_changed=True)
-        backend.subtitles._mark_project_dirty()
         backend._set_status("音量ミキサーを既定値へ戻しました", "EDIT")

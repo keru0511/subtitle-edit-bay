@@ -1205,8 +1205,8 @@ class EditBayBackend(LegacyEditBayBackend):
     def _segment_view(self, segment: dict[str, Any], source_index: int | None = None) -> dict[str, Any]:
         return self._subtitles_facade._segment_view(segment, source_index)
 
-    def _short_video_section(self) -> dict[str, Any]:
-        return self._shortVideo_facade._short_video_section()
+    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, Any]:
+        return self.shortVideo._short_video_section(for_edit=for_edit)
 
     def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
         return self._subtitles_facade._find_segment_by_id(segment_id)
@@ -2185,35 +2185,8 @@ class EditBayBackend(LegacyEditBayBackend):
         self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
         return True
 
-    def _record_history(
-        self,
-        before: list[dict[str, Any]],
-        after: list[dict[str, Any]],
-        reflow_layout: bool = True,
-    ) -> None:
-        return self._subtitles_facade._record_history(before, after, reflow_layout)
-
-    def _record_timeline_history(
-        self,
-        before: dict[str, Any],
-        after: dict[str, Any],
-    ) -> None:
-        return self._subtitles_facade._record_timeline_history(before, after)
-
-    def _push_history(self, entry: dict[str, Any]) -> None:
-        return self._subtitles_facade._push_history(entry)
-
     def _mark_project_dirty(self) -> None:
         return self._subtitles_facade._mark_project_dirty()
-
-    def _replace_segments(
-        self,
-        segments: list[dict[str, Any]],
-        selected_id: str | None = None,
-        *,
-        reflow_layout: bool = True,
-    ) -> None:
-        return self._subtitles_facade._replace_segments(segments, selected_id, reflow_layout=reflow_layout)
 
     def _commit_segment_change(
         self,
@@ -2224,12 +2197,6 @@ class EditBayBackend(LegacyEditBayBackend):
         reflow_layout: bool = True,
     ) -> None:
         return self._subtitles_facade._commit_segment_change(before, after, selected_id, reflow_layout=reflow_layout)
-
-    def _apply_history_entry(self, entry: dict[str, Any], state: str) -> None:
-        return self._subtitles_facade._apply_history_entry(entry, state)
-
-    def _replace_timeline(self, payload: dict[str, Any]) -> None:
-        return self._workspace_facade._replace_timeline(payload)
 
     def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:
         return self._workspace_facade._commit_timeline(timeline, status)

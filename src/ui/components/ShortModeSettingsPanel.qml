@@ -9,6 +9,7 @@ ColumnLayout {
     spacing: 10
 
     property var appBackend: null
+    property bool refreshingSettings: false
     readonly property bool editingEnabled: settingsRoot.appBackend && !settingsRoot.appBackend.running
     property var fitOptions: [
         { "label": "画面いっぱい", "value": "cover" },
@@ -30,30 +31,36 @@ ColumnLayout {
     }
 
     function refresh() {
-        if (!settingsRoot.appBackend) return
-        var s = settingsRoot.appBackend.shortVideo.shortVideoSettings
-        fitCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.fitOptions, s.global_fit)
-        bgColorField.text = s.global_background_color
-        transitionCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.transitionOptions, s.transition.type)
-        transitionDuration.value = s.transition.duration
-        scaleSpin.value = s.subtitle_scale_percent
+        if (!settingsRoot.appBackend || settingsRoot.refreshingSettings) return
+        // 表示値の反映で発火する変更通知をユーザーの編集として扱わない。
+        settingsRoot.refreshingSettings = true
+        try {
+            var s = settingsRoot.appBackend.shortVideo.shortVideoSettings
+            fitCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.fitOptions, s.global_fit)
+            bgColorField.text = s.global_background_color
+            transitionCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.transitionOptions, s.transition.type)
+            transitionDuration.value = s.transition.duration
+            scaleSpin.value = s.subtitle_scale_percent
 
-        var bgm = s.bgm || {}
-        bgmFileLabel.text = bgm.path ? bgm.path.toString() : "BGM ファイルを選択"
-        bgmIn.text = bgm["in"] ? bgm["in"].toString() : "0"
-        bgmOut.text = bgm.out ? bgm.out.toString() : "0"
-        bgmStart.text = bgm.start ? bgm.start.toString() : "0"
-        bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
+            var bgm = s.bgm || {}
+            bgmFileLabel.text = bgm.path ? bgm.path.toString() : "BGM ファイルを選択"
+            bgmIn.text = bgm["in"] ? bgm["in"].toString() : "0"
+            bgmOut.text = bgm.out ? bgm.out.toString() : "0"
+            bgmStart.text = bgm.start ? bgm.start.toString() : "0"
+            bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
+        } finally {
+            settingsRoot.refreshingSettings = false
+        }
     }
 
     function _sendBgmUpdate(changes) {
-        if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
+        if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
             settingsRoot.appBackend.shortVideo.setShortVideoBgm(changes)
         }
     }
 
     Connections {
-        target: settingsRoot.appBackend.shortVideo
+        target: settingsRoot.appBackend ? settingsRoot.appBackend.shortVideo : null
         function onShortVideoChanged() { settingsRoot.refresh() }
     }
 
@@ -120,7 +127,7 @@ ColumnLayout {
         id: bgColorDialog
         title: "背景色を選択"
         onAccepted: {
-            if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
+            if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
                 var hex = selectedColor.toString().replace("#", "")
                 settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(hex)
             }
@@ -139,7 +146,7 @@ ColumnLayout {
             valueRole: "value"
             enabled: settingsRoot.editingEnabled
             onActivated: {
-                if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
+                if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
                     settingsRoot.appBackend.shortVideo.setShortVideoTransition(transitionCombo.currentValue, transitionDuration.value)
                 }
             }
@@ -153,7 +160,7 @@ ColumnLayout {
             from: 0; to: 2.0; stepSize: 0.1
             enabled: settingsRoot.editingEnabled
             onValueChanged: {
-                if (settingsRoot.appBackend && !settingsRoot.appBackend.running) {
+                if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
                     settingsRoot.appBackend.shortVideo.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
             }

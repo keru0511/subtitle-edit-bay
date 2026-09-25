@@ -153,7 +153,7 @@ def validate_publish_gate(
 ) -> None:
     jobs = _workflow_jobs(workflow)
     graph = build_job_graph(workflow)
-    publish = _job_mapping(jobs, publish_job)
+    _job_mapping(jobs, publish_job)
     ancestors = job_ancestors(graph, publish_job)
     missing_gates = sorted(set(required_gates) - ancestors)
     if missing_gates:

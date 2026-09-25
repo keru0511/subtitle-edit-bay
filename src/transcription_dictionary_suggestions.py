@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 

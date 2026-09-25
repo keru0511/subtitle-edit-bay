@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Any, Protocol
+from typing import Protocol, TypedDict
 
 
-def hidden_subprocess_kwargs() -> dict[str, Any]:
+class SubprocessOptions(TypedDict, total=False):
+    """外部プロセス起動に渡すOS依存オプション。"""
+
+    creationflags: int
+    start_new_session: bool
+
+
+def hidden_subprocess_kwargs() -> SubprocessOptions:
     """Return subprocess options that keep background Windows commands hidden."""
     if os.name != "nt":
         return {}
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
 
 
-def detached_subprocess_kwargs() -> dict[str, Any]:
+def detached_subprocess_kwargs() -> SubprocessOptions:
     """GUIから独立して継続するプロセスの起動オプション。"""
     return {"start_new_session": True, **hidden_subprocess_kwargs()}
 

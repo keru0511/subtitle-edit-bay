@@ -5,8 +5,6 @@ from src.short_video_schema import (
     ShortVideoBgm,
     ShortVideoClip,
     ShortVideoError,
-    ShortVideoOutput,
-    ShortVideoTransition,
 )
 
 

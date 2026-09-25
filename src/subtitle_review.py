@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping
 
-from .subtitle_review_rules import RULE_VERSION, ReviewFinding, review_segment_rules
+from .subtitle_review_rules import RULE_VERSION, review_segment_rules
 
 
 REVIEW_STATUSES = {"open", "resolved", "ignored", "false_positive", "stale"}

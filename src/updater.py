@@ -10,7 +10,6 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from . import platform_updates
 from .platform_updates import installer_asset_name
@@ -223,7 +222,7 @@ def apply_zip_update(
     import tempfile
 
     project_root = project_root.resolve()
-    current_version = resolve_application_version(project_root)
+    resolve_application_version(project_root)
     previous_manifest = _load_manifest(project_root)
     backup_root = project_root / ".local" / "update_backups" / "pending"
     if backup_root.exists():

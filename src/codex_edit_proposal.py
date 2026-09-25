@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import math
 from typing import Any, Iterable, Mapping
 
-from .subtitle_project import SubtitleProjectError, normalize_segment, validate_project
+from .subtitle_project import SubtitleProjectError, validate_project
 
 
 class EditProposalError(ValueError):

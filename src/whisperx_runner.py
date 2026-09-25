@@ -3,12 +3,11 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import math
 import os
 import tempfile
 from pathlib import Path
-from functools import partial
 
+from .ctc_alignment import blank_aware_alignment
 from .transcription_profile import DEFAULT_VAD_OFFSET, DEFAULT_VAD_ONSET, first_pass_profile
 
 
@@ -42,43 +41,6 @@ def _release_memory(device: str) -> None:
         torch.cuda.empty_cache()
 
 
-def merge_chunks_with_gap(merge_chunks, max_gap: float, *args, padding: float = 0.0, **kwargs):
-    """VADが保持した発話境界で分割し、長い無音を初回認識に含めない。"""
-    if not math.isfinite(max_gap) or max_gap <= 0:
-        raise ValueError("発話を結合する無音の上限は正の有限値にしてください。")
-    if not math.isfinite(padding) or not 0 <= padding <= max_gap / 2:
-        raise ValueError("発話の余裕は0以上、無音上限の半分以下にしてください。")
-    output = []
-    for chunk in merge_chunks(*args, **kwargs):
-        groups = []
-        current = []
-        end = None
-        for start, stop in chunk["segments"]:
-            if not math.isfinite(start) or not math.isfinite(stop) or not 0 <= start < stop:
-                raise ValueError("VADの発話区間が不正です。")
-            if current and start < current[-1][0]:
-                raise ValueError("VADの発話区間が時刻順ではありません。")
-            if end is not None and start - end > max_gap:
-                groups.append(current)
-                current = []
-                end = None
-            current.append((start, stop))
-            end = stop if end is None else max(end, stop)
-        if not current:
-            raise ValueError("VADチャンクに発話区間がありません。")
-        groups.append(current)
-        for group in groups:
-            output.append(
-                {
-                    **chunk,
-                    "start": max(chunk["start"], group[0][0] - padding),
-                    "end": min(chunk["end"], max(stop for _, stop in group) + padding),
-                    "segments": group,
-                }
-            )
-    return output
-
-
 def run(args: argparse.Namespace) -> Path:
     # 軽量なCLI・単体テストでは、モデルとGPUライブラリをロードしない。
     import whisperx
@@ -89,17 +51,15 @@ def run(args: argparse.Namespace) -> Path:
         raise ValueError("音声区間は1〜30秒、探索数とバッチ数は1以上にしてください。")
     if not 1 <= args.repetition_penalty <= 2 or args.no_repeat_ngram_size < 0:
         raise ValueError("反復ペナルティは1〜2、反復禁止の長さは0以上にしてください。")
-    if not math.isfinite(args.max_speech_gap) or args.max_speech_gap <= 0:
-        raise ValueError("発話を結合する無音の上限は正の有限値にしてください。")
-    if not math.isfinite(args.speech_pad) or not 0 <= args.speech_pad <= args.max_speech_gap / 2:
-        raise ValueError("発話の余裕は0以上、無音上限の半分以下にしてください。")
+    if args.alignment_backend != "ctc-blank-v1":
+        raise ValueError("未対応の時刻合わせ方式です。")
     if args.diarize and not os.environ.get("HF_TOKEN", "").strip():
         raise ValueError("話者分離にはHF_TOKENが必要です。")
 
     asr_options = {
         "beam_size": args.beam_size,
         "repetition_penalty": args.repetition_penalty,
-        # 本当に繰り返した発言を禁止せず、標準では反復への追加ペナルティも課さない。
+        # 本当に繰り返した発言を禁止しない。確率への緩いペナルティのみ適用する。
         "no_repeat_ngram_size": args.no_repeat_ngram_size,
         "condition_on_previous_text": False,
         "initial_prompt": args.initial_prompt,
@@ -121,31 +81,28 @@ def run(args: argparse.Namespace) -> Path:
         vad_options={"chunk_size": args.chunk_size, "vad_onset": args.vad_onset, "vad_offset": args.vad_offset},
     )
     try:
-        # このモデルのVADだけに適用する。VAD検出・生成・時刻合わせはそれぞれ一度のまま。
-        model.vad_model.merge_chunks = partial(
-            merge_chunks_with_gap, model.vad_model.merge_chunks, args.max_speech_gap, padding=args.speech_pad
-        )
         result = model.transcribe(audio, batch_size=args.batch_size, chunk_size=args.chunk_size, print_progress=True)
     finally:
         del model
         _release_memory(args.device)
 
-    for segment in result["segments"]:
-        print(f"初回認識区間: {segment['start']:.3f}〜{segment['end']:.3f}秒", flush=True)
     language = result["language"]
     if result["segments"]:
         align_model, metadata = whisperx.load_align_model(language_code=language, device=args.device)
         try:
             # 切り詰めた音声ではなく元の音声と絶対時刻を渡し、語単位で時刻を合わせる。
-            result = whisperx.align(
-                result["segments"],
-                align_model,
-                metadata,
-                audio,
-                args.device,
-                interpolate_method=args.interpolate_method,
-                print_progress=True,
-            )
+            from whisperx import alignment
+
+            with blank_aware_alignment(alignment):
+                result = whisperx.align(
+                    result["segments"],
+                    align_model,
+                    metadata,
+                    audio,
+                    args.device,
+                    interpolate_method=args.interpolate_method,
+                    print_progress=True,
+                )
         finally:
             del align_model
             _release_memory(args.device)

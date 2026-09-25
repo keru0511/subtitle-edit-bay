@@ -17,6 +17,7 @@ on:
       - 'src/transcription_profile.py'
       - 'src/transcription_execution.py'
       - 'src/whisperx_runner.py'
+      - 'src/ctc_alignment.py'
       - 'src/craig_transcription_execution.py'
       - 'src/runtime_settings.py'
   workflow_dispatch:

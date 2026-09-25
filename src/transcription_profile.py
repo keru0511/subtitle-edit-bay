@@ -10,11 +10,10 @@ def first_pass_profile() -> dict[str, str | int | float]:
         "version": "first-pass-v2",
         "vad_method": "pyannote",
         "chunk_size": 15,
-        "max_speech_gap": 1.0,
-        "speech_pad": 0.5,
         "beam_size": 10,
-        "repetition_penalty": 1.0,
+        "repetition_penalty": 1.1,
         "no_repeat_ngram_size": 0,
         "batch_size": 8,
         "interpolate_method": "nearest",
+        "alignment_backend": "ctc-blank-v1",
     }

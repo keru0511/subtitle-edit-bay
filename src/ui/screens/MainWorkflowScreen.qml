@@ -44,6 +44,11 @@ ApplicationWindow {
     property var pendingWelcomeTranscriptionRequest: null
     property int editorDraftSegmentIndex: -1
     property string editorDraftText: ""
+    property string editorDraftSegmentId: ""
+    property string editorDraftProjectPath: ""
+    property string editorDraftOriginalText: ""
+    readonly property bool hasPendingSubtitleText: editorDraftSegmentId !== ""
+        && editorDraftText !== editorDraftOriginalText
     property string activeOverlay: ""
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
@@ -385,28 +390,80 @@ ApplicationWindow {
         return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
     }
 
+    function subtitleIndexForId(segmentId, preferredIndex) {
+        if (!segmentId)
+            return -1
+        if (preferredIndex >= 0
+                && String(root.appBackend.segmentAt(preferredIndex).id || "") === segmentId)
+            return preferredIndex
+        for (var index = 0; index < root.appBackend.segmentCount; ++index) {
+            if (String(root.appBackend.segmentAt(index).id || "") === segmentId)
+                return index
+        }
+        return -1
+    }
+
     function beginSubtitleDraft(segmentIndex, text) {
+        var segment = root.appBackend.segmentAt(segmentIndex)
         root.editorDraftSegmentIndex = segmentIndex
+        root.editorDraftSegmentId = String(segment.id || "")
+        root.editorDraftProjectPath = root.appBackend.projectPath
+        root.editorDraftOriginalText = String(text)
         root.editorDraftText = String(text)
     }
 
     function updateSubtitleDraft(segmentIndex, text) {
-        if (root.editorDraftSegmentIndex !== segmentIndex)
-            root.editorDraftSegmentIndex = segmentIndex
-        root.editorDraftText = String(text)
+        if (root.editorDraftSegmentId !== "")
+            root.editorDraftText = String(text)
     }
 
-    function clearSubtitleDraft(segmentIndex) {
-        if (root.editorDraftSegmentIndex !== segmentIndex)
-            return
+    function clearSubtitleDraft() {
         root.editorDraftSegmentIndex = -1
+        root.editorDraftSegmentId = ""
+        root.editorDraftProjectPath = ""
+        root.editorDraftOriginalText = ""
         root.editorDraftText = ""
+    }
+
+    function commitSubtitleDraft(expectedId) {
+        if (expectedId !== undefined && expectedId !== root.editorDraftSegmentId)
+            return
+        var id = root.editorDraftSegmentId
+        var projectPath = root.editorDraftProjectPath
+        var preferredIndex = root.editorDraftSegmentIndex
+        var text = root.editorDraftText
+        var changed = root.hasPendingSubtitleText
+        // モデル更新・フォーカス通知が再入しても同じ入力を二度反映しない。
+        root.clearSubtitleDraft()
+        if (!changed || projectPath !== root.appBackend.projectPath)
+            return
+        var index = root.subtitleIndexForId(id, preferredIndex)
+        if (index < 0)
+            return // 削除済みの字幕の本文を、同じ行に移動した別の字幕へ反映しない。
+        var selectedIndex = root.appBackend.selectedSegmentIndex
+        var selectedId = String(root.appBackend.segmentAt(selectedIndex).id || "")
+        root.appBackend.updateSegment(index, {"text": text})
+        if (selectedId !== id)
+            root.appBackend.selectSegment(root.subtitleIndexForId(selectedId, selectedIndex))
+    }
+
+    function performSubtitleEdit(action, atSeconds) {
+        if (root.appBackend.running)
+            return
+        root.commitPendingEdits()
+        switch (action) {
+        case "add": root.appBackend.addSegment(atSeconds); break
+        case "delete": root.appBackend.deleteSelectedSegment(); break
+        case "split": root.appBackend.splitSelectedSegment(atSeconds); break
+        case "undo": root.appBackend.undoSubtitleEdit(); break
+        case "redo": root.appBackend.redoSubtitleEdit(); break
+        }
     }
 
     function subtitlePreviewText(segmentData) {
         var sourceIndex = Number(segmentData.sourceIndex)
         if ((root.editorMode || root.appBackend.currentEditMode === "subtitle")
-                && sourceIndex === root.editorDraftSegmentIndex)
+                && String(segmentData.id || "") === root.editorDraftSegmentId)
             return root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)
         if (segmentData.preview_text !== undefined)
             return String(segmentData.preview_text)
@@ -610,6 +667,7 @@ ApplicationWindow {
         // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
         root.commitInputMethod()
         root.contentItem.forceActiveFocus()
+        root.commitSubtitleDraft()
     }
 
     // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
@@ -648,6 +706,16 @@ ApplicationWindow {
     function saveProject() {
         root.commitPendingEdits()
         return root.appBackend.saveProject()
+    }
+
+    function browseProjectFile() {
+        root.commitPendingEdits()
+        root.appBackend.browseProjectFile()
+    }
+
+    function browseProjectSaveAs() {
+        root.commitPendingEdits()
+        root.appBackend.browseProjectSaveAs()
     }
 
     function renderVideo() {
@@ -1199,7 +1267,7 @@ ApplicationWindow {
         accentColor: root.acid
         warningColor: root.amber
         onUpdateCheckRequested: root.appBackend.checkForUpdates()
-        onProjectOpenRequested: root.appBackend.browseProjectFile()
+        onProjectOpenRequested: root.browseProjectFile()
         onSourceSettingsRequested: sourcePopup.open()
         onSaveRequested: root.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
@@ -1375,22 +1443,22 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 5
-                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
+                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
+                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
                     SmallButton {
                         objectName: "workspaceSubtitleAddButton"
                         text: "+ 字幕追加"
                         enabled: !root.appBackend.running
-                        onClicked: root.appBackend.addSegment(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
+                        onClicked: root.performSubtitleEdit("add", Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
                     }
                     SmallButton {
                         objectName: "workspaceSubtitleSplitButton"
                         text: "分割"
                         enabled: !root.appBackend.running
                             && root.canSplitSelectedSegment(root.appBackend.editorPlayhead.sourcePositionMs)
-                        onClicked: root.appBackend.splitSelectedSegment(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
+                        onClicked: root.performSubtitleEdit("split", Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
                     }
-                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
+                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
                     Item { Layout.fillWidth: true }
                     SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveProject() }
                     SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.buildSubtitlePreview() }
@@ -1517,7 +1585,7 @@ ApplicationWindow {
             savedContentY: root.editorCaptionScrollY
             beginDraft: root.beginSubtitleDraft
             updateDraft: root.updateSubtitleDraft
-            clearDraft: root.clearSubtitleDraft
+            commitDraft: root.commitSubtitleDraft
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }
@@ -1723,7 +1791,7 @@ ApplicationWindow {
                     Layout.preferredHeight: 48
                     text: "プロジェクトを開く"
                     enabled: !root.appBackend.running
-                    onClicked: root.appBackend.browseProjectFile()
+                    onClicked: root.browseProjectFile()
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 Text { text: "必要に応じて"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
@@ -2393,7 +2461,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Text { objectName: "projectSavePathText"; Layout.fillWidth: true; text: root.appBackend.projectSavePath || "動画の選択後に決まります"; color: root.textMuted; elide: Text.ElideMiddle }
-                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.appBackend.browseProjectSaveAs() }
+                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.browseProjectSaveAs() }
             }
             PanelTitle { text: "完成動画の出力先" }
             RowLayout {
@@ -3040,11 +3108,11 @@ ApplicationWindow {
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
                 Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
-                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.appBackend.addSegment(mainPlayer.position / 1000) }
-                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.appBackend.splitSelectedSegment(mainPlayer.position / 1000) }
-                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
+                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
+                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
+                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.performSubtitleEdit("add", mainPlayer.position / 1000) }
+                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.performSubtitleEdit("split", mainPlayer.position / 1000) }
+                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.saveProject() }
                 SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.buildSubtitlePreview() }
                 Button {
@@ -3173,7 +3241,12 @@ ApplicationWindow {
                             currentIndex: root.appBackend.selectedSegmentIndex
                             Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
                             onContentYChanged: root.editorCaptionScrollY = contentY
-                            onCurrentIndexChanged: if (currentIndex >= 0) root.appBackend.selectSegment(currentIndex)
+                            function syncSelectedIndex() {
+                                if (currentIndex >= 0 && currentIndex !== root.appBackend.selectedSegmentIndex)
+                                    root.appBackend.selectSegment(currentIndex)
+                            }
+                            // Undoによる行の復元中は、一時的な行番号を同期して再入しない。
+                            onCurrentIndexChanged: Qt.callLater(captionTable.syncSelectedIndex)
                             delegate: Rectangle {
                                 id: captionRow
                                 required property int index
@@ -3240,6 +3313,14 @@ ApplicationWindow {
                                     TextArea {
                                         id: captionTextArea
                                         objectName: "captionTextArea"
+                                        property string editingSegmentId: ""
+                                        function commitText() {
+                                            var id = editingSegmentId
+                                            editingSegmentId = ""
+                                            if (id)
+                                                root.commitSubtitleDraft(id)
+                                        }
+                                        Component.onDestruction: commitText()
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 52
                                         text: captionRow.editorText
@@ -3247,17 +3328,15 @@ ApplicationWindow {
                                         wrapMode: TextEdit.Wrap
                                         selectByMouse: true
                                         onTextChanged: {
-                                            if (activeFocus)
+                                            if (activeFocus && editingSegmentId !== "")
                                                 root.updateSubtitleDraft(captionRow.index, text)
                                         }
                                         onActiveFocusChanged: {
                                             if (activeFocus) {
+                                                editingSegmentId = captionRow.segmentId
                                                 root.beginSubtitleDraft(captionRow.index, text)
                                             } else {
-                                                var editedText = text
-                                                if (editedText !== captionRow.editorText)
-                                                    root.appBackend.updateSegment(captionRow.index, {"text": editedText})
-                                                root.clearSubtitleDraft(captionRow.index)
+                                                commitText()
                                             }
                                         }
                                         background: Rectangle { radius: 6; color: "#101512"; border.color: parent.activeFocus ? root.acid : root.border }
@@ -3548,10 +3627,10 @@ ApplicationWindow {
         onDropped: function(drop) { root.importSourceDrop(drop) }
     }
 
-    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("undo") }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("redo") }
     Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProjectFromShortcut() }
-    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
+    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
 
     Connections {
         target: root.appBackend

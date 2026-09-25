@@ -103,8 +103,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("workspaceKind: root.appBackend.currentWorkspace", workflow)
         self.assertIn("currentEditMode: root.appBackend.currentEditMode", workflow)
         # 保存・書き出しの接続はtest_gui_editorの実キー入力・実クリックで検証する。
+        # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
         for action in (
-            "onProjectOpenRequested: root.appBackend.browseProjectFile()",
             "onSourceSettingsRequested: sourcePopup.open()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",

@@ -31,8 +31,8 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         # test_workspace_header_save_commits_caption_key_input と
         # test_workspace_caption_key_input_is_committed_before_render が実操作を検証する。
         # The shared workflow is the only owner of navigation side effects.
+        # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
         for route in (
-            "onProjectOpenRequested: root.appBackend.browseProjectFile()",
             "onSourceSettingsRequested: sourcePopup.open()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",

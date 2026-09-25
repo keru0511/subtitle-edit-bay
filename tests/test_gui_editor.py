@@ -3557,6 +3557,124 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertTrue(window.close())
         save.assert_not_called()
 
+    def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QObject]:
+        path = self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
+            {"id": "second", "start": 5, "end": 8, "text": "second", "speaker": "Speaker_Alice"},
+        ])
+        timer_patch = patch.object(self.app.autosave_timer, "start")
+        timer_patch.start()
+        self.addCleanup(timer_patch.stop)
+        _, window = self._load_qml()
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        else:
+            field = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+        self._click(window, field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in "edited":
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.app.processEvents()
+        self.assertEqual(field.property("text"), "edited")
+        self.assertTrue(field.hasActiveFocus())
+        return path, window
+
+    def _assert_pending_text_delete_preserves_neighbor(self, *, expanded: bool) -> None:
+        path, window = self._prepare_pending_subtitle_text(expanded=expanded)
+        names = ("deleteCaptionButton", "saveProjectButton", "undoCaptionButton") if expanded else (
+            "workspaceSubtitleDeleteButton", "workspaceSubtitleSaveButton", "workspaceSubtitleUndoButton"
+        )
+        self._click(window, self._quick_item(window, names[0]))
+        self._click(window, self._quick_item(window, names[1]))
+        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]], [("second", "second")])
+        self._click(window, self._quick_item(window, names[2]))
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+        self.assertEqual(self.app.segmentAt(1)["text"], "second")
+
+    def test_pending_text_delete_preserves_neighbor_in_workspace(self) -> None:
+        self._assert_pending_text_delete_preserves_neighbor(expanded=False)
+
+    def test_pending_text_delete_preserves_neighbor_in_expanded_editor(self) -> None:
+        self._assert_pending_text_delete_preserves_neighbor(expanded=True)
+
+    def test_pending_text_split_preserves_new_text_and_undo(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app.setEditorPlayhead(2_000, "source")
+        self._click(window, self._quick_item(window, "workspaceSubtitleSplitButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        segments = load_project(path)["segments"]
+        self.assertEqual([s["text"] for s in segments], ["edi", "ted", "second"])
+        self.assertEqual([(s["start"], s["end"]) for s in segments[:2]], [(0.0, 2.0), (2.0, 4.0)])
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+
+    def test_pending_text_undo_redo_survives_save(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        undo = self._quick_item(window, "workspaceSubtitleUndoButton")
+        self.assertTrue(undo.isEnabled(), "未確定の本文編集も取り消せる")
+        self._click(window, undo)
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self._click(window, self._quick_item(window, "workspaceSubtitleRedoButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+
+    def test_pending_text_add_commits_original_caption_before_new_row(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app.setEditorPlayhead(9_000, "source")
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        segments = load_project(path)["segments"]
+        self.assertEqual([s["text"] for s in segments[:2]], ["edited", "second"])
+        self.assertEqual(len(segments), 3)
+        self.assertEqual(segments[2]["start"], 9.0)
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+
+    def test_pending_text_tracks_id_after_row_reorder(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app.updateSegment(0, {"start": 9.0, "end": 12.0})
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]],
+                         [("second", "second"), ("first", "edited")])
+
+    def test_pending_text_is_discarded_if_edited_caption_was_removed(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        # UI外の編集でも、消えたIDの本文が次の行へ流れないことを検証する。
+        self.app.deleteSelectedSegment()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]], [("second", "second")])
+
+    def test_pending_text_is_not_applied_to_another_project_with_same_id(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        other = load_project(path)
+        other["segments"][0]["text"] = "other project"
+        target = self.root / "other.subtitle-project.json"
+        save_project(target, other)
+        self.app.loadProject(str(target))
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(load_project(target)["segments"][0]["text"], "other project")
+
+    def test_project_open_commits_pending_text_to_original_project(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        other = load_project(path)
+        other["segments"][0]["text"] = "other project"
+        target = self.root / "other.subtitle-project.json"
+        save_project(target, other)
+        with patch("src.gui.QFileDialog.getOpenFileName", return_value=(str(target), "")):
+            self._click(window, self._quick_item(window, "projectOpenButton"))
+        self.assertEqual(Path(self.app.projectPath), target)
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(self.app.segmentAt(0)["text"], "other project")
+
     def test_workspace_subtitle_delete_undo_redo_and_save_round_trip(self) -> None:
         """削除・履歴・保存を通常編集画面の実クリックで検証する。"""
         path = self._load_project()

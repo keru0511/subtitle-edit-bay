@@ -49,6 +49,12 @@ QMLは`backend`の機能別QObjectを通じて画面の状態を読み取り、�
 Qtが認識する型・Slot・通知の互換性は`tests/test_gui_backend_metaobject.py`で確認します。
 外部関数を差し替えるテストは、その関数を利用する機能別モジュールを対象にします。
 
+性能計測は`tests/gui_performance_scenarios.py`の計測用窓口で、QMLからの呼び出し、
+全件配列生成、プレビューのキャッシュミスを記録します。比較対象の旧リビジョンには
+旧バックエンド用の計測を使い、両方を同じハーネスで実行します。
+`tests/test_gui_test_harness.py`では実際のQMLから計測対象を呼び、計測漏れと
+互換APIによる二重計測を検証します。機能別窓口だけの変更も性能CIの対象です。
+
 ```sh
 python -m unittest tests.test_gui_backend_metaobject tests.test_gui_ai_chat_state tests.test_gui_editor
 python scripts/check_quality.py --lint-only

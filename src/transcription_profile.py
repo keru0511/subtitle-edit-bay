@@ -13,7 +13,7 @@ def first_pass_profile() -> dict[str, str | int | float]:
         "max_speech_gap": 1.0,
         "speech_pad": 0.5,
         "beam_size": 10,
-        "repetition_penalty": 1.1,
+        "repetition_penalty": 1.0,
         "no_repeat_ngram_size": 0,
         "batch_size": 8,
         "interpolate_method": "nearest",

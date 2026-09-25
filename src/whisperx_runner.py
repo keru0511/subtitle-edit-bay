@@ -99,7 +99,7 @@ def run(args: argparse.Namespace) -> Path:
     asr_options = {
         "beam_size": args.beam_size,
         "repetition_penalty": args.repetition_penalty,
-        # 本当に繰り返した発言を禁止しない。確率への緩いペナルティのみ適用する。
+        # 本当に繰り返した発言を禁止せず、標準では反復への追加ペナルティも課さない。
         "no_repeat_ngram_size": args.no_repeat_ngram_size,
         "condition_on_previous_text": False,
         "initial_prompt": args.initial_prompt,

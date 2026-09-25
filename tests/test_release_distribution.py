@@ -182,6 +182,44 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn('if ($failed.status -ne "failed"', smoke)
         self.assertNotIn('status = "success"', smoke)
 
+    def test_installer_jobs_cache_downloads_without_skipping_product_validation(self) -> None:
+        dependency_paths = {
+            "requirements.txt",
+            "runtime/runtime-contract.json",
+            "runtime/requirements-windows-cpu.lock",
+            "runtime/requirements-windows-cu128.lock",
+        }
+        for path, job_id, prefix in (
+            (CI_WORKFLOW, "windows-installer-smoke", ""),
+            (RELEASE_PREPARE_WORKFLOW, "smoke", "release-tools/"),
+        ):
+            with self.subTest(workflow=path.name):
+                job = load_workflow(path)["jobs"][job_id]
+                steps = job["steps"]
+                python_step = next(step for step in steps if str(step.get("uses", "")).startswith("actions/setup-python@"))
+                cache_env = next(step for step in steps if step.get("name") == "Configure installer download cache")
+                self.assertEqual(cache_env["shell"], "pwsh")
+                self.assertIn("$env:GITHUB_ENV", cache_env["run"])
+                self.assertIn(r"PIP_CACHE_DIR=$env:RUNNER_TEMP\installer-pip-cache", cache_env["run"])
+                self.assertLess(steps.index(cache_env), steps.index(python_step))
+                self.assertNotIn("if", cache_env)
+                self.assertNotIn("PIP_CACHE_DIR", python_step.get("env", {}))
+                self.assertEqual(python_step["with"]["cache"], "pip")
+                self.assertEqual(
+                    set(python_step["with"]["cache-dependency-path"].splitlines()),
+                    {prefix + dependency for dependency in dependency_paths},
+                )
+                checkout = next(step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@"))
+                self.assertLess(steps.index(checkout), steps.index(python_step))
+                self.assertEqual(checkout.get("with", {}).get("path", ""), prefix.rstrip("/"))
+                install = next(step for step in steps if "test_installer.ps1" in str(step.get("run", "")))
+                self.assertLess(steps.index(python_step), steps.index(install))
+                self.assertNotIn("if", install)
+                self.assertNotIn("continue-on-error", install)
+                self.assertNotIn("PIP_CACHE_DIR", install.get("env", {}))
+                self.assertNotIn("cache-hit", str(job))
+                self.assertFalse(any(str(step.get("uses", "")).startswith("actions/cache") for step in steps))
+
     def test_installer_requires_x64_native_launcher(self) -> None:
         build = (ROOT / "scripts" / "build_installer.ps1").read_text(encoding="utf-8-sig")
         launcher_build = (ROOT / "scripts" / "build_launcher.ps1").read_text(encoding="utf-8-sig")

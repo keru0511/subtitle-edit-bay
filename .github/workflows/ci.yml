@@ -393,12 +393,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure installer download cache
+        shell: pwsh
+        run: |
+          # setup-pythonと製品ランチャーの子プロセスで同じキャッシュを使う。
+          Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8 `
+              -Value "PIP_CACHE_DIR=$env:RUNNER_TEMP\installer-pip-cache"
       - name: Set up Python 3.10
         uses: actions/setup-python@v7
         with:
           python-version: "3.10"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            runtime/runtime-contract.json
+            runtime/requirements-windows-cpu.lock
+            runtime/requirements-windows-cu128.lock
 
       - name: Set up x64 MSVC environment
         uses: ilammy/msvc-dev-cmd@v1

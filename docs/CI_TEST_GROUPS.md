@@ -104,3 +104,28 @@ VERSION・リリース基盤変更では従来どおり全検証し、Portable�
 
 判定の回帰テストは `python -m unittest tests.test_ci_impact tests.test_ci_test_groups tests.test_release_distribution` で実行します。
 GitHub Actionsの条件仕様: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions
+
+## インストーラー検証のダウンロードキャッシュ
+
+通常CIの `Windows installer smoke` とRelease readinessの `Install and start prepared package` は、
+`actions/setup-python` のpipキャッシュを利用します。Python準備より前に `GITHUB_ENV` へ
+`PIP_CACHE_DIR` を設定し、ランナーの一時ディレクトリ内の `installer-pip-cache` に揃えます。
+製品ランチャーから起動する実セットアップにもこの環境変数を引き継ぎます。
+
+キャッシュの識別にはOS・アーキテクチャ・Pythonバージョンに加え、`requirements.txt`、
+`runtime/runtime-contract.json`、CPU/CUDA両方のロックファイルを使います。
+Release readinessでは `release-tools/` 以下のファイルを参照します。
+依存定義を変更した場合は新しいキーになり、互換性のある過去のダウンロードキャッシュがあれば再利用します。
+
+保存するのはpipのキャッシュだけです。インストール済み仮想環境やセットアップ成功記録は復元しません。
+キャッシュ命中の有無にかかわらず、インストール・移行・更新・新しい仮想環境の作成・
+`--require-hashes` による依存インストール・`pip check`・実行環境検証・GUI起動・異常系検証を実行します。
+初回やキャッシュ失効時は従来どおりダウンロードします。
+
+効果は `Set up Python 3.10` のキャッシュ復元時間、インストール・起動ステップ、
+`Post Set up Python 3.10` のキャッシュ保存時間を合算して比較します。
+パッケージの展開・インストール時間は残るため、全体の短縮幅はキャッシュが温まった後の実測で確認します。
+mainのキャッシュはPRからも参照できますが、PR側の保存可否や再利用範囲はGitHubのキャッシュ権限・スコープに従います。
+
+参考: [setup-pythonのキャッシュ実装](https://github.com/actions/setup-python/blob/main/src/cache-distributions/pip-cache.ts)、
+[pipのキャッシュ仕様](https://pip.pypa.io/en/stable/topics/caching/)

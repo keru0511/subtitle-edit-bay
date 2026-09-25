@@ -303,6 +303,10 @@ def main() -> int:
                 **score_transcript(run["transcript"], manifest),
                 **{key: value for key, value in run.items() if key != "transcript"},
             }
+        cache_root = Path(os.environ.get("HF_HOME", str(Path.home() / ".cache/huggingface")))
+        report["model_snapshots"] = sorted(
+            str(path.relative_to(cache_root)) for path in cache_root.glob("hub/models--*/snapshots/*") if path.is_dir()
+        )
         report["failures"] = quality_failures(report["baseline"], report["candidate"], manifest["limits"])
     except Exception as error:
         report["failures"].append(f"実認識検証が完了しませんでした: {type(error).__name__}: {error}")

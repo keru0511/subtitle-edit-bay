@@ -8,7 +8,7 @@ on:
       - 'assets/runtime_config.json'
       - 'runtime/**'
       - 'scripts/benchmark_transcription.py'
-      - 'src/transcrib*.py'
+      - 'src/transcri*.py'
       - 'src/whisperx_runner.py'
       - 'src/craig_transcription_execution.py'
       - 'src/runtime_settings.py'

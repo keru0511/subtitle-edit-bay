@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QSignalSpy, QTest
 

@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from src.project_snapshots import (
-    SnapshotError,
     _merge_media_references,
     project_checksum,
     sanitize_project,

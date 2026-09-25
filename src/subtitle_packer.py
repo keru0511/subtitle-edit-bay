@@ -4,10 +4,10 @@ from functools import lru_cache
 
 from .models import SubtitleEvent
 from .subtitle_layout.rules import (
-    CLAUSE_BREAK_TOKENS,
+    CLAUSE_BREAK_TOKENS as CLAUSE_BREAK_TOKENS,
     ELLIPSIS,
     LEADING_AVOID_CHARS,
-    LEADING_BOUNDARY_PENALTIES,
+    LEADING_BOUNDARY_PENALTIES as LEADING_BOUNDARY_PENALTIES,
     LEFT_BOUNDARY_AVOID_WORDS,
     MAX_LINES,
     RIGHT_BOUNDARY_AVOID_WORDS,
@@ -17,13 +17,13 @@ from .subtitle_layout.rules import (
 )
 from .subtitle_layout.scoring import (
     TARGET_READING_SPEED,
-    TIMING_BALANCE_WEIGHT,
-    char_bucket,
+    TIMING_BALANCE_WEIGHT as TIMING_BALANCE_WEIGHT,
+    char_bucket as char_bucket,
     chunk_boundaries,
     clause_break_bonus,
     connected_char_penalty,
     display_width,
-    duration_pressure,
+    duration_pressure as duration_pressure,
     is_protected_inline_split,
     leading_boundary_penalty,
     text_width,

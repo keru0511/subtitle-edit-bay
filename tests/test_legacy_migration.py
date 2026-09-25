@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
@@ -13,7 +12,6 @@ from unittest.mock import patch
 from src.legacy_migration import (
     CACHE_KIND_AUDIO_PREVIEW,
     CACHE_KIND_LEGACY_APP_SOURCE,
-    CACHE_KIND_LEGACY_VENV,
     CACHE_KIND_MEDIA,
     CACHE_KIND_OUTPUT,
     CACHE_KIND_PIP_DOWNLOAD,
@@ -38,7 +36,6 @@ from src.legacy_migration import (
     CATEGORY_PROJECT,
     CATEGORY_RUNTIME_CONFIG,
     CATEGORY_SPEAKER_COLORS,
-    CATEGORY_USER_SETTINGS,
     SCOPE_EXTERNAL,
     STATUS_NOT_DISCOVERABLE,
     STATUS_MISSING,

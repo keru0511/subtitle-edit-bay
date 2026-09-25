@@ -6,7 +6,7 @@ import subprocess
 from fractions import Fraction
 from pathlib import Path
 
-from .media_probe import probe_media_duration
+from .media_probe import probe_media_duration as probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 VIDEO_CODEC = "libx264"

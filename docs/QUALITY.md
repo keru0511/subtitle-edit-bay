@@ -262,23 +262,30 @@ Install dependencies and then run checks from a fresh environment:
 python scripts/check_quality.py --install-runtime --install-dev
 ```
 
-The CI Python quality job uses the same script with `--lint-only`, runs a scoped format check against `scripts/check_quality.py`, and runs a scoped mypy check against `scripts/check_quality.py`. Windows CI keeps separate jobs for runtime-heavy smoke checks.
+CIのPython品質ジョブは共通の`check_quality.py`を使い、Ruff、同スクリプトの整形確認、OS境界の型チェックを実行します。Windows上の実プロセス・GUI・メディア検証は別ジョブで維持します。
 
-## Current Ruff scope
+## Ruffの対象範囲
 
-Ruff is currently configured to catch broken Python only:
+`E9`（構文エラー）と`F`（Pyflakes全ルール）をPython全体へ適用します。未定義名に加えて、未使用import・未使用変数・重複定義などを検出します。互換APIとして再公開する名前は同名aliasを使い、再公開の意図を明示します。外部から使われる名前を機械的に削除しません。
 
-- syntax errors
-- undefined names
-- severe Pyflakes control-flow errors
+全体の整形・import並び替え・広範なスタイルルールは別変更で扱います。今回、全体への整形適用は行いません。
 
-Ruff format is available through the shared quality entrypoint. CI currently enforces a scoped format check for the quality entrypoint itself, but repository-wide formatting is not enforced yet. Repository-wide format enforcement should be enabled in a separate formatting-only pull request to avoid mixing behavior work with large formatting diffs.
+## 型チェックの対象範囲
 
-## Current type-check scope
+既存の`scripts/check_quality.py`に加え、以下のOS境界をmypyのstrict設定で検証します。明示的な`Any`も許可しません。
 
-mypy is available through the shared quality entrypoint. CI currently enforces a scoped mypy check for `scripts/check_quality.py` only. Repository-wide type checking is not enforced yet because the broader codebase still needs typed settings and domain model boundaries.
+- `src/platform_paths.py`
+- `src/platform_updates.py`
+- `src/process_utils.py`
+- `src/qprocess_launcher.py`
 
-Import sorting and broad style rules are not enforced yet. They should be enabled in separate follow-up changes after the existing hot spots are cleaned up.
+CIでは同じ品質ジョブで`linux`・`win32`・`darwin`の各条件分岐を静的に評価します。これは各OSでの実行テストの代わりではありません。
+
+```sh
+python scripts/check_quality.py --type-only --type-platform win32 --paths scripts/check_quality.py src/platform_paths.py src/platform_updates.py src/process_utils.py src/qprocess_launcher.py
+```
+
+mypy全体への`--ignore-missing-imports`は使いません。品質ジョブに大きなGUI実行環境を導入しないため、PySide6の未導入だけはモジュールを限定して許容します。PySide6がない環境ではQt API自体の型までは保証しません。PySide6のあるGUIテストと併用します。本体全体の型チェックは、設定・ドメインモデルの境界を整えながら段階的に広げます。
 
 ## Heavier Windows checks
 

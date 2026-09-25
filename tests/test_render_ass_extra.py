@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from unittest import mock
 
 from src.render_ass import (
     SubtitleEvent,

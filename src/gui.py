@@ -46,7 +46,6 @@ from .process_utils import detached_subprocess_kwargs
 
 from .audio_mixer import (
     DEFAULT_AUDIO_TRACK,
-    MAX_VOLUME_PERCENT,
     active_audio_mix_channels,
     reconcile_audio_mix,
     reset_audio_mix,

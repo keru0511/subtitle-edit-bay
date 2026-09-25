@@ -26,6 +26,7 @@
         "test_ai_provider",
         "test_application_info",
         "test_application_logging",
+        "test_asr_ci_runtime",
         "test_ass_template",
         "test_assemble_video",
         "test_audio_auto_mix",

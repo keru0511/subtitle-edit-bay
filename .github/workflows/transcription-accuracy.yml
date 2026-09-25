@@ -11,6 +11,8 @@ on:
       - 'runtime/requirements-windows-cpu.lock'
       - 'runtime/runtime-contract.json'
       - 'scripts/benchmark_transcription.py'
+      - 'scripts/asr_ci_runtime.py'
+      - 'scripts/runtime_contract.py'
       - 'src/transcribe.py'
       - 'src/transcription_profile.py'
       - 'src/transcription_execution.py'
@@ -73,14 +75,17 @@ jobs:
       - name: 実行環境の識別子を取得
         id: cache-context
         run: |
-          "image=$env:ImageOS-$env:ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $key = python scripts/asr_ci_runtime.py cache-key --venv "$env:GITHUB_WORKSPACE/.asr-venv"
+          "key=$key" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: 導入済みCPUランタイムを復元
         id: runtime-cache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.asr-venv
-          key: asr-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-context.outputs.image }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('candidate/runtime/requirements-windows-cpu.lock', 'candidate/runtime/runtime-contract.json') }}
+          key: ${{ steps.cache-context.outputs.key }}
 
       - name: FFmpegを準備
         run: |
@@ -97,17 +102,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          python scripts/runtime_contract.py validate
-          $contract = Get-Content runtime/runtime-contract.json -Raw | ConvertFrom-Json
           $venv = Join-Path $env:GITHUB_WORKSPACE '.asr-venv'
-          $python = Join-Path $venv 'Scripts/python.exe'
-          if ($env:RUNTIME_CACHE_HIT -ne 'true') {
-              python -m venv $venv
-              & $python -m pip install --no-cache-dir "pip==$($contract.python.pip_version)"
-              & $python -m pip install --no-cache-dir --require-hashes --index-url https://pypi.org/simple -r runtime/requirements-windows-cpu.lock
-          }
-          & $python -m pip check
-          & $python scripts/runtime_contract.py verify-runtime --profile cpu --manifest-output "$env:RUNNER_TEMP/asr-runtime-manifest.json"
+          python scripts/asr_ci_runtime.py prepare --venv $venv --manifest "$env:RUNNER_TEMP/asr-runtime-manifest.json"
           (Join-Path $venv 'Scripts') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: 実録音を初回認識し誤りと時刻を比較

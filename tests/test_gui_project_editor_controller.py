@@ -292,6 +292,36 @@ class ProjectEditorControllerTests(unittest.TestCase):
                 {"id": "added", "path": "added.wav", "volume_percent": 80},
             ])
 
+    def test_mixed_edit_history_roundtrips_without_overwriting_other_sections(self) -> None:
+        from src.video_timeline import timeline_from_project
+
+        controller = self._editing_controller()
+        states = [deepcopy(controller.project)]
+        mix = deepcopy(controller.project["audio_mix"])
+        mix["channels"][0]["volume_percent"] = 80
+        mix["customized"] = True
+        controller.commit_section_change("audio_mix", mix)
+        states.append(deepcopy(controller.project))
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "字幕を修正"}])
+        states.append(deepcopy(controller.project))
+        short = deepcopy(controller.project["short_video"])
+        short["enabled"] = True
+        short["clips"] = [{"start": 0, "end": 1}]
+        controller.commit_section_change("short_video", short)
+        states.append(deepcopy(controller.project))
+        timeline = timeline_from_project(controller.project).add_cut(4, 5)
+        controller.commit_timeline_change(timeline.to_json())
+        states.append(deepcopy(controller.project))
+        for expected in reversed(states[:-1]):
+            self.assertTrue(controller.undo())
+            self.assertEqual(controller.project, expected)
+        self.assertFalse(controller.can_undo)
+        for expected in states[1:]:
+            self.assertTrue(controller.redo())
+            self.assertEqual(controller.project, expected)
+        self.assertFalse(controller.can_redo)
+
     def test_invalid_short_edit_does_not_create_history(self) -> None:
         controller = self._editing_controller()
         before = deepcopy(controller.project)

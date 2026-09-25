@@ -5061,6 +5061,27 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.currentEditMode, "audio")
         self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
 
+    def test_short_settings_refresh_and_undo_do_not_commit_slider_clamping(self) -> None:
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        self.assertTrue(self.app.setShortVideoTransition("fade", 3.0))
+        before = deepcopy(self.app._project["short_video"])
+        revision = self.app._project_revision
+        history_count = len(self.app._undo_stack)
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(self.app._project["short_video"], before)
+        self.assertEqual(self.app._project_revision, revision)
+        self.assertEqual(len(self.app._undo_stack), history_count)
+        self.assertTrue(self.app.setShortVideoTransition("fade", 0.5))
+        self.app.undoEdit()
+        self.app.processEvents()
+        self.assertEqual(self.app._project["short_video"], before)
+        self.assertTrue(self.app.canRedo)
+        self.app.redoEdit()
+        self.app.processEvents()
+        self.assertEqual(self.app.shortVideoSettings["transition"]["duration"], 0.5)
+
     def test_short_mode_transition_duration_uses_internal_values(self) -> None:
         self._load_project()
         _, window = self._load_qml()

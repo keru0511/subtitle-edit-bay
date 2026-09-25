@@ -43,10 +43,10 @@ Rectangle {
                 objectName: "mediaBinAddButton"
                 text: "追加"
                 enabled: root.backend && !root.backend.running
-                onClicked: root.backend.browseSequenceAsset()
+                onClicked: root.backend.sequence.browseSequenceAsset()
             }
             Text {
-                text: root.backend ? String(root.backend.mediaBinAssets.length) : "0"
+                text: root.backend ? String(root.backend.sequence.mediaBinAssets.length) : "0"
                 color: root.mutedColor
                 font.family: "Cascadia Mono"
                 font.pixelSize: 11
@@ -68,7 +68,7 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
             spacing: 4
-            model: root.backend ? root.backend.mediaBinAssets : []
+            model: root.backend ? root.backend.sequence.mediaBinAssets : []
             ScrollBar.vertical: ScrollBar {}
             Text {
                 anchors.centerIn: parent
@@ -159,7 +159,7 @@ Rectangle {
                         implicitWidth: 28
                         enabled: root.backend && !root.backend.running
                             && Number(assetItem.modelData.duration || 0) > 0
-                        onClicked: root.backend.addSequenceClip(String(assetItem.modelData.id))
+                        onClicked: root.backend.sequence.addSequenceClip(String(assetItem.modelData.id))
                     }
                 }
             }
@@ -176,7 +176,7 @@ Rectangle {
             }
             onDropped: function(drop) {
                 if (drop.hasUrls && root.backend)
-                    root.backend.addSequenceAssets(drop.urls)
+                    root.backend.sequence.addSequenceAssets(drop.urls)
                 drop.acceptProposedAction()
             }
 

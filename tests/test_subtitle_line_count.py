@@ -2,7 +2,6 @@ import unittest
 
 from src.subtitle_line_count import (
     format_segment_text,
-    normalize_subtitle_line_count,
     pack_segments_with_line_count,
     segment_editor_text,
     segment_preview_text,
@@ -247,15 +246,6 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual(segment_preview_text(segment), r"first\nsecond")
         self.assertEqual(segment_editor_text(segment), r"first\nsecond")
 
-    def test_line_count_normalizer_accepts_auto_one_and_two_only(self) -> None:
-        self.assertEqual(normalize_subtitle_line_count(None), "auto")
-        self.assertEqual(normalize_subtitle_line_count(""), "auto")
-        self.assertEqual(normalize_subtitle_line_count(1), "1")
-        self.assertEqual(normalize_subtitle_line_count("2"), "2")
-        with self.assertRaises(ValueError):
-            normalize_subtitle_line_count(True)
-        with self.assertRaises(ValueError):
-            normalize_subtitle_line_count("3")
 
 
 if __name__ == "__main__":

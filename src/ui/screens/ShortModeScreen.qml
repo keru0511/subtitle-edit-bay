@@ -16,7 +16,7 @@ Item {
 
     function clampCurrentClipIndex() {
         if (!shortRoot.appBackend) return
-        var count = shortRoot.appBackend.shortVideoClipCount
+        var count = shortRoot.appBackend.shortVideo.shortVideoClipCount
         var nextIndex = count > 0
             ? Math.min(Math.max(0, shortRoot.currentClipIndex), count - 1)
             : 0
@@ -26,13 +26,13 @@ Item {
 
     function currentClip() {
         if (!shortRoot.appBackend) return null
-        var count = shortRoot.appBackend.shortVideoClipCount
+        var count = shortRoot.appBackend.shortVideo.shortVideoClipCount
         if (currentClipIndex < 0 || currentClipIndex >= count) return null
-        return shortRoot.appBackend.shortVideoClipAt(currentClipIndex)
+        return shortRoot.appBackend.shortVideo.shortVideoClipAt(currentClipIndex)
     }
 
     function initializeIfNeeded() {
-        if (shortRoot.appBackend) shortRoot.appBackend.initializeShortVideoClips()
+        if (shortRoot.appBackend) shortRoot.appBackend.shortVideo.initializeShortVideoClips()
     }
 
     Component.onCompleted: {
@@ -41,7 +41,7 @@ Item {
     }
 
     Connections {
-        target: shortRoot.appBackend
+        target: shortRoot.appBackend.shortVideo
         function onShortVideoClipDataChanged() { shortRoot.clampCurrentClipIndex() }
     }
 
@@ -76,14 +76,14 @@ Item {
                 objectName: "shortModeExportButton"
                 implicitHeight: 32
                 enabled: shortRoot.appBackend && !shortRoot.appBackend.running
-                    && (shortRoot.appBackend.actionCapabilities.canRenderShort || shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput)
+                    && (shortRoot.appBackend.workflow.actionCapabilities.canRenderShort || shortRoot.appBackend.workflow.actionCapabilities.shortRenderNeedsOutput)
                 ToolTip.visible: hovered && !enabled
-                ToolTip.text: shortRoot.appBackend ? shortRoot.appBackend.actionCapabilities.shortRenderReason : ""
-                text: shortRoot.appBackend && shortRoot.appBackend.actionCapabilities.shortRenderNeedsOutput
+                ToolTip.text: shortRoot.appBackend ? shortRoot.appBackend.workflow.actionCapabilities.shortRenderReason : ""
+                text: shortRoot.appBackend && shortRoot.appBackend.workflow.actionCapabilities.shortRenderNeedsOutput
                     ? "出力先を選んでショート動画を書き出す"
                     : "ショート動画を書き出す"
                 onClicked: {
-                    shortRoot.appBackend.renderShortVideo()
+                    shortRoot.appBackend.workflow.renderShortVideo()
                 }
                 contentItem: Text {
                     text: exportButton.text

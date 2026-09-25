@@ -80,6 +80,88 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.gui = GuiTestHarness(self.app, backend=self.app, qml_roots=(qml_root,))
         self.addCleanup(self.gui.cleanup)
 
+    def _load_feature_binding_probe(self) -> QObject:
+        qml = self.root / "FeatureBindings.qml"
+        qml.write_text(
+            """import QtQuick
+Window {
+    visible: true
+    property string subtitleText: backend.subtitles.subtitleSegments.length
+        ? backend.subtitles.subtitleSegments[0].text : ""
+    property bool undoAvailable: backend.subtitles.canUndo
+    property real channelVolume: backend.audio.audioMixerChannels.length
+        ? backend.audio.audioMixerChannels[0].volume_percent : 0
+    property string activeJob: backend.workflow.activeJob
+    property int progressPercent: backend.workflow.progressPercent
+    property string authState: backend.ai.codexAuthState
+    function editSubtitle() {
+        backend.subtitles.updateSegment(0, {text: "窓口を分離した字幕"})
+    }
+    function undoSubtitle() { backend.subtitles.undoSubtitleEdit() }
+    function editVolume() { backend.audio.updateAudioMixChannel(0, {volume_percent: 56}) }
+    function cancelJob() { backend.workflow.cancelProcessing() }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        return window
+
+    def test_feature_facades_share_lifetime_and_qml_edit_history(self) -> None:
+        self._load_project()
+        window = self._load_feature_binding_probe()
+        for name in ("subtitles", "audio", "ai", "workflow", "workspace", "sequence", "shortVideo", "updates"):
+            with self.subTest(feature=name):
+                facade = self.app.property(name)
+                self.assertIs(facade.parent(), self.app)
+                self.assertIs(facade, self.app.property(name))
+        original = window.property("subtitleText")
+        facade_changes = QSignalSpy(self.app.subtitles.segmentsChanged)
+        legacy_changes = QSignalSpy(self.app.segmentsChanged)
+        # 新しい窓口は旧公開メソッドを経由せず、編集コントローラーへ到達する。
+        with patch.object(self.app, "updateSegment", side_effect=AssertionError("旧窓口への逆戻り")):
+            self.assertTrue(QMetaObject.invokeMethod(window, "editSubtitle"))
+        self.gui.wait_until(lambda: window.property("subtitleText") == "窓口を分離した字幕", description="字幕編集の反映")
+        self.assertTrue(window.property("undoAvailable"))
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "窓口を分離した字幕")
+        self.assertGreater(facade_changes.count(), 0)
+        self.assertEqual(facade_changes.count(), legacy_changes.count())
+        self.assertTrue(QMetaObject.invokeMethod(window, "undoSubtitle"))
+        self.gui.wait_until(lambda: window.property("subtitleText") == original, description="Undoの反映")
+        self.assertEqual(self.app.subtitleSegments[0]["text"], original)
+
+    def test_audio_facade_notifies_qml_and_preserves_busy_guard(self) -> None:
+        self._load_project()
+        window = self._load_feature_binding_probe()
+        gains = QSignalSpy(self.app.audio.audioMixerPreviewGainsChanged)
+        with patch.object(self.app, "updateAudioMixChannel", side_effect=AssertionError("旧窓口への逆戻り")):
+            self.assertTrue(QMetaObject.invokeMethod(window, "editVolume"))
+        self.gui.wait_until(lambda: window.property("channelVolume") == 56, description="音量変更の反映")
+        self.assertEqual(self.app.audioMixerChannels[0]["volume_percent"], 56)
+        self.assertEqual(gains.count(), 1)
+        self.app._running = True
+        self.app.audio.updateAudioMixChannel(0, {"volume_percent": 80})
+        self.assertEqual(window.property("channelVolume"), 56)
+        self.assertEqual(gains.count(), 1)
+
+    def test_workflow_and_ai_facades_publish_state_to_qml(self) -> None:
+        self._load_project()
+        window = self._load_feature_binding_probe()
+        with patch.object(self.app, "_start_process"):
+            self.app.workflow._start_command([sys.executable, "--version"], "render", "書き出し")
+        self.app.workflow._process_started()
+        self.gui.wait_until(lambda: window.property("activeJob") == "render", description="処理状態の反映")
+        self.assertEqual(window.property("progressPercent"), self.app.progressPercent)
+        with patch.object(self.app._job_runner, "cancel") as cancel:
+            self.assertTrue(QMetaObject.invokeMethod(window, "cancelJob"))
+        cancel.assert_called_once_with(job_id="render")
+        self.assertTrue(self.app._cancel_requested)
+        authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")
+        self.app._codex_chat._snapshot = authenticated
+        self.app.ai._on_codex_chat_state(authenticated)
+        self.gui.wait_until(lambda: window.property("authState") == "authenticated", description="認証状態の反映")
+        self.assertEqual(self.app.codexAuthState, "authenticated")
+
     @staticmethod
     def _fake_media_file_has_required_streams(
         source: Path | str,
@@ -417,7 +499,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         with (
             patch("src.gui.probe_media_duration", return_value=30.0),
-            patch.object(self.app, "startTranscription") as start,
+            patch.object(self.app.workflow, "startTranscription") as start,
         ):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
 
@@ -437,7 +519,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         reason = self._quick_item(window, "startScreenTranscriptionBlockReason")
         self.assertTrue(reason.isVisible())
         self.assertIn("CPU", reason.property("text"))
-        with patch.object(self.app, "startTranscription") as start:
+        with patch.object(self.app.workflow, "startTranscription") as start:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
 
@@ -466,7 +548,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch("src.gui.probe_media_duration", return_value=30.0),
             patch.object(self.app, "refreshDependencies"),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
 
@@ -545,7 +627,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch("src.gui.probe_media_duration", return_value=30.0),
             patch.object(self.app, "refreshDependencies"),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
 
@@ -567,7 +649,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_start_screen_transcription_opens_source_setup_when_sources_are_missing(self) -> None:
         _, window = self._load_qml()
-        with patch.object(self.app, "startTranscription") as start:
+        with patch.object(self.app.workflow, "startTranscription") as start:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
         self.assertTrue(window.findChild(QObject, "sourcePopup").property("visible"))
@@ -585,7 +667,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch("src.gui.probe_media_duration", return_value=30.0),
             patch.object(self.app, "refreshDependencies"),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         command = start.call_args.args[0]
@@ -629,7 +711,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(saved["transcription"]["context_base_dir"], str(path.parent))
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
         self.assertTrue(self.app.actionCapabilities["canTranscribe"])
-        with patch.object(self.app, "refreshDependencies"), patch.object(self.app, "_start_command") as start:
+        with patch.object(self.app, "refreshDependencies"), patch.object(self.app.workflow, "_start_command") as start:
             self.app.transcribeProject(self.app.settings, "merge")
         command = start.call_args.args[0]
         self.assertEqual(command[command.index("--render-output-dir") + 1], "")
@@ -720,7 +802,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.saveProjectAs(str(target)))
         self.assertTrue(self.app._load_project_path(target, update_sources=True))
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
-        with patch.object(self.app, "_start_command") as start:
+        with patch.object(self.app.workflow, "_start_command") as start:
             self.app.transcribeProject({**self.app.settings, "transcription_context": context}, "merge")
         command = start.call_args.args[0]
         self.assertIn("--context-base-dir", command)
@@ -760,7 +842,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.app.setOutputDirectory("")
                 preserved = deepcopy(self.app._project)
                 action = self.app.renderShortVideo if short else lambda: self.app.renderVideo(self.app.settings)
-                with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value="") as choose, patch.object(self.app, "_start_command") as start:
+                with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value="") as choose, patch.object(self.app.workflow, "_start_command") as start:
                     action()
                 choose.assert_called_once()
                 start.assert_not_called()
@@ -768,7 +850,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                 self.assertEqual(Path(self.app.projectPath), path)
                 export = self.root / f"export-{short}"
                 export.mkdir()
-                with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)), patch.object(self.app, "_start_command") as start:
+                with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)), patch.object(self.app.workflow, "_start_command") as start:
                     action()
                 command = start.call_args.args[0]
                 self.assertEqual(Path(command[command.index("--output") + 1]).parent, export)
@@ -869,7 +951,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app, "refreshDependencies"),
             patch.object(self.app, "saveProject", return_value=True),
-            patch.object(self.app, "_start_command") as start_command,
+            patch.object(self.app.workflow, "_start_command") as start_command,
         ):
             self.app.renderVideo(self.app.settings)
 
@@ -1479,6 +1561,91 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app._project["audio_mix"]["customized"])
         self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
 
+    def test_ai_subtitle_edit_uses_shared_history_without_replacing_project(self) -> None:
+        self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 1, "text": "修正前"},
+            {"id": "second", "start": 2, "end": 3, "text": "維持"},
+        ])
+        project = self.app._project
+        revision = self.app._project_revision
+        self.app._codex_proposal = {
+            "summary": "字幕を修正", "warnings": [], "base_revision": revision,
+            "operations": [{"type": "update_segment", "segment_id": "first", "changes": {"text": "修正後"}}],
+        }
+        self.app.applyCodexProposal()
+        self.assertIs(self.app._project, project)
+        self.assertEqual(self.app._project_revision, revision + 1)
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "修正後")
+        self.assertEqual([item["id"] for item in self.app._undo_stack[-1]["before"]], ["first"])
+        self.app.undoEdit()
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "修正前")
+        self.app.redoEdit()
+        self.assertEqual(self.app.subtitleSegments[0]["text"], "修正後")
+
+    def test_manual_audio_edits_and_reset_share_undo_redo_and_save(self) -> None:
+        path = self._load_project()
+        before = deepcopy(self.app._project["audio_mix"])
+        revision = self.app._project_revision
+        self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
+        edited = deepcopy(self.app._project["audio_mix"])
+        self.assertEqual(self.app._project_revision, revision + 1)
+        self.assertEqual(len(self.app._undo_stack), 1)
+        self.app.undoEdit()
+        self.assertEqual(self.app._project["audio_mix"], before)
+        self.app.redoEdit()
+        self.assertEqual(self.app._project["audio_mix"], edited)
+        self.app.resetAudioMixer()
+        self.app.undoEdit()
+        self.assertEqual(self.app._project["audio_mix"], edited)
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["audio_mix"], edited)
+
+    def test_audio_undo_redo_preserves_relinked_source_paths(self) -> None:
+        path = self._load_project()
+        old_source = Path(self.app._project["audio_sources"][0]["path"])
+        self.app._project["audio_sources"][0]["file_name"] = old_source.name
+        self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
+        relocated = self.root / "relocated"
+        relocated.mkdir()
+        new_source = relocated / old_source.name
+        new_source.write_bytes(b"audio")
+        self.app.beginSourceRelink()
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(self.app._project["video"]["path"])
+            self.app.setAudioFiles([str(new_source)], False)
+            self.app.setOutputDirectory(self.app._project["output_dir"])
+        self.app.relinkProjectSources()
+        self.app.finishSourceRelink()
+        for action, volume in ((self.app.undoEdit, 100), (self.app.redoEdit, 135)):
+            action()
+            channel = next(item for item in self.app.audioMixerChannels if item["kind"] == "external")
+            self.assertEqual(channel["path"], str(new_source.resolve()))
+            self.assertEqual(channel["volume_percent"], volume)
+            self.assertEqual(self.app._project["audio_sources"][0]["path"], str(new_source.resolve()))
+        self.assertTrue(self.app.saveProject())
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        channel = next(item for item in saved["audio_mix"]["channels"] if item["kind"] == "external")
+        self.assertEqual(channel["path"], str(new_source.resolve()))
+
+    def test_short_edit_undo_redo_updates_clip_model_and_saved_project(self) -> None:
+        path = self._load_project()
+        before = deepcopy(self.app._project)
+        # 表示の読み取りだけでは保存データを追加しない。
+        self.app.shortVideoSettings
+        self.assertEqual(self.app._project, before)
+        original_count = self.app.shortVideoClipCount
+        self.assertTrue(self.app.addShortVideoClipByRange(1, 2))
+        self.assertEqual(self.app.shortVideoClipCount, original_count + 1)
+        self.app.undoEdit()
+        self.assertEqual(self.app.shortVideoClipCount, original_count)
+        self.assertEqual(self.app._project, before)
+        self.app.redoEdit()
+        self.assertEqual(self.app._short_video_clip_model.rowCount(), original_count + 1)
+        self.assertTrue(self.app.saveProject())
+        clips = json.loads(path.read_text(encoding="utf-8"))["short_video"]["clips"]
+        self.assertEqual(clips[-1]["start"], 1)
+        self.assertEqual(clips[-1]["end"], 2)
+
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()
 
@@ -1624,7 +1791,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         with (
             patch("src.gui.save_project", side_effect=OSError("disk full")),
-            patch("src.gui.build_project_ass") as build_ass,
+            patch("src.gui_subtitles_facade.build_project_ass") as build_ass,
         ):
             self.app.buildSubtitlePreview(self.app.settings)
             build_ass.assert_not_called()
@@ -1632,7 +1799,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app, "saveSettings"),
             patch("src.gui.save_project", side_effect=OSError("disk full")),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self.app.renderVideo(self.app.settings)
             start.assert_not_called()
@@ -1854,7 +2021,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._load_project()
 
         with patch(
-            "src.gui.segment_preview_text",
+            "src.gui_subtitles_facade.segment_preview_text",
             wraps=original_segment_preview_text,
         ) as formatter:
             first = self.app.activeSubtitleSegments(1.0)
@@ -2035,7 +2202,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             "subtitle_min_duration_seconds": 0.5,
         }
 
-        with patch("src.gui.build_project_ass", return_value=ass_path):
+        with patch("src.gui_subtitles_facade.build_project_ass", return_value=ass_path):
             self.app.buildSubtitlePreview(settings)
 
         subtitle = load_project(path)["subtitle_settings"]
@@ -2075,7 +2242,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         with (
             patch.object(self.app, "saveSettings"),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self.app.startTranscription(self.app.settings)
 
@@ -2094,7 +2261,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._speakers = []
         self.app._audio_tracks = [{"selector": "", "label": "No tracks"}]
 
-        with patch.object(self.app, "_start_command") as start:
+        with patch.object(self.app.workflow, "_start_command") as start:
             self.app.startTranscription(self.app.settings)
 
         self.assertEqual(start.call_count, 0)
@@ -2112,7 +2279,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app, "refreshDependencies"),
             patch.object(self.app, "saveSettings"),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self.app.startTranscription(settings)
 
@@ -2126,7 +2293,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app, "saveSettings"),
             patch.object(self.app, "saveProject", return_value=True),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self.app.renderVideo(settings)
 
@@ -2155,7 +2322,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                     patch.object(self.app, "saveSettings") as save_settings,
                     patch.object(self.app, "_update_project_settings"),
                     patch.object(self.app, "saveProject", return_value=True),
-                    patch.object(self.app, "_start_command") as start,
+                    patch.object(self.app.workflow, "_start_command") as start,
                 ):
                     self.app.renderVideo(self.app.settings)
 
@@ -2487,7 +2654,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             version="codex-cli 0.99.0",
             distribution="git",
         )
-        with patch("src.gui.detect_codex", return_value=runtime):
+        with patch("src.gui_ai_facade.detect_codex", return_value=runtime):
             client = self.app._create_codex_chat_client()
         self.assertIsNotNone(client.log_callback)
         log_thread = threading.Thread(
@@ -3420,7 +3587,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
                     captured_texts.append(load_project(path)["segments"][0]["text"])
 
                 button_name = "editorRenderButton" if expanded else "workspaceHeaderRenderButton"
-                with patch.object(self.app, "_start_command", side_effect=capture_render) as start:
+                with patch.object(self.app.workflow, "_start_command", side_effect=capture_render) as start:
                     self._click(window, self._quick_item(window, button_name))
                 start.assert_called_once()
                 self.assertEqual(captured_texts, [expected])
@@ -4053,7 +4220,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         progress_panel = self._quick_item(window, "processingProgressPanel")
         process_stop = self._quick_visual_item(progress_panel, "processingProgressStopButton")
         self.assertTrue(process_stop.isVisible())
-        with patch.object(self.app, "cancelProcessing") as stop_process:
+        with patch.object(self.app.workflow, "cancelProcessing") as stop_process:
             self._click(window, process_stop)
         stop_process.assert_called_once_with()
 
@@ -4334,7 +4501,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app, "saveSettings"),
             patch.object(self.app, "saveProject", return_value=True),
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self._click(window, render)
 
@@ -4372,8 +4539,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app._codex_chat, "send_message") as plain_chat,
             patch.object(
-                self.app,
-                "dispatch_codex_action",
+                self.app.ai, "dispatch_codex_action",
                 return_value=ActionResult(status=ActionStatus.SUCCESS),
             ) as dispatch,
         ):
@@ -4435,8 +4601,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app._codex_chat, "send_message") as plain_chat,
             patch.object(
-                self.app,
-                "dispatch_codex_action",
+                self.app.ai, "dispatch_codex_action",
                 return_value=ActionResult(status=ActionStatus.SUCCESS),
             ) as dispatch,
         ):
@@ -4617,7 +4782,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         chat_send = self._quick_item(window, "codexChatSendButton")
         chat_input.setProperty("text", "進捗中も送信できる")
         self.app.processEvents()
-        with patch.object(self.app, "sendCodexChatMessage") as send:
+        with patch.object(self.app.ai, "sendCodexChatMessage") as send:
             self._click(window, chat_send)
         send.assert_called_once_with("進捗中も送信できる", "auto", 0.0, 0.0)
 
@@ -4631,13 +4796,13 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._codex_chat._snapshot = streaming
         self.app._on_codex_chat_state(streaming)
         self.app.processEvents()
-        with patch.object(self.app, "stopCodexChat") as stop_chat:
+        with patch.object(self.app.ai, "stopCodexChat") as stop_chat:
             self._click(window, self._quick_item(window, "codexChatStopButton"))
         stop_chat.assert_called_once_with()
 
         progress_panel = self._quick_item(window, "processingProgressModePanel")
         process_stop = self._quick_visual_item(progress_panel, "processingProgressStopButton")
-        with patch.object(self.app, "cancelProcessing") as stop_process:
+        with patch.object(self.app.workflow, "cancelProcessing") as stop_process:
             self._click(window, process_stop)
         stop_process.assert_called_once_with()
 
@@ -5433,6 +5598,27 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertEqual(self.app.currentEditMode, "audio")
         self.assertIs(self._quick_item(window, "codexChatPanel"), chat_panel)
 
+    def test_short_settings_refresh_and_undo_do_not_commit_slider_clamping(self) -> None:
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        self.assertTrue(self.app.setShortVideoTransition("fade", 3.0))
+        before = deepcopy(self.app._project["short_video"])
+        revision = self.app._project_revision
+        history_count = len(self.app._undo_stack)
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(self.app._project["short_video"], before)
+        self.assertEqual(self.app._project_revision, revision)
+        self.assertEqual(len(self.app._undo_stack), history_count)
+        self.assertTrue(self.app.setShortVideoTransition("fade", 0.5))
+        self.app.undoEdit()
+        self.app.processEvents()
+        self.assertEqual(self.app._project["short_video"], before)
+        self.assertTrue(self.app.canRedo)
+        self.app.redoEdit()
+        self.app.processEvents()
+        self.assertEqual(self.app.shortVideoSettings["transition"]["duration"], 0.5)
+
     def test_short_mode_transition_duration_uses_internal_values(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -5471,12 +5657,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
         with (
             patch.object(
-                self.app,
-                "_build_short_video_clip_view",
-                wraps=self.app._build_short_video_clip_view,
+                self.app.shortVideo, "_build_short_video_clip_view",
+                wraps=self.app.shortVideo._build_short_video_clip_view,
             ) as build_clip_view,
             patch(
-                "src.gui.segment_preview_text",
+                "src.gui_subtitles_facade.segment_preview_text",
                 wraps=original_segment_preview_text,
             ) as format_preview,
         ):
@@ -5780,7 +5965,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         with (
             patch.object(self.app, "refreshDependencies"),
             patch.object(self.app, "saveProject", return_value=True),
-            patch.object(self.app, "_start_command") as start_command,
+            patch.object(self.app.workflow, "_start_command") as start_command,
         ):
             self._click(window, self._quick_item(window, "shortModeExportButton"))
         self.assertEqual(start_command.call_args.args[1], "render_short")
@@ -5879,7 +6064,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self._set_ready_sources()
 
         _, window = self._load_qml()
-        with patch.object(self.app, "_start_command") as start_command:
+        with patch.object(self.app.workflow, "_start_command") as start_command:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
@@ -5943,7 +6128,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         progress_changes = QSignalSpy(self.app.progressChanged)
         finished = QSignalSpy(self.app.process.finished)
-        with patch("src.gui.build_gui_transcribe_command", side_effect=build_test_command):
+        with patch("src.gui_workflow_facade.build_gui_transcribe_command", side_effect=build_test_command):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             if finished.count() == 0:
                 self.assertTrue(finished.wait(10_000), self.app.process.errorString())
@@ -6076,7 +6261,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             audio_files=(str(audio.resolve()),),
         )
 
-        with patch.object(self.app, "startTranscription") as start_transcription:
+        with patch.object(self.app.workflow, "startTranscription") as start_transcription:
             self.app.transcribeProject(self.app.settings, "merge")
 
         generated_path = Path(start_transcription.call_args.args[2])
@@ -6100,11 +6285,10 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._transcription_preserved_project_path = str(project_path)
 
         with (
-            patch.object(self.app, "_read_process_output"),
+            patch.object(self.app.workflow, "_read_process_output"),
             patch.object(self.app, "_try_load_default_project", return_value=True),
             patch.object(
-                self.app,
-                "_merge_preserved_transcription_segments",
+                self.app.workflow, "_merge_preserved_transcription_segments",
                 side_effect=ValueError("merge failed"),
             ),
         ):
@@ -6131,7 +6315,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         _, window = self._load_qml()
         started = QSignalSpy(self.app.process.started)
         finished = QSignalSpy(self.app.process.finished)
-        with patch("src.gui.build_gui_transcribe_command", side_effect=build_wait_command):
+        with patch("src.gui_workflow_facade.build_gui_transcribe_command", side_effect=build_wait_command):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             if started.count() == 0:
                 self.assertTrue(started.wait(10_000), self.app.process.errorString())
@@ -6169,7 +6353,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._running = True
         self.app._cancel_requested = True
 
-        with patch.object(self.app, "_read_process_output"):
+        with patch.object(self.app.workflow, "_read_process_output"):
             self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
 
         self.assertEqual(self.app._transcription_merge_mode, "")
@@ -6206,7 +6390,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app._running = True
         self.app._cancel_requested = False
 
-        with patch.object(self.app, "_read_process_output"):
+        with patch.object(self.app.workflow, "_read_process_output"):
             self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
 
         self.assertTrue(Path(self.app.projectPath).samefile(project_b_path))
@@ -6270,7 +6454,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             return command
 
         _, window = self._load_qml()
-        with patch("src.gui.build_gui_transcribe_command", side_effect=build_attempt_command):
+        with patch("src.gui_workflow_facade.build_gui_transcribe_command", side_effect=build_attempt_command):
             first_finished = QSignalSpy(self.app.process.finished)
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             if first_finished.count() == 0:
@@ -6308,7 +6492,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         project_path = self._save_default_project_for_selected_sources()
 
         _, window = self._load_qml()
-        with patch.object(self.app, "_start_command") as start_command:
+        with patch.object(self.app.workflow, "_start_command") as start_command:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
@@ -6331,7 +6515,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.app.setAudioFiles([str(selected_audio)], False)
 
         _, window = self._load_qml()
-        with patch.object(self.app, "_start_command") as start_command:
+        with patch.object(self.app.workflow, "_start_command") as start_command:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             self.app.processEvents()
 
@@ -6388,7 +6572,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             self.assertEqual(stop_button.property("text"), "停止")
 
         self.app._cancel_requested = True
-        with patch.object(self.app, "_read_process_output"):
+        with patch.object(self.app.workflow, "_read_process_output"):
             self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
 
 
@@ -6455,7 +6639,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
             patch("sys.platform", "darwin"),
             patch.object(self.app, "saveProject") as save_project,
             patch.object(self.app, "saveSettings") as save_settings,
-            patch.object(self.app, "_start_command") as start,
+            patch.object(self.app.workflow, "_start_command") as start,
         ):
             self.app.applyUpdate()
             save_project.assert_not_called()
@@ -6588,7 +6772,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         return project_path, first_video, second_video
 
     def _add_second_sequence_asset(self, second_video: Path, *, duration: float = 8.0) -> str:
-        with patch("src.gui.probe_media_duration", return_value=duration):
+        with patch("src.gui_sequence_facade.probe_media_duration", return_value=duration):
             self.assertTrue(self.app.addSequenceAsset(str(second_video)))
         assets = self.app.mediaBinAssets
         self.assertEqual(len(assets), 2)
@@ -6676,7 +6860,7 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertTrue(self.app.sequenceError)
 
         second_video.write_bytes(b"second video fixture")
-        with patch("src.gui.probe_media_duration", return_value=0.0):
+        with patch("src.gui_sequence_facade.probe_media_duration", return_value=0.0):
             self.assertFalse(self.app.addSequenceAsset(str(second_video)))
         self.assertEqual(len(self.app.mediaBinAssets), 1)
         self.assertTrue(self.app.sequenceError)

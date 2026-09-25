@@ -27,7 +27,8 @@ def coerce_float(value: object) -> float:
     """数値・文字列・bytes/bytearray/memoryviewをfloatに変換する。"""
     if isinstance(value, memoryview):
         value = value.tobytes()
-    if isinstance(value, (str, bytes, bytearray, SupportsFloat, SupportsIndex)):
+    # 通常のJSON数値は実行時プロトコル検査より先に判定する。
+    if isinstance(value, (str, bytes, bytearray, int, float, SupportsFloat, SupportsIndex)):
         return float(value)
     raise TypeError("value must be convertible to float")
 
@@ -36,7 +37,8 @@ def coerce_int(value: object) -> int:
     """数値・文字列・bytes/bytearray/memoryviewをintに変換する。"""
     if isinstance(value, memoryview):
         value = value.tobytes()
-    if isinstance(value, (str, bytes, bytearray, SupportsInt, SupportsIndex)):
+    # 通常のJSON数値は実行時プロトコル検査より先に判定する。
+    if isinstance(value, (str, bytes, bytearray, int, float, SupportsInt, SupportsIndex)):
         return int(value)
     raise TypeError("value must be convertible to int")
 
@@ -44,3 +46,8 @@ def coerce_int(value: object) -> int:
 def is_object_iterable(value: object) -> TypeGuard[Iterable[object]]:
     """要素の型を仮定せず、反復可能な入力として扱う。"""
     return isinstance(value, Iterable)
+
+
+def is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    """キー・値を検証する前の辞書を、同じ参照のまま更新可能として扱う。"""
+    return isinstance(value, dict)

@@ -14,9 +14,11 @@
 
 再起動後の再読込テストの子プロセスは、保存検証と無関係な外部AI接続を無効にし、一時プロジェクト内の設定で起動するようにした。保存・書き出しの内部コード文字列を要求する検査は実操作テストに置き換えた。
 
-追加修正後の `tests.test_gui_editor`・`tests.test_qml_static`・`tests.test_production_integration` は計242ケースすべて成功。portableテストも1087ケースで失敗・エラーなし（Windows専用4ケースはスキップ）。Ruff、CIテスト分類検証、差分チェックも成功した。
+追加修正後の `tests.test_gui_editor`・`tests.test_qml_static`・`tests.test_production_integration` は計250ケースすべて成功。portableテストも1087ケースで失敗・エラーなし（Windows専用4ケースはスキップ）。Ruff、CIテスト分類検証、差分チェックも成功した。
 
 検証ではmacOSの一時ディレクトリを `TMPDIR=/private/tmp` に指定する。初回記録のパス表記差の問題自体は今回の修正対象に含めない。Windows実機・日本語IMEの変換中操作は未検証。
+
+最新mainの機能別窓口への分割を統合し、字幕操作は `subtitles`、書き出しは `workflow` 経由へ移行した。入力確定と選択同期の修正は維持し、動画処理のテスト差し替え先も更新した。統合後のGUI関連250ケース、3,000件・10,000件の性能シナリオ（各1回、再生2秒）の操作結果検査はすべて成功した。
 
 ## 対象と方針
 

@@ -31,17 +31,17 @@ class WorkspaceContractTests(unittest.TestCase):
 
         self.assertIn(
             'readonly property bool shortWorkspaceActive: root.appBackend\n'
-            '        && root.appBackend.currentWorkspace === "short-artifact"',
+            '        && root.appBackend.workspace.currentWorkspace === "short-artifact"',
             workflow,
         )
-        self.assertIn('root.appBackend.switchWorkspace("short-artifact")', workflow)
-        self.assertIn('root.appBackend.switchWorkspace("normal-video")', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("short-artifact")', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("normal-video")', workflow)
         self.assertIn(
-            'var nextWorkspace = String(root.appBackend.currentWorkspace || "normal-video")',
+            'var nextWorkspace = String(root.appBackend.workspace.currentWorkspace || "normal-video")',
             workflow,
         )
         self.assertIn("function onWorkspaceChanged()", workflow)
-        self.assertIn("var playerState = root.appBackend.workspacePlayerState", workflow)
+        self.assertIn("var playerState = root.appBackend.workspace.workspacePlayerState", workflow)
         self.assertIn("mainPlayer.position = Number(playerState.positionMs || 0)", workflow)
         self.assertNotIn("root.currentWorkspace", workflow)
 
@@ -59,7 +59,7 @@ class WorkspaceContractTests(unittest.TestCase):
 
         self.assertIn(
             'readonly property bool codexAuthenticated: root.appBackend\n'
-            '        && root.appBackend.codexAuthState === "authenticated"',
+            '        && root.appBackend.ai.codexAuthState === "authenticated"',
             workflow,
         )
         self.assertIn("backend: root.appBackend", workflow)

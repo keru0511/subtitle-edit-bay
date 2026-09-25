@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from copy import deepcopy
+import shutil
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
 from src.gui_project_editor_controller import ProjectEditorController
-from src.subtitle_project import create_project, load_project
+from src.subtitle_project import SubtitleProjectError, create_project, load_project, save_project
 
 
 class ProjectEditorControllerTests(unittest.TestCase):
@@ -179,6 +181,187 @@ class ProjectEditorControllerTests(unittest.TestCase):
             self.assertIn("segments", events)
             self.assertIn("history", events)
             self.assertIn("selection", events)
+
+    def _editing_controller(self, **kwargs) -> ProjectEditorController:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        controller = ProjectEditorController(root, **kwargs)
+        self.addCleanup(controller.shutdown)
+        controller.adopt_loaded_project(self._project(root), root / "edit.subtitle-project.json")
+        return controller
+
+    def test_rejected_edit_preserves_document_history_revision_selection_and_notifications(self) -> None:
+        events = []
+        controller = self._editing_controller(on_dirty=lambda: events.append("dirty"))
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "変更"}])
+        controller.undo()
+        events.clear()
+        before = deepcopy((controller.project, controller.undo_stack, controller.redo_stack,
+                           controller.project_revision, controller.selected_segment_index, controller.project_dirty))
+        duplicate = {**controller.project["segments"][0], "id": "duplicate"}
+        with self.assertRaises(SubtitleProjectError):
+            controller.commit_segment_change([], [duplicate, duplicate])
+        self.assertEqual(before, (controller.project, controller.undo_stack, controller.redo_stack,
+                                 controller.project_revision, controller.selected_segment_index, controller.project_dirty))
+        self.assertEqual(events, [])
+
+    def test_layout_failure_does_not_mutate_existing_segments_or_history(self) -> None:
+        def fail_layout(segments):
+            segments[0]["layout_row"] = 999
+            raise ValueError("レイアウト失敗")
+        controller = self._editing_controller(assign_project_layout_rows_fn=fail_layout)
+        before = deepcopy(controller.project)
+        revision = controller.project_revision
+        with self.assertRaises(ValueError):
+            controller.commit_segment_change([], [{"id": "new", "start": 2, "end": 3, "text": "追加"}])
+        self.assertEqual(controller.project, before)
+        self.assertEqual(controller.project_revision, revision)
+        self.assertFalse(controller.can_undo)
+        self.assertFalse(controller.project_dirty)
+
+    def test_failed_undo_preserves_history_and_document(self) -> None:
+        controller = self._editing_controller()
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "変更"}])
+        before = deepcopy((controller.project, controller.undo_stack, controller.redo_stack, controller.project_revision))
+        def fail_layout(segments):
+            raise ValueError("復元失敗")
+        controller._assign_project_layout_rows_fn = fail_layout
+        with self.assertRaises(ValueError):
+            controller.undo()
+        self.assertEqual(before, (controller.project, controller.undo_stack, controller.redo_stack, controller.project_revision))
+
+    def test_noop_preserves_redo_and_does_not_request_save(self) -> None:
+        events = []
+        controller = self._editing_controller(on_dirty=lambda: events.append("dirty"))
+        current = deepcopy(controller.project["segments"][0])
+        controller.commit_segment_change([current], [{**current, "text": "変更"}])
+        controller.undo()
+        revision = controller.project_revision
+        events.clear()
+        controller.commit_segment_change([current], [current])
+        self.assertEqual(controller.project_revision, revision)
+        self.assertTrue(controller.can_redo)
+        self.assertEqual(events, [])
+
+    def test_callbacks_observe_committed_history_revision_and_document(self) -> None:
+        observed = []
+        controller = self._editing_controller(
+            on_segments_changed=lambda: observed.append(
+                (controller.project_revision, controller.project_dirty, controller.can_undo,
+                 controller.project["segments"][0]["text"])),
+        )
+        revision = controller.project_revision
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "確定済み"}])
+        self.assertEqual(observed, [(revision + 1, True, True, "確定済み")])
+
+    def test_short_edit_roundtrip_removes_previously_absent_section(self) -> None:
+        events = []
+        controller = self._editing_controller(on_dirty=lambda: events.append("dirty"))
+        controller.project.pop("short_video", None)
+        section = {"enabled": True, "clips": [{"start": 0, "end": 1}]}
+        controller.commit_section_change("short_video", section)
+        section["clips"][0]["end"] = 10
+        self.assertEqual(controller.project["short_video"]["clips"][0]["end"], 1)
+        controller.undo()
+        self.assertNotIn("short_video", controller.project)
+        controller.redo()
+        self.assertEqual(controller.project["short_video"]["clips"][0]["end"], 1)
+        self.assertEqual(events, ["dirty"] * 3)
+
+    def test_audio_history_keeps_current_channel_topology(self) -> None:
+        controller = self._editing_controller()
+        controller.project["audio_mix"] = {"customized": False, "channels": [
+            {"id": "kept", "path": "old.wav", "volume_percent": 100},
+            {"id": "removed", "path": "removed.wav", "volume_percent": 100},
+        ]}
+        edited = deepcopy(controller.project["audio_mix"])
+        edited["channels"][0]["volume_percent"] = 130
+        edited["customized"] = True
+        controller.commit_section_change("audio_mix", edited)
+        controller.project["audio_mix"]["channels"] = [
+            {"id": "kept", "path": "new.wav", "volume_percent": 130},
+            {"id": "added", "path": "added.wav", "volume_percent": 80},
+        ]
+        for action, volume in ((controller.undo, 100), (controller.redo, 130)):
+            action()
+            self.assertEqual(controller.project["audio_mix"]["channels"], [
+                {"id": "kept", "path": "new.wav", "volume_percent": volume},
+                {"id": "added", "path": "added.wav", "volume_percent": 80},
+            ])
+
+    def test_mixed_edit_history_roundtrips_without_overwriting_other_sections(self) -> None:
+        from src.video_timeline import timeline_from_project
+
+        controller = self._editing_controller()
+        states = [deepcopy(controller.project)]
+        mix = deepcopy(controller.project["audio_mix"])
+        mix["channels"][0]["volume_percent"] = 80
+        mix["customized"] = True
+        controller.commit_section_change("audio_mix", mix)
+        states.append(deepcopy(controller.project))
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "字幕を修正"}])
+        states.append(deepcopy(controller.project))
+        short = deepcopy(controller.project["short_video"])
+        short["enabled"] = True
+        short["clips"] = [{"start": 0, "end": 1}]
+        controller.commit_section_change("short_video", short)
+        states.append(deepcopy(controller.project))
+        timeline = timeline_from_project(controller.project).add_cut(4, 5)
+        controller.commit_timeline_change(timeline.to_json())
+        states.append(deepcopy(controller.project))
+        for expected in reversed(states[:-1]):
+            self.assertTrue(controller.undo())
+            self.assertEqual(controller.project, expected)
+        self.assertFalse(controller.can_undo)
+        for expected in states[1:]:
+            self.assertTrue(controller.redo())
+            self.assertEqual(controller.project, expected)
+        self.assertFalse(controller.can_redo)
+
+    def test_invalid_short_edit_does_not_create_history(self) -> None:
+        controller = self._editing_controller()
+        before = deepcopy(controller.project)
+        with self.assertRaises(ValueError):
+            controller.commit_section_change("short_video", {"global_fit": "invalid"})
+        self.assertEqual(controller.project, before)
+        self.assertFalse(controller.can_undo)
+        self.assertFalse(controller.project_dirty)
+
+    def test_edit_during_save_keeps_snapshot_and_requests_latest_revision(self) -> None:
+        started, release = threading.Event(), threading.Event()
+        def delayed_save(path, project, **kwargs) -> ProjectEditorController:
+            started.set()
+            if not release.wait(3):
+                raise TimeoutError("保存テストの同期が失敗しました")
+            return save_project(path, project, **kwargs)
+        retries = []
+        controller = self._editing_controller(save_project_fn=delayed_save, on_autosave_retry=lambda: retries.append(True))
+        self.addCleanup(release.set)
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "保存対象"}])
+        controller.autosave()
+        self.assertTrue(started.wait(1))
+        revision, path = controller.autosave_revision, controller.autosave_path
+        current = controller.project["segments"][0]
+        controller.commit_segment_change([current], [{**current, "text": "次の編集", "start": 0.5}])
+        controller.autosave()
+        release.set()
+        controller.autosave_future.result(timeout=3)
+        controller.finish_autosave(revision, path, "")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "保存対象")
+        self.assertEqual(controller.project["segments"][0]["text"], "次の編集")
+        self.assertTrue(controller.project_dirty)
+        self.assertEqual(retries, [True])
+        controller.autosave()
+        revision, path = controller.autosave_revision, controller.autosave_path
+        controller.autosave_future.result(timeout=3)
+        controller.finish_autosave(revision, path, "")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "次の編集")
+        self.assertFalse(controller.project_dirty)
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ Rectangle {
     }
 
     function assetDuration(assetId) {
-        var assets = root.backend ? root.backend.mediaBinAssets : []
+        var assets = root.backend ? root.backend.sequence.mediaBinAssets : []
         for (var index = 0; index < assets.length; ++index) {
             if (String(assets[index].id || "") === String(assetId || ""))
                 return Number(assets[index].duration || 0)
@@ -69,7 +69,7 @@ Rectangle {
     }
 
     function sequenceTargetIndex(sceneX) {
-        var clips = root.backend ? root.backend.sequenceClips : []
+        var clips = root.backend ? root.backend.sequence.sequenceClips : []
         if (clips.length === 0)
             return 0
         var localX = sequenceTimelineList.mapFromItem(null, sceneX, 0).x
@@ -106,10 +106,10 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: root.backend && root.backend.sequenceError
-                        ? root.backend.sequenceError
+                    text: root.backend && root.backend.sequence.sequenceError
+                        ? root.backend.sequence.sequenceError
                         : (root.backend && root.backend.projectDirty ? "編集内容を保存しています" : "保存済み")
-                    color: root.backend && root.backend.sequenceError ? root.dangerColor : root.mutedColor
+                    color: root.backend && root.backend.sequence.sequenceError ? root.dangerColor : root.mutedColor
                     font.family: "Yu Gothic UI"
                     font.pixelSize: 8
                     elide: Text.ElideRight
@@ -119,7 +119,7 @@ Rectangle {
             Text {
                 objectName: "sequenceOutputDurationText"
                 text: root.backend
-                    ? "出力 " + Number(root.backend.sequenceOutputDuration || 0).toFixed(2) + "秒"
+                    ? "出力 " + Number(root.backend.sequence.sequenceOutputDuration || 0).toFixed(2) + "秒"
                     : "出力 0.00秒"
                 color: root.accentColor
                 font.family: "Cascadia Mono"
@@ -128,20 +128,20 @@ Rectangle {
             SmallButton {
                 objectName: "sequenceUndoButton"
                 text: "元に戻す"
-                enabled: root.backend && root.backend.canUndo && !root.backend.running
-                onClicked: root.backend.undoCutEdit()
+                enabled: root.backend && root.backend.subtitles.canUndo && !root.backend.running
+                onClicked: root.backend.subtitles.undoCutEdit()
             }
             SmallButton {
                 objectName: "sequenceRedoButton"
                 text: "やり直す"
-                enabled: root.backend && root.backend.canRedo && !root.backend.running
-                onClicked: root.backend.redoCutEdit()
+                enabled: root.backend && root.backend.subtitles.canRedo && !root.backend.running
+                onClicked: root.backend.subtitles.redoCutEdit()
             }
             SmallButton {
                 objectName: "sequenceAddAssetButton"
                 text: "動画を追加"
                 enabled: root.backend && !root.backend.running
-                onClicked: root.backend.browseSequenceAsset()
+                onClicked: root.backend.sequence.browseSequenceAsset()
             }
         }
 
@@ -178,8 +178,8 @@ Rectangle {
                         Text {
                             objectName: "sequencePlayheadText"
                             text: root.backend
-                                ? ("再生位置 " + Number(root.backend.sequencePlayhead.outputSeconds || 0).toFixed(2)
-                                    + "秒 / " + Number(root.backend.sequenceOutputDuration || 0).toFixed(2) + "秒")
+                                ? ("再生位置 " + Number(root.backend.sequence.sequencePlayhead.outputSeconds || 0).toFixed(2)
+                                    + "秒 / " + Number(root.backend.sequence.sequenceOutputDuration || 0).toFixed(2) + "秒")
                                 : "再生位置 0.00秒 / 0.00秒"
                             color: root.mutedColor
                             font.family: "Cascadia Mono"
@@ -192,16 +192,16 @@ Rectangle {
                         objectName: "sequencePlayheadSlider"
                         Layout.fillWidth: true
                         from: 0
-                        to: Math.max(1, Number(root.backend ? root.backend.sequenceOutputDuration : 0) * 1000)
+                        to: Math.max(1, Number(root.backend ? root.backend.sequence.sequenceOutputDuration : 0) * 1000)
                         Binding {
                             target: sequencePlayheadSlider
                             property: "value"
-                            value: Number(root.backend ? root.backend.sequencePlayhead.outputMs : 0)
+                            value: Number(root.backend ? root.backend.sequence.sequencePlayhead.outputMs : 0)
                             when: !sequencePlayheadSlider.pressed
                         }
                         onMoved: {
                             if (root.backend)
-                                root.backend.setSequencePlayhead(Math.round(value))
+                                root.backend.sequence.setSequencePlayhead(Math.round(value))
                         }
                     }
 
@@ -276,7 +276,7 @@ Rectangle {
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
-                            model: root.backend ? root.backend.sequenceClips : []
+                            model: root.backend ? root.backend.sequence.sequenceClips : []
 
                             delegate: Rectangle {
                                 id: timelineClip
@@ -329,7 +329,7 @@ Rectangle {
                                     onDropped: function(drop) {
                                         var assetId = root.assetIdFromDrag(drop)
                                         if (assetId.length > 0 && root.backend) {
-                                            root.backend.insertSequenceClip(assetId, timelineClip.index)
+                                            root.backend.sequence.insertSequenceClip(assetId, timelineClip.index)
                                             root.hoverIndex = -1
                                             drop.acceptProposedAction()
                                         }
@@ -396,12 +396,12 @@ Rectangle {
                                     onReleased: function(mouse) {
                                         var scenePoint = mapToItem(null, mouse.x, mouse.y)
                                         if (moved && root.backend) {
-                                            root.backend.moveSequenceClip(
+                                            root.backend.sequence.moveSequenceClip(
                                                 timelineClip.clipId,
                                                 root.sequenceTargetIndex(scenePoint.x)
                                             )
                                         } else if (root.backend) {
-                                            root.backend.setSequencePlayhead(
+                                            root.backend.sequence.setSequencePlayhead(
                                                 Math.round(Number(timelineClip.modelData.outputStart || 0) * 1000)
                                             )
                                         }
@@ -444,7 +444,7 @@ Rectangle {
                                     onReleased: {
                                         if (root.backend
                                                 && Math.abs(timelineClip.displaySourceStart - initialValue) >= 0.001)
-                                            root.backend.trimSequenceClip(
+                                            root.backend.sequence.trimSequenceClip(
                                                 timelineClip.clipId,
                                                 timelineClip.displaySourceStart,
                                                 Number(timelineClip.modelData.sourceEnd || 0)
@@ -487,7 +487,7 @@ Rectangle {
                                     onReleased: {
                                         if (root.backend
                                                 && Math.abs(timelineClip.displaySourceEnd - initialValue) >= 0.001)
-                                            root.backend.trimSequenceClip(
+                                            root.backend.sequence.trimSequenceClip(
                                                 timelineClip.clipId,
                                                 Number(timelineClip.modelData.sourceStart || 0),
                                                 timelineClip.displaySourceEnd
@@ -534,7 +534,7 @@ Rectangle {
                                 var assetId = root.assetIdFromDrag(drop)
                                 if (assetId.length > 0 && root.backend) {
                                     var scenePoint = mapToItem(null, drop.x, drop.y)
-                                    root.backend.insertSequenceClip(
+                                    root.backend.sequence.insertSequenceClip(
                                         assetId,
                                         root.sequenceTargetIndex(scenePoint.x)
                                     )
@@ -553,7 +553,7 @@ Rectangle {
                         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                         clip: true
                         spacing: 4
-                        model: root.backend ? root.backend.sequenceClips : []
+                        model: root.backend ? root.backend.sequence.sequenceClips : []
 
                         delegate: Rectangle {
                             id: clipItem
@@ -578,7 +578,7 @@ Rectangle {
                                 onTapped: {
                                     root.selectedClipId = clipItem.clipId
                                     if (root.backend)
-                                        root.backend.setSequencePlayhead(
+                                        root.backend.sequence.setSequencePlayhead(
                                             Math.round(Number(clipItem.modelData.outputStart || 0) * 1000)
                                         )
                                 }
@@ -622,7 +622,7 @@ Rectangle {
                                 onDropped: function(drop) {
                                     var assetId = root.assetIdFromDrag(drop)
                                     if (assetId.length > 0) {
-                                        root.backend.insertSequenceClip(assetId, clipItem.index)
+                                        root.backend.sequence.insertSequenceClip(assetId, clipItem.index)
                                         root.hoverIndex = -1
                                         drop.acceptProposedAction()
                                         return
@@ -631,7 +631,7 @@ Rectangle {
                                     if (clipId.length > 0)
                                         root.activeDragClipId = clipId
                                     if (root.activeDragClipId.length > 0 && root.backend)
-                                        root.backend.moveSequenceClip(root.activeDragClipId, clipItem.index)
+                                        root.backend.sequence.moveSequenceClip(root.activeDragClipId, clipItem.index)
                                     root.activeDragClipId = ""
                                     root.hoverIndex = -1
                                     drop.acceptProposedAction()
@@ -666,7 +666,7 @@ Rectangle {
                                         text: "削除"
                                         implicitWidth: 40
                                         enabled: root.backend && !root.backend.running
-                                        onClicked: root.backend.removeSequenceClip(clipItem.clipId)
+                                        onClicked: root.backend.sequence.removeSequenceClip(clipItem.clipId)
                                     }
                                 }
 
@@ -680,7 +680,7 @@ Rectangle {
                                         Layout.preferredWidth: 66
                                         text: Number(clipItem.modelData.sourceStart || 0).toFixed(3)
                                         onEditingFinished: {
-                                            var accepted = root.backend && root.backend.trimSequenceClip(
+                                            var accepted = root.backend && root.backend.sequence.trimSequenceClip(
                                                 clipItem.clipId, Number(text), Number(clipEndField.text))
                                             if (!accepted)
                                                 root.resetTimeField(clipStartField, clipItem.modelData.sourceStart)
@@ -699,7 +699,7 @@ Rectangle {
                                         Layout.preferredWidth: 66
                                         text: Number(clipItem.modelData.sourceEnd || 0).toFixed(3)
                                         onEditingFinished: {
-                                            var accepted = root.backend && root.backend.trimSequenceClip(
+                                            var accepted = root.backend && root.backend.sequence.trimSequenceClip(
                                                 clipItem.clipId, Number(clipStartField.text), Number(text))
                                             if (!accepted)
                                                 root.resetTimeField(clipEndField, clipItem.modelData.sourceEnd)
@@ -721,7 +721,7 @@ Rectangle {
                                             ? clipItem.modelData.transition.type : "cut")
                                         onActivated: function(_index) {
                                             if (root.backend)
-                                                root.backend.setSequenceTransition(
+                                                root.backend.sequence.setSequenceTransition(
                                                     clipItem.clipId, currentText, transitionDuration.value / 1000)
                                         }
                                     }
@@ -737,7 +737,7 @@ Rectangle {
                                         editable: true
                                         onValueModified: {
                                             if (root.backend)
-                                                root.backend.setSequenceTransition(
+                                                root.backend.sequence.setSequenceTransition(
                                                     clipItem.clipId, transitionCombo.currentText, value / 1000)
                                         }
                                     }
@@ -753,7 +753,7 @@ Rectangle {
                                         checked: Boolean(clipItem.modelData.audioLinked)
                                         onToggled: {
                                             if (root.backend)
-                                                root.backend.setSequenceClipAudio(
+                                                root.backend.sequence.setSequenceClipAudio(
                                                     clipItem.clipId, checked, Number(volumeSlider.value),
                                                     Number(audioOffset.value) / 1000, mutedCheck.checked)
                                         }
@@ -768,7 +768,7 @@ Rectangle {
                                         value: Number(clipItem.modelData.volume || 0)
                                         onMoved: {
                                             if (root.backend)
-                                                root.backend.setSequenceClipAudio(
+                                                root.backend.sequence.setSequenceClipAudio(
                                                     clipItem.clipId, audioLinkedCheck.checked, value,
                                                     Number(audioOffset.value) / 1000, mutedCheck.checked)
                                         }
@@ -780,7 +780,7 @@ Rectangle {
                                         checked: Boolean(clipItem.modelData.muted)
                                         onToggled: {
                                             if (root.backend)
-                                                root.backend.setSequenceClipAudio(
+                                                root.backend.sequence.setSequenceClipAudio(
                                                     clipItem.clipId, audioLinkedCheck.checked,
                                                     Number(volumeSlider.value), Number(audioOffset.value) / 1000, checked)
                                         }
@@ -796,7 +796,7 @@ Rectangle {
                                         editable: true
                                         onValueModified: {
                                             if (root.backend)
-                                                root.backend.setSequenceClipAudio(
+                                                root.backend.sequence.setSequenceClipAudio(
                                                     clipItem.clipId, audioLinkedCheck.checked,
                                                     Number(volumeSlider.value), value / 1000, mutedCheck.checked)
                                         }

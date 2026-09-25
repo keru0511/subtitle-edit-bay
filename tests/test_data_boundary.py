@@ -9,12 +9,24 @@ from src.data_boundary import (
     coerce_int,
     decode_json,
     is_object_iterable,
+    is_object_dict,
     is_object_mapping,
     is_object_sequence,
 )
 
 
 class DataBoundaryTests(unittest.TestCase):
+    def test_mutable_dict_guard_preserves_identity_and_unknown_values(self) -> None:
+        original: dict[str, object] = {"value": [1, None]}
+        incoming: object = original
+        if not is_object_dict(incoming):
+            self.fail("辞書を更新可能として受け取る必要があります")
+        incoming["added"] = True
+        self.assertIs(incoming, original)
+        self.assertIs(original["added"], True)
+        self.assertFalse(is_object_dict(UserDict({"value": 1})))
+        self.assertFalse(is_object_dict([]))
+
     def test_mapping_preserves_unknown_key_and_value_types(self) -> None:
         payload: object = UserDict({1: ["value"]})
         self.assertTrue(is_object_mapping(payload))

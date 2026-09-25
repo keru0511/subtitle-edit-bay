@@ -44,21 +44,21 @@ Item {
     }
 
     function refreshSelectedEditor() {
-        root.selectedSegment = root.backend.segmentAt(root.backend.selectedSegmentIndex)
+        root.selectedSegment = root.backend.subtitles.segmentAt(root.backend.subtitles.selectedSegmentIndex)
         syncEditorTimer.restart()
     }
 
     function segmentIdAt(index) {
         if (index < 0)
             return ""
-        var segment = root.backend.segmentAt(index)
+        var segment = root.backend.subtitles.segmentAt(index)
         return segment && segment.id !== undefined ? String(segment.id) : ""
     }
 
     function segmentIndexForId(segmentId) {
         if (!segmentId)
             return -1
-        for (var index = 0; index < root.backend.segmentCount; ++index) {
+        for (var index = 0; index < root.backend.subtitles.segmentCount; ++index) {
             if (root.segmentIdAt(index) === segmentId)
                 return index
         }
@@ -66,20 +66,20 @@ Item {
     }
 
     function beginTimeEdit(field) {
-        field.editingSegmentIndex = root.backend.selectedSegmentIndex
+        field.editingSegmentIndex = root.backend.subtitles.selectedSegmentIndex
         field.editingSegmentId = root.segmentIdAt(field.editingSegmentIndex)
     }
 
     function restoreSelection(selectedIndex, selectedId, editedId) {
         if (selectedIndex < 0) {
-            root.backend.selectSegment(-1)
+            root.backend.subtitles.selectSegment(-1)
             return
         }
         if (selectedId === editedId)
             return
         var restoreIndex = root.segmentIndexForId(selectedId)
         if (restoreIndex >= 0)
-            root.backend.selectSegment(restoreIndex)
+            root.backend.subtitles.selectSegment(restoreIndex)
     }
 
     function commitTimeEdit(field, propertyName) {
@@ -87,12 +87,12 @@ Item {
         var editIndex = editedId
             ? root.segmentIndexForId(editedId)
             : field.editingSegmentIndex
-        var selectedIndex = root.backend.selectedSegmentIndex
+        var selectedIndex = root.backend.subtitles.selectedSegmentIndex
         var selectedId = root.segmentIdAt(selectedIndex)
         if (editIndex >= 0 && field.acceptableInput) {
             var changes = ({})
             changes[propertyName] = Number(field.text)
-            root.backend.updateSegment(editIndex, changes)
+            root.backend.subtitles.updateSegment(editIndex, changes)
             root.restoreSelection(selectedIndex, selectedId, editedId)
         }
         field.editingSegmentIndex = -1
@@ -124,7 +124,7 @@ Item {
     Component.onDestruction: commitCaptionText()
 
     Connections {
-        target: root.backend
+        target: root.backend.subtitles
         function onSelectionChanged() { root.refreshSelectedEditor() }
         function onSegmentsChanged() { root.refreshSelectedEditor() }
     }
@@ -145,7 +145,7 @@ Item {
             Layout.fillWidth: true
             Text { text: "字幕設定"; color: root.textColor; font.family: "Yu Gothic UI"; font.pixelSize: 13; font.weight: Font.Bold }
             Item { Layout.fillWidth: true }
-            Text { text: root.backend.segmentCount + "件"; color: root.accentColor; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+            Text { text: root.backend.subtitles.segmentCount + "件"; color: root.accentColor; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
         }
 
         ListView {
@@ -156,8 +156,8 @@ Item {
             clip: true
             spacing: 5
             boundsBehavior: Flickable.StopAtBounds
-            model: root.backend.subtitleModel
-            currentIndex: root.backend.selectedSegmentIndex
+            model: root.backend.subtitles.subtitleModel
+            currentIndex: root.backend.subtitles.selectedSegmentIndex
             onContentYChanged: {
                 if (!root.restoringContentY)
                     root.contentYChangedByUser(contentY)
@@ -182,8 +182,8 @@ Item {
                 width: subtitleList.width
                 height: 46
                 radius: 7
-                color: root.backend.selectedSegmentIndex === subtitleRow.index ? "#263326" : root.raisedColor
-                border.color: root.backend.selectedSegmentIndex === subtitleRow.index ? root.accentColor : root.borderColor
+                color: root.backend.subtitles.selectedSegmentIndex === subtitleRow.index ? "#263326" : root.raisedColor
+                border.color: root.backend.subtitles.selectedSegmentIndex === subtitleRow.index ? root.accentColor : root.borderColor
                 Column {
                     anchors.fill: parent
                     anchors.margins: 6
@@ -194,7 +194,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        root.backend.selectSegment(subtitleRow.index)
+                        root.backend.subtitles.selectSegment(subtitleRow.index)
                         root.seekRequested(subtitleRow.start * 1000)
                     }
                 }
@@ -203,7 +203,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                visible: root.backend.segmentCount === 0
+                visible: root.backend.subtitles.segmentCount === 0
                 text: "字幕はまだありません\n下部の「字幕追加」から作成できます"
                 color: root.mutedColor
                 font.family: "Yu Gothic UI"
@@ -213,7 +213,7 @@ Item {
         }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
-        Text { text: root.backend.selectedSegmentIndex >= 0 ? "選択中の字幕" : "字幕を選択してください"; color: root.textColor; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.DemiBold }
+        Text { text: root.backend.subtitles.selectedSegmentIndex >= 0 ? "選択中の字幕" : "字幕を選択してください"; color: root.textColor; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.DemiBold }
 
         Flickable {
             Layout.fillWidth: true
@@ -222,7 +222,7 @@ Item {
             contentWidth: width
             contentHeight: selectedEditor.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
-            visible: root.backend.selectedSegmentIndex >= 0
+            visible: root.backend.subtitles.selectedSegmentIndex >= 0
 
             ColumnLayout {
                 id: selectedEditor
@@ -264,7 +264,7 @@ Item {
                     model: root.speakers
                     textRole: "name"
                     valueRole: "style"
-                    onActivated: root.backend.updateSegment(root.backend.selectedSegmentIndex, {"speaker": currentValue})
+                    onActivated: root.backend.subtitles.updateSegment(root.backend.subtitles.selectedSegmentIndex, {"speaker": currentValue})
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -275,7 +275,7 @@ Item {
                         model: root.fontChoices
                         textRole: "label"
                         valueRole: "family"
-                        onActivated: root.backend.updateSegment(root.backend.selectedSegmentIndex, {"subtitle_font_family": currentValue})
+                        onActivated: root.backend.subtitles.updateSegment(root.backend.subtitles.selectedSegmentIndex, {"subtitle_font_family": currentValue})
                     }
                     Button {
                         objectName: "workspaceSubtitleSpeakerColorButton"
@@ -307,7 +307,7 @@ Item {
                         from: 50
                         to: 200
                         stepSize: 5
-                        onValueModified: root.backend.updateSegment(root.backend.selectedSegmentIndex, {"subtitle_font_scale": value / 100})
+                        onValueModified: root.backend.subtitles.updateSegment(root.backend.subtitles.selectedSegmentIndex, {"subtitle_font_scale": value / 100})
                     }
                     Text { text: "%"; color: root.mutedColor; font.pixelSize: 9 }
                 }
@@ -330,7 +330,7 @@ Item {
                     }
                     onActiveFocusChanged: {
                         if (activeFocus) {
-                            editingSegmentIndex = root.backend.selectedSegmentIndex
+                            editingSegmentIndex = root.backend.subtitles.selectedSegmentIndex
                             editingSegmentId = root.segmentIdAt(editingSegmentIndex)
                             if (root.beginDraft && editingSegmentIndex >= 0)
                                 root.beginDraft(editingSegmentIndex, text)

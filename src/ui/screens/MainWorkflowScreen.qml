@@ -14,8 +14,8 @@ ApplicationWindow {
     // qmllint enable unqualified
     readonly property var workflowCapabilities: {
         // Depend on backend notifications as well as the unsaved device choice.
-        var snapshot = root.appBackend.actionCapabilities
-        return snapshot ? root.appBackend.actionCapabilitiesForDevice(deviceCombo.currentText) : ({})
+        var snapshot = root.appBackend.workflow.actionCapabilities
+        return snapshot ? root.appBackend.workflow.actionCapabilitiesForDevice(deviceCombo.currentText) : ({})
     }
     property real timelinePixelsPerSecond: 34
     property real editorPixelsPerSecond: 64
@@ -30,9 +30,9 @@ ApplicationWindow {
     )
     readonly property string selectedSubtitleOutlineColor: root.subtitleOutlineColor
     readonly property int selectedSubtitleOutlineThickness: root.subtitleOutlineThickness
-    property var projectSpeakerCache: root.appBackend.projectSpeakers
-    property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
-    property var subtitleLayoutMetricsCache: root.appBackend.subtitleLayoutMetrics
+    property var projectSpeakerCache: root.appBackend.subtitles.projectSpeakers
+    property var subtitleWaveformCache: root.appBackend.subtitles.subtitleWaveforms
+    property var subtitleLayoutMetricsCache: root.appBackend.subtitles.subtitleLayoutMetrics
     property real editorPositionCache: 0
     property real editorTimelineScrollX: 0
     property real editorCaptionScrollY: 0
@@ -57,26 +57,26 @@ ApplicationWindow {
     // and source/output playhead remain owned by this workspace.
     property Component cutModeEditorContent: cutWorkspaceEditorComponent
     property Component cutModeSettingsContent: cutWorkspaceSettingsComponent
-    property Component modeEditorContent: root.appBackend.currentEditMode === "subtitle"
+    property Component modeEditorContent: root.appBackend.workspace.currentEditMode === "subtitle"
         ? subtitleWorkspaceEditorComponent
-        : (root.appBackend.currentEditMode === "audio"
+        : (root.appBackend.workspace.currentEditMode === "audio"
             ? audioWorkspaceEditorComponent
             : root.cutModeEditorContent)
-    property Component modeSettingsContent: root.appBackend.currentEditMode === "subtitle"
+    property Component modeSettingsContent: root.appBackend.workspace.currentEditMode === "subtitle"
         ? subtitleWorkspaceSettingsComponent
-        : (root.appBackend.currentEditMode === "audio"
+        : (root.appBackend.workspace.currentEditMode === "audio"
             ? audioWorkspaceSettingsComponent
             : root.cutModeSettingsContent)
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
     readonly property bool shortWorkspaceActive: root.appBackend
-        && root.appBackend.currentWorkspace === "short-artifact"
+        && root.appBackend.workspace.currentWorkspace === "short-artifact"
     readonly property bool codexAuthenticated: root.appBackend
-        && root.appBackend.codexAuthState === "authenticated"
+        && root.appBackend.ai.codexAuthState === "authenticated"
     readonly property string aiProviderLoginLabel: {
         var providerName = root.appBackend
-            ? String(root.appBackend.aiChatProviderName || "")
+            ? String(root.appBackend.ai.aiChatProviderName || "")
             : ""
         return providerName ? providerName + "ログイン" : "ログイン"
     }
@@ -101,6 +101,14 @@ ApplicationWindow {
     property bool codexDrawerOpen: true
     property string inspectorTab: "settings"
     property bool previousCodexAuthenticated: false
+    onCodexAuthenticatedChanged: {
+        if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
+            root.codexDrawerOpen = true
+            if (root.loginInInspector)
+                root.inspectorTab = "codex"
+        }
+        root.previousCodexAuthenticated = root.codexAuthenticated
+    }
     onEditorModeChanged: {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
@@ -153,7 +161,7 @@ ApplicationWindow {
             if (root.colorTarget === "source")
                 root.appBackend.updateSpeakerColor(root.colorTargetIndex, colorValue)
             else if (root.colorTarget === "project")
-                root.appBackend.updateProjectSpeakerColor(root.colorTargetIndex, colorValue)
+                root.appBackend.subtitles.updateProjectSpeakerColor(root.colorTargetIndex, colorValue)
             root.colorTarget = ""
             root.colorTargetIndex = -1
         }
@@ -328,7 +336,7 @@ ApplicationWindow {
         else if (root.appBackend.transcriptionProjectExists())
             overwriteProjectDialog.open()
         else
-            root.appBackend.startTranscription(root.currentSettings(), false)
+            root.appBackend.workflow.startTranscription(root.currentSettings(), false)
     }
 
     function startNewVideoEdit() {
@@ -377,15 +385,15 @@ ApplicationWindow {
         }
         if (!root.appBackend.projectLoaded && !root.appBackend.createEmptyProject())
             return
-        root.appBackend.startTranscription(executionSettings, true)
+        root.appBackend.workflow.startTranscription(executionSettings, true)
     }
 
     function canSplitSelectedSegment(positionMs) {
-        var index = root.appBackend.selectedSegmentIndex
-        var segmentCount = root.appBackend.segmentCount
+        var index = root.appBackend.subtitles.selectedSegmentIndex
+        var segmentCount = root.appBackend.subtitles.segmentCount
         if (index < 0 || index >= segmentCount)
             return false
-        var segment = root.appBackend.segmentAt(index)
+        var segment = root.appBackend.subtitles.segmentAt(index)
         var seconds = Number(positionMs) / 1000
         return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
     }
@@ -394,17 +402,17 @@ ApplicationWindow {
         if (!segmentId)
             return -1
         if (preferredIndex >= 0
-                && String(root.appBackend.segmentAt(preferredIndex).id || "") === segmentId)
+                && String(root.appBackend.subtitles.segmentAt(preferredIndex).id || "") === segmentId)
             return preferredIndex
-        for (var index = 0; index < root.appBackend.segmentCount; ++index) {
-            if (String(root.appBackend.segmentAt(index).id || "") === segmentId)
+        for (var index = 0; index < root.appBackend.subtitles.segmentCount; ++index) {
+            if (String(root.appBackend.subtitles.segmentAt(index).id || "") === segmentId)
                 return index
         }
         return -1
     }
 
     function beginSubtitleDraft(segmentIndex, text) {
-        var segment = root.appBackend.segmentAt(segmentIndex)
+        var segment = root.appBackend.subtitles.segmentAt(segmentIndex)
         root.editorDraftSegmentIndex = segmentIndex
         root.editorDraftSegmentId = String(segment.id || "")
         root.editorDraftProjectPath = root.appBackend.projectPath
@@ -440,11 +448,11 @@ ApplicationWindow {
         var index = root.subtitleIndexForId(id, preferredIndex)
         if (index < 0)
             return // 削除済みの字幕の本文を、同じ行に移動した別の字幕へ反映しない。
-        var selectedIndex = root.appBackend.selectedSegmentIndex
-        var selectedId = String(root.appBackend.segmentAt(selectedIndex).id || "")
-        root.appBackend.updateSegment(index, {"text": text})
+        var selectedIndex = root.appBackend.subtitles.selectedSegmentIndex
+        var selectedId = String(root.appBackend.subtitles.segmentAt(selectedIndex).id || "")
+        root.appBackend.subtitles.updateSegment(index, {"text": text})
         if (selectedId !== id)
-            root.appBackend.selectSegment(root.subtitleIndexForId(selectedId, selectedIndex))
+            root.appBackend.subtitles.selectSegment(root.subtitleIndexForId(selectedId, selectedIndex))
     }
 
     function performSubtitleEdit(action, atSeconds) {
@@ -452,19 +460,19 @@ ApplicationWindow {
             return
         root.commitPendingEdits()
         switch (action) {
-        case "add": root.appBackend.addSegment(atSeconds); break
-        case "delete": root.appBackend.deleteSelectedSegment(); break
-        case "split": root.appBackend.splitSelectedSegment(atSeconds); break
-        case "undo": root.appBackend.undoSubtitleEdit(); break
-        case "redo": root.appBackend.redoSubtitleEdit(); break
+        case "add": root.appBackend.subtitles.addSegment(atSeconds); break
+        case "delete": root.appBackend.subtitles.deleteSelectedSegment(); break
+        case "split": root.appBackend.subtitles.splitSelectedSegment(atSeconds); break
+        case "undo": root.appBackend.subtitles.undoSubtitleEdit(); break
+        case "redo": root.appBackend.subtitles.redoSubtitleEdit(); break
         }
     }
 
     function subtitlePreviewText(segmentData) {
         var sourceIndex = Number(segmentData.sourceIndex)
-        if ((root.editorMode || root.appBackend.currentEditMode === "subtitle")
+        if ((root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle")
                 && String(segmentData.id || "") === root.editorDraftSegmentId)
-            return root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)
+            return root.appBackend.subtitles.formatSubtitlePreview(sourceIndex, root.editorDraftText)
         if (segmentData.preview_text !== undefined)
             return String(segmentData.preview_text)
         return String(segmentData.text || "")
@@ -483,14 +491,14 @@ ApplicationWindow {
     }
 
     function selectWorkspaceMode(mode) {
-        var changed = root.appBackend.selectEditMode(mode)
-        return changed || root.appBackend.currentEditMode === mode
+        var changed = root.appBackend.workspace.selectEditMode(mode)
+        return changed || root.appBackend.workspace.currentEditMode === mode
     }
 
     function syncSharedPlayerToPlayhead() {
         // The shared player always renders source media. Output-timeline
         // positions are converted once by the backend's shared mapping.
-        var sourcePosition = Number(root.appBackend.editorPlayhead.sourcePositionMs || 0)
+        var sourcePosition = Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs || 0)
         if (Math.abs(mainPlayer.position - sourcePosition) <= 1)
             return false
         root.pendingSharedSourcePosition = sourcePosition
@@ -504,22 +512,22 @@ ApplicationWindow {
 
     function seekSharedPlayer(positionMilliseconds, basis) {
         var position = Math.max(0, Math.round(Number(positionMilliseconds) || 0))
-        var timelineBasis = basis || String(root.appBackend.editorPlayhead.basis || "source")
-        var changed = root.appBackend.setEditorPlayhead(position, timelineBasis)
+        var timelineBasis = basis || String(root.appBackend.workspace.editorPlayhead.basis || "source")
+        var changed = root.appBackend.workspace.setEditorPlayhead(position, timelineBasis)
         if (!changed)
             root.syncSharedPlayerToPlayhead()
     }
 
     function enforceCutPreview(positionMilliseconds) {
-        if (!root.appBackend.cutTimeline.hasCuts
+        if (!root.appBackend.workspace.cutTimeline.hasCuts
                 || mainPlayer.playbackState !== MediaPlayer.PlayingState)
             return false
         var current = Math.max(0, Math.round(Number(positionMilliseconds) || 0))
-        var next = root.appBackend.nextCutPreviewSourceMs(current)
+        var next = root.appBackend.workspace.nextCutPreviewSourceMs(current)
         if (next <= current + 1)
             return false
         root.seekSharedPlayer(next, "source")
-        if (next >= Number(root.appBackend.cutTimeline.sourceDuration || 0) * 1000)
+        if (next >= Number(root.appBackend.workspace.cutTimeline.sourceDuration || 0) * 1000)
             mainPlayer.pause()
         return true
     }
@@ -537,7 +545,7 @@ ApplicationWindow {
 
     function syncEditorPlayhead(positionMs, syncSelection) {
         var resolvedPosition = Math.max(0, Math.round(Number(positionMs) || 0))
-        root.appBackend.setWorkspacePlayerState(
+        root.appBackend.workspace.setWorkspacePlayerState(
             "normal-video",
             resolvedPosition,
             mainPlayer.playbackState === MediaPlayer.PlayingState
@@ -550,21 +558,21 @@ ApplicationWindow {
         } else if (!root.applyingSharedSeek) {
             // The shared player always reports source-media positions. Keeping
             // that basis here avoids applying an output-to-source mapping twice.
-            root.appBackend.setEditorPlayhead(resolvedPosition, "source")
+            root.appBackend.workspace.setEditorPlayhead(resolvedPosition, "source")
         }
         if (syncSelection
                 && root.editorDraftSegmentIndex < 0
                 && (root.editorMode
                     || (root.activeOverlay === ""
-                        && root.appBackend.currentEditMode === "subtitle")))
-            root.appBackend.selectSegmentAtTime(
-                Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000
+                        && root.appBackend.workspace.currentEditMode === "subtitle")))
+            root.appBackend.subtitles.selectSegmentAtTime(
+                Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000
             )
     }
 
     function syncEditorSelectionFromActiveSegments(activeSegments) {
         var subtitleSelectionActive = root.editorMode
-            || (root.activeOverlay === "" && root.appBackend.currentEditMode === "subtitle")
+            || (root.activeOverlay === "" && root.appBackend.workspace.currentEditMode === "subtitle")
         if (!subtitleSelectionActive
                 || root.editorDraftSegmentIndex >= 0
                 || !activeSegments
@@ -572,17 +580,17 @@ ApplicationWindow {
             return
         var sourceIndex = Number(activeSegments[activeSegments.length - 1].sourceIndex)
         if (isFinite(sourceIndex) && sourceIndex >= 0)
-            root.appBackend.selectSegment(Math.floor(sourceIndex))
+            root.appBackend.subtitles.selectSegment(Math.floor(sourceIndex))
     }
 
     function openEditorScreen() {
         root.closeSettingsPopup()
-        root.appBackend.selectEditMode("subtitle")
+        root.appBackend.workspace.selectEditMode("subtitle")
         if (!root.mixerMode) {
             root.editorPositionCache = mainPlayer.position
             mainPlayer.pause()
         } else
-            root.appBackend.stopAudioMixerPreview()
+            root.appBackend.audio.stopAudioMixerPreview()
         root.activeOverlay = "editor"
     }
 
@@ -596,16 +604,16 @@ ApplicationWindow {
 
     function openMixerScreen() {
         root.closeSettingsPopup()
-        if (!root.appBackend.selectEditMode("audio") && root.appBackend.currentEditMode !== "audio")
+        if (!root.appBackend.workspace.selectEditMode("audio") && root.appBackend.workspace.currentEditMode !== "audio")
             return
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.appBackend.prepareAudioMixerPreview()
+        root.appBackend.audio.prepareAudioMixerPreview()
         root.activeOverlay = "mixer"
     }
 
     function closeMixerScreen() {
-        root.appBackend.stopAudioMixerPreview()
+        root.appBackend.audio.stopAudioMixerPreview()
         mainPlayer.position = root.editorPositionCache
         root.activeOverlay = ""
     }
@@ -616,7 +624,7 @@ ApplicationWindow {
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.appBackend.stopAudioMixerPreview()
+        root.appBackend.audio.stopAudioMixerPreview()
         root.activeOverlay = "dictionary"
     }
 
@@ -631,15 +639,15 @@ ApplicationWindow {
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.appBackend.stopAudioMixerPreview()
-        root.appBackend.setWorkspacePlayerState("normal-video", mainPlayer.position, false)
-        root.appBackend.switchWorkspace("short-artifact")
+        root.appBackend.audio.stopAudioMixerPreview()
+        root.appBackend.workspace.setWorkspacePlayerState("normal-video", mainPlayer.position, false)
+        root.appBackend.workspace.switchWorkspace("short-artifact")
     }
 
     function closeShortWorkspace() {
-        if (!root.appBackend.switchWorkspace("normal-video"))
+        if (!root.appBackend.workspace.switchWorkspace("normal-video"))
             return
-        var playerState = root.appBackend.workspacePlayerState
+        var playerState = root.appBackend.workspace.workspacePlayerState
         mainPlayer.position = playerState
             ? Number(playerState.positionMs || 0)
             : root.editorPositionCache
@@ -720,12 +728,12 @@ ApplicationWindow {
 
     function renderVideo() {
         root.commitPendingEdits()
-        root.appBackend.renderVideo(root.currentSettings())
+        root.appBackend.workflow.renderVideo(root.currentSettings())
     }
 
     function buildSubtitlePreview() {
         root.commitPendingEdits()
-        root.appBackend.buildSubtitlePreview(root.currentSettings())
+        root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
     }
 
     function renderFromEditor() {
@@ -872,7 +880,7 @@ ApplicationWindow {
             var viewportStart = Math.max(0, timelineFlick.contentX / pixels - padding)
             var viewportEnd = (timelineFlick.contentX + timelineFlick.width) / pixels + padding
             timelineRoot.visibleSegments = timelineRoot.showSegments
-                ? root.appBackend.visibleSubtitleSegments(viewportStart, viewportEnd)
+                ? root.appBackend.subtitles.visibleSubtitleSegments(viewportStart, viewportEnd)
                 : []
 
             var ticks = []
@@ -917,7 +925,7 @@ ApplicationWindow {
         onPixelsPerSecondChanged: timelineRoot.refreshViewport()
         signal segmentActivated(int index)
         Connections {
-            target: root.appBackend
+            target: root.appBackend.subtitles
             function onSegmentsChanged() { Qt.callLater(timelineRoot.refreshViewport) }
         }
         Connections {
@@ -1077,9 +1085,9 @@ ApplicationWindow {
                         height: timelineRoot.laneHeight - timelineRoot.laneInset * 2 - 1
                         radius: 6
                         color: root.speakerColor(segment.speaker || "")
-                        opacity: root.appBackend.selectedSegmentIndex === sourceIndex ? 1 : 0.78
-                        border.color: root.appBackend.selectedSegmentIndex === sourceIndex ? root.textPrimary : "#66101010"
-                        border.width: root.appBackend.selectedSegmentIndex === sourceIndex ? 2 : 1
+                        opacity: root.appBackend.subtitles.selectedSegmentIndex === sourceIndex ? 1 : 0.78
+                        border.color: root.appBackend.subtitles.selectedSegmentIndex === sourceIndex ? root.textPrimary : "#66101010"
+                        border.width: root.appBackend.subtitles.selectedSegmentIndex === sourceIndex ? 2 : 1
 
                         Text {
                             anchors.fill: parent
@@ -1106,10 +1114,10 @@ ApplicationWindow {
                             drag.minimumX: 0
                             drag.maximumX: Math.max(0, timelineCanvas.width - captionClip.width)
                             onPressed: {
-                                root.appBackend.selectSegment(captionClip.sourceIndex)
+                                root.appBackend.subtitles.selectSegment(captionClip.sourceIndex)
                                 timelineRoot.segmentActivated(captionClip.sourceIndex)
                             }
-                            onReleased: root.appBackend.moveSegment(
+                            onReleased: root.appBackend.subtitles.moveSegment(
                                 captionClip.sourceIndex,
                                 captionClip.x / timelineRoot.pixelsPerSecond,
                                 (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
@@ -1126,7 +1134,7 @@ ApplicationWindow {
                             height: parent.height
                             radius: 3
                             color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.sourceIndex
+                            visible: timelineRoot.editable && root.appBackend.subtitles.selectedSegmentIndex === captionClip.sourceIndex
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.SizeHorCursor
@@ -1142,7 +1150,7 @@ ApplicationWindow {
                                     captionClip.x = Math.max(0, captionClip.originalX + delta)
                                     captionClip.width = captionClip.originalWidth - (captionClip.x - captionClip.originalX)
                                 }
-                                onReleased: root.appBackend.resizeSegmentStart(
+                                onReleased: root.appBackend.subtitles.resizeSegmentStart(
                                     captionClip.sourceIndex,
                                     captionClip.x / timelineRoot.pixelsPerSecond,
                                     timelineRoot.snapSeconds
@@ -1159,7 +1167,7 @@ ApplicationWindow {
                             height: parent.height
                             radius: 3
                             color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.sourceIndex
+                            visible: timelineRoot.editable && root.appBackend.subtitles.selectedSegmentIndex === captionClip.sourceIndex
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.SizeHorCursor
@@ -1172,7 +1180,7 @@ ApplicationWindow {
                                     var pointer = mapToItem(timelineCanvas, mouse.x, mouse.y).x
                                     captionClip.width = Math.max(4, captionClip.originalWidth + pointer - captionClip.pointerStart)
                                 }
-                                onReleased: root.appBackend.resizeSegmentEnd(
+                                onReleased: root.appBackend.subtitles.resizeSegmentEnd(
                                     captionClip.sourceIndex,
                                     (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
                                     timelineRoot.snapSeconds
@@ -1244,21 +1252,21 @@ ApplicationWindow {
         projectName: root.appBackend.projectName
         projectDirty: root.appBackend.projectDirty
         sourcePath: root.appBackend.sourceSelection.video
-        workspaceKind: root.appBackend.currentWorkspace
-        currentEditMode: root.appBackend.currentEditMode
+        workspaceKind: root.appBackend.workspace.currentWorkspace
+        currentEditMode: root.appBackend.workspace.currentEditMode
         activityText: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status)
         applicationVersion: root.appBackend.applicationInfo.version
         running: root.appBackend.running
-        updateBusy: root.appBackend.updateBusy
+        updateBusy: root.appBackend.updates.updateBusy
         rightInset: root.codexDrawerHeaderInset
         outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
         canRender: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
         renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
         renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
         aiAuthenticated: root.codexAuthenticated
-        aiLoginAvailable: Boolean(root.appBackend.aiChatLoginAvailable)
-        aiAuthState: root.appBackend.codexAuthState
-        aiConnectionState: root.appBackend.codexConnectionState
+        aiLoginAvailable: Boolean(root.appBackend.ai.aiChatLoginAvailable)
+        aiAuthState: root.appBackend.ai.codexAuthState
+        aiConnectionState: root.appBackend.ai.codexConnectionState
         panelColor: root.panel
         raisedColor: root.raised
         borderColor: root.border
@@ -1266,7 +1274,7 @@ ApplicationWindow {
         mutedColor: root.textMuted
         accentColor: root.acid
         warningColor: root.amber
-        onUpdateCheckRequested: root.appBackend.checkForUpdates()
+        onUpdateCheckRequested: root.appBackend.updates.checkForUpdates()
         onProjectOpenRequested: root.browseProjectFile()
         onSourceSettingsRequested: sourcePopup.open()
         onSaveRequested: root.saveProject()
@@ -1276,12 +1284,12 @@ ApplicationWindow {
                 root.inspectorTab = root.inspectorTab === "codex" ? "settings" : "codex"
             } else if (root.codexAuthenticated) {
                 root.codexDrawerOpen = !root.codexDrawerOpen
-            } else if (root.appBackend.codexAuthState === "login_pending") {
-                root.appBackend.openAIProviderLoginPage()
-            } else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0) {
-                root.appBackend.reconnectAIChat()
+            } else if (root.appBackend.ai.codexAuthState === "login_pending") {
+                root.appBackend.ai.openAIProviderLoginPage()
+            } else if (["error", "disconnected"].indexOf(root.appBackend.ai.codexConnectionState) >= 0) {
+                root.appBackend.ai.reconnectAIChat()
             } else {
-                root.appBackend.startAIProviderLogin()
+                root.appBackend.ai.startAIProviderLogin()
             }
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
@@ -1294,7 +1302,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         modal: true
         title: "更新の確認"
-        visible: root.appBackend.updateAvailable && (!root.appBackend.updateBusy || root.appBackend.updateDownloadActive)
+        visible: root.appBackend.updates.updateAvailable && (!root.appBackend.updates.updateBusy || root.appBackend.updates.updateDownloadActive)
         standardButtons: Dialog.NoButton
         width: 500
         height: 320
@@ -1302,10 +1310,10 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 8
-            Text { text: "現在のバージョン: " + root.appBackend.updateCurrentVersion; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
-            Text { text: "最新バージョン: " + root.appBackend.updateLatestVersion; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text { text: "現在のバージョン: " + root.appBackend.updates.updateCurrentVersion; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text { text: "最新バージョン: " + root.appBackend.updates.updateLatestVersion; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
             Text {
-                text: root.appBackend.updateReleaseNotes
+                text: root.appBackend.updates.updateReleaseNotes
                 color: root.textMuted
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 10
@@ -1314,8 +1322,8 @@ ApplicationWindow {
                 Layout.fillHeight: true
             }
             Text {
-                visible: root.appBackend.updatePackageSize > 0
-                text: "ダウンロードサイズ: " + root.formatBytes(root.appBackend.updatePackageSize)
+                visible: root.appBackend.updates.updatePackageSize > 0
+                text: "ダウンロードサイズ: " + root.formatBytes(root.appBackend.updates.updatePackageSize)
                 color: root.textMuted
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 11
@@ -1323,17 +1331,17 @@ ApplicationWindow {
             }
             ProgressBar {
                 objectName: "updateDownloadProgressBar"
-                visible: root.appBackend.updateDownloadActive
+                visible: root.appBackend.updates.updateDownloadActive
                 from: 0
-                to: root.appBackend.updateDownloadTotal > 0 ? root.appBackend.updateDownloadTotal : 1
-                value: root.appBackend.updateDownloadBytes
+                to: root.appBackend.updates.updateDownloadTotal > 0 ? root.appBackend.updates.updateDownloadTotal : 1
+                value: root.appBackend.updates.updateDownloadBytes
                 Layout.fillWidth: true
             }
             RowLayout {
-                Button { objectName: "applyUpdateButton"; text: root.appBackend.updatePackageReady ? "再起動して更新" : "アップデート"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
-                Button { objectName: "cancelUpdateDownloadButton"; text: "ダウンロードをキャンセル"; visible: root.appBackend.updateDownloadActive; enabled: true; onClicked: root.appBackend.cancelUpdateDownload() }
-                Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.restartApplication() }
-                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
+                Button { objectName: "applyUpdateButton"; text: root.appBackend.updates.updatePackageReady ? "再起動して更新" : "アップデート"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updates.updateBusy; onClicked: root.appBackend.updates.applyUpdate() }
+                Button { objectName: "cancelUpdateDownloadButton"; text: "ダウンロードをキャンセル"; visible: root.appBackend.updates.updateDownloadActive; enabled: true; onClicked: root.appBackend.updates.cancelUpdateDownload() }
+                Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.updates.restartApplication() }
+                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updates.updateBusy; onClicked: { root.appBackend.updates.dismissUpdateInfo(); updateDialog.close(); } }
             }
         }
     }
@@ -1443,22 +1451,22 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 5
-                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
-                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
+                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.subtitles.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
+                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.subtitles.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
                     SmallButton {
                         objectName: "workspaceSubtitleAddButton"
                         text: "+ 字幕追加"
                         enabled: !root.appBackend.running
-                        onClicked: root.performSubtitleEdit("add", Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
+                        onClicked: root.performSubtitleEdit("add", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
                     }
                     SmallButton {
                         objectName: "workspaceSubtitleSplitButton"
                         text: "分割"
                         enabled: !root.appBackend.running
-                            && root.canSplitSelectedSegment(root.appBackend.editorPlayhead.sourcePositionMs)
-                        onClicked: root.performSubtitleEdit("split", Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
+                            && root.canSplitSelectedSegment(root.appBackend.workspace.editorPlayhead.sourcePositionMs)
+                        onClicked: root.performSubtitleEdit("split", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
                     }
-                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
+                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.subtitles.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
                     Item { Layout.fillWidth: true }
                     SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveProject() }
                     SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.buildSubtitlePreview() }
@@ -1482,7 +1490,7 @@ ApplicationWindow {
                             root.editorTimelineScrollX = viewportX
                     }
                     onSegmentActivated: function(index) {
-                        var segment = root.appBackend.segmentAt(index)
+                        var segment = root.appBackend.subtitles.segmentAt(index)
                         if (segment)
                             root.seekSharedPlayer(Number(segment.start) * 1000, "source")
                     }
@@ -1515,7 +1523,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     PanelTitle { text: "音声タイムライン" }
                     Text {
-                        text: root.appBackend.audioPreviewPreparing
+                        text: root.appBackend.audio.audioPreviewPreparing
                             ? "プレビュー音声を準備中…"
                             : (workspaceAudioBridge.intentionalSilence
                                 ? "すべての音声トラックが無効です"
@@ -1545,8 +1553,8 @@ ApplicationWindow {
                     editable: false
                     showSegments: false
                     showTrackVolume: true
-                    lanes: root.appBackend.audioMixerSequenceChannels
-                    waveforms: root.appBackend.audioMixerSequenceChannels
+                    lanes: root.appBackend.audio.audioMixerSequenceChannels
+                    waveforms: root.appBackend.audio.audioMixerSequenceChannels
                     seekHandler: function(positionMilliseconds) {
                         root.seekSharedPlayer(positionMilliseconds, "source")
                     }
@@ -1575,7 +1583,7 @@ ApplicationWindow {
             objectName: "workspaceSubtitleSettings"
             backend: root.appBackend
             speakers: root.projectSpeakerCache
-            fontChoices: root.appBackend.fontChoices
+            fontChoices: root.appBackend.subtitles.fontChoices
             panelColor: root.panel
             raisedColor: root.raised
             borderColor: root.border
@@ -1625,7 +1633,7 @@ ApplicationWindow {
             objectName: "workspaceCutEditor"
             backend: root.appBackend
             player: mainPlayer
-            timeline: root.appBackend.cutTimeline
+            timeline: root.appBackend.workspace.cutTimeline
             selectionStartMs: root.cutSelectionStartMs
             selectionEndMs: root.cutSelectionEndMs
             selectedCutId: root.selectedCutId
@@ -1655,7 +1663,7 @@ ApplicationWindow {
         CutModeSettings {
             objectName: "workspaceCutSettings"
             backend: root.appBackend
-            timeline: root.appBackend.cutTimeline
+            timeline: root.appBackend.workspace.cutTimeline
             selectionStartMs: root.cutSelectionStartMs
             selectionEndMs: root.cutSelectionEndMs
             selectedCutId: root.selectedCutId
@@ -1682,25 +1690,17 @@ ApplicationWindow {
         height: 0
         backend: root.appBackend
         player: mainPlayer
-        active: root.appBackend.currentEditMode === "audio" && mainWorkspace.visible
+        active: root.appBackend.workspace.currentEditMode === "audio" && mainWorkspace.visible
         seekRevision: root.sharedSeekRevision
     }
 
     Connections {
-        target: root.appBackend
+        target: root.appBackend.workspace
 
         function onEditorPlayheadChanged() {
             root.syncSharedPlayerToPlayhead()
         }
 
-        function onCodexChatChanged() {
-            if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
-                root.codexDrawerOpen = true
-                if (root.loginInInspector)
-                    root.inspectorTab = "codex"
-            }
-            root.previousCodexAuthenticated = root.codexAuthenticated
-        }
     }
 
     Timer {
@@ -1862,8 +1862,8 @@ ApplicationWindow {
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            currentMode: root.appBackend.currentEditMode
-            capabilities: root.appBackend.editorModeCapabilities
+            currentMode: root.appBackend.workspace.currentEditMode
+            capabilities: root.appBackend.workspace.editorModeCapabilities
             panelColor: root.panel
             raisedColor: root.raised
             borderColor: root.border
@@ -1918,16 +1918,16 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         projectLoaded: root.appBackend.projectLoaded
                         running: root.appBackend.running
-                        activeJob: root.appBackend.activeJob
+                        activeJob: root.appBackend.workflow.activeJob
                         canCreateProject: Boolean(root.appBackend.sourceSelection.video)
                         canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
                         canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
                         renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
                         renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
                         blockReason: root.transcriptionBlockReason()
-                        audioMixerAvailable: root.appBackend.audioMixerAvailable
-                        mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
-                        subtitleAvailable: root.appBackend.segmentCount > 0
+                        audioMixerAvailable: root.appBackend.audio.audioMixerAvailable
+                        mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audio.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
+                        subtitleAvailable: root.appBackend.subtitles.segmentCount > 0
                         outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
                         settingsExpanded: root.settingsExpanded
                         onSettingsRequested: root.toggleSettingsPopup()
@@ -1941,8 +1941,8 @@ ApplicationWindow {
                         onSaveOrStopRequested: {
                             if (!root.appBackend.running)
                                 root.appBackend.saveSettings(root.currentSettings())
-                            else if (root.appBackend.activeJob !== "update")
-                                root.appBackend.cancelProcessing()
+                            else if (root.appBackend.workflow.activeJob !== "update")
+                                root.appBackend.workflow.cancelProcessing()
                         }
                         onOutputFolderRequested: root.appBackend.openOutputFolder()
                     }
@@ -2020,10 +2020,10 @@ ApplicationWindow {
                                 ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
                                 Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
                                 Text {
-                                    text: root.appBackend.cutTimeline.hasCuts
+                                    text: root.appBackend.workspace.cutTimeline.hasCuts
                                         ? ("素材 " + root.stamp(mainPlayer.position / 1000)
-                                            + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
-                                            + " / " + root.stamp(root.appBackend.cutOutputDuration))
+                                            + "  出力 " + root.stamp(Number(root.appBackend.workspace.editorPlayhead.outputPositionMs) / 1000)
+                                            + " / " + root.stamp(root.appBackend.workspace.cutOutputDuration))
                                         : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
                                     color: root.textMuted
                                     font.pixelSize: 10
@@ -2037,7 +2037,7 @@ ApplicationWindow {
 
 
             RowLayout {
-                visible: root.appBackend.currentEditMode === "cut"
+                visible: root.appBackend.workspace.currentEditMode === "cut"
                 Layout.fillWidth: true
                 SmallButton {
                     objectName: "cutToolButton"
@@ -2054,9 +2054,9 @@ ApplicationWindow {
             SequenceEditorPanel {
                 id: sequenceEditorPanel
                 objectName: "workspaceSequenceEditor"
-                visible: root.appBackend.currentWorkspace === "normal-video"
+                visible: root.appBackend.workspace.currentWorkspace === "normal-video"
                     && root.appBackend.projectLoaded
-                    && root.appBackend.currentEditMode === "cut" && root.editTool === "sequence"
+                    && root.appBackend.workspace.currentEditMode === "cut" && root.editTool === "sequence"
                 Layout.fillWidth: true
                 Layout.preferredHeight: 335
                 Layout.minimumHeight: 315
@@ -2074,10 +2074,10 @@ ApplicationWindow {
             Rectangle {
                 id: modeEditorSlot
                 objectName: "modeEditorSlot"
-                visible: root.appBackend.projectLoaded && (root.appBackend.currentEditMode !== "cut" || root.editTool === "cut")
+                visible: root.appBackend.projectLoaded && (root.appBackend.workspace.currentEditMode !== "cut" || root.editTool === "cut")
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible
-                    ? (root.appBackend.currentEditMode === "cut" ? 122 : 156)
+                    ? (root.appBackend.workspace.currentEditMode === "cut" ? 122 : 156)
                     : 0
                 Layout.minimumHeight: visible
                     ? 92
@@ -2106,7 +2106,7 @@ ApplicationWindow {
                 implicitHeight: progressPanel.implicitHeight
                 z: 700
                 color: "transparent"
-                visible: root.appBackend && root.appBackend.progressVisible
+                visible: root.appBackend && root.appBackend.workflow.progressVisible
 
                 ProcessingProgressPanel {
                     id: progressPanel
@@ -2129,12 +2129,12 @@ ApplicationWindow {
                 compact: true
                 objectName: "applicationLogPanel"
                 Layout.fillWidth: true
-                Layout.fillHeight: root.appBackend.progressVisible
+                Layout.fillHeight: root.appBackend.workflow.progressVisible
                 Layout.preferredHeight: implicitHeight
                 // The progress panel reserves 126px in this column.  At the
                 // 1220x760 minimum window, allow an expanded log to shrink
                 // to its collapsed minimum so its header remains reachable.
-                Layout.minimumHeight: root.appBackend.progressVisible ? 56 : implicitHeight
+                Layout.minimumHeight: root.appBackend.workflow.progressVisible ? 56 : implicitHeight
                 backend: root.appBackend
             }
         }
@@ -2256,14 +2256,14 @@ ApplicationWindow {
           if (request) {
               if (root.appBackend.loadProjectWithSelectedSources(
                       request.projectPath, request.sources))
-                  root.appBackend.transcribeProject(request.settings, "replace")
+                  root.appBackend.workflow.transcribeProject(request.settings, "replace")
               return
           }
           var settings = JSON.parse(JSON.stringify(root.currentSettings()))
           if (root.appBackend.projectLoaded)
-              root.appBackend.transcribeProject(settings, "replace")
+              root.appBackend.workflow.transcribeProject(settings, "replace")
           else
-              root.appBackend.startTranscription(settings, true)
+              root.appBackend.workflow.startTranscription(settings, true)
       }
       onRejected: root.pendingWelcomeTranscriptionRequest = null
   }
@@ -2291,8 +2291,8 @@ ApplicationWindow {
               Layout.fillWidth: true
               Item { Layout.fillWidth: true }
               Button { objectName: "transcriptionMergeCancelButton"; text: "キャンセル"; onClicked: transcriptionMergeDialog.close() }
-              Button { objectName: "transcriptionMergeAppendButton"; text: "追加・統合"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.transcribeProject(root.currentSettings(), "merge") } }
-              Button { objectName: "transcriptionMergeReplaceButton"; text: "置き換え"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.transcribeProject(root.currentSettings(), "replace") } }
+              Button { objectName: "transcriptionMergeAppendButton"; text: "追加・統合"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.workflow.transcribeProject(root.currentSettings(), "merge") } }
+              Button { objectName: "transcriptionMergeReplaceButton"; text: "置き換え"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.workflow.transcribeProject(root.currentSettings(), "replace") } }
           }
       }
   }
@@ -2507,8 +2507,8 @@ ApplicationWindow {
             Item {
                 id: mixerContent
                 objectName: "mixerContent"
-                readonly property bool previewReady: !root.appBackend.audioPreviewPreparing
-                    && root.appBackend.audioMixerPreviewChannels.length > 0
+                readonly property bool previewReady: !root.appBackend.audio.audioPreviewPreparing
+                    && root.appBackend.audio.audioMixerPreviewChannels.length > 0
                 property real initialPosition: -1
                 property int initialPositionStableTicks: 0
                 property real channelScrollPosition: 0
@@ -2564,10 +2564,10 @@ ApplicationWindow {
                 function togglePlayback() {
                     if (mixerPlayer.playbackState === MediaPlayer.PlayingState) {
                         mixerPlayer.pause()
-                        root.appBackend.pauseAudioMixerPreview()
+                        root.appBackend.audio.pauseAudioMixerPreview()
                         mixerContent.syncPreviewPlayers(false)
                     } else {
-                        root.appBackend.startAudioMixerPreview(mixerPlayer.position)
+                        root.appBackend.audio.startAudioMixerPreview(mixerPlayer.position)
                         mixerPlayer.play()
                         mixerContent.syncPreviewPlayers(true)
                     }
@@ -2578,7 +2578,7 @@ ApplicationWindow {
                         0,
                         Math.min(mixerPlayer.duration, milliseconds)
                     )
-                    root.appBackend.seekAudioMixerPreview(
+                    root.appBackend.audio.seekAudioMixerPreview(
                         mixerPlayer.position,
                         mixerPlayer.playbackState === MediaPlayer.PlayingState
                     )
@@ -2599,13 +2599,13 @@ ApplicationWindow {
                 function updateMixerChannel(index, changes) {
                     channelScrollPosition = mixerChannelList.contentX
                     mixerChannelScrollRestoreTimer.restart()
-                    root.appBackend.updateAudioMixChannel(index, changes)
+                    root.appBackend.audio.updateAudioMixChannel(index, changes)
                 }
 
                 MediaPlayer {
                     id: mixerPlayer
                     objectName: "mixerPlayer"
-                    source: mixerContent.previewReady ? root.appBackend.audioPreviewClockUrl : ""
+                    source: mixerContent.previewReady ? root.appBackend.audio.audioPreviewClockUrl : ""
                     audioOutput: AudioOutput { muted: true }
                     Component.onCompleted: mixerContent.restoreInitialPosition()
                     onSeekableChanged: mixerContent.restoreInitialPosition()
@@ -2619,14 +2619,14 @@ ApplicationWindow {
                     onPlaybackStateChanged: {
                         mixerContent.syncPreviewPlayers(false)
                         if (mixerPlayer.playbackState === MediaPlayer.StoppedState)
-                            root.appBackend.pauseAudioMixerPreview()
+                            root.appBackend.audio.pauseAudioMixerPreview()
                     }
                 }
 
                 Instantiator {
                     id: mixerPreviewPlayers
                     objectName: "mixerPreviewPlayers"
-                    model: root.appBackend.audioMixerPreviewChannels
+                    model: root.appBackend.audio.audioMixerPreviewChannels
                     delegate: MediaPlayer {
                         id: mixerPreviewPlayer
                         required property int index
@@ -2726,7 +2726,7 @@ ApplicationWindow {
                         Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                         Text {
                             objectName: "mixerAudioPreviewCacheSummary"
-                            text: root.appBackend.audioPreviewPreparing ? "プレビューを準備中" : "プレビュー準備済み"
+                            text: root.appBackend.audio.audioPreviewPreparing ? "プレビューを準備中" : "プレビュー準備済み"
                             color: root.textMuted
                             font.family: "Cascadia Mono"
                             font.pixelSize: 9
@@ -2736,18 +2736,18 @@ ApplicationWindow {
                             text: "プレビューを作り直す"
                             enabled: !root.appBackend.running
                             onClicked: {
-                                root.appBackend.clearAudioPreviewCache()
-                                root.appBackend.prepareAudioMixerPreview()
+                                root.appBackend.audio.clearAudioPreviewCache()
+                                root.appBackend.audio.prepareAudioMixerPreview()
                             }
                         }
-                        SmallButton { objectName: "mixerResetButton"; text: "すべての音声トラックをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
+                        SmallButton { objectName: "mixerResetButton"; text: "すべての音声トラックをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.audio.resetAudioMixer() }
                         SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveProject() }
                         SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
                         Button {
                             id: mixerRenderButton
                             objectName: "mixerRenderButton"
                             implicitHeight: 34
-                            text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
+                            text: root.appBackend.workflow.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
                             enabled: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
                             onClicked: {
                                 root.renderVideo()
@@ -2816,7 +2816,7 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 PanelTitle { text: "プレビュー" }
-                                Text { text: root.appBackend.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                                Text { text: root.appBackend.audio.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audio.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                                 Item { Layout.fillWidth: true }
                                 Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                             }
@@ -2830,8 +2830,8 @@ ApplicationWindow {
                                 editable: false
                                 showSegments: false
                                 showTrackVolume: true
-                                lanes: root.appBackend.audioMixerSequenceChannels
-                                waveforms: root.appBackend.audioMixerSequenceChannels
+                                lanes: root.appBackend.audio.audioMixerSequenceChannels
+                                waveforms: root.appBackend.audio.audioMixerSequenceChannels
                             }
                         }
                     }
@@ -2851,7 +2851,7 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 PanelTitle { text: "音声トラック" }
-                                Text { text: root.appBackend.audioMixerChannels.length + "トラック"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
+                                Text { text: root.appBackend.audio.audioMixerChannels.length + "トラック"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
                                 Item { Layout.fillWidth: true }
                                 Text { text: "音量: −60〜+6 dB / ミュート / ソロ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                             }
@@ -2864,7 +2864,7 @@ ApplicationWindow {
                                 spacing: 12
                                 clip: true
                                 boundsBehavior: Flickable.StopAtBounds
-                                model: root.appBackend.audioMixerChannels
+                                model: root.appBackend.audio.audioMixerChannels
                                 onContentXChanged: {
                                     if (!mixerContent.restoringChannelScroll && !mixerChannelScrollRestoreTimer.running)
                                         mixerContent.channelScrollPosition = contentX
@@ -2874,7 +2874,7 @@ ApplicationWindow {
                                     required property int index
                                     required property var modelData
                                     objectName: "mixerChannelStrip-" + index
-                                    property real previewLevel: Number(root.appBackend.audioPreviewLevels[modelData.id] || 0)
+                                    property real previewLevel: Number(root.appBackend.audio.audioPreviewLevels[modelData.id] || 0)
                                     width: 170
                                     height: mixerChannelList.height - 12
                                     radius: 9
@@ -3035,8 +3035,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text { Layout.fillWidth: true; text: "使用するトラック、ミュート、ソロ、音量をプレビューへ反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
                                 Text { text: "全体の音量"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.weight: Font.Bold }
-                                Rectangle { objectName: "mixerMasterMeter"; Layout.preferredWidth: 120; Layout.preferredHeight: 9; radius: 4; color: "#070908"; border.color: root.border; Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 2; width: Math.max(0, (parent.width - 4) * Number(root.appBackend.audioMasterLevel || 0)); radius: 2; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.acid; Behavior on width { NumberAnimation { duration: 45 } } } }
-                                Text { objectName: "mixerLimiterReduction"; text: "自動調整 " + Number(root.appBackend.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; Layout.preferredWidth: 100 }
+                                Rectangle { objectName: "mixerMasterMeter"; Layout.preferredWidth: 120; Layout.preferredHeight: 9; radius: 4; color: "#070908"; border.color: root.border; Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 2; width: Math.max(0, (parent.width - 4) * Number(root.appBackend.audio.audioMasterLevel || 0)); radius: 2; color: root.appBackend.audio.audioLimiterReductionDb > 0.01 ? root.amber : root.acid; Behavior on width { NumberAnimation { duration: 45 } } } }
+                                Text { objectName: "mixerLimiterReduction"; text: "自動調整 " + Number(root.appBackend.audio.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audio.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; Layout.preferredWidth: 100 }
                                 Text { text: "音声出力: AAC / 48 kHz"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                             }
                         }
@@ -3108,18 +3108,18 @@ ApplicationWindow {
                 Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
                 Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
                 Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
-                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
+                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.subtitles.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
+                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.subtitles.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
                 SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.performSubtitleEdit("add", mainPlayer.position / 1000) }
                 SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.performSubtitleEdit("split", mainPlayer.position / 1000) }
-                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
+                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.subtitles.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
                 SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.saveProject() }
                 SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.buildSubtitlePreview() }
                 Button {
                     id: editorRenderButton
                     objectName: "editorRenderButton"
                     implicitHeight: 34
-                    text: root.appBackend.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
+                    text: root.appBackend.workflow.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
                     enabled: root.appBackend.projectLoaded && !root.appBackend.running
                     onClicked: root.renderFromEditor()
                     contentItem: Text { text: editorRenderButton.text; color: editorRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -3185,7 +3185,7 @@ ApplicationWindow {
                         Component.onCompleted: Qt.callLater(function() { viewportX = root.editorTimelineScrollX })
                         onViewportXChanged: root.editorTimelineScrollX = viewportX
                         onSegmentActivated: function(index) {
-                            var segment = root.appBackend.segmentAt(index)
+                            var segment = root.appBackend.subtitles.segmentAt(index)
                             if (segment) mainPlayer.position = Number(segment.start) * 1000
                         }
                     }
@@ -3233,17 +3233,17 @@ ApplicationWindow {
                             objectName: "captionTable"
                             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5
                             function revealSelectedCaption() {
-                                var selectedIndex = root.appBackend.selectedSegmentIndex
+                                var selectedIndex = root.appBackend.subtitles.selectedSegmentIndex
                                 if (selectedIndex >= 0)
                                     positionViewAtIndex(selectedIndex, ListView.Contain)
                             }
-                            model: root.appBackend.subtitleModel
+                            model: root.appBackend.subtitles.subtitleModel
                             // モデルの移動・復元中の一時的な行番号を選択状態へ逆流させない。
                             currentIndex: -1
                             keyNavigationEnabled: false
                             Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
-                            Keys.onUpPressed: root.appBackend.selectSegment(Math.max(0, root.appBackend.selectedSegmentIndex - 1))
-                            Keys.onDownPressed: root.appBackend.selectSegment(Math.min(count - 1, root.appBackend.selectedSegmentIndex + 1))
+                            Keys.onUpPressed: root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
+                            Keys.onDownPressed: root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
                             onContentYChanged: root.editorCaptionScrollY = contentY
                             delegate: Rectangle {
                                 id: captionRow
@@ -3259,14 +3259,14 @@ ApplicationWindow {
                                 required property real subtitleFontScale
                                 required property string subtitleFontFamily
                                 width: captionTable.width; height: 122; radius: 8
-                                color: root.appBackend.selectedSegmentIndex === index ? "#263326" : root.raised
-                                border.color: root.appBackend.selectedSegmentIndex === index ? root.acid : root.border
-                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); mainPlayer.position = captionRow.start * 1000 } }
+                                color: root.appBackend.subtitles.selectedSegmentIndex === index ? "#263326" : root.raised
+                                border.color: root.appBackend.subtitles.selectedSegmentIndex === index ? root.acid : root.border
+                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.subtitles.selectSegment(captionRow.index); mainPlayer.position = captionRow.start * 1000 } }
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 7; spacing: 5
                                     RowLayout { Layout.fillWidth: true; spacing: 5
                                         Text { text: String(captionRow.index + 1).padStart(4, "0"); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9 }
-                                        TimeField { Layout.preferredWidth: 72; text: captionRow.start.toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"start": Number(text)}) }
-                                        TimeField { Layout.preferredWidth: 72; text: captionRow.end.toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"end": Number(text)}) }
+                                        TimeField { Layout.preferredWidth: 72; text: captionRow.start.toFixed(3); onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {"start": Number(text)}) }
+                                        TimeField { Layout.preferredWidth: 72; text: captionRow.end.toFixed(3); onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {"end": Number(text)}) }
                                         ComboBox {
                                             Layout.preferredWidth: 105
                                             model: root.projectSpeakerCache
@@ -3275,13 +3275,13 @@ ApplicationWindow {
                                             Component.onCompleted: {
                                                 for (var i = 0; i < count; ++i) if (valueAt(i) === captionRow.speaker) currentIndex = i
                                             }
-                                            onActivated: root.appBackend.updateSegment(captionRow.index, {"speaker": currentValue})
+                                            onActivated: root.appBackend.subtitles.updateSegment(captionRow.index, {"speaker": currentValue})
                                         }
                                         ComboBox {
                                             id: captionFontCombo
                                             objectName: "captionFontCombo"
                                             Layout.preferredWidth: 130
-                                            model: root.appBackend.fontChoices
+                                            model: root.appBackend.subtitles.fontChoices
                                             textRole: "label"
                                             valueRole: "family"
                                             function syncCurrentFont() {
@@ -3298,13 +3298,13 @@ ApplicationWindow {
                                                 target: captionRow
                                                 function onSubtitleFontFamilyChanged() { captionFontCombo.syncCurrentFont() }
                                             }
-                                            onActivated: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_family": currentValue})
+                                            onActivated: root.appBackend.subtitles.updateSegment(captionRow.index, {"subtitle_font_family": currentValue})
                                         }
                                         CompactSpinBox {
                                             objectName: "captionSizeSpin"
                                             Layout.preferredWidth: 106; from: 50; to: 200; stepSize: 5
                                             value: Math.round(captionRow.subtitleFontScale * 100)
-                                            onValueModified: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_scale": value / 100})
+                                            onValueModified: root.appBackend.subtitles.updateSegment(captionRow.index, {"subtitle_font_scale": value / 100})
                                         }
                                         Text { text: "%"; color: root.textMuted; font.pixelSize: 9 }
                                     }
@@ -3331,7 +3331,7 @@ ApplicationWindow {
                                         }
                                         onActiveFocusChanged: {
                                             if (activeFocus) {
-                                                root.appBackend.selectSegment(captionRow.index)
+                                                root.appBackend.subtitles.selectSegment(captionRow.index)
                                                 editingSegmentId = captionRow.segmentId
                                                 root.beginSubtitleDraft(captionRow.index, text)
                                             } else {
@@ -3354,7 +3354,7 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     width: 360
                     height: 112
-                    visible: root.appBackend.segmentCount === 0
+                    visible: root.appBackend.subtitles.segmentCount === 0
                     z: 10
                     radius: 10
                     color: "#17201B"
@@ -3368,7 +3368,7 @@ ApplicationWindow {
                 }
 
                 Connections {
-                    target: root.appBackend
+                    target: root.appBackend.subtitles
                     function onSegmentsChanged() {
                         Qt.callLater(function() {
                             if (captionTable && typeof captionTable.revealSelectedCaption === "function")
@@ -3414,11 +3414,11 @@ ApplicationWindow {
     }
 
     Connections {
-        target: root.appBackend
+        target: root.appBackend.workspace
         function onWorkspaceChanged() {
-            var nextWorkspace = String(root.appBackend.currentWorkspace || "normal-video")
+            var nextWorkspace = String(root.appBackend.workspace.currentWorkspace || "normal-video")
             if (nextWorkspace === "normal-video") {
-                var playerState = root.appBackend.workspacePlayerState
+                var playerState = root.appBackend.workspace.workspacePlayerState
                 if (playerState)
                     mainPlayer.position = Number(playerState.positionMs || 0)
             }
@@ -3475,27 +3475,27 @@ ApplicationWindow {
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
             && (!root.loginInInspector || root.inspectorTab === "codex")
-            && root.appBackend.aiChatProviders.length > 1
-        model: root.appBackend ? root.appBackend.aiChatProviders : []
+            && root.appBackend.ai.aiChatProviders.length > 1
+        model: root.appBackend ? root.appBackend.ai.aiChatProviders : []
         textRole: "label"
         valueRole: "id"
-        enabled: root.appBackend && root.appBackend.codexChatState !== "streaming"
-            && root.appBackend.codexChatState !== "sending"
-            && root.appBackend.codexChatState !== "stopping"
+        enabled: root.appBackend && root.appBackend.ai.codexChatState !== "streaming"
+            && root.appBackend.ai.codexChatState !== "sending"
+            && root.appBackend.ai.codexChatState !== "stopping"
         Component.onCompleted: {
             for (var index = 0; index < count; ++index) {
-                if (valueAt(index) === root.appBackend.aiChatProviderId) {
+                if (valueAt(index) === root.appBackend.ai.aiChatProviderId) {
                     currentIndex = index
                     break
                 }
             }
         }
-        onActivated: root.appBackend.selectAIProvider(currentValue)
+        onActivated: root.appBackend.ai.selectAIProvider(currentValue)
         Connections {
-            target: root.appBackend
+            target: root.appBackend.ai
             function onAiChatChanged() {
                 for (var index = 0; index < aiProviderLoginCombo.count; ++index) {
-                    if (aiProviderLoginCombo.valueAt(index) === root.appBackend.aiChatProviderId) {
+                    if (aiProviderLoginCombo.valueAt(index) === root.appBackend.ai.aiChatProviderId) {
                         aiProviderLoginCombo.currentIndex = index
                         break
                     }
@@ -3516,10 +3516,10 @@ ApplicationWindow {
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
             && (!root.loginInInspector || root.inspectorTab === "codex")
-            && root.appBackend.aiChatAuthHint
-            && !root.appBackend.aiChatLoginAvailable
+            && root.appBackend.ai.aiChatAuthHint
+            && !root.appBackend.ai.aiChatLoginAvailable
         z: 650
-        text: root.appBackend ? root.appBackend.aiChatAuthHint : ""
+        text: root.appBackend ? root.appBackend.ai.aiChatAuthHint : ""
         textFormat: Text.PlainText
         color: root.textMuted
         font.family: "Yu Gothic UI"
@@ -3541,26 +3541,26 @@ ApplicationWindow {
         height: 34
         visible: !root.codexAuthenticated
             && (!root.loginInInspector || root.inspectorTab === "codex")
-            && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
+            && (!root.appBackend || root.appBackend.ai.aiChatLoginAvailable)
         z: 650
-        text: root.appBackend && root.appBackend.aiChatAuthHint
-            ? root.appBackend.aiChatAuthHint
-            : (root.appBackend && root.appBackend.codexAuthState === "login_pending"
+        text: root.appBackend && root.appBackend.ai.aiChatAuthHint
+            ? root.appBackend.ai.aiChatAuthHint
+            : (root.appBackend && root.appBackend.ai.codexAuthState === "login_pending"
             ? "ブラウザを開く"
-            : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0
+            : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.ai.codexConnectionState) >= 0
                 ? "再接続" : root.aiProviderLoginLabel))
         enabled: root.appBackend
-            && root.appBackend.codexConnectionState !== "connecting"
-            && root.appBackend.codexAuthState !== "checking"
-            && root.appBackend.codexAuthState !== "logging_in"
-            && root.appBackend.aiChatLoginAvailable
+            && root.appBackend.ai.codexConnectionState !== "connecting"
+            && root.appBackend.ai.codexAuthState !== "checking"
+            && root.appBackend.ai.codexAuthState !== "logging_in"
+            && root.appBackend.ai.aiChatLoginAvailable
         onClicked: {
-            if (root.appBackend.codexAuthState === "login_pending")
-                root.appBackend.openAIProviderLoginPage()
-            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
-                root.appBackend.reconnectAIChat()
+            if (root.appBackend.ai.codexAuthState === "login_pending")
+                root.appBackend.ai.openAIProviderLoginPage()
+            else if (["error", "disconnected"].indexOf(root.appBackend.ai.codexConnectionState) >= 0)
+                root.appBackend.ai.reconnectAIChat()
             else
-                root.appBackend.startAIProviderLogin()
+                root.appBackend.ai.startAIProviderLogin()
         }
     }
 
@@ -3576,7 +3576,7 @@ ApplicationWindow {
         z: 700
         color: "transparent"
         visible: root.appBackend
-            && root.appBackend.progressVisible
+            && root.appBackend.workflow.progressVisible
             && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive)
         height: modeProgressPanel.implicitHeight
 
@@ -3629,7 +3629,7 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("undo") }
     Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("redo") }
     Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProjectFromShortcut() }
-    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
+    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.subtitles.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
 
     Connections {
         target: root.appBackend
@@ -3641,7 +3641,7 @@ ApplicationWindow {
         root.syncSettings()
     }
     onClosing: function(close) {
-        if (root.appBackend.running && root.appBackend.activeJob === "update") {
+        if (root.appBackend.running && root.appBackend.workflow.activeJob === "update") {
             close.accepted = false
             return
         }

@@ -1,0 +1,66 @@
+# UIテスト見直し（初回）
+
+## 対象と方針
+
+保存、Undo／Redo、削除、分割、書き出し、処理停止について、既存GUIテストと画面の接続を確認した。全UI操作の網羅性を認定するレビューではない。配置や内部コードを固定するより、利用者の操作と結果を検証する。
+
+比較元: `4467c585a8d6906831d82929ea86f13be57c1756`。
+
+## 優先して対応したい点
+
+### 1. 拡大字幕編集の入力直後の保存・書き出し
+
+macOSのオフスクリーンGUIテストで、文章を編集して保存・書き出しをクリックしても、保存内容が編集前のままになる。変更前でも次の3ケースが再現した。
+
+- `test_project_save_restart_reload_e2e_preserves_edits_and_unsaved_switch`
+- `test_qml_multiline_editor_live_previews_and_saves_manual_break`
+- `test_editor_render_e2e_saves_edits_and_burns_subtitles`
+
+`MainWorkflowScreen.qml` の拡大字幕入力はフォーカスを失う際に本文をバックエンドへ反映する。保存ボタンは直接 `saveProject()` を呼ぶ。フォーカス移動に依存する確定順序が原因候補。テストは実クリックを使うが、入力自体は `setProperty("text", ...)` であるため、実キー入力およびWindows実画面での再現範囲は未確認。
+
+次は入力確定と保存・書き出しの順序を検証する。テスト側で事前に別コントロールへフォーカスを移して成功させるだけの修正はしない。
+
+### 2. 一時ディレクトリのパス比較がmacOSの表記差で失敗する
+
+`/var/...` と解決後の `/private/var/...` を直接比較しているため、同じファイルでも既存ケースが失敗する。代表例は `test_changing_export_directory_preserves_editor_and_autosave_path`。次は共有GUIテストセッションの一時ルートを正規化するか、ファイル同一性を検証する比較へ整理する。画面に表示するパスの契約とは分けて扱う。
+
+`test_output_unset_qml_offers_export_and_distinct_save_locations` はパス比較失敗後にポップアップの後処理を飛ばし、後続のショート画面検索にも失敗する。失敗時の後処理も確認する。
+
+### 3. 字幕操作のボタン接続に検証の空白があった
+
+削除・履歴操作にはバックエンド直接呼び出しのテストがあるが、通常編集画面のボタンから一連の結果を確認する検証が不足していた。今回、既存GUIテストモジュールに以下を追加した。
+
+- 最後の字幕を削除 → 操作可否更新 → Undo → Redo → 保存 → 再読込
+- Undo後に別の字幕を追加 → 古いRedoが無効になる
+- 保存失敗 → 元ファイル・未保存編集の保持 → 同じ保存ボタンで再試行
+- 再生位置が字幕の端・範囲外では分割不可 → 中央で分割 → Undo
+
+いずれも対象ボタンを実クリックし、操作本体をモックしない。保存失敗の注入と、このケースの自動保存タイマー開始だけをモックする。再読込と再生位置設定はバックエンドAPIを利用する。
+
+## 既存テストを活用する領域
+
+| 操作 | 確認した既存テスト・検証内容 |
+| --- | --- |
+| 保存・再読込 | `test_project_save_restart_reload_e2e_preserves_edits_and_unsaved_switch`。今回、上記の既存失敗を確認 |
+| 書き出し | `test_editor_render_e2e_saves_edits_and_burns_subtitles` など、動画出力までの検証あり。上記の入力確定に課題 |
+| 処理停止 | `test_processing_cancel_e2e_stops_process_and_restores_gui`。子プロセスの停止と操作復帰を検証 |
+| カット | `test_workspace_cut_mode_adds_and_undoes_a_selected_range`。画面からの追加と取り消しを検証 |
+| 処理中の操作可否 | ショート画面には `test_short_mode_mutation_controls_follow_running_state` あり。全編集画面への網羅性は未確認 |
+
+## 検証結果
+
+環境: macOS、Python 3.13.3、PySide6 6.11.2、Qt offscreen/software。
+
+- 追加4ケース: すべて成功。
+- `tests.test_gui_editor` 全199ケース: 183ケース成功、既存16ケース失敗（サブケースを含む失敗報告19件）。
+- 失敗した16ケースを変更前の同一コミットで再実行: 同じ19件の失敗を確認。
+- Ruff、CIテスト分類検証、`git diff --check`: 成功。
+- Windowsでの再検証は未実施。本体コードの変更や失敗テストの除外は行っていない。
+
+実行コマンド（GUI依存導入済みのPython環境で実行）:
+
+```sh
+python -m unittest tests.test_gui_editor -v
+python -m ruff check --no-cache tests/test_gui_editor.py
+python scripts/run_ci_tests.py --validate
+```

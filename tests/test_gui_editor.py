@@ -5964,7 +5964,11 @@ class GuiEditorRegressionTests(unittest.TestCase):
 
     def test_backend_apply_update_starts_update_command(self) -> None:
         self.app._update_info = self._fake_update_info()
-        with patch.object(self.app.process, "start") as start:
+        with (
+            patch("sys.platform", "win32"),
+            patch("shutil.which", return_value="powershell.exe"),
+            patch.object(self.app.process, "start") as start,
+        ):
             self.app.applyUpdate()
             start.assert_called_once()
             program, args = start.call_args[0]
@@ -5987,6 +5991,20 @@ class GuiEditorRegressionTests(unittest.TestCase):
         self.assertFalse(self.app.running)
         self.assertEqual(self.app.stage, "UPDATE")
         self.assertIn("完了", self.app.status)
+
+    def test_backend_unsupported_update_does_not_save_or_start(self) -> None:
+        self.app._update_info = self._fake_update_info()
+        with (
+            patch("sys.platform", "darwin"),
+            patch.object(self.app, "saveProject") as save_project,
+            patch.object(self.app, "saveSettings") as save_settings,
+            patch.object(self.app, "_start_command") as start,
+        ):
+            self.app.applyUpdate()
+            save_project.assert_not_called()
+            save_settings.assert_not_called()
+            start.assert_not_called()
+        self.assertIn("未対応", self.app.status)
 
     def test_backend_apply_update_blocked_when_project_dirty(self) -> None:
         self.app._update_info = self._fake_update_info()

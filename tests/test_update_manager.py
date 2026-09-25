@@ -143,23 +143,16 @@ class UpdateManagerTests(unittest.TestCase):
 
 
 class PlatformUpdateTests(unittest.TestCase):
-    def test_non_windows_does_not_select_windows_installer(self):
-        payload = {
-            "tag_name": "v1.2.3",
-            "assets": [{"name": "SubtitleEditBay-Setup.exe", "browser_download_url": "https://example.test/setup.exe"}],
-        }
+    def test_non_windows_rejects_update_check_before_network_access(self):
         for platform in ("darwin", "linux"):
             with (
                 self.subTest(platform=platform),
                 patch("sys.platform", platform),
-                patch(
-                    "src.updater.urllib.request.urlopen",
-                    return_value=io.BytesIO(json.dumps(payload).encode()),
-                ),
+                patch("src.updater.urllib.request.urlopen") as urlopen,
             ):
-                info = updater.fetch_latest_release(Path("."))
-                self.assertEqual(info.package_type, "archive")
-                self.assertTrue(info.download_url.endswith(".zip"))
+                with self.assertRaisesRegex(updater.UpdaterError, "未対応"):
+                    updater.fetch_latest_release(Path("."))
+                urlopen.assert_not_called()
 
     def test_unsupported_installer_handoff_fails_before_launch(self):
         from src.update_manager import UpdatePackageError

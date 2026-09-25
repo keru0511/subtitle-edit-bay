@@ -4059,13 +4059,17 @@ class EditBayBackend(LegacyEditBayBackend):
             else:
                 self.downloadUpdate()
             return
+        try:
+            command = updater.launch_update_script(
+                self.workspace_root, self._update_info.download_url
+            )
+        except updater.UpdaterError as error:
+            self._set_status(str(error), "ERROR")
+            return
         if self._project is not None and not self.saveProject():
             self._set_status("プロジェクトを保存できませんでした", "ERROR")
             return
         self.saveSettings(self._settings)
-        command = updater.launch_update_script(
-            self.workspace_root, self._update_info.download_url
-        )
         self._start_command(command, "update", "アプリケーションを更新しています")
 
     @Slot()

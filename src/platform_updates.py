@@ -57,3 +57,9 @@ def build_installer_command(
             str(result_path),
         ]
     raise ValueError("このOSのインストーラー更新は未対応です")
+
+
+def require_supported_update() -> None:
+    """更新方式が未実装のOSでは、取得・書換え・起動の前に拒否する。"""
+    if sys.platform != "win32":
+        raise ValueError("このOSの自動更新は未対応です")

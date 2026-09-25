@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import math
+import io
+from contextlib import redirect_stdout
 from array import array
 import json
 import tempfile
@@ -14,11 +16,13 @@ from scripts.benchmark_transcription import (
     align_characters,
     apply_effect,
     merge_reports,
+    main,
     normalize_text,
     prepare_audio,
     quality_failures,
     score_transcript,
     score_recording,
+    score_word_boundaries,
 )
 
 
@@ -187,6 +191,142 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
         missing = score_transcript(payload, manifest)
         self.assertEqual(missing["deletions"], 2)
         self.assertTrue(quality_failures(result, missing, manifest["limits"]))
+
+    def add_word_annotations(self):
+        # 評価器の合成テスト。実録音に人手ラベルを付けたという意味ではない。
+        self.manifest["limits"]["word_boundary_tolerance_seconds"] = 0.2
+        self.manifest["clips"][0]["word_annotation"] = {
+            "method": "human",
+            "source": "単体テスト用の人工的な正解時刻",
+            "words": [{"text": "はいはい", "start": 0.1, "end": 1.5}],
+        }
+
+    def test_unannotated_boundaries_are_unknown_not_zero(self):
+        result = score_word_boundaries(self.payload, self.manifest)
+        self.assertEqual(result["status"], "not_annotated")
+        self.assertEqual(result["reference_words"], 0)
+        self.assertIsNone(result["max_boundary_error_seconds"])
+        self.assertIsNone(result["boundary_errors"])
+
+    def test_word_boundaries_detect_shift_inside_speech_window(self):
+        self.add_word_annotations()
+        baseline = score_recording(self.payload, self.manifest)
+        self.payload["segments"][0]["words"][0].update(start=2.5, end=3.9)
+        candidate = score_recording(self.payload, self.manifest)
+        self.assertEqual(candidate["cer"], 0)
+        self.assertEqual(candidate["timing_window_errors"], 0)
+        self.assertEqual(candidate["word_boundaries"]["boundary_errors"], 1)
+        self.assertAlmostEqual(candidate["word_boundaries"]["mean_start_error_seconds"], 0.4)
+        self.assertTrue(quality_failures(baseline, candidate, self.manifest["limits"]))
+
+    def test_word_boundaries_detect_shortened_ending(self):
+        self.add_word_annotations()
+        baseline = score_recording(self.payload, self.manifest)
+        self.payload["segments"][0]["words"][0]["end"] = 2.5
+        candidate = score_recording(self.payload, self.manifest)
+        self.assertEqual(candidate["timing_window_errors"], 0)
+        self.assertEqual(candidate["word_boundaries"]["shortened_endings"], 1)
+        self.assertTrue(quality_failures(baseline, candidate, self.manifest["limits"]))
+
+    def test_word_boundaries_aggregate_character_times_and_report_coverage(self):
+        self.add_word_annotations()
+        self.payload["segments"][0]["words"] = [
+            {"word": "はい", "start": 2.1, "end": 2.6},
+            {"word": "はい", "start": 2.8, "end": 3.5},
+        ]
+        score = score_recording(self.payload, self.manifest)
+        boundary = score["word_boundaries"]
+        self.assertEqual((boundary["annotated_clips"], boundary["total_clips"]), (1, 2))
+        self.assertEqual(boundary["matched_words"], 1)
+        self.assertEqual(boundary["max_boundary_error_seconds"], 0)
+        self.assertEqual(quality_failures(score, score, self.manifest["limits"]), [])
+
+    def test_word_boundaries_do_not_hide_unmatched_or_untimed_words(self):
+        self.add_word_annotations()
+        baseline = score_recording(self.payload, self.manifest)
+        for changed in [
+            {"text": "はい", "words": [{"word": "はい", "start": 2.1, "end": 3.5}]},
+            {"text": "はいあはい", "words": [{"word": "はいあはい", "start": 2.1, "end": 3.5}]},
+            {"text": "はいはい", "words": []},
+        ]:
+            with self.subTest(changed=changed):
+                payload = copy.deepcopy(self.payload)
+                payload["segments"][0].update(changed)
+                candidate = score_recording(payload, self.manifest)
+                self.assertEqual(candidate["word_boundaries"]["unmatched_words"], 1)
+                self.assertIsNone(candidate["word_boundaries"]["max_boundary_error_seconds"])
+                self.assertTrue(quality_failures(baseline, candidate, self.manifest["limits"]))
+
+    def test_word_annotations_reject_bad_provenance_text_and_times(self):
+        self.add_word_annotations()
+        changes = [
+            {"method": "forced_alignment"},
+            {"source": ""},
+            {"words": []},
+            {"words": [{"text": "はい", "start": 0.1, "end": 1.5}]},
+            {"words": [{"text": "はいはい", "start": 0.1, "end": float("nan")}]},
+            {"words": [{"text": "はいはい", "start": 0.1, "end": 2.001}]},
+            {"words": [{"text": "はい", "start": 0.1, "end": 1.1}, {"text": "はい", "start": 1.0, "end": 1.5}]},
+        ]
+        for changed in changes:
+            with self.subTest(changed=changed):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["clips"][0]["word_annotation"].update(changed)
+                with self.assertRaises(ValueError):
+                    score_word_boundaries(self.payload, manifest)
+
+    def test_word_boundary_equivalent_spelling_preserves_interval(self):
+        self.add_word_annotations()
+        clip = self.manifest["clips"][0]
+        clip["text"] = "あとから"
+        clip["word_annotation"]["words"][0]["text"] = "あとから"
+        self.manifest["equivalent_spellings"] = {"後から": "あとから"}
+        self.payload["segments"][0].update(
+            text="後から",
+            words=[
+                {"word": "後", "start": 2.1, "end": 2.5},
+                {"word": "から", "start": 2.5, "end": 3.5},
+            ],
+        )
+        score = score_word_boundaries(self.payload, self.manifest)
+        self.assertEqual(score["matched_words"], 1)
+        self.assertEqual(score["max_boundary_error_seconds"], 0)
+
+    def test_saved_transcript_scoring_needs_no_model_and_fails_bad_boundaries(self):
+        self.add_word_annotations()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            transcript = root / "transcript.json"
+            manifest.write_text(json.dumps(self.manifest), encoding="utf-8")
+            for shortened in [False, True]:
+                with self.subTest(shortened=shortened):
+                    if shortened:
+                        self.payload["segments"][0]["words"][0]["end"] = 2.5
+                    transcript.write_text(json.dumps(self.payload), encoding="utf-8")
+                    output = root / str(shortened)
+                    arguments = [
+                        "benchmark",
+                        "--score-transcript",
+                        str(transcript),
+                        "--manifest",
+                        str(manifest),
+                        "--output",
+                        str(output),
+                    ]
+                    with (
+                        patch("sys.argv", arguments),
+                        redirect_stdout(io.StringIO()),
+                        patch("scripts.benchmark_transcription.run_revision") as run,
+                        patch("scripts.benchmark_transcription.importlib.metadata.version") as version,
+                    ):
+                        self.assertEqual(main(), int(shortened))
+                        run.assert_not_called()
+                        version.assert_not_called()
+                    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+                    self.assertEqual(report["mode"], "score_only")
+                    self.assertEqual(report["transcript_sha256"], hashlib.sha256(transcript.read_bytes()).hexdigest())
+                    self.assertIn("保存済みJSON", (output / "report.md").read_text(encoding="utf-8"))
 
     def test_audio_effects_preserve_length_and_are_deterministic(self):
         source = array("h", [1000, -1000] * 800)

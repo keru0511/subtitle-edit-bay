@@ -167,6 +167,108 @@ def score_transcript(payload: dict, manifest: dict) -> dict:
     }
 
 
+def score_word_boundaries(payload: dict, manifest: dict) -> dict:
+    """人手注釈のある単語だけを採点し、未注釈と照合不能を区別する。"""
+    reference, words = "", []
+    equivalents = manifest.get("equivalent_spellings", {})
+    annotated_clips = 0
+    for clip in manifest["clips"]:
+        text = normalize_text(clip["text"])
+        canonical, _ = canonical_spelling(text, [None] * len(text), equivalents)
+        annotation = clip.get("word_annotation")
+        if annotation is not None:
+            if annotation.get("method") != "human" or not annotation.get("source", "").strip():
+                raise ValueError("単語境界には人手注釈と出典を明記してください。")
+            entries = annotation.get("words", [])
+            if not entries or "".join(normalize_text(word["text"]) for word in entries) != text:
+                raise ValueError("単語注釈の本文が録音の正解文と一致しません。")
+            annotated_clips += 1
+            offset, previous_end = len(reference), 0.0
+            parts = []
+            for word in entries:
+                timing = validated_time(word, clip["duration"])
+                if timing is None or timing[0] >= timing[1] or timing[0] < previous_end or timing[1] > clip["duration"]:
+                    raise ValueError("単語注釈は音声内の重ならない開始・終了時刻にしてください。")
+                previous_end = timing[1]
+                normalized = normalize_text(word["text"])
+                normalized, _ = canonical_spelling(normalized, [None] * len(normalized), equivalents)
+                if not normalized:
+                    raise ValueError("単語注釈に空文字や句読点だけは使えません。")
+                parts.append(normalized)
+                words.append(
+                    {
+                        "clip_id": clip.get("id", str(annotated_clips)),
+                        "text": word["text"],
+                        "reference_start": offset,
+                        "reference_end": offset + len(normalized),
+                        "start": clip["start"] + timing[0],
+                        "end": clip["start"] + timing[1],
+                    }
+                )
+                offset += len(normalized)
+            if "".join(parts) != canonical:
+                raise ValueError("同等表記の置換範囲をまたいで単語を分割できません。")
+        reference += canonical
+    result = {
+        "status": "not_annotated",
+        "annotated_clips": annotated_clips,
+        "total_clips": len(manifest["clips"]),
+        "reference_words": len(words),
+        "matched_words": 0,
+        "unmatched_words": 0,
+        "boundary_errors": None,
+        "shortened_endings": None,
+        "mean_start_error_seconds": None,
+        "mean_end_error_seconds": None,
+        "max_boundary_error_seconds": None,
+        "details": [],
+    }
+    if not words:
+        return result
+    tolerance = manifest["limits"]["word_boundary_tolerance_seconds"]
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("単語境界の許容誤差は有限の非負数にしてください。")
+    hypothesis, timings, _ = transcript_characters(payload, manifest["duration"])
+    hypothesis, timings = canonical_spelling(hypothesis, timings, equivalents)
+    mapping = {i: j for operation, i, j in align_characters(reference, hypothesis) if operation == "equal"}
+    start_errors, end_errors = [], []
+    result.update(status="evaluated", boundary_errors=0, shortened_endings=0)
+    for word in words:
+        indices = [mapping.get(i) for i in range(word["reference_start"], word["reference_end"])]
+        matched = all(i is not None for i in indices)
+        if matched:
+            matched = indices == list(range(indices[0], indices[0] + len(indices)))
+        actual = [timings[i] for i in indices] if matched else []
+        if not actual or any(timing is None for timing in actual):
+            result["unmatched_words"] += 1
+            result["details"].append({**word, "status": "unmatched"})
+            continue
+        start, end = min(t[0] for t in actual), max(t[1] for t in actual)
+        start_error, end_error = abs(start - word["start"]), abs(end - word["end"])
+        start_errors.append(start_error)
+        end_errors.append(end_error)
+        result["matched_words"] += 1
+        result["boundary_errors"] += max(start_error, end_error) > tolerance + 1e-9
+        result["shortened_endings"] += word["end"] - end > tolerance + 1e-9
+        result["details"].append(
+            {
+                **word,
+                "status": "matched",
+                "actual_start": start,
+                "actual_end": end,
+                "start_error_seconds": start_error,
+                "end_error_seconds": end_error,
+            }
+        )
+    if start_errors:
+        result.update(
+            mean_start_error_seconds=sum(start_errors) / len(start_errors),
+            mean_end_error_seconds=sum(end_errors) / len(end_errors),
+            max_boundary_error_seconds=max(start_errors + end_errors),
+        )
+    return result
+
+
 def score_recording(payload: dict, manifest: dict) -> dict:
     """全体の検査を維持し、発話条件ごとの悪化も独立に判定する。"""
     result = score_transcript(payload, manifest)
@@ -186,7 +288,7 @@ def score_recording(payload: dict, manifest: dict) -> dict:
                 word = {"word": char, "start": timing[0], "end": timing[1]}
                 segments.append({"text": char, "start": timing[0], "end": timing[1], "words": [word]})
         conditions[condition] = score_transcript({"segments": segments}, {**manifest, "clips": clips})
-    return {**result, "conditions": conditions}
+    return {**result, "conditions": conditions, "word_boundaries": score_word_boundaries(payload, manifest)}
 
 
 def apply_effect(part: array, rate: int, effect: dict) -> array:
@@ -228,6 +330,15 @@ def quality_failures(baseline: dict, candidate: dict, limits: dict) -> list[str]
             failures.append(f"{key}が許容値を超えました。")
     if candidate["invalid_segments"]:
         failures.append("不正な字幕時刻があります。")
+    if "word_boundaries" in candidate or "word_boundaries" in baseline:
+        old, new = baseline.get("word_boundaries", {}), candidate.get("word_boundaries", {})
+        if not old or not new or old.get("reference_words") != new.get("reference_words"):
+            failures.append("比較する単語境界の注釈数が一致しません。")
+        elif new["reference_words"]:
+            if new["unmatched_words"]:
+                failures.append("人手注釈の単語に認識違い・脱落・時刻欠損があり、境界を評価できません。")
+            if new["boundary_errors"]:
+                failures.append("単語の開始・終了時刻が人手注釈の許容誤差を超えました。")
     if "conditions" in candidate or "conditions" in baseline:
         if set(candidate.get("conditions", {})) != set(baseline.get("conditions", {})):
             failures.append("比較する発話条件が一致しません。")
@@ -347,9 +458,35 @@ def write_report(output: Path, report: dict) -> None:
     lines = [
         "# 実音声による初回文字起こし比較",
         "",
-        "認識モデル: large-v3 / CPU int8 / 日本語。素材の配置・加工条件はreport.jsonのmanifestを参照。",
+        (
+            "保存済みJSONの採点のみ。認識モデル・入力音声との対応はこの処理では検証していません。"
+            if report.get("mode") == "score_only"
+            else "認識モデル: large-v3 / CPU int8 / 日本語。素材の配置・加工条件はreport.jsonのmanifestを参照。"
+        ),
         "",
     ]
+    if "evaluation" in report:
+        score = report["evaluation"]
+        lines += ["| 指標 | 保存済みJSON |", "| --- | ---: |"]
+        for metric in ["raw_cer", "cer", "insertions", "deletions", "timing_window_errors", "untimed_characters"]:
+            lines.append(f"| {metric} | {score[metric]:.4f} |")
+        boundary = score["word_boundaries"]
+        lines += ["", f"単語境界の人手注釈: {boundary['annotated_clips']}/{boundary['total_clips']}録音。", ""]
+        if not boundary["reference_words"]:
+            lines.append("単語境界は未検証です。誤差ゼロという意味ではありません。")
+        else:
+            for metric in [
+                "reference_words",
+                "matched_words",
+                "unmatched_words",
+                "boundary_errors",
+                "shortened_endings",
+                "mean_start_error_seconds",
+                "mean_end_error_seconds",
+                "max_boundary_error_seconds",
+            ]:
+                value = boundary[metric]
+                lines.append(f"- {metric}: {'評価不能' if value is None else value}")
     if "baseline" in report and "candidate" in report:
         lines += ["| 指標 | 比較対象 | 変更後 |", "| --- | ---: | ---: |"]
         for metric in [
@@ -372,19 +509,48 @@ def write_report(output: Path, report: dict) -> None:
                 lines.append(
                     f"| {condition} | {report['baseline']['conditions'][condition]['cer']:.4f} | {score['cer']:.4f} |"
                 )
+        if "word_boundaries" in report["candidate"]:
+            boundary = report["candidate"]["word_boundaries"]
+            lines += ["", "## 人手注釈による単語境界", ""]
+            if not boundary["reference_words"]:
+                lines.append("未検証：人手で確認した単語境界がありません。時刻誤差ゼロという意味ではありません。")
+            else:
+                lines += [
+                    f"人手注釈: {boundary['annotated_clips']}/{boundary['total_clips']}録音、"
+                    f"{boundary['reference_words']}語。未注釈の録音の境界精度は未検証です。",
+                    "",
+                    "| 指標 | 比較対象 | 変更後 |",
+                    "| --- | ---: | ---: |",
+                ]
+                for metric in [
+                    "matched_words",
+                    "unmatched_words",
+                    "boundary_errors",
+                    "shortened_endings",
+                    "mean_start_error_seconds",
+                    "mean_end_error_seconds",
+                    "max_boundary_error_seconds",
+                ]:
+                    values = [report[name]["word_boundaries"][metric] for name in ["baseline", "candidate"]]
+                    display = ["評価不能" if value is None else f"{value:.4f}" for value in values]
+                    lines.append(f"| {metric} | {display[0]} | {display[1]} |")
         lines += ["", f"比較対象: `{report['baseline']['commit']}`", f"変更後: `{report['candidate']['commit']}`", ""]
-    lines += ["## 判定", ""] + (
+    lines += ["", "## 判定", ""] + (
         report.get("failures")
         or (
             ["この固定素材での回帰検査に合格。実際のゲーム実況における改善を証明するものではありません。"]
             if "baseline" in report and "candidate" in report
-            else ["片側の実認識を完了。比較判定は集約ジョブで行います。"]
+            else (
+                ["保存済みJSONはこの正解データの絶対基準に合格。新旧比較・新たな実認識は行っていません。"]
+                if "evaluation" in report
+                else ["片側の実認識を完了。比較判定は集約ジョブで行います。"]
+            )
         )
     )
     lines += [
         "",
         "raw_cerは表記差を含む値、cerは素材で明示した同等表記だけを統一した値です。",
-        "時刻評価は既知の録音配置区間からの逸脱です。単語の正解開始・終了時刻に対する誤差ではありません。",
+        "区間逸脱と、人手注釈のある単語の境界誤差は別指標です。単語境界の注釈がない録音は境界精度未検証です。",
         "条件別の区間内CERは時刻で文字を振り分けるため、時刻ずれでも悪化します。本文認識だけのCERとは区別してください。",
         "",
     ]
@@ -418,23 +584,37 @@ def main() -> int:
     parser.add_argument("--baseline-root", type=Path)
     parser.add_argument("--candidate-root", type=Path)
     parser.add_argument("--revision", choices=["baseline", "candidate"])
+    parser.add_argument("--score-transcript", type=Path, help="保存済み認識JSONを採点する。モデル推論は実行しない。")
     parser.add_argument("--merge-reports", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"))
     parser.add_argument(
         "--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "assets/asr_benchmark/manifest.json"
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.score_transcript and (args.merge_reports or args.revision or args.baseline_root or args.candidate_root):
+        parser.error("--score-transcriptは認識実行・集約オプションと同時指定できません")
     if args.merge_reports and args.revision:
         parser.error("--merge-reportsと--revisionは同時指定できません")
     revisions = [("baseline", args.baseline_root), ("candidate", args.candidate_root)]
     if args.revision:
         revisions = [(name, root) for name, root in revisions if name == args.revision]
-    if not args.merge_reports and any(root is None for _, root in revisions):
+    if not args.merge_reports and not args.score_transcript and any(root is None for _, root in revisions):
         parser.error("認識対象のcheckoutを指定してください")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     report = {"schema_version": 1, "python": sys.version, "platform": platform.platform(), "failures": []}
     try:
+        if args.score_transcript:
+            report["mode"] = "score_only"
+            report["manifest"] = json.loads(args.manifest.read_text(encoding="utf-8"))
+            transcript_bytes = args.score_transcript.read_bytes()
+            report["transcript_sha256"] = hashlib.sha256(transcript_bytes).hexdigest()
+            score = score_recording(json.loads(transcript_bytes), report["manifest"])
+            report["evaluation"] = score
+            # 比較対象がないので絶対基準だけを判定する。回帰改善を主張しない。
+            report["failures"] = quality_failures(score, score, report["manifest"]["limits"])
+            write_report(output, report)
+            return 1 if report["failures"] else 0
         if args.merge_reports:
             report = merge_reports(*(json.loads(path.read_text(encoding="utf-8")) for path in args.merge_reports))
             write_report(output, report)

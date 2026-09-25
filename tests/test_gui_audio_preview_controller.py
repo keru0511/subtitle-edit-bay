@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from src.audio_preview_cache import (
     AudioPreviewCacheResult,
@@ -101,6 +103,11 @@ class AudioPreviewControllerTests(unittest.TestCase):
             controller.pending_levels.clear()
 
     def test_cache_hit_miss_completion_and_clear_keep_generation_contract(self) -> None:
+        for complete_immediately in (False, True):
+            with self.subTest(complete_immediately=complete_immediately):
+                self._check_cache_generation_contract(complete_immediately)
+
+    def _check_cache_generation_contract(self, complete_immediately: bool) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = self._project(root)
@@ -131,12 +138,34 @@ class AudioPreviewControllerTests(unittest.TestCase):
 
             first_entry = audio_preview_cache_entries(project, root / "cache")[0]
             first_entry.output_path.unlink()
-            controller.prepare_preview()
-            future = controller.cache_future
-            self.assertIsNotNone(future)
-            if future is not None:
-                result = future.result(timeout=2)
-                controller.apply_audio_preview_cache(controller.cache_request, result)
+            future: Future[AudioPreviewCacheResult] = Future()
+
+            results: list[AudioPreviewCacheResult] = []
+
+            def submit_prepare(
+                function: object,
+                snapshot: object,
+                cache_root: Path,
+                *,
+                protected_paths: list[Path],
+            ) -> Future[AudioPreviewCacheResult]:
+                self.assertIs(function, prepare)
+                self.assertEqual(snapshot, project)
+                self.assertIsNot(snapshot, project)
+                result = prepare(project, cache_root, protected_paths=protected_paths)
+                results.append(result)
+                if complete_immediately:
+                    future.set_result(result)
+                return future
+
+            # コールバック登録前の完了と登録後の完了を、スレッドの速度に依存せず検証する。
+            with patch.object(controller._cache_executor, "submit", side_effect=submit_prepare):
+                controller.prepare_preview()
+                if not complete_immediately:
+                    self.assertIs(controller.cache_future, future)
+                    self.assertTrue(controller.preparing)
+                    future.set_result(results[0])
+            self.assertIsNone(controller.cache_future)
             self.assertFalse(controller.preparing)
             self.assertEqual(calls, [root / "cache"])
             self.assertTrue(controller.preview_complete)

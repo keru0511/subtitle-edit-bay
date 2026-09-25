@@ -4,7 +4,36 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TypedDict
+
+from .data_boundary import decode_json, is_object_mapping, is_object_sequence
+
+
+class DictionarySourcePayload(TypedDict, total=False):
+    """JSONに保存する出典。空のフィールドは省略する。"""
+
+    url: str
+    title: str
+    where_found: list[str]
+
+
+class DictionaryTermPayload(TypedDict):
+    """検証済みの辞書エントリーを保存する形式。"""
+
+    term: str
+    aliases: list[str]
+    type_hint: str
+    enabled: bool
+    score: float
+    sources: list[DictionarySourcePayload]
+
+
+class TranscriptionDictionaryPayload(TypedDict):
+    """辞書全体の保存形式。"""
+
+    game_title: str
+    terms: list[DictionaryTermPayload]
+    scope: str
 
 
 class TranscriptionDictionaryError(ValueError):
@@ -17,8 +46,8 @@ class DictionarySource:
     title: str = ""
     where_found: tuple[str, ...] = ()
 
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {}
+    def to_json(self) -> DictionarySourcePayload:
+        payload: DictionarySourcePayload = {}
         if self.url:
             payload["url"] = self.url
         if self.title:
@@ -37,7 +66,7 @@ class DictionaryTerm:
     score: float = 1.0
     sources: tuple[DictionarySource, ...] = ()
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> DictionaryTermPayload:
         return {
             "term": self.term,
             "aliases": list(self.aliases),
@@ -54,7 +83,7 @@ class TranscriptionDictionary:
     terms: tuple[DictionaryTerm, ...] = ()
     scope: str = "game"
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> TranscriptionDictionaryPayload:
         return {
             "game_title": self.game_title,
             "terms": [term.to_json() for term in self.terms],
@@ -62,7 +91,7 @@ class TranscriptionDictionary:
         }
 
 
-def _clean_text(value: Any, field: str, *, required: bool = False, max_length: int = 256) -> str:
+def _clean_text(value: object, field: str, *, required: bool = False, max_length: int = 256) -> str:
     if value is None and not required:
         return ""
     if not isinstance(value, str):
@@ -73,10 +102,10 @@ def _clean_text(value: Any, field: str, *, required: bool = False, max_length: i
     return cleaned
 
 
-def _clean_text_list(value: Any, field: str, *, exclude: set[str] | None = None) -> tuple[str, ...]:
+def _clean_text_list(value: object, field: str, *, exclude: set[str] | None = None) -> tuple[str, ...]:
     if value is None:
         return ()
-    if not isinstance(value, list):
+    if not isinstance(value, list) or not is_object_sequence(value):
         raise TranscriptionDictionaryError(f"{field} must be an array")
     blocked = exclude or set()
     result: list[str] = []
@@ -90,7 +119,7 @@ def _clean_text_list(value: Any, field: str, *, exclude: set[str] | None = None)
     return tuple(result)
 
 
-def _clean_bool(value: Any, field: str, default: bool) -> bool:
+def _clean_bool(value: object, field: str, default: bool) -> bool:
     if value is None:
         return default
     if not isinstance(value, bool):
@@ -98,7 +127,7 @@ def _clean_bool(value: Any, field: str, default: bool) -> bool:
     return value
 
 
-def _clean_score(value: Any, field: str) -> float:
+def _clean_score(value: object, field: str) -> float:
     if value is None:
         return 1.0
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -109,8 +138,8 @@ def _clean_score(value: Any, field: str) -> float:
     return round(score, 4)
 
 
-def _normalize_source(value: Any, field: str) -> DictionarySource:
-    if not isinstance(value, Mapping):
+def _normalize_source(value: object, field: str) -> DictionarySource:
+    if not is_object_mapping(value):
         raise TranscriptionDictionaryError(f"{field} must be an object")
     return DictionarySource(
         url=_clean_text(value.get("url", ""), f"{field}.url", max_length=2048),
@@ -119,17 +148,17 @@ def _normalize_source(value: Any, field: str) -> DictionarySource:
     )
 
 
-def _normalize_sources(value: Any, field: str) -> tuple[DictionarySource, ...]:
+def _normalize_sources(value: object, field: str) -> tuple[DictionarySource, ...]:
     if value is None:
         return ()
-    if not isinstance(value, list):
+    if not isinstance(value, list) or not is_object_sequence(value):
         raise TranscriptionDictionaryError(f"{field} must be an array")
     return tuple(_normalize_source(item, f"{field}[{index}]") for index, item in enumerate(value))
 
 
-def normalize_dictionary_term(value: Any, index: int) -> DictionaryTerm:
+def normalize_dictionary_term(value: object, index: int) -> DictionaryTerm:
     field = f"terms[{index}]"
-    if not isinstance(value, Mapping):
+    if not is_object_mapping(value):
         raise TranscriptionDictionaryError(f"{field} must be an object")
     term = _clean_text(value.get("term"), f"{field}.term", required=True)
     aliases = _clean_text_list(value.get("aliases", []), f"{field}.aliases", exclude={term})
@@ -143,11 +172,11 @@ def normalize_dictionary_term(value: Any, index: int) -> DictionaryTerm:
     )
 
 
-def transcription_dictionary_from_mapping(payload: Mapping[str, Any]) -> TranscriptionDictionary:
-    if not isinstance(payload, Mapping):
+def transcription_dictionary_from_mapping(payload: object) -> TranscriptionDictionary:
+    if not is_object_mapping(payload):
         raise TranscriptionDictionaryError("dictionary root must be an object")
     raw_terms = payload.get("terms")
-    if not isinstance(raw_terms, list):
+    if not isinstance(raw_terms, list) or not is_object_sequence(raw_terms):
         raise TranscriptionDictionaryError("terms must be an array")
     scope = payload.get("scope", "game")
     if not isinstance(scope, str) or scope not in {"global", "game", "project"}:
@@ -162,10 +191,10 @@ def transcription_dictionary_from_mapping(payload: Mapping[str, Any]) -> Transcr
 def load_transcription_dictionary(path: str | Path) -> TranscriptionDictionary:
     dictionary_path = Path(path)
     try:
-        payload = json.loads(dictionary_path.read_text(encoding="utf-8"))
+        payload = decode_json(dictionary_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise TranscriptionDictionaryError(f"invalid dictionary JSON: {dictionary_path}") from error
-    if not isinstance(payload, Mapping):
+    if not is_object_mapping(payload):
         raise TranscriptionDictionaryError("dictionary root must be an object")
     return transcription_dictionary_from_mapping(payload)
 

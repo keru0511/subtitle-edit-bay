@@ -7,60 +7,11 @@ from pathlib import Path
 
 from src.subtitle_project import SubtitleProjectError, create_project, load_project, save_project
 from src.transcription_context import (
-    TranscriptionContextError,
     normalize_transcription_context,
-    transcription_context_from_mapping,
 )
 
 
 class TranscriptionContextTests(unittest.TestCase):
-    def test_default_context_has_stable_project_shape(self) -> None:
-        self.assertEqual(
-            normalize_transcription_context(),
-            {
-                "game_title": "",
-                "game_notes": "",
-                "creator_terms": [],
-                "dictionary_path": None,
-                "dictionary_confirmed": False,
-                "web_dictionary_enabled": False,
-                "web_dictionary_candidates": [],
-                "web_dictionary_terms": [],
-                "web_dictionary_candidate_metadata": [],
-            },
-        )
-
-    def test_context_normalizes_terms_paths_and_booleans(self) -> None:
-        context = transcription_context_from_mapping({
-            "game_title": "  Splatoon 3  ",
-            "game_notes": "  サーモンラン  ",
-            "creator_terms": ["", "ナワバリバトル", "ナワバリバトル", "スプラシューター"],
-            "dictionary_path": " dictionaries/splatoon.json ",
-            "dictionary_confirmed": True,
-            "web_dictionary_enabled": True,
-            "web_dictionary_candidates": ["候補A", "候補A", "候補B", ""],
-            "web_dictionary_terms": ["web語", "web語", " "],
-        })
-
-        self.assertEqual(context.game_title, "Splatoon 3")
-        self.assertEqual(context.game_notes, "サーモンラン")
-        self.assertEqual(context.creator_terms, ("ナワバリバトル", "スプラシューター"))
-        self.assertEqual(context.dictionary_path, "dictionaries/splatoon.json")
-        self.assertTrue(context.dictionary_confirmed)
-        self.assertTrue(context.web_dictionary_enabled)
-        self.assertEqual(context.web_dictionary_candidates, ("候補A", "候補B"))
-        self.assertEqual(context.web_dictionary_terms, ("web語",))
-
-    def test_context_rejects_invalid_shapes(self) -> None:
-        with self.assertRaises(TranscriptionContextError):
-            normalize_transcription_context({"creator_terms": "not-an-array"})
-        with self.assertRaises(TranscriptionContextError):
-            normalize_transcription_context({"dictionary_confirmed": "yes"})
-        with self.assertRaises(TranscriptionContextError):
-            normalize_transcription_context({"game_title": 123})
-        with self.assertRaises(TranscriptionContextError):
-            normalize_transcription_context({"web_dictionary_candidates": "bad"})
-
     def test_project_context_round_trips_through_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

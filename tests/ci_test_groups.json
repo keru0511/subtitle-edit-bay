@@ -117,6 +117,7 @@
         "test_transcript_cache",
         "test_transcription_context",
         "test_transcription_context_config",
+        "test_transcription_context_models",
         "test_transcription_dictionary",
         "test_transcription_dictionary_suggestions",
         "test_transcription_execution",

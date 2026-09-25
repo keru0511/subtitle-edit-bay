@@ -5,6 +5,7 @@ import unittest
 from src.transcription_web_dictionary import (
     build_web_dictionary_candidate_metadata,
     build_web_dictionary_candidates,
+    normalize_web_dictionary_candidate_metadata,
 )
 
 
@@ -41,6 +42,11 @@ class TranscriptionWebDictionaryTests(unittest.TestCase):
         self.assertEqual(by_term["Splatoon 3"]["source"], "title")
         self.assertEqual(by_term["Splatoon 3"]["score"], "1.00")
         self.assertEqual(by_term["Bomba"]["source"], "snippet:1")
+
+    def test_metadata_normalizer_remains_available_from_compatibility_module(self) -> None:
+        from src.transcription_metadata import normalize_web_dictionary_candidate_metadata as normalize_metadata
+
+        self.assertIs(normalize_web_dictionary_candidate_metadata, normalize_metadata)
 
 
 if __name__ == "__main__":

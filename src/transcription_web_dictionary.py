@@ -1,10 +1,15 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import re
-from typing import Any, Mapping, Sequence
+from typing import Sequence
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from .transcription_metadata import (
+    normalize_web_dictionary_term as _normalize_term,
+    normalize_web_dictionary_candidate_metadata as normalize_web_dictionary_candidate_metadata,
+)
 
 
 _CJK_TERM_RE = re.compile(r"[\u4e00-\u9fff]{2,}|[\u3040-\u30ff]{2,}")
@@ -54,17 +59,6 @@ def fetch_web_dictionary_source(url: str, *, timeout: float = 10.0) -> str:
     except (OSError, URLError) as error:
         raise ValueError(f"failed to fetch web dictionary source: {error}") from error
     return _strip_html(raw.decode(charset, errors="replace"))
-
-
-def _normalize_term(term: str) -> str:
-    cleaned = "".join(char for char in term.strip() if char >= " " and char != "\x7f")
-    normalized = " ".join(cleaned.split()).strip("- ")
-    if not normalized:
-        return ""
-    ascii_parts = normalized.split()
-    if all(part.isalpha() and part.islower() for part in ascii_parts):
-        return " ".join(part.capitalize() for part in ascii_parts)
-    return normalized
 
 
 def _is_usable_term(term: str) -> bool:
@@ -201,38 +195,3 @@ def build_web_dictionary_candidates(
         max_terms=max_terms,
         snippets=snippets,
     ))
-
-
-def normalize_web_dictionary_candidate_metadata(
-    value: Any,
-    field: str,
-    *,
-    max_items: int,
-) -> tuple[dict[str, str], ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str) or not isinstance(value, Sequence):
-        raise TypeError(f"{field} must be an array of source objects")
-
-    seen: set[tuple[str, str]] = set()
-    terms: list[dict[str, str]] = []
-    for index, raw in enumerate(value):
-        if index >= max_items:
-            break
-        if not isinstance(raw, Mapping):
-            raise TypeError(f"{field} must contain only objects")
-        term = _normalize_term(str(raw.get("term", "")))
-        source = _normalize_term(str(raw.get("source", ""))) or "unknown"
-        raw_score = raw.get("score", "0.00")
-        try:
-            score = f"{float(raw_score):.2f}"
-        except (TypeError, ValueError):
-            score = "0.00"
-        if not term:
-            continue
-        key = (term.casefold(), source.casefold())
-        if key in seen:
-            continue
-        seen.add(key)
-        terms.append({"term": term, "source": source, "score": score})
-    return tuple(terms)

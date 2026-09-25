@@ -10,9 +10,6 @@ from src.craig_pipeline import CraigTranscriptionBatch
 from src.gui_state import build_gui_render_command, build_gui_transcribe_command
 from src.subtitle_project import (
     SubtitleProjectError,
-    AudioMix,
-    AudioMixChannel,
-    SpeakerInfo,
     create_project,
     derive_ass_path,
     derive_project_path,
@@ -24,8 +21,6 @@ from src.subtitle_project import (
     save_project_model,
     save_project,
     SubtitleProject,
-    SubtitleSegment,
-    WaveformInfo,
     waveform_peaks_from_samples,
 )
 from src.subtitle_workflow import (
@@ -43,49 +38,17 @@ from src.subtitle_workflow import (
 
 
 class SubtitleProjectTests(unittest.TestCase):
-    def test_subtitle_segment_model_round_trip(self) -> None:
-        model = SubtitleSegment.from_json(
-            {
-                "id": "seg-1",
-                "start": 0.1,
-                "end": 0.9,
-                "text": " hello ",
-                "speaker": "Oz",
-                "source_speaker": "alice",
-            },
-            index=0,
-        )
-        restored = SubtitleSegment.from_json(model.to_json(), index=0)
-        self.assertEqual(restored.to_json(), model.to_json())
+    def test_schema_exports_keep_existing_import_and_error_identity(self) -> None:
+        from src import subtitle_project, subtitle_project_schema, subtitle_line_count, subtitle_line_count_config
 
-    def test_speaker_and_waveform_models_round_trip(self) -> None:
-        speaker = SpeakerInfo.from_json(
-            {"name": "alice", "style": "Speaker_Alice", "track_key": "craig:alice", "file_name": "1-alice.flac", "path": "/tmp/1-alice.flac", "color": "#445566"}
-        )
-        self.assertEqual(
-            speaker.to_json(),
-            {"name": "alice", "style": "Speaker_Alice", "track_key": "craig:alice", "file_name": "1-alice.flac", "path": "/tmp/1-alice.flac", "color": "#445566"},
-        )
-        waveform = WaveformInfo.from_json(
-            {"speaker": "Oz", "style": "Oz", "color": "#445566", "source_path": "/tmp/audio.wav", "offset_seconds": 0.2, "duration_seconds": 1.5, "sample_rate": 400, "peaks": [0.1, 0.2]}
-        )
-        self.assertEqual(waveform.source_path, "/tmp/audio.wav")
-        self.assertEqual(waveform.peaks, [0.1, 0.2])
-
-    def test_audio_mix_model_round_trip(self) -> None:
-        mix = AudioMix.from_json(
-            {
-                "version": 1,
-                "customized": True,
-                "channels": [
-                    {"id": "video:0:a:0", "kind": "video", "label": "0:a:0", "selector": "0:a:0", "enabled": True, "muted": False, "solo": False, "volume_percent": 100.0}
-                ],
-            }
-        )
-        payload = mix.to_json()
-        self.assertEqual(payload["version"], 1)
-        self.assertEqual(len(payload["channels"]), 1)
-        self.assertIsInstance(AudioMixChannel.from_json(payload["channels"][0]), AudioMixChannel)
+        for name in (
+            "SubtitleSegment", "SpeakerInfo", "WaveformInfo", "AudioMixChannel", "AudioMix",
+            "SubtitleProjectError", "normalize_segment", "_finite_number", "_subtitle_line_count",
+        ):
+            self.assertIs(getattr(subtitle_project, name), getattr(subtitle_project_schema, name))
+        self.assertIs(subtitle_line_count.normalize_subtitle_line_count, subtitle_line_count_config.normalize_subtitle_line_count)
+        with self.assertRaises(SubtitleProjectError):
+            create_project(video_path="video.mkv", segments=[{"words": [None]}])
 
     def test_project_model_parses_and_round_trips_payload(self) -> None:
         payload = {

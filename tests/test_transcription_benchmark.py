@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
+from array import array
 import json
 import tempfile
 import unittest
@@ -10,11 +12,13 @@ from unittest.mock import patch
 
 from scripts.benchmark_transcription import (
     align_characters,
+    apply_effect,
     merge_reports,
     normalize_text,
     prepare_audio,
     quality_failures,
     score_transcript,
+    score_recording,
 )
 
 
@@ -184,10 +188,56 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
         self.assertEqual(missing["deletions"], 2)
         self.assertTrue(quality_failures(result, missing, manifest["limits"]))
 
+    def test_audio_effects_preserve_length_and_are_deterministic(self):
+        source = array("h", [1000, -1000] * 800)
+        quiet = apply_effect(source, 16000, {"gain_db": -18})
+        self.assertEqual(len(quiet), len(source))
+        self.assertAlmostEqual(quiet[0] / source[0], 10 ** (-18 / 20), places=3)
+        for effect in [{"noise_snr_db": 15, "seed": 447}, {"tone_snr_db": 15}]:
+            first = apply_effect(source, 16000, effect)
+            self.assertEqual(first, apply_effect(source, 16000, effect))
+            self.assertEqual(len(first), len(source))
+            signal = sum(value * value for value in source)
+            noise = sum((actual - original) ** 2 for actual, original in zip(first, source))
+            self.assertAlmostEqual(10 * math.log10(signal / noise), 15, places=1)
+        with self.assertRaises(ValueError):
+            apply_effect(source, 16000, {"noize_snr_db": 15})
+
+    def test_effects_do_not_overflow_pcm(self):
+        result = apply_effect(array("h", [32767, -32768] * 100), 16000, {"noise_snr_db": 0})
+        self.assertTrue(all(-32768 <= value <= 32767 for value in result))
+
+    def test_condition_regression_cannot_hide_in_overall_average(self):
+        self.manifest["clips"][0]["condition"] = "clean"
+        self.manifest["clips"][1]["condition"] = "low_volume"
+        old = copy.deepcopy(self.payload)
+        old["segments"][0]["text"] = "はいは"
+        old["segments"][0]["words"][0]["word"] = "はいは"
+        new = copy.deepcopy(self.payload)
+        new["segments"][1]["text"] = "進ます"
+        new["segments"][1]["words"][0]["word"] = "進ます"
+        baseline = score_recording(old, self.manifest)
+        candidate = score_recording(new, self.manifest)
+        self.assertEqual(baseline["cer"], candidate["cer"])
+        self.assertTrue(
+            any("low_volume" in failure for failure in quality_failures(baseline, candidate, self.manifest["limits"]))
+        )
+
+    def test_condition_scoring_does_not_hide_untimed_or_silent_text(self):
+        baseline = score_recording(self.payload, self.manifest)
+        self.payload["segments"].append({"text": "いいいい", "start": 7, "end": 8, "words": []})
+        candidate = score_recording(self.payload, self.manifest)
+        self.assertEqual(candidate["untimed_characters"], 4)
+        self.assertTrue(quality_failures(baseline, candidate, self.manifest["limits"]))
+
     def test_checked_in_audio_hashes_match(self) -> None:
         directory = Path(__file__).resolve().parents[1] / "assets/asr_benchmark"
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(len(manifest["clips"]), 4)
+        self.assertEqual(len(manifest["clips"]), 8)
+        self.assertEqual(
+            {clip["condition"] for clip in manifest["clips"]},
+            {"clean", "low_volume", "speech_noise", "tonal_background", "band_limited"},
+        )
         for clip in manifest["clips"]:
             self.assertEqual(hashlib.sha256((directory / clip["audio"]).read_bytes()).hexdigest(), clip["sha256"])
 

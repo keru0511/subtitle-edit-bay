@@ -1,9 +1,9 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": "https://github.com/kaiidams/Kokoro-Speech-Dataset/releases/tag/1.3",
   "sample_archive_sha256": "e3e6e76675d7fa9bf5aca0d857c610ea6583be2c6c0ec28d1e7bc0b1a094d0f6",
   "sample_rate": 16000,
-  "duration": 70,
+  "duration": 120,
   "noise_intervals": [
     [
       23,
@@ -22,7 +22,8 @@
       "sha256": "79ce683785cffef5290a0647e8495921d5d051c45e1fcb5ccfe9725175688e62",
       "text": "聞くともなしに村のいろいろな話が耳にはいる。",
       "start": 2,
-      "duration": 3.436553
+      "duration": 3.436553,
+      "condition": "clean"
     },
     {
       "id": "kokoro-by-soseki-natsume-03253",
@@ -30,7 +31,8 @@
       "sha256": "3bdea401178a4b58284da85323443b7e28d5d661b4a209e84ea4b3d52eaf53f9",
       "text": "叔父はお前のうちだからといって、聞きませんでした。",
       "start": 14,
-      "duration": 4.028662
+      "duration": 4.028662,
+      "condition": "clean"
     },
     {
       "id": "kokoro-by-soseki-natsume-03491",
@@ -38,7 +40,8 @@
       "sha256": "842defbacf39bcbdef3abe9bda4173b6e089551ca45d7fe76f682ab390cbe50b",
       "text": "あとからこの友人に送ってもらった金だけなのです。",
       "start": 32,
-      "duration": 3.541043
+      "duration": 3.541043,
+      "condition": "clean"
     },
     {
       "id": "kokoro-by-soseki-natsume-04773",
@@ -46,7 +49,60 @@
       "sha256": "91447901661a178ca587f6a340ea1b5cec85372fed0d9595873ac1490df96603",
       "text": "うんうん汗を流しながら歩き出したのです。しかし私は",
       "start": 46,
-      "duration": 4.493061
+      "duration": 4.493061,
+      "condition": "clean"
+    },
+    {
+      "id": "inakakyoshi-by-katai-tayama-03416-low_volume",
+      "audio": "inakakyoshi-by-katai-tayama-03416.flac",
+      "sha256": "79ce683785cffef5290a0647e8495921d5d051c45e1fcb5ccfe9725175688e62",
+      "text": "聞くともなしに村のいろいろな話が耳にはいる。",
+      "start": 74,
+      "duration": 3.436553,
+      "condition": "low_volume",
+      "effect": {
+        "gain_db": -18
+      }
+    },
+    {
+      "id": "kokoro-by-soseki-natsume-03253-speech_noise",
+      "audio": "kokoro-by-soseki-natsume-03253.flac",
+      "sha256": "3bdea401178a4b58284da85323443b7e28d5d661b4a209e84ea4b3d52eaf53f9",
+      "text": "叔父はお前のうちだからといって、聞きませんでした。",
+      "start": 84,
+      "duration": 4.028662,
+      "condition": "speech_noise",
+      "effect": {
+        "noise_snr_db": 15,
+        "seed": 447
+      }
+    },
+    {
+      "id": "kokoro-by-soseki-natsume-03491-tonal_background",
+      "audio": "kokoro-by-soseki-natsume-03491.flac",
+      "sha256": "842defbacf39bcbdef3abe9bda4173b6e089551ca45d7fe76f682ab390cbe50b",
+      "text": "あとからこの友人に送ってもらった金だけなのです。",
+      "start": 94,
+      "duration": 3.541043,
+      "condition": "tonal_background",
+      "effect": {
+        "tone_snr_db": 15
+      }
+    },
+    {
+      "id": "kokoro-by-soseki-natsume-04773-band_limited",
+      "audio": "kokoro-by-soseki-natsume-04773.flac",
+      "sha256": "91447901661a178ca587f6a340ea1b5cec85372fed0d9595873ac1490df96603",
+      "text": "うんうん汗を流しながら歩き出したのです。しかし私は",
+      "start": 104,
+      "duration": 4.493061,
+      "condition": "band_limited",
+      "effect": {
+        "bandpass_hz": [
+          300,
+          3000
+        ]
+      }
     }
   ],
   "limits": {
@@ -63,5 +119,11 @@
     "と言って": "といって",
     "後から": "あとから",
     "おじは": "叔父は"
-  }
+  },
+  "tonal_intervals": [
+    [
+      114,
+      118
+    ]
+  ]
 }

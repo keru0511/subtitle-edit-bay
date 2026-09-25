@@ -167,6 +167,53 @@ def score_transcript(payload: dict, manifest: dict) -> dict:
     }
 
 
+def score_recording(payload: dict, manifest: dict) -> dict:
+    """全体の検査を維持し、発話条件ごとの悪化も独立に判定する。"""
+    result = score_transcript(payload, manifest)
+    characters, timings, _ = transcript_characters(payload, manifest["duration"])
+    tolerance = manifest["limits"]["timing_tolerance_seconds"]
+    conditions = {}
+    for condition in sorted({clip.get("condition", "clean") for clip in manifest["clips"]}):
+        clips = [clip for clip in manifest["clips"] if clip.get("condition", "clean") == condition]
+        segments = []
+        for char, timing in zip(characters, timings):
+            if timing is None:
+                continue  # 時刻欠損は全体検査で必ず失敗させる。
+            midpoint = sum(timing) / 2
+            if any(
+                clip["start"] - tolerance <= midpoint <= clip["start"] + clip["duration"] + tolerance for clip in clips
+            ):
+                word = {"word": char, "start": timing[0], "end": timing[1]}
+                segments.append({"text": char, "start": timing[0], "end": timing[1], "words": [word]})
+        conditions[condition] = score_transcript({"segments": segments}, {**manifest, "clips": clips})
+    return {**result, "conditions": conditions}
+
+
+def apply_effect(part: array, rate: int, effect: dict) -> array:
+    """音声長を変えず、固定パラメータで音量・雑音・背景音を付加する。"""
+    unknown = set(effect) - {"gain_db", "noise_snr_db", "tone_snr_db", "seed", "bandpass_hz"}
+    if unknown:
+        raise ValueError(f"未知の音声加工です: {sorted(unknown)}")
+    values = [value * 10 ** (effect.get("gain_db", 0) / 20) for value in part]
+    rms = math.sqrt(sum(value * value for value in values) / max(1, len(values)))
+    for name in ["noise", "tone"]:
+        if f"{name}_snr_db" not in effect:
+            continue
+        randomizer = random.Random(effect.get("seed", 446))
+        background = [
+            randomizer.uniform(-1, 1)
+            if name == "noise"
+            else sum(math.sin(2 * math.pi * frequency * index / rate) for frequency in [220, 330, 440])
+            for index in range(len(values))
+        ]
+        background_rms = math.sqrt(sum(value * value for value in background) / max(1, len(background)))
+        scale = rms / (10 ** (effect[f"{name}_snr_db"] / 20) * max(background_rms, 1e-12))
+        values = [value + sound * scale for value, sound in zip(values, background)]
+    # クリッピングによる別の歪みを追加しない。必要な場合は全体を同率で縮小する。
+    scale = min(1, 32767 / max(1, max((abs(value) for value in values), default=0)))
+    return array("h", [round(value * scale) for value in values])
+
+
 def quality_failures(baseline: dict, candidate: dict, limits: dict) -> list[str]:
     failures = []
     if candidate["cer"] > limits["max_cer"]:
@@ -181,6 +228,15 @@ def quality_failures(baseline: dict, candidate: dict, limits: dict) -> list[str]
             failures.append(f"{key}が許容値を超えました。")
     if candidate["invalid_segments"]:
         failures.append("不正な字幕時刻があります。")
+    if "conditions" in candidate or "conditions" in baseline:
+        if set(candidate.get("conditions", {})) != set(baseline.get("conditions", {})):
+            failures.append("比較する発話条件が一致しません。")
+        else:
+            for condition, score in candidate["conditions"].items():
+                failures.extend(
+                    f"{condition}: {failure}"
+                    for failure in quality_failures(baseline["conditions"][condition], score, limits)
+                )
     return failures
 
 
@@ -192,6 +248,13 @@ def prepare_audio(manifest_path: Path, output: Path) -> dict:
         source = manifest_path.parent / clip["audio"]
         if hashlib.sha256(source.read_bytes()).hexdigest() != clip["sha256"]:
             raise ValueError(f"検証音声のハッシュが不一致です: {clip['id']}")
+        effect = clip.get("effect", {})
+        filters = []
+        if "bandpass_hz" in effect:
+            low, high = effect["bandpass_hz"]
+            if not 0 < low < high < rate / 2:
+                raise ValueError("帯域制限の範囲が不正です。")
+            filters = ["-af", f"highpass=f={low},lowpass=f={high}"]
         decoded = subprocess.check_output(
             [
                 "ffmpeg",
@@ -203,6 +266,7 @@ def prepare_audio(manifest_path: Path, output: Path) -> dict:
                 "1",
                 "-ar",
                 str(rate),
+                *filters,
                 "-f",
                 "s16le",
                 "-",
@@ -217,13 +281,20 @@ def prepare_audio(manifest_path: Path, output: Path) -> dict:
             raise ValueError("参照区間と音声の長さが一致しません。")
         if start < 0 or start + len(part) > len(samples):
             raise ValueError("参照区間が音声全体の範囲外です。")
-        samples[start : start + len(part)] = part
+        samples[start : start + len(part)] = apply_effect(part, rate, effect)
     randomizer = random.Random(manifest["noise_seed"])
     for start, end in manifest["noise_intervals"]:
         if any(start < clip["start"] + clip["duration"] and end > clip["start"] for clip in manifest["clips"]):
             raise ValueError("負例の雑音が発話区間と重なっています。")
         for index in range(round(start * rate), round(end * rate)):
             samples[index] = randomizer.randint(-300, 300)
+    for start, end in manifest.get("tonal_intervals", []):
+        if not 0 <= start < end <= manifest["duration"] or any(
+            start < clip["start"] + clip["duration"] and end > clip["start"] for clip in manifest["clips"]
+        ):
+            raise ValueError("負例の合成背景音の区間が不正です。")
+        for index in range(round(start * rate), round(end * rate)):
+            samples[index] = round(300 * math.sin(2 * math.pi * 330 * index / rate))
     if sys.byteorder != "little":
         samples.byteswap()
     with wave.open(str(output), "wb") as handle:
@@ -276,7 +347,7 @@ def write_report(output: Path, report: dict) -> None:
     lines = [
         "# 実音声による初回文字起こし比較",
         "",
-        "認識モデル: large-v3 / CPU int8 / 日本語。実録音4件、無音・固定雑音を含む70秒の音声。",
+        "認識モデル: large-v3 / CPU int8 / 日本語。素材の配置・加工条件はreport.jsonのmanifestを参照。",
         "",
     ]
     if "baseline" in report and "candidate" in report:
@@ -295,6 +366,12 @@ def write_report(output: Path, report: dict) -> None:
             "elapsed_seconds",
         ]:
             lines.append(f"| {metric} | {report['baseline'][metric]:.4f} | {report['candidate'][metric]:.4f} |")
+        if "conditions" in report["candidate"]:
+            lines += ["", "| 発話条件 | 比較対象CER | 変更後CER |", "| --- | ---: | ---: |"]
+            for condition, score in report["candidate"]["conditions"].items():
+                lines.append(
+                    f"| {condition} | {report['baseline']['conditions'][condition]['cer']:.4f} | {score['cer']:.4f} |"
+                )
         lines += ["", f"比較対象: `{report['baseline']['commit']}`", f"変更後: `{report['candidate']['commit']}`", ""]
     lines += ["## 判定", ""] + (
         report.get("failures")
@@ -372,7 +449,7 @@ def main() -> int:
             print(f"{name}: large-v3の実認識と時刻合わせを開始します。", flush=True)
             run = run_revision(root.resolve(), audio, output / name)
             report[name] = {
-                **score_transcript(run["transcript"], manifest),
+                **score_recording(run["transcript"], manifest),
                 **{key: value for key, value in run.items() if key != "transcript"},
             }
         cache_root = Path(os.environ.get("HF_HOME", str(Path.home() / ".cache/huggingface")))

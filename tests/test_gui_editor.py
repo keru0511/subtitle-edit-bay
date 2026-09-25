@@ -3388,6 +3388,107 @@ class GuiEditorRegressionTests(unittest.TestCase):
         text_area = self._quick_visual_item(subtitle_settings, "workspaceSubtitleTextArea")
         self.assertTrue(text_area.isVisible())
 
+    def test_workspace_subtitle_delete_undo_redo_and_save_round_trip(self) -> None:
+        """削除・履歴・保存を通常編集画面の実クリックで検証する。"""
+        path = self._load_project()
+        original = deepcopy(self.app.subtitleSegments)
+        _, window = self._load_qml()
+
+        def button(action: str) -> QQuickItem:
+            return self._quick_item(window, f"workspaceSubtitle{action}Button")
+
+        self.assertFalse(button("Undo").isEnabled())
+        self.assertFalse(button("Redo").isEnabled())
+        self._click(window, button("Delete"))
+        self.assertEqual(self.app.segmentCount, 0)
+        self.assertEqual(self.app.selectedSegmentIndex, -1)
+        self.assertFalse(button("Delete").isEnabled())
+        self.assertFalse(button("Split").isEnabled())
+        self.assertTrue(button("Undo").isEnabled())
+
+        self._click(window, button("Undo"))
+        self.assertEqual(self.app.subtitleSegments, original)
+        self.assertTrue(button("Delete").isEnabled())
+        self.assertTrue(button("Redo").isEnabled())
+        self._click(window, button("Redo"))
+        self.assertEqual(self.app.segmentCount, 0)
+        self.assertFalse(button("Redo").isEnabled())
+
+        self._click(window, button("Save"))
+        self.assertFalse(self.app.projectDirty)
+        self.assertEqual(load_project(path)["segments"], [])
+        self.app.loadProject(str(path))
+        self.assertEqual(self.app.segmentCount, 0)
+        self.assertFalse(button("Delete").isEnabled())
+
+    def test_workspace_subtitle_new_edit_after_undo_discards_redo(self) -> None:
+        """取り消し後の追加で、古い削除をやり直せなくなる。"""
+        self._load_project()
+        original_id = self.app.segmentAt(0)["id"]
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceSubtitleDeleteButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertTrue(self._quick_item(window, "workspaceSubtitleRedoButton").isEnabled())
+
+        self.app.setEditorPlayhead(5_000, "source")
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+        self.assertEqual(self.app.segmentAt(0)["id"], original_id)
+        self.assertEqual(self.app.segmentAt(1)["start"], 5.0)
+        self.assertFalse(self._quick_item(window, "workspaceSubtitleRedoButton").isEnabled())
+
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, 1)
+        self.assertEqual(self.app.segmentAt(0)["id"], original_id)
+
+    def test_workspace_subtitle_save_failure_preserves_disk_and_allows_retry(self) -> None:
+        """保存失敗時も元ファイルと未保存の編集を保ち、同じボタンで再試行できる。"""
+        path = self._load_project()
+        original_bytes = path.read_bytes()
+        _, window = self._load_qml()
+        # 自動保存が手動保存の結果を隠さないよう、このケースではタイマー開始だけを止める。
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_item(window, "workspaceSubtitleDeleteButton"))
+            save_button = self._quick_item(window, "workspaceSubtitleSaveButton")
+            with patch("src.gui.save_project", side_effect=OSError("テスト用の保存失敗")):
+                self._click(window, save_button)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertIn("テスト用の保存失敗", self.app.status)
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(self.app.segmentCount, 0)
+            self.assertEqual(path.read_bytes(), original_bytes)
+            self.assertTrue(save_button.isEnabled())
+
+            self._click(window, save_button)
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(load_project(path)["segments"], [])
+
+    def test_workspace_subtitle_split_uses_playhead_and_rejects_boundaries(self) -> None:
+        """分割ボタンの有効条件と、分割・取り消し後の字幕内容を検証する。"""
+        self._load_project()
+        original = deepcopy(self.app.subtitleSegments)
+        _, window = self._load_qml()
+        split = self._quick_item(window, "workspaceSubtitleSplitButton")
+        for position in (0, 4_000, 5_000):
+            with self.subTest(position=position):
+                self.app.setEditorPlayhead(position, "source")
+                self.app.processEvents()
+                self.assertFalse(split.isEnabled())
+                self.assertEqual(self.app.subtitleSegments, original)
+
+        self.app.setEditorPlayhead(2_000, "source")
+        self.app.processEvents()
+        self.assertTrue(split.isEnabled())
+        self._click(window, split)
+        self.assertEqual(self.app.segmentCount, 2)
+        first, second = self.app.subtitleSegments
+        self.assertEqual((first["start"], first["end"]), (0.0, 2.0))
+        self.assertEqual((second["start"], second["end"]), (2.0, 4.0))
+        self.assertEqual(first["text"] + second["text"], original[0]["text"])
+        self.assertFalse(split.isEnabled())
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.subtitleSegments, original)
+
     def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
         self._load_project(
             segments=[

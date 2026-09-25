@@ -9,7 +9,7 @@ from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from src.transcribe import build_whisperx_command, run_command_with_utf8_log
-from src.whisperx_runner import build_parser, run
+from src.whisperx_runner import build_parser, merge_chunks_with_gap, run
 
 
 class WhisperxRunnerTests(unittest.TestCase):
@@ -65,6 +65,42 @@ class WhisperxRunnerTests(unittest.TestCase):
             self.assertEqual(data["segments"][0]["words"][0]["end"], 12.9)
             self.assertEqual(data["language"], "ja")
 
+    def test_gap_split_preserves_short_pauses_absolute_times_and_all_speech(self):
+        chunks = [{"start": 74.0, "end": 88.0, "segments": [(74.0, 77.4), (84.0, 85.0), (85.5, 88.0)]}]
+        original = json.loads(json.dumps(chunks))
+        merge = MagicMock(return_value=chunks)
+        result = merge_chunks_with_gap(merge, 1.0, "scores", 15, onset=0.5, offset=0.363)
+        self.assertEqual([(chunk["start"], chunk["end"]) for chunk in result], [(74.0, 77.4), (84.0, 88.0)])
+        self.assertEqual([span for chunk in result for span in chunk["segments"]], chunks[0]["segments"])
+        self.assertEqual(json.loads(json.dumps(chunks)), original)
+        merge.assert_called_once_with("scores", 15, onset=0.5, offset=0.363)
+
+    def test_gap_split_handles_silence_overlaps_and_exact_boundary(self):
+        self.assertEqual(merge_chunks_with_gap(lambda: [], 1.0), [])
+        chunk = {"start": 0.0, "end": 5.0, "segments": [(0.0, 3.0), (1.0, 2.0), (4.0, 5.0)]}
+        self.assertEqual(merge_chunks_with_gap(lambda: [chunk], 1.0), [chunk])
+        with self.assertRaises(ValueError):
+            merge_chunks_with_gap(lambda: [], float("nan"))
+
+    def test_vad_gap_policy_is_installed_before_single_transcription(self):
+        backend = self.backend()
+        vad = backend.load_model.return_value.vad_model
+        original_merge = vad.merge_chunks
+        original_merge.return_value = [{"start": 2.0, "end": 17.0, "segments": [(2.0, 5.0), (14.0, 17.0)]}]
+
+        def transcribe(*args, **kwargs):
+            chunks = vad.merge_chunks("scores", 15, onset=0.5, offset=0.363)
+            self.assertEqual(len(chunks), 2)
+            return {"language": "ja", "segments": []}
+
+        backend.load_model.return_value.transcribe.side_effect = transcribe
+        with tempfile.TemporaryDirectory() as directory, patch.dict("sys.modules", {"whisperx": backend}):
+            command = build_whisperx_command("voice.wav", directory)
+            self.assertIn("--max_speech_gap", command)
+            run(build_parser().parse_args(command[3:]))
+        backend.load_model.return_value.transcribe.assert_called_once()
+        original_merge.assert_called_once()
+
     def test_silent_audio_produces_empty_result_without_alignment(self) -> None:
         backend = self.backend()
         backend.load_model.return_value.transcribe.return_value = {"language": "ja", "segments": []}
@@ -119,7 +155,10 @@ class WhisperxRunnerTests(unittest.TestCase):
             root = Path(directory)
             (root / "whisperx.py").write_text(
                 "def load_audio(path): return []\n"
+                "class Vad:\n"
+                "    def merge_chunks(self, *args, **kwargs): return []\n"
                 "class Model:\n"
+                "    def __init__(self): self.vad_model = Vad()\n"
                 "    def transcribe(self, audio, **kwargs): return {'language': 'ja', 'segments': []}\n"
                 "def load_model(*args, **kwargs): return Model()\n"
             )

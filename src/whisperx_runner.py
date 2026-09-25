@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
+from functools import partial
 
 from .transcription_profile import DEFAULT_VAD_OFFSET, DEFAULT_VAD_ONSET, first_pass_profile
 
@@ -40,6 +42,34 @@ def _release_memory(device: str) -> None:
         torch.cuda.empty_cache()
 
 
+def merge_chunks_with_gap(merge_chunks, max_gap: float, *args, **kwargs):
+    """VADが保持した発話境界で分割し、長い無音を初回認識に含めない。"""
+    if not math.isfinite(max_gap) or max_gap <= 0:
+        raise ValueError("発話を結合する無音の上限は正の有限値にしてください。")
+    output = []
+    for chunk in merge_chunks(*args, **kwargs):
+        groups = []
+        current = []
+        end = None
+        for start, stop in chunk["segments"]:
+            if not math.isfinite(start) or not math.isfinite(stop) or not 0 <= start < stop:
+                raise ValueError("VADの発話区間が不正です。")
+            if current and start < current[-1][0]:
+                raise ValueError("VADの発話区間が時刻順ではありません。")
+            if end is not None and start - end > max_gap:
+                groups.append(current)
+                current = []
+                end = None
+            current.append((start, stop))
+            end = stop if end is None else max(end, stop)
+        if not current:
+            raise ValueError("VADチャンクに発話区間がありません。")
+        groups.append(current)
+        for group in groups:
+            output.append({**chunk, "start": group[0][0], "end": max(stop for _, stop in group), "segments": group})
+    return output
+
+
 def run(args: argparse.Namespace) -> Path:
     # 軽量なCLI・単体テストでは、モデルとGPUライブラリをロードしない。
     import whisperx
@@ -50,6 +80,8 @@ def run(args: argparse.Namespace) -> Path:
         raise ValueError("音声区間は1〜30秒、探索数とバッチ数は1以上にしてください。")
     if not 1 <= args.repetition_penalty <= 2 or args.no_repeat_ngram_size < 0:
         raise ValueError("反復ペナルティは1〜2、反復禁止の長さは0以上にしてください。")
+    if not math.isfinite(args.max_speech_gap) or args.max_speech_gap <= 0:
+        raise ValueError("発話を結合する無音の上限は正の有限値にしてください。")
     if args.diarize and not os.environ.get("HF_TOKEN", "").strip():
         raise ValueError("話者分離にはHF_TOKENが必要です。")
 
@@ -78,6 +110,8 @@ def run(args: argparse.Namespace) -> Path:
         vad_options={"chunk_size": args.chunk_size, "vad_onset": args.vad_onset, "vad_offset": args.vad_offset},
     )
     try:
+        # このモデルのVADだけに適用する。VAD検出・生成・時刻合わせはそれぞれ一度のまま。
+        model.vad_model.merge_chunks = partial(merge_chunks_with_gap, model.vad_model.merge_chunks, args.max_speech_gap)
         result = model.transcribe(audio, batch_size=args.batch_size, chunk_size=args.chunk_size, print_progress=True)
     finally:
         del model

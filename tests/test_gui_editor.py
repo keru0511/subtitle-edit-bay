@@ -3479,6 +3479,84 @@ class GuiEditorRegressionTests(unittest.TestCase):
     def test_workspace_header_save_commits_caption_key_input(self) -> None:
         self._assert_caption_input_committed_before_action(expanded=False, action="header_save")
 
+    def test_save_shortcut_preserves_selection_and_continued_typing(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QTest.keyClick(window, Qt.Key.Key_B)
+            QTest.keyClick(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+            self.app.processEvents()
+            selection = (caption.property("selectionStart"), caption.property("selectionEnd"))
+            self.assertNotEqual(*selection)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "ab")
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertEqual((caption.property("selectionStart"), caption.property("selectionEnd")), selection)
+            QTest.keyClick(window, Qt.Key.Key_C)
+            self.app.processEvents()
+            self.assertEqual(caption.property("text"), "ac")
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "ac")
+
+    def test_save_shortcut_failure_preserves_focus_for_retry(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            with patch("src.gui.save_project", side_effect=OSError("保存失敗の再現")):
+                QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+                self.app.processEvents()
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            QTest.keyClick(window, Qt.Key.Key_B)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "ab")
+            self.assertFalse(self.app.projectDirty)
+
+    def test_close_rejects_failed_draft_save_and_allows_retry(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            with patch("src.gui.save_project", side_effect=OSError("終了時の保存失敗")):
+                self.assertFalse(window.close())
+                self.app.processEvents()
+            self.assertTrue(window.isVisible())
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertEqual(self.app.segmentAt(0)["text"], "a")
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertTrue(window.close())
+            self.assertFalse(window.isVisible())
+            self.assertEqual(load_project(path)["segments"][0]["text"], "a")
+            self.assertFalse(self.app.projectDirty)
+
+    def test_close_without_project_does_not_require_save(self) -> None:
+        _, window = self._load_qml()
+        self.assertFalse(self.app.projectLoaded)
+        with patch.object(self.app, "saveProject") as save:
+            self.assertTrue(window.close())
+        save.assert_not_called()
+
     def test_workspace_subtitle_delete_undo_redo_and_save_round_trip(self) -> None:
         """削除・履歴・保存を通常編集画面の実クリックで検証する。"""
         path = self._load_project()

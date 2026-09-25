@@ -598,14 +598,51 @@ ApplicationWindow {
         return value <= -60 ? 0 : Math.max(0, Math.min(200, 100 * Math.pow(10, value / 20)))
     }
 
-    function commitPendingEdits() {
-        // IMEの未確定文字も含め、既存のフォーカス終了処理で入力を確定する。
-        // ボタンクリックによるフォーカス移動はOSによって異なるため明示する。
+    function commitInputMethod() {
+        // フォーカスを移す前にIMEの未確定文字を確定する。
         // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
         // qmllint disable missing-property
         Qt.inputMethod.commit()
         // qmllint enable missing-property
+    }
+
+    function commitPendingEdits() {
+        // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
+        root.commitInputMethod()
         root.contentItem.forceActiveFocus()
+    }
+
+    // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
+    property Item saveShortcutFocusTarget: null
+
+    function textSelection(item: var): var {
+        if (!item || item.cursorPosition === undefined || item.select === undefined)
+            return null
+        return {start: item.selectionStart, end: item.selectionEnd, cursor: item.cursorPosition}
+    }
+
+    function restoreTextSelection(item: var, selection: var) {
+        if (!item || !selection)
+            return
+        if (selection.cursor === selection.start)
+            item.select(selection.end, selection.start)
+        else
+            item.select(selection.start, selection.end)
+    }
+
+    function saveProjectFromShortcut() {
+        root.commitInputMethod()
+        root.saveShortcutFocusTarget = root.activeFocusItem
+        var selection = root.textSelection(root.saveShortcutFocusTarget)
+        var saved = root.saveProject()
+        if (root.saveShortcutFocusTarget
+                && root.saveShortcutFocusTarget.visible
+                && root.saveShortcutFocusTarget.enabled) {
+            root.saveShortcutFocusTarget.forceActiveFocus()
+            root.restoreTextSelection(root.saveShortcutFocusTarget, selection)
+        }
+        root.saveShortcutFocusTarget = null
+        return saved
     }
 
     function saveProject() {
@@ -3513,7 +3550,7 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
     Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProject() }
+    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProjectFromShortcut() }
     Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
 
     Connections {
@@ -3530,7 +3567,10 @@ ApplicationWindow {
             close.accepted = false
             return
         }
-        root.saveProject()
+        if (root.appBackend.projectLoaded && !root.saveProject()) {
+            close.accepted = false
+            return
+        }
         mainPlayer.stop()
     }
 }

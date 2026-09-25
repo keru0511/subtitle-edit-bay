@@ -47,32 +47,12 @@ class SubtitleProjectTests(unittest.TestCase):
         ):
             self.assertIs(getattr(subtitle_project, name), getattr(subtitle_project_schema, name))
         self.assertIs(subtitle_line_count.normalize_subtitle_line_count, subtitle_line_count_config.normalize_subtitle_line_count)
+        from src import subtitle_project_model
+
+        for name in ("SubtitleProject", "migrate_project_payload", "utc_timestamp"):
+            self.assertIs(getattr(subtitle_project, name), getattr(subtitle_project_model, name))
         with self.assertRaises(SubtitleProjectError):
             create_project(video_path="video.mkv", segments=[{"words": [None]}])
-
-    def test_project_model_parses_and_round_trips_payload(self) -> None:
-        payload = {
-            "schema_version": 1,
-            "project_type": "subtitle-edit-project",
-            "created_at": "2026-01-01T00:00:00",
-            "updated_at": "2026-01-01T00:00:01",
-            "video": {"path": "video.mkv"},
-            "output_dir": "/tmp/out",
-            "audio_sources": [{"name": "alice", "style": "Speaker_Alice", "track_key": "craig:alice", "file_name": "1-alice.flac", "path": "/tmp/1-alice.flac", "color": "#445566"}],
-            "speakers": [{"name": "alice", "style": "Speaker_Alice", "track_key": "craig:alice", "file_name": "1-alice.flac", "path": "/tmp/1-alice.flac", "color": "#445566"}],
-            "waveforms": [{"speaker": "Oz", "style": "Oz", "color": "#445566", "source_path": "/tmp/audio.wav", "offset_seconds": 0.2, "duration_seconds": 1.5, "sample_rate": 400, "peaks": [0.1]}],
-            "subtitle_settings": {"font_size": 64, "outline_color": "#000000", "outline_thickness": 3},
-            "render_settings": {},
-            "transcription": {},
-            "transcription_context": {},
-            "segments": [{"start": 0.0, "end": 1.0, "text": "hi", "speaker": "Oz"}],
-            "audio_mix": {"version": 1, "customized": False, "channels": []},
-        }
-        model = SubtitleProject.from_json(payload)
-        round_trip = model.to_json()
-        self.assertEqual(round_trip["video"]["path"], "video.mkv")
-        self.assertEqual(round_trip["segments"][0]["id"], "subtitle-000001")
-        self.assertIsInstance(SubtitleProject.from_json(round_trip), SubtitleProject)
 
     def test_model_persistence_and_view_payload_keep_boundaries_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

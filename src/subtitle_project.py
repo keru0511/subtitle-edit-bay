@@ -4,9 +4,7 @@ import heapq
 import json
 import subprocess
 import unicodedata
-from dataclasses import dataclass, field
 from copy import deepcopy
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -15,12 +13,16 @@ import numpy as np
 from .audio_mixer import reconcile_audio_mix
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .color_config import normalize_rgb_color
-from .short_video_schema import ShortVideo
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
-from .video_timeline import VideoTimeline, VideoTimelineError
-from .video_sequence import VideoSequence, VideoSequenceError
 from .media_probe import probe_media_duration
+from .subtitle_project_model import (
+    PROJECT_SCHEMA_VERSION as PROJECT_SCHEMA_VERSION,
+    PROJECT_TYPE as PROJECT_TYPE,
+    SubtitleProject as SubtitleProject,
+    migrate_project_payload as migrate_project_payload,
+    utc_timestamp as utc_timestamp,
+)
 from .subtitle_project_schema import (
     AudioMix as AudioMix,
     AudioMixChannel as AudioMixChannel,
@@ -36,136 +38,7 @@ from .subtitle_project_schema import (
 )
 
 
-PROJECT_SCHEMA_VERSION = 1
-PROJECT_TYPE = "subtitle-edit-project"
 DEFAULT_WAVEFORM_BINS = 720
-
-
-@dataclass(frozen=True)
-class SubtitleProject:
-    schema_version: int
-    project_type: str
-    created_at: str
-    updated_at: str
-    video: dict[str, Any]
-    output_dir: str
-    audio_sources: list[SpeakerInfo]
-    speakers: list[SpeakerInfo]
-    waveforms: list[WaveformInfo]
-    subtitle_settings: dict[str, Any]
-    render_settings: dict[str, Any]
-    transcription: dict[str, Any]
-    transcription_context: dict[str, Any]
-    audio_mix: AudioMix | None
-    segments: list[SubtitleSegment]
-    timeline: VideoTimeline
-    sequence: VideoSequence = field(default_factory=VideoSequence)
-    short_video: ShortVideo = field(default_factory=ShortVideo)
-    extras: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_json(cls, payload: dict[str, Any]) -> "SubtitleProject":
-        migrated = migrate_project_payload(payload)
-        video = migrated.get("video", {})
-        if not isinstance(video, dict):
-            raise SubtitleProjectError("video must be an object")
-        segments = [
-            SubtitleSegment.from_json(segment, index=index)
-            for index, segment in enumerate(migrated.get("segments", []))
-            if isinstance(segment, dict)
-        ]
-        video_duration = max(
-            0.0,
-            _finite_number(
-                video.get("duration_seconds", 0.0) or 0.0,
-                "video.duration_seconds",
-            ),
-        )
-        try:
-            timeline = VideoTimeline.from_json(
-                migrated.get("timeline"),
-                source_duration=video_duration,
-            )
-        except VideoTimelineError as error:
-            raise SubtitleProjectError(str(error)) from error
-        try:
-            sequence = VideoSequence.from_json(
-                migrated.get("sequence"),
-                legacy_video=video,
-            )
-            if sequence.is_legacy_single_video():
-                sequence = sequence.sync_legacy_video(video)
-        except VideoSequenceError as error:
-            raise SubtitleProjectError(str(error)) from error
-        return cls(
-            schema_version=int(migrated.get("schema_version", PROJECT_SCHEMA_VERSION)),
-            project_type=str(migrated.get("project_type", PROJECT_TYPE)),
-            created_at=str(migrated.get("created_at", utc_timestamp())),
-            updated_at=str(migrated.get("updated_at", utc_timestamp())),
-            video=deepcopy(video),
-            output_dir=str(migrated.get("output_dir", "")),
-            audio_sources=[SpeakerInfo.from_json(source) for source in migrated.get("audio_sources", []) if isinstance(source, dict)],
-            speakers=[SpeakerInfo.from_json(speaker) for speaker in migrated.get("speakers", []) if isinstance(speaker, dict)],
-            waveforms=[WaveformInfo.from_json(waveform) for waveform in migrated.get("waveforms", []) if isinstance(waveform, dict)],
-            subtitle_settings=deepcopy(migrated.get("subtitle_settings", {})),
-            render_settings=deepcopy(migrated.get("render_settings", {})),
-            transcription=deepcopy(migrated.get("transcription", {})),
-            transcription_context=deepcopy(migrated.get("transcription_context", {})),
-            audio_mix=AudioMix.from_json(migrated["audio_mix"]) if isinstance(migrated.get("audio_mix"), dict) else None,
-            segments=segments,
-            timeline=timeline,
-            sequence=sequence,
-            short_video=ShortVideo.from_json(migrated.get("short_video")),
-            extras=deepcopy({key: value for key, value in migrated.items() if key not in {
-                "schema_version", "project_type", "created_at", "updated_at", "video", "output_dir",
-                "audio_sources", "speakers", "waveforms", "subtitle_settings", "render_settings",
-                "transcription", "transcription_context", "audio_mix", "segments", "timeline", "sequence",
-                "short_video",
-            }}),
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        payload = {
-            "schema_version": self.schema_version,
-            "project_type": self.project_type,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "video": deepcopy(self.video),
-            "output_dir": self.output_dir,
-            "audio_sources": [speaker.to_json() for speaker in self.audio_sources],
-            "speakers": [speaker.to_json() for speaker in self.speakers],
-            "waveforms": [waveform.to_json() for waveform in self.waveforms],
-            "subtitle_settings": deepcopy(self.subtitle_settings),
-            "render_settings": deepcopy(self.render_settings),
-            "transcription": deepcopy(self.transcription),
-            "transcription_context": deepcopy(self.transcription_context),
-            "segments": [segment.to_json() for segment in self.segments],
-            "timeline": self.timeline.to_json(),
-            "sequence": self.sequence.to_json(),
-        }
-        if self.audio_mix is not None:
-            payload["audio_mix"] = self.audio_mix.to_json()
-        payload["short_video"] = self.short_video.to_json()
-        payload.update(deepcopy(self.extras))
-        return payload
-
-
-def migrate_project_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    migrated = deepcopy(payload)
-    schema_version = int(migrated.get("schema_version", PROJECT_SCHEMA_VERSION) or PROJECT_SCHEMA_VERSION)
-    if schema_version > PROJECT_SCHEMA_VERSION:
-        raise SubtitleProjectError(f"unsupported project schema_version: {migrated.get('schema_version')!r}")
-
-    if "project_type" not in migrated:
-        migrated["project_type"] = PROJECT_TYPE
-    if schema_version < PROJECT_SCHEMA_VERSION:
-        migrated["schema_version"] = PROJECT_SCHEMA_VERSION
-
-    return migrated
-
-
-def utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def derive_project_path(video_path: str | Path, output_dir: str | Path) -> Path:

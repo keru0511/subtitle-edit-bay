@@ -82,7 +82,7 @@ class YoutubeTextTests(TypedTestCase):
 
     def test_build_description_text_without_picks(self) -> None:
         segments = [{"start": 0, "end": 1.0, "text": "またね。", "speaker": "Oz"}]
-        titles = []
+        titles: list[str] = []
         description = build_description_text(segments, titles, "game_2024")
         self.assertIn("game_2024 の実況字幕版", description)
         self.assertIn("登場話者: Oz", description)
@@ -96,12 +96,11 @@ class YoutubeTextTests(TypedTestCase):
     def test_write_youtube_texts_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             merged = Path(temp_dir) / "game.merged.json"
+            payload: dict[str, object] = {
+                "segments": [{"start": 0, "end": 1, "text": "ナワバリバトル", "speaker": "Oz"}]
+            }
             merged.write_text(
-                json.dumps({
-                    "segments": [
-                        {"start": 0, "end": 1, "text": "ナワバリバトル", "speaker": "Oz"},
-                    ]
-                }, ensure_ascii=False),
+                json.dumps(payload, ensure_ascii=False),
                 encoding="utf-8",
             )
             title_path, desc_path = write_youtube_texts(str(merged), timestamp_offset_seconds=5.0)
@@ -112,8 +111,16 @@ class YoutubeTextTests(TypedTestCase):
     def test_load_merged_transcript_reads_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "merged.json"
-            path.write_text(json.dumps({"segments": []}), encoding="utf-8")
+            payload: dict[str, object] = {"segments": []}
+            path.write_text(json.dumps(payload), encoding="utf-8")
             self.assertEqual(load_merged_transcript(str(path)), {"segments": []})
+
+    def test_youtube_texts_reject_malformed_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "merged.json"
+            path.write_text('{"segments": {}}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "segments must be an array"):
+                write_youtube_texts(str(path))
 
 
 if __name__ == "__main__":

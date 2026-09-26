@@ -7,9 +7,11 @@ import json
 import math
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TypeGuard
+
+from .data_boundary import coerce_float, decode_json, is_object_iterable, is_object_mapping
 
 
 TIMELINE_SCHEMA_VERSION = 1
@@ -19,7 +21,17 @@ class TimelineInterchangeError(ValueError):
     """Raised when a timeline cannot be represented safely."""
 
 
-def _atomic_json(destination: str | os.PathLike[str], payload: Mapping[str, Any], overwrite: bool) -> Path:
+def _string_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    return is_object_mapping(value) and all(isinstance(key, str) for key in value)
+
+
+def _items(value: object) -> Iterable[object]:
+    if not is_object_iterable(value):
+        raise TypeError(f"'{type(value).__name__}' object is not iterable")
+    return value
+
+
+def _atomic_json(destination: str | os.PathLike[str], payload: Mapping[str, object], overwrite: bool) -> Path:
     path = Path(destination)
     if path.exists() and not overwrite:
         raise TimelineInterchangeError(f"destination already exists: {path}")
@@ -43,7 +55,7 @@ def _atomic_json(destination: str | os.PathLike[str], payload: Mapping[str, Any]
     return path
 
 
-def build_timeline_document(project: Mapping[str, Any], revision: str | int | None = None) -> dict[str, Any]:
+def build_timeline_document(project: Mapping[str, object], revision: str | int | None = None) -> dict[str, object]:
     """Wrap a project in a versioned document with one canonical payload."""
 
     if not isinstance(project, Mapping):
@@ -51,7 +63,7 @@ def build_timeline_document(project: Mapping[str, Any], revision: str | int | No
     project_payload = copy.deepcopy(dict(project))
     if revision is not None:
         project_payload["revision"] = revision
-    document: dict[str, Any] = {
+    document: dict[str, object] = {
         "schema_version": TIMELINE_SCHEMA_VERSION,
         "project": project_payload,
     }
@@ -59,21 +71,26 @@ def build_timeline_document(project: Mapping[str, Any], revision: str | int | No
 
 
 def export_timeline_json(
-    project: Mapping[str, Any], destination: str | os.PathLike[str], *, revision: str | int | None = None, overwrite: bool = False
+    project: Mapping[str, object],
+    destination: str | os.PathLike[str],
+    *,
+    revision: str | int | None = None,
+    overwrite: bool = False,
 ) -> Path:
     return _atomic_json(destination, build_timeline_document(project, revision), overwrite)
 
 
-def import_timeline_json(source: str | os.PathLike[str]) -> dict[str, Any]:
+def import_timeline_json(source: str | os.PathLike[str]) -> dict[str, object]:
     path = Path(source)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = decode_json(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise TimelineInterchangeError(f"unable to read timeline: {path}") from exc
-    if not isinstance(document, Mapping) or document.get("schema_version") != TIMELINE_SCHEMA_VERSION:
+    if not _string_mapping(document) or document.get("schema_version") != TIMELINE_SCHEMA_VERSION:
         raise TimelineInterchangeError("unsupported timeline schema")
-    if isinstance(document.get("project"), Mapping):
-        project = document["project"]
+    raw_project = document.get("project")
+    if _string_mapping(raw_project):
+        project = raw_project
         legacy_fields = {
             "revision": project.get("revision"),
             "source": project.get("source", project.get("sources", [])),
@@ -96,9 +113,9 @@ def import_timeline_json(source: str | os.PathLike[str]) -> dict[str, Any]:
     }
 
 
-def _edl_seconds(seconds: Any, field: str = "EDL time") -> float:
+def _edl_seconds(seconds: object, field: str = "EDL time") -> float:
     try:
-        value = float(seconds)
+        value = coerce_float(seconds)
     except (TypeError, ValueError) as exc:
         raise TimelineInterchangeError(f"{field} must be numeric") from exc
     if not math.isfinite(value):
@@ -108,7 +125,7 @@ def _edl_seconds(seconds: Any, field: str = "EDL time") -> float:
     return value
 
 
-def _timecode(seconds: Any, fps: int) -> str:
+def _timecode(seconds: object, fps: int) -> str:
     value = _edl_seconds(seconds)
     frame = int(value * fps + 0.5)
     hours, frame = divmod(frame, fps * 3600)
@@ -117,34 +134,37 @@ def _timecode(seconds: Any, fps: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds_part:02d}:{frames:02d}"
 
 
-def _clip_warnings(project: Mapping[str, Any]) -> list[str]:
+def _clip_warnings(project: Mapping[str, object]) -> list[str]:
     warnings: list[str] = []
-    for transition in project.get("transitions", []) or []:
-        if isinstance(transition, Mapping) and str(transition.get("type", "cut")).lower() not in {"cut", "dissolve"}:
+    for transition in _items(project.get("transitions", []) or []):
+        if is_object_mapping(transition) and str(transition.get("type", "cut")).lower() not in {"cut", "dissolve"}:
             warnings.append(f"unsupported transition: {transition.get('type')}")
-    for clip in project.get("clips", []) or []:
-        if isinstance(clip, Mapping) and clip.get("effect"):
+    for clip in _items(project.get("clips", []) or []):
+        if is_object_mapping(clip) and clip.get("effect"):
             warnings.append(f"unrepresentable effect on clip: {clip.get('id', 'unknown')}")
     return warnings
 
 
 def export_edl(
-    project: Mapping[str, Any], destination: str | os.PathLike[str], *, fps: int = 30, overwrite: bool = False
+    project: Mapping[str, object], destination: str | os.PathLike[str], *, fps: int = 30, overwrite: bool = False
 ) -> Path:
     if fps <= 0 or fps > 240:
         raise TimelineInterchangeError("fps must be between 1 and 240")
-    clips = project.get("clips", []) or []
+    clips = _items(project.get("clips", []) or [])
     lines = [f"TITLE: {project.get('name', 'Subtitle Edit Bay')}", "FCM: NON-DROP FRAME", ""]
-    source_entries = project.get("source", project.get("sources", [])) or []
-    if isinstance(source_entries, Mapping):
-        source_entries = [source_entries]
+    raw_source_entries = project.get("source", project.get("sources", [])) or []
+    source_entries: Iterable[object]
+    if is_object_mapping(raw_source_entries):
+        source_entries = [raw_source_entries]
+    else:
+        source_entries = _items(raw_source_entries)
     source_paths = {
         str(source.get("id")): str(source.get("path"))
         for source in source_entries
-        if isinstance(source, Mapping) and source.get("id") and source.get("path")
+        if is_object_mapping(source) and source.get("id") and source.get("path")
     }
     for index, clip in enumerate(clips, start=1):
-        if not isinstance(clip, Mapping):
+        if not is_object_mapping(clip):
             raise TimelineInterchangeError("every clip must be an object")
         source_start = clip.get("source_start", clip.get("in", clip.get("start", 0)))
         source_end = clip.get("source_end", clip.get("out", clip.get("end")))
@@ -193,7 +213,7 @@ def export_edl(
     return path
 
 
-def export_warnings(project: Mapping[str, Any]) -> list[str]:
+def export_warnings(project: Mapping[str, object]) -> list[str]:
     """Return EDL compatibility warnings before the user confirms export."""
 
     return _clip_warnings(project)

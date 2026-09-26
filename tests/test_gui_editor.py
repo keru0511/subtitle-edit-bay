@@ -760,6 +760,59 @@ Window {
         self.assertTrue(panel.isVisible())
         self.assertTrue(loader.property("active"))
 
+    def test_workspace_preview_works_without_main_workflow_context(self) -> None:
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentWorkspacePreview.qml"
+        qml.write_text(
+            'import QtQuick\nimport QtMultimedia\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 640
+    height: 400
+    visible: true
+    property real requestedSeekMs: -1
+    function updateSeek() {
+        preview.setDuration(6000)
+        preview.setPlayheadPosition(2500)
+    }
+    MediaPlayer { id: sharedPlayer; videoOutput: preview.videoOutputItem }
+    WorkspacePreviewPanel {
+        id: preview
+        width: 600
+        height: 340
+        appBackend: backend
+        player: sharedPlayer
+        colors: ({border: "#243044", textPrimary: "#F8FAFC", textMuted: "#94A3B8"})
+        layoutMetrics: ({})
+        previewActive: false
+        baseFontSize: 50
+        defaultSubtitleFontSize: 50
+        outlineColor: "#000000"
+        outlineThickness: 3
+        speakerColors: []
+        subtitleTextResolver: function(segment) { return segment.text }
+        formatTimestamp: function(seconds) { return Number(seconds).toFixed(1) }
+        onSeekRequested: function(positionMs) { host.requestedSeekMs = positionMs }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        panel = self._quick_item(window, "mainVideoPanel")
+        slider = self._quick_item(window, "mainPreviewSeekSlider")
+        player = window.findChild(QMediaPlayer)
+        self.assertIsNotNone(player)
+        self.assertIs(player.videoOutput().parentItem(), panel)
+        self.assertTrue(QMetaObject.invokeMethod(window, "updateSeek"))
+        self.assertEqual(slider.property("to"), 6000)
+        self.assertEqual(slider.property("value"), 2500)
+        slider.setProperty("value", 1500)
+        self.assertTrue(QMetaObject.invokeMethod(slider, "moved"))
+        self.assertEqual(window.property("requestedSeekMs"), 1500)
+        time_label = self._quick_item(window, "mainPreviewTimeLabel")
+        self.assertEqual(time_label.property("text"), "0.0 / 0.0")
+
     def test_source_settings_popup_works_without_main_workflow_context(self) -> None:
         path, _, _ = self._make_project()
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]

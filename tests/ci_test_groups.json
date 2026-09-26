@@ -111,6 +111,7 @@
         "test_subtitle_project",
         "test_subtitle_project_layout",
         "test_subtitle_project_model",
+        "test_subtitle_project_persistence_types",
         "test_subtitle_project_safety",
         "test_subtitle_project_schema",
         "test_subtitle_review",

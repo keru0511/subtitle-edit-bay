@@ -113,37 +113,41 @@ Item {
                 colors: root.colors
                 objectName: "addCaptionButton"
                 text: "+ 字幕追加"
+                enabled: !root.appBackend.running
                 onClicked: root.editRequested("add", root.player.position / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "splitCaptionButton"
                 text: "分割"
-                enabled: root.editorState.canSplitSelectedSegment(root.player.position)
+                enabled: !root.appBackend.running && root.editorState.canSplitSelectedSegment(root.player.position)
                 onClicked: root.editRequested("split", root.player.position / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "deleteCaptionButton"
                 text: "削除"
-                enabled: root.appBackend.subtitles.selectedSegmentIndex >= 0
+                enabled: !root.appBackend.running && root.appBackend.subtitles.selectedSegmentIndex >= 0
                 onClicked: root.editRequested("delete", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "saveProjectButton"
                 text: "保存"
+                enabled: !root.appBackend.running
                 onClicked: root.saveRequested()
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "buildAssButton"
                 text: "プレビューを更新"
+                enabled: !root.appBackend.running
                 onClicked: root.previewRequested()
             }
             Button {
                 id: editorRenderButton
                 objectName: "editorRenderButton"
+                focusPolicy: Qt.TabFocus
                 implicitHeight: 34
                 text: root.appBackend.workflow.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
                 enabled: root.appBackend.projectLoaded && !root.appBackend.running
@@ -229,6 +233,7 @@ Item {
                         spacing: 1
                         Slider {
                             id: editorSeek
+                            objectName: "editorSeekSlider"
                             Layout.fillWidth: true
                             from: 0
                             to: 1
@@ -237,6 +242,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             ToolButton {
+                                objectName: "editorPlaybackButton"
                                 text: root.player.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
                                 onClicked: root.player.playbackState === MediaPlayer.PlayingState ? root.player.pause() : root.player.play()
                             }
@@ -271,6 +277,7 @@ Item {
                     }
                     SpinBox {
                         id: snapSpin
+                        objectName: "editorSnapSpin"
                         from: 0
                         to: 1000
                         stepSize: 10
@@ -289,6 +296,7 @@ Item {
                         font.pixelSize: 9
                     }
                     Slider {
+                        objectName: "editorTimelineZoomSlider"
                         Layout.preferredWidth: 140
                         from: 16
                         to: 180
@@ -309,7 +317,7 @@ Item {
                     player: root.player
                     pixelsPerSecond: root.editorState.pixelsPerSecond
                     snapSeconds: root.editorState.snapMilliseconds / 1000
-                    editable: true
+                    editable: !root.appBackend.running
                     Component.onCompleted: Qt.callLater(function () {
                         viewportX = root.editorState.timelineScrollX;
                     })
@@ -477,10 +485,24 @@ Item {
                                         inputBackground: "#101512"
                                         Layout.preferredWidth: 72
                                         objectName: "captionStartTimeField"
-                                        text: captionRow.start.toFixed(3)
-                                        onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {
-                                            "start": Number(text)
-                                        })
+                                        property string editingSegmentId: ""
+                                        function commitTime() {
+                                            var id = editingSegmentId
+                                            editingSegmentId = ""
+                                            if (id) {
+                                                root.editorState.updateTimeDraft(id, "start", text, acceptableInput)
+                                                root.editorState.commitTimeDraft(id, "start")
+                                            }
+                                        }
+                                        Component.onDestruction: commitTime()
+                                        text: root.editorState.pendingTimeForSegment(captionRow.segmentId, "start", captionRow.start.toFixed(3))
+                                        enabled: !root.appBackend.running
+                                        onTextChanged: if (activeFocus && editingSegmentId !== "") root.editorState.updateTimeDraft(editingSegmentId, "start", text, acceptableInput)
+                                        onActiveFocusChanged: if (activeFocus) {
+                                            editingSegmentId = captionRow.segmentId
+                                            root.editorState.beginTimeDraft(captionRow.index, "start", text, acceptableInput)
+                                        }
+                                        onEditingFinished: commitTime()
                                     }
                                     TimeField {
                                         textPrimary: root.colors.textPrimary
@@ -489,15 +511,30 @@ Item {
                                         inputBackground: "#101512"
                                         Layout.preferredWidth: 72
                                         objectName: "captionEndTimeField"
-                                        text: captionRow.end.toFixed(3)
-                                        onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {
-                                            "end": Number(text)
-                                        })
+                                        property string editingSegmentId: ""
+                                        function commitTime() {
+                                            var id = editingSegmentId
+                                            editingSegmentId = ""
+                                            if (id) {
+                                                root.editorState.updateTimeDraft(id, "end", text, acceptableInput)
+                                                root.editorState.commitTimeDraft(id, "end")
+                                            }
+                                        }
+                                        Component.onDestruction: commitTime()
+                                        text: root.editorState.pendingTimeForSegment(captionRow.segmentId, "end", captionRow.end.toFixed(3))
+                                        enabled: !root.appBackend.running
+                                        onTextChanged: if (activeFocus && editingSegmentId !== "") root.editorState.updateTimeDraft(editingSegmentId, "end", text, acceptableInput)
+                                        onActiveFocusChanged: if (activeFocus) {
+                                            editingSegmentId = captionRow.segmentId
+                                            root.editorState.beginTimeDraft(captionRow.index, "end", text, acceptableInput)
+                                        }
+                                        onEditingFinished: commitTime()
                                     }
                                     ComboBox {
                                         id: captionSpeakerCombo
                                         objectName: "captionSpeakerCombo"
                                         Layout.preferredWidth: 105
+                                        enabled: !root.appBackend.running
                                         model: root.projectSpeakerCache
                                         textRole: "name"
                                         valueRole: "style"
@@ -518,6 +555,7 @@ Item {
                                         id: captionFontCombo
                                         objectName: "captionFontCombo"
                                         Layout.preferredWidth: 130
+                                        enabled: !root.appBackend.running
                                         model: root.appBackend.subtitles.fontChoices
                                         textRole: "label"
                                         valueRole: "family"
@@ -550,6 +588,7 @@ Item {
                                         selectedTextColor: "#10140F"
                                         objectName: "captionSizeSpin"
                                         Layout.preferredWidth: 106
+                                        enabled: !root.appBackend.running
                                         from: 50
                                         to: 200
                                         stepSize: 5
@@ -567,6 +606,7 @@ Item {
                                 TextArea {
                                     id: captionTextArea
                                     objectName: "captionTextArea"
+                                    enabled: !root.appBackend.running
                                     property string editingSegmentId: ""
                                     function commitText() {
                                         var id = editingSegmentId;
@@ -577,7 +617,7 @@ Item {
                                     Component.onDestruction: commitText()
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 52
-                                    text: captionRow.editorText
+                                    text: root.editorState.pendingTextForSegment(captionRow.segmentId, captionRow.editorText)
                                     color: root.colors.textPrimary
                                     selectionColor: root.colors.acid
                                     font.family: captionRow.subtitleFontFamily || "Yu Gothic UI"
@@ -606,6 +646,7 @@ Item {
                             }
                         }
                         ScrollBar.vertical: ScrollBar {
+                            objectName: "captionTableScrollBar"
                             policy: ScrollBar.AlwaysOn
                         }
                     }

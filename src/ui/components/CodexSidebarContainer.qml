@@ -64,6 +64,7 @@ Rectangle {
             id: chatPanel
             objectName: "codexChatPanel"
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             Layout.fillHeight: expanded
             Layout.minimumHeight: expanded ? 180 : implicitHeight
             Layout.preferredHeight: implicitHeight

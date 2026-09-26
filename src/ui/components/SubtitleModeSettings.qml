@@ -7,6 +7,7 @@ Item {
     id: root
 
     required property var backend
+    required property var editorState
     property var speakers: []
     property var fontChoices: []
     property color panelColor: "#161B22"
@@ -21,6 +22,7 @@ Item {
     property var beginDraft: null
     property var updateDraft: null
     property var commitDraft: null
+    property var pendingDraftTextForSegment: null
     signal seekRequested(real positionMilliseconds)
     signal speakerColorRequested(int speakerIndex, string currentColor)
     signal contentYChangedByUser(real value)
@@ -55,58 +57,35 @@ Item {
         return segment && segment.id !== undefined ? String(segment.id) : ""
     }
 
-    function segmentIndexForId(segmentId) {
-        if (!segmentId)
-            return -1
-        for (var index = 0; index < root.backend.subtitles.segmentCount; ++index) {
-            if (root.segmentIdAt(index) === segmentId)
-                return index
-        }
-        return -1
-    }
-
-    function beginTimeEdit(field) {
-        field.editingSegmentIndex = root.backend.subtitles.selectedSegmentIndex
-        field.editingSegmentId = root.segmentIdAt(field.editingSegmentIndex)
-    }
-
-    function restoreSelection(selectedIndex, selectedId, editedId) {
-        if (selectedIndex < 0) {
-            root.backend.subtitles.selectSegment(-1)
-            return
-        }
-        if (selectedId === editedId)
-            return
-        var restoreIndex = root.segmentIndexForId(selectedId)
-        if (restoreIndex >= 0)
-            root.backend.subtitles.selectSegment(restoreIndex)
+    function beginTimeEdit(field, propertyName) {
+        var index = root.backend.subtitles.selectedSegmentIndex
+        field.editingSegmentId = root.segmentIdAt(index)
+        if (index >= 0)
+            root.editorState.beginTimeDraft(index, propertyName, field.text, field.acceptableInput)
     }
 
     function commitTimeEdit(field, propertyName) {
         var editedId = field.editingSegmentId
-        var editIndex = editedId
-            ? root.segmentIndexForId(editedId)
-            : field.editingSegmentIndex
-        var selectedIndex = root.backend.subtitles.selectedSegmentIndex
-        var selectedId = root.segmentIdAt(selectedIndex)
-        if (editIndex >= 0 && field.acceptableInput) {
-            var changes = ({})
-            changes[propertyName] = Number(field.text)
-            root.backend.subtitles.updateSegment(editIndex, changes)
-            root.restoreSelection(selectedIndex, selectedId, editedId)
-        }
-        field.editingSegmentIndex = -1
         field.editingSegmentId = ""
+        if (editedId) {
+            root.editorState.updateTimeDraft(editedId, propertyName, field.text, field.acceptableInput)
+            root.editorState.commitTimeDraft(editedId, propertyName)
+        }
     }
 
     function syncEditorFields() {
         var segment = root.selectedSegment || ({})
         if (!startField.activeFocus)
-            startField.text = segment.start === undefined ? "" : Number(segment.start).toFixed(3)
+            startField.text = root.editorState.pendingTimeForSegment(
+                segment.id || "", "start", segment.start === undefined ? "" : Number(segment.start).toFixed(3))
         if (!endField.activeFocus)
-            endField.text = segment.end === undefined ? "" : Number(segment.end).toFixed(3)
-        if (!captionText.activeFocus)
-            captionText.text = String(segment.editorText || segment.text || "")
+            endField.text = root.editorState.pendingTimeForSegment(
+                segment.id || "", "end", segment.end === undefined ? "" : Number(segment.end).toFixed(3))
+        if (!captionText.activeFocus) {
+            var storedText = String(segment.editorText || segment.text || "")
+            captionText.text = root.pendingDraftTextForSegment
+                ? root.pendingDraftTextForSegment(segment.id || "", storedText) : storedText
+        }
         root.selectComboValue(speakerCombo, segment.speaker || "")
         root.selectComboValue(fontCombo, segment.subtitle_font_family || "")
         sizeSpin.value = Math.round(Number(segment.subtitle_font_scale || 1) * 100)
@@ -121,7 +100,10 @@ Item {
     }
 
     Component.onCompleted: refreshSelectedEditor()
-    Component.onDestruction: commitCaptionText()
+    Component.onDestruction: {
+        root.editorState.commitTimeDraft()
+        commitCaptionText()
+    }
 
     Connections {
         target: root.backend.subtitles
@@ -233,26 +215,34 @@ Item {
                     TimeField {
                         id: startField
                         objectName: "workspaceSubtitleStartField"
-                        property int editingSegmentIndex: -1
+                        enabled: !root.backend.running
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "開始"
+                        onTextChanged: {
+                            if (activeFocus && editingSegmentId !== "")
+                                root.editorState.updateTimeDraft(editingSegmentId, "start", text, acceptableInput)
+                        }
                         onActiveFocusChanged: {
                             if (activeFocus)
-                                root.beginTimeEdit(startField)
+                                root.beginTimeEdit(startField, "start")
                         }
                         onEditingFinished: root.commitTimeEdit(startField, "start")
                     }
                     TimeField {
                         id: endField
                         objectName: "workspaceSubtitleEndField"
-                        property int editingSegmentIndex: -1
+                        enabled: !root.backend.running
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "終了"
+                        onTextChanged: {
+                            if (activeFocus && editingSegmentId !== "")
+                                root.editorState.updateTimeDraft(editingSegmentId, "end", text, acceptableInput)
+                        }
                         onActiveFocusChanged: {
                             if (activeFocus)
-                                root.beginTimeEdit(endField)
+                                root.beginTimeEdit(endField, "end")
                         }
                         onEditingFinished: root.commitTimeEdit(endField, "end")
                     }
@@ -260,6 +250,7 @@ Item {
                 ComboBox {
                     id: speakerCombo
                     objectName: "workspaceSubtitleSpeakerCombo"
+                    enabled: !root.backend.running
                     Layout.fillWidth: true
                     model: root.speakers
                     textRole: "name"
@@ -271,6 +262,7 @@ Item {
                     ComboBox {
                         id: fontCombo
                         objectName: "workspaceSubtitleFontCombo"
+                        enabled: !root.backend.running
                         Layout.fillWidth: true
                         model: root.fontChoices
                         textRole: "label"
@@ -281,7 +273,7 @@ Item {
                         objectName: "workspaceSubtitleSpeakerColorButton"
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 30
-                        enabled: root.speakerIndex(root.selectedSegment.speaker || "") >= 0
+                        enabled: !root.backend.running && root.speakerIndex(root.selectedSegment.speaker || "") >= 0
                         onClicked: {
                             var index = root.speakerIndex(root.selectedSegment.speaker || "")
                             if (index >= 0)
@@ -303,6 +295,7 @@ Item {
                     CompactSpinBox {
                         id: sizeSpin
                         objectName: "workspaceSubtitleSizeSpin"
+                        enabled: !root.backend.running
                         Layout.fillWidth: true
                         from: 50
                         to: 200
@@ -314,6 +307,7 @@ Item {
                 TextArea {
                     id: captionText
                     objectName: "workspaceSubtitleTextArea"
+                    enabled: !root.backend.running
                     property int editingSegmentIndex: -1
                     property string editingSegmentId: ""
                     Layout.fillWidth: true

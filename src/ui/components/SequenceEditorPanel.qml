@@ -81,7 +81,7 @@ Rectangle {
                 return index
             cursor += clipWidth + sequenceTimelineList.spacing
         }
-        return clips.length - 1
+        return clips.length
     }
 
     ColumnLayout {
@@ -312,28 +312,6 @@ Rectangle {
                                     property: "displaySourceEnd"
                                     value: Number(timelineClip.modelData.sourceEnd || 0)
                                     when: !timelineTrimEndArea.pressed
-                                }
-
-                                DropArea {
-                                    objectName: "sequenceTimelineClipDropArea"
-                                    anchors.fill: parent
-                                    z: 20
-                                    enabled: root.backend && !root.backend.running
-                                    onEntered: function(drag) {
-                                        var assetId = root.assetIdFromDrag(drag)
-                                        drag.accepted = assetId.length > 0
-                                        if (assetId.length > 0)
-                                            root.hoverIndex = timelineClip.index
-                                    }
-                                    onExited: if (root.hoverIndex === timelineClip.index) root.hoverIndex = -1
-                                    onDropped: function(drop) {
-                                        var assetId = root.assetIdFromDrag(drop)
-                                        if (assetId.length > 0 && root.backend) {
-                                            root.backend.sequence.insertSequenceClip(assetId, timelineClip.index)
-                                            root.hoverIndex = -1
-                                            drop.acceptProposedAction()
-                                        }
-                                    }
                                 }
 
                                 Text {
@@ -568,11 +546,31 @@ Rectangle {
                                 ? root.accentColor : root.borderColor
                             border.width: root.hoverIndex === clipItem.index ? 2 : 1
 
-                            Drag.active: reorderHandler.active
-                            Drag.source: clipItem
-                            Drag.supportedActions: Qt.MoveAction
-                            Drag.hotSpot.x: width / 2
-                            Drag.hotSpot.y: height / 2
+                            Rectangle {
+                                id: reorderPreview
+                                parent: Overlay.overlay
+                                width: clipItem.width
+                                height: clipItem.height
+                                visible: dragging
+                                z: 100
+                                radius: clipItem.radius
+                                color: root.raisedColor
+                                border.color: root.accentColor
+                                opacity: 0.85
+                                property bool dragging: false
+                                property real originX: 0
+                                property real originY: 0
+                                Drag.active: dragging
+                                Drag.source: clipItem
+                                Drag.supportedActions: Qt.MoveAction
+                                Drag.hotSpot.x: reorderHandler.centroid.pressPosition.x
+                                Drag.hotSpot.y: reorderHandler.centroid.pressPosition.y
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "クリップを移動"
+                                    color: root.textColor
+                                }
+                            }
 
                             TapHandler {
                                 onTapped: {
@@ -587,10 +585,24 @@ Rectangle {
                                 id: reorderHandler
                                 enabled: root.backend && !root.backend.running
                                 target: null
+                                onActiveTranslationChanged: {
+                                    if (active) {
+                                        reorderPreview.x = reorderPreview.originX + activeTranslation.x
+                                        reorderPreview.y = reorderPreview.originY + activeTranslation.y
+                                    }
+                                }
                                 onActiveChanged: {
                                     if (active) {
+                                        var origin = clipItem.mapToItem(reorderPreview.parent, 0, 0)
+                                        reorderPreview.originX = origin.x
+                                        reorderPreview.originY = origin.y
+                                        reorderPreview.x = origin.x + activeTranslation.x
+                                        reorderPreview.y = origin.y + activeTranslation.y
+                                        reorderPreview.dragging = true
                                         root.activeDragClipId = clipItem.clipId
                                     } else {
+                                        reorderPreview.Drag.drop()
+                                        reorderPreview.dragging = false
                                         if (root.activeDragClipId === clipItem.clipId)
                                             root.activeDragClipId = ""
                                         root.hoverIndex = -1
@@ -766,11 +778,19 @@ Rectangle {
                                         from: 0
                                         to: 2
                                         value: Number(clipItem.modelData.volume || 0)
-                                        onMoved: {
+                                        function commitVolume() {
                                             if (root.backend)
                                                 root.backend.sequence.setSequenceClipAudio(
                                                     clipItem.clipId, audioLinkedCheck.checked, value,
                                                     Number(audioOffset.value) / 1000, mutedCheck.checked)
+                                        }
+                                        onMoved: {
+                                            if (!pressed)
+                                                commitVolume()
+                                        }
+                                        onPressedChanged: {
+                                            if (!pressed)
+                                                commitVolume()
                                         }
                                     }
                                     CheckBox {

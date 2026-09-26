@@ -259,12 +259,14 @@ Rectangle {
             }
             SmallButton {
                 objectName: "projectOpenButton"
+                focusPolicy: Qt.TabFocus
                 text: "開く"
                 enabled: !header.running
                 onClicked: header.projectOpenRequested()
             }
             SmallButton {
                 objectName: "workspaceHeaderSaveButton"
+                focusPolicy: Qt.TabFocus
                 text: "保存"
                 enabled: header.projectLoaded && !header.running
                 onClicked: header.saveRequested()
@@ -290,6 +292,7 @@ Rectangle {
             Button {
                 id: renderButton
                 objectName: "workspaceHeaderRenderButton"
+                focusPolicy: Qt.TabFocus
                 Layout.preferredWidth: 106
                 Layout.preferredHeight: 32
                 enabled: header.projectLoaded && !header.running && header.canRender

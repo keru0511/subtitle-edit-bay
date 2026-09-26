@@ -67,11 +67,13 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             started_marker = Path(temp_dir) / "descendant-started.txt"
             marker = Path(temp_dir) / "descendant-completed.txt"
+            # Windowsのtaskkill /Tが高負荷時でも子プロセスの終了前に処理できる猶予を設ける。
+            descendant_completion_delay_seconds = 5.0
             child_code = (
                 "from pathlib import Path; "
                 "import time; "
                 f"Path({str(started_marker)!r}).write_text('started', encoding='utf-8'); "
-                "time.sleep(1.5); "
+                f"time.sleep({descendant_completion_delay_seconds}); "
                 f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
             )
             parent_code = (
@@ -90,7 +92,7 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
 
             self.assertIn("descendant_pid=", str(raised.exception))
             self.assertTrue(started_marker.is_file(), "Descendant process did not reach the test checkpoint.")
-            time.sleep(1.6)
+            time.sleep(descendant_completion_delay_seconds + 0.2)
             self.assertFalse(marker.exists(), "Timed-out command left a descendant process running.")
 
 

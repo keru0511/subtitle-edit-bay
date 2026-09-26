@@ -521,6 +521,10 @@ class LegacyBackendCompatibility:
     def redoEdit(self) -> None:
         return self._subtitles_facade.redoEdit()
 
+    @Slot()
+    def reportPendingInputMethod(self) -> None:
+        self._set_status("入力中の文字を確定してから、もう一度操作してください", "CHECK")
+
     @Slot("QVariantMap")
     def buildSubtitlePreview(self, settings: dict[str, Any]) -> None:
         return self._subtitles_facade.buildSubtitlePreview(settings)

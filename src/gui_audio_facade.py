@@ -370,6 +370,8 @@ class AudioFacade(FeatureFacade):
         allow_silence: bool = False,
     ) -> bool:
         backend = self._backend
+        if backend._running:
+            return False
         if self.project_editor.project is None or not backend._audio_mix_proposal:
             backend._set_status("適用する音量ミキサーの変更案がありません", "CHECK")
             return False

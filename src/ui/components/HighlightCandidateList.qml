@@ -88,7 +88,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.shortVideo.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
-        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0; onClicked: appBackend.shortVideo.retryHighlightAnalysis() }
+        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0; onClicked: appBackend.shortVideo.retryHighlightAnalysis() }
         Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.shortVideo.highlightUndoAvailable && !appBackend.running; onClicked: appBackend.shortVideo.undoHighlightRejection() }
     }
 
@@ -124,8 +124,8 @@ ColumnLayout {
                     Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
                 Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0), Number(modelData.end || modelData.start || 0)) }
-                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightAddButton"; text: "ショートに追加"; onClicked: appBackend.shortVideo.addHighlightCandidate(modelData.source_index) }
-                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightRejectButton"; text: "候補から外す"; onClicked: appBackend.shortVideo.rejectHighlightCandidate(modelData.source_index) }
+                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightAddButton"; text: "ショートに追加"; enabled: appBackend && !appBackend.running; onClicked: appBackend.shortVideo.addHighlightCandidate(modelData.source_index) }
+                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightRejectButton"; text: "候補から外す"; enabled: appBackend && !appBackend.running; onClicked: appBackend.shortVideo.rejectHighlightCandidate(modelData.source_index) }
             }
         }
     }

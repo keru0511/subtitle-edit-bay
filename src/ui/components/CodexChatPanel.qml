@@ -101,78 +101,89 @@ Rectangle {
         anchors.margins: 8
         spacing: 7
 
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
-            spacing: 6
+            Layout.minimumWidth: 0
+            spacing: 4
 
-            Text {
-                text: panel.providerName() + "チャット"
-                textFormat: Text.PlainText
-                color: panel.textColor
-                font.family: "Yu Gothic UI"
-                font.pixelSize: 12
-                font.weight: Font.Bold
-            }
-            ComboBox {
-                id: providerCombo
-                objectName: "aiProviderHeaderCombo"
-                Layout.preferredWidth: 88
-                Layout.minimumWidth: 70
-                model: backend ? backend.ai.aiChatProviders : []
-                textRole: "label"
-                valueRole: "id"
-                enabled: backend && !panel.busy() && backend.ai.aiChatProviders.length > 0
-                Component.onCompleted: panel.syncProviderSelection()
-                onActivated: backend.ai.selectAIProvider(currentValue)
-            }
-            Text {
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: panel.authStateLabel()
-                textFormat: Text.PlainText
-                color: backend && ["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0
-                    ? panel.errorColor : panel.mutedColor
-                font.family: "Yu Gothic UI"
-                font.pixelSize: 9
-                horizontalAlignment: Text.AlignRight
-                elide: Text.ElideRight
-            }
-            SmallButton {
-                id: connectionButton
-                objectName: "codexConnectButton"
-                Layout.preferredWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                Layout.minimumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                Layout.maximumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                Layout.preferredHeight: 30
-                Layout.maximumHeight: 30
-                visible: !panel.authenticated()
-                    && (!backend || backend.ai.aiChatLoginAvailable)
-                text: backend && backend.ai.codexAuthState === "login_pending"
-                    ? "ブラウザを開く"
-                    : (backend && ["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0
-                        ? "再接続" : "ログイン")
-                enabled: backend && backend.ai.codexConnectionState !== "connecting"
-                    && backend.ai.codexAuthState !== "logging_in"
-                onClicked: {
-                    if (backend.ai.codexAuthState === "login_pending")
-                        backend.ai.openAIProviderLoginPage()
-                    else if (["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0)
-                        backend.ai.reconnectAIChat()
-                    else
-                        backend.ai.startAIProviderLogin()
+                spacing: 6
+                Text {
+                    text: panel.providerName() + "チャット"
+                    textFormat: Text.PlainText
+                    color: panel.textColor
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 12
+                    font.weight: Font.Bold
+                }
+                Item { Layout.fillWidth: true }
+                SmallButton {
+                    objectName: "codexChatToggleButton"
+                    Layout.preferredWidth: 48
+                    Layout.minimumWidth: 48
+                    Layout.maximumWidth: 48
+                    Layout.preferredHeight: 30
+                    Layout.maximumHeight: 30
+                    text: panel.expanded ? "閉じる" : "開く"
+                    enabled: panel.authenticated()
+                    onClicked: panel.expanded = !panel.expanded
                 }
             }
-            SmallButton {
-                objectName: "codexChatToggleButton"
-                Layout.preferredWidth: 48
-                Layout.minimumWidth: 48
-                Layout.maximumWidth: 48
-                Layout.preferredHeight: 30
-                Layout.maximumHeight: 30
-                text: panel.expanded ? "閉じる" : "開く"
-                enabled: panel.authenticated()
-                onClicked: panel.expanded = !panel.expanded
+            RowLayout {
+                visible: panel.expanded
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                spacing: 6
+                ComboBox {
+                    id: providerCombo
+                    objectName: "aiProviderHeaderCombo"
+                    Layout.preferredWidth: 88
+                    Layout.minimumWidth: 70
+                    model: backend ? backend.ai.aiChatProviders : []
+                    textRole: "label"
+                    valueRole: "id"
+                    enabled: backend && !panel.busy() && backend.ai.aiChatProviders.length > 0
+                    Component.onCompleted: panel.syncProviderSelection()
+                    onActivated: backend.ai.selectAIProvider(currentValue)
+                }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: panel.authStateLabel()
+                    textFormat: Text.PlainText
+                    color: backend && ["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0
+                        ? panel.errorColor : panel.mutedColor
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 9
+                    horizontalAlignment: Text.AlignRight
+                    elide: Text.ElideRight
+                }
+                SmallButton {
+                    id: connectionButton
+                    objectName: "codexConnectButton"
+                    Layout.preferredWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
+                    Layout.minimumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
+                    Layout.maximumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
+                    Layout.preferredHeight: 30
+                    Layout.maximumHeight: 30
+                    visible: !panel.authenticated()
+                        && (!backend || backend.ai.aiChatLoginAvailable)
+                    text: backend && backend.ai.codexAuthState === "login_pending"
+                        ? "ブラウザを開く"
+                        : (backend && ["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0
+                            ? "再接続" : "ログイン")
+                    enabled: backend && backend.ai.codexConnectionState !== "connecting"
+                        && backend.ai.codexAuthState !== "logging_in"
+                    onClicked: {
+                        if (backend.ai.codexAuthState === "login_pending")
+                            backend.ai.openAIProviderLoginPage()
+                        else if (["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0)
+                            backend.ai.reconnectAIChat()
+                        else
+                            backend.ai.startAIProviderLogin()
+                    }
+                }
             }
         }
 
@@ -308,6 +319,7 @@ Rectangle {
             CodexEditPanel {
                 objectName: "codexChatProposalCard"
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 Layout.preferredHeight: implicitHeight
                 backend: panel.backend
             }

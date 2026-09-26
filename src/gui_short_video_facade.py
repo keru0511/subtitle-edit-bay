@@ -130,6 +130,8 @@ class ShortVideoFacade(FeatureFacade):
 
     def _commit_short_video(self, section: dict[str, Any]) -> bool:
         backend = self._backend
+        if backend._project is None or backend._running:
+            return False
         try:
             changed = self.project_editor.commit_section_change("short_video", section)
         except (ValueError, TypeError, OverflowError) as error:
@@ -497,7 +499,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(result=bool)
     def retryHighlightAnalysis(self) -> bool:
         backend = self._backend
-        if self._highlight_state.status in {"running", "cancelling"}:
+        if self.project_editor.project is None or backend._running or self._highlight_state.status in {"running", "cancelling"}:
             return False
         self._highlight_state.candidates = []
         backend.highlightCandidatesChanged.emit()
@@ -542,7 +544,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:
         backend = self._backend
-        if not 0 <= index < len(self._highlight_state.candidates):
+        if backend._running or not 0 <= index < len(self._highlight_state.candidates):
             return False
         self._highlight_state.rejected.append(self._highlight_state.candidates.pop(index))
         backend.highlightCandidatesChanged.emit()
@@ -551,7 +553,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(result=bool)
     def undoHighlightRejection(self) -> bool:
         backend = self._backend
-        if not self._highlight_state.rejected:
+        if backend._running or not self._highlight_state.rejected:
             return False
         self._highlight_state.candidates.append(self._highlight_state.rejected.pop())
         backend.highlightCandidatesChanged.emit()

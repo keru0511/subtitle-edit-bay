@@ -256,6 +256,7 @@ Item {
                         }
                     }
                     SmallButton {
+                        objectName: "workspaceCutSelectButton-" + String(cutRow.modelData.id)
                         Layout.preferredWidth: 44
                         text: "選択"
                         onClicked: root.cutSelected(

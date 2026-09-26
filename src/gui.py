@@ -1631,12 +1631,14 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def beginSourceRelink(self) -> None:
+        if self._running:
+            return
         self._relink_source_selection = self._source_selection
         self._relinking_project_sources = True
 
     @Slot()
     def finishSourceRelink(self) -> None:
-        if not self._relinking_project_sources:
+        if self._running or not self._relinking_project_sources:
             return
         try:
             previous = self._relink_source_selection
@@ -1651,7 +1653,7 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot()
     def relinkProjectSources(self) -> None:
-        if self._project is None:
+        if self._running or self._project is None:
             return
 
         old_project = deepcopy(self._project)

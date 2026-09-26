@@ -57,7 +57,7 @@ Popup {
     height: Math.min(680, Overlay.overlay.height - 32)
     modal: true
     focus: true
-    closePolicy: Popup.CloseOnEscape
+    closePolicy: root.appBackend.running ? Popup.NoAutoClose : Popup.CloseOnEscape
     onOpened: root.appBackend.beginSourceRelink()
     onClosed: root.appBackend.finishSourceRelink()
     background: Rectangle {
@@ -81,6 +81,7 @@ Popup {
             }
             ToolButton {
                 text: "×"
+                enabled: !root.appBackend.running
                 onClicked: root.close()
             }
         }
@@ -384,6 +385,7 @@ Popup {
             Button {
                 objectName: "sourceDoneButton"
                 text: "完了"
+                enabled: !root.appBackend.running
                 onClicked: root.close()
             }
         }

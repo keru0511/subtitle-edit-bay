@@ -3265,6 +3265,60 @@ Window {
         self.assertTrue(self.app.projectLoaded)
         self.assertEqual(Path(self.app.projectPath), path)
 
+    def test_source_relink_is_locked_during_processing_and_recovers(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        popup = window.findChild(QObject, "sourcePopup")
+        self.assertTrue(popup.property("visible"))
+        button = self._quick_item(window, "sourceRelinkButton")
+        done_button = self._quick_item(window, "sourceDoneButton")
+        self.assertTrue(button.isEnabled())
+        self.assertTrue(done_button.isEnabled())
+
+        relocated = self.root / "relinked-during-processing"
+        relocated.mkdir()
+        project = deepcopy(self.app._project)
+        assert project is not None
+        video = relocated / Path(project["video"]["path"]).name
+        audio = relocated / Path(project["audio_sources"][0]["path"]).name
+        video.write_bytes(b"video")
+        audio.write_bytes(b"audio")
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(video))
+            self.app.setAudioFiles([str(audio)], False)
+
+        before = (
+            deepcopy(self.app._project), self.app.projectDirty, path.read_bytes(),
+        )
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            self.app.processEvents()
+            self.assertFalse(button.isEnabled())
+            self.assertFalse(done_button.isEnabled())
+            QTest.keyClick(window, Qt.Key.Key_Escape)
+            self.assertTrue(popup.property("visible"))
+            self.app.relinkProjectSources()
+            self.app.finishSourceRelink()
+            self.assertTrue(self.app._relinking_project_sources)
+            self.assertEqual(
+                (self.app._project, self.app.projectDirty, path.read_bytes()),
+                before,
+            )
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.app.processEvents()
+        self.assertTrue(button.isEnabled())
+        self.assertTrue(done_button.isEnabled())
+        self._click(window, button)
+        self.assertEqual(self.app._project["video"]["path"], str(video.resolve()))
+        self.assertEqual(self.app._project["audio_sources"][0]["path"], str(audio.resolve()))
+        self._click(window, done_button)
+        self.assertFalse(self.app._relinking_project_sources)
+
     def test_finish_source_relink_clears_relinking_state(self) -> None:
         path, _, _ = self._make_project()
         with patch.object(self.app, "_probe_audio_tracks"):

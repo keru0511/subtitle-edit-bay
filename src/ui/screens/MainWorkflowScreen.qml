@@ -491,6 +491,11 @@ ApplicationWindow {
     }
 
     function closeShortWorkspace() {
+        // Loader.item の型は QObject だが、読み込み先は ShortModeScreen。
+        // qmllint disable missing-property
+        if (shortModeLoader.item && !shortModeLoader.item.commitPendingEdits())
+            return
+        // qmllint enable missing-property
         if (!root.appBackend.workspace.switchWorkspace("normal-video"))
             return
         var playerState = root.appBackend.workspace.workspacePlayerState

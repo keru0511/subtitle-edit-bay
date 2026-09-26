@@ -1313,6 +1313,53 @@ Window {
                 self.assertEqual(Path(self.app.projectPath), path)
                 self.assertEqual(load_project(path)["output_dir"], str(export))
 
+    def test_header_render_selects_missing_output_and_keeps_project_location(self) -> None:
+        path = self._load_project()
+        self.app.setOutputDirectory("")
+        original_project = deepcopy(self.app._project)
+        original_file = path.read_bytes()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        render_button = self._quick_item(window, "workspaceHeaderRenderButton")
+        output_button = self._quick_item(window, "workspaceHeaderOutputButton")
+        self.assertTrue(render_button.isEnabled())
+        self.assertIn("出力先を選択", render_button.property("text"))
+        self.assertFalse(output_button.isEnabled())
+
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch("src.gui_base.QFileDialog.getExistingDirectory", return_value="") as choose,
+            patch.object(self.app.workflow, "_start_command") as start,
+        ):
+            self._click(window, render_button)
+        choose.assert_called_once()
+        start.assert_not_called()
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertIn("書き出しを中止", self.app.status)
+        self.assertEqual(self.app._project, original_project)
+        self.assertEqual(path.read_bytes(), original_file)
+        self.assertEqual(Path(self.app.projectPath), path)
+
+        export = self.root / "chosen-export"
+        export.mkdir()
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)) as choose,
+            patch.object(self.app.workflow, "_start_command") as start,
+        ):
+            self._click(window, render_button)
+        choose.assert_called_once()
+        start.assert_called_once()
+        command = start.call_args.args[0]
+        self.assertEqual(Path(command[command.index("--output") + 1]).parent, export)
+        self.assertEqual(Path(self.app.projectPath), path)
+        self.assertEqual(load_project(path)["output_dir"], str(export))
+        self.assertTrue(output_button.isEnabled())
+        with patch("src.gui_base.QDesktopServices.openUrl", return_value=True) as open_url:
+            self._click(window, output_button)
+        open_url.assert_called_once()
+        self.assertEqual(Path(open_url.call_args.args[0].toLocalFile()), export)
+
     def test_output_unset_qml_offers_export_and_distinct_save_locations(self) -> None:
         path = self._load_project()
         self.app.setOutputDirectory("")
@@ -8936,6 +8983,74 @@ Window {
         ):
             self._click(window, self._quick_item(window, "shortModeExportButton"))
         self.assertEqual(start_command.call_args.args[1], "render_short")
+
+    def test_short_export_saves_clip_time_typed_without_return(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="ショートクリップの編集欄",
+        )
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        self._replace_focused_time(window, start_field, "0.500")
+        self.assertTrue(start_field.hasActiveFocus())
+        captured_starts = []
+
+        def capture_render(*_args: object, **_kwargs: object) -> None:
+            captured_starts.append(load_project(path)["short_video"]["clips"][0]["start"])
+
+        with (
+            patch.object(self.app.autosave_timer, "start"),
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app.workflow, "_start_command", side_effect=capture_render) as start,
+        ):
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_called_once()
+        self.assertEqual(captured_starts, [0.5])
+
+    def test_short_back_commits_clip_time_typed_without_return(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="ショートクリップの編集欄",
+        )
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        self._replace_focused_time(window, start_field, "0.500")
+        self.assertTrue(start_field.hasActiveFocus())
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_item(window, "shortModeBackButton"))
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+
+    def test_short_export_saves_bgm_time_typed_without_return(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        bgm_start = self._quick_item(window, "shortModeBgmStartField")
+        self._click(window, bgm_start)
+        self._replace_focused_time(window, bgm_start, "1.250")
+        self.assertTrue(bgm_start.hasActiveFocus())
+        captured_starts = []
+
+        def capture_render(*_args: object, **_kwargs: object) -> None:
+            captured_starts.append(load_project(path)["short_video"]["bgm"]["start"])
+
+        with (
+            patch.object(self.app.autosave_timer, "start"),
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app.workflow, "_start_command", side_effect=capture_render) as start,
+        ):
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_called_once()
+        self.assertEqual(captured_starts, [1.25])
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),

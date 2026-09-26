@@ -312,6 +312,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_render_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_shortcut_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_header_render_selects_missing_output_and_keeps_project_location
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_analysis_can_start_and_cancel_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_candidates_are_preserved_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_filtered_candidate_actions_use_original_index_and_save
@@ -331,8 +332,11 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_project_speaker_color_dialog_applies_and_cancel_preserves_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_clip_card_drag_cancel_restores_position
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_clip_card_drag_reorders_before_target
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_back_commits_clip_time_typed_without_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_initialization_is_locked_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_background_color_dialog_applies_selected_color
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_saves_bgm_time_typed_without_return
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_saves_clip_time_typed_without_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_clip_mutation_controls_dispatch_runtime_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_fit_combo_updates_its_delegate_clip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_gui_adds_direct_range_clip_when_segments_exist

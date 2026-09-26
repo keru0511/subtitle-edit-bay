@@ -35,6 +35,14 @@ Item {
         if (shortRoot.appBackend) shortRoot.appBackend.shortVideo.initializeShortVideoClips()
     }
 
+    function commitPendingEdits() {
+        if (shortRoot.mainRoot && !shortRoot.mainRoot.commitInputMethod())
+            return false
+        // 編集中の時刻やBGM設定の onEditingFinished を、画面遷移より先に実行する。
+        shortRoot.forceActiveFocus()
+        return true
+    }
+
     Component.onCompleted: {
         shortRoot.initializeIfNeeded()
         shortRoot.clampCurrentClipIndex()
@@ -83,6 +91,8 @@ Item {
                     ? "出力先を選んでショート動画を書き出す"
                     : "ショート動画を書き出す"
                 onClicked: {
+                    if (!shortRoot.commitPendingEdits())
+                        return
                     shortRoot.appBackend.workflow.renderShortVideo()
                 }
                 contentItem: Text {

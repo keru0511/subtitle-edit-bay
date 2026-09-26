@@ -93,7 +93,7 @@ Item {
             player: root.player
             pixelsPerSecond: root.editorState.pixelsPerSecond
             snapSeconds: root.editorState.snapMilliseconds / 1000
-            editable: true
+            editable: !root.appBackend.running
             seekHandler: function (positionMilliseconds) {
                 root.seekRequested(positionMilliseconds);
             }

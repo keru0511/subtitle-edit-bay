@@ -113,32 +113,35 @@ Item {
                 colors: root.colors
                 objectName: "addCaptionButton"
                 text: "+ 字幕追加"
+                enabled: !root.appBackend.running
                 onClicked: root.editRequested("add", root.player.position / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "splitCaptionButton"
                 text: "分割"
-                enabled: root.editorState.canSplitSelectedSegment(root.player.position)
+                enabled: !root.appBackend.running && root.editorState.canSplitSelectedSegment(root.player.position)
                 onClicked: root.editRequested("split", root.player.position / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "deleteCaptionButton"
                 text: "削除"
-                enabled: root.appBackend.subtitles.selectedSegmentIndex >= 0
+                enabled: !root.appBackend.running && root.appBackend.subtitles.selectedSegmentIndex >= 0
                 onClicked: root.editRequested("delete", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "saveProjectButton"
                 text: "保存"
+                enabled: !root.appBackend.running
                 onClicked: root.saveRequested()
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "buildAssButton"
                 text: "プレビューを更新"
+                enabled: !root.appBackend.running
                 onClicked: root.previewRequested()
             }
             Button {
@@ -309,7 +312,7 @@ Item {
                     player: root.player
                     pixelsPerSecond: root.editorState.pixelsPerSecond
                     snapSeconds: root.editorState.snapMilliseconds / 1000
-                    editable: true
+                    editable: !root.appBackend.running
                     Component.onCompleted: Qt.callLater(function () {
                         viewportX = root.editorState.timelineScrollX;
                     })
@@ -478,6 +481,7 @@ Item {
                                         Layout.preferredWidth: 72
                                         objectName: "captionStartTimeField"
                                         text: captionRow.start.toFixed(3)
+                                        enabled: !root.appBackend.running
                                         onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {
                                             "start": Number(text)
                                         })
@@ -490,6 +494,7 @@ Item {
                                         Layout.preferredWidth: 72
                                         objectName: "captionEndTimeField"
                                         text: captionRow.end.toFixed(3)
+                                        enabled: !root.appBackend.running
                                         onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {
                                             "end": Number(text)
                                         })
@@ -498,6 +503,7 @@ Item {
                                         id: captionSpeakerCombo
                                         objectName: "captionSpeakerCombo"
                                         Layout.preferredWidth: 105
+                                        enabled: !root.appBackend.running
                                         model: root.projectSpeakerCache
                                         textRole: "name"
                                         valueRole: "style"
@@ -518,6 +524,7 @@ Item {
                                         id: captionFontCombo
                                         objectName: "captionFontCombo"
                                         Layout.preferredWidth: 130
+                                        enabled: !root.appBackend.running
                                         model: root.appBackend.subtitles.fontChoices
                                         textRole: "label"
                                         valueRole: "family"
@@ -550,6 +557,7 @@ Item {
                                         selectedTextColor: "#10140F"
                                         objectName: "captionSizeSpin"
                                         Layout.preferredWidth: 106
+                                        enabled: !root.appBackend.running
                                         from: 50
                                         to: 200
                                         stepSize: 5
@@ -567,6 +575,7 @@ Item {
                                 TextArea {
                                     id: captionTextArea
                                     objectName: "captionTextArea"
+                                    enabled: !root.appBackend.running
                                     property string editingSegmentId: ""
                                     function commitText() {
                                         var id = editingSegmentId;

@@ -233,6 +233,7 @@ Item {
                     TimeField {
                         id: startField
                         objectName: "workspaceSubtitleStartField"
+                        enabled: !root.backend.running
                         property int editingSegmentIndex: -1
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
@@ -246,6 +247,7 @@ Item {
                     TimeField {
                         id: endField
                         objectName: "workspaceSubtitleEndField"
+                        enabled: !root.backend.running
                         property int editingSegmentIndex: -1
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
@@ -260,6 +262,7 @@ Item {
                 ComboBox {
                     id: speakerCombo
                     objectName: "workspaceSubtitleSpeakerCombo"
+                    enabled: !root.backend.running
                     Layout.fillWidth: true
                     model: root.speakers
                     textRole: "name"
@@ -271,6 +274,7 @@ Item {
                     ComboBox {
                         id: fontCombo
                         objectName: "workspaceSubtitleFontCombo"
+                        enabled: !root.backend.running
                         Layout.fillWidth: true
                         model: root.fontChoices
                         textRole: "label"
@@ -281,7 +285,7 @@ Item {
                         objectName: "workspaceSubtitleSpeakerColorButton"
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 30
-                        enabled: root.speakerIndex(root.selectedSegment.speaker || "") >= 0
+                        enabled: !root.backend.running && root.speakerIndex(root.selectedSegment.speaker || "") >= 0
                         onClicked: {
                             var index = root.speakerIndex(root.selectedSegment.speaker || "")
                             if (index >= 0)
@@ -303,6 +307,7 @@ Item {
                     CompactSpinBox {
                         id: sizeSpin
                         objectName: "workspaceSubtitleSizeSpin"
+                        enabled: !root.backend.running
                         Layout.fillWidth: true
                         from: 50
                         to: 200
@@ -314,6 +319,7 @@ Item {
                 TextArea {
                     id: captionText
                     objectName: "workspaceSubtitleTextArea"
+                    enabled: !root.backend.running
                     property int editingSegmentIndex: -1
                     property string editingSegmentId: ""
                     Layout.fillWidth: true

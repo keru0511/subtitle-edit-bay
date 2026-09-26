@@ -4101,6 +4101,149 @@ Window {
         self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
         self.assertEqual(self.app.subtitleSegments, original)
 
+    def test_subtitle_edit_controls_follow_processing_state(self) -> None:
+        """処理中は字幕を編集できず、終了後は同じ画面から再開できる。"""
+        self._load_project()
+        self.app.selectEditMode("subtitle")
+        self.app.updateSegment(0, {"text": "保存済みの字幕"})
+        self.app.updateSegment(0, {"text": "取り消す字幕"})
+        self.app.undoEdit()
+        self.assertTrue(self.app.saveProject())
+        self.app.setEditorPlayhead(2_000, "source")
+        _, window = self._load_qml()
+
+        workspace_controls = (
+            "workspaceSubtitleUndoButton",
+            "workspaceSubtitleRedoButton",
+            "workspaceSubtitleAddButton",
+            "workspaceSubtitleSplitButton",
+            "workspaceSubtitleDeleteButton",
+            "workspaceSubtitleSaveButton",
+            "workspaceSubtitlePreviewButton",
+            "workspaceSubtitleStartField",
+            "workspaceSubtitleEndField",
+            "workspaceSubtitleSpeakerCombo",
+            "workspaceSubtitleFontCombo",
+            "workspaceSubtitleSpeakerColorButton",
+            "workspaceSubtitleSizeSpin",
+            "workspaceSubtitleTextArea",
+        )
+        controls = [self._quick_visual_item(window.contentItem(), name) for name in workspace_controls]
+        timeline = self._quick_item(window, "workspaceSubtitleTimeline")
+
+        def click_disabled_button(name: str) -> None:
+            button = self._quick_item(window, name)
+            point = button.mapToScene(QPointF(button.width() / 2, button.height() / 2))
+            QTest.mouseClick(
+                window,
+                Qt.MouseButton.LeftButton,
+                pos=QPoint(round(point.x()), round(point.y())),
+            )
+            self.app.processEvents()
+
+        for name, control in zip(workspace_controls, controls):
+            self.assertTrue(control.isEnabled(), name)
+        self.assertTrue(timeline.property("editable"))
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(workspace_controls, controls):
+            self.assertFalse(control.isEnabled(), name)
+        self.assertFalse(timeline.property("editable"))
+        segments_during_processing = deepcopy(self.app.subtitleSegments)
+        click_disabled_button("workspaceSubtitleAddButton")
+        self.assertEqual(self.app.subtitleSegments, segments_during_processing)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(workspace_controls, controls):
+            self.assertTrue(control.isEnabled(), name)
+        self.assertTrue(timeline.property("editable"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, 1)
+
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        editor_controls = (
+            "undoCaptionButton", "redoCaptionButton", "addCaptionButton", "deleteCaptionButton",
+            "saveProjectButton", "buildAssButton", "captionStartTimeField", "captionEndTimeField",
+            "captionSpeakerCombo", "captionFontCombo", "captionSizeSpin", "captionTextArea",
+        )
+        controls = [self._quick_visual_item(window.contentItem(), name) for name in editor_controls]
+        timeline = self._quick_item(window, "editorTimeline")
+        for name, control in zip(editor_controls, controls):
+            self.assertTrue(control.isEnabled(), name)
+        self.assertTrue(timeline.property("editable"))
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(editor_controls, controls):
+            self.assertFalse(control.isEnabled(), name)
+        self.assertFalse(timeline.property("editable"))
+        segments_during_processing = deepcopy(self.app.subtitleSegments)
+        click_disabled_button("addCaptionButton")
+        self.assertEqual(self.app.subtitleSegments, segments_during_processing)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in zip(editor_controls, controls):
+            self.assertTrue(control.isEnabled(), name)
+        self.assertTrue(timeline.property("editable"))
+        self._click(window, self._quick_item(window, "addCaptionButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+
+    def test_subtitle_backend_rejects_mutations_during_processing(self) -> None:
+        """画面以外の字幕編集入口も処理中のprojectと履歴を変えない。"""
+        actions = (
+            ("本文", lambda: self.app.subtitles.updateSegment(0, {"text": "処理中の編集"})),
+            ("移動", lambda: self.app.subtitles.moveSegment(0, 1.0, 5.0, 0.0)),
+            ("開始時刻", lambda: self.app.subtitles.resizeSegmentStart(0, 0.5, 0.0)),
+            ("終了時刻", lambda: self.app.subtitles.resizeSegmentEnd(0, 3.5, 0.0)),
+            ("追加", lambda: self.app.subtitles.addSegment(9.0)),
+            ("分割", lambda: self.app.subtitles.splitSelectedSegment(2.0)),
+            ("削除", self.app.subtitles.deleteSelectedSegment),
+            ("Undo", self.app.subtitles.undoEdit),
+            ("Redo", self.app.subtitles.redoEdit),
+            ("プレビュー更新", lambda: self.app.subtitles.buildSubtitlePreview({"subtitle_font_size": 60})),
+        )
+        for name, action in actions:
+            with self.subTest(action=name):
+                path = self._load_project()
+                self.app.subtitles.updateSegment(0, {"text": "一度目の編集"})
+                self.app.subtitles.updateSegment(0, {"text": "二度目の編集"})
+                self.app.subtitles.undoEdit()
+                self.assertTrue(self.app.subtitles.canUndo)
+                self.assertTrue(self.app.subtitles.canRedo)
+                self.assertTrue(self.app.saveProject())
+                self.app.autosave_timer.stop()
+                before = (
+                    deepcopy(self.app._project),
+                    deepcopy(self.app._undo_stack),
+                    deepcopy(self.app._redo_stack),
+                    self.app.projectDirty,
+                    path.read_bytes(),
+                )
+                self.app._running = True
+                try:
+                    action()
+                    self.assertEqual(
+                        (
+                            self.app._project,
+                            self.app._undo_stack,
+                            self.app._redo_stack,
+                            self.app.projectDirty,
+                            path.read_bytes(),
+                        ),
+                        before,
+                    )
+                finally:
+                    self.app._running = False
+
     def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
         self._load_project(
             segments=[

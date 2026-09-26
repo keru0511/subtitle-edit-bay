@@ -74,6 +74,8 @@ class DataBoundaryTests(TypedTestCase):
         self.assertEqual(items[2], "日本語")
         self.assertIsNone(decode_json("null"))
         self.assertTrue(decode_json("true"))
+        self.assertEqual(decode_json(b'\xef\xbb\xbf{"value": 1}'), {"value": 1})
+        self.assertEqual(decode_json('{"value": 1}'.encode("utf-16")), {"value": 1})
         with self.assertRaises(json.JSONDecodeError):
             decode_json("{")
 

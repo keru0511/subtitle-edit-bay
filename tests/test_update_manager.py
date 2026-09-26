@@ -28,7 +28,7 @@ def _installer(path: Path) -> str:
 
 
 class UpdateManagerTests(TypedTestCase):
-    def test_download_verifies_size_hash_and_reports_byte_progress(self):
+    def test_download_verifies_size_hash_and_reports_byte_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             source = tmp_path / "SubtitleEditBay-Setup.exe"
@@ -52,7 +52,7 @@ class UpdateManagerTests(TypedTestCase):
             self.assertFalse(destination.with_name(destination.name + ".partial").exists())
             self.assertEqual(progress[-1][0], source.stat().st_size)
 
-    def test_cancel_removes_partial_package(self):
+    def test_cancel_removes_partial_package(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             source = tmp_path / "SubtitleEditBay-Setup.exe"
@@ -68,7 +68,7 @@ class UpdateManagerTests(TypedTestCase):
             self.assertFalse(destination.exists())
             self.assertFalse(destination.with_name(destination.name + ".partial").exists())
 
-    def test_hash_mismatch_and_unsafe_zip_are_rejected(self):
+    def test_hash_mismatch_and_unsafe_zip_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             source = tmp_path / "SubtitleEditBay-Setup.exe"
@@ -88,7 +88,7 @@ class UpdateManagerTests(TypedTestCase):
             with self.assertRaisesRegex(UpdatePackageError, "unsafe path"):
                 validate_package(archive, expected_sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
 
-    def test_installer_helper_command_is_hidden_and_carries_transaction_context(self):
+    def test_installer_helper_command_is_hidden_and_carries_transaction_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             with patch("sys.platform", "win32"):
@@ -111,7 +111,7 @@ class UpdateManagerTests(TypedTestCase):
         self.assertEqual(Path(command[install_index + 1]), tmp_path)
         self.assertNotIn(str(tmp_path / "SubtitleEditBay.exe"), command)
 
-    def test_release_asset_metadata_selects_installer_and_checksum(self):
+    def test_release_asset_metadata_selects_installer_and_checksum(self) -> None:
         payload = {
             "tag_name": "v1.2.3",
             "body": "notes",
@@ -144,7 +144,7 @@ class UpdateManagerTests(TypedTestCase):
 
 
 class PlatformUpdateTests(TypedTestCase):
-    def test_non_windows_rejects_update_check_before_network_access(self):
+    def test_non_windows_rejects_update_check_before_network_access(self) -> None:
         for platform in ("darwin", "linux"):
             with (
                 self.subTest(platform=platform),
@@ -155,7 +155,7 @@ class PlatformUpdateTests(TypedTestCase):
                     updater.fetch_latest_release(Path("."))
                 urlopen.assert_not_called()
 
-    def test_unsupported_installer_handoff_fails_before_launch(self):
+    def test_unsupported_installer_handoff_fails_before_launch(self) -> None:
         from src.update_manager import UpdatePackageError
 
         with patch("sys.platform", "darwin"), self.assertRaises(UpdatePackageError):

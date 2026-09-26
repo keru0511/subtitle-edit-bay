@@ -208,6 +208,15 @@ files = [
   "tests/test_audio_mixer.py",
   "tests/test_subtitle_layout_golden.py",
   "tests/test_validation_errors.py",
+  "tests/test_quality_entrypoint.py",
+  "src/update_manager.py",
+  "src/updater.py",
+  "tests/test_update_manager.py",
+  "scripts/release_contract.py",
+  "scripts/release_state.py",
+  "scripts/ci_impact.py",
+  "scripts/release_readiness.py",
+  "tests/test_ci_impact.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -406,6 +415,15 @@ module = [
   "tests.test_audio_mixer",
   "tests.test_subtitle_layout_golden",
   "tests.test_validation_errors",
+  "tests.test_quality_entrypoint",
+  "src.update_manager",
+  "src.updater",
+  "tests.test_update_manager",
+  "scripts.release_contract",
+  "scripts.release_state",
+  "scripts.ci_impact",
+  "scripts.release_readiness",
+  "tests.test_ci_impact",
 ]
 strict = true
 disallow_any_explicit = true

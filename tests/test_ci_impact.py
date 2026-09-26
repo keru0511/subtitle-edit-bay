@@ -2,28 +2,35 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from src.data_boundary import decode_json, is_object_mapping
 from scripts.ci_impact import JOBS, changed_paths, main, plan_changes
 from scripts.release_readiness import ReleaseReadinessError, assert_ci_validation_results
 from tests.typed_case import TypedTestCase
 
 
+def _all_jobs_enabled(lines: dict[str, str]) -> bool:
+    plan = decode_json(lines["impact_plan"])
+    if not is_object_mapping(plan) or any(type(value) is not bool for value in plan.values()):
+        raise AssertionError("CIジョブ計画の形式が不正です")
+    return all(bool(value) for value in plan.values())
+
+
 class CiImpactTests(TypedTestCase):
-    def test_documentation_avoids_expensive_jobs(self):
+    def test_documentation_avoids_expensive_jobs(self) -> None:
         plan = plan_changes(["README.md", "docs/CI_TEST_GROUPS.md", "AGENTS.md"])
         self.assertEqual([job for job, enabled in plan.items() if enabled], ["python-quality"])
 
-    def test_application_keeps_runtime_checks_but_avoids_installer(self):
+    def test_application_keeps_runtime_checks_but_avoids_installer(self) -> None:
         plan = plan_changes(["src/transcription_context.py"])
         self.assertTrue(all(plan[job] for job in JOBS if job != "windows-installer-smoke"))
         self.assertFalse(plan["windows-installer-smoke"])
 
-    def test_unknown_and_shared_changes_run_everything(self):
+    def test_unknown_and_shared_changes_run_everything(self) -> None:
         for path in [
             "new-tool.toml",
             "tests/helpers.py",
@@ -40,7 +47,7 @@ class CiImpactTests(TypedTestCase):
             with self.subTest(path=path):
                 self.assertTrue(all(plan_changes([path]).values()))
 
-    def test_test_group_mapping_includes_cross_platform_selectors(self):
+    def test_test_group_mapping_includes_cross_platform_selectors(self) -> None:
         plan = plan_changes(["tests/test_audio_mix_semantic_e2e.py"])
         self.assertTrue(plan["portable-tests"])
         self.assertTrue(plan["windows-tests"])
@@ -50,13 +57,13 @@ class CiImpactTests(TypedTestCase):
         self.assertTrue(plan["portable-tests"])
         self.assertTrue(plan["windows-launcher-tests"])
 
-    def test_multiple_areas_are_combined(self):
+    def test_multiple_areas_are_combined(self) -> None:
         plan = plan_changes(["docs/USAGE.md", "tests/test_transcription_context.py", "tests/test_windows_launchers.py"])
         self.assertTrue(plan["portable-tests"])
         self.assertTrue(plan["windows-launcher-tests"])
         self.assertFalse(plan["windows-tests"])
 
-    def test_manual_run_and_missing_push_base_run_everything(self):
+    def test_manual_run_and_missing_push_base_run_everything(self) -> None:
         for event, base in [("workflow_dispatch", "abc"), ("schedule", "abc"), ("push", "0" * 40), ("push", "")]:
             with self.subTest(event=event, base=base), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
@@ -76,10 +83,10 @@ class CiImpactTests(TypedTestCase):
                 ):
                     main()
                 lines = dict(line.split("=", 1) for line in output.read_text().splitlines())
-                self.assertTrue(all(json.loads(lines["impact_plan"]).values()))
+                self.assertTrue(_all_jobs_enabled(lines))
                 self.assertEqual(lines["codeql"], "true")
 
-    def test_unavailable_diff_falls_back_to_full_validation(self):
+    def test_unavailable_diff_falls_back_to_full_validation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             with (
@@ -101,13 +108,13 @@ class CiImpactTests(TypedTestCase):
             ):
                 main()
             lines = dict(line.split("=", 1) for line in output.read_text().splitlines())
-            self.assertTrue(all(json.loads(lines["impact_plan"]).values()))
+            self.assertTrue(_all_jobs_enabled(lines))
 
-    def test_git_rename_includes_both_paths(self):
+    def test_git_rename_includes_both_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 
-            def git(*args):
+            def git(*args: str) -> None:
                 subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
             git("init")
@@ -122,7 +129,7 @@ class CiImpactTests(TypedTestCase):
             with patch("scripts.ci_impact.ROOT", root):
                 self.assertEqual(set(changed_paths("HEAD^", "HEAD")), {"old.py", "new.py"})
 
-    def test_gate_accepts_only_planned_skips(self):
+    def test_gate_accepts_only_planned_skips(self) -> None:
         plan = plan_changes(["README.md"])
         required = ["success", "skipped", "skipped", "skipped"]
         delegated = ["skipped", "skipped"]
@@ -138,20 +145,22 @@ class CiImpactTests(TypedTestCase):
                 False, False, "success", ["success"] * 4, ["skipped"] * 2, plan_changes(["src/gui.py"])
             )
 
-    def test_release_preparation_cannot_use_reduced_plan(self):
+    def test_release_preparation_cannot_use_reduced_plan(self) -> None:
         with self.assertRaises(ReleaseReadinessError):
             assert_ci_validation_results(
                 True, True, "success", ["success"] * 4, ["skipped"] * 2, plan_changes(["README.md"])
             )
         assert_ci_validation_results(True, True, "success", ["success"] * 4, ["skipped"] * 2, plan_changes(["VERSION"]))
 
-    def test_invalid_plan_is_rejected(self):
-        for plan in [{}, dict.fromkeys(JOBS, "false"), dict.fromkeys(JOBS, False)]:
+    def test_invalid_plan_is_rejected(self) -> None:
+        invalid_plans: list[object] = [{}, dict.fromkeys(JOBS, "false"), dict.fromkeys(JOBS, False)]
+        for plan in invalid_plans:
             with self.subTest(plan=plan), self.assertRaises(ReleaseReadinessError):
                 assert_ci_validation_results(False, False, "success", ["success"] * 4, ["success"] * 2, plan)
 
-    def test_each_selected_job_rejects_failure_cancellation_and_skip(self):
-        for paths in [["README.md"], ["src/gui.py"], ["VERSION"], ["tests/test_windows_launchers.py"]]:
+    def test_each_selected_job_rejects_failure_cancellation_and_skip(self) -> None:
+        path_sets: list[list[str]] = [["README.md"], ["src/gui.py"], ["VERSION"], ["tests/test_windows_launchers.py"]]
+        for paths in path_sets:
             plan = plan_changes(paths)
             expected = ["success" if plan[job] else "skipped" for job in JOBS]
             assert_ci_validation_results(False, False, "success", expected[:4], expected[4:], plan)
@@ -164,12 +173,13 @@ class CiImpactTests(TypedTestCase):
                     with self.subTest(paths=paths, job=job, status=status), self.assertRaises(ReleaseReadinessError):
                         assert_ci_validation_results(False, False, "success", actual[:4], actual[4:], plan)
 
-    def test_pr_and_push_use_the_supplied_diff_and_emit_skips(self):
+    def test_pr_and_push_use_the_supplied_diff_and_emit_skips(self) -> None:
         for event in ["pull_request", "push"]:
             with self.subTest(event=event), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
+                changed: list[str] = ["README.md"]
                 with (
-                    patch("scripts.ci_impact.changed_paths", return_value=["README.md"]) as diff,
+                    patch("scripts.ci_impact.changed_paths", return_value=changed) as diff,
                     patch(
                         "sys.argv",
                         [
@@ -190,4 +200,4 @@ class CiImpactTests(TypedTestCase):
                 lines = dict(line.split("=", 1) for line in output.read_text().splitlines())
                 self.assertEqual(lines["codeql"], "false")
                 self.assertEqual(lines["windows-installer-smoke"], "false")
-                self.assertEqual(json.loads(lines["impact_plan"]), plan_changes(["README.md"]))
+                self.assertEqual(decode_json(lines["impact_plan"]), plan_changes(["README.md"]))

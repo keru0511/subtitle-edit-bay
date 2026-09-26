@@ -4,7 +4,7 @@ import argparse
 import json
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data_boundary import decode_json, is_object_mapping
 from scripts.ci_impact import JOBS
 from scripts.release_contract import ReleaseContractError, release_version_from_tag
 
@@ -62,6 +63,25 @@ class Classification:
     changed_files: tuple[str, ...]
 
 
+@dataclass
+class ReleaseReadinessArgs(argparse.Namespace):
+    command: str = ""
+    base_sha: str = ""
+    source_sha: str = ""
+    github_output: Path | None = None
+    event_name: str = ""
+    base_ref: str = ""
+    kind: str = ""
+    classify_result: str = ""
+    requires_preparation: str = "false"
+    prepare_result: str = ""
+    result: list[str] = field(default_factory=list)
+    delegates_to_readiness: str = "false"
+    impact_plan: object = None
+    required_result: list[str] = field(default_factory=list)
+    delegated_result: list[str] = field(default_factory=list)
+
+
 def _git(*args: str) -> str:
     completed = subprocess.run(
         ("git", *args),
@@ -101,7 +121,8 @@ def _changed_files(base_sha: str, source_sha: str) -> tuple[str, ...]:
 
 def _version_tuple(tag: str) -> tuple[int, int, int]:
     version = release_version_from_tag(tag)
-    return tuple(int(part) for part in version.split("."))  # type: ignore[return-value]
+    major, minor, patch = version.split(".")
+    return int(major), int(minor), int(patch)
 
 
 def _is_release_infrastructure(path: str) -> bool:
@@ -201,7 +222,7 @@ def assert_ci_validation_results(
     classify_result: str,
     always_required_results: Sequence[str],
     delegated_results: Sequence[str],
-    impact_plan: dict[str, bool] | None = None,
+    impact_plan: object = None,
 ) -> None:
     if classify_result != "success":
         raise ReleaseReadinessError("CI validation ownership classification did not succeed")
@@ -209,27 +230,34 @@ def assert_ci_validation_results(
         raise ReleaseReadinessError("CI validation cannot delegate a normal change")
     if len(always_required_results) != len(CI_ALWAYS_REQUIRED_JOB_NAMES) - 1:
         raise ReleaseReadinessError("CI validation has an unexpected required-job result count")
-    plan = dict.fromkeys(JOBS, True) if impact_plan is None else impact_plan
-    if not isinstance(plan, dict) or set(plan) != set(JOBS) or any(type(value) is not bool for value in plan.values()):
-        raise ReleaseReadinessError("invalid CI impact plan")
+    plan: dict[str, bool] = {job: True for job in JOBS}
+    if impact_plan is not None:
+        if not is_object_mapping(impact_plan) or set(impact_plan) != set(JOBS):
+            raise ReleaseReadinessError("invalid CI impact plan")
+        for job in JOBS:
+            value = impact_plan.get(job)
+            if type(value) is not bool:
+                raise ReleaseReadinessError("invalid CI impact plan")
+            plan[job] = value
     if not plan["python-quality"] or (requires_preparation and not all(plan.values())):
         raise ReleaseReadinessError("required validation cannot be omitted from CI impact plan")
     failed = [
         result
-        for job, result in zip(JOBS[:4], always_required_results)
-        if result != ("success" if plan[job] else "skipped")
+        for index, result in enumerate(always_required_results)
+        if result != ("success" if plan[JOBS[index]] else "skipped")
     ]
     if failed:
         raise ReleaseReadinessError("required CI validation failed or skipped: " + ", ".join(failed))
     if len(delegated_results) != len(CI_DELEGATED_JOB_NAMES):
         raise ReleaseReadinessError("CI validation has an unexpected delegated-job result count")
-    for job, result in zip(JOBS[4:], delegated_results):
+    for index, result in enumerate(delegated_results):
+        job = JOBS[index + 4]
         expected = "skipped" if delegates_to_readiness or not plan[job] else "success"
         if result != expected:
             raise ReleaseReadinessError(f"CI delegated validation must be {expected}: {result}")
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> ReleaseReadinessArgs:
     parser = argparse.ArgumentParser(description="Classify and aggregate release readiness checks.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     classify = subparsers.add_parser("classify")
@@ -249,10 +277,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ci_validation.add_argument("--requires-preparation", required=True, choices=("true", "false"))
     ci_validation.add_argument("--delegates-to-readiness", required=True, choices=("true", "false"))
     ci_validation.add_argument("--classify-result", required=True)
-    ci_validation.add_argument("--impact-plan", type=json.loads)
+    ci_validation.add_argument("--impact-plan", type=decode_json)
     ci_validation.add_argument("--required-result", action="append", required=True)
     ci_validation.add_argument("--delegated-result", action="append", required=True)
-    return parser.parse_args(argv)
+    return parser.parse_args(argv, namespace=ReleaseReadinessArgs())
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -260,7 +288,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "classify":
             classification = classify_changes(args.base_sha, args.source_sha)
-            print(json.dumps(asdict(classification), ensure_ascii=False))
+            summary: dict[str, object] = {
+                "kind": classification.kind,
+                "release_version": classification.release_version,
+                "requires_preparation": classification.requires_preparation,
+                "changed_files": classification.changed_files,
+            }
+            print(json.dumps(summary, ensure_ascii=False))
             if args.github_output:
                 write_github_outputs(args.github_output, classification, args.event_name, args.base_ref)
         elif args.command == "assert-readiness":

@@ -22,7 +22,7 @@ def is_object_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
 
 
-def decode_json(text: str) -> object:
+def decode_json(text: str | bytes | bytearray) -> object:
     """JSONを未検証の値として受け渡す。構造・値の検証は呼び出し元が行う。"""
     payload: object = json.loads(text)
     return payload

@@ -46,7 +46,7 @@ def resolve_option(
 
 
 def resolve_list_option(
-    value: list[str] | None, config: Mapping[str, object], key: str, default: list[str] | None = None
+    value: object, config: Mapping[str, object], key: str, default: list[str] | None = None
 ) -> list[str]:
     resolved = resolve_option(value, config, key, default)
     if resolved is None:

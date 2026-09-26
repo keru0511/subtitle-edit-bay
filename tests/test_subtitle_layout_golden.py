@@ -45,11 +45,16 @@ class SubtitleLayoutGoldenTests(TypedTestCase):
 
     def test_short_duration_case_keeps_current_balanced_break_output(self) -> None:
         text = "ABCDEFGHIJKLMN"
+        boundary_points: list[int] = [6, 7]
+
+        def candidate_kind_bonus(_text: str, index: int) -> int:
+            return -50 if index == 6 else 0
+
         with (
-            mock.patch("src.subtitle_packer.break_candidates", return_value=[6, 7]),
+            mock.patch("src.subtitle_packer.break_candidates", return_value=boundary_points),
             mock.patch(
                 "src.subtitle_packer.candidate_kind_bonus",
-                side_effect=lambda _text, index: -50 if index == 6 else 0,
+                side_effect=candidate_kind_bonus,
             ),
         ):
             long_duration = normalize_text(text, max_width=8, max_lines=2, display_duration=3.0)

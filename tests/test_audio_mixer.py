@@ -29,8 +29,8 @@ class AudioMixerTests(TypedTestCase):
                 segments=[],
                 duration_seconds=1.0,
             )
-            reconcile_audio_mix(project, video_tracks=[])
-            first, second = project["audio_mix"]["channels"]
+            audio_mix = reconcile_audio_mix(project, video_tracks=[])
+            first, second = audio_mix["channels"]
             first.update({"enabled": True, "muted": True, "solo": False, "volume_percent": 42})
             second.update({"enabled": True, "muted": False, "solo": True, "volume_percent": 157})
             project_path = root / "video-only.subtitle-project.json"

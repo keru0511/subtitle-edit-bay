@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_object_list
 from src.color_config import normalize_rgb_color, save_speaker_color
 from src.runtime_config import (
     load_command_runtime_config,
@@ -344,7 +345,9 @@ class SubtitleProjectValidationTests(TypedTestCase):
             segments=[{"start": 0, "end": 1, "text": "hi", "speaker": "Oz"}],
         )
         self.assertEqual(project["project_type"], "subtitle-edit-project")
-        self.assertEqual(len(project["segments"]), 1)
+        segments = project["segments"]
+        assert is_object_list(segments)
+        self.assertEqual(len(segments), 1)
 
     def test_project_from_transcript_requires_segments(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

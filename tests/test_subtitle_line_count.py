@@ -46,11 +46,13 @@ class SubtitleLineCountTests(unittest.TestCase):
 
     def test_automatic_one_line_pages_preserve_text(self) -> None:
         source = "明日の予定を確認してから次の作業を始めましょう"
-        events = pack_segments_with_line_count({"segments": [{
-            "text": source, "start": 0, "end": 5, "max_width": 12, "subtitle_line_count": "1",
-        }]})
-        self.assertEqual("".join(event.text for event in events), source)
-        self.assertTrue(all(r"\N" not in event.text for event in events))
+        for line_count in ("1", " 1 ", 1):
+            with self.subTest(line_count=line_count):
+                events = pack_segments_with_line_count({"segments": [{
+                    "text": source, "start": 0, "end": 5, "max_width": 12, "subtitle_line_count": line_count,
+                }]})
+                self.assertEqual("".join(event.text for event in events), source)
+                self.assertTrue(all(r"\N" not in event.text for event in events))
 
     def test_automatic_pages_respect_caller_default_width(self) -> None:
         source = "ABCDEFGHIJKLMNOPQRSTUVWX"

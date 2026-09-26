@@ -915,7 +915,7 @@ def pack_segment_pages(
     has_word_timing = bool(segment.get("words"))
     forced_boundaries = gap_boundary_indices(segment.get("words"), subtitle_max_gap_seconds) if has_word_timing else set()
     max_width = coerce_int(segment.get("max_width", DEFAULT_PAGE_WIDTH))
-    max_lines = 1 if str(segment.get("subtitle_line_count")) == "1" else MAX_LINES
+    max_lines = 1 if str(segment.get("subtitle_line_count", "auto")).strip() == "1" else MAX_LINES
     segment = {**segment, "max_width": max_width}
     raw_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
     unit_entries: list[AtomicUnitEntry] = []

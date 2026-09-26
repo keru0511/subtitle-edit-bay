@@ -641,6 +641,7 @@ Item {
                             }
                         }
                         ScrollBar.vertical: ScrollBar {
+                            objectName: "captionTableScrollBar"
                             policy: ScrollBar.AlwaysOn
                         }
                     }

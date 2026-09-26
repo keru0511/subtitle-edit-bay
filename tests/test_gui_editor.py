@@ -3885,6 +3885,28 @@ Window {
         self.assertTrue(window.close())
         self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
 
+    def test_transcription_request_commits_pending_time_before_merge_choice(self) -> None:
+        self._set_ready_sources()
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+        self.app.dependenciesChanged.emit()
+        self._load_project()
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        field = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleStartField"
+        )
+        self._click(window, field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in "1.250":
+            QTest.keyClick(window, Qt.Key(ord(char)))
+        self.app.processEvents()
+        self.assertTrue(field.hasActiveFocus())
+
+        self.assertTrue(QMetaObject.invokeMethod(window, "requestTranscription"))
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["start"], 1.25)
+        self.assertTrue(window.findChild(QObject, "transcriptionMergeDialog").property("visible"))
+
     def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QObject]:
         path = self._load_project(segments=[
             {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
@@ -4202,7 +4224,17 @@ Window {
         self.app._running = True
         self.app.runningChanged.emit()
         self.app.processEvents()
-        table.setProperty("contentY", float(table.property("contentHeight")) * 0.7)
+        scroll_bar = self._quick_item(window, "captionTableScrollBar")
+        self.assertTrue(scroll_bar.isEnabled())
+
+        def scrollbar_point(fraction: float) -> QPoint:
+            scene_point = scroll_bar.mapToScene(QPointF(scroll_bar.width() / 2, scroll_bar.height() * fraction))
+            return QPoint(round(scene_point.x()), round(scene_point.y()))
+
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=scrollbar_point(0.02))
+        for fraction in (0.2, 0.4, 0.6, 0.7):
+            QTest.mouseMove(window, scrollbar_point(fraction), 30)
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=scrollbar_point(0.7))
         self.app.processEvents()
         self.assertGreater(float(table.property("contentY")), 0)
         self.assertEqual(self.app.segmentAt(0)["start"], 0.0)
@@ -4504,6 +4536,34 @@ Window {
         self.assertTrue(timeline.property("editable"))
         self._click(window, self._quick_item(window, "addCaptionButton"))
         self.assertEqual(self.app.segmentCount, 2)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    def test_expanded_split_control_recovers_after_processing(self) -> None:
+        self._set_ready_sources()
+        self._load_project()
+        self._generate_black_test_video_with_audio(self.root / "game.mkv", self.root / "1-alice.flac")
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        player = window.findChild(QObject, "mainWorkspacePlayer")
+        self.gui.wait_until(lambda: player.property("duration") >= 1_000, timeout_ms=5_000, description="動画の読み込み")
+        player.setProperty("position", 500)
+        self.app.processEvents()
+        split_button = self._quick_item(window, "splitCaptionButton")
+        self.assertTrue(split_button.isEnabled())
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(split_button.isEnabled())
+        point = split_button.mapToScene(QPointF(split_button.width() / 2, split_button.height() / 2))
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=QPoint(round(point.x()), round(point.y())))
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentCount, 1)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(split_button.isEnabled())
 
     def test_subtitle_backend_rejects_mutations_during_processing(self) -> None:
         """画面以外の字幕編集入口も処理中のprojectと履歴を変えない。"""
@@ -6056,6 +6116,13 @@ Window {
         caption.forceActiveFocus()
         caption.setProperty("text", "E2E BURNED CAPTION")
         self.app.processEvents()
+        start_field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionStartTimeField")
+        self._click(window, start_field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in "0.100":
+            QTest.keyClick(window, Qt.Key(ord(char)))
+        self.app.processEvents()
+        self.assertEqual(start_field.property("text"), "0.100")
 
         progress_changes = QSignalSpy(self.app.progressChanged)
         finished = QSignalSpy(self.app.process.finished)
@@ -6081,6 +6148,7 @@ Window {
         self.assertIn("Render complete", self.app._log)
 
         saved_project = load_project(project_path)
+        self.assertEqual(saved_project["segments"][0]["start"], 0.1)
         self.assertEqual(saved_project["segments"][0]["text"], "E2E BURNED CAPTION")
         self.assertTrue(saved_project["segments"][0]["manual_text"])
         self.assertGreater(saved_project["subtitle_settings"]["font_size"], 0)

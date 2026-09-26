@@ -390,6 +390,22 @@ class RenderAssTests(unittest.TestCase):
         self.assertIn(",Alice_Bob,", dialogue)
         self.assertNotIn(",Alice,Bob,", dialogue)
 
+    def test_render_ass_accepts_non_string_speaker_and_emphasis_from_raw_json(self) -> None:
+        output = render_ass(
+            {
+                "segments": [
+                    {"start": 0, "end": 1, "text": "前", "speaker": None, "emphasis": None, "layout_packed": True},
+                    {"start": 1, "end": 2, "text": "後", "speaker": 7, "emphasis": 2, "layout_packed": True},
+                ]
+            },
+            speaker_color_map={},
+        )
+
+        dialogues = [line for line in output.splitlines() if line.startswith("Dialogue:")]
+        self.assertEqual(len(dialogues), 2)
+        self.assertIn(",None,0,0,", dialogues[0])
+        self.assertIn(",7,0,0,", dialogues[1])
+
     def test_sanitize_ass_text_replaces_dangerous_chars(self) -> None:
         self.assertEqual(sanitize_ass_text("A{lice}\\,Bob"), "A_lice___Bob")
 

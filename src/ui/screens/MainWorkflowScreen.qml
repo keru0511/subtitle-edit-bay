@@ -319,53 +319,16 @@ ApplicationWindow {
             root.appBackend.workflow.startTranscription(root.currentSettings(), false)
     }
 
-    function startNewVideoEdit() {
-        if (!root.appBackend.sourceSelection.video)
-            root.appBackend.browseVideoFile()
-        if (!root.appBackend.sourceSelection.video || root.appBackend.projectLoaded)
-            return
-        if (root.appBackend.transcriptionProjectExists())
-            root.appBackend.loadProject(root.appBackend.projectSavePath)
-        else
-            root.appBackend.createEmptyProject()
-    }
-
-    function hasTranscriptionAudio() {
-        if (root.appBackend.speakers.length > 0)
-            return true
-        for (var index = 0; index < root.appBackend.audioTracks.length; ++index) {
-            if (String(root.appBackend.audioTracks[index].selector || "").length > 0)
-                return true
-        }
-        return false
-    }
-
-    function welcomeTranscriptionBlockReason() {
-        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio())
-            return ""
-        return root.workflowCapabilities.canTranscribe ? "" : root.transcriptionBlockReason()
-    }
-
-    function startTranscriptionFromWelcome() {
-        var executionSettings = JSON.parse(JSON.stringify(root.currentSettings()))
-        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio()) {
-            sourcePopup.open()
-            return
-        }
-        if (!root.workflowCapabilities.canTranscribe)
-            return
-        if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
-            root.pendingWelcomeTranscriptionRequest = {
-                "settings": executionSettings,
-                "sources": JSON.parse(JSON.stringify(root.appBackend.sourceSelection)),
-                "projectPath": String(root.appBackend.projectSavePath)
-            }
+    ProjectStartFlow {
+        id: projectStartFlow
+        appBackend: root.appBackend
+        workflowCapabilities: root.workflowCapabilities
+        settingsProvider: root.currentSettings
+        onSourceSettingsRequested: sourcePopup.open()
+        onOverwriteConfirmationRequested: function(request) {
+            root.pendingWelcomeTranscriptionRequest = request
             overwriteProjectDialog.open()
-            return
         }
-        if (!root.appBackend.projectLoaded && !root.appBackend.createEmptyProject())
-            return
-        root.appBackend.workflow.startTranscription(executionSettings, true)
     }
 
     function performSubtitleEdit(action, atSeconds) {
@@ -1122,135 +1085,19 @@ ApplicationWindow {
         anchors.rightMargin: root.codexWorkspaceRightInset + 12
         spacing: 10
 
-        Rectangle {
-            objectName: "projectStartScreen"
+        ProjectStartScreen {
             visible: !root.appBackend.projectLoaded
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 14
-            color: root.panel
-            border.color: root.border
-
-            ColumnLayout {
-                anchors.centerIn: parent
-                width: Math.min(640, parent.width - 64)
-                spacing: 14
-
-                Text {
-                    Layout.fillWidth: true
-                    text: "編集を始める"
-                    color: root.textPrimary
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 28
-                    font.weight: Font.Bold
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: "文字起こしをしなくても、動画を選ぶだけで字幕・カット・音量の編集を始められます"
-                    color: root.textMuted
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                Rectangle {
-                    objectName: "startScreenStatusPanel"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? 58 : 0
-                    visible: root.appBackend.stage === "ERROR" || root.appBackend.stage === "CHECK"
-                    radius: 8
-                    color: root.appBackend.stage === "ERROR" ? "#321C1C" : "#302A1C"
-                    border.color: root.appBackend.stage === "ERROR" ? root.danger : root.amber
-                    Text {
-                        objectName: "startScreenStatusText"
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        text: root.appBackend.status
-                        color: root.textPrimary
-                        font.family: "Yu Gothic UI"
-                        font.pixelSize: 10
-                        wrapMode: Text.Wrap
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-                Item { Layout.preferredHeight: 4 }
-                Button {
-                    id: newVideoEditButtonControl
-                    objectName: "newVideoEditButton"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 54
-                    text: "新しい動画を編集"
-                    enabled: !root.appBackend.running
-                    onClicked: root.startNewVideoEdit()
-                    contentItem: Text { text: newVideoEditButtonControl.text; color: "#10140F"; font.family: "Yu Gothic UI"; font.pixelSize: 15; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 10; color: newVideoEditButtonControl.enabled ? root.acid : "#465044" }
-                }
-                Button {
-                    objectName: "startScreenOpenProjectButton"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 48
-                    text: "プロジェクトを開く"
-                    enabled: !root.appBackend.running
-                    onClicked: root.browseProjectFile()
-                }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                Text { text: "必要に応じて"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Button {
-                        objectName: "startWithTranscriptionButton"
-                        Layout.fillWidth: true
-                        text: "文字起こしから始める"
-                        enabled: !root.appBackend.running
-                        onClicked: root.startTranscriptionFromWelcome()
-                        ToolTip.visible: hovered && root.welcomeTranscriptionBlockReason().length > 0
-                        ToolTip.text: root.welcomeTranscriptionBlockReason()
-                    }
-                    Button {
-                        objectName: "startScreenSourceSetupButton"
-                        Layout.fillWidth: true
-                        text: "素材設定"
-                        enabled: !root.appBackend.running
-                        onClicked: sourcePopup.open()
-                    }
-                    Button {
-                        objectName: "startScreenDictionaryButton"
-                        Layout.fillWidth: true
-                        text: "文字起こし辞書"
-                        enabled: !root.appBackend.running
-                        onClicked: root.openDictionaryScreen()
-                    }
-                    Button {
-                        objectName: "startScreenSettingsButton"
-                        Layout.fillWidth: true
-                        text: "処理設定"
-                        enabled: !root.appBackend.running
-                        onClicked: root.toggleSettingsPopup()
-                    }
-                }
-                Text {
-                    objectName: "startScreenTranscriptionBlockReason"
-                    Layout.fillWidth: true
-                    visible: root.welcomeTranscriptionBlockReason().length > 0
-                    text: root.welcomeTranscriptionBlockReason()
-                    color: root.amber
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 10
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: root.appBackend.sourceSelection.video ? "選択中: " + root.appBackend.sourceSelection.video : "既存の .subtitle-project.json もそのまま開けます"
-                    color: root.textMuted
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 9
-                    elide: Text.ElideMiddle
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
+            appBackend: root.appBackend
+            colors: root.subtitleEditorColors
+            transcriptionBlockReason: projectStartFlow.transcriptionBlockReason
+            onNewVideoEditRequested: projectStartFlow.startNewVideoEdit()
+            onOpenProjectRequested: root.browseProjectFile()
+            onStartTranscriptionRequested: projectStartFlow.startTranscription()
+            onSourceSettingsRequested: sourcePopup.open()
+            onDictionaryRequested: root.openDictionaryScreen()
+            onProcessingSettingsRequested: root.toggleSettingsPopup()
         }
 
         EditorModeRail {

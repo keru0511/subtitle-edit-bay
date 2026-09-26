@@ -335,6 +335,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_fit_combo_updates_its_delegate_clip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_gui_adds_direct_range_clip_when_segments_exist
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_segment_picker_uses_the_subtitle_model
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_settings_controls_save_round_trip
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_popup_drop_target_imports_video
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_relink_is_locked_during_processing_and_recovers

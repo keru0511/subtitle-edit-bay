@@ -8499,6 +8499,71 @@ Window {
             self.assertEqual(transition["type"], transition_type)
             self.assertAlmostEqual(float(transition["duration"]), duration)
 
+    def test_short_mode_settings_controls_save_round_trip(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+
+        fit_combo = self._quick_item(window, "shortModeGlobalFitCombo")
+        self.assertEqual(fit_combo.property("currentValue"), "cover")
+        self._click(window, fit_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(self.app.shortVideoSettings["global_fit"], "contain")
+
+        transition_combo = self._quick_item(window, "shortModeTransitionCombo")
+        self._click(window, transition_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(self.app.shortVideoSettings["transition"]["type"], "fade")
+
+        duration_slider = self._quick_item(window, "shortModeTransitionDurationSlider")
+        self.gui.click_at(window, duration_slider, duration_slider.width() * 0.65, duration_slider.height() / 2)
+        duration = float(self.app.shortVideoSettings["transition"]["duration"])
+        self.assertGreater(duration, 0.5)
+
+        scale_spin = self._quick_item(window, "shortModeSubtitleScaleSpin")
+        self._click(window, scale_spin)
+        QTest.keyClick(window, Qt.Key.Key_Up)
+        self.assertEqual(self.app.shortVideoSettings["subtitle_scale_percent"], 151)
+
+        bgm_path = self.root / "short-mode-music.wav"
+        bgm_path.write_bytes(b"audio")
+        with patch(
+            "src.gui_short_video_facade.QFileDialog.getOpenFileName",
+            return_value=(str(bgm_path), ""),
+        ) as choose_bgm:
+            self._click(window, self._quick_item(window, "shortModeBgmBrowseButton"))
+        choose_bgm.assert_called_once()
+        self.assertEqual(self.app.shortVideoSettings["bgm"]["path"], str(bgm_path))
+
+        for name, value, field in (
+            ("shortModeBgmInField", "0.500", "in"),
+            ("shortModeBgmOutField", "2.000", "out"),
+            ("shortModeBgmStartField", "1.000", "start"),
+        ):
+            time_field = self._quick_item(window, name)
+            self._click(window, time_field)
+            self._replace_focused_time(window, time_field, value)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.assertAlmostEqual(self.app.shortVideoSettings["bgm"][field], float(value))
+
+        volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
+        self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
+        volume = float(self.app.shortVideoSettings["bgm"]["volume"])
+        self.assertGreater(volume, 0.4)
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved = load_project(project_path)["short_video"]
+        self.assertEqual(saved["global_fit"], "contain")
+        self.assertEqual(saved["transition"], {"type": "fade", "duration": duration})
+        self.assertEqual(saved["subtitle_scale_percent"], 151)
+        self.assertEqual(saved["bgm"]["path"], str(bgm_path))
+        for field, expected in (("in", 0.5), ("out", 2.0), ("start", 1.0), ("volume", volume)):
+            self.assertAlmostEqual(saved["bgm"][field], expected)
+
     def test_short_mode_clip_model_materializes_only_requested_rows(self) -> None:
         segment_count = 3_000
         self._load_project(

@@ -106,11 +106,11 @@ class CodexAIProvider:
             return self.refresh()
         except Exception as error:
             with self._lock:
-                client = self._client
+                failed_client = self._client
                 self._client = None
-            if client is not None:
+            if failed_client is not None:
                 try:
-                    client.stop()
+                    failed_client.stop()
                 except Exception:
                     pass
             return self._set_state(

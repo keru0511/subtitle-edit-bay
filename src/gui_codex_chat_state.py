@@ -138,8 +138,9 @@ class CodexChatController:
                 return
         self._preferred_model = selected
         self._update(selected_model=selected, model_error="", error="")
-        if self.on_selected_model is not None:
-            self._dispatch(lambda: self.on_selected_model(selected))
+        selected_model_callback = self.on_selected_model
+        if selected_model_callback is not None:
+            self._dispatch(lambda: selected_model_callback(selected))
 
     def send_message(self, text: str) -> None:
         prompt = str(text).strip()
@@ -334,9 +335,9 @@ class CodexChatController:
             self._apply_provider_state(state)
         except Exception as error:
             with self._lock:
-                provider = self._provider
+                failed_provider = self._provider
                 self._provider = None
-            self._close_provider(provider)
+            self._close_provider(failed_provider)
             message = f"{self.provider_name}へ接続できません: {self._safe_error(error)}"
             self._update(
                 connection_state="error",
@@ -670,8 +671,9 @@ class CodexChatController:
             )
         self._preferred_model = state.selected_model or self._preferred_model
         self._update(**changes)
-        if state.auth_state == "authenticated" and state.selected_model and self.on_selected_model is not None:
-            self._dispatch(lambda: self.on_selected_model(state.selected_model))
+        selected_model_callback = self.on_selected_model
+        if state.auth_state == "authenticated" and state.selected_model and selected_model_callback is not None:
+            self._dispatch(lambda: selected_model_callback(state.selected_model))
 
     @staticmethod
     def _safe_error(error: object) -> str:
@@ -720,8 +722,9 @@ class CodexChatController:
         with self._lock:
             self._snapshot = replace(self._snapshot, **changes)
             snapshot = self._snapshot
-        if self.on_state is not None:
-            self._dispatch(lambda: self.on_state(snapshot))
+        state_callback = self.on_state
+        if state_callback is not None:
+            self._dispatch(lambda: state_callback(snapshot))
 
     def _dispatch(self, callback: Callable[[], None]) -> None:
         try:

@@ -7,7 +7,9 @@ import subprocess
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Literal, Mapping, Protocol, Sequence, cast
+
+from .data_boundary import coerce_float
 
 
 VISUAL_SIGNAL_VERSION = "ffmpeg-scene-v1"
@@ -40,6 +42,38 @@ class VisualSignalResult:
     fallback: bool = False
     error: str = ""
     elapsed_seconds: float = 0.0
+
+
+class _SceneRunner(Protocol):
+    def __call__(
+        self,
+        command: list[str],
+        *,
+        capture_output: Literal[True],
+        text: Literal[True],
+        timeout: float,
+        check: Literal[False],
+        shell: Literal[False],
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+def _run_scene_ffmpeg(
+    command: list[str],
+    *,
+    capture_output: Literal[True],
+    text: Literal[True],
+    timeout: float,
+    check: Literal[False],
+    shell: Literal[False],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        capture_output=capture_output,
+        text=text,
+        timeout=timeout,
+        check=check,
+        shell=shell,
+    )
 
 
 def build_scene_change_command(
@@ -87,7 +121,8 @@ def visual_signal_cache_key(
         "size": path.stat().st_size if path.is_file() else None,
         "mtime_ns": path.stat().st_mtime_ns if path.is_file() else None,
     }
-    payload = {"video": fingerprint, "windows": windows, "settings": asdict(settings)}
+    settings_payload = cast(object, asdict(settings))
+    payload = {"video": fingerprint, "windows": windows, "settings": settings_payload}
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -98,7 +133,7 @@ def extract_visual_signals(
     windows: Iterable[tuple[float, float]],
     *,
     settings: VisualSignalSettings | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    runner: _SceneRunner = _run_scene_ffmpeg,
     cancel_check: Callable[[], bool] | None = None,
     progress_callback: Callable[[float], None] | None = None,
 ) -> VisualSignalResult:
@@ -136,31 +171,39 @@ def extract_visual_signals(
 
 
 def blend_visual_scores(
-    candidates: Iterable[Mapping[str, Any]],
+    candidates: Iterable[Mapping[str, object]],
     signals: Iterable[VisualSignal],
     *,
     settings: VisualSignalSettings | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     settings = settings or VisualSignalSettings()
     source = [dict(item) for item in candidates]
     if not settings.enabled or not settings.weight:
         return source
     visual = list(signals)
-    result: list[dict[str, Any]] = []
+    result: list[dict[str, object]] = []
     weight = max(0.0, min(1.0, settings.weight))
     for candidate in source:
-        start = float(candidate.get("start", 0.0))
-        end = float(candidate.get("end", start))
+        start = coerce_float(candidate.get("start", 0.0))
+        end = coerce_float(candidate.get("end", start))
         matching = [signal.score for signal in visual if start <= signal.timestamp <= end]
         visual_score = max(matching, default=0.0)
-        local_score = max(0.0, min(1.0, float(candidate.get("score", 0.0))))
+        local_score = max(0.0, min(1.0, coerce_float(candidate.get("score", 0.0))))
         updated = dict(candidate)
         updated["local_score"] = local_score
         updated["visual_score"] = round(visual_score, 4)
         updated["score"] = round((1.0 - weight) * local_score + weight * visual_score, 4)
         updated["visual_reason"] = "画面変化あり" if matching else "画面signalなし"
         result.append(updated)
-    return sorted(result, key=lambda item: (-float(item["score"]), float(item.get("start", 0.0)), str(item.get("id", ""))))
+    return sorted(result, key=_visual_score_sort_key)
+
+
+def _visual_score_sort_key(item: Mapping[str, object]) -> tuple[float, float, str]:
+    return (
+        -coerce_float(item["score"]),
+        coerce_float(item.get("start", 0.0)),
+        str(item.get("id", "")),
+    )
 
 
 def _parse_scene_metadata(output: str, window_start: float) -> list[VisualSignal]:
@@ -185,4 +228,3 @@ def _deduplicate_signals(signals: Iterable[VisualSignal]) -> list[VisualSignal]:
         if previous is None or signal.score > previous.score:
             by_timestamp[signal.timestamp] = signal
     return [by_timestamp[key] for key in sorted(by_timestamp)]
-

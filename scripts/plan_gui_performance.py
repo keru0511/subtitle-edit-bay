@@ -5,7 +5,19 @@ import json
 import math
 import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, Sequence, cast
+
+
+class _PlanArgs(Protocol):
+    repetitions: str
+    playback_seconds: str
+    compare_ref: str
+    event_name: str
+    base_sha: str
+    max_regression_percent: str
+    fail_on_regression: str
+    repository: Path
+    github_output: Path | None
 
 
 def validate_inputs(
@@ -83,7 +95,7 @@ def select_comparison_commit(*, event_name: str, base_sha: str, compare_ref: str
     return resolve_commit(revision, repository=repository)
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> _PlanArgs:
     parser = argparse.ArgumentParser(description="Validate GUI benchmark inputs and create its repetition matrix.")
     parser.add_argument("--repetitions", default="3")
     parser.add_argument("--playback-seconds", default="30")
@@ -94,7 +106,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fail-on-regression", default="false")
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--github-output", type=Path)
-    return parser.parse_args(argv)
+    return cast(_PlanArgs, parser.parse_args(argv))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

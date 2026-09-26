@@ -10,11 +10,20 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from typing import Mapping, Protocol, cast
+
+from src.data_boundary import decode_json, is_object_mapping
 
 
-def cache_key(root: Path, venv: Path, context: dict) -> str:
+class _RuntimeArgs(Protocol):
+    command: str
+    venv: Path
+    manifest: Path | None
+
+
+def cache_key(root: Path, venv: Path, context: Mapping[str, str]) -> str:
     definitions = ["runtime/requirements-windows-cpu.lock", "runtime/runtime-contract.json"]
-    payload = {
+    payload: dict[str, object] = {
         "context": context,
         "venv": str(venv.resolve()),
         "definitions": {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in definitions},
@@ -23,7 +32,7 @@ def cache_key(root: Path, venv: Path, context: dict) -> str:
     return f"asr-runtime-v2-{digest}"
 
 
-def runtime_context() -> dict:
+def runtime_context() -> dict[str, str]:
     # イメージの更新日では分けない。venvは配置先と元Pythonのパスが同じ場合だけ復元する。
     return {
         "os": sys.platform,
@@ -36,13 +45,13 @@ def runtime_context() -> dict:
 
 
 def prepare_runtime(root: Path, venv: Path, manifest: Path, cache_hit: bool) -> str:
-    def run(*args):
+    def run(*args: str | Path) -> None:
         subprocess.run([str(arg) for arg in args], cwd=root, check=True, timeout=300)
 
     script = root / "scripts/runtime_contract.py"
     python = venv / "Scripts/python.exe"
 
-    def verify():
+    def verify() -> None:
         run(python, "-m", "pip", "check")
         run(python, script, "verify-runtime", "--profile", "cpu", "--manifest-output", manifest)
 
@@ -54,9 +63,17 @@ def prepare_runtime(root: Path, venv: Path, manifest: Path, cache_hit: bool) -> 
             return "restored"
         except (OSError, subprocess.SubprocessError) as error:
             print(f"復元環境の検証に失敗したため一度だけ再構築します: {error}", flush=True)
-    contract = json.loads((root / "runtime/runtime-contract.json").read_text(encoding="utf-8"))
+    contract = decode_json((root / "runtime/runtime-contract.json").read_text(encoding="utf-8"))
+    if not is_object_mapping(contract):
+        raise ValueError("runtime contract must be an object")
+    python_contract = contract.get("python")
+    if not is_object_mapping(python_contract):
+        raise ValueError("runtime contract python section must be an object")
+    pip_version = python_contract.get("pip_version")
+    if not isinstance(pip_version, str):
+        raise ValueError("runtime contract pip version must be a string")
     run(sys.executable, "-m", "venv", "--clear", venv)
-    run(python, "-m", "pip", "install", "--no-cache-dir", f"pip=={contract['python']['pip_version']}")
+    run(python, "-m", "pip", "install", "--no-cache-dir", f"pip=={pip_version}")
     run(
         python,
         "-m",
@@ -75,10 +92,11 @@ def prepare_runtime(root: Path, venv: Path, manifest: Path, cache_hit: bool) -> 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["cache-key", "prepare"])
+    commands: tuple[str, str] = ("cache-key", "prepare")
+    parser.add_argument("command", choices=commands)
     parser.add_argument("--venv", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
-    args = parser.parse_args()
+    args = cast(_RuntimeArgs, parser.parse_args())
     root = Path(__file__).resolve().parents[1]
     if args.command == "cache-key":
         print(cache_key(root, args.venv, runtime_context()))

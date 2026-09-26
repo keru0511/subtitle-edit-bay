@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping, cast
 
 from .gui_codex_chat_state import CodexChatController, CodexChatSnapshot
 
@@ -173,7 +173,7 @@ class AIProviderChatRouter:
         self._notify_state()
         return True
 
-    def available_providers(self) -> list[dict[str, Any]]:
+    def available_providers(self) -> list[dict[str, object]]:
         """Return only providers whose current runtime is usable.
 
         A provider in ``error`` is intentionally omitted.  ``connecting`` and
@@ -181,7 +181,7 @@ class AIProviderChatRouter:
         provider's own reconnect/login action.
         """
 
-        result: list[dict[str, Any]] = []
+        result: list[dict[str, object]] = []
         active = self.active_provider_id
         for provider_id in self._provider_order:
             snapshot = self._controllers[provider_id].snapshot
@@ -190,7 +190,7 @@ class AIProviderChatRouter:
             result.append(_provider_mapping(provider_id, snapshot, provider_id == active))
         return result
 
-    def provider_states(self) -> list[dict[str, Any]]:
+    def provider_states(self) -> list[dict[str, object]]:
         """Return all provider states for diagnostics/tests, including errors."""
 
         active = self.active_provider_id
@@ -231,7 +231,8 @@ def _provider_mapping(
     provider_id: str,
     snapshot: CodexChatSnapshot,
     selected: bool,
-) -> dict[str, Any]:
+) -> dict[str, object]:
+    models = cast(tuple[Mapping[str, object], ...], snapshot.models)
     return {
         "id": provider_id,
         "label": snapshot.provider_name,
@@ -242,7 +243,7 @@ def _provider_mapping(
         "auth_label": snapshot.auth_label,
         "login_url": snapshot.login_url,
         "login_available": snapshot.login_available,
-        "models": [dict(model) for model in snapshot.models],
+        "models": [dict(model) for model in models],
         "model_selection_supported": snapshot.model_selection_supported,
         "selected_model": snapshot.selected_model,
         "error": snapshot.error,

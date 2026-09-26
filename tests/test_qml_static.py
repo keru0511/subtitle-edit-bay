@@ -36,6 +36,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "SourceSettingsPopup.qml",
     COMPONENTS_ROOT / "AdvancedSettingsPopup.qml",
     COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml",
+    COMPONENTS_ROOT / "WorkspacePreviewPanel.qml",
     START_SCREEN_QML,
     START_FLOW_QML,
     COMPONENTS_ROOT / "CutModeSettings.qml",
@@ -303,6 +304,7 @@ class QmlStaticTests(unittest.TestCase):
                 COMPONENTS_ROOT / "SourceSettingsPopup.qml",
                 COMPONENTS_ROOT / "AdvancedSettingsPopup.qml",
                 COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml",
+                COMPONENTS_ROOT / "WorkspacePreviewPanel.qml",
             )),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
@@ -356,6 +358,7 @@ class QmlStaticTests(unittest.TestCase):
             "id: shortModePage", 1
         )[0]
         inspector = (COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml").read_text(encoding="utf-8")
+        preview = (COMPONENTS_ROOT / "WorkspacePreviewPanel.qml").read_text(encoding="utf-8")
 
         self.assertIn('property string activeOverlay: ""', workflow)
         self.assertIn('root.appBackend.workspace.currentWorkspace', workflow)
@@ -390,22 +393,28 @@ class QmlStaticTests(unittest.TestCase):
         ):
             with self.subTest(stale_marker=stale_marker):
                 self.assertNotIn(stale_marker, workflow)
-        self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
-        self.assertIn('objectName: "mainWorkspacePlayer"', main_workspace)
-        self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)
+        self.assertEqual(workflow.count("MediaPlayer {"), 1)
+        self.assertNotIn("MediaPlayer {", main_workspace)
+        self.assertIn('objectName: "mainWorkspacePlayer"', workflow)
+        self.assertIn('objectName: "mainWorkspaceAudioOutput"', workflow)
+        self.assertIn('WorkspacePreviewPanel {', main_workspace)
+        self.assertIn('objectName: "mainVideoPanel"', preview)
+        self.assertIn('SubtitleOverlay {', preview)
+        self.assertIn('signal seekRequested(real positionMs)', preview)
+        self.assertNotIn("MediaPlayer {", preview)
         self.assertNotIn("MediaPlayer {", editor_content)
         self.assertNotIn("editorPlayer", workflow)
         screen = (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8")
         self.assertNotIn("MediaPlayer {", screen)
         self.assertIn("root.previewAttached(editorVideo)", screen)
         self.assertIn("mainPlayer.videoOutput = output", editor_content)
-        self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
+        self.assertIn("mainPlayer.videoOutput = mainPreview.videoOutputItem", editor_content)
         self.assertIn('String(root.appBackend.workspace.editorPlayhead.basis || "source")', workflow)
-        self.assertIn("interval: 100", main_workspace)
-        self.assertIn("if (!root.enforceCutPreview(mainPlayer.position))", main_workspace)
+        self.assertIn("interval: 100", workflow)
+        self.assertIn("if (!root.enforceCutPreview(mainPlayer.position))", workflow)
         self.assertIn(
             "root.syncEditorPlayhead(mainPlayer.position, false)",
-            main_workspace,
+            workflow,
         )
         self.assertIn("onActiveSegmentsChanged:", screen)
         self.assertIn("syncEditorSelectionFromActiveSegments", editor_content)
@@ -423,7 +432,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "workspaceCutSettings"', workflow)
         self.assertIn("player: mainPlayer", workflow)
         self.assertIn("nextCutPreviewSourceMs", workflow)
-        self.assertIn("editorPlayhead.outputPositionMs", workflow)
+        preview = (COMPONENTS_ROOT / "WorkspacePreviewPanel.qml").read_text(encoding="utf-8")
+        self.assertIn("editorPlayhead.outputPositionMs", preview)
         self.assertNotIn("MediaPlayer {", cut_timeline)
         self.assertNotIn("MediaPlayer {", cut_settings)
 

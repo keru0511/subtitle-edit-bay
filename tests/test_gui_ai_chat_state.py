@@ -193,19 +193,21 @@ class AIProviderChatRouterTests(unittest.TestCase):
 class GeminiAuthHintTests(unittest.TestCase):
     @staticmethod
     def _hint(*, auth_state: str, login_available: bool) -> str:
-        backend = SimpleNamespace(
-            _ai_chat=SimpleNamespace(
-                snapshot=CodexChatSnapshot(
-                    provider_id="gemini",
-                    provider_name="Gemini",
-                    auth_state=auth_state,
-                    login_available=login_available,
+        facade = SimpleNamespace(
+            services=SimpleNamespace(
+                chat_router=SimpleNamespace(
+                    snapshot=CodexChatSnapshot(
+                        provider_id="gemini",
+                        provider_name="Gemini",
+                        auth_state=auth_state,
+                        login_available=login_available,
+                    )
                 )
             )
         )
         getter = AIChatFacade.aiChatAuthHint.fget
         assert getter is not None
-        return getter(SimpleNamespace(_backend=backend))
+        return getter(facade)
 
     def test_authenticated_gemini_without_login_action_has_no_auth_hint(self) -> None:
         self.assertEqual(
@@ -220,19 +222,21 @@ class GeminiAuthHintTests(unittest.TestCase):
         )
 
     def test_unauthenticated_gemini_with_login_action_exposes_generic_login_route(self) -> None:
-        backend = SimpleNamespace(
-            _ai_chat=SimpleNamespace(
-                snapshot=CodexChatSnapshot(
-                    provider_id="gemini",
-                    provider_name="Gemini",
-                    auth_state="unauthenticated",
-                    login_available=True,
+        facade = SimpleNamespace(
+            services=SimpleNamespace(
+                chat_router=SimpleNamespace(
+                    snapshot=CodexChatSnapshot(
+                        provider_id="gemini",
+                        provider_name="Gemini",
+                        auth_state="unauthenticated",
+                        login_available=True,
+                    )
                 )
             )
         )
         login_available = AIChatFacade.aiChatLoginAvailable.fget
         assert login_available is not None
-        self.assertTrue(login_available(SimpleNamespace(_backend=backend)))
+        self.assertTrue(login_available(facade))
         self.assertEqual(self._hint(auth_state="unauthenticated", login_available=True), "")
 
 
@@ -285,10 +289,10 @@ class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
             self.assertEqual(router.snapshot.provider_name, "Gemini")
             self.assertEqual(router.snapshot.auth_state, "authenticated")
             self.assertFalse(router.snapshot.login_available)
-            backend = SimpleNamespace(_ai_chat=router)
+            facade = SimpleNamespace(services=SimpleNamespace(chat_router=router))
             getter = AIChatFacade.aiChatAuthHint.fget
             assert getter is not None
-            self.assertEqual(getter(SimpleNamespace(_backend=backend)), "")
+            self.assertEqual(getter(facade), "")
             self.assertTrue(router.snapshot.model_selection_supported)
             self.assertEqual(router.snapshot.selected_model, "router-model")
             self.assertEqual([item["id"] for item in router.snapshot.models], ["router-model"])

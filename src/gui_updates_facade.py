@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,23 @@ if TYPE_CHECKING:
     from .gui import EditBayBackend
 
 
+@dataclass(slots=True)
+class UpdateState:
+    """更新確認とダウンロードの一時状態。"""
+
+    info: updater.UpdateInfo | None = None
+    error: str = ""
+    busy: bool = False
+    package_path: Path | None = None
+    package_sha256: str = ""
+    package_ready: bool = False
+    download_bytes: int = 0
+    download_total: int = 0
+    download_speed: float = 0.0
+    download_active: bool = False
+    download_cancel: threading.Event = field(default_factory=threading.Event)
+
+
 class UpdateFacade(FeatureFacade):
     """アプリケーション更新の画面窓口。"""
 
@@ -36,6 +54,7 @@ class UpdateFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        self._state = UpdateState()
         backend.updateBusyChanged.connect(self.updateBusyChanged.emit)
         backend.updateDownloadProgressChanged.connect(self.updateDownloadProgressChanged.emit)
         backend.updateErrorChanged.connect(self.updateErrorChanged.emit)
@@ -44,77 +63,64 @@ class UpdateFacade(FeatureFacade):
 
     @Property(str, notify=updateInfoChanged)
     def updateCurrentVersion(self) -> str:
-        backend = self._backend
-        return backend._update_info.current_version if backend._update_info else ""
+        return self._state.info.current_version if self._state.info else ""
 
     @Property(str, notify=updateInfoChanged)
     def updateLatestVersion(self) -> str:
-        backend = self._backend
-        return backend._update_info.latest_version if backend._update_info else ""
+        return self._state.info.latest_version if self._state.info else ""
 
     @Property(str, notify=updateInfoChanged)
     def updateReleaseNotes(self) -> str:
-        backend = self._backend
-        return backend._update_info.release_notes if backend._update_info else ""
+        return self._state.info.release_notes if self._state.info else ""
 
     @Property(str, notify=updateInfoChanged)
     def updateDownloadUrl(self) -> str:
-        backend = self._backend
-        return backend._update_info.download_url if backend._update_info else ""
+        return self._state.info.download_url if self._state.info else ""
 
     @Property(bool, notify=updateInfoChanged)
     def updateAvailable(self) -> bool:
-        backend = self._backend
-        return backend._update_info.available if backend._update_info else False
+        return self._state.info.available if self._state.info else False
 
     @Property(bool, notify=updateBusyChanged)
     def updateBusy(self) -> bool:
-        backend = self._backend
-        return backend._update_busy
+        return self._state.busy
 
     @Property(str, notify=updateErrorChanged)
     def updateError(self) -> str:
-        backend = self._backend
-        return backend._update_error
+        return self._state.error
 
     @Property(int, notify=updateDownloadProgressChanged)
     def updateDownloadBytes(self) -> int:
-        backend = self._backend
-        return backend._update_download_bytes
+        return self._state.download_bytes
 
     @Property(int, notify=updateDownloadProgressChanged)
     def updateDownloadTotal(self) -> int:
-        backend = self._backend
-        return backend._update_download_total
+        return self._state.download_total
 
     @Property(float, notify=updateDownloadProgressChanged)
     def updateDownloadSpeed(self) -> float:
-        backend = self._backend
-        return backend._update_download_speed
+        return self._state.download_speed
 
     @Property(bool, notify=updateDownloadProgressChanged)
     def updateDownloadActive(self) -> bool:
-        backend = self._backend
-        return backend._update_download_active
+        return self._state.download_active
 
     @Property(bool, notify=updatePackageReadyChanged)
     def updatePackageReady(self) -> bool:
-        backend = self._backend
-        return backend._update_package_ready
+        return self._state.package_ready
 
     @Property(int, notify=updateInfoChanged)
     def updatePackageSize(self) -> int:
-        backend = self._backend
-        return int(backend._update_info.package_size) if backend._update_info else 0
+        return int(self._state.info.package_size) if self._state.info else 0
 
     @Slot()
     def checkForUpdates(self) -> None:
         backend = self._backend
-        if backend._update_busy:
+        if self._state.busy:
             return
-        backend._update_busy = True
+        self._state.busy = True
         backend.updateBusyChanged.emit()
-        backend._update_error = ""
+        self._state.error = ""
         backend.updateErrorChanged.emit()
         backend._set_status("最新リリースを確認しています", "UPDATE")
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
@@ -131,12 +137,12 @@ class UpdateFacade(FeatureFacade):
 
     def _on_update_check_finished(self, info: Any, error: str) -> None:
         backend = self._backend
-        backend._update_info = info
-        backend._update_error = error
-        backend._update_busy = False
-        backend._update_package_path = None
-        backend._update_package_sha256 = ""
-        backend._update_package_ready = False
+        self._state.info = info
+        self._state.error = error
+        self._state.busy = False
+        self._state.package_path = None
+        self._state.package_sha256 = ""
+        self._state.package_ready = False
         backend.updateInfoChanged.emit()
         backend.updateErrorChanged.emit()
         backend.updatePackageReadyChanged.emit()
@@ -154,14 +160,14 @@ class UpdateFacade(FeatureFacade):
         if backend._running and backend._active_job == "update":
             backend._set_status("更新中は更新画面を閉じられません", "UPDATE")
             return
-        if backend._update_download_active:
+        if self._state.download_active:
             backend._set_status("ダウンロード中は更新画面を閉じられません", "UPDATE")
             return
-        backend._update_info = None
-        backend._update_error = ""
-        backend._update_package_path = None
-        backend._update_package_sha256 = ""
-        backend._update_package_ready = False
+        self._state.info = None
+        self._state.error = ""
+        self._state.package_path = None
+        self._state.package_sha256 = ""
+        self._state.package_ready = False
         backend.updateInfoChanged.emit()
         backend.updateErrorChanged.emit()
         backend.updatePackageReadyChanged.emit()
@@ -169,21 +175,21 @@ class UpdateFacade(FeatureFacade):
     @Slot()
     def downloadUpdate(self) -> None:
         backend = self._backend
-        if backend._update_busy or backend._update_download_active:
+        if self._state.busy or self._state.download_active:
             return
-        if not backend._update_info or not backend._update_info.available:
+        if not self._state.info or not self._state.info.available:
             backend._set_status("更新可能なバージョンがありません", "CHECK")
             return
-        if getattr(backend._update_info, "package_type", "archive") != "installer":
+        if getattr(self._state.info, "package_type", "archive") != "installer":
             backend._set_status("この配布形態は従来の更新方法を使用します", "UPDATE")
             return
-        backend._update_busy = True
-        backend._update_download_active = True
-        backend._update_download_cancel = threading.Event()
-        backend._update_download_bytes = 0
-        backend._update_download_total = int(backend._update_info.package_size or 0)
-        backend._update_download_speed = 0.0
-        backend._update_error = ""
+        self._state.busy = True
+        self._state.download_active = True
+        self._state.download_cancel = threading.Event()
+        self._state.download_bytes = 0
+        self._state.download_total = int(self._state.info.package_size or 0)
+        self._state.download_speed = 0.0
+        self._state.error = ""
         backend.updateBusyChanged.emit()
         backend.updateErrorChanged.emit()
         backend.updateDownloadProgressChanged.emit()
@@ -192,7 +198,7 @@ class UpdateFacade(FeatureFacade):
 
     def _download_update_worker(self) -> None:
         backend = self._backend
-        info = backend._update_info
+        info = self._state.info
         if info is None:
             backend.updateDownloadFinished.emit("", "更新情報がありません")
             return
@@ -204,12 +210,12 @@ class UpdateFacade(FeatureFacade):
             package_path = update_manager.download_package(
                 info,
                 destination,
-                cancel_event=backend._update_download_cancel,
+                cancel_event=self._state.download_cancel,
                 progress_callback=lambda downloaded, total, speed: backend.updateDownloadProgressEvent.emit(
                     downloaded, total, speed
                 ),
             )
-            backend._update_package_sha256 = expected_sha256
+            self._state.package_sha256 = expected_sha256
             backend.updateDownloadFinished.emit(str(package_path), "")
         except update_manager.UpdateDownloadCancelled as error:
             backend.updateDownloadFinished.emit("", str(error))
@@ -220,24 +226,24 @@ class UpdateFacade(FeatureFacade):
 
     def _on_update_download_progress(self, downloaded: int, total: int, speed: float) -> None:
         backend = self._backend
-        backend._update_download_bytes = downloaded
-        backend._update_download_total = total
-        backend._update_download_speed = speed
+        self._state.download_bytes = downloaded
+        self._state.download_total = total
+        self._state.download_speed = speed
         backend.updateDownloadProgressChanged.emit()
 
     def _on_update_download_finished(self, package_path: str, error: str) -> None:
         backend = self._backend
-        backend._update_download_active = False
-        backend._update_busy = False
+        self._state.download_active = False
+        self._state.busy = False
         if error:
-            backend._update_error = error
-            backend._update_package_path = None
-            backend._update_package_ready = False
+            self._state.error = error
+            self._state.package_path = None
+            self._state.package_ready = False
             backend._set_status(error, "ERROR" if "キャンセル" not in error else "CANCELLED")
         else:
-            backend._update_error = ""
-            backend._update_package_path = Path(package_path)
-            backend._update_package_ready = True
+            self._state.error = ""
+            self._state.package_path = Path(package_path)
+            self._state.package_ready = True
             backend._set_status("更新パッケージを検証しました。再起動して更新できます", "READY")
         backend.updateBusyChanged.emit()
         backend.updateErrorChanged.emit()
@@ -247,35 +253,33 @@ class UpdateFacade(FeatureFacade):
     @Slot()
     def cancelUpdateDownload(self) -> None:
         backend = self._backend
-        if backend._update_download_active:
-            backend._update_download_cancel.set()
+        if self._state.download_active:
+            self._state.download_cancel.set()
             backend._set_status("更新パッケージのダウンロードをキャンセルしています", "UPDATE")
 
     @Slot()
     def applyDownloadedUpdate(self) -> None:
         backend = self._backend
-        if not backend._update_package_ready or not backend._update_package_path or not backend._update_info:
+        if not self._state.package_ready or not self._state.package_path or not self._state.info:
             backend._set_status("検証済みの更新パッケージがありません", "CHECK")
             return
         if backend._running:
             backend._set_status("処理中は更新を開始できません", "BUSY")
             return
-        if backend._project_dirty:
+        if self.project_editor.project_dirty:
             backend._set_status("未保存の変更があります。更新前に保存してください", "CHECK")
             return
-        if backend._project is not None and not backend.saveProject():
+        if self.project_editor.project is not None and not backend.saveProject():
             backend._set_status("プロジェクトを保存できませんでした", "ERROR")
             return
         backend.saveSettings(backend._settings)
         try:
-            expected_sha256 = backend._update_package_sha256 or update_manager.resolve_expected_sha256(
-                backend._update_info
-            )
+            expected_sha256 = self._state.package_sha256 or update_manager.resolve_expected_sha256(self._state.info)
             result_path = update_manager.update_download_directory(backend.workspace_root) / "last-update-result.json"
             command = update_manager.build_installer_helper_command(
                 backend.workspace_root,
-                backend._update_package_path,
-                expected_version=backend._update_info.latest_version,
+                self._state.package_path,
+                expected_version=self._state.info.latest_version,
                 expected_sha256=expected_sha256,
                 result_path=result_path,
             )
@@ -299,24 +303,24 @@ class UpdateFacade(FeatureFacade):
         if backend._running:
             backend._set_status("処理中は更新を開始できません", "BUSY")
             return
-        if backend._project_dirty:
+        if self.project_editor.project_dirty:
             backend._set_status("未保存の変更があります。更新前に保存してください", "CHECK")
             return
-        if not backend._update_info or not backend._update_info.available:
+        if not self._state.info or not self._state.info.available:
             backend._set_status("更新可能なバージョンがありません", "CHECK")
             return
-        if getattr(backend._update_info, "package_type", "archive") == "installer":
-            if backend._update_package_ready:
+        if getattr(self._state.info, "package_type", "archive") == "installer":
+            if self._state.package_ready:
                 self.applyDownloadedUpdate()
             else:
                 self.downloadUpdate()
             return
         try:
-            command = updater.launch_update_script(backend.workspace_root, backend._update_info.download_url)
+            command = updater.launch_update_script(backend.workspace_root, self._state.info.download_url)
         except updater.UpdaterError as error:
             backend._set_status(str(error), "ERROR")
             return
-        if backend._project is not None and not backend.saveProject():
+        if self.project_editor.project is not None and not backend.saveProject():
             backend._set_status("プロジェクトを保存できませんでした", "ERROR")
             return
         backend.saveSettings(backend._settings)

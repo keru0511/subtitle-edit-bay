@@ -10,6 +10,7 @@ from src.subtitle_project import create_project, derive_ass_path, load_project, 
 from src.subtitle_workflow import render_project_video
 from tests.media_test_helpers import (
     FrameRegion,
+    MediaFixture,
     MediaSegment,
     assert_frame_difference_absent,
     assert_frame_difference_present,
@@ -47,6 +48,14 @@ ALL_FIXTURE_FREQUENCIES = (440, 660, 880, 1100)
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
 class ManualCutSemanticE2ETests(unittest.TestCase):
+    _temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    fixture: MediaFixture
+    output: Path
+    control: Path
+    output_probe: dict[str, object]
+    control_probe: dict[str, object]
+
     @classmethod
     def setUpClass(cls) -> None:
         require_media_tools()

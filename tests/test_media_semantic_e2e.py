@@ -13,6 +13,7 @@ from src.video_encoding import select_automatic_video_codec
 from tests.media_test_helpers import (
     FrameDifference,
     FrameRegion,
+    MediaFixture,
     MediaSegment,
     assert_frame_difference_absent,
     assert_frame_difference_present,
@@ -99,6 +100,20 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
 class MediaSemanticE2ETests(unittest.TestCase):
+    _temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    fixture: MediaFixture
+    selected_codec: str
+    control_ass: Path
+    one_line_ass: Path
+    two_line_ass: Path
+    manual_break_ass: Path
+    control_output: Path
+    one_line_output: Path
+    two_line_output: Path
+    manual_break_output: Path
+    output_probes: dict[str, dict[str, object]]
+
     @classmethod
     def setUpClass(cls) -> None:
         require_media_tools()

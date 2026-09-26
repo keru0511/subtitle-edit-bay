@@ -12,6 +12,7 @@ from src.video_encoding import select_automatic_video_codec
 from src.video_sequence import VideoSequence
 from tests.media_test_helpers import (
     audio_streams,
+    MediaFixture,
     MediaSegment,
     create_lavfi_av_fixture,
     extract_rgb_frame,
@@ -38,6 +39,18 @@ THIRD_AFTER_TONE_HZ = 1_540
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
 class SequenceRenderSemanticE2ETests(unittest.TestCase):
+    _temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    first_fixture: MediaFixture
+    second_fixture: MediaFixture
+    third_fixture: MediaFixture
+    selected_codec: str
+    sequence: VideoSequence
+    project_path: Path
+    output: Path
+    output_probe: dict[str, object]
+    first_probe: dict[str, object]
+
     @classmethod
     def setUpClass(cls) -> None:
         require_media_tools()

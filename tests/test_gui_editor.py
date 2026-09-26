@@ -35,7 +35,7 @@ from src.audio_preview_cache import (
 from src import updater
 from src.codex_actions import ActionResult, ActionStatus
 from src.codex_runtime import CodexRuntimeInfo
-from src.gui import build_font_choices
+from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
@@ -54,6 +54,11 @@ from tests.gui_test_harness import GuiTestHarness, MediaPlayerSignalProbe
 
 
 class GuiEditorRegressionTests(unittest.TestCase):
+    _session: EditBayGuiTestSession
+    app: EditBayBackend
+    _codex_chat_connect_calls: int
+    _startup_log_text: str
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._session = EditBayGuiTestSession()

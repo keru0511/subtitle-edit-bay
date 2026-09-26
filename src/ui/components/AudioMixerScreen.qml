@@ -445,7 +445,7 @@ Item {
                             Item {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                Layout.minimumHeight: 250
+                                Layout.minimumHeight: 180
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 13

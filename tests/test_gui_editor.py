@@ -7294,8 +7294,10 @@ Window {
         video_channel_id = self.app.audioMixerChannels[0]["id"]
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
+        self._assert_quick_item_within(window.contentItem(), video_mute_button)
+        self._assert_quick_item_within(channel_list, video_mute_button)
 
-        self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
+        self._click(window, video_mute_button)
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
@@ -7306,7 +7308,7 @@ Window {
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
 
-        self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
+        self._click(window, video_mute_button)
         self.app.processEvents()
         self.assertEqual(preview_players.property("count"), 1)
         self.assertIs(
@@ -7348,6 +7350,9 @@ Window {
             self.assertGreaterEqual(top_left.y(), 0, name)
             self.assertLessEqual(top_left.x() + item.width(), window.width() + 1, name)
             self.assertLessEqual(top_left.y() + item.height(), window.height() + 1, name)
+        video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
+        for name in ("mixerMuteButton", "mixerSoloButton", "mixerChannelEnabledCheck"):
+            self._assert_quick_item_within(channel_list, self._quick_visual_item(video_channel_strip, name))
 
         self._click(window, self._quick_item(window, "mixerBackButton"))
         self.assertTrue(main.isVisible())
@@ -8144,17 +8149,16 @@ Window {
 
         video_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{video_index}")
         video_mute_button = self._quick_visual_item(video_strip, "mixerMuteButton")
-        self.assertTrue(QMetaObject.invokeMethod(video_mute_button, "clicked"))
+        self._click(window, video_mute_button)
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         if not bool(channels[external_index]["enabled"]):
             enabled_check = self._quick_visual_item(external_strip, "mixerChannelEnabledCheck")
-            enabled_check.setProperty("checked", True)
-            self.assertTrue(QMetaObject.invokeMethod(enabled_check, "toggled"))
+            self._click(window, enabled_check)
             QTest.qWait(50)
             external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         external_solo_button = self._quick_visual_item(external_strip, "mixerSoloButton")
-        self.assertTrue(QMetaObject.invokeMethod(external_solo_button, "clicked"))
+        self._click(window, external_solo_button)
         QTest.qWait(50)
         external_strip = self._quick_visual_item(channel_list, f"mixerChannelStrip-{external_index}")
         fader = self._quick_visual_item(external_strip, "mixerChannelFader")
@@ -10618,6 +10622,37 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         clip_list = self._quick_item(window, "shortModeClipListView")
+
+        def click_visible_clip_button(name: str) -> None:
+            for _ in range(3):
+                button = self._quick_visual_item(clip_list, name)
+                top = button.mapToScene(QPointF(0, 0)).y()
+                bottom = button.mapToScene(QPointF(0, button.height())).y()
+                visible_top = clip_list.mapToScene(QPointF(0, 0)).y()
+                visible_bottom = min(
+                    window.height(),
+                    clip_list.mapToScene(QPointF(0, clip_list.height())).y(),
+                )
+                center = (top + bottom) / 2
+                if visible_top + 5 <= center <= visible_bottom - 5:
+                    self._assert_quick_item_within(window.contentItem(), button)
+                    self._click(window, button)
+                    return
+                delta = bottom - visible_bottom + 8 if bottom > visible_bottom else top - visible_top - 8
+                self.gui.set_property(
+                    clip_list, "contentY",
+                    min(
+                        max(0.0, float(clip_list.property("contentY")) + delta),
+                        max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+                    ),
+                )
+            self.fail(
+                f"{name} を画面内に表示できません: button={top:.1f}-{bottom:.1f}, "
+                f"view={visible_top:.1f}-{visible_bottom:.1f}, "
+                f"contentY={clip_list.property('contentY')}, "
+                f"contentHeight={clip_list.property('contentHeight')}, height={clip_list.height()}"
+            )
+
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
             description="short clip delegate creation",
@@ -10687,8 +10722,7 @@ Window {
         self.gui.emit_signal(fit_combo, "activated", 1)
         self.assertEqual(self.app.shortVideoClips[0]["fit"], "contain")
 
-        move_down_button = self._quick_visual_item(clip_list, "shortModeMoveDownButton0")
-        self.gui.emit_signal(move_down_button, "clicked")
+        click_visible_clip_button("shortModeMoveDownButton0")
         self.gui.wait_until(
             lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
             == ["runtime-clip-1", "runtime-clip-0", "runtime-clip-2"],
@@ -10700,21 +10734,22 @@ Window {
             lambda: self.gui.find_visual_item(clip_list, "shortModeMoveUpButton1") is not None,
             description="reordered second short clip visibility",
         )
-        move_up_button = self._quick_visual_item(clip_list, "shortModeMoveUpButton1")
-        self.gui.emit_signal(move_up_button, "clicked")
+        click_visible_clip_button("shortModeMoveUpButton1")
         self.gui.wait_until(
             lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
             == ["runtime-clip-0", "runtime-clip-1", "runtime-clip-2"],
             description="short clip up reorder dispatch",
         )
 
-        self.gui.set_property(clip_list, "contentY", 260)
+        self.gui.set_property(
+            clip_list, "contentY",
+            max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+        )
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeDeleteButton2") is not None,
             description="third short clip delegate visibility",
         )
-        delete_button = self._quick_visual_item(clip_list, "shortModeDeleteButton2")
-        self.gui.emit_signal(delete_button, "clicked")
+        click_visible_clip_button("shortModeDeleteButton2")
         self.gui.wait_until(
             lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
             == ["runtime-clip-0", "runtime-clip-1"],

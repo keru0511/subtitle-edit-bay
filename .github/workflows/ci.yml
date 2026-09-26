@@ -293,6 +293,7 @@ jobs:
           python -m unittest -v
           tests.test_gui_editor.GuiEditorRegressionTests.test_ai_proposals_are_locked_during_processing_and_recover
           tests.test_gui_editor.GuiEditorRegressionTests.test_audio_editing_is_locked_during_processing_and_recovers
+          tests.test_gui_editor.GuiEditorRegressionTests.test_audio_mixer_gui_settings_are_saved_and_applied_to_rendered_output
           tests.test_gui_editor.GuiEditorRegressionTests.test_autosave_waits_until_processing_finishes
           tests.test_gui_editor.GuiEditorRegressionTests.test_closing_dictionary_window_saves_pending_input
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_auth_controls_fit_and_dispatch_from_screen
@@ -323,11 +324,13 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_progress_and_codex_controls_remain_clickable_together
           tests.test_gui_editor.GuiEditorRegressionTests.test_qml_update_dialog_flow
           tests.test_gui_editor.GuiEditorRegressionTests.test_qml_settings_round_trip_and_expanded_popup_fit
+          tests.test_gui_editor.GuiEditorRegressionTests.test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size
           tests.test_gui_editor.GuiEditorRegressionTests.test_project_speaker_color_dialog_applies_and_cancel_preserves_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_clip_card_drag_cancel_restores_position
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_clip_card_drag_reorders_before_target
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_initialization_is_locked_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_background_color_dialog_applies_selected_color
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_clip_mutation_controls_dispatch_runtime_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_popup_drop_target_imports_video
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_relink_is_locked_during_processing_and_recovers

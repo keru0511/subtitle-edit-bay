@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+
+from .data_boundary import coerce_float
 
 
 class HighlightCancelled(RuntimeError):
@@ -17,40 +19,32 @@ class SpeechSignal:
 
 
 def build_speech_signals(
-    segments: Iterable[Mapping[str, Any]],
-    audio_levels: Iterable[Mapping[str, Any]] | None = None,
+    segments: Iterable[Mapping[str, object]],
+    audio_levels: Iterable[Mapping[str, object]] | None = None,
 ) -> list[SpeechSignal]:
     """Create normalized, deterministic speech signals from available inputs."""
     source_segments = list(segments)
     levels = [
         SpeechSignal(
-            start=float(item.get("start", 0.0)),
-            end=float(item.get("end", 0.0)),
-            level=max(0.0, float(item.get("level", item.get("rms", 0.0)))),
+            start=coerce_float(item.get("start", 0.0)),
+            end=coerce_float(item.get("end", 0.0)),
+            level=max(0.0, coerce_float(item.get("level", item.get("rms", 0.0)))),
             source="waveform",
         )
         for item in (audio_levels or [])
-        if float(item.get("end", 0.0)) > float(item.get("start", 0.0))
+        if coerce_float(item.get("end", 0.0)) > coerce_float(item.get("start", 0.0))
     ]
     max_level = max((item.level for item in levels), default=0.0)
     normalized: list[SpeechSignal] = []
     for segment in source_segments:
-        start = float(segment.get("start", 0.0))
-        end = float(segment.get("end", start))
+        start = coerce_float(segment.get("start", 0.0))
+        end = coerce_float(segment.get("end", start))
         if end <= start:
             continue
         text = str(segment.get("text", "")).strip()
         text_signal = min(1.0, len(text) / 36.0)
-        overlapping = [
-            item.level
-            for item in levels
-            if item.end > start and item.start < end
-        ]
-        audio_signal = (
-            sum(overlapping) / len(overlapping) / max_level
-            if overlapping and max_level > 0.0
-            else 0.0
-        )
+        overlapping = [item.level for item in levels if item.end > start and item.start < end]
+        audio_signal = sum(overlapping) / len(overlapping) / max_level if overlapping and max_level > 0.0 else 0.0
         emphasis = 0.25 if any(mark in text for mark in ("!", "！", "?", "？")) else 0.0
         normalized.append(
             SpeechSignal(
@@ -61,4 +55,3 @@ def build_speech_signals(
             )
         )
     return normalized
-

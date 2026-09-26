@@ -116,9 +116,7 @@ class HighlightCandidateTests(TypedTestCase):
             first = generate_highlight_candidates(SEGMENTS, settings=settings, cache_directory=temp_dir)
             cache_path = next(Path(temp_dir).glob("*.json"))
             cache_path.write_text("{broken", encoding="utf-8")
-            regenerated = generate_highlight_candidates(
-                SEGMENTS, settings=settings, cache_directory=temp_dir
-            )
+            regenerated = generate_highlight_candidates(SEGMENTS, settings=settings, cache_directory=temp_dir)
         self.assertEqual([item.to_json() for item in first], [item.to_json() for item in regenerated])
 
     def test_cancellation_is_reported(self) -> None:

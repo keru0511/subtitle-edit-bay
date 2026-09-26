@@ -337,6 +337,8 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_background_color_dialog_applies_selected_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_saves_bgm_time_typed_without_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_saves_clip_time_typed_without_return
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_waits_for_incomplete_background_color
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_waits_for_incomplete_clip_time_and_retries
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_clip_mutation_controls_dispatch_runtime_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_fit_combo_updates_its_delegate_clip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_gui_adds_direct_range_clip_when_segments_exist

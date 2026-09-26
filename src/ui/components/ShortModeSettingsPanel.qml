@@ -99,6 +99,7 @@ ColumnLayout {
             Layout.preferredWidth: 80
             text: "000000"
             enabled: settingsRoot.editingEnabled
+            validator: RegularExpressionValidator { regularExpression: /^#?[0-9A-Fa-f]{6}$/ }
             onEditingFinished: {
                 if (settingsRoot.appBackend) {
                     var raw = text.replace("#", "")

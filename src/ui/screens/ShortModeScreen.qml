@@ -13,6 +13,7 @@ Item {
     property var appBackend: backend
     // qmllint enable unqualified
     property int currentClipIndex: 0
+    property string inputValidationMessage: ""
 
     function clampCurrentClipIndex() {
         if (!shortRoot.appBackend) return
@@ -38,6 +39,15 @@ Item {
     function commitPendingEdits() {
         if (shortRoot.mainRoot && !shortRoot.mainRoot.commitInputMethod())
             return false
+        // qmllint disable missing-property
+        var focusedInput = shortRoot.mainRoot ? shortRoot.mainRoot.activeFocusItem : null
+        // 入力途中の値を失って古い設定で書き出さない。
+        if (focusedInput && focusedInput.acceptableInput === false) {
+            shortRoot.inputValidationMessage = "入力途中の値を完了してください"
+            return false
+        }
+        // qmllint enable missing-property
+        shortRoot.inputValidationMessage = ""
         // 編集中の時刻やBGM設定の onEditingFinished を、画面遷移より先に実行する。
         shortRoot.forceActiveFocus()
         return true
@@ -134,6 +144,17 @@ Item {
         }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#2A3530" }
+
+        Text {
+            objectName: "shortModeInputValidationMessage"
+            Layout.fillWidth: true
+            visible: shortRoot.inputValidationMessage.length > 0
+            text: shortRoot.inputValidationMessage
+            color: "#F59E0B"
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            wrapMode: Text.Wrap
+        }
 
         RowLayout {
             Layout.fillWidth: true

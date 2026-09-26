@@ -9052,6 +9052,77 @@ Window {
         start.assert_called_once()
         self.assertEqual(captured_starts, [1.25])
 
+    def test_short_export_waits_for_incomplete_clip_time_and_retries(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="ショートクリップの編集欄",
+        )
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_Backspace)
+        self.assertEqual(start_field.property("text"), "")
+        self.assertFalse(start_field.property("acceptableInput"))
+
+        with patch.object(self.app.workflow, "_start_command") as start:
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_not_called()
+        self.assertTrue(start_field.hasActiveFocus())
+        validation_message = self._quick_item(window, "shortModeInputValidationMessage")
+        self.assertTrue(validation_message.isVisible())
+        self.assertIn("入力途中", validation_message.property("text"))
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self.assertTrue(self._quick_item(window, "shortModeScreen").isVisible())
+        self.assertTrue(start_field.hasActiveFocus())
+        self.assertEqual(self.app.shortVideoClips[0]["start"], 0.0)
+        self.assertEqual(load_project(path)["short_video"]["clips"], [])
+
+        self._replace_focused_time(window, start_field, "0.500")
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app.workflow, "_start_command") as start,
+        ):
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_called_once()
+        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertFalse(validation_message.isVisible())
+
+    def test_short_export_waits_for_incomplete_background_color(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        color_field = self._quick_item(window, "shortModeBackgroundColorField")
+        self._click(window, color_field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_Backspace)
+        self.assertEqual(color_field.property("text"), "")
+        self.assertFalse(color_field.property("acceptableInput"))
+
+        with patch.object(self.app.workflow, "_start_command") as start:
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_not_called()
+        self.assertTrue(color_field.hasActiveFocus())
+        validation_message = self._quick_item(window, "shortModeInputValidationMessage")
+        self.assertTrue(validation_message.isVisible())
+        self.assertEqual(load_project(path)["short_video"]["clips"], [])
+
+        for char in "112233":
+            QTest.keyClick(window, Qt.Key(ord(char)))
+        self.assertEqual(color_field.property("text"), "112233")
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app.workflow, "_start_command") as start,
+        ):
+            self._click(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_called_once()
+        self.assertEqual(load_project(path)["short_video"]["global_background_color"], "#112233")
+        self.assertFalse(validation_message.isVisible())
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",

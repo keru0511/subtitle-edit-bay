@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from src.data_boundary import is_object_dict
 from src.merge_transcripts import (
+    Segment,
     assign_bottom_rows,
     available_base_rows,
     build_discord_speaker_map,
@@ -25,21 +27,37 @@ from src.merge_transcripts import (
 from tests.typed_case import TypedTestCase
 
 
+def _identity_pack(segment: object, **_kwargs: object) -> list[Segment]:
+    if not is_object_dict(segment):
+        raise AssertionError("字幕セグメントは辞書である必要があります")
+    return [segment]
+
+
 class MergeTranscriptsTests(TypedTestCase):
     def test_load_transcript_reads_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "transcript.json"
-            path.write_text(json.dumps({"segments": []}), encoding="utf-8")
+            payload: dict[str, object] = {"segments": []}
+            path.write_text(json.dumps(payload), encoding="utf-8")
             self.assertEqual(load_transcript(str(path)), {"segments": []})
+
+    def test_load_transcript_rejects_non_object_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "transcript.json"
+            path.write_text("[]", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "transcript must be an object"):
+                load_transcript(str(path))
 
     def test_text_width_counts_ascii_and_full_width(self) -> None:
         from src.merge_transcripts import display_width, text_width
+
         self.assertEqual(display_width("a"), 1)
         self.assertEqual(display_width("あ"), 2)
         self.assertEqual(text_width("aあ"), 3)
 
     def test_max_width_for_speaker(self) -> None:
         from src.merge_transcripts import max_width_for_speaker
+
         self.assertEqual(max_width_for_speaker("Oz"), 28)
         self.assertEqual(max_width_for_speaker("Guest"), 24)
 
@@ -59,12 +77,15 @@ class MergeTranscriptsTests(TypedTestCase):
             {"speaker": "dave"},
         ]
         mapping = build_discord_speaker_map(segments)
-        self.assertEqual(mapping, {
-            "alice": "A",
-            "bob": "B",
-            "carol": "C",
-            "dave": "UNKNOWN_1",
-        })
+        self.assertEqual(
+            mapping,
+            {
+                "alice": "A",
+                "bob": "B",
+                "carol": "C",
+                "dave": "UNKNOWN_1",
+            },
+        )
 
     def test_speaker_for_track(self) -> None:
         self.assertEqual(speaker_for_track("0:a:1"), "Oz")
@@ -87,18 +108,18 @@ class MergeTranscriptsTests(TypedTestCase):
         self.assertEqual(occupied_rows({"layout_row": 0, "layout_row_span": 2}), {0, 1})
 
     def test_available_base_rows(self) -> None:
-        active = [{"layout_row": 0, "layout_row_span": 1}]
+        active: list[Segment] = [{"layout_row": 0, "layout_row_span": 1}]
         self.assertEqual(available_base_rows(active, 1), [1, 2])
 
     def test_mark_overflow(self) -> None:
-        overflow: list[dict] = []
-        segment: dict = {}
+        overflow: list[Segment] = []
+        segment: Segment = {}
         mark_overflow(segment, overflow)
         self.assertEqual(overflow, [segment])
         self.assertEqual(segment["filter_reasons"], ["overflow_dropped"])
 
     def test_assign_bottom_rows(self) -> None:
-        segments = [
+        segments: list[Segment] = [
             {"start": 0, "end": 2, "text": "a", "speaker": "Oz", "max_width": 28},
             {"start": 1, "end": 3, "text": "b", "speaker": "Guest", "max_width": 28},
         ]
@@ -108,7 +129,7 @@ class MergeTranscriptsTests(TypedTestCase):
         self.assertIn("layout_row", assigned[0])
 
     def test_assign_bottom_rows_overflow(self) -> None:
-        segments = [
+        segments: list[Segment] = [
             {"start": 0, "end": 10, "text": "a", "speaker": "Oz", "max_width": 28},
             {"start": 1, "end": 10, "text": "b", "speaker": "Guest", "max_width": 28},
             {"start": 2, "end": 10, "text": "c", "speaker": "A", "max_width": 28},
@@ -118,8 +139,8 @@ class MergeTranscriptsTests(TypedTestCase):
         self.assertGreater(len(overflow), 0)
 
     def test_split_segment_delegates_to_packer(self) -> None:
-        segment = {"start": 0, "end": 1, "text": "abc"}
-        with mock.patch("src.merge_transcripts.pack_segment_pages", return_value=[segment]) as patched:
+        segment: Segment = {"start": 0, "end": 1, "text": "abc"}
+        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=_identity_pack) as patched:
             self.assertEqual(split_segment(segment), [segment])
             patched.assert_called_once()
 
@@ -128,7 +149,7 @@ class MergeTranscriptsTests(TypedTestCase):
             {"start": 0, "end": 1, "text": "ご視聴ありがとうございました", "source_track": "0:a:3", "speaker": "A"},
             {"start": 1, "end": 2, "text": "やばい！", "source_track": "0:a:3", "speaker": "B"},
         ]
-        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=lambda seg, **kw: [seg]):
+        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=_identity_pack):
             refined, filtered = refine_segments(segments)
         self.assertEqual(len(refined), 1)
         self.assertEqual(len(filtered), 1)
@@ -153,7 +174,7 @@ class MergeTranscriptsTests(TypedTestCase):
             },
         ]
 
-        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=lambda seg, **kw: [seg]):
+        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=_identity_pack):
             refined, filtered = refine_segments(segments)
 
         self.assertEqual([item["text"] for item in refined], ["○○だよね。", "○○なんだけど"])
@@ -179,7 +200,7 @@ class MergeTranscriptsTests(TypedTestCase):
             },
         ]
 
-        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=lambda seg, **kw: [seg]):
+        with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=_identity_pack):
             refined, filtered = refine_segments(segments)
 
         self.assertEqual(
@@ -192,15 +213,12 @@ class MergeTranscriptsTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             transcript = root / "0_a_1.json"
+            payload: dict[str, object] = {"segments": [{"start": 0, "end": 1, "text": "hello", "speaker": None}]}
             transcript.write_text(
-                json.dumps({
-                    "segments": [
-                        {"start": 0, "end": 1, "text": "hello", "speaker": None},
-                    ]
-                }),
+                json.dumps(payload),
                 encoding="utf-8",
             )
-            with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=lambda seg, **kw: [seg]):
+            with mock.patch("src.merge_transcripts.pack_segment_pages", side_effect=_identity_pack):
                 merged, filtered = merge_transcripts({"0:a:1": str(transcript)})
             self.assertEqual(len(merged["segments"]), 1)
             self.assertEqual(merged["segments"][0]["speaker"], "Oz")
@@ -209,7 +227,9 @@ class MergeTranscriptsTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "merged.json"
             filtered_output = Path(temp_dir) / "filtered.json"
-            with mock.patch("src.merge_transcripts.merge_transcripts", return_value=({"segments": []}, {"segments": []})):
+            with mock.patch(
+                "src.merge_transcripts.merge_transcripts", return_value=({"segments": []}, {"segments": []})
+            ):
                 write_merged_transcript({}, str(output), str(filtered_output))
             self.assertTrue(output.exists())
             self.assertTrue(filtered_output.exists())

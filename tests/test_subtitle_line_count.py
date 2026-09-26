@@ -52,6 +52,16 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual("".join(event.text for event in events), source)
         self.assertTrue(all(r"\N" not in event.text for event in events))
 
+    def test_automatic_pages_respect_caller_default_width(self) -> None:
+        source = "ABCDEFGHIJKLMNOPQRSTUVWX"
+        data = {"segments": [{"text": source, "start": 0, "end": 4}]}
+        for packer in [legacy_pack_segments, pack_segments_with_line_count]:
+            with self.subTest(packer=packer.__name__):
+                events = packer(data, default_max_width=8)
+                self.assertEqual("".join(event.text.replace(r"\N", "") for event in events), source)
+                self.assertGreater(len(events), 1)
+                self.assertTrue(all(line == "" or len(line) <= 8 for event in events for line in event.text.split(r"\N")))
+
     def test_project_segments_default_to_auto_line_count(self) -> None:
         project = create_project(
             video_path="video.mkv",

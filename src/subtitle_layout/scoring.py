@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -148,10 +149,20 @@ def leading_boundary_penalty(text: str, break_index: int) -> int:
 
 
 def candidate_kind_bonus(text: str, break_index: int) -> int:
+    return candidate_kind_bonus_with_boundaries(text, break_index, budoux_boundaries, morpheme_boundaries)
+
+
+def candidate_kind_bonus_with_boundaries(
+    text: str,
+    break_index: int,
+    budoux_boundary_indices: Callable[[str], set[int]],
+    morpheme_boundary_indices: Callable[[str], set[int]],
+) -> int:
+    """境界の取得元を指定して候補の優先度を算出する。"""
     bonus = 0
-    if break_index in budoux_boundaries(text):
+    if break_index in budoux_boundary_indices(text):
         bonus -= 10
-    if break_index in morpheme_boundaries(text):
+    if break_index in morpheme_boundary_indices(text):
         bonus -= 6
     if text[break_index - 1] in rules.STRONG_BREAK_CHARS:
         bonus -= 6
@@ -167,6 +178,17 @@ def score_break(
     max_width: int,
     display_duration: float | None = None,
 ) -> BreakScore:
+    return score_break_with_bonus(text, break_index, max_width, display_duration, candidate_kind_bonus)
+
+
+def score_break_with_bonus(
+    text: str,
+    break_index: int,
+    max_width: int,
+    display_duration: float | None,
+    candidate_bonus_for_break: Callable[[str, int], int],
+) -> BreakScore:
+    """候補種別の採点元を指定して改行スコアを算出する。"""
     left = text[:break_index].rstrip()
     right = text[break_index:].lstrip()
     left_width = text_width(left)
@@ -200,7 +222,7 @@ def score_break(
     boundary_penalty += connected_char_penalty(previous_char, next_char)
 
     natural_midpoint_penalty = abs(break_index - len(text) // 2)
-    candidate_bonus = candidate_kind_bonus(text, break_index)
+    candidate_bonus = candidate_bonus_for_break(text, break_index)
     leading_penalty = leading_boundary_penalty(text, break_index)
     timing_penalty = timing_balance_penalty(left_width, right_width, display_duration)
     return (

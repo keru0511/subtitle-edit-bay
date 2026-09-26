@@ -104,6 +104,7 @@
         "test_subtitle_layout_modules",
         "test_subtitle_layout_packer_bridge",
         "test_subtitle_layout_scoring",
+        "test_subtitle_layout_wrapping",
         "test_subtitle_line_count",
         "test_subtitle_line_count_config",
         "test_subtitle_line_count_contracts",

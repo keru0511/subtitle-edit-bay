@@ -27,8 +27,10 @@ class QProcessLauncherTest(TypedTestCase):
         self.assertEqual(launch.arguments, tuple(command[1:]))
         self.assertEqual(launch.working_directory, str(working_directory))
 
-    @unittest.skipUnless(os.name == "nt", "Windows QProcess integration test")
     def test_windows_launches_unicode_venv_workspace_and_media_path(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows QProcess integration test")
+
         application = QCoreApplication.instance() or QCoreApplication([])
         self.assertIsNotNone(application)
         with tempfile.TemporaryDirectory(prefix="edit-bay-qprocess-") as temporary:

@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.subtitle_project import create_project, load_project, save_project
+from src.subtitle_project import create_project, load_project, load_project_model, save_project
+from src.subtitle_project_schema import AudioMix
 from src.subtitle_workflow import render_project_video
 
 
@@ -28,7 +29,8 @@ class SubtitleRenderPlanningTests(unittest.TestCase):
             with patch("src.subtitle_workflow.run_ffmpeg_burn"):
                 render_project_video(project_path, audio_normalize=False)
 
-            self.assertNotIn("last_cut_output", load_project(project_path)["render_settings"])
+            render_settings = load_project_model(project_path).render_settings or {}
+            self.assertNotIn("last_cut_output", render_settings)
 
     def test_audio_fallback_does_not_persist_an_automatic_channel_change(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -52,15 +54,24 @@ class SubtitleRenderPlanningTests(unittest.TestCase):
             )
             project_path = save_project(root / "project.subtitle-project.json", project)
             before = load_project(project_path)["audio_mix"]
+            no_audio_streams: list[dict[str, object]] = []
+
+            effective_audio_mixes: list[AudioMix] = []
+
+            def capture_burn(_video: str, _subtitle: str | None, output: str, **kwargs: object) -> Path:
+                effective_audio_mixes.append(AudioMix.from_json(kwargs.get("audio_mix")))
+                return Path(output)
 
             with (
-                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
-                patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=no_audio_streams),
+                patch("src.subtitle_workflow.run_ffmpeg_burn", side_effect=capture_burn),
             ):
                 render_project_video(project_path, audio_normalize=False)
 
-            effective_channels = burn.call_args.kwargs["audio_mix"]["channels"]
-            self.assertTrue(next(channel["enabled"] for channel in effective_channels if channel["kind"] == "external"))
+            self.assertEqual(len(effective_audio_mixes), 1)
+            self.assertTrue(
+                next(channel.enabled for channel in effective_audio_mixes[0].channels if channel.kind == "external")
+            )
             self.assertEqual(load_project(project_path)["audio_mix"], before)
 
 

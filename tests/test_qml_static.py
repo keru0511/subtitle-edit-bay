@@ -29,6 +29,7 @@ SHARED_CONTROL_QML_FILES = (
     WORKSPACE_HEADER_QML,
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
+    COMPONENTS_ROOT / "AudioMixerScreen.qml",
     COMPONENTS_ROOT / "CutModeSettings.qml",
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
@@ -278,7 +279,7 @@ class QmlStaticTests(unittest.TestCase):
             "codex edit": (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8"),
             "highlight": (COMPONENTS_ROOT / "HighlightCandidateList.qml").read_text(encoding="utf-8"),
             "dictionary": (COMPONENTS_ROOT / "TranscriptionContextPanel.qml").read_text(encoding="utf-8"),
-            "workflow": WORKFLOW_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8"),
+            "workflow": WORKFLOW_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8") + (COMPONENTS_ROOT / "AudioMixerScreen.qml").read_text(encoding="utf-8"),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
         }

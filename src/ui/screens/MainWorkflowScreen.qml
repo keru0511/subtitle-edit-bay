@@ -318,53 +318,16 @@ ApplicationWindow {
             root.appBackend.workflow.startTranscription(root.currentSettings(), false)
     }
 
-    function startNewVideoEdit() {
-        if (!root.appBackend.sourceSelection.video)
-            root.appBackend.browseVideoFile()
-        if (!root.appBackend.sourceSelection.video || root.appBackend.projectLoaded)
-            return
-        if (root.appBackend.transcriptionProjectExists())
-            root.appBackend.loadProject(root.appBackend.projectSavePath)
-        else
-            root.appBackend.createEmptyProject()
-    }
-
-    function hasTranscriptionAudio() {
-        if (root.appBackend.speakers.length > 0)
-            return true
-        for (var index = 0; index < root.appBackend.audioTracks.length; ++index) {
-            if (String(root.appBackend.audioTracks[index].selector || "").length > 0)
-                return true
-        }
-        return false
-    }
-
-    function welcomeTranscriptionBlockReason() {
-        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio())
-            return ""
-        return root.workflowCapabilities.canTranscribe ? "" : root.transcriptionBlockReason()
-    }
-
-    function startTranscriptionFromWelcome() {
-        var executionSettings = JSON.parse(JSON.stringify(root.currentSettings()))
-        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio()) {
-            sourcePopup.open()
-            return
-        }
-        if (!root.workflowCapabilities.canTranscribe)
-            return
-        if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
-            root.pendingWelcomeTranscriptionRequest = {
-                "settings": executionSettings,
-                "sources": JSON.parse(JSON.stringify(root.appBackend.sourceSelection)),
-                "projectPath": String(root.appBackend.projectSavePath)
-            }
+    ProjectStartFlow {
+        id: projectStartFlow
+        appBackend: root.appBackend
+        workflowCapabilities: root.workflowCapabilities
+        settingsProvider: root.currentSettings
+        onSourceSettingsRequested: sourcePopup.open()
+        onOverwriteConfirmationRequested: function(request) {
+            root.pendingWelcomeTranscriptionRequest = request
             overwriteProjectDialog.open()
-            return
         }
-        if (!root.appBackend.projectLoaded && !root.appBackend.createEmptyProject())
-            return
-        root.appBackend.workflow.startTranscription(executionSettings, true)
     }
 
     function performSubtitleEdit(action, atSeconds) {
@@ -1119,10 +1082,10 @@ ApplicationWindow {
             Layout.fillHeight: true
             appBackend: root.appBackend
             colors: root.subtitleEditorColors
-            transcriptionBlockReason: root.welcomeTranscriptionBlockReason()
-            onNewVideoEditRequested: root.startNewVideoEdit()
+            transcriptionBlockReason: projectStartFlow.transcriptionBlockReason
+            onNewVideoEditRequested: projectStartFlow.startNewVideoEdit()
             onOpenProjectRequested: root.browseProjectFile()
-            onStartTranscriptionRequested: root.startTranscriptionFromWelcome()
+            onStartTranscriptionRequested: projectStartFlow.startTranscription()
             onSourceSettingsRequested: sourcePopup.open()
             onDictionaryRequested: root.openDictionaryScreen()
             onProcessingSettingsRequested: root.toggleSettingsPopup()

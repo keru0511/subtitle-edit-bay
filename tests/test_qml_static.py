@@ -15,6 +15,7 @@ WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
 WORKSPACE_HEADER_QML = COMPONENTS_ROOT / "WorkspaceHeader.qml"
 START_SCREEN_QML = COMPONENTS_ROOT / "ProjectStartScreen.qml"
+START_FLOW_QML = COMPONENTS_ROOT / "ProjectStartFlow.qml"
 SEQUENCE_EDITOR_QML = COMPONENTS_ROOT / "SequenceEditorPanel.qml"
 SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "ContextActionBar.qml",
@@ -34,6 +35,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
     COMPONENTS_ROOT / "SourceSettingsPopup.qml",
     START_SCREEN_QML,
+    START_FLOW_QML,
     COMPONENTS_ROOT / "CutModeSettings.qml",
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
@@ -145,6 +147,7 @@ class QmlStaticTests(unittest.TestCase):
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         start_screen = START_SCREEN_QML.read_text(encoding="utf-8")
         self.assertEqual(workflow.count("ProjectStartScreen {"), 1)
+        self.assertEqual(workflow.count("ProjectStartFlow {"), 1)
         for object_name in (
             "projectStartScreen",
             "newVideoEditButton",

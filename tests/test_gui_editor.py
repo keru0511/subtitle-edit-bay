@@ -470,6 +470,48 @@ Window {
             description="開始画面のエラー表示",
         )
 
+    def test_project_start_flow_works_without_main_workflow_context(self) -> None:
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentProjectStartFlow.qml"
+        qml.write_text(
+            'import QtQuick\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 640
+    height: 480
+    visible: true
+    property int sourceSettingsRequests: 0
+    property var pendingRequest: null
+    function startTranscription() { flow.startTranscription() }
+    ProjectStartFlow {
+        id: flow
+        appBackend: backend
+        workflowCapabilities: ({canTranscribe: true, transcriptionReason: ""})
+        settingsProvider: function() { return {device: "cpu", model: "small"} }
+        onSourceSettingsRequested: host.sourceSettingsRequests += 1
+        onOverwriteConfirmationRequested: function(request) { host.pendingRequest = request }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        self.assertTrue(QMetaObject.invokeMethod(window, "startTranscription"))
+        self.assertEqual(window.property("sourceSettingsRequests"), 1)
+        self.assertIsNone(self._qml_value(window, "pendingRequest"))
+
+        video, audio, _output = self._set_ready_sources()
+        project_path = self._save_default_project_for_selected_sources()
+        self.assertFalse(self.app.projectLoaded)
+        self.assertTrue(QMetaObject.invokeMethod(window, "startTranscription"))
+        request = self._qml_value(window, "pendingRequest")
+        self.assertEqual(window.property("sourceSettingsRequests"), 1)
+        self.assertEqual(request["settings"], {"device": "cpu", "model": "small"})
+        self.assertEqual(request["sources"]["video"], str(video.resolve()))
+        self.assertEqual(request["sources"]["audio_files"], [str(audio.resolve())])
+        self.assertEqual(request["projectPath"], str(project_path))
+        self.assertFalse(self.app.projectLoaded)
+
     def test_project_start_screen_prioritizes_new_edit_and_existing_project(self) -> None:
         _, window = self._load_qml()
         start_screen = self._quick_item(window, "projectStartScreen")

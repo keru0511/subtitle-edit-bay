@@ -859,7 +859,10 @@ Window {
         self.assertEqual(command[command.index("--alignment-offset-adjustment") + 1], "1.25")
 
     def test_source_alignment_button_uses_selected_track_and_manual_offset(self) -> None:
-        video, audio, _output = self._set_ready_sources()
+        video, _audio, _output = self._set_ready_sources()
+        alternate_audio = self.root / "2-bob.flac"
+        alternate_audio.write_bytes(b"audio")
+        self.app.setAudioFiles([str(alternate_audio)], True)
         self.app._audio_tracks = [
             {"selector": "0:a:0", "label": "0:a:0  game"},
             {"selector": "0:a:1", "label": "0:a:1  microphone"},
@@ -869,6 +872,12 @@ Window {
         self.app.dependenciesChanged.emit()
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        reference_audio = self._quick_item(window, "referenceAudioCombo")
+        self.assertEqual(reference_audio.property("count"), 2)
+        self._click(window, reference_audio)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(reference_audio.property("currentValue"), str(alternate_audio.resolve()))
         self._quick_item(window, "videoAudioTrackCombo").setProperty("currentIndex", 1)
         self._quick_item(window, "manualAlignmentOffsetField").setProperty("text", "1.250")
         self.app.processEvents()
@@ -888,7 +897,7 @@ Window {
             self._click(window, self._quick_item(window, "analyzeAlignmentButton"))
             self.gui.wait_until(lambda: not self.app.alignmentBusy, description="同期解析の完了")
 
-        calculate.assert_called_once_with(str(video.resolve()), str(audio.resolve()), "0:a:1", 1.25)
+        calculate.assert_called_once_with(str(video.resolve()), str(alternate_audio.resolve()), "0:a:1", 1.25)
         self.assertEqual(self.app.alignmentResult, result)
 
     def test_existing_project_transcription_keeps_newly_selected_audio_source(self) -> None:
@@ -2005,8 +2014,15 @@ Window {
             deepcopy(self.app._project), deepcopy(self.app._undo_stack),
             self.app._project_revision, self.app.projectDirty, path.read_bytes(),
         )
+        proposal_card = self._quick_item(window, "codexChatProposalCard")
         discard_button = self._quick_item(window, "codexDiscardButton")
         self.assertIsNotNone(self.app._codex_proposal)
+        self.gui.wait_until(
+            lambda: proposal_card.isVisible()
+            and not proposal_card.property("audioProposal")
+            and discard_button.isVisible() and discard_button.property("enabled"),
+            description="subtitle proposal card after audio apply",
+        )
         self._click(window, discard_button)
         self.assertIsNone(self.app._codex_proposal)
         self.assertEqual(
@@ -2015,9 +2031,18 @@ Window {
             after_apply,
         )
 
+        self.gui.wait_until(
+            lambda: not proposal_card.isVisible(),
+            description="subtitle proposal card cleared",
+        )
         self.app._audio_mix_proposal = audio_proposal
         self.app.audioMixProposalChanged.emit()
-        self.app.processEvents()
+        self.gui.wait_until(
+            lambda: proposal_card.isVisible()
+            and proposal_card.property("audioProposal")
+            and discard_button.isVisible() and discard_button.property("enabled"),
+            description="audio proposal card restored",
+        )
         self.assertTrue(discard_button.property("enabled"))
         self._click(window, discard_button)
         self.assertIsNone(self.app._audio_mix_proposal)

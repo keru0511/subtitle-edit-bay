@@ -54,6 +54,10 @@ Item {
             return false
         }
         // qmllint enable missing-property
+        if (!settingsPanel.commitPendingEdits()) {
+            shortRoot.inputValidationMessage = "ショート設定を保存できませんでした"
+            return false
+        }
         shortRoot.inputValidationMessage = ""
         // 編集中の時刻やBGM設定の onEditingFinished を、画面遷移より先に実行する。
         shortRoot.forceActiveFocus()

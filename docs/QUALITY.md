@@ -10,10 +10,11 @@ Install runtime dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Install development-only tooling:
+開発用ツールと型チェック専用スタブをインストールします。Qtの実行環境が不要な場合は、スタブを依存パッケージ抜きで導入します。
 
 ```powershell
 python -m pip install -r requirements-dev.txt
+python -m pip install --no-deps -r requirements-type-stubs.txt
 ```
 
 `requirements-dev.txt` also includes the YAML parser used by the GitHub Actions
@@ -283,7 +284,7 @@ python scripts/check_quality.py --type-only --type-platform win32
 python scripts/check_quality.py --type-only --paths src scripts tests
 ```
 
-既存の品質チェック用スクリプトとOS境界4モジュールに加え、実行設定の読み込み・検証・データ境界、文字起こしコンテキスト・辞書・非破壊カットとタイムラインのJSON/EDL入出力・複数クリップのシーケンス・ショート動画設定・字幕プロジェクトの保存と波形生成・構成モデルと行数設定、スナップショット・クラッシュ復旧・音声ミックス・組版の分割境界と採点・行数調整・句読点の付け直し・ASS出力・話者色設定・SRT/VTT/CSV出力・字幕レビュー、および対応するテストを対象にしています（計63ファイル）。OS境界はstrictと明示的な`Any`禁止を継続します。移行済みのデータ境界・モデル・対応テストの58ファイルでは、次の規則をすべて適用します。
+OS境界、データ境界、字幕・文字起こし処理、実行設定、更新、GUIの一部、および対応するテストを型チェック対象にしています。対象ファイル数は`pyproject.toml`の`tool.mypy.files`で確認できます。対象の各モジュールには、次の規則をすべて適用します。
 
 - `strict`: 注釈のない関数、型引数のないジェネリックなどを禁止
 - `disallow_any_explicit`: 明示的な`Any`を禁止
@@ -293,7 +294,7 @@ python scripts/check_quality.py --type-only --paths src scripts tests
 
 標準ライブラリのJSONデコード結果は`object`で受けます。コンテナを読み取る前に実際の形を検証し、各要素も`object`として扱います。`object`は任意の演算や属性アクセスを許可しないため、利用前の型の絞り込みが必要です。`cast`・`type: ignore`・検査除外を増やして通す方針は採りません。実行設定は未知のキーやセクションを保持する互換契約があるため、固定フィールドのモデルとして扱える領域とは分けて移行します。
 
-CIの3つのOS設定は静的な条件分岐の検証であり、各OSでの実行テストの代わりではありません。mypy全体への`--ignore-missing-imports`は使いません。品質ジョブにGUI実行環境を導入しないため、既存のPySide6未導入許容は維持しています。未導入時はQt APIの型を保証しません。今回移行したデータ境界はPySide6に依存しません。
+CIの3つのOS設定は静的な条件分岐の検証であり、各OSでの実行テストの代わりではありません。mypy全体への`--ignore-missing-imports`は使いません。品質ジョブではPySide6本体を導入せず、型定義だけを`requirements-type-stubs.txt`から導入します。GUI APIの型チェックを広げる際は、この軽量な環境でも検証します。
 
 行数調整と句読点の付け直しは未検証の値を`object`で受け、形を確かめてから読み取ります。行数調整では数値文字列などの既存の変換と、元の字幕辞書を使う経路を維持します。句読点の付け直しでは入力の単語・拡張値を変更せず、必要な部分だけ複製します。保存処理を呼ぶ従来の`test_subtitle_line_count.py`は実行テストとして残し、型チェックには保存処理から独立した`test_subtitle_line_count_contracts.py`を加えます。
 

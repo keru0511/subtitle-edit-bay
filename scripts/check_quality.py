@@ -151,6 +151,7 @@ def build_steps(args: QualityArgs) -> list[list[str]]:
         steps.append([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     if args.install_dev:
         steps.append([sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"])
+        steps.append([sys.executable, "-m", "pip", "install", "--no-deps", "-r", "requirements-type-stubs.txt"])
     if not args.skip_lint:
         steps.append([sys.executable, "-m", "ruff", "check", *quality_targets(args)])
     if args.include_format:

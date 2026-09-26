@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from PySide6.QtCore import QProcess, Slot
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
@@ -19,9 +19,28 @@ from .video_sequence import VideoSequence
 from .video_timeline import VideoTimeline
 from .workflow_actions import ActionCapability
 
+if TYPE_CHECKING:
+    from .gui_ai_facade import AIChatFacade
+    from .gui_audio_facade import AudioFacade
+    from .gui_sequence_facade import SequenceFacade
+    from .gui_short_video_facade import ShortVideoFacade
+    from .gui_subtitles_facade import SubtitleFacade
+    from .gui_updates_facade import UpdateFacade
+    from .gui_workflow_facade import WorkflowFacade
+    from .gui_workspace_facade import WorkspaceFacade
+
 
 class LegacyBackendCompatibility:
     """旧APIの利用者を保ち、処理と状態の所有権は各機能窓口に置く。"""
+
+    _workspace_facade: WorkspaceFacade
+    _subtitles_facade: SubtitleFacade
+    _short_video_facade: ShortVideoFacade
+    _audio_facade: AudioFacade
+    _sequence_facade: SequenceFacade
+    _workflow_facade: WorkflowFacade
+    _ai_facade: AIChatFacade
+    _updates_facade: UpdateFacade
 
     @Slot(str, int, bool, result=bool)
     def setWorkspacePlayerState(

@@ -69,6 +69,8 @@ files = [
   "tests/test_batch.py",
   "src/transcription_dictionary_suggestions.py",
   "tests/test_transcription_dictionary_suggestions.py",
+  "src/realtime_audio_mixer.py",
+  "tests/test_realtime_audio_mixer.py",
   "tests/test_transcribe.py",
   "tests/test_media_probe.py",
   "tests/test_merge_transcripts.py",
@@ -257,11 +259,6 @@ disallow_any_expr = true
 disallow_any_unimported = true
 disallow_any_decorated = true
 
-# 品質チェックのジョブではGUI本体を導入しない。
-[[tool.mypy.overrides]]
-module = ["PySide6", "PySide6.*"]
-ignore_missing_imports = true
-
 # 移行済みのデータ境界・モデルでは明示・暗黙のAnyを禁止する。
 [[tool.mypy.overrides]]
 module = [
@@ -303,6 +300,8 @@ module = [
   "tests.test_batch",
   "src.transcription_dictionary_suggestions",
   "tests.test_transcription_dictionary_suggestions",
+  "src.realtime_audio_mixer",
+  "tests.test_realtime_audio_mixer",
   "tests.test_transcribe",
   "tests.test_media_probe",
   "tests.test_merge_transcripts",

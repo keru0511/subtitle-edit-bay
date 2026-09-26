@@ -147,7 +147,11 @@ class QualityEntrypointTests(TypedTestCase):
             steps[1],
             [sys.executable, "-m", "pip", "install", "-r", "requirements-dev.txt"],
         )
-        self.assertEqual(steps[2][1:4], ["-m", "unittest", "discover"])
+        self.assertEqual(
+            steps[2],
+            [sys.executable, "-m", "pip", "install", "--no-deps", "-r", "requirements-type-stubs.txt"],
+        )
+        self.assertEqual(steps[3][1:4], ["-m", "unittest", "discover"])
 
     def test_fix_format_requires_format_mode(self) -> None:
         with self.assertRaises(SystemExit):

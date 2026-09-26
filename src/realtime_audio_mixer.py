@@ -7,7 +7,7 @@ import time
 from typing import Mapping
 
 import numpy as np
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QIODevice, QObject, QTimer, Signal
 from PySide6.QtMultimedia import (
     QAudioBuffer,
     QAudioFormat,
@@ -25,7 +25,7 @@ MIX_PREROLL_TIMEOUT_SECONDS = 0.75
 MIX_TIMESTAMP_TOLERANCE_FRAMES = 2
 MIX_MAX_DECODE_LOOKAHEAD_SECONDS = 0.5
 LIMITER_CEILING_DB = -1.5
-LIMITER_CEILING = 10.0 ** (LIMITER_CEILING_DB / 20.0)
+LIMITER_CEILING = math.pow(10.0, LIMITER_CEILING_DB / 20.0)
 LIMITER_RELEASE_SECONDS = 0.08
 
 def buffered_output_start_frame(
@@ -45,7 +45,7 @@ def build_mix_format() -> QAudioFormat:
     audio_format = QAudioFormat()
     audio_format.setSampleRate(MIX_SAMPLE_RATE)
     audio_format.setChannelCount(MIX_CHANNEL_COUNT)
-    audio_format.setSampleFormat(QAudioFormat.Float)
+    audio_format.setSampleFormat(QAudioFormat.SampleFormat.Float)
     return audio_format
 
 
@@ -57,15 +57,15 @@ def audio_buffer_to_float32(buffer: QAudioBuffer) -> np.ndarray:
     channel_count = max(1, audio_format.channelCount())
     raw = bytes(buffer.constData())
     sample_format = audio_format.sampleFormat()
-    if sample_format == QAudioFormat.UInt8:
+    if sample_format == QAudioFormat.SampleFormat.UInt8:
         samples = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
-    elif sample_format == QAudioFormat.Int16:
+    elif sample_format == QAudioFormat.SampleFormat.Int16:
         usable = len(raw) - len(raw) % 2
         samples = np.frombuffer(raw[:usable], dtype="<i2").astype(np.float32) / 32768.0
-    elif sample_format == QAudioFormat.Int32:
+    elif sample_format == QAudioFormat.SampleFormat.Int32:
         usable = len(raw) - len(raw) % 4
         samples = np.frombuffer(raw[:usable], dtype="<i4").astype(np.float32) / 2147483648.0
-    elif sample_format == QAudioFormat.Float:
+    elif sample_format == QAudioFormat.SampleFormat.Float:
         usable = len(raw) - len(raw) % 4
         samples = np.frombuffer(raw[:usable], dtype="<f4").astype(np.float32, copy=True)
         samples[~np.isfinite(samples)] = 0.0
@@ -78,13 +78,13 @@ def audio_buffer_to_float32(buffer: QAudioBuffer) -> np.ndarray:
 def encode_float32(samples: np.ndarray, audio_format: QAudioFormat) -> bytes:
     clipped = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
     sample_format = audio_format.sampleFormat()
-    if sample_format == QAudioFormat.Float:
+    if sample_format == QAudioFormat.SampleFormat.Float:
         return np.asarray(clipped, dtype="<f4").tobytes()
-    if sample_format == QAudioFormat.Int16:
+    if sample_format == QAudioFormat.SampleFormat.Int16:
         return np.asarray(np.rint(clipped * 32767.0), dtype="<i2").tobytes()
-    if sample_format == QAudioFormat.Int32:
+    if sample_format == QAudioFormat.SampleFormat.Int32:
         return np.asarray(np.rint(clipped * 2147483647.0), dtype="<i4").tobytes()
-    if sample_format == QAudioFormat.UInt8:
+    if sample_format == QAudioFormat.SampleFormat.UInt8:
         return np.asarray(np.rint(clipped * 127.0 + 128.0), dtype=np.uint8).tobytes()
     raise ValueError(f"Unsupported output sample format: {sample_format}")
 
@@ -129,6 +129,10 @@ class AudioChunk:
     @property
     def end_frame(self) -> int:
         return self.start_frame + len(self.samples)
+
+
+def _audio_chunk_start_frame(chunk: AudioChunk) -> int:
+    return chunk.start_frame
 
 
 class TimelineAudioMixer:
@@ -199,7 +203,7 @@ class TimelineAudioMixer:
             return
         chunks = self._chunks.setdefault(channel_id, deque())
         if chunks and absolute_start < chunks[-1].start_frame:
-            ordered = sorted((*chunks, chunk), key=lambda item: item.start_frame)
+            ordered = sorted((*chunks, chunk), key=_audio_chunk_start_frame)
             self._chunks[channel_id] = deque(ordered)
         else:
             chunks.append(chunk)
@@ -316,7 +320,7 @@ class RealtimeAudioMixer(QObject):
             self.audio_format.channelCount(),
         )
         self._sink: QAudioSink | None = None
-        self._device = None
+        self._device: QIODevice | None = None
         self._playing = False
         self._started = False
         self._base_frame = 0

@@ -4,6 +4,7 @@ from collections.abc import Iterator, Sequence
 from typing import overload
 
 from . import fft as fft
+from . import testing as testing
 
 class ndarray:
     size: int

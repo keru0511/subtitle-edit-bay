@@ -21,7 +21,7 @@ class RealtimeAudioMixerTests(TypedTestCase):
         audio_format = QAudioFormat()
         audio_format.setSampleRate(48_000)
         audio_format.setChannelCount(2)
-        audio_format.setSampleFormat(QAudioFormat.Int16)
+        audio_format.setSampleFormat(QAudioFormat.SampleFormat.Int16)
         buffer = QAudioBuffer(
             struct.pack("<hhhh", 0, 16_384, -32_768, 8_192),
             audio_format,
@@ -139,14 +139,15 @@ class RealtimeAudioMixerTests(TypedTestCase):
         audio_format = QAudioFormat()
         audio_format.setSampleRate(48_000)
         audio_format.setChannelCount(2)
-        audio_format.setSampleFormat(QAudioFormat.Int16)
+        audio_format.setSampleFormat(QAudioFormat.SampleFormat.Int16)
 
         encoded = encode_float32(
             np.array([[-1.0, 0.0], [0.5, 1.0]], dtype=np.float32),
             audio_format,
         )
 
-        self.assertEqual(struct.unpack("<hhhh", encoded), (-32767, 0, 16384, 32767))
+        decoded = tuple(int.from_bytes(encoded[index : index + 2], "little", signed=True) for index in range(0, 8, 2))
+        self.assertEqual(decoded, (-32767, 0, 16384, 32767))
 
 
 if __name__ == "__main__":

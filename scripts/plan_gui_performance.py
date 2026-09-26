@@ -5,7 +5,29 @@ import json
 import math
 import subprocess
 from pathlib import Path
-from typing import Protocol, Sequence, cast
+from typing import Protocol, Sequence, TypedDict, cast
+
+
+class PerformanceMatrixJob(TypedDict):
+    repetition: int
+    suite: str
+    segment_count: int
+
+
+class PerformanceMatrix(TypedDict):
+    include: list[PerformanceMatrixJob]
+
+
+class _PerformancePlanBase(TypedDict):
+    repetitions: int
+    playback_seconds: str
+    max_regression_percent: str
+    fail_on_regression: str
+    matrix: PerformanceMatrix
+
+
+class PerformancePlan(_PerformancePlanBase, total=False):
+    compare_ref: str
 
 
 class _PlanArgs(Protocol):
@@ -25,7 +47,7 @@ def validate_inputs(
     playback_seconds: str,
     max_regression_percent: str,
     fail_on_regression: str,
-) -> dict[str, object]:
+) -> PerformancePlan:
     try:
         parsed_repetitions = int(repetitions)
     except ValueError as error:

@@ -122,6 +122,8 @@ class ShortVideoFacade(FeatureFacade):
 
     def _commit_short_video(self, section: dict[str, Any]) -> bool:
         backend = self._backend
+        if backend._project is None or backend._running:
+            return False
         try:
             changed = backend._project_editor_controller.commit_section_change("short_video", section)
         except (ValueError, TypeError, OverflowError) as error:

@@ -9267,6 +9267,39 @@ Window {
         for name, control in zip(control_names, controls):
             self.assertTrue(control.property("enabled"), name)
 
+    def test_short_clip_initialization_is_locked_during_processing(self) -> None:
+        path = self._load_project()
+        self.assertEqual(self.app.shortVideoClips, [])
+        before = (
+            deepcopy(self.app._project),
+            deepcopy(self.app._undo_stack),
+            self.app._project_revision,
+            self.app.projectDirty,
+            path.read_bytes(),
+        )
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            self.app.initializeShortVideoClips()
+            self.assertEqual(
+                (
+                    self.app._project,
+                    self.app._undo_stack,
+                    self.app._project_revision,
+                    self.app.projectDirty,
+                    path.read_bytes(),
+                ),
+                before,
+            )
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.app.initializeShortVideoClips()
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+        self.assertTrue(self.app.projectDirty)
+
     def test_short_mode_clip_mutation_controls_dispatch_runtime_actions(self) -> None:
         self._load_project(
             segments=[

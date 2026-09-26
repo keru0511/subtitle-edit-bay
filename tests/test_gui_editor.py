@@ -11202,6 +11202,152 @@ Window {
         )
         self.assertFalse(self.app.projectDirty)
 
+    def test_sequence_time_typed_without_return_is_saved_from_header(self) -> None:
+        path, _first_video, _second_video = self._make_sequence_project()
+        clip_id = str(self.app.sequenceClips[0]["clipId"])
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(
+            lambda: self._quick_visual_item(clip_list, "sequenceClipStartField").isVisible(),
+            description="シーケンスの開始時刻入力欄",
+        )
+        start_field = self._quick_visual_item(clip_list, "sequenceClipStartField")
+        self._click(window, start_field)
+        self._replace_focused_time(window, start_field, "1.250")
+        self.assertEqual(self.app.sequenceClips[0]["sourceStart"], 0.0)
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        self.assertEqual(self.app.sequenceClips[0]["clipId"], clip_id)
+        self.assertAlmostEqual(self.app.sequenceClips[0]["sourceStart"], 1.25)
+        self.assertAlmostEqual(load_project(path)["sequence"]["clips"][0]["source_start"], 1.25)
+        self.assertFalse(self.app.projectDirty)
+
+        end_field = self._quick_visual_item(clip_list, "sequenceClipEndField")
+        self._click(window, end_field)
+        self._replace_focused_time(window, end_field, "8.500")
+        self.assertAlmostEqual(self.app.sequenceClips[0]["sourceEnd"], 10.0)
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertAlmostEqual(self.app.sequenceClips[0]["sourceEnd"], 8.5)
+        self.assertAlmostEqual(load_project(path)["sequence"]["clips"][0]["source_end"], 8.5)
+        self.assertFalse(self.app.projectDirty)
+
+    def test_sequence_audio_controls_from_card_are_saved(self) -> None:
+        path, _first_video, _second_video = self._make_sequence_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(
+            lambda: self._quick_visual_item(clip_list, "sequenceAudioLinkedCheck").isVisible(),
+            description="シーケンスの音声設定",
+        )
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_visual_item(clip_list, "sequenceAudioLinkedCheck"))
+            self.assertFalse(self.app.sequenceClips[0]["audioLinked"])
+            self._click(window, self._quick_visual_item(clip_list, "sequenceClipMutedCheck"))
+            self.assertTrue(self.app.sequenceClips[0]["muted"])
+
+            volume_slider = self._quick_visual_item(clip_list, "sequenceClipVolumeSlider")
+            start = volume_slider.mapToScene(
+                QPointF(volume_slider.width() * 0.5, volume_slider.height() / 2)
+            ).toPoint()
+            end = volume_slider.mapToScene(
+                QPointF(volume_slider.width() * 0.75, volume_slider.height() / 2)
+            ).toPoint()
+            QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
+            for fraction in (0.5, 1.0):
+                QTest.mouseMove(window, start + (end - start) * fraction, 30)
+            QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=end)
+            self.gui.wait_until(
+                lambda: 1.3 <= self.app.sequenceClips[0]["volume"] <= 1.9,
+                description="シーケンスの音量スライダー",
+            )
+            expected_volume = self.app.sequenceClips[0]["volume"]
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        saved_clip = load_project(path)["sequence"]["clips"][0]
+        self.assertFalse(saved_clip["audio_linked"])
+        self.assertTrue(saved_clip["muted"])
+        self.assertAlmostEqual(saved_clip["volume"], expected_volume, places=2)
+        self.assertFalse(self.app.projectDirty)
+
+    def test_sequence_transition_controls_from_card_are_saved(self) -> None:
+        path, _first_video, second_video = self._make_sequence_project()
+        asset_id = self._add_second_sequence_asset(second_video)
+        self.assertTrue(self.app.addSequenceClip(asset_id))
+        clip_id = str(self.app.sequenceClips[1]["clipId"])
+        self.assertTrue(self.app.setSequenceTransition(clip_id, "crossfade", 0.5))
+        self.assertTrue(self.app.saveProject())
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(
+            lambda: clip_list.property("count") == 2
+            and float(clip_list.property("contentHeight")) > clip_list.height(),
+            description="切り替え設定の一覧配置",
+        )
+        self.gui.set_property(
+            clip_list, "contentY",
+            max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+        )
+        self.gui.wait_until(
+            lambda: any(
+                item.property("clipId") == clip_id
+                for item in self.gui.visual_items_with_properties(clip_list, "clipId")
+            ),
+            description="後続クリップの切り替え設定",
+        )
+        clip_card = self.gui.find_visual_item_by_properties(
+            clip_list, {"clipId": clip_id}, required_properties=("clipId",),
+        )
+        transition = self._quick_visual_item(clip_card, "sequenceTransitionCombo")
+        self.assertEqual(transition.property("currentText"), "crossfade")
+        self.assertEqual(
+            self._quick_visual_item(clip_card, "sequenceTransitionDuration").property("value"), 500,
+        )
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, transition)
+            QTest.keyClick(window, Qt.Key.Key_Down)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.gui.wait_until(
+                lambda: self.app.sequenceClips[1]["transition"]["type"] == "fade",
+                description="シーケンスの切り替え方法",
+            )
+            self.assertAlmostEqual(self.app.sequenceClips[1]["transition"]["duration"], 0.5)
+            clip_card = self.gui.find_visual_item_by_properties(
+                clip_list, {"clipId": clip_id}, required_properties=("clipId",),
+            )
+            self.gui.set_property(
+                clip_list, "contentY",
+                max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+            )
+            duration = self._quick_visual_item(clip_card, "sequenceTransitionDuration")
+            self.assertEqual(duration.property("value"), 500)
+            self._assert_quick_item_within(clip_list, duration)
+            increase = duration.mapToScene(
+                QPointF(duration.width() - 8, duration.height() * 0.25)
+            ).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
+            self.gui.wait_until(
+                lambda: self.app.sequenceClips[1]["transition"]["duration"] > 0.5,
+                description="シーケンスの切り替え時間",
+            )
+            expected_duration = self.app.sequenceClips[1]["transition"]["duration"]
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        saved_transition = load_project(path)["sequence"]["clips"][1]["transition"]
+        self.assertEqual(saved_transition["type"], "fade")
+        self.assertAlmostEqual(saved_transition["duration"], expected_duration)
+        self.assertFalse(self.app.projectDirty)
+
     def test_highlight_candidates_are_preserved_during_processing(self) -> None:
         project_path = self._load_project()
         _, window = self._load_qml()

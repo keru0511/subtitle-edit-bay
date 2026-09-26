@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Protocol, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 
 class SubprocessOptions(TypedDict, total=False):
@@ -12,11 +12,31 @@ class SubprocessOptions(TypedDict, total=False):
     start_new_session: bool
 
 
+class VersionProbeRun(Protocol):
+    """CLI のバージョン確認に必要な subprocess.run の最小契約。"""
+
+    def __call__(
+        self,
+        command: list[str],
+        /,
+        *,
+        capture_output: Literal[True],
+        text: Literal[True],
+        encoding: str,
+        errors: str,
+        timeout: int,
+        check: Literal[False],
+        shell: Literal[False],
+        creationflags: int,
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
 def hidden_subprocess_kwargs() -> SubprocessOptions:
     """Return subprocess options that keep background Windows commands hidden."""
     if os.name != "nt":
         return {}
-    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    creation_flag: object = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return {"creationflags": creation_flag if isinstance(creation_flag, int) else 0}
 
 
 def detached_subprocess_kwargs() -> SubprocessOptions:

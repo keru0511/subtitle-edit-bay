@@ -32,6 +32,13 @@ files = [
   "src/platform_updates.py",
   "src/process_utils.py",
   "src/qprocess_launcher.py",
+  "src/application_logging.py",
+  "src/ai_provider.py",
+  "src/codex_runtime.py",
+  "src/gemini_runtime.py",
+  "src/transcript_cache.py",
+  "src/gui_workspace_controller.py",
+  "tests/test_transcript_cache.py",
   "src/data_boundary.py",
   "src/runtime_config.py",
   "src/runtime_config_schema.py",
@@ -99,6 +106,9 @@ mypy_path = "$MYPY_CONFIG_FILE_DIR/typings"
 module = ["src.platform_paths", "src.platform_updates", "src.process_utils", "src.qprocess_launcher"]
 strict = true
 disallow_any_explicit = true
+disallow_any_expr = true
+disallow_any_unimported = true
+disallow_any_decorated = true
 
 # 品質チェックのジョブではGUI本体を導入しない。
 [[tool.mypy.overrides]]
@@ -109,6 +119,13 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
   "src.data_boundary",
+  "src.application_logging",
+  "src.ai_provider",
+  "src.codex_runtime",
+  "src.gemini_runtime",
+  "src.transcript_cache",
+  "src.gui_workspace_controller",
+  "tests.test_transcript_cache",
   "src.runtime_config",
   "src.runtime_config_schema",
   "tests.test_data_boundary",

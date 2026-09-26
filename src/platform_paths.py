@@ -5,6 +5,17 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from typing import Protocol, cast
+
+
+class _StandardLocationNamespace(Protocol):
+    GenericCacheLocation: object
+
+
+class _StandardPaths(Protocol):
+    StandardLocation: _StandardLocationNamespace
+
+    def writableLocation(self, location: object) -> str: ...
 
 
 def log_directory(workspace_root: str | Path) -> Path:
@@ -23,7 +34,8 @@ def audio_preview_directory() -> Path:
     # Qtの依存はGUIがこの保存先を要求した場合だけ読み込む。
     from PySide6.QtCore import QStandardPaths
 
-    base = os.environ.get("LOCALAPPDATA") or QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.GenericCacheLocation
+    standard_paths = cast(_StandardPaths, QStandardPaths)
+    base = os.environ.get("LOCALAPPDATA") or standard_paths.writableLocation(
+        standard_paths.StandardLocation.GenericCacheLocation
     )
     return Path(base) / "Subtitle Edit Bay" / "audio-preview"

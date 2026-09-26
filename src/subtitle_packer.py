@@ -660,6 +660,14 @@ def build_character_timeline(words: object) -> list[CharacterTiming]:
     return timeline
 
 
+def _ordered_character_timeline(timeline: Sequence[CharacterTiming]) -> bool:
+    """本文順と矛盾する語時刻はページの時刻配分に使わない。"""
+    return all(
+        current["start"] >= previous["end"] - 1e-9
+        for previous, current in zip(timeline, timeline[1:])
+    )
+
+
 def effective_word_end(word: object) -> float:
     return _effective_word_end_mapping(_mapping(word))
 
@@ -768,7 +776,7 @@ def build_timed_units_from_width(segment: object, unit_entries: Sequence[AtomicU
 def build_timed_units_from_words(segment: object, unit_entries: Sequence[AtomicUnitEntry], start: float, end: float) -> list[dict[object, object]]:
     segment = _mapping(segment)
     timeline = build_character_timeline(segment.get("words"))
-    if not timeline:
+    if not timeline or not _ordered_character_timeline(timeline):
         return []
 
     words = _entry_mappings(segment.get("words"))
@@ -931,6 +939,7 @@ def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object
     can_partition_words = (
         all(isinstance(word.get("word"), str) for word in words)
         and len(timeline) == sum(len(item) for item in normalized_words)
+        and _ordered_character_timeline(timeline)
         and word_positions is not None
     )
     assigned: list[list[dict[object, object]]] = [[] for _ in pages]

@@ -83,6 +83,33 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertTrue(all(not page["words"] for page in pages))
         self.assertEqual(word["word"], "ABCDEFGHIJKLMNOPQRSTUVWXYY0123456789")
 
+    def test_out_of_order_word_times_fall_back_to_segment_times(self) -> None:
+        source = "ABCDEFGHIJKLMNOP"
+        words = [
+            {"word": "ABCDEFGH", "start": 2.0, "end": 3.0},
+            {"word": "IJKLMNOP", "start": 0.0, "end": 1.0},
+        ]
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 3, "max_width": 4, "words": words})
+        self.assertGreater(len(pages), 1)
+        self.assertEqual("".join(page["text"] for page in pages), source)
+        self.assertAlmostEqual(pages[0]["start"], 0.0)
+        self.assertAlmostEqual(pages[-1]["end"], 3.0)
+        self.assertTrue(all(left["end"] <= right["start"] for left, right in zip(pages, pages[1:])))
+        self.assertTrue(all(not page["words"] for page in pages))
+
+    def test_overlapping_word_times_do_not_create_truncated_word_entries(self) -> None:
+        source = "ABCDEFGHIJKLMNOP"
+        words = [
+            {"word": "ABCDEFGH", "start": 0.0, "end": 1.0},
+            {"word": "IJKLMNOP", "start": 0.2, "end": 0.4},
+        ]
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 3, "max_width": 4, "words": words})
+        self.assertEqual("".join(page["text"] for page in pages), source)
+        self.assertAlmostEqual(pages[-1]["end"], 3.0)
+        self.assertTrue(all(left["end"] <= right["start"] for left, right in zip(pages, pages[1:])))
+        self.assertEqual([word["word"] for page in pages for word in page["words"]], ["ABCDEFGH"])
+        self.assertEqual(pages[0]["words"][0]["end"], 1.0)
+
     def test_split_word_times_stay_inside_segment_bounds(self) -> None:
         source = "字幕確認"
         pages = pack_segment_pages({"text": source, "start": 0.2, "end": 0.8, "max_width": 2,

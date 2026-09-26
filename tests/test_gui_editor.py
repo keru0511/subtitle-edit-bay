@@ -956,6 +956,117 @@ Window {
             )
         self.assertTrue(self.app.projectLoaded)
 
+    def test_source_audio_add_remove_clear_buttons_save_selected_sources(self) -> None:
+        _video, original_audio, _output = self._set_ready_sources()
+        added_audio = self.root / "2-bob.wav"
+        added_audio.write_bytes(b"audio")
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        audio_list = self._quick_item(window, "sourceAudioList")
+        self.assertEqual(audio_list.property("count"), 1)
+
+        with patch(
+            "src.gui_base.QFileDialog.getOpenFileNames",
+            return_value=([str(added_audio)], ""),
+        ) as choose_audio:
+            self._click(window, self._quick_item(window, "sourceAudioAddButton"))
+        choose_audio.assert_called_once()
+        self.assertEqual(audio_list.property("count"), 2)
+        self.assertEqual(
+            self.app.sourceSelection["audio_files"],
+            [str(original_audio.resolve()), str(added_audio.resolve())],
+        )
+
+        remove_button = self._quick_visual_item(audio_list, "sourceAudioRemoveButton-1")
+        self._click(window, remove_button)
+        self.assertEqual(audio_list.property("count"), 1)
+        self.assertEqual(self.app.sourceSelection["audio_files"], [str(original_audio.resolve())])
+
+        self._click(window, self._quick_item(window, "sourceAudioClearButton"))
+        self.assertEqual(audio_list.property("count"), 0)
+        self.assertEqual(self.app.sourceSelection["audio_files"], [])
+
+        with patch(
+            "src.gui_base.QFileDialog.getOpenFileNames",
+            return_value=([str(added_audio)], ""),
+        ):
+            self._click(window, self._quick_item(window, "sourceAudioAddButton"))
+        self.assertEqual(self.app.sourceSelection["audio_files"], [str(added_audio.resolve())])
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+
+        with patch("src.gui.probe_media_duration", return_value=30.0):
+            self._click(window, self._quick_item(window, "newVideoEditButton"))
+        self.assertTrue(self.app.projectLoaded)
+        saved = load_project(Path(self.app.projectPath))
+        self.assertEqual(
+            [item["path"] for item in saved["audio_sources"]],
+            [str(added_audio.resolve())],
+        )
+
+    def test_source_change_keeps_unsaved_project_when_save_fails(self) -> None:
+        path, _audio, _output = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self.app.autosave_timer.stop()
+        saved_bytes = path.read_bytes()
+        original_sources = list(self.app.sourceSelection["audio_files"])
+        self.assertTrue(original_sources)
+        _, window = self._load_qml()
+        with patch.object(self.app.autosave_timer, "start"):
+            self.app.subtitles.updateSegment(0, {"text": "保存待ちの字幕"})
+            self.assertTrue(self.app.projectDirty)
+            edited_project = deepcopy(self.app._project)
+            edited_history = deepcopy(self.app._undo_stack)
+
+            self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
+            self._click(window, self._quick_item(window, "sourceAudioClearButton"))
+            self.assertEqual(self.app.sourceSelection["audio_files"], [])
+            self.assertTrue(self.app.projectLoaded)
+
+            with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
+                self._click(window, self._quick_item(window, "sourceDoneButton"))
+            self.assertTrue(self.app.projectLoaded)
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(self.app._project, edited_project)
+            self.assertEqual(self.app._undo_stack, edited_history)
+            self.assertEqual(self.app.sourceSelection["audio_files"], original_sources)
+            self.assertEqual(path.read_bytes(), saved_bytes)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertIn("保存先を使用できません", self.app.status)
+
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(load_project(path)["segments"][0]["text"], "保存待ちの字幕")
+
+    def test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure(self) -> None:
+        path, _audio, _output = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self.app.autosave_timer.stop()
+        other_audio = self.root / "2-bob.wav"
+        other_audio.write_bytes(b"audio")
+        saved_bytes = path.read_bytes()
+        original_sources = deepcopy(self.app.sourceSelection)
+        with patch.object(self.app.autosave_timer, "start"):
+            self.app.subtitles.updateSegment(0, {"text": "消してはいけない字幕"})
+            edited_project = deepcopy(self.app._project)
+            edited_history = deepcopy(self.app._undo_stack)
+
+            for change in (
+                lambda: self.app.setAudioFiles([str(other_audio)], False),
+                self.app.resetSources,
+            ):
+                with self.subTest(change=change):
+                    with patch("src.gui.save_project", side_effect=OSError("保存を拒否")):
+                        change()
+                    self.assertTrue(self.app.projectLoaded)
+                    self.assertTrue(self.app.projectDirty)
+                    self.assertEqual(self.app._project, edited_project)
+                    self.assertEqual(self.app._undo_stack, edited_history)
+                    self.assertEqual(self.app.sourceSelection, original_sources)
+                    self.assertEqual(path.read_bytes(), saved_bytes)
+                    self.assertEqual(self.app.stage, "ERROR")
+                    self.assertIn("保存を拒否", self.app.status)
+
     def test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription(self) -> None:
         video = self.root / "multi-track.mkv"
         video.write_bytes(b"video")

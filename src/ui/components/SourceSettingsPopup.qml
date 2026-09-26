@@ -234,6 +234,7 @@ Popup {
                                 elide: Text.ElideMiddle
                             }
                             ToolButton {
+                                objectName: "sourceAudioRemoveButton-" + sourceAudioDelegate.index
                                 text: "×"
                                 enabled: !root.appBackend.running
                                 onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index)
@@ -244,11 +245,13 @@ Popup {
                 RowLayout {
                     Layout.fillWidth: true
                     SourceButton {
+                        objectName: "sourceAudioAddButton"
                         text: "音声を追加"
                         enabled: !root.appBackend.running
                         onClicked: root.appBackend.browseAudioFiles()
                     }
                     SourceButton {
+                        objectName: "sourceAudioClearButton"
                         text: "クリア"
                         enabled: !root.appBackend.running
                         onClicked: root.appBackend.clearAudioFiles()

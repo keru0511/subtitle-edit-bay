@@ -1602,11 +1602,22 @@ class EditBayBackend(LegacyEditBayBackend):
             return
         media_changed = update.media_changed
         if not self._relinking_project_sources and media_changed and not self._project_source_selection_matches(selection):
-            self._clear_project()
+            if not self._clear_project():
+                self._restore_source_selection_after_failed_save(previous)
         elif previous.output_dir != selection.output_dir:
             self._project["output_dir"] = selection.output_dir
             self._mark_project_dirty()
             self.projectDataChanged.emit()
+
+    def _restore_source_selection_after_failed_save(self, selection: SourceSelection) -> None:
+        error_status = self.status
+        was_loading_project_sources = self._loading_project_sources
+        self._loading_project_sources = True
+        try:
+            self._set_source_selection(selection)
+        finally:
+            self._loading_project_sources = was_loading_project_sources
+        self._set_status(error_status, "ERROR")
 
     def _normalized_source_path(self, value: str) -> str:
         if not value:
@@ -1646,7 +1657,8 @@ class EditBayBackend(LegacyEditBayBackend):
                 previous.video != self._source_selection.video
                 or previous.audio_files != self._source_selection.audio_files
             ) and not self._project_source_selection_matches(self._source_selection):
-                self._clear_project()
+                if not self._clear_project():
+                    self._restore_source_selection_after_failed_save(previous)
         finally:
             self._relinking_project_sources = False
             self._relink_source_selection = None
@@ -1852,10 +1864,10 @@ class EditBayBackend(LegacyEditBayBackend):
             self._set_status("空の編集プロジェクトを作成しました。字幕を手動追加できます", "EDIT")
         return loaded
 
-    def _clear_project(self) -> None:
+    def _clear_project(self) -> bool:
+        if self._project_dirty and not self.saveProject():
+            return False
         self.autosave_timer.stop()
-        if self._project_dirty:
-            self.saveProject()
         if hasattr(self, "_codex_audio_mix_session"):
             was_audio_proposal_running = self._codex_audio_mix_session.running
             self._codex_audio_mix_session.stop()
@@ -1883,6 +1895,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.segmentsChanged.emit()
         self.historyChanged.emit()
         self.selectionChanged.emit()
+        return True
 
     def _try_load_default_project(self) -> bool:
         if self._loading_project_sources or self._relinking_project_sources:
@@ -1898,9 +1911,9 @@ class EditBayBackend(LegacyEditBayBackend):
     def resetSources(self) -> None:
         if self._running:
             return
+        if not self._loading_project_sources and self._project is not None and not self._clear_project():
+            return
         super().resetSources()
-        if not self._loading_project_sources and self._project is not None:
-            self._clear_project()
 
     @Slot(str)
     def setVideoFile(self, path: str) -> None:

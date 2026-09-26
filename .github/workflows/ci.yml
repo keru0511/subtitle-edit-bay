@@ -373,8 +373,11 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_sliders_follow_full_drag_and_save
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_editors_work_without_main_workflow_context
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset
+          tests.test_gui_editor.GuiEditorRegressionTests.test_source_audio_add_remove_clear_buttons_save_selected_sources
+          tests.test_gui_editor.GuiEditorRegressionTests.test_source_change_keeps_unsaved_project_when_save_fails
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_popup_drop_target_imports_video
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_relink_is_locked_during_processing_and_recovers
+          tests.test_gui_editor.GuiEditorRegressionTests.test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_speaker_color_dialog_applies_and_cancel_preserves_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_start_screen_transcription_preserves_unsaved_execution_settings

@@ -151,12 +151,16 @@ class RuntimeConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "root must be an object"):
             validate_runtime_config_payload([], discard_unknown=False)
 
-    def test_schema_rejects_booleans_as_numbers_and_non_string_array_elements(self) -> None:
+    def test_schema_rejects_invalid_numeric_values_and_array_elements(self) -> None:
         invalid_settings: tuple[dict[str, object], ...] = (
             {"width": True},
             {"audio_target_lufs": False},
+            {"audio_target_lufs": None},
+            {"audio_target_lufs": float("nan")},
+            {"audio_target_lufs": float("inf")},
             {"min_speakers": True},
             {"vad_onset": False},
+            {"vad_onset": float("-inf")},
             {"audio_track": ["0:a:0", 1]},
             {"audio_track": ("0:a:0",)},
         )

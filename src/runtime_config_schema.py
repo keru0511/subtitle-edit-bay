@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 
 from .data_boundary import is_object_mapping, is_object_sequence
@@ -120,9 +121,11 @@ def _validate_value(value: object, kind: str, path: str) -> None:
     elif kind == NULLABLE_INTEGER:
         valid = value is None or (isinstance(value, int) and not isinstance(value, bool))
     elif kind == NUMBER:
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
     elif kind == NULLABLE_NUMBER:
-        valid = value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
+        valid = value is None or (
+            isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        )
     elif kind == STRING_ARRAY:
         valid = is_object_sequence(value) and isinstance(value, list) and all(isinstance(item, str) for item in value)
     elif kind == OBJECT:

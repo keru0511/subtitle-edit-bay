@@ -3577,6 +3577,57 @@ Window {
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
         self.assertFalse(window.property("settingsExpanded"))
 
+    def test_settings_reject_blank_numeric_draft_and_allow_retry(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "settingsToggleButton"))
+
+        scroll_view = self._quick_item(window, "advancedSettingsScrollView")
+        flickable = scroll_view.property("contentItem")
+        self.assertIsNotNone(flickable)
+        self.gui.wait_until(
+            lambda: scroll_view.height() > 0,
+            description="advanced settings scroll view layout",
+        )
+        flickable.setProperty(
+            "contentY",
+            max(0.0, float(flickable.property("contentHeight")) - float(flickable.property("height"))),
+        )
+        self.app.processEvents()
+        threshold_field = self._quick_item(window, "speechThresholdField")
+        self._assert_quick_item_within(scroll_view, threshold_field)
+        self._quick_item(window, "silenceSwitch").setProperty("checked", True)
+        self.app.processEvents()
+        save_button = self._quick_item(window, "settingsPopupSaveButton")
+        config_path = Path(self.app.gui_config_path)
+        original_config = config_path.read_bytes() if config_path.exists() else None
+        original_settings = deepcopy(self.app.settings)
+
+        self._click(window, threshold_field)
+        threshold_field.forceActiveFocus()
+        threshold_field.setProperty("cursorPosition", len(str(threshold_field.property("text"))))
+        for _ in range(3):
+            QTest.keyClick(window, Qt.Key.Key_Backspace)
+        self.app.processEvents()
+        self.assertEqual(threshold_field.property("text"), "")
+        self.assertFalse(save_button.isEnabled())
+        self.assertTrue(self._quick_item(window, "settingsNumericValidationMessage").isVisible())
+        self.assertFalse(self.app.saveSettings(window.currentSettings().toVariant()))
+        self.assertFalse(self.app.saveSettings({**window.currentSettings().toVariant(), "speech_threshold_db": None}))
+        self.assertEqual(self.app.settings, original_settings)
+        self.assertEqual(config_path.read_bytes() if config_path.exists() else None, original_config)
+
+        threshold_field.setProperty("text", "-35")
+        self.app.processEvents()
+        self.assertTrue(save_button.isEnabled())
+        self.assertFalse(self._quick_item(window, "settingsNumericValidationMessage").isVisible())
+        self._click(window, save_button)
+        self.assertEqual(self.app.settings["speech_threshold_db"], "-35dB")
+        self.assertEqual(
+            json.loads(config_path.read_text(encoding="utf-8"))["craig_pipeline"]["speech_threshold_db"],
+            "-35dB",
+        )
+
     def test_qml_compact_action_bar_single_row_layout_and_palette(self) -> None:
         self._load_project()
         _, window = self._load_qml()

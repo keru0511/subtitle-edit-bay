@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import subprocess
 import tempfile
 import unittest
@@ -24,11 +26,17 @@ def _fake_process(
     stdout_lines: list[str] | tuple[str, ...] = (),
     *,
     return_code: int = 0,
-) -> mock.MagicMock:
-    process = mock.MagicMock()
-    process.stdout = list(stdout_lines)
-    process.wait.return_value = return_code
-    return process
+) -> _FakeProcess:
+    return _FakeProcess(stdout_lines, return_code=return_code)
+
+
+class _FakeProcess:
+    def __init__(self, stdout_lines: list[str] | tuple[str, ...], *, return_code: int) -> None:
+        self.stdout = list(stdout_lines)
+        self.return_code = return_code
+
+    def wait(self) -> int:
+        return self.return_code
 
 
 class SilenceCutTests(TypedTestCase):
@@ -148,7 +156,7 @@ class SilenceCutTests(TypedTestCase):
         self.assertNotIn("atrim", filter_text)
 
     def test_retime_segments_for_keep_ranges_maps_to_output_timeline(self) -> None:
-        segments = [
+        segments: list[dict[str, object]] = [
             {"start": 0.5, "end": 1.5, "text": "first", "layout_row": 0, "words": [{"start": 0.5, "end": 1.5}]},
             {"start": 3.0, "end": 4.0, "text": "second", "layout_row": 1},
         ]
@@ -206,16 +214,15 @@ class SilenceCutTests(TypedTestCase):
         self.assertIn("loudnorm=I=-16:LRA=11:TP=-1.5", " ".join(command))
 
     def test_build_silence_cut_command_accepts_audio_mix(self) -> None:
+        channels: list[dict[str, object]] = [
+            {"kind": "video", "selector": "0:a:0", "enabled": True, "volume_percent": 100},
+            {"kind": "external", "path": "voice.flac", "enabled": True, "volume_percent": 75},
+        ]
         command = build_silence_cut_command(
             "input.mp4",
             "output.mp4",
             [(0.0, 0.4), (0.6, 1.0)],
-            audio_mix={
-                "channels": [
-                    {"kind": "video", "selector": "0:a:0", "enabled": True, "volume_percent": 100},
-                    {"kind": "external", "path": "voice.flac", "enabled": True, "volume_percent": 75},
-                ]
-            },
+            audio_mix={"channels": channels},
             audio_offset_seconds=0.1,
         )
 
@@ -232,10 +239,8 @@ class SilenceCutTests(TypedTestCase):
         keep_ranges = [(float(index * 2), float(index * 2 + 1)) for index in range(333)]
         observed: dict[str, int] = {}
 
-        def inspect_command(command: list[str], **_kwargs: object) -> mock.MagicMock:
-            filter_options = [
-                option for option in ("-/filter_complex", "-filter_complex_script") if option in command
-            ]
+        def inspect_command(command: list[str], **_kwargs: object) -> _FakeProcess:
+            filter_options = [option for option in ("-/filter_complex", "-filter_complex_script") if option in command]
             self.assertEqual(len(filter_options), 1)
             script_index = command.index(filter_options[0]) + 1
             script_path = Path(command[script_index])
@@ -278,19 +283,16 @@ class SilenceCutTests(TypedTestCase):
 
             self.assertEqual(output_path.read_bytes(), b"previous output")
             self.assertEqual(
-                [
-                    path
-                    for path in output_path.parent.iterdir()
-                    if ".partial" in path.name
-                ],
+                [path for path in output_path.parent.iterdir() if ".partial" in path.name],
                 [],
             )
+
     def test_cut_media_ranges_falls_back_from_nvenc_to_x264(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
             calls: list[list[str]] = []
 
-            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
+            def fake_popen(command: list[str], **_kwargs: object) -> _FakeProcess:
                 calls.append(command)
                 if len(calls) == 1:
                     return _fake_process(
@@ -319,7 +321,7 @@ class SilenceCutTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "output.mp4"
 
-            def inspect_command(command: list[str], **_kwargs: object) -> mock.MagicMock:
+            def inspect_command(command: list[str], **_kwargs: object) -> _FakeProcess:
                 filter_options = [
                     option for option in ("-/filter_complex", "-filter_complex_script") if option in command
                 ]
@@ -356,7 +358,8 @@ class SilenceCutTests(TypedTestCase):
             [(0.0, 1.0)],
             filter_script_path="filters.txt",
         )
-        self.assertIn(command[command.index("filters.txt") - 1], {"-filter_complex_script", "-/filter_complex"})
+        expected_options: set[str] = {"-filter_complex_script", "-/filter_complex"}
+        self.assertIn(command[command.index("filters.txt") - 1], expected_options)
         self.assertIn("filters.txt", command)
         self.assertNotIn("trim=start=0.000:end=1.000", " ".join(command))
 

@@ -4,10 +4,12 @@ import argparse
 import os
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Protocol, cast
 
 from .audio_mixer import build_audio_mix_filter
+from .data_boundary import coerce_float, coerce_int
 from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .ffmpeg_filter_script import (
     LEGACY_FILTER_SCRIPT_OPTION,
@@ -28,6 +30,17 @@ PIX_FMT = "yuv420p"
 _FILTER_SCRIPT_THRESHOLD = 8192
 
 
+class _SilenceCutArgs(Protocol):
+    input: str
+    output: str
+    noise: str
+    silence_duration: float
+    padding: float
+    min_clip_duration: float
+    audio_track: str
+    run: bool
+
+
 def build_silencedetect_command(
     input_path: str,
     noise: str = "-35dB",
@@ -41,13 +54,15 @@ def build_silencedetect_command(
     ]
     if audio_track:
         command.extend(["-map", audio_track])
-    command.extend([
-        "-af",
-        f"silencedetect=noise={noise}:d={duration}",
-        "-f",
-        "null",
-        "-",
-    ])
+    command.extend(
+        [
+            "-af",
+            f"silencedetect=noise={noise}:d={duration}",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
     return command
 
 
@@ -104,7 +119,9 @@ def invert_ranges(duration: float, ranges: list[tuple[float, float]]) -> list[tu
     return inverted
 
 
-def shift_ranges(ranges: list[tuple[float, float]], offset_seconds: float, duration: float) -> list[tuple[float, float]]:
+def shift_ranges(
+    ranges: list[tuple[float, float]], offset_seconds: float, duration: float
+) -> list[tuple[float, float]]:
     return merge_ranges(
         [
             (max(0.0, start + offset_seconds), min(duration, end + offset_seconds))
@@ -127,11 +144,7 @@ def build_keep_ranges(
         if cut_end > cut_start:
             cut_ranges.append((cut_start, cut_end))
 
-    return [
-        (start, end)
-        for start, end in invert_ranges(duration, cut_ranges)
-        if end - start >= min_clip_duration
-    ]
+    return [(start, end) for start, end in invert_ranges(duration, cut_ranges) if end - start >= min_clip_duration]
 
 
 def build_no_speech_plan(
@@ -144,11 +157,7 @@ def build_no_speech_plan(
 ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
     aligned_speech = shift_ranges(speaker_speech_ranges, offset_seconds, video_duration)
     all_no_speech = invert_ranges(video_duration, aligned_speech)
-    cut_ranges = [
-        (start, end)
-        for start, end in all_no_speech
-        if end - start >= min_no_speech_seconds
-    ]
+    cut_ranges = [(start, end) for start, end in all_no_speech if end - start >= min_no_speech_seconds]
     keep_ranges = build_keep_ranges(
         video_duration,
         cut_ranges,
@@ -159,15 +168,15 @@ def build_no_speech_plan(
 
 
 def retime_segments_for_keep_ranges(
-    segments: list[dict],
+    segments: Sequence[Mapping[str, object]],
     keep_ranges: list[tuple[float, float]],
-) -> list[dict]:
-    retimed_segments: list[dict] = []
+) -> list[dict[str, object]]:
+    retimed_segments: list[dict[str, object]] = []
     output_cursor = 0.0
     for keep_start, keep_end in keep_ranges:
         for segment in segments:
-            segment_start = float(segment.get("start", 0.0))
-            segment_end = float(segment.get("end", segment_start))
+            segment_start = coerce_float(segment.get("start", 0.0))
+            segment_end = coerce_float(segment.get("end", segment_start))
             overlap_start = max(segment_start, keep_start)
             overlap_end = min(segment_end, keep_end)
             if overlap_end <= overlap_start:
@@ -180,7 +189,11 @@ def retime_segments_for_keep_ranges(
             retimed.pop("words", None)
             retimed_segments.append(retimed)
         output_cursor += keep_end - keep_start
-    return sorted(retimed_segments, key=lambda item: (float(item["start"]), int(item.get("layout_row", 0))))
+
+    def sort_key(item: dict[str, object]) -> tuple[float, int]:
+        return coerce_float(item["start"]), coerce_int(item.get("layout_row", 0))
+
+    return sorted(retimed_segments, key=sort_key)
 
 
 def build_concat_filter(
@@ -195,9 +208,7 @@ def build_concat_filter(
     # Map each retained frame directly from source time to output time. Joining
     # individually zero-based video clips accumulates frame-rounding errors at
     # every cut (and concat then pads audio to those rounded video durations).
-    selection = "+".join(
-        f"gte(t,{start:.3f})*lt(t,{end:.3f})" for start, end in keep_ranges
-    )
+    selection = "+".join(f"gte(t,{start:.3f})*lt(t,{end:.3f})" for start, end in keep_ranges)
     removed = [f"{keep_ranges[0][0]:.3f}"]
     for (_, previous_end), (start, _) in zip(keep_ranges, keep_ranges[1:]):
         removed.append(f"{start - previous_end:.3f}*gte(T,{start:.3f})")
@@ -220,7 +231,9 @@ def build_concat_filter(
             concat_inputs.append(f"[a{index}]")
     audio_output = "[acat]" if audio_filter else "[a]"
     audio_split = (
-        [f"[mixed_audio]asplit={len(keep_ranges)}{''.join(f'[mixed_audio_{index}]' for index in range(len(keep_ranges)))}"]
+        [
+            f"[mixed_audio]asplit={len(keep_ranges)}{''.join(f'[mixed_audio_{index}]' for index in range(len(keep_ranges)))}"
+        ]
         if split_filtered_audio
         else []
     )
@@ -247,7 +260,7 @@ def build_silence_cut_command(
     video_filter: str | None = None,
     filter_script_path: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
-    audio_mix: dict | None = None,
+    audio_mix: object | None = None,
     audio_offset_seconds: float = 0.0,
     filter_script_option: str = LEGACY_FILTER_SCRIPT_OPTION,
     include_audio: bool = True,
@@ -306,7 +319,7 @@ def cut_media_ranges(
     audio_filter: str | None = None,
     video_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
-    audio_mix: dict | None = None,
+    audio_mix: object | None = None,
     audio_offset_seconds: float = 0.0,
     filter_script_path: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
@@ -328,9 +341,7 @@ def cut_media_ranges(
     )
     filter_graph = f"{mix_filter};{concat_filter}" if mix_filter else concat_filter
     use_filter_script = (
-        filter_script_path is not None
-        or os.name == "nt"
-        or len(filter_graph) > _FILTER_SCRIPT_THRESHOLD
+        filter_script_path is not None or os.name == "nt" or len(filter_graph) > _FILTER_SCRIPT_THRESHOLD
     )
     selected_filter_script_option = (
         filter_script_option or detect_filter_complex_script_option()
@@ -348,6 +359,7 @@ def cut_media_ranges(
         if not filter_script_path:
             filter_script.write_text(filter_graph, encoding="utf-8")
     try:
+
         def command_builder(selected_codec: str, command_output: str) -> list[str]:
             return build_silence_cut_command(
                 input_path,
@@ -467,9 +479,11 @@ def main() -> None:
     parser.add_argument("--silence-duration", type=float, default=0.4, help="Minimum silence duration in seconds.")
     parser.add_argument("--padding", type=float, default=0.08, help="Speech padding around cut boundaries.")
     parser.add_argument("--min-clip-duration", type=float, default=0.25, help="Minimum kept clip duration in seconds.")
-    parser.add_argument("--audio-track", default=DEFAULT_AUDIO_TRACK, help="Audio track included in the output, such as 0:a:0.")
+    parser.add_argument(
+        "--audio-track", default=DEFAULT_AUDIO_TRACK, help="Audio track included in the output, such as 0:a:0."
+    )
     parser.add_argument("--run", action="store_true", help="Execute instead of printing the command.")
-    args = parser.parse_args()
+    args = cast(_SilenceCutArgs, parser.parse_args())
 
     media_duration = probe_media_duration(args.input)
     silence_ranges = detect_silence(

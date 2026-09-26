@@ -169,6 +169,10 @@ files = [
   "tests/test_burn_subs.py",
   "src/runtime_dependencies.py",
   "tests/test_runtime_dependencies.py",
+  "src/silence_cut.py",
+  "tests/test_silence_cut.py",
+  "src/short_video.py",
+  "src/short_video_ass.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -327,6 +331,10 @@ module = [
   "tests.test_burn_subs",
   "src.runtime_dependencies",
   "tests.test_runtime_dependencies",
+  "src.silence_cut",
+  "tests.test_silence_cut",
+  "src.short_video",
+  "src.short_video_ass",
 ]
 strict = true
 disallow_any_explicit = true

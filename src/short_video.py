@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 from .burn_subs import DEFAULT_FILTERED_AUDIO_RATE, build_ass_filter
 from .color_config import normalize_rgb_color
+from .data_boundary import is_object_mapping
 from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .ffmpeg_filter_script import (
     LEGACY_FILTER_SCRIPT_OPTION,
@@ -201,9 +201,7 @@ def build_short_video_filter_complex(
     for index, clip in enumerate(clips):
         fit = _clip_fit(clip, global_fit)
         background_color = _clip_background_color(clip, global_background_color)
-        stream_filters.append(
-            _build_clip_video_filter(index, clip, width, height, fps, fit, background_color)
-        )
+        stream_filters.append(_build_clip_video_filter(index, clip, width, height, fps, fit, background_color))
         if has_audio:
             stream_filters.append(_build_clip_audio_filter(index, clip))
 
@@ -228,15 +226,11 @@ def build_short_video_filter_complex(
                 is_last = index == clip_count - 1
                 if td <= 0.0:
                     new_v = f"vc{index}"
-                    stream_filters.append(
-                        f"[{v_out}][sv{index}]concat=n=2:v=1:a=0[{new_v}]"
-                    )
+                    stream_filters.append(f"[{v_out}][sv{index}]concat=n=2:v=1:a=0[{new_v}]")
                     v_out = new_v
                     if has_audio:
                         new_a = "aout" if is_last else f"ac{index}"
-                        stream_filters.append(
-                            f"[{a_out}][sa{index}]concat=n=2:v=0:a=1[{new_a}]"
-                        )
+                        stream_filters.append(f"[{a_out}][sa{index}]concat=n=2:v=0:a=1[{new_a}]")
                         a_out = new_a
                     continue
                 offset = timeline_clip.output_start
@@ -326,17 +320,27 @@ def build_short_video_command(
 
     command.extend(["-c:v", video_codec])
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    command.extend([
-        "-r", str(output_fps),
-        "-pix_fmt", "yuv420p",
-        "-s", f"{output_width}x{output_height}",
-    ])
+    command.extend(
+        [
+            "-r",
+            str(output_fps),
+            "-pix_fmt",
+            "yuv420p",
+            "-s",
+            f"{output_width}x{output_height}",
+        ]
+    )
     if has_audio:
-        command.extend([
-            "-c:a", audio_codec,
-            "-b:a", DEFAULT_SHORT_AUDIO_BITRATE,
-            "-ar", DEFAULT_FILTERED_AUDIO_RATE,
-        ])
+        command.extend(
+            [
+                "-c:a",
+                audio_codec,
+                "-b:a",
+                DEFAULT_SHORT_AUDIO_BITRATE,
+                "-ar",
+                DEFAULT_FILTERED_AUDIO_RATE,
+            ]
+        )
 
     if Path(output_path).suffix.lower() in {".mp4", ".m4v", ".mov"}:
         command.extend(["-movflags", "+faststart"])
@@ -383,11 +387,14 @@ def render_short_video(
     x264_crf: int = DEFAULT_X264_CRF,
     ass_path: str | Path | None = None,
     progress_callback: Callable[[str], None] | None = None,
-    _project: dict[str, Any] | None = None,
+    _project: Mapping[str, object] | Mapping[object, object] | None = None,
 ) -> Path:
     """Render the short mode vertical video for a subtitle project."""
     project = _project if _project is not None else load_project(project_path)
-    video_path = str(project.get("video", {}).get("path", ""))
+    video = project.get("video", {})
+    if not is_object_mapping(video):
+        raise TypeError("project video must be an object")
+    video_path = str(video.get("path", ""))
     if not video_path or not Path(video_path).is_file():
         raise FileNotFoundError(f"Project video was not found: {video_path}")
 
@@ -433,9 +440,7 @@ def render_short_video(
     use_filter_script = os.name == "nt" or len(filter_complex) > DEFAULT_FILTER_SCRIPT_THRESHOLD
     filter_script: Path | None = None
     filter_script_option = (
-        _detected_filter_complex_script_option()
-        if use_filter_script
-        else LEGACY_FILTER_SCRIPT_OPTION
+        _detected_filter_complex_script_option() if use_filter_script else LEGACY_FILTER_SCRIPT_OPTION
     )
 
     def progress(message: str) -> None:

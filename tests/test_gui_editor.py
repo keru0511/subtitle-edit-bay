@@ -3163,6 +3163,43 @@ Window {
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
         self.assertTrue(self._quick_item(window, "applicationLogPanel").property("expanded"))
 
+    def test_log_actions_fit_and_work_at_minimum_window_width(self) -> None:
+        self._load_project()
+        self.app._record_log("画面からコピーする診断記録", component="startup", stage="STARTUP")
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        panel = self._quick_item(window, "applicationLogPanel")
+        copy_logs = self._quick_item(window, "copyLogsButton")
+        copy_info = self._quick_item(window, "copyApplicationInfoButton")
+        open_folder = self._quick_item(window, "openLogsButton")
+
+        for button in (copy_logs, copy_info, open_folder):
+            self.assertTrue(button.isVisible(), button.objectName())
+            self._assert_quick_item_within(panel, button)
+            self._assert_quick_item_within(window.contentItem(), button)
+            self._assert_button_content_fits(button)
+
+        with patch("src.gui.runtime_diagnostic_info", return_value={}):
+            self._click(window, copy_logs)
+        self.assertIn("画面からコピーする診断記録", self.app.clipboard().text())
+
+        self._click(window, copy_info)
+        info = self.app.clipboard().text()
+        self.assertIn("Version:", info)
+        self.assertIn("Application path:", info)
+
+        with patch("src.gui.QDesktopServices.openUrl", return_value=True) as open_url:
+            self._click(window, open_folder)
+            open_url.assert_called_once()
+        self.assertEqual(
+            Path(open_url.call_args.args[0].toLocalFile()),
+            self.app._application_logger.log_directory,
+        )
+        with patch("src.gui.QDesktopServices.openUrl", return_value=False):
+            self._click(window, open_folder)
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("ログ保存先を開けませんでした", self.app.status)
+
     def test_qml_system_log_panel_scrolls_to_the_latest_entry(self) -> None:
         self._load_project()
         for index in range(250):
@@ -3261,6 +3298,7 @@ Window {
         self.app._active_job = "transcribe"
         self.app._running = True
         _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
 
         with (
             patch("src.gui.runtime_diagnostic_info", return_value={"pytorch": "2.8.0+cu128"}),
@@ -3277,9 +3315,13 @@ Window {
         self.app.processEvents()
         self.assertEqual(self.app.stage, "SAVED")
         self.assertTrue(self.app.hasLastProcessDiagnostic)
-        self.assertTrue(self._quick_item(window, "copyErrorLogsButton").isVisible())
+        copy_error = self._quick_item(window, "copyErrorLogsButton")
+        self.assertTrue(copy_error.isVisible())
+        self._assert_quick_item_within(self._quick_item(window, "applicationLogPanel"), copy_error)
+        self._assert_quick_item_within(window.contentItem(), copy_error)
+        self._assert_button_content_fits(copy_error)
 
-        self.app.copyErrorLogsToClipboard()
+        self._click(window, copy_error)
         error_diagnostic = self.app.clipboard().text()
         self.assertIn("job: transcribe", error_diagnostic)
         self.assertIn("工程: ERROR", error_diagnostic)
@@ -3290,7 +3332,7 @@ Window {
         self.assertNotIn("工程: SAVED", error_diagnostic)
 
         with patch("src.gui.runtime_diagnostic_info", return_value={}):
-            self.app.copyLogsToClipboard()
+            self._click(window, self._quick_item(window, "copyLogsButton"))
         current_diagnostic = self.app.clipboard().text()
         self.assertIn("工程: SAVED", current_diagnostic)
         self.assertIn("status: GUI設定を保存しました", current_diagnostic)
@@ -6734,6 +6776,55 @@ Window {
             and self.app._gemini_chat.snapshot.thread_id == "gemini-thread",
             description="new chat cleared conversation and pending proposal",
         )
+        self.assertEqual(
+            (self.app._project, self.app._undo_stack, self.app._project_revision,
+             self.app.projectDirty, path.read_bytes()),
+            before,
+        )
+
+    def test_codex_auth_controls_fit_and_dispatch_from_screen(self) -> None:
+        path = self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        panel = self._quick_item(window, "codexChatPanel")
+        toggle = self._quick_item(window, "codexChatToggleButton")
+        before = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            self.app._project_revision, self.app.projectDirty, path.read_bytes(),
+        )
+
+        self.assertTrue(panel.property("expanded"))
+        self.assertTrue(toggle.isVisible())
+        self._assert_quick_item_within(window.contentItem(), toggle)
+        self._click(window, toggle)
+        self.assertFalse(panel.property("expanded"))
+        self._click(window, toggle)
+        self.assertTrue(panel.property("expanded"))
+
+        relogin = self._quick_item(window, "codexReloginButton")
+        logout = self._quick_item(window, "codexLogoutButton")
+        for button in (relogin, logout):
+            self.assertTrue(button.isVisible(), button.objectName())
+            self._assert_quick_item_within(panel, button)
+            self._assert_quick_item_within(window.contentItem(), button)
+            self._assert_button_content_fits(button)
+
+        with patch.object(self.app._codex_chat, "login") as login:
+            self._click(window, relogin)
+        login.assert_called_once_with(relogin=True)
+        self.assertTrue(panel.property("expanded"))
+
+        with patch.object(self.app._codex_chat, "logout") as disconnect:
+            self._click(window, logout)
+        disconnect.assert_called_once_with()
+        self.assertFalse(panel.property("expanded"))
         self.assertEqual(
             (self.app._project, self.app._undo_stack, self.app._project_revision,
              self.app.projectDirty, path.read_bytes()),

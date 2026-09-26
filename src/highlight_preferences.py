@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
 
+from .data_boundary import coerce_float, is_object_mapping
 from .highlight_feedback import HighlightFeedbackEvent
 
 
@@ -44,42 +45,58 @@ class HighlightPreferenceModel:
             minimum_events=self.settings.minimum_events,
         )
 
-    def rank(self, candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
+    def rank(self, candidates: Iterable[Mapping[str, object]]) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
         for candidate in candidates:
             item = dict(candidate)
-            base = float(item.get("score", 0.0))
+            base = coerce_float(item.get("score", 0.0))
             explanation = self.explain(candidate)
             item["baseline_score"] = round(base, 4)
             item["preference_adjustment"] = round(explanation.adjustment, 4)
             item["score"] = round(max(0.0, min(1.0, base + explanation.adjustment)), 4)
             item["preference_explanation"] = explanation.reason
             result.append(item)
-        return sorted(result, key=lambda item: (-float(item["score"]), float(item.get("start", 0.0)), str(item.get("id", ""))))
 
-    def explain(self, candidate: Mapping[str, Any]) -> PreferenceExplanation:
+        def sort_key(item: dict[str, object]) -> tuple[float, float, str]:
+            return (
+                -coerce_float(item["score"]),
+                coerce_float(item.get("start", 0.0)),
+                str(item.get("id", "")),
+            )
+
+        return sorted(result, key=sort_key)
+
+    def explain(self, candidate: Mapping[str, object]) -> PreferenceExplanation:
         if not self.settings.enabled or len(self.events) < self.settings.minimum_events:
             return PreferenceExplanation(0.0, "履歴が少ないためbaseline順位を使用", len(self.events))
         adjustment = 0.0
         reasons: list[str] = []
         category = str(candidate.get("category", ""))
         for feature, weight in self._weights.items():
+            value: object
             if feature.startswith("category:"):
                 value = 1.0 if category == feature.split(":", 1)[1] else 0.0
                 display_feature = feature.split(":", 1)[1]
             else:
-                value = candidate.get(feature, candidate.get("score_breakdown", {}).get(feature, 0.0))
+                raw_breakdown = candidate.get("score_breakdown", {})
+                if not is_object_mapping(raw_breakdown):
+                    raise TypeError("score_breakdown must be an object")
+                value = candidate.get(feature, raw_breakdown.get(feature, 0.0))
                 display_feature = feature
             if isinstance(value, str):
                 value = 1.0 if value == category else 0.0
             try:
-                adjustment += float(value) * weight
+                adjustment += coerce_float(value) * weight
             except (TypeError, ValueError):
                 continue
             if abs(weight) >= 0.03:
                 reasons.append(f"{display_feature}傾向 {weight:+.2f}")
         reason = "、".join(reasons) if reasons else "baselineと同じ"
-        return PreferenceExplanation(max(-self.settings.max_weight_delta, min(self.settings.max_weight_delta, adjustment)), reason, len(self.events))
+        return PreferenceExplanation(
+            max(-self.settings.max_weight_delta, min(self.settings.max_weight_delta, adjustment)),
+            reason,
+            len(self.events),
+        )
 
     def _learn_weights(self) -> dict[str, float]:
         if len(self.events) < self.settings.minimum_events:
@@ -101,6 +118,9 @@ class HighlightPreferenceModel:
                 totals[weight_key] = totals.get(weight_key, 0.0) + direction * numeric * self.settings.learning_rate
                 counts[weight_key] = counts.get(weight_key, 0) + 1
         return {
-            feature: max(-self.settings.max_weight_delta, min(self.settings.max_weight_delta, totals[feature] / max(1, counts[feature])))
+            feature: max(
+                -self.settings.max_weight_delta,
+                min(self.settings.max_weight_delta, totals[feature] / max(1, counts[feature])),
+            )
             for feature in totals
         }

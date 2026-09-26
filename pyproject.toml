@@ -151,6 +151,13 @@ files = [
   "tests/test_audio_preview_cache.py",
   "src/processing_progress.py",
   "tests/test_processing_progress.py",
+  "src/subtitle_bulk_edit.py",
+  "tests/test_subtitle_bulk_edit.py",
+  "src/gui_source_selection_controller.py",
+  "tests/test_gui_source_selection_controller.py",
+  "src/highlight_feedback.py",
+  "src/highlight_preferences.py",
+  "tests/test_highlight_preferences.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -291,6 +298,13 @@ module = [
   "tests.test_audio_preview_cache",
   "src.processing_progress",
   "tests.test_processing_progress",
+  "src.subtitle_bulk_edit",
+  "tests.test_subtitle_bulk_edit",
+  "src.gui_source_selection_controller",
+  "tests.test_gui_source_selection_controller",
+  "src.highlight_feedback",
+  "src.highlight_preferences",
+  "tests.test_highlight_preferences",
 ]
 strict = true
 disallow_any_explicit = true

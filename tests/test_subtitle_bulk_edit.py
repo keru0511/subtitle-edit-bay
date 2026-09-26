@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 import tempfile
 import unittest
+from collections.abc import Mapping
 
+from src.data_boundary import is_object_list, is_object_mapping
 from src.subtitle_bulk_edit import (
     BulkEditAction,
     BulkEditError,
@@ -17,7 +19,7 @@ from tests.typed_case import TypedTestCase
 
 
 class SubtitleBulkEditTests(TypedTestCase):
-    def _project(self) -> dict[str, object]:
+    def _project(self) -> dict[object, object]:
         with tempfile.TemporaryDirectory() as temp_dir:
             return create_project(
                 video_path="C:/input.mp4",
@@ -28,6 +30,16 @@ class SubtitleBulkEditTests(TypedTestCase):
                 ],
                 duration_seconds=2.0,
             )
+
+    @staticmethod
+    def _segment(project: Mapping[object, object], index: int) -> Mapping[object, object]:
+        segments = project.get("segments")
+        if not is_object_list(segments):
+            raise AssertionError("字幕区間は配列である必要がある")
+        segment = segments[index]
+        if not is_object_mapping(segment):
+            raise AssertionError("字幕区間はオブジェクトである必要がある")
+        return segment
 
     def test_query_supports_regex_speaker_time_and_stable_ids(self) -> None:
         project = self._project()
@@ -53,7 +65,7 @@ class SubtitleBulkEditTests(TypedTestCase):
         self.assertEqual(preview.segment_ids, ("s1",))
         result = apply_bulk_edit(project, query, action)
         self.assertEqual(project, original)
-        updated = result.project["segments"][0]
+        updated = self._segment(result.project, 0)
         self.assertEqual(updated["text"], "ALPHA")
         self.assertEqual(updated["speaker"], "Player")
         self.assertEqual(updated["start"], 0.1)
@@ -66,21 +78,26 @@ class SubtitleBulkEditTests(TypedTestCase):
             BulkEditQuery(text="alpha", case_sensitive=False),
             BulkEditAction(text_replace_from="alpha", text_replace_to="ALPHA"),
         )
-        self.assertEqual(result.project["segments"][0]["text"], "ALPHA")
+        self.assertEqual(self._segment(result.project, 0)["text"], "ALPHA")
 
         regex_result = apply_bulk_edit(
             project,
             BulkEditQuery(text=r"a(l)pha", regex=True, case_sensitive=False),
             BulkEditAction(text_replace_from=r"a(l)pha", text_replace_to=r"A\1PHA"),
         )
-        self.assertEqual(regex_result.project["segments"][0]["text"], "AlPHA")
+        self.assertEqual(self._segment(regex_result.project, 0)["text"], "AlPHA")
 
     def test_invalid_regex_and_cancel_do_not_change_project(self) -> None:
         project = self._project()
         with self.assertRaises(BulkEditError):
             preview_bulk_edit(project, BulkEditQuery(text="[", regex=True), BulkEditAction(text_replace_from="["))
         with self.assertRaises(BulkEditError):
-            apply_bulk_edit(project, BulkEditQuery(text="Alpha"), BulkEditAction(text_replace_from="Alpha", text_replace_to="X"), cancel_check=lambda: True)
+            apply_bulk_edit(
+                project,
+                BulkEditQuery(text="Alpha"),
+                BulkEditAction(text_replace_from="Alpha", text_replace_to="X"),
+                cancel_check=lambda: True,
+            )
 
 
 if __name__ == "__main__":

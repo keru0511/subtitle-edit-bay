@@ -6737,6 +6737,100 @@ Window {
         self.assertEqual(load_project(path)["audio_mix"], expected)
         self.assertFalse(self.app.projectDirty)
 
+    def test_mixer_reset_button_restores_and_saves_defaults_after_edit(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        channel_list = self._quick_item(window, "mixerChannelList")
+        external_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-1")
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_visual_item(external_strip, "mixerChannelEnabledCheck"))
+            self.assertTrue(self.app.audioMixerChannels[1]["enabled"])
+            self._click(window, self._quick_item(window, "mixerSaveButton"))
+            self.assertTrue(load_project(path)["audio_mix"]["customized"])
+
+            reset_button = self._quick_item(window, "mixerResetButton")
+            self.app._running = True
+            self.app.runningChanged.emit()
+            try:
+                self._click_disabled(window, reset_button)
+                self.assertTrue(self.app.audioMixerChannels[1]["enabled"])
+                self.assertTrue(load_project(path)["audio_mix"]["customized"])
+            finally:
+                self.app._running = False
+                self.app.runningChanged.emit()
+
+            self.gui.wait_until(lambda: reset_button.isEnabled(), description="ミキサーのリセット再開")
+            self._click(window, reset_button)
+            self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
+            self.assertFalse(self.app._project["audio_mix"]["customized"])
+            self.assertTrue(self.app.projectDirty)
+            expected = deepcopy(self.app._project["audio_mix"])
+            self._click(window, self._quick_item(window, "mixerSaveButton"))
+
+        self.assertEqual(load_project(path)["audio_mix"], expected)
+        self.assertFalse(self.app.projectDirty)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    def test_mixer_preview_rebuild_and_transport_buttons_use_rebuilt_audio(self) -> None:
+        path = self._load_project(duration_seconds=8.0)
+        self._generate_black_test_video_with_audio(
+            self.root / "game.mkv", self.root / "1-alice.flac", duration_seconds=8,
+        )
+        saved_project = path.read_bytes()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        player = self.gui.find_object(window, "mixerPlayer", QMediaPlayer)
+        self.gui.wait_until(
+            lambda: player.duration() >= 7_500 and not self.app.audioPreviewPreparing,
+            description="ミキサーの再生可能な音声プレビュー",
+            timeout_ms=15_000,
+        )
+
+        cache_times = {
+            channel_id: Path(cache_path).stat().st_mtime_ns
+            for channel_id, cache_path in self.app._audio_preview_cache_paths.items()
+        }
+        self.assertEqual(len(cache_times), 2)
+        generation = self.app.audioPreviewGeneration
+        self._click(window, self._quick_item(window, "mixerClearAudioPreviewCacheButton"))
+        self.assertEqual(self.app.audioPreviewGeneration, generation + 1)
+        self.gui.wait_until(
+            lambda: player.duration() >= 7_500 and not self.app.audioPreviewPreparing
+            and len(self.app._audio_preview_cache_paths) == 2,
+            description="画面から作り直した音声プレビュー",
+            timeout_ms=15_000,
+        )
+        self.assertTrue(all(
+            Path(cache_path).stat().st_mtime_ns > cache_times[channel_id]
+            for channel_id, cache_path in self.app._audio_preview_cache_paths.items()
+        ))
+        self.assertEqual(path.read_bytes(), saved_project)
+        self.assertFalse(self.app.projectDirty)
+
+        self._click(window, self._quick_item(window, "mixerForwardButton"))
+        self.gui.wait_until(
+            lambda: 4_800 <= player.position() <= 5_200,
+            description="ミキサーの5秒進む操作",
+        )
+        self._click(window, self._quick_item(window, "mixerRewindButton"))
+        self.gui.wait_until(
+            lambda: player.position() <= 200,
+            description="ミキサーの5秒戻る操作",
+        )
+        play_button = self._quick_item(window, "mixerPlayButton")
+        self._click(window, play_button)
+        self.gui.wait_until(
+            lambda: player.playbackState() == QMediaPlayer.PlaybackState.PlayingState,
+            description="ミキサーの再生開始",
+        )
+        self._click(window, play_button)
+        self.gui.wait_until(
+            lambda: player.playbackState() == QMediaPlayer.PlaybackState.PausedState,
+            description="ミキサーの一時停止",
+        )
+
     def test_audio_mixer_works_without_main_workflow_context(self) -> None:
         self._load_project()
         components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
@@ -7994,7 +8088,9 @@ Window {
             capture_output=True,
         )
 
-    def _generate_black_test_video_with_audio(self, video: Path, audio: Path) -> None:
+    def _generate_black_test_video_with_audio(
+        self, video: Path, audio: Path, *, duration_seconds: int = 1,
+    ) -> None:
         subprocess.run(
             [
                 "ffmpeg",
@@ -8002,11 +8098,11 @@ Window {
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=black:size=320x180:rate=15:duration=1",
+                f"color=c=black:size=320x180:rate=15:duration={duration_seconds}",
                 "-f",
                 "lavfi",
                 "-i",
-                "sine=frequency=440:sample_rate=48000:duration=1",
+                f"sine=frequency=440:sample_rate=48000:duration={duration_seconds}",
                 "-shortest",
                 "-c:v",
                 "libx264",
@@ -8026,7 +8122,7 @@ Window {
                 "-f",
                 "lavfi",
                 "-i",
-                "sine=frequency=880:sample_rate=48000:duration=1",
+                f"sine=frequency=880:sample_rate=48000:duration={duration_seconds}",
                 "-c:a",
                 "flac",
                 str(audio),

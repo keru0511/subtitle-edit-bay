@@ -14,19 +14,16 @@ ApplicationWindow {
     readonly property var workflowCapabilities: {
         // Depend on backend notifications as well as the unsaved device choice.
         var snapshot = root.appBackend.workflow.actionCapabilities
-        return snapshot ? root.appBackend.workflow.actionCapabilitiesForDevice(deviceCombo.currentText) : ({})
+        return snapshot ? root.appBackend.workflow.actionCapabilitiesForDevice(advancedSettingsPopup.selectedDevice) : ({})
     }
     property real timelinePixelsPerSecond: 34
     property alias editorPixelsPerSecond: subtitleEditorState.pixelsPerSecond
     property alias snapMilliseconds: subtitleEditorState.snapMilliseconds
     readonly property int defaultSubtitleFontSize: 50
-    property int subtitleFontSizePercent: 100
-    property string subtitleOutlineColor: "#000000"
-    property int subtitleOutlineThickness: 3
-    readonly property int selectedSubtitleFontSize: Math.max(
-        3,
-        Math.round(root.defaultSubtitleFontSize * root.subtitleFontSizePercent / 100)
-    )
+    property alias subtitleFontSizePercent: advancedSettingsPopup.fontSizePercent
+    property alias subtitleOutlineColor: advancedSettingsPopup.outlineColor
+    property alias subtitleOutlineThickness: advancedSettingsPopup.outlineThickness
+    readonly property int selectedSubtitleFontSize: advancedSettingsPopup.selectedFontSize
     readonly property string selectedSubtitleOutlineColor: root.subtitleOutlineColor
     readonly property int selectedSubtitleOutlineThickness: root.subtitleOutlineThickness
     property var projectSpeakerCache: root.appBackend.subtitles.projectSpeakers
@@ -169,11 +166,11 @@ ApplicationWindow {
         id: outlineColorDialog
         objectName: "outlineColorDialog"
         title: "字幕の縁取り色を選択"
-        onAccepted: outlineColorButton.colorValue = selectedColor.toString()
+        onAccepted: advancedSettingsPopup.outlineColor = selectedColor.toString()
     }
 
-    function openOutlineColorPicker() {
-        outlineColorDialog.selectedColor = outlineColorButton.colorValue
+    function openOutlineColorPicker(currentColor) {
+        outlineColorDialog.selectedColor = currentColor
         outlineColorDialog.open()
     }
 
@@ -186,31 +183,11 @@ ApplicationWindow {
     }
 
     function currentSettings() {
-        return {
-            "model": modelCombo.currentText,
-            "device": deviceCombo.currentText,
-            "compute_type": deviceCombo.currentText === "cuda" ? "float16" : "int8",
-            "language": "ja",
-            "nvenc_cq": qualitySpin.value,
-            "x264_crf": qualitySpin.value,
-            "subtitle_font_size": root.selectedSubtitleFontSize,
-            "subtitle_outline_color": root.selectedSubtitleOutlineColor,
-            "subtitle_outline_thickness": root.selectedSubtitleOutlineThickness,
-            "subtitle_volume_scale_percent": volumeScaleSpin.value,
-            "subtitle_max_gap_seconds": Number(gapField.text),
-            "subtitle_end_padding_seconds": Number(paddingField.text),
-            "subtitle_min_duration_seconds": Number(minDurationField.text),
-            "audio_normalize": normalizeSwitch.checked,
-            "audio_target_lufs": Number(lufsField.text),
-            "cut_no_speech": silenceSwitch.checked,
-            "no_speech_min_seconds": Number(silenceField.text),
-            "speech_padding_seconds": Number(speechPaddingField.text),
-            "speech_threshold_db": String(Number(speechThresholdField.text)) + "dB",
-            "postprocess_workers": workersSpin.value,
-            "reference_audio": root.appBackend.speakers.length > 0 ? sourcePopup.referenceAudioValue : "",
-            "reference_track": root.appBackend.audioTracks.length > 0 ? sourcePopup.referenceTrackValue : "",
-            "alignment_offset_adjustment": Number(sourcePopup.manualOffsetText || 0)
-        }
+        var values = advancedSettingsPopup.settingsValues()
+        values.reference_audio = root.appBackend.speakers.length > 0 ? sourcePopup.referenceAudioValue : ""
+        values.reference_track = root.appBackend.audioTracks.length > 0 ? sourcePopup.referenceTrackValue : ""
+        values.alignment_offset_adjustment = Number(sourcePopup.manualOffsetText || 0)
+        return values
     }
 
     function coalesceSetting(value, fallback) {
@@ -273,26 +250,7 @@ ApplicationWindow {
 
     function syncSettings() {
         var value = root.appBackend.settings
-        qualitySpin.value = Number(coalesceSetting(value.nvenc_cq, 18))
-        root.subtitleFontSizePercent = Math.round(Number(coalesceSetting(value.subtitle_font_size, root.defaultSubtitleFontSize)) / root.defaultSubtitleFontSize * 100)
-        fontSizeSpin.value = root.subtitleFontSizePercent
-        root.subtitleOutlineColor = String(coalesceSetting(value.subtitle_outline_color, "#000000"))
-        outlineColorButton.colorValue = root.subtitleOutlineColor
-        root.subtitleOutlineThickness = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
-        outlineThicknessSpin.value = root.subtitleOutlineThickness
-        volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
-        gapField.text = Number(coalesceSetting(value.subtitle_max_gap_seconds, 0.1)).toFixed(2)
-        paddingField.text = Number(coalesceSetting(value.subtitle_end_padding_seconds, 0.08)).toFixed(2)
-        minDurationField.text = Number(coalesceSetting(value.subtitle_min_duration_seconds, 0.35)).toFixed(2)
-        silenceField.text = Number(coalesceSetting(value.no_speech_min_seconds, 1.2)).toFixed(1)
-        speechPaddingField.text = Number(coalesceSetting(value.speech_padding_seconds, 0.25)).toFixed(2)
-        speechThresholdField.text = parseFloat(String(coalesceSetting(value.speech_threshold_db, "-40dB"))).toFixed(0)
-        lufsField.text = Number(coalesceSetting(value.audio_target_lufs, -16)).toFixed(0)
-        normalizeSwitch.checked = value.audio_normalize === undefined ? true : value.audio_normalize
-        silenceSwitch.checked = Boolean(value.cut_no_speech)
-        workersSpin.value = Number(coalesceSetting(value.postprocess_workers, 4))
-        modelCombo.currentIndex = Math.max(0, modelCombo.find(coalesceSetting(value.model, "large-v3")))
-        deviceCombo.currentIndex = Math.max(0, deviceCombo.find(coalesceSetting(value.device, "cuda")))
+        advancedSettingsPopup.applySettings(value)
         sourcePopup.manualOffsetText = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function toggleSettingsPopup() {
@@ -815,96 +773,24 @@ ApplicationWindow {
         }
     }
 
-        Popup {
-            id: advancedSettingsPopup
-            objectName: "advancedSettingsPopup"
-            // Keep the popup clear of the action bar's right-aligned toggle,
-            // including at the 1220px minimum window width.
-            x: Math.max(12, root.width - width - 430)
-            y: contextActionBar.y + contextActionBar.height + 10
-            width: Math.min(360, root.width - 24)
-            height: Math.max(0, Math.min(620, root.contentItem.height - y - 12))
-            padding: 12
-            modal: false
-            focus: true
-            // The toggle button is outside this non-modal popup. Let the toggle
-            // handler own the close action so an outside press cannot close the
-            // popup before the same press reopens it through onSettingsRequested.
-            closePolicy: Popup.CloseOnEscape
-            onOpened: root.settingsExpanded = true
-            onClosed: root.settingsExpanded = false
-            contentItem: ColumnLayout {
-                objectName: "advancedSettingsPanel"
-                spacing: 10
-
-                SmallButton { objectName: "settingsPopupSaveButton"; Layout.fillWidth: true; text: "設定を保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveSettings(root.currentSettings()) }
-                SmallButton { objectName: "settingsPopupCloseButton"; Layout.fillWidth: true; text: "閉じる"; onClicked: advancedSettingsPopup.close() }
-
-                ScrollView {
-                    id: advancedSettingsScrollView
-                    objectName: "advancedSettingsScrollView"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    contentWidth: availableWidth
-                    contentHeight: advancedSettingsContent.implicitHeight
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical: ScrollBar {
-                        objectName: "advancedSettingsVerticalScrollBar"
-                        policy: ScrollBar.AlwaysOn
-                    }
-
-                    ColumnLayout {
-                        id: advancedSettingsContent
-                        objectName: "advancedSettingsContent"
-                        width: advancedSettingsScrollView.availableWidth
-                        spacing: 10
-                        PanelTitle { text: "文字起こしエンジン" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; objectName: "deviceCombo"; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; objectName: "modelCombo"; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "字幕" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100; onValueChanged: root.subtitleFontSizePercent = value } Text { text: "%"; color: root.textMuted } }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text { text: "縁取り色"; color: root.textPrimary; Layout.fillWidth: true }
-                            Button {
-                                id: outlineColorButton
-                                objectName: "outlineColorButton"
-                                property string colorValue: "#000000"
-                                onColorValueChanged: root.subtitleOutlineColor = colorValue
-                                Layout.preferredWidth: 112
-                                Layout.preferredHeight: 32
-                                onClicked: root.openOutlineColorPicker()
-                                contentItem: Row {
-                                    spacing: 7
-                                    Rectangle { width: 20; height: 20; radius: 4; color: outlineColorButton.colorValue; border.color: root.border }
-                                    Text { text: outlineColorButton.colorValue; color: root.textPrimary; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                }
-                                background: Rectangle { radius: 6; color: root.raised; border.color: root.border }
-                            }
-                        }
-                        RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3; onValueChanged: root.subtitleOutlineThickness = value } Text { text: "px"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "字幕の音量バランス"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "最短表示時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "動画・音声" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "動画書き出し"; color: root.textPrimary; Layout.fillWidth: true } Text { objectName: "automaticVideoCodecText"; text: root.appBackend.dependencyStatus.nvenc ? "GPU（自動）" : "CPU（自動）"; color: root.acid; font.family: "Yu Gothic UI" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "画質"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; objectName: "qualitySpin"; from: 14; to: 28; value: 18 } }
-                        Switch { id: normalizeSwitch; objectName: "normalizeSwitch"; text: "音量を正規化"; checked: true }
-                        RowLayout { Layout.fillWidth: true; Text { text: "目標LUFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; objectName: "lufsField"; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }
-                        Switch { id: silenceSwitch; objectName: "silenceSwitch"; text: "無音部分をカット" }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "最短無音時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; objectName: "silenceField"; Layout.preferredWidth: 76; text: "1.2" } }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "発話余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; objectName: "speechPaddingField"; Layout.preferredWidth: 76; text: "0.25" } }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "無音判定閾値"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechThresholdField; objectName: "speechThresholdField"; Layout.preferredWidth: 76; text: "-40"; validator: DoubleValidator { bottom: -100; top: 0; decimals: 1 } } }
-                        Item { Layout.preferredHeight: 6 }
-                    }
-                }
-            }
+    AdvancedSettingsPopup {
+        id: advancedSettingsPopup
+        appBackend: root.appBackend
+        colors: root.subtitleEditorColors
+        defaultSubtitleFontSize: root.defaultSubtitleFontSize
+        // Keep the popup clear of the action bar's right-aligned toggle,
+        // including at the 1220px minimum window width.
+        x: Math.max(12, root.width - width - 430)
+        y: contextActionBar.y + contextActionBar.height + 10
+        width: Math.min(360, root.width - 24)
+        height: Math.max(0, Math.min(620, root.contentItem.height - y - 12))
+        onOpened: root.settingsExpanded = true
+        onClosed: root.settingsExpanded = false
+        onSaveRequested: root.appBackend.saveSettings(root.currentSettings())
+        onOutlineColorRequested: function(currentColor) {
+            root.openOutlineColorPicker(currentColor)
         }
+    }
 
     Component {
         id: subtitleWorkspaceEditorComponent

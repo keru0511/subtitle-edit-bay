@@ -4956,6 +4956,32 @@ Window {
         self.assertFalse(self.app.projectDirty)
         self.assertEqual(load_project(path)["segments"][0]["text"], "未保存の字幕")
 
+    def test_autosave_waits_until_processing_finishes(self) -> None:
+        path = self._load_project()
+        saved_bytes = path.read_bytes()
+        self.app.subtitles.updateSegment(0, {"text": "処理中は保存しない字幕"})
+        self.assertTrue(self.app.autosave_timer.isActive())
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            # 完了通知から予約済みの再試行が届いても保存しない。
+            self.app._autosave_project()
+            self.app._wait_for_autosave()
+            self.assertEqual(path.read_bytes(), saved_bytes)
+            self.assertTrue(self.app.projectDirty)
+            self.assertFalse(self.app.autosave_timer.isActive())
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.assertTrue(self.app.autosave_timer.isActive())
+        self.app.autosave_timer.stop()
+        self.app._autosave_project()
+        self.app._wait_for_autosave()
+        self.assertEqual(load_project(path)["segments"][0]["text"], "処理中は保存しない字幕")
+        self.assertFalse(self.app.projectDirty)
+
     def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
         self._load_project(
             segments=[

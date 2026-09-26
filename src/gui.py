@@ -715,6 +715,7 @@ class EditBayBackend(LegacyEditBayBackend):
         self.autosave_timer.setSingleShot(True)
         self.autosave_timer.setInterval(700)
         self.autosave_timer.timeout.connect(self._autosave_project)
+        self.runningChanged.connect(self._sync_autosave_with_processing)
         self._project_editor_controller = ProjectEditorController(
             resolved_workspace_root,
             # Resolve these names at call time so existing tests can patch
@@ -2302,7 +2303,15 @@ class EditBayBackend(LegacyEditBayBackend):
         self._set_status("字幕編集を保存しました", "SAVED")
         return True
 
+    def _sync_autosave_with_processing(self) -> None:
+        if self._running:
+            self.autosave_timer.stop()
+        elif self.projectDirty:
+            self.autosave_timer.start()
+
     def _autosave_project(self) -> None:
+        if self._running:
+            return
         self._project_editor_controller.autosave()
 
     @Slot(int, str, str)

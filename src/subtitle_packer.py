@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from typing import TypedDict
+from unicodedata import category
 
 from .data_boundary import coerce_float, coerce_int, is_object_dict, is_object_mapping, is_object_sequence
 from .typed_cache import typed_lru_cache
@@ -658,6 +660,14 @@ def build_character_timeline(words: object) -> list[CharacterTiming]:
     return timeline
 
 
+def _ordered_character_timeline(timeline: Sequence[CharacterTiming]) -> bool:
+    """本文順と矛盾する語時刻はページの時刻配分に使わない。"""
+    return all(
+        current["start"] >= previous["end"] - 1e-9
+        for previous, current in zip(timeline, timeline[1:])
+    )
+
+
 def effective_word_end(word: object) -> float:
     return _effective_word_end_mapping(_mapping(word))
 
@@ -766,43 +776,44 @@ def build_timed_units_from_width(segment: object, unit_entries: Sequence[AtomicU
 def build_timed_units_from_words(segment: object, unit_entries: Sequence[AtomicUnitEntry], start: float, end: float) -> list[dict[object, object]]:
     segment = _mapping(segment)
     timeline = build_character_timeline(segment.get("words"))
-    if not timeline:
+    if not timeline or not _ordered_character_timeline(timeline):
         return []
 
-    unit_lengths = [max(1, len(normalize_alignment_text(entry["text"]))) for entry in unit_entries]
-    total_unit_length = sum(unit_lengths)
-    total_chars = len(timeline)
-    if total_unit_length <= 0 or total_chars <= 0:
+    words = _entry_mappings(segment.get("words"))
+    word_text = "".join(normalize_alignment_text(word.get("word", "")) for word in words)
+    source_text = normalize_alignment_text("".join(entry["text"] for entry in unit_entries))
+    word_positions = (
+        _aligned_word_positions(source_text, word_text)
+        if all(isinstance(word.get("word"), str) for word in words) and len(timeline) == len(word_text)
+        else None
+    )
+    if word_positions is None:
+        # 不一致を比例配分すると一部の語時刻へ本文全体を押し込むため、幅による時刻配分に戻す。
         return []
 
-    timed_units: list[dict[object, object]] = []
-    cursor = 0
-    consumed_units = 0
-    for index, entry in enumerate(unit_entries):
-        consumed_units += unit_lengths[index]
-        if index == len(unit_entries) - 1:
-            next_cursor = total_chars
+    aligned_units: list[dict[object, object]] = []
+    source_cursor = 0
+    for entry in unit_entries:
+        next_source_cursor = source_cursor + len(normalize_alignment_text(entry["text"]))
+        first_char = bisect_left(word_positions, source_cursor)
+        next_char = bisect_left(word_positions, next_source_cursor)
+        if first_char < next_char:
+            unit_start = timeline[first_char]["start"]
+            unit_end = timeline[next_char - 1]["end"]
         else:
-            next_cursor = round(total_chars * (consumed_units / total_unit_length))
-            min_next = cursor + 1
-            max_next = total_chars - (len(unit_entries) - index - 1)
-            next_cursor = max(min_next, min(next_cursor, max_next))
-
-        char_slice = timeline[cursor:next_cursor]
-        if not char_slice:
-            return []
-
-        timed_units.append(
-            {
-                **segment,
-                "start": max(start, _number(char_slice[0]["start"])),
-                "end": min(end, _number(char_slice[-1]["end"])),
-                "text": entry["text"],
-                "force_break_before": bool(entry.get("force_break_before", False)),
-            }
-        )
-        cursor = next_cursor
-    return timed_units
+            # 語時刻のない句読点は隣接する発話時刻に置き、後続語の時刻を消費しない。
+            boundary = timeline[first_char - 1]["end"] if first_char else timeline[0]["start"]
+            unit_start = boundary
+            unit_end = boundary
+        aligned_units.append({
+            **segment,
+            "start": max(start, min(unit_start, end)),
+            "end": max(start, min(unit_end, end)),
+            "text": entry["text"],
+            "force_break_before": bool(entry.get("force_break_before", False)),
+        })
+        source_cursor = next_source_cursor
+    return aligned_units
 
 
 def is_sentence_like(text: str) -> bool:
@@ -872,7 +883,10 @@ def finalize_group_segment(
     adjusted_end = group_end + subtitle_end_padding_seconds if use_word_timing else group_end
 
     group_width = text_width("".join(_text(item["text"]) for item in group))
-    upper_bound = min(segment_end_limit, group_start + max_duration_for_width(group_width))
+    duration_limit = max_duration_for_width(group_width)
+    if use_word_timing and group_end - group_start <= ABSOLUTE_MAX_DURATION:
+        duration_limit = max(duration_limit, group_end - group_start)
+    upper_bound = min(segment_end_limit, group_start + duration_limit)
     if next_group_start is not None:
         upper_bound = min(upper_bound, next_group_start)
 
@@ -889,6 +903,95 @@ def finalize_group_segment(
         "text": "".join(_text(item["text"]) for item in group).strip(),
         "layout_packed": True,
     }
+
+
+def _page_preserves_text(text: str, max_width: int, max_lines: int = MAX_LINES) -> bool:
+    """描画時に省略される組み合わせをページ確定前に除外する。"""
+    rendered = normalize_text(text, max_width=max_width, max_lines=max_lines)
+    return normalize_alignment_text(rendered.replace(r"\N", "")) == normalize_alignment_text(text.replace(r"\N", ""))
+
+
+def _aligned_word_positions(page_text: str, word_text: str) -> list[int] | None:
+    """アラインメントにない句読点だけを飛ばして語の文字位置を対応させる。"""
+    positions: list[int] = []
+    cursor = 0
+    for char in word_text:
+        while cursor < len(page_text) and page_text[cursor] != char:
+            if not category(page_text[cursor]).startswith("P"):
+                return None
+            cursor += 1
+        if cursor >= len(page_text):
+            return None
+        positions.append(cursor)
+        cursor += 1
+    if any(not category(char).startswith("P") for char in page_text[cursor:]):
+        return None
+    return positions
+
+
+def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object, object]]) -> None:
+    """ページ本文に対応する語だけを保持し、後の結合で語が重複しないようにする。"""
+    if not pages or not segment.get("words"):
+        return
+    words = _entry_mappings(segment["words"])
+    normalized_words = [normalize_alignment_text(word.get("word", "")) for word in words]
+    timeline = build_character_timeline(words)
+    page_lengths = [len(normalize_alignment_text(page["text"])) for page in pages]
+    page_text = normalize_alignment_text("".join(_text(page["text"]) for page in pages))
+    word_positions = _aligned_word_positions(page_text, "".join(normalized_words))
+    can_partition_words = (
+        all(isinstance(word.get("word"), str) for word in words)
+        and len(timeline) == sum(len(item) for item in normalized_words)
+        and _ordered_character_timeline(timeline)
+        and word_positions is not None
+    )
+    assigned: list[list[dict[object, object]]] = [[] for _ in pages]
+    if can_partition_words:
+        assert word_positions is not None
+        page_start = 0
+        for page_index, page_length in enumerate(page_lengths):
+            page_end = page_start + page_length
+            page_word_start = bisect_left(word_positions, page_start)
+            page_word_end = bisect_left(word_positions, page_end)
+            word_start = 0
+            for word, normalized in zip(words, normalized_words):
+                word_end = word_start + len(normalized)
+                overlap_start = max(page_word_start, word_start)
+                overlap_end = min(page_word_end, word_end)
+                if overlap_start < overlap_end:
+                    fragment = dict(word)
+                    if overlap_start != word_start or overlap_end != word_end:
+                        fragment["word"] = normalized[overlap_start - word_start:overlap_end - word_start]
+                        fragment["start"] = timeline[overlap_start]["start"]
+                        fragment["end"] = timeline[overlap_end - 1]["end"]
+                    page_time_start = _number(pages[page_index]["start"])
+                    page_time_end = _number(pages[page_index]["end"])
+                    if _number(fragment["end"]) > page_time_start and _number(fragment["start"]) < page_time_end:
+                        fragment_start = max(page_time_start, min(_number(fragment["start"]), page_time_end))
+                        fragment["start"] = fragment_start
+                        fragment["end"] = max(fragment_start, min(_number(fragment["end"]), page_time_end))
+                        assigned[page_index].append(fragment)
+                word_start = word_end
+            page_start = page_end
+    else:
+        # 本文と合わない語を時刻だけで推測配置しない。文字と時刻が収まる語だけ残す。
+        for word in words:
+            start = word.get("start")
+            end = word.get("end")
+            normalized = normalize_alignment_text(word.get("word", ""))
+            if start is None or end is None or not normalized:
+                continue
+            word_time_start = _number(start)
+            word_time_end = _number(end)
+            for index, page in enumerate(pages):
+                if (
+                    _number(page["start"]) <= word_time_start <= word_time_end <= _number(page["end"])
+                    and normalized in normalize_alignment_text(page["text"])
+                ):
+                    assigned[index].append(dict(word))
+                    break
+    for page, page_words in zip(pages, assigned):
+        page["words"] = page_words
 
 
 def pack_segment_pages(
@@ -908,11 +1011,60 @@ def pack_segment_pages(
     end = _number(segment["end"])
     has_word_timing = bool(segment.get("words"))
     forced_boundaries = gap_boundary_indices(segment.get("words"), subtitle_max_gap_seconds) if has_word_timing else set()
-    unit_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
+    max_width = coerce_int(segment.get("max_width", DEFAULT_PAGE_WIDTH))
+    max_lines = 1 if str(segment.get("subtitle_line_count", "auto")).strip() == "1" else MAX_LINES
+    segment = {**segment, "max_width": max_width}
+    raw_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
+    unit_entries: list[AtomicUnitEntry] = []
+    for entry in raw_entries:
+        parts = (
+            [entry["text"]]
+            if _page_preserves_text(entry["text"], max_width, max_lines)
+            else split_by_width_naturally(entry["text"], max_width)
+        )
+        for index, part in enumerate(parts):
+            unit_entries.append({
+                **entry,
+                "text": part,
+                "force_break_before": index == 0 and entry.get("force_break_before", False),
+            })
     if not unit_entries:
         return []
 
     timed_units = build_timed_units_from_words(segment, unit_entries, start, end)
+    word_boundaries: list[int] = []
+    if timed_units:
+        words = _entry_mappings(segment["words"])
+        normalized_words = [normalize_alignment_text(word["word"]) for word in words]
+        source_text = normalize_alignment_text("".join(entry["text"] for entry in unit_entries))
+        word_positions = _aligned_word_positions(source_text, "".join(normalized_words))
+        assert word_positions is not None
+        word_cursor = 0
+        for word_text in normalized_words[:-1]:
+            word_cursor += len(word_text)
+            if 0 < word_cursor < len(word_positions):
+                word_boundaries.append(word_positions[word_cursor])
+    while timed_units:
+        expanded_entries: list[AtomicUnitEntry] = []
+        source_cursor = 0
+        for entry, unit in zip(unit_entries, timed_units):
+            parts = [entry["text"]]
+            next_source_cursor = source_cursor + len(normalize_alignment_text(entry["text"]))
+            crosses_words = bisect_right(word_boundaries, source_cursor) < bisect_left(word_boundaries, next_source_cursor)
+            if crosses_words and _number(unit["end"]) - _number(unit["start"]) > ABSOLUTE_MAX_DURATION:
+                narrower_width = max(1, text_width(entry["text"]) // 2)
+                parts = split_by_width_naturally(entry["text"], narrower_width)
+            for index, part in enumerate(parts):
+                expanded_entries.append({
+                    **entry,
+                    "text": part,
+                    "force_break_before": index == 0 and entry.get("force_break_before", False),
+                })
+            source_cursor = next_source_cursor
+        if len(expanded_entries) == len(unit_entries):
+            break
+        unit_entries = expanded_entries
+        timed_units = build_timed_units_from_words(segment, unit_entries, start, end)
     if not timed_units:
         timed_units = build_timed_units_from_width(segment, unit_entries, start, end)
         has_word_timing = False
@@ -922,7 +1074,7 @@ def pack_segment_pages(
     current_duration = 0.0
     current_width = 0
     current_sentences = 0
-    max_group_width = coerce_int(segment.get("max_width", DEFAULT_PAGE_WIDTH)) * MAX_LINES
+    max_group_width = max_width * max_lines
 
     for unit in timed_units:
         unit_duration = _number(unit["end"]) - _number(unit["start"])
@@ -955,34 +1107,33 @@ def pack_segment_pages(
         subtitle_max_gap_seconds,
     )
 
+    # 結合後の実際の描画を確認し、認識済みの文字を省略する前に次ページへ送る。
+    duration_groups: list[list[dict[object, object]]] = []
+    for group in grouped:
+        duration_fitting: list[dict[object, object]] = []
+        for unit in group:
+            if duration_fitting and _number(unit["end"]) - _number(duration_fitting[0]["start"]) > ABSOLUTE_MAX_DURATION:
+                duration_groups.append(duration_fitting)
+                duration_fitting = []
+            duration_fitting.append(unit)
+        if duration_fitting:
+            duration_groups.append(duration_fitting)
+    fitting_groups: list[list[dict[object, object]]] = []
+    for group in duration_groups:
+        fitting: list[dict[object, object]] = []
+        for unit in group:
+            combined = "".join(_text(item["text"]) for item in fitting) + _text(unit["text"])
+            if fitting and not _page_preserves_text(combined, max_width, max_lines):
+                fitting_groups.append(fitting)
+                fitting = []
+            fitting.append(unit)
+        if fitting:
+            fitting_groups.append(fitting)
+    grouped = fitting_groups
+
     results: list[dict[object, object]] = []
     for index, group in enumerate(grouped):
         next_group_start = _number(grouped[index + 1][0]["start"]) if index + 1 < len(grouped) else None
-        group_start = _number(group[0]["start"])
-        group_end = _number(group[-1]["end"])
-        if group_end - group_start > ABSOLUTE_MAX_DURATION and len(group) > 1:
-            midpoint = len(group) // 2
-            results.append(
-                finalize_group_segment(
-                    segment,
-                    group[:midpoint],
-                    _number(group[midpoint]["start"]),
-                    subtitle_end_padding_seconds,
-                    subtitle_min_duration_seconds,
-                    has_word_timing,
-                )
-            )
-            results.append(
-                finalize_group_segment(
-                    segment,
-                    group[midpoint:],
-                    next_group_start,
-                    subtitle_end_padding_seconds,
-                    subtitle_min_duration_seconds,
-                    has_word_timing,
-                )
-            )
-            continue
         results.append(
             finalize_group_segment(
                 segment,
@@ -993,6 +1144,7 @@ def pack_segment_pages(
                 has_word_timing,
             )
         )
+    _assign_page_words(segment, results)
     return results
 
 
@@ -1037,7 +1189,7 @@ def pack_segments(
     events: list[SubtitleEvent] = []
     for segment in _entry_mappings(_mapping(data).get("segments", [])):
         pages = [segment] if segment.get("layout_packed") else pack_segment_pages(
-            segment,
+            {**segment, "max_width": coerce_int(segment.get("max_width", default_max_width))},
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
             subtitle_end_padding_seconds=subtitle_end_padding_seconds,
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,

@@ -95,6 +95,9 @@ class SubtitleLineCountTests(unittest.TestCase):
         for page in pages:
             self.assertEqual("".join(word["word"] for word in page["words"]), page["text"].replace("。", ""))
         self.assertEqual("".join(word["word"] for page in pages for word in page["words"]), source.replace("。", ""))
+        final_spoken_page = next(page for page in pages if "晴れです" in page["text"])
+        self.assertAlmostEqual(final_spoken_page["words"][-1]["end"], 2.8)
+        self.assertGreaterEqual(final_spoken_page["end"], 2.8)
 
     def test_automatic_one_line_pages_preserve_text(self) -> None:
         source = "明日の予定を確認してから次の作業を始めましょう"

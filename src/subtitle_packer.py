@@ -771,6 +771,39 @@ def build_timed_units_from_words(segment: object, unit_entries: Sequence[AtomicU
     if not timeline:
         return []
 
+    words = _entry_mappings(segment.get("words"))
+    word_text = "".join(normalize_alignment_text(word.get("word", "")) for word in words)
+    source_text = normalize_alignment_text("".join(entry["text"] for entry in unit_entries))
+    word_positions = (
+        _aligned_word_positions(source_text, word_text)
+        if all(isinstance(word.get("word"), str) for word in words) and len(timeline) == len(word_text)
+        else None
+    )
+    if word_positions is not None:
+        aligned_units: list[dict[object, object]] = []
+        source_cursor = 0
+        for entry in unit_entries:
+            next_source_cursor = source_cursor + len(normalize_alignment_text(entry["text"]))
+            first_char = bisect_left(word_positions, source_cursor)
+            next_char = bisect_left(word_positions, next_source_cursor)
+            if first_char < next_char:
+                unit_start = timeline[first_char]["start"]
+                unit_end = timeline[next_char - 1]["end"]
+            else:
+                # 語時刻のない句読点は隣接する発話時刻に置き、後続語の時刻を消費しない。
+                boundary = timeline[first_char - 1]["end"] if first_char else timeline[0]["start"]
+                unit_start = boundary
+                unit_end = boundary
+            aligned_units.append({
+                **segment,
+                "start": max(start, min(unit_start, end)),
+                "end": max(start, min(unit_end, end)),
+                "text": entry["text"],
+                "force_break_before": bool(entry.get("force_break_before", False)),
+            })
+            source_cursor = next_source_cursor
+        return aligned_units
+
     unit_lengths = [max(1, len(normalize_alignment_text(entry["text"]))) for entry in unit_entries]
     total_unit_length = sum(unit_lengths)
     total_chars = len(timeline)

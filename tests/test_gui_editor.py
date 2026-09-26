@@ -6809,11 +6809,16 @@ Window {
         self.assertEqual(path.read_bytes(), saved_project)
         self.assertFalse(self.app.projectDirty)
 
+        # 再生準備の直後は、元の位置を復元するタイマーがまだ動いている。
+        preview_session = self._quick_item(window, "mixerPreviewSession")
+        preview_session.setProperty("initialPosition", 0)
         self._click(window, self._quick_item(window, "mixerForwardButton"))
         self.gui.wait_until(
             lambda: 4_800 <= player.position() <= 5_200,
             description="ミキサーの5秒進む操作",
         )
+        QTest.qWait(400)
+        self.assertGreaterEqual(player.position(), 4_800)
         self._click(window, self._quick_item(window, "mixerRewindButton"))
         self.gui.wait_until(
             lambda: player.position() <= 200,
@@ -6830,11 +6835,19 @@ Window {
             lambda: 5_500 <= player.position() <= 6_500,
             description="ミキサーのスライダーによる移動",
         )
+        player.setPosition(0)
+        preview_session.setProperty("initialPosition", 0)
         play_button = self._quick_item(window, "mixerPlayButton")
         self._click(window, play_button)
+        self.assertEqual(preview_session.property("initialPosition"), -1)
         self.gui.wait_until(
             lambda: player.playbackState() == QMediaPlayer.PlaybackState.PlayingState,
             description="ミキサーの再生開始",
+        )
+        self.gui.wait_until(
+            lambda: player.position() >= 250,
+            description="ミキサーの再生位置が進むこと",
+            timeout_ms=3_000,
         )
         self._click(window, play_button)
         self.gui.wait_until(
@@ -7569,6 +7582,8 @@ Window {
         self.assertEqual(preview_players.property("count"), 1)
         preview_player = window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0")
         self.assertIsNotNone(preview_player)
+        for name in ("mixerPlayButton", "mixerRewindButton", "mixerSeek", "mixerForwardButton"):
+            self.assertFalse(self._quick_item(window, name).isEnabled(), name)
         video_channel_id = self.app.audioMixerChannels[0]["id"]
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")

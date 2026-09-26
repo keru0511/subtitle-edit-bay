@@ -71,6 +71,8 @@ Item {
             root.audioBackend.pauseAudioMixerPreview()
             root.syncPreviewPlayers(false)
         } else {
+            root.restoreInitialPosition()
+            initialPosition = -1
             root.audioBackend.startAudioMixerPreview(mixerPlayer.position)
             mixerPlayer.play()
             root.syncPreviewPlayers(true)
@@ -78,6 +80,7 @@ Item {
     }
 
     function seekTo(milliseconds) {
+        initialPosition = -1
         mixerPlayer.position = Math.max(
             0,
             Math.min(mixerPlayer.duration, milliseconds)

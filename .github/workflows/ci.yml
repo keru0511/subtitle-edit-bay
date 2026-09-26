@@ -312,7 +312,9 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_render_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_shortcut_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_analysis_can_start_and_cancel_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_candidates_are_preserved_during_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_filtered_candidate_actions_use_original_index_and_save
           tests.test_gui_editor.GuiEditorRegressionTests.test_incomplete_time_input_can_be_finished_after_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_log_actions_fit_and_work_at_minimum_window_width
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_preview_play_button_starts_and_pauses_shared_player

@@ -10515,6 +10515,112 @@ Window {
             description="highlight candidate rejection after processing",
         )
 
+    def test_highlight_filtered_candidate_actions_use_original_index_and_save(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertTrue(self.app.removeShortVideoClip(0))
+
+        later = {
+            "id": "candidate-later",
+            "start": 2.0,
+            "end": 3.0,
+            "score": 0.9,
+            "category": "emphasis",
+            "source_segment_ids": ["segment-a"],
+        }
+        earlier = {
+            "id": "candidate-earlier",
+            "start": 0.5,
+            "end": 1.0,
+            "score": 0.2,
+            "category": "conversation",
+            "source_segment_ids": ["segment-a"],
+        }
+        self.app._highlight_status = "completed"
+        self.app._highlight_candidates = [later, earlier]
+        self.app.highlightAnalysisChanged.emit()
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+
+        sort_combo = self._quick_item(window, "highlightSortCombo")
+        self._click(window, sort_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(sort_combo.property("currentIndex"), 1)
+
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+        self.gui.wait_until(lambda: candidate_list.property("count") == 2, description="sorted candidate count")
+        self._click(window, self._quick_visual_item(candidate_list, "highlightAddButton"))
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+        clip = self.app._project["short_video"]["clips"][0]
+        self.assertEqual((clip["highlight_candidate_id"], clip["start"], clip["end"]),
+                         ("candidate-earlier", 0.5, 1.0))
+
+        category_combo = self._quick_item(window, "highlightCategoryCombo")
+        self._click(window, category_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(category_combo.property("currentValue"), "conversation")
+        self.gui.wait_until(lambda: candidate_list.property("count") == 1, description="filtered candidate count")
+
+        self._click(window, self._quick_visual_item(candidate_list, "highlightRejectButton"))
+        self.assertEqual(self.app._highlight_candidates, [later])
+        self.assertEqual(self.app._highlight_rejected, [earlier])
+        self.assertEqual(candidate_list.property("count"), 0)
+
+        undo_button = self._quick_item(window, "highlightUndoRejectButton")
+        self._click(window, undo_button)
+        self.assertEqual(self.app._highlight_candidates, [later, earlier])
+        self.assertEqual(self.app._highlight_rejected, [])
+        self.assertEqual(candidate_list.property("count"), 1)
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved = load_project(project_path)["short_video"]["clips"]
+        self.assertEqual(len(saved), 1)
+        self.assertEqual((saved[0]["segment_id"], saved[0]["start"], saved[0]["end"]),
+                         ("segment-a", 0.5, 1.0))
+
+    def test_highlight_analysis_can_start_and_cancel_from_screen(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        analyze_button = self._quick_item(window, "highlightAnalyzeButton")
+        cancel_button = self._quick_item(window, "highlightCancelButton")
+        before_project = deepcopy(self.app._project)
+        before_file = project_path.read_bytes()
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocked_generate(*_args: object, **_kwargs: object) -> list[object]:
+            worker_started.set()
+            release_worker.wait()
+            return []
+
+        try:
+            with patch("src.highlight_candidates.generate_highlight_candidates", side_effect=blocked_generate):
+                self._click(window, analyze_button)
+                self.gui.wait_until(
+                    lambda: worker_started.is_set() and self.app.highlightAnalysisState == "running",
+                    description="highlight analysis started from screen",
+                )
+                self.assertFalse(analyze_button.isEnabled())
+                self.assertTrue(cancel_button.isEnabled())
+                self._click(window, cancel_button)
+                self.assertEqual(self.app.highlightAnalysisState, "cancelling")
+                self.assertFalse(cancel_button.isEnabled())
+        finally:
+            release_worker.set()
+
+        self.gui.wait_until(
+            lambda: self.app.highlightAnalysisState == "cancelled" and analyze_button.isEnabled(),
+            description="highlight analysis cancelled from screen",
+        )
+        self.assertEqual(self.app._highlight_candidates, [])
+        self.assertEqual(self.app._project, before_project)
+        self.assertEqual(project_path.read_bytes(), before_file)
+
     def test_highlight_retry_resets_rejected_candidates_before_worker_completion(self) -> None:
         self._load_project()
         _, window = self._load_qml()

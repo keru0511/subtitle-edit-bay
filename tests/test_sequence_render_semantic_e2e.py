@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 import os
 import tempfile
-import unittest
 from pathlib import Path
 
+from src.data_boundary import is_object_mapping
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_video
 from src.video_encoding import select_automatic_video_codec
@@ -23,7 +23,7 @@ from tests.media_test_helpers import (
     require_media_tools,
     video_stream,
 )
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 FIXTURE_FPS = 30
@@ -35,7 +35,7 @@ THIRD_TONE_HZ = 1_320
 THIRD_AFTER_TONE_HZ = 1_540
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
@@ -172,12 +172,16 @@ class SequenceRenderSemanticE2ETests(TypedTestCase):
             delta=DURATION_TOLERANCE_SECONDS,
         )
         persisted = load_project(self.project_path)
+        render_settings = persisted["render_settings"]
+        assert is_object_mapping(render_settings)
         self.assertEqual(
-            persisted["render_settings"]["sequence_clip_count"],
+            render_settings["sequence_clip_count"],
             3,
         )
+        duration = render_settings["output_duration_seconds"]
+        assert isinstance(duration, (int, float))
         self.assertAlmostEqual(
-            persisted["render_settings"]["output_duration_seconds"],
+            duration,
             4.25,
         )
 

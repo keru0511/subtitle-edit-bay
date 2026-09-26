@@ -468,7 +468,7 @@ class VideoTimeline:
         return int(round(self.output_to_source_seconds(int(position_ms) / 1000.0) * 1000))
 
 
-def timeline_from_project(project: Mapping[str, object]) -> VideoTimeline:
+def timeline_from_project(project: Mapping[str, object] | Mapping[object, object]) -> VideoTimeline:
     """Build the normal-video timeline without consulting short-video state."""
 
     video = project.get("video", {})

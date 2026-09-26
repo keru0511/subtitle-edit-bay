@@ -10,9 +10,11 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
-from typing import Mapping, Protocol, cast
+from typing import Mapping, Protocol, TypeGuard, cast
 
-from src.data_boundary import decode_json, is_object_mapping
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
 
 
 class _RuntimeArgs(Protocol):
@@ -63,11 +65,11 @@ def prepare_runtime(root: Path, venv: Path, manifest: Path, cache_hit: bool) -> 
             return "restored"
         except (OSError, subprocess.SubprocessError) as error:
             print(f"復元環境の検証に失敗したため一度だけ再構築します: {error}", flush=True)
-    contract = decode_json((root / "runtime/runtime-contract.json").read_text(encoding="utf-8"))
-    if not is_object_mapping(contract):
+    contract: object = json.loads((root / "runtime/runtime-contract.json").read_text(encoding="utf-8"))
+    if not _is_object_mapping(contract):
         raise ValueError("runtime contract must be an object")
     python_contract = contract.get("python")
-    if not is_object_mapping(python_contract):
+    if not _is_object_mapping(python_contract):
         raise ValueError("runtime contract python section must be an object")
     pip_version = python_contract.get("pip_version")
     if not isinstance(pip_version, str):

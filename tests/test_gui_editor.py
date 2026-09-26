@@ -2008,10 +2008,17 @@ Window {
 
         self.assertTrue(operation_check().property("checked"))
         self._click(window, operation_check())
-        self.assertFalse(operation_check().property("checked"))
-        self.assertFalse(apply_button.property("enabled"))
+        self.gui.wait_until(
+            lambda: not operation_check().property("checked")
+            and not apply_button.property("enabled"),
+            description="音量案の選択解除",
+        )
         self._click(window, operation_check())
-        self.assertTrue(apply_button.property("enabled"))
+        self.gui.wait_until(
+            lambda: operation_check().property("checked")
+            and apply_button.property("enabled"),
+            description="音量案の再選択",
+        )
         self._click(window, apply_button)
         self.assertEqual(self.app.audioMixerChannels[0]["volume_percent"], 110.0)
 
@@ -4315,6 +4322,7 @@ Window {
             QTest.keyClick(window, Qt.Key.Key_A)
             QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
             self.app.processEvents()
+            self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(caption.property("inputMethodComposing"))
             self.assertEqual(caption.property("preeditText"), "日本")
             self.assertEqual(caption.property("text"), "a")
@@ -4360,6 +4368,7 @@ Window {
             QTest.keyClick(window, Qt.Key.Key_A)
             QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
             self.app.processEvents()
+            self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(caption.property("inputMethodComposing"))
             self.assertEqual(caption.property("preeditText"), "日本")
 
@@ -4370,6 +4379,7 @@ Window {
             self.assertIn("確定してから", self.app.status)
             self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
             self.assertEqual(self.app.segmentAt(0)["text"], "abcdefgh")
+            self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(caption.property("inputMethodComposing"))
             self.assertEqual(caption.property("preeditText"), "日本")
 

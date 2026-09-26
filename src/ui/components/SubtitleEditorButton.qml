@@ -2,6 +2,7 @@ import QtQuick
 
 SmallButton {
     required property var colors
+    focusPolicy: Qt.TabFocus
     textPrimary: colors.textPrimary
     disabledText: "#59635D"
     borderColor: colors.border

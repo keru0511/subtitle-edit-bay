@@ -147,6 +147,7 @@ Item {
             Button {
                 id: editorRenderButton
                 objectName: "editorRenderButton"
+                focusPolicy: Qt.TabFocus
                 implicitHeight: 34
                 text: root.appBackend.workflow.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
                 enabled: root.appBackend.projectLoaded && !root.appBackend.running

@@ -1883,6 +1883,90 @@ Window {
         self.app.redoEdit()
         self.assertEqual(self.app.subtitleSegments[0]["text"], "修正後")
 
+    def test_ai_proposals_are_locked_during_processing_and_recover(self) -> None:
+        path = self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated", auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        _, window = self._load_qml()
+        revision = self.app._project_revision
+        self.app._codex_proposal = {
+            "summary": "字幕を修正", "warnings": [], "base_revision": revision,
+            "operations": [{
+                "id": "subtitle-edit", "type": "update_segment", "segment_id": "segment-a",
+                "changes": {"text": "処理中に適用されてはいけない"},
+            }],
+        }
+        self.app.codexProposalChanged.emit()
+        self.app.processEvents()
+        apply_button = self._quick_item(window, "codexApplyButton")
+        allow_silence_button = self._quick_item(window, "codexAudioAllowSilenceButton")
+        self.assertTrue(apply_button.property("enabled"))
+
+        channels = self.app.audioMixerChannels
+        self.assertTrue(channels)
+        audio_proposal = build_audio_mix_proposal(
+            {
+                "schema_version": 1,
+                "summary": "音量を調整",
+                "warnings": [],
+                "base_revision": revision,
+                "audio_state_revision": audio_mix_state_revision(channels),
+                "operations": [{
+                    "id": "voice-up", "type": "update_audio_channel",
+                    "channel_id": str(channels[0]["id"]),
+                    "changes": {"volume_percent": 110.0},
+                    "reason": "確認用の音量変更",
+                }],
+            },
+            channels,
+            project_revision=revision,
+        )
+        before = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            self.app._project_revision, self.app.projectDirty, path.read_bytes(),
+        )
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            self.app.processEvents()
+            self.assertFalse(apply_button.property("enabled"))
+            self.app.applyCodexProposal()
+            self.assertIsNotNone(self.app._codex_proposal)
+
+            self.app._audio_mix_proposal = audio_proposal
+            self.app.audioMixProposalChanged.emit()
+            self.app.processEvents()
+            self.assertFalse(apply_button.property("enabled"))
+            self.assertFalse(allow_silence_button.property("enabled"))
+            self.assertFalse(self.app.applyAudioMixProposal())
+            self.assertIsNotNone(self.app._audio_mix_proposal)
+            self.assertEqual(
+                (self.app._project, self.app._undo_stack, self.app._project_revision,
+                 self.app.projectDirty, path.read_bytes()),
+                before,
+            )
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.app.processEvents()
+        self.assertTrue(apply_button.property("enabled"))
+        self.assertTrue(allow_silence_button.property("enabled"))
+        operation_check = self._quick_visual_item(
+            self._quick_item(window, "codexProposalList"), "codexOperationCheck",
+        )
+        self.assertTrue(operation_check.property("checked"))
+        self._click(window, operation_check)
+        self.assertFalse(operation_check.property("checked"))
+        self.assertFalse(apply_button.property("enabled"))
+        self._click(window, operation_check)
+        self.assertTrue(apply_button.property("enabled"))
+        self._click(window, apply_button)
+        self.assertEqual(self.app.audioMixerChannels[0]["volume_percent"], 110.0)
+
     def test_manual_audio_edits_and_reset_share_undo_redo_and_save(self) -> None:
         path = self._load_project()
         before = deepcopy(self.app._project["audio_mix"])

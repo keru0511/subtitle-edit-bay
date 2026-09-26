@@ -535,6 +535,8 @@ class AIChatFacade(FeatureFacade):
     @Slot("QVariantList")
     def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
         backend = self._backend
+        if backend._running:
+            return
         if backend._project is None or not backend._codex_proposal:
             backend._set_status("適用するCodex編集案がありません", "CHECK")
             return

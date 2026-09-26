@@ -500,14 +500,21 @@ ApplicationWindow {
     }
 
     function commitInputMethod() {
-        // フォーカスを移す前にIMEの未確定文字を確定する。
-        // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
+        // 変換中に保存するとOSごとの確定結果が異なるため、先に利用者の確定を待つ。
         var focusedInput = root.activeFocusItem
         // qmllint disable missing-property
-        Qt.inputMethod.commit()
-        var stillComposing = focusedInput && focusedInput.inputMethodComposing === true
+        var composing = focusedInput && focusedInput.inputMethodComposing === true
         // qmllint enable missing-property
-        if (stillComposing) {
+        if (composing) {
+            root.appBackend.reportPendingInputMethod()
+            return false
+        }
+        // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
+        // qmllint disable missing-property
+        Qt.inputMethod.commit()
+        composing = focusedInput && focusedInput.inputMethodComposing === true
+        // qmllint enable missing-property
+        if (composing) {
             root.appBackend.reportPendingInputMethod()
             return false
         }

@@ -779,65 +779,33 @@ def build_timed_units_from_words(segment: object, unit_entries: Sequence[AtomicU
         if all(isinstance(word.get("word"), str) for word in words) and len(timeline) == len(word_text)
         else None
     )
-    if word_positions is not None:
-        aligned_units: list[dict[object, object]] = []
-        source_cursor = 0
-        for entry in unit_entries:
-            next_source_cursor = source_cursor + len(normalize_alignment_text(entry["text"]))
-            first_char = bisect_left(word_positions, source_cursor)
-            next_char = bisect_left(word_positions, next_source_cursor)
-            if first_char < next_char:
-                unit_start = timeline[first_char]["start"]
-                unit_end = timeline[next_char - 1]["end"]
-            else:
-                # 語時刻のない句読点は隣接する発話時刻に置き、後続語の時刻を消費しない。
-                boundary = timeline[first_char - 1]["end"] if first_char else timeline[0]["start"]
-                unit_start = boundary
-                unit_end = boundary
-            aligned_units.append({
-                **segment,
-                "start": max(start, min(unit_start, end)),
-                "end": max(start, min(unit_end, end)),
-                "text": entry["text"],
-                "force_break_before": bool(entry.get("force_break_before", False)),
-            })
-            source_cursor = next_source_cursor
-        return aligned_units
-
-    unit_lengths = [max(1, len(normalize_alignment_text(entry["text"]))) for entry in unit_entries]
-    total_unit_length = sum(unit_lengths)
-    total_chars = len(timeline)
-    if total_unit_length <= 0 or total_chars <= 0:
+    if word_positions is None:
+        # 不一致を比例配分すると一部の語時刻へ本文全体を押し込むため、幅による時刻配分に戻す。
         return []
 
-    timed_units: list[dict[object, object]] = []
-    cursor = 0
-    consumed_units = 0
-    for index, entry in enumerate(unit_entries):
-        consumed_units += unit_lengths[index]
-        if index == len(unit_entries) - 1:
-            next_cursor = total_chars
+    aligned_units: list[dict[object, object]] = []
+    source_cursor = 0
+    for entry in unit_entries:
+        next_source_cursor = source_cursor + len(normalize_alignment_text(entry["text"]))
+        first_char = bisect_left(word_positions, source_cursor)
+        next_char = bisect_left(word_positions, next_source_cursor)
+        if first_char < next_char:
+            unit_start = timeline[first_char]["start"]
+            unit_end = timeline[next_char - 1]["end"]
         else:
-            next_cursor = round(total_chars * (consumed_units / total_unit_length))
-            min_next = cursor + 1
-            max_next = total_chars - (len(unit_entries) - index - 1)
-            next_cursor = max(min_next, min(next_cursor, max_next))
-
-        char_slice = timeline[cursor:next_cursor]
-        if not char_slice:
-            return []
-
-        timed_units.append(
-            {
-                **segment,
-                "start": max(start, _number(char_slice[0]["start"])),
-                "end": min(end, _number(char_slice[-1]["end"])),
-                "text": entry["text"],
-                "force_break_before": bool(entry.get("force_break_before", False)),
-            }
-        )
-        cursor = next_cursor
-    return timed_units
+            # 語時刻のない句読点は隣接する発話時刻に置き、後続語の時刻を消費しない。
+            boundary = timeline[first_char - 1]["end"] if first_char else timeline[0]["start"]
+            unit_start = boundary
+            unit_end = boundary
+        aligned_units.append({
+            **segment,
+            "start": max(start, min(unit_start, end)),
+            "end": max(start, min(unit_end, end)),
+            "text": entry["text"],
+            "force_break_before": bool(entry.get("force_break_before", False)),
+        })
+        source_cursor = next_source_cursor
+    return aligned_units
 
 
 def is_sentence_like(text: str) -> bool:
@@ -993,19 +961,22 @@ def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object
                 word_start = word_end
             page_start = page_end
     else:
-        # アラインメント文字列が本文と一致しない場合、時刻が最も近い1ページにだけ残す。
+        # 本文と合わない語を時刻だけで推測配置しない。文字と時刻が収まる語だけ残す。
         for word in words:
             start = word.get("start")
             end = word.get("end")
-            midpoint = (_number(start) + _number(end)) / 2 if start is not None and end is not None else _number(pages[0]["start"])
-            closest = 0
-            closest_distance = float("inf")
+            normalized = normalize_alignment_text(word.get("word", ""))
+            if start is None or end is None or not normalized:
+                continue
+            word_time_start = _number(start)
+            word_time_end = _number(end)
             for index, page in enumerate(pages):
-                distance = max(_number(page["start"]) - midpoint, midpoint - _number(page["end"]), 0.0)
-                if distance < closest_distance:
-                    closest = index
-                    closest_distance = distance
-            assigned[closest].append(dict(word))
+                if (
+                    _number(page["start"]) <= word_time_start <= word_time_end <= _number(page["end"])
+                    and normalized in normalize_alignment_text(page["text"])
+                ):
+                    assigned[index].append(dict(word))
+                    break
     for page, page_words in zip(pages, assigned):
         page["words"] = page_words
 

@@ -73,6 +73,15 @@ class SubtitleLineCountTests(unittest.TestCase):
         pages = pack_segment_pages({"text": source, "start": 0, "end": 2.4, "max_width": 8, "words": [word]})
         self.assertGreater(len(pages), 1)
         self.assertEqual([item["word"] for page in pages for item in page["words"]], ["ABC"])
+        self.assertAlmostEqual(pages[-1]["end"], 2.4)
+
+    def test_mismatched_long_word_is_not_assigned_outside_a_page(self) -> None:
+        source = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        word = {"word": "ABCDEFGHIJKLMNOPQRSTUVWXYY0123456789", "start": 0.0, "end": 3.6}
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 3.6, "max_width": 8, "words": [word]})
+        self.assertGreater(len(pages), 1)
+        self.assertTrue(all(not page["words"] for page in pages))
+        self.assertEqual(word["word"], "ABCDEFGHIJKLMNOPQRSTUVWXYY0123456789")
 
     def test_split_word_times_stay_inside_segment_bounds(self) -> None:
         source = "字幕確認"

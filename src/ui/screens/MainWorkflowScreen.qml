@@ -310,6 +310,7 @@ ApplicationWindow {
     function requestTranscription() {
         if (!root.workflowCapabilities.canTranscribe)
             return
+        root.commitPendingEdits()
         if (root.appBackend.projectLoaded)
             transcriptionMergeDialog.open()
         else if (root.appBackend.transcriptionProjectExists())
@@ -504,8 +505,6 @@ ApplicationWindow {
     }
 
     function openEditorScreen() {
-        if (root.appBackend.running)
-            return
         root.closeSettingsPopup()
         root.appBackend.workspace.selectEditMode("subtitle")
         if (!root.mixerMode) {
@@ -517,8 +516,6 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
-        if (root.appBackend.running)
-            return
         root.commitPendingEdits()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
@@ -592,6 +589,7 @@ ApplicationWindow {
         root.commitInputMethod()
         root.contentItem.forceActiveFocus()
         subtitleEditorState.commitSubtitleDraft()
+        subtitleEditorState.commitTimeDraft()
     }
 
     // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
@@ -983,6 +981,7 @@ ApplicationWindow {
         SubtitleModeSettings {
             objectName: "workspaceSubtitleSettings"
             backend: root.appBackend
+            editorState: subtitleEditorState
             speakers: root.projectSpeakerCache
             fontChoices: root.appBackend.subtitles.fontChoices
             panelColor: root.panel
@@ -1258,7 +1257,6 @@ ApplicationWindow {
             id: editorModeRail
             objectName: "editorModeRail"
             visible: root.appBackend.projectLoaded
-            enabled: !root.appBackend.running
             Layout.preferredWidth: 70
             Layout.minimumWidth: 86
             Layout.minimumHeight: 0
@@ -2056,7 +2054,14 @@ ApplicationWindow {
     }
     onClosing: function(close) {
         if (root.appBackend.running) {
-            close.accepted = false
+            if (root.appBackend.workflow.activeJob === "update"
+                    || root.appBackend.projectDirty
+                    || subtitleEditorState.hasPendingSubtitleText
+                    || subtitleEditorState.hasPendingTimeEdit) {
+                close.accepted = false
+                return
+            }
+            mainPlayer.stop()
             return
         }
         if (root.appBackend.projectLoaded && !root.saveProject()) {

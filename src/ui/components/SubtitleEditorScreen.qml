@@ -169,7 +169,6 @@ Item {
                 colors: root.colors
                 objectName: "editorBackButton"
                 text: "メインへ戻る"
-                enabled: !root.appBackend.running
                 onClicked: root.closeRequested()
             }
         }
@@ -416,7 +415,6 @@ Item {
                     ListView {
                         id: captionTable
                         objectName: "captionTable"
-                        interactive: !root.appBackend.running
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
@@ -430,8 +428,8 @@ Item {
                         // 行移動中の内部行番号を選択状態へ逆流させない。
                         currentIndex: -1
                         keyNavigationEnabled: false
-                        Keys.onUpPressed: if (!root.appBackend.running) root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
-                        Keys.onDownPressed: if (!root.appBackend.running) root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
+                        Keys.onUpPressed: root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
+                        Keys.onDownPressed: root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
                         Component.onCompleted: Qt.callLater(function () {
                             contentY = root.editorState.captionScrollY;
                         })
@@ -457,7 +455,6 @@ Item {
                             MouseArea {
                                 anchors.fill: parent
                                 z: -1
-                                enabled: !root.appBackend.running
                                 onClicked: {
                                     root.appBackend.subtitles.selectSegment(captionRow.index);
                                     root.player.position = captionRow.start * 1000;
@@ -483,11 +480,24 @@ Item {
                                         inputBackground: "#101512"
                                         Layout.preferredWidth: 72
                                         objectName: "captionStartTimeField"
-                                        text: captionRow.start.toFixed(3)
+                                        property string editingSegmentId: ""
+                                        function commitTime() {
+                                            var id = editingSegmentId
+                                            editingSegmentId = ""
+                                            if (id) {
+                                                root.editorState.updateTimeDraft(id, "start", text, acceptableInput)
+                                                root.editorState.commitTimeDraft(id, "start")
+                                            }
+                                        }
+                                        Component.onDestruction: commitTime()
+                                        text: root.editorState.pendingTimeForSegment(captionRow.segmentId, "start", captionRow.start.toFixed(3))
                                         enabled: !root.appBackend.running
-                                        onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {
-                                            "start": Number(text)
-                                        })
+                                        onTextChanged: if (activeFocus && editingSegmentId !== "") root.editorState.updateTimeDraft(editingSegmentId, "start", text, acceptableInput)
+                                        onActiveFocusChanged: if (activeFocus) {
+                                            editingSegmentId = captionRow.segmentId
+                                            root.editorState.beginTimeDraft(captionRow.index, "start", text, acceptableInput)
+                                        }
+                                        onEditingFinished: commitTime()
                                     }
                                     TimeField {
                                         textPrimary: root.colors.textPrimary
@@ -496,11 +506,24 @@ Item {
                                         inputBackground: "#101512"
                                         Layout.preferredWidth: 72
                                         objectName: "captionEndTimeField"
-                                        text: captionRow.end.toFixed(3)
+                                        property string editingSegmentId: ""
+                                        function commitTime() {
+                                            var id = editingSegmentId
+                                            editingSegmentId = ""
+                                            if (id) {
+                                                root.editorState.updateTimeDraft(id, "end", text, acceptableInput)
+                                                root.editorState.commitTimeDraft(id, "end")
+                                            }
+                                        }
+                                        Component.onDestruction: commitTime()
+                                        text: root.editorState.pendingTimeForSegment(captionRow.segmentId, "end", captionRow.end.toFixed(3))
                                         enabled: !root.appBackend.running
-                                        onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {
-                                            "end": Number(text)
-                                        })
+                                        onTextChanged: if (activeFocus && editingSegmentId !== "") root.editorState.updateTimeDraft(editingSegmentId, "end", text, acceptableInput)
+                                        onActiveFocusChanged: if (activeFocus) {
+                                            editingSegmentId = captionRow.segmentId
+                                            root.editorState.beginTimeDraft(captionRow.index, "end", text, acceptableInput)
+                                        }
+                                        onEditingFinished: commitTime()
                                     }
                                     ComboBox {
                                         id: captionSpeakerCombo

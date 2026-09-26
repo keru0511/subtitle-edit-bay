@@ -7,6 +7,7 @@ Item {
     id: root
 
     required property var backend
+    required property var editorState
     property var speakers: []
     property var fontChoices: []
     property color panelColor: "#161B22"
@@ -56,56 +57,30 @@ Item {
         return segment && segment.id !== undefined ? String(segment.id) : ""
     }
 
-    function segmentIndexForId(segmentId) {
-        if (!segmentId)
-            return -1
-        for (var index = 0; index < root.backend.subtitles.segmentCount; ++index) {
-            if (root.segmentIdAt(index) === segmentId)
-                return index
-        }
-        return -1
-    }
-
-    function beginTimeEdit(field) {
-        field.editingSegmentIndex = root.backend.subtitles.selectedSegmentIndex
-        field.editingSegmentId = root.segmentIdAt(field.editingSegmentIndex)
-    }
-
-    function restoreSelection(selectedIndex, selectedId, editedId) {
-        if (selectedIndex < 0) {
-            root.backend.subtitles.selectSegment(-1)
-            return
-        }
-        if (selectedId === editedId)
-            return
-        var restoreIndex = root.segmentIndexForId(selectedId)
-        if (restoreIndex >= 0)
-            root.backend.subtitles.selectSegment(restoreIndex)
+    function beginTimeEdit(field, propertyName) {
+        var index = root.backend.subtitles.selectedSegmentIndex
+        field.editingSegmentId = root.segmentIdAt(index)
+        if (index >= 0)
+            root.editorState.beginTimeDraft(index, propertyName, field.text, field.acceptableInput)
     }
 
     function commitTimeEdit(field, propertyName) {
         var editedId = field.editingSegmentId
-        var editIndex = editedId
-            ? root.segmentIndexForId(editedId)
-            : field.editingSegmentIndex
-        var selectedIndex = root.backend.subtitles.selectedSegmentIndex
-        var selectedId = root.segmentIdAt(selectedIndex)
-        if (editIndex >= 0 && field.acceptableInput) {
-            var changes = ({})
-            changes[propertyName] = Number(field.text)
-            root.backend.subtitles.updateSegment(editIndex, changes)
-            root.restoreSelection(selectedIndex, selectedId, editedId)
-        }
-        field.editingSegmentIndex = -1
         field.editingSegmentId = ""
+        if (editedId) {
+            root.editorState.updateTimeDraft(editedId, propertyName, field.text, field.acceptableInput)
+            root.editorState.commitTimeDraft(editedId, propertyName)
+        }
     }
 
     function syncEditorFields() {
         var segment = root.selectedSegment || ({})
         if (!startField.activeFocus)
-            startField.text = segment.start === undefined ? "" : Number(segment.start).toFixed(3)
+            startField.text = root.editorState.pendingTimeForSegment(
+                segment.id || "", "start", segment.start === undefined ? "" : Number(segment.start).toFixed(3))
         if (!endField.activeFocus)
-            endField.text = segment.end === undefined ? "" : Number(segment.end).toFixed(3)
+            endField.text = root.editorState.pendingTimeForSegment(
+                segment.id || "", "end", segment.end === undefined ? "" : Number(segment.end).toFixed(3))
         if (!captionText.activeFocus) {
             var storedText = String(segment.editorText || segment.text || "")
             captionText.text = root.pendingDraftTextForSegment
@@ -125,7 +100,10 @@ Item {
     }
 
     Component.onCompleted: refreshSelectedEditor()
-    Component.onDestruction: commitCaptionText()
+    Component.onDestruction: {
+        root.editorState.commitTimeDraft()
+        commitCaptionText()
+    }
 
     Connections {
         target: root.backend.subtitles
@@ -155,7 +133,6 @@ Item {
         ListView {
             id: subtitleList
             objectName: "workspaceSubtitleList"
-            interactive: !root.backend.running
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(190, Math.max(76, root.height * 0.3))
             clip: true
@@ -198,7 +175,6 @@ Item {
                 }
                 MouseArea {
                     anchors.fill: parent
-                    enabled: !root.backend.running
                     onClicked: {
                         root.backend.subtitles.selectSegment(subtitleRow.index)
                         root.seekRequested(subtitleRow.start * 1000)
@@ -240,13 +216,16 @@ Item {
                         id: startField
                         objectName: "workspaceSubtitleStartField"
                         enabled: !root.backend.running
-                        property int editingSegmentIndex: -1
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "開始"
+                        onTextChanged: {
+                            if (activeFocus && editingSegmentId !== "")
+                                root.editorState.updateTimeDraft(editingSegmentId, "start", text, acceptableInput)
+                        }
                         onActiveFocusChanged: {
                             if (activeFocus)
-                                root.beginTimeEdit(startField)
+                                root.beginTimeEdit(startField, "start")
                         }
                         onEditingFinished: root.commitTimeEdit(startField, "start")
                     }
@@ -254,13 +233,16 @@ Item {
                         id: endField
                         objectName: "workspaceSubtitleEndField"
                         enabled: !root.backend.running
-                        property int editingSegmentIndex: -1
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "終了"
+                        onTextChanged: {
+                            if (activeFocus && editingSegmentId !== "")
+                                root.editorState.updateTimeDraft(editingSegmentId, "end", text, acceptableInput)
+                        }
                         onActiveFocusChanged: {
                             if (activeFocus)
-                                root.beginTimeEdit(endField)
+                                root.beginTimeEdit(endField, "end")
                         }
                         onEditingFinished: root.commitTimeEdit(endField, "end")
                     }

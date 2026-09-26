@@ -17,6 +17,14 @@ QtObject {
     property string draftProjectPath: ""
     property string draftOriginalText: ""
     readonly property bool hasPendingSubtitleText: draftSegmentId !== "" && draftText !== draftOriginalText
+    property int timeDraftSegmentIndex: -1
+    property string timeDraftSegmentId: ""
+    property string timeDraftProjectPath: ""
+    property string timeDraftProperty: ""
+    property string timeDraftText: ""
+    property string timeDraftOriginalText: ""
+    property bool timeDraftAcceptableInput: false
+    readonly property bool hasPendingTimeEdit: timeDraftSegmentId !== "" && timeDraftText !== timeDraftOriginalText
 
     function canSplitSelectedSegment(positionMs) {
         var index = state.subtitles.selectedSegmentIndex;
@@ -104,6 +112,86 @@ QtObject {
         var selectedIndex = state.subtitles.selectedSegmentIndex
         var selectedId = String(state.subtitles.segmentAt(selectedIndex).id || "")
         state.subtitles.updateSegment(index, {"text": text})
+        if (selectedId !== id)
+            state.subtitles.selectSegment(state.subtitleIndexForId(selectedId, selectedIndex))
+    }
+
+    function beginTimeDraft(segmentIndex, propertyName, text, acceptableInput) {
+        if (state.running)
+            return
+        var segment = state.subtitles.segmentAt(segmentIndex)
+        var segmentId = String(segment.id || "")
+        if (state.timeDraftSegmentId !== "") {
+            if (state.hasPendingTimeEdit
+                    && state.timeDraftSegmentId === segmentId
+                    && state.timeDraftProperty === propertyName
+                    && state.timeDraftProjectPath === state.projectPath) {
+                state.timeDraftSegmentIndex = segmentIndex
+                return
+            }
+            state.commitTimeDraft()
+        }
+        state.timeDraftSegmentIndex = segmentIndex
+        state.timeDraftSegmentId = segmentId
+        state.timeDraftProjectPath = state.projectPath
+        state.timeDraftProperty = propertyName
+        state.timeDraftOriginalText = String(text)
+        state.timeDraftText = String(text)
+        state.timeDraftAcceptableInput = Boolean(acceptableInput)
+    }
+
+    function updateTimeDraft(segmentId, propertyName, text, acceptableInput) {
+        if (state.timeDraftSegmentId === String(segmentId) && state.timeDraftProperty === propertyName) {
+            state.timeDraftText = String(text)
+            state.timeDraftAcceptableInput = Boolean(acceptableInput)
+        }
+    }
+
+    function pendingTimeForSegment(segmentId, propertyName, fallbackText) {
+        if (state.hasPendingTimeEdit
+                && state.timeDraftProjectPath === state.projectPath
+                && state.timeDraftSegmentId === String(segmentId)
+                && state.timeDraftProperty === propertyName)
+            return state.timeDraftText
+        return String(fallbackText)
+    }
+
+    function clearTimeDraft() {
+        state.timeDraftSegmentIndex = -1
+        state.timeDraftSegmentId = ""
+        state.timeDraftProjectPath = ""
+        state.timeDraftProperty = ""
+        state.timeDraftText = ""
+        state.timeDraftOriginalText = ""
+        state.timeDraftAcceptableInput = false
+    }
+
+    function commitTimeDraft(expectedId, expectedProperty) {
+        if (expectedId !== undefined && expectedId !== state.timeDraftSegmentId)
+            return
+        if (expectedProperty !== undefined && expectedProperty !== state.timeDraftProperty)
+            return
+        if (state.running)
+            return
+        var id = state.timeDraftSegmentId
+        var projectPath = state.timeDraftProjectPath
+        var preferredIndex = state.timeDraftSegmentIndex
+        var propertyName = state.timeDraftProperty
+        var text = state.timeDraftText
+        var changed = state.hasPendingTimeEdit
+        var acceptable = state.timeDraftAcceptableInput
+        state.clearTimeDraft()
+        if (!changed || !acceptable || projectPath !== state.projectPath)
+            return
+        var index = state.subtitleIndexForId(id, preferredIndex)
+        var value = Number(text)
+        if (index < 0 || !isFinite(value) || value < 0)
+            return
+        var selectedIndex = state.subtitles.selectedSegmentIndex
+        var selectedId = String(state.subtitles.segmentAt(selectedIndex).id || "")
+        var changes = ({})
+        changes[propertyName] = value
+        state.subtitles.updateSegment(index, changes)
         if (selectedId !== id)
             state.subtitles.selectSegment(state.subtitleIndexForId(selectedId, selectedIndex))
     }

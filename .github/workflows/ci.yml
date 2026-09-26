@@ -323,6 +323,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_incomplete_time_input_can_be_finished_after_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_log_actions_fit_and_work_at_minimum_window_width
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_preview_play_button_starts_and_pauses_shared_player
+          tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_preview_works_without_main_workflow_context
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_inserts_before_clip_and_appends_after_last
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_onto_clip_card_inserts_before_it
@@ -338,6 +339,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_clip_card_drag_reorders_before_target
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_audio_controls_from_card_are_saved
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_remove_button_undo_redo_and_save_from_screen
+          tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_playhead_and_zoom_sliders_follow_drag
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_time_typed_without_return_is_saved_from_header
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_transition_controls_from_card_are_saved
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_back_commits_clip_time_typed_without_return

@@ -312,6 +312,21 @@ Window {
     def _click(self, window: QObject, item: QQuickItem) -> None:
         self.gui.click(window, item)
 
+    def _drag_slider(self, window: QObject, slider: QQuickItem, target_fraction: float) -> None:
+        start_fraction = float(slider.property("visualPosition"))
+        start = slider.mapToScene(
+            QPointF(slider.width() * (0.05 + 0.9 * start_fraction), slider.height() / 2)
+        ).toPoint()
+        finish = slider.mapToScene(
+            QPointF(slider.width() * (0.05 + 0.9 * target_fraction), slider.height() / 2)
+        ).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
+        self.assertTrue(bool(slider.property("pressed")), slider.objectName())
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, start + (finish - start) * fraction, 30)
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=finish)
+        self.gui.process_events()
+
     def _click_disabled(self, window: QObject, item: QQuickItem) -> None:
         self.gui.wait_until(
             lambda: not item.isEnabled(),
@@ -870,9 +885,9 @@ Window {
         self.assertTrue(QMetaObject.invokeMethod(window, "updateSeek"))
         self.assertEqual(slider.property("to"), 6000)
         self.assertEqual(slider.property("value"), 2500)
-        slider.setProperty("value", 1500)
-        self.assertTrue(QMetaObject.invokeMethod(slider, "moved"))
-        self.assertEqual(window.property("requestedSeekMs"), 1500)
+        self._drag_slider(window, slider, 0.5)
+        self.assertGreater(window.property("requestedSeekMs"), 2_000)
+        self.assertLess(window.property("requestedSeekMs"), 4_000)
         time_label = self._quick_item(window, "mainPreviewTimeLabel")
         self.assertEqual(time_label.property("text"), "0.0 / 0.0")
 
@@ -11047,38 +11062,42 @@ Window {
         self.app.undoCutEdit()
         self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
 
-    def test_sequence_timeline_zoom_changes_clip_scale(self) -> None:
+    def test_sequence_playhead_and_zoom_sliders_follow_drag(self) -> None:
         self._make_sequence_project()
         first_clip_id = str(self.app.sequenceClips[0]["clipId"])
         _, window = self._load_qml()
         self.gui.resize(window, 1520, 940)
-        self.app.selectEditMode("cut")
-        window.setProperty("editTool", "sequence")
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
         timeline_clip = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineClip-{first_clip_id}"
         )
+        playhead_slider = self._quick_item(window, "sequencePlayheadSlider")
         zoom_slider = self._quick_item(window, "sequenceTimelineZoomSlider")
         zoom_label = self._quick_item(window, "sequenceTimelineZoomLabel")
         self.gui.wait_until(timeline_clip.isVisible, description="zoomable timeline clip")
+        self._drag_slider(window, playhead_slider, 0.6)
+        self.gui.wait_until(
+            lambda: self.app.sequencePlayhead["outputMs"] >= 4_000,
+            description="sequence playhead moved by slider drag",
+        )
         initial_width = timeline_clip.width()
         self.assertEqual(zoom_label.property("text"), "100%")
 
-        zoom_slider.setProperty("value", 200)
-        self.assertTrue(QMetaObject.invokeMethod(zoom_slider, "moved"))
+        self._drag_slider(window, zoom_slider, 0.75)
         self.gui.wait_until(
-            lambda: timeline_clip.width() > initial_width * 1.8,
+            lambda: timeline_clip.width() > initial_width * 1.5,
             description="timeline zoom in",
         )
         zoomed_width = timeline_clip.width()
-        self.assertEqual(zoom_label.property("text"), "200%")
+        self.assertGreater(int(str(zoom_label.property("text")).rstrip("%")), 100)
 
-        zoom_slider.setProperty("value", 50)
-        self.assertTrue(QMetaObject.invokeMethod(zoom_slider, "moved"))
+        self._drag_slider(window, zoom_slider, 0.05)
         self.gui.wait_until(
-            lambda: timeline_clip.width() < zoomed_width * 0.3,
+            lambda: timeline_clip.width() < zoomed_width * 0.5,
             description="timeline zoom out",
         )
-        self.assertEqual(zoom_label.property("text"), "50%")
+        self.assertLess(int(str(zoom_label.property("text")).rstrip("%")), 100)
 
     def test_short_workspace_places_settings_left_and_clips_right(self) -> None:
         self._load_project()

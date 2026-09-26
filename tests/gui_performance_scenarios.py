@@ -387,7 +387,9 @@ if hasattr(EditBayBackend, "subtitles"):
 
         def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
             self._backend.gui_diagnostics["preview_format_requests"] += 1
-            cache = getattr(self._backend, "_subtitle_preview_text_cache", {})
+            # 所有先を移す前の比較対象も同じハーネスで計測する。
+            cache_owner = self if hasattr(self, "_subtitle_preview_text_cache") else self._backend
+            cache = getattr(cache_owner, "_subtitle_preview_text_cache", {})
             segment_id = str(segment.get("id", ""))
             signature_builder = getattr(self, "_subtitle_preview_signature", None)
             signature = signature_builder(segment) if callable(signature_builder) else None

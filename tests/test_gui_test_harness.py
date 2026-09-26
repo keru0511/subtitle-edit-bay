@@ -392,7 +392,7 @@ QtObject {
         assert backend.gui_diagnostics["full_segment_materializations"] == 1, backend.gui_diagnostics
         assert backend.gui_diagnostics["full_clip_materializations"] == 1
         assert backend.gui_diagnostics["short_clip_materializations"] == 1
-        backend._subtitle_preview_text_cache.clear()
+        backend.subtitles._subtitle_preview_text_cache.clear()
         backend.reset_gui_diagnostics()
         assert QMetaObject.invokeMethod(view, "preview")
         assert QMetaObject.invokeMethod(view, "preview")

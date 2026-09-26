@@ -16,25 +16,23 @@ from tests.typed_case import TypedTestCase
 
 
 def write_dictionary(path: Path) -> None:
-    path.write_text(
-        json.dumps(
+    payload: dict[str, object] = {
+        "game_title": "Test Game",
+        "terms": [
             {
-                "game_title": "Test Game",
-                "terms": [
-                    {
-                        "term": "スプラッシュボム",
-                        "aliases": ["スプボム"],
-                        "type_hint": "item",
-                        "enabled": True,
-                    },
-                    {
-                        "term": "未使用語",
-                        "enabled": False,
-                    },
-                ],
+                "term": "スプラッシュボム",
+                "aliases": ["スプボム"],
+                "type_hint": "item",
+                "enabled": True,
             },
-            ensure_ascii=False,
-        ),
+            {
+                "term": "未使用語",
+                "enabled": False,
+            },
+        ],
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False),
         encoding="utf-8",
     )
 

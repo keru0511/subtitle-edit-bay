@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from .transcription_context import TranscriptionContext, transcription_context_from_mapping
 from .transcription_dictionary import TranscriptionDictionary, load_transcription_dictionary
@@ -16,14 +16,14 @@ class TranscriptionHintWorkflowError(ValueError):
     """Raised when workflow-level transcription hint inputs cannot be resolved."""
 
 
-def _context_from_value(context: TranscriptionContext | Mapping[str, Any] | None) -> TranscriptionContext:
+def _context_from_value(context: TranscriptionContext | Mapping[str, object] | None) -> TranscriptionContext:
     if isinstance(context, TranscriptionContext):
         return context
     return transcription_context_from_mapping(context)
 
 
 def resolve_confirmed_dictionary_path(
-    context: TranscriptionContext | Mapping[str, Any] | None,
+    context: TranscriptionContext | Mapping[str, object] | None,
     *,
     base_dir: str | Path | None = None,
 ) -> Path | None:
@@ -45,7 +45,7 @@ def resolve_confirmed_dictionary_path(
 
 
 def load_confirmed_transcription_dictionary(
-    context: TranscriptionContext | Mapping[str, Any] | None,
+    context: TranscriptionContext | Mapping[str, object] | None,
     *,
     base_dir: str | Path | None = None,
 ) -> TranscriptionDictionary | None:
@@ -63,7 +63,7 @@ def load_confirmed_transcription_dictionary(
 
 
 def build_craig_hint_plan_from_context(
-    context: TranscriptionContext | Mapping[str, Any] | None,
+    context: TranscriptionContext | Mapping[str, object] | None,
     *,
     asr_settings: TranscriptionAsrSettings | None = None,
     base_dir: str | Path | None = None,

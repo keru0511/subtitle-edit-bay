@@ -1338,7 +1338,7 @@ Window {
         self.assertIn("書き出しを中止", self.app.status)
         self.assertEqual(self.app._project, original_project)
         self.assertEqual(path.read_bytes(), original_file)
-        self.assertEqual(Path(self.app.projectPath), path)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
 
         export = self.root / "chosen-export"
         export.mkdir()
@@ -1351,14 +1351,14 @@ Window {
         choose.assert_called_once()
         start.assert_called_once()
         command = start.call_args.args[0]
-        self.assertEqual(Path(command[command.index("--output") + 1]).parent, export)
-        self.assertEqual(Path(self.app.projectPath), path)
-        self.assertEqual(load_project(path)["output_dir"], str(export))
+        self.assertTrue(Path(command[command.index("--output") + 1]).parent.samefile(export))
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        self.assertTrue(Path(load_project(path)["output_dir"]).samefile(export))
         self.assertTrue(output_button.isEnabled())
         with patch("src.gui_base.QDesktopServices.openUrl", return_value=True) as open_url:
             self._click(window, output_button)
         open_url.assert_called_once()
-        self.assertEqual(Path(open_url.call_args.args[0].toLocalFile()), export)
+        self.assertTrue(Path(open_url.call_args.args[0].toLocalFile()).samefile(export))
 
     def test_output_unset_qml_offers_export_and_distinct_save_locations(self) -> None:
         path = self._load_project()

@@ -31,6 +31,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioModeSettings.qml",
     COMPONENTS_ROOT / "AudioMixerScreen.qml",
     COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
+    COMPONENTS_ROOT / "SourceSettingsPopup.qml",
     COMPONENTS_ROOT / "CutModeSettings.qml",
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
@@ -280,7 +281,7 @@ class QmlStaticTests(unittest.TestCase):
             "codex edit": (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8"),
             "highlight": (COMPONENTS_ROOT / "HighlightCandidateList.qml").read_text(encoding="utf-8"),
             "dictionary": (COMPONENTS_ROOT / "TranscriptionContextPanel.qml").read_text(encoding="utf-8"),
-            "workflow": WORKFLOW_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8") + (COMPONENTS_ROOT / "AudioMixerScreen.qml").read_text(encoding="utf-8"),
+            "workflow": WORKFLOW_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8") + (COMPONENTS_ROOT / "AudioMixerScreen.qml").read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SourceSettingsPopup.qml").read_text(encoding="utf-8"),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
         }

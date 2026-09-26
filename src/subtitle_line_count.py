@@ -36,12 +36,6 @@ def _dictionary(value: object) -> dict[object, object]:
     return value
 
 
-def _text(value: object) -> str:
-    if not isinstance(value, str):
-        raise TypeError("subtitle field must be a string")
-    return value
-
-
 def _segments(value: object) -> list[dict[object, object]]:
     if not is_object_sequence(value) or isinstance(value, (str, bytes, bytearray)):
         raise TypeError("subtitle segments must be a sequence")
@@ -101,8 +95,8 @@ def pack_event_with_line_count(segment: object, default_max_width: int = 24) -> 
     if not text:
         return None
 
-    speaker = _text(segment.get("speaker", "Oz"))
-    emphasis = _text(segment.get("emphasis", "normal"))
+    speaker = str(segment.get("speaker", "Oz"))
+    emphasis = str(segment.get("emphasis", "normal"))
     max_width = coerce_int(segment.get("max_width", default_max_width))
     display_duration = max(0.01, coerce_float(segment["end"]) - coerce_float(segment["start"]))
     line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", SUBTITLE_LINE_COUNT_AUTO))

@@ -58,7 +58,29 @@ class SubtitleLineCountContractTests(unittest.TestCase):
         self.assertEqual(events[0].text, format_segment_text(segment))
         self.assertEqual(segment_editor_text(segment), events[0].text.replace(r"\N", "\n"))
 
-    def test_rejects_invalid_payload_containers_and_required_strings(self) -> None:
+    def test_non_string_speaker_and_emphasis_keep_their_rendered_values(self) -> None:
+        cases: tuple[tuple[object, object, str, str], ...] = (
+            (None, None, "None", "None"),
+            (7, 2, "7", "2"),
+            (False, True, "False", "True"),
+        )
+        for speaker, emphasis, expected_speaker, expected_emphasis in cases:
+            segment: dict[str, object] = {
+                "text": "字幕",
+                "start": 0,
+                "end": 1,
+                "speaker": speaker,
+                "emphasis": emphasis,
+            }
+            with self.subTest(speaker=speaker, emphasis=emphasis):
+                event = pack_event_with_line_count(segment)
+                self.assertIsNotNone(event)
+                if event is None:
+                    self.fail("字幕イベントが生成されませんでした")
+                self.assertEqual(event.speaker, expected_speaker)
+                self.assertEqual(event.emphasis, expected_emphasis)
+
+    def test_rejects_invalid_payload_containers(self) -> None:
         invalid_payloads: tuple[object, ...] = (None, "字幕", 42, [])
         for payload in invalid_payloads:
             with self.subTest(payload=payload):
@@ -68,11 +90,6 @@ class SubtitleLineCountContractTests(unittest.TestCase):
             with self.subTest(segments=segments):
                 with self.assertRaises((TypeError, KeyError)):
                     pack_segments_with_line_count({"segments": segments})
-        for field in ("speaker", "emphasis"):
-            segment: dict[str, object] = {"text": "字幕", "start": 0, "end": 1, field: None}
-            with self.subTest(field=field):
-                with self.assertRaises(TypeError):
-                    pack_event_with_line_count(segment)
 
     def test_empty_segments_remain_empty(self) -> None:
         self.assertFalse(pack_segments_with_line_count({}))

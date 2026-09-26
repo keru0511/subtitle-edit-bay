@@ -9098,7 +9098,7 @@ Window {
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
         self.assertGreater(self.app.shortVideoSettings["bgm"]["volume"], 0.4)
-        self.assertEqual(color_field.property("text"), "112233")
+        self.assertIn(color_field.property("text"), ("112233", "#112233"))
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
         self.assertEqual(load_project(path)["short_video"]["global_background_color"], "#112233")

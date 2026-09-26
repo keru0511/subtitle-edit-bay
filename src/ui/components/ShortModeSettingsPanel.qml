@@ -146,7 +146,14 @@ ColumnLayout {
             validator: RegularExpressionValidator { regularExpression: /^#?[0-9A-Fa-f]{6}$/ }
             property bool draftEdited: false
             onTextEdited: draftEdited = true
-            onEditingFinished: settingsRoot.commitPendingEdits()
+            onEditingFinished: {
+                if (settingsRoot.appBackend) {
+                    var savedColor = String(settingsRoot.appBackend.shortVideo.shortVideoSettings.global_background_color || "")
+                    if (text.replace("#", "").toUpperCase() !== savedColor.replace("#", "").toUpperCase())
+                        draftEdited = true
+                }
+                settingsRoot.commitPendingEdits()
+            }
         }
         Rectangle {
             Layout.preferredWidth: 30
@@ -288,7 +295,10 @@ ColumnLayout {
             text: "0"
             property bool draftEdited: false
             onTextEdited: draftEdited = true
-            onEditingFinished: settingsRoot.commitPendingEdits()
+            onEditingFinished: {
+                draftEdited = true
+                settingsRoot.commitPendingEdits()
+            }
         }
         TimeField {
             id: bgmOut
@@ -301,7 +311,10 @@ ColumnLayout {
             text: "0"
             property bool draftEdited: false
             onTextEdited: draftEdited = true
-            onEditingFinished: settingsRoot.commitPendingEdits()
+            onEditingFinished: {
+                draftEdited = true
+                settingsRoot.commitPendingEdits()
+            }
         }
         TimeField {
             id: bgmStart
@@ -314,7 +327,10 @@ ColumnLayout {
             text: "0"
             property bool draftEdited: false
             onTextEdited: draftEdited = true
-            onEditingFinished: settingsRoot.commitPendingEdits()
+            onEditingFinished: {
+                draftEdited = true
+                settingsRoot.commitPendingEdits()
+            }
         }
         ColumnLayout {
             Layout.row: 3

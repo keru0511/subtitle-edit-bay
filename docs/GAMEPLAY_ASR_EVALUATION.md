@@ -64,3 +64,5 @@ python scripts/benchmark_transcription.py \
 ```
 
 候補はVAD閾値、音声区切りの長さ、探索幅と反復設定の順に、一種類ずつ比較します。評価結果はCERだけで決めず、`insertions`、`deletions`、`outside_speech_characters`、`timing_window_errors` と実際の音声を照らし合わせます。反復ペナルティだけで発言していない語を消せても、自然な繰り返しが脱落するなら採用しません。朗読4件の短い実認識CIは高速な回帰検査として維持し、実況素材を使った長い探索を通常のPRごとに追加しません。
+
+社畜部の実況動画で実モデルを動かした初回の試行と、既定設定を変更しなかった理由は [実況音声による初回認識の試行](GAMEPLAY_ASR_TRIAL_2026-09-26.md) に記録します。

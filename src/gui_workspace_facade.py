@@ -6,11 +6,10 @@ from copy import deepcopy
 from typing import Any
 
 from PySide6.QtCore import (
-    Property,
     Signal,
-    Slot,
 )
 
+from .qt_decorators import Property, Slot
 from .editor_workspace import (
     EditModeCapabilities,
     EditorWorkspaceState,

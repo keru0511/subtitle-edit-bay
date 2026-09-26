@@ -10,11 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import (
-    Property,
     Signal,
-    Slot,
 )
 
+from .qt_decorators import Property, Slot
 from .platform_updates import installer_download_name
 from .process_utils import detached_subprocess_kwargs
 

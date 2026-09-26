@@ -7,9 +7,10 @@ import math
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
 
+from .qt_decorators import Slot
 from .audio_mixer import (
     AUDIO_MIX_MASTER_GAIN,
     MAX_VOLUME_PERCENT,

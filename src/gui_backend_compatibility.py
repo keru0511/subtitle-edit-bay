@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
-from PySide6.QtCore import QProcess, Slot
+from PySide6.QtCore import QProcess
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 
+from .qt_decorators import Slot
 from .audio_preview_cache import AudioPreviewCacheResult
 from .codex_actions import ActionResult, ActionScope
 from .codex_app_server_client import CodexAppServerClient

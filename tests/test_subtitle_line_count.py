@@ -6,7 +6,7 @@ from src.subtitle_line_count import (
     segment_editor_text,
     segment_preview_text,
 )
-from src.subtitle_packer import pack_segments as legacy_pack_segments
+from src.subtitle_packer import pack_segment_pages, pack_segments as legacy_pack_segments
 from src.subtitle_project import SubtitleProjectError, create_project
 
 
@@ -43,6 +43,36 @@ class SubtitleLineCountTests(unittest.TestCase):
             self.assertLessEqual(event.end, min(13.6, words[cursor - 1]["end"] + 0.080001))
         self.assertEqual(cursor, len(source))
         self.assertTrue(all(left.end <= right.start for left, right in zip(events, events[1:])))
+
+    def test_split_pages_keep_only_their_aligned_words(self) -> None:
+        source = "ABCDEFGHIJKLMNOPQRSTUVWX"
+        words = [{"word": char, "start": index * 0.1, "end": (index + 1) * 0.1}
+                 for index, char in enumerate(source)]
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 2.4, "max_width": 8, "words": words})
+        self.assertGreater(len(pages), 1)
+        self.assertEqual([word["word"] for page in pages for word in page["words"]], list(source))
+        for page in pages:
+            self.assertEqual("".join(word["word"] for word in page["words"]), page["text"])
+        self.assertEqual(len(words), len(source))
+
+    def test_split_inside_aligned_word_keeps_nonduplicated_fragments(self) -> None:
+        source = "ABCDEFGHIJKLMNOPQRSTUVWX"
+        word = {"word": source, "start": 0.0, "end": 2.4, "confidence": 0.9}
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 2.4, "max_width": 8, "words": [word]})
+        self.assertGreater(len(pages), 1)
+        self.assertEqual("".join(page["words"][0]["word"] for page in pages), source)
+        self.assertTrue(all(page["words"][0]["word"] == page["text"] for page in pages))
+        self.assertTrue(all(page["words"][0]["confidence"] == 0.9 for page in pages))
+        self.assertTrue(all(left["words"][0]["end"] <= right["words"][0]["start"]
+                            for left, right in zip(pages, pages[1:])))
+        self.assertEqual(word["word"], source)
+
+    def test_incomplete_alignment_is_not_copied_to_every_page(self) -> None:
+        source = "ABCDEFGHIJKLMNOPQRSTUVWX"
+        word = {"word": "ABC", "start": 0.0, "end": 0.3}
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 2.4, "max_width": 8, "words": [word]})
+        self.assertGreater(len(pages), 1)
+        self.assertEqual([item["word"] for page in pages for item in page["words"]], ["ABC"])
 
     def test_automatic_one_line_pages_preserve_text(self) -> None:
         source = "明日の予定を確認してから次の作業を始めましょう"

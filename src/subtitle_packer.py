@@ -897,6 +897,56 @@ def _page_preserves_text(text: str, max_width: int, max_lines: int = MAX_LINES) 
     return normalize_alignment_text(rendered.replace(r"\N", "")) == normalize_alignment_text(text.replace(r"\N", ""))
 
 
+def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object, object]]) -> None:
+    """ページ本文に対応する語だけを保持し、後の結合で語が重複しないようにする。"""
+    if len(pages) <= 1 or not segment.get("words"):
+        return
+    words = _entry_mappings(segment["words"])
+    normalized_words = [normalize_alignment_text(word.get("word", "")) for word in words]
+    timeline = build_character_timeline(words)
+    page_lengths = [len(normalize_alignment_text(page["text"])) for page in pages]
+    exact_alignment = (
+        all(isinstance(word.get("word"), str) for word in words)
+        and len(timeline) == sum(len(item) for item in normalized_words)
+        and "".join(normalized_words) == normalize_alignment_text("".join(_text(page["text"]) for page in pages))
+    )
+    assigned: list[list[dict[object, object]]] = [[] for _ in pages]
+    if exact_alignment:
+        page_start = 0
+        for page_index, page_length in enumerate(page_lengths):
+            page_end = page_start + page_length
+            word_start = 0
+            for word, normalized in zip(words, normalized_words):
+                word_end = word_start + len(normalized)
+                overlap_start = max(page_start, word_start)
+                overlap_end = min(page_end, word_end)
+                if overlap_start < overlap_end:
+                    fragment = dict(word)
+                    if overlap_start != word_start or overlap_end != word_end:
+                        fragment["word"] = normalized[overlap_start - word_start:overlap_end - word_start]
+                        fragment["start"] = timeline[overlap_start]["start"]
+                        fragment["end"] = timeline[overlap_end - 1]["end"]
+                    assigned[page_index].append(fragment)
+                word_start = word_end
+            page_start = page_end
+    else:
+        # アラインメント文字列が本文と一致しない場合、時刻が最も近い1ページにだけ残す。
+        for word in words:
+            start = word.get("start")
+            end = word.get("end")
+            midpoint = (_number(start) + _number(end)) / 2 if start is not None and end is not None else _number(pages[0]["start"])
+            closest = 0
+            closest_distance = float("inf")
+            for index, page in enumerate(pages):
+                distance = max(_number(page["start"]) - midpoint, midpoint - _number(page["end"]), 0.0)
+                if distance < closest_distance:
+                    closest = index
+                    closest_distance = distance
+            assigned[closest].append(dict(word))
+    for page, page_words in zip(pages, assigned):
+        page["words"] = page_words
+
+
 def pack_segment_pages(
     segment: object,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
@@ -1011,6 +1061,7 @@ def pack_segment_pages(
                 has_word_timing,
             )
         )
+    _assign_page_words(segment, results)
     return results
 
 

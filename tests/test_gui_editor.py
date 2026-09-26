@@ -18,8 +18,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
-from PySide6.QtGui import QInputMethodEvent, QKeySequence
+from PySide6.QtCore import QCoreApplication, QMetaObject, QMimeData, QObject, QPoint, QPointF, QProcess, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QInputMethodEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -1587,6 +1587,49 @@ Window {
 
         self.assertEqual(self.app.sourceSelection["video"], "")
         self.assertEqual(self.app.stage, "BUSY")
+
+    def test_window_drop_area_imports_source_and_disables_during_processing(self) -> None:
+        video = self.root / "capture.mkv"
+        video.write_bytes(b"video")
+        _, window = self._load_qml()
+        drop_area = self._quick_item(window, "globalSourceDropArea")
+        self.assertTrue(drop_area.isEnabled())
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(video.resolve()))])
+        position = QPoint(window.width() // 2, window.height() // 2)
+
+        with patch.object(self.app, "_probe_audio_tracks"):
+            enter = QDragEnterEvent(
+                position, Qt.DropAction.CopyAction, mime,
+                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+            )
+            QCoreApplication.sendEvent(window, enter)
+            self.assertTrue(enter.isAccepted())
+            self.assertTrue(window.property("acceptingSourceDrop"))
+            drop = QDropEvent(
+                QPointF(position), Qt.DropAction.CopyAction, mime,
+                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+            )
+            QCoreApplication.sendEvent(window, drop)
+
+        self.assertTrue(drop.isAccepted())
+        self.assertFalse(window.property("acceptingSourceDrop"))
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(drop_area.isEnabled())
+        other_video = self.root / "other.mkv"
+        other_video.write_bytes(b"other video")
+        other_mime = QMimeData()
+        other_mime.setUrls([QUrl.fromLocalFile(str(other_video.resolve()))])
+        busy_enter = QDragEnterEvent(
+            position, Qt.DropAction.CopyAction, other_mime,
+            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+        )
+        QCoreApplication.sendEvent(window, busy_enter)
+        self.assertFalse(busy_enter.isAccepted())
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
 
     def test_video_file_dialog_allows_extended_video_extensions(self) -> None:
         video = self.root / "capture.avi"
@@ -7189,6 +7232,37 @@ Window {
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
 
+    def test_dictionary_confirmation_switch_saves_and_reopens_from_screen(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        dictionary_path = self.root / "game-terms.json"
+        dictionary_path.write_text("{}", encoding="utf-8")
+        path_field = self._quick_visual_item(page, "transcriptionDictionaryPathField")
+        path_field.setProperty("text", str(dictionary_path))
+        confirmation = self._quick_item(window, "transcriptionDictionaryConfirmedSwitch")
+        self.assertFalse(confirmation.property("checked"))
+        self.assertTrue(confirmation.isEnabled())
+        self._assert_quick_item_within(page, confirmation)
+
+        self._click(window, confirmation)
+        self.assertTrue(confirmation.property("checked"))
+        self.assertEqual(self.app.transcriptionContext["dictionary_path"], str(dictionary_path))
+        self.assertTrue(self.app.transcriptionContext["dictionary_confirmed"])
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertTrue(config["craig_pipeline"]["transcription_context"]["dictionary_confirmed"])
+
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self.assertFalse(page.isVisible())
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        self.assertTrue(confirmation.property("checked"))
+        self._click(window, confirmation)
+        self.assertFalse(self.app.transcriptionContext["dictionary_confirmed"])
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertFalse(config["craig_pipeline"]["transcription_context"]["dictionary_confirmed"])
+
     def test_web_dictionary_candidate_actions_save_and_reload_from_screen(self) -> None:
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
@@ -7319,6 +7393,7 @@ Window {
             self.assertFalse(self._quick_item(window, "transcriptionDictionaryBackButton").isEnabled())
             self.assertFalse(save_shortcut.property("enabled"))
             for name in (
+                "transcriptionDictionaryConfirmedSwitch",
                 "transcriptionWebDictionarySwitch",
                 "transcriptionWebDictionaryRefreshButton",
                 "transcriptionWebDictionaryAddButton",

@@ -298,6 +298,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_auth_controls_fit_and_dispatch_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_model_and_new_chat_controls_preserve_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_cut_editing_is_locked_during_processing_and_recovers
+          tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_confirmation_switch_saves_and_reopens_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_shortcuts_preserve_pending_input_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_error_copy_preserves_failure_after_settings_save_and_drains_output
@@ -333,6 +334,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_project_open_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_render_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_save_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_window_drop_area_imports_source_and_disables_during_processing
 
       - name: Run Windows FFmpeg and Qt media tests
         shell: pwsh

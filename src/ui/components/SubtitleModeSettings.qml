@@ -21,6 +21,7 @@ Item {
     property var beginDraft: null
     property var updateDraft: null
     property var commitDraft: null
+    property var pendingDraftTextForSegment: null
     signal seekRequested(real positionMilliseconds)
     signal speakerColorRequested(int speakerIndex, string currentColor)
     signal contentYChangedByUser(real value)
@@ -105,8 +106,11 @@ Item {
             startField.text = segment.start === undefined ? "" : Number(segment.start).toFixed(3)
         if (!endField.activeFocus)
             endField.text = segment.end === undefined ? "" : Number(segment.end).toFixed(3)
-        if (!captionText.activeFocus)
-            captionText.text = String(segment.editorText || segment.text || "")
+        if (!captionText.activeFocus) {
+            var storedText = String(segment.editorText || segment.text || "")
+            captionText.text = root.pendingDraftTextForSegment
+                ? root.pendingDraftTextForSegment(segment.id || "", storedText) : storedText
+        }
         root.selectComboValue(speakerCombo, segment.speaker || "")
         root.selectComboValue(fontCombo, segment.subtitle_font_family || "")
         sizeSpin.value = Math.round(Number(segment.subtitle_font_scale || 1) * 100)
@@ -151,6 +155,7 @@ Item {
         ListView {
             id: subtitleList
             objectName: "workspaceSubtitleList"
+            interactive: !root.backend.running
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(190, Math.max(76, root.height * 0.3))
             clip: true
@@ -193,6 +198,7 @@ Item {
                 }
                 MouseArea {
                     anchors.fill: parent
+                    enabled: !root.backend.running
                     onClicked: {
                         root.backend.subtitles.selectSegment(subtitleRow.index)
                         root.seekRequested(subtitleRow.start * 1000)

@@ -399,6 +399,7 @@ ApplicationWindow {
     SubtitleEditorState {
         id: subtitleEditorState
         subtitles: root.appBackend.subtitles
+        running: root.appBackend.running
         projectPath: root.appBackend.projectPath
         previewEnabled: root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle"
     }
@@ -519,6 +520,8 @@ ApplicationWindow {
     }
 
     function openEditorScreen() {
+        if (root.appBackend.running)
+            return
         root.closeSettingsPopup()
         root.appBackend.workspace.selectEditMode("subtitle")
         if (!root.mixerMode) {
@@ -530,6 +533,8 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
+        if (root.appBackend.running)
+            return
         root.commitPendingEdits()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
@@ -597,6 +602,8 @@ ApplicationWindow {
     }
 
     function commitPendingEdits() {
+        if (root.appBackend.running)
+            return
         // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
         root.commitInputMethod()
         root.contentItem.forceActiveFocus()
@@ -637,6 +644,8 @@ ApplicationWindow {
     }
 
     function saveProject() {
+        if (root.appBackend.running)
+            return false
         root.commitPendingEdits()
         return root.appBackend.saveProject()
     }
@@ -1002,6 +1011,7 @@ ApplicationWindow {
             beginDraft: subtitleEditorState.beginSubtitleDraft
             updateDraft: subtitleEditorState.updateSubtitleDraft
             commitDraft: subtitleEditorState.commitSubtitleDraft
+            pendingDraftTextForSegment: subtitleEditorState.pendingTextForSegment
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }
@@ -1264,6 +1274,7 @@ ApplicationWindow {
             id: editorModeRail
             objectName: "editorModeRail"
             visible: root.appBackend.projectLoaded
+            enabled: !root.appBackend.running
             Layout.preferredWidth: 70
             Layout.minimumWidth: 86
             Layout.minimumHeight: 0
@@ -2223,7 +2234,7 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("undo") }
     Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("redo") }
-    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProjectFromShortcut() }
+    Shortcut { sequences: [StandardKey.Save]; enabled: (root.editorMode || root.mixerMode) && !root.appBackend.running; onActivated: root.saveProjectFromShortcut() }
     Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.subtitles.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
 
     Connections {
@@ -2236,7 +2247,7 @@ ApplicationWindow {
         root.syncSettings()
     }
     onClosing: function(close) {
-        if (root.appBackend.running && root.appBackend.workflow.activeJob === "update") {
+        if (root.appBackend.running) {
             close.accepted = false
             return
         }

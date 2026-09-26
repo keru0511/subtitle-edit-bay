@@ -3775,6 +3775,31 @@ Window {
             self.assertTrue(window.close())
         save.assert_not_called()
 
+    def test_close_during_processing_keeps_pending_subtitle_text(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+
+        self.assertFalse(window.close())
+        self.assertTrue(window.isVisible())
+        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(window.close())
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+
+    def test_close_during_processing_without_pending_edits_is_blocked(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(window.close())
+        self.assertTrue(window.isVisible())
+
     def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QObject]:
         path = self._load_project(segments=[
             {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
@@ -3921,6 +3946,146 @@ Window {
 
     def test_pending_text_delete_preserves_neighbor_in_workspace(self) -> None:
         self._assert_pending_text_delete_preserves_neighbor(expanded=False)
+
+    def _assert_pending_text_survives_processing_state_change(self, *, expanded: bool) -> None:
+        path, window = self._prepare_pending_subtitle_text(expanded=expanded)
+        self.assertEqual(window.property("editorDraftText"), "edited")
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["text"], "first")
+        self.assertEqual(window.property("editorDraftText"), "edited")
+        if expanded:
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        save_button = "saveProjectButton" if expanded else "workspaceSubtitleSaveButton"
+        self._click(window, self._quick_item(window, save_button))
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+
+    def test_pending_text_survives_processing_state_change_in_workspace(self) -> None:
+        self._assert_pending_text_survives_processing_state_change(expanded=False)
+
+    def test_pending_text_survives_processing_state_change_in_expanded_editor(self) -> None:
+        self._assert_pending_text_survives_processing_state_change(expanded=True)
+
+    def test_processing_blocks_mode_switch_and_preserves_pending_text(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(self._quick_item(window, "editorModeRail").isEnabled())
+        self.assertFalse(self.app.selectEditMode("audio"))
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertEqual(self.app.segmentAt(0)["text"], "first")
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        field = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        self.assertEqual(field.property("text"), "edited")
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+
+    def test_processing_blocks_expanded_editor_close_and_preserves_pending_text(self) -> None:
+        path, window = self._prepare_pending_subtitle_text(expanded=True)
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(self._quick_item(window, "editorBackButton").isEnabled())
+        self.assertTrue(QMetaObject.invokeMethod(window, "closeEditorScreen"))
+        self.assertTrue(self._quick_item(window, "editorPage").isVisible())
+        self.assertEqual(self.app.segmentAt(0)["text"], "first")
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        self.assertEqual(field.property("text"), "edited")
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+
+    def test_pending_start_time_survives_processing_state_change(self) -> None:
+        path = self._load_project()
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        field = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleStartField"
+        )
+        self._click(window, field)
+        field.setProperty("text", "1.250")
+        self.app.processEvents()
+        self.assertTrue(field.hasActiveFocus())
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["start"], 0.0)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+
+    def test_pending_start_time_survives_processing_state_change_in_expanded_editor(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionStartTimeField")
+        self._click(window, field)
+        field.setProperty("text", "1.250")
+        self.app.processEvents()
+        self.assertTrue(field.hasActiveFocus())
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["start"], 0.0)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+
+    def test_processing_blocks_mode_switch_and_preserves_pending_start_time(self) -> None:
+        path = self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
+            {"id": "second", "start": 5, "end": 8, "text": "second", "speaker": "Speaker_Alice"},
+        ])
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        field = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleStartField"
+        )
+        self._click(window, field)
+        field.setProperty("text", "1.250")
+        self.app.processEvents()
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.assertFalse(self.app.selectEditMode("audio"))
+        self.app.subtitles.selectSegment(1)
+        self.app.processEvents()
+        self.assertEqual(self.app.currentEditMode, "subtitle")
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        self.assertEqual(self.app.segmentAt(0)["start"], 0.0)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
 
     def test_pending_text_delete_preserves_neighbor_in_expanded_editor(self) -> None:
         self._assert_pending_text_delete_preserves_neighbor(expanded=True)
@@ -4243,6 +4408,25 @@ Window {
                     )
                 finally:
                     self.app._running = False
+
+    def test_processing_does_not_save_unsaved_subtitle_changes(self) -> None:
+        path = self._load_project()
+        saved_bytes = path.read_bytes()
+        self.app.subtitles.updateSegment(0, {"text": "未保存の字幕"})
+        self.app.autosave_timer.stop()
+        self.assertTrue(self.app.projectDirty)
+
+        self.app._running = True
+        try:
+            self.assertFalse(self.app.saveProject())
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(path.read_bytes(), saved_bytes)
+        finally:
+            self.app._running = False
+
+        self.assertTrue(self.app.saveProject())
+        self.assertFalse(self.app.projectDirty)
+        self.assertEqual(load_project(path)["segments"][0]["text"], "未保存の字幕")
 
     def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
         self._load_project(

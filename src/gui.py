@@ -2285,6 +2285,9 @@ class EditBayBackend(LegacyEditBayBackend):
 
     @Slot(result=bool)
     def saveProject(self) -> bool:
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを保存できません", "BUSY")
+            return False
         if self._project is None or not self._project_path:
             self._set_status("保存する字幕編集プロジェクトがありません", "CHECK")
             return False

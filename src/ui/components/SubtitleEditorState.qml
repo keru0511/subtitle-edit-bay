@@ -3,6 +3,7 @@ import QtQuick
 QtObject {
     id: state
     required property var subtitles
+    property bool running: false
     property bool previewEnabled: false
     property real pixelsPerSecond: 64
     property int snapMilliseconds: 100
@@ -41,12 +42,32 @@ QtObject {
     }
 
     function beginSubtitleDraft(segmentIndex, text) {
+        if (state.running)
+            return
         var segment = state.subtitles.segmentAt(segmentIndex)
+        var segmentId = String(segment.id || "")
+        if (state.draftSegmentId !== "") {
+            if (state.hasPendingSubtitleText
+                    && state.draftSegmentId === segmentId
+                    && state.draftProjectPath === state.projectPath) {
+                state.draftSegmentIndex = segmentIndex
+                return
+            }
+            state.commitSubtitleDraft()
+        }
         state.draftSegmentIndex = segmentIndex
-        state.draftSegmentId = String(segment.id || "")
+        state.draftSegmentId = segmentId
         state.draftProjectPath = state.projectPath
         state.draftOriginalText = String(text)
         state.draftText = String(text)
+    }
+
+    function pendingTextForSegment(segmentId, fallbackText) {
+        if (state.hasPendingSubtitleText
+                && state.draftProjectPath === state.projectPath
+                && state.draftSegmentId === String(segmentId))
+            return state.draftText
+        return String(fallbackText)
     }
 
     function updateSubtitleDraft(segmentIndex, text) {
@@ -64,6 +85,9 @@ QtObject {
 
     function commitSubtitleDraft(expectedId) {
         if (expectedId !== undefined && expectedId !== state.draftSegmentId)
+            return
+        // 処理中に入力欄が無効化されても、確定できない本文を破棄しない。
+        if (state.running)
             return
         var id = state.draftSegmentId
         var projectPath = state.draftProjectPath

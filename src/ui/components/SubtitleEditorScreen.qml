@@ -169,6 +169,7 @@ Item {
                 colors: root.colors
                 objectName: "editorBackButton"
                 text: "メインへ戻る"
+                enabled: !root.appBackend.running
                 onClicked: root.closeRequested()
             }
         }
@@ -415,6 +416,7 @@ Item {
                     ListView {
                         id: captionTable
                         objectName: "captionTable"
+                        interactive: !root.appBackend.running
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
@@ -428,8 +430,8 @@ Item {
                         // 行移動中の内部行番号を選択状態へ逆流させない。
                         currentIndex: -1
                         keyNavigationEnabled: false
-                        Keys.onUpPressed: root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
-                        Keys.onDownPressed: root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
+                        Keys.onUpPressed: if (!root.appBackend.running) root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
+                        Keys.onDownPressed: if (!root.appBackend.running) root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
                         Component.onCompleted: Qt.callLater(function () {
                             contentY = root.editorState.captionScrollY;
                         })
@@ -455,6 +457,7 @@ Item {
                             MouseArea {
                                 anchors.fill: parent
                                 z: -1
+                                enabled: !root.appBackend.running
                                 onClicked: {
                                     root.appBackend.subtitles.selectSegment(captionRow.index);
                                     root.player.position = captionRow.start * 1000;
@@ -586,7 +589,7 @@ Item {
                                     Component.onDestruction: commitText()
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 52
-                                    text: captionRow.editorText
+                                    text: root.editorState.pendingTextForSegment(captionRow.segmentId, captionRow.editorText)
                                     color: root.colors.textPrimary
                                     selectionColor: root.colors.acid
                                     font.family: captionRow.subtitleFontFamily || "Yu Gothic UI"

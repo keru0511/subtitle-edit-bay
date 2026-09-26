@@ -164,6 +164,8 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(str, result=bool)
     def selectEditMode(self, mode: str) -> bool:
         backend = self._backend
+        if backend._running:
+            return False
         changed = backend._editor_workspace.select_mode(mode, self._edit_mode_capabilities())
         if changed:
             backend.editorModeChanged.emit()

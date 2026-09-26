@@ -352,6 +352,8 @@ class SubtitleFacade(FeatureFacade):
     @Slot(int)
     def selectSegment(self, index: int) -> None:
         backend = self._backend
+        if backend._running:
+            return
         backend._project_editor_controller.select_segment(index)
 
     @Slot(float, result=int)

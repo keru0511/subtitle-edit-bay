@@ -11,6 +11,7 @@
         "test_sequence_render_semantic_e2e",
         "test_short_video_ass",
         "test_short_video_semantic_e2e",
+        "test_silence_cut_semantic_e2e",
         "test_workflow_action_semantic_e2e"
       ],
       "selectors": []
@@ -76,6 +77,7 @@
         "test_installer_migration",
         "test_installer_migration_entrypoint",
         "test_legacy_migration",
+        "test_legacy_migration_module_boundaries",
         "test_media_probe",
         "test_merge_transcripts",
         "test_multi_source_short_video",
@@ -116,6 +118,7 @@
         "test_subtitle_project_persistence_types",
         "test_subtitle_project_safety",
         "test_subtitle_project_schema",
+        "test_subtitle_render_planning",
         "test_subtitle_review",
         "test_subtitle_text_rules",
         "test_subtitle_workflow_context_cli",
@@ -190,7 +193,8 @@
         "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_clip_order_boundary_duration_and_unselected_media",
         "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_short_without_subtitles_keeps_final_media_contract",
         "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_source_time_basis_uses_original_source_ranges_in_final_media",
-        "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_subtitles_follow_selected_clips_on_short_output_timeline"
+        "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests.test_subtitles_follow_selected_clips_on_short_output_timeline",
+        "tests.test_silence_cut_semantic_e2e.SilenceCutSemanticE2ETests.test_silence_cut_retimes_subtitles_and_preserves_source_edits"
       ]
     },
     "windows-launcher-runtime": {

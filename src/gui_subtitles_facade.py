@@ -55,10 +55,9 @@ class SubtitleFacade(FeatureFacade):
 
     @Property("QVariantList", notify=segmentsChanged)
     def subtitleSegments(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return []
-        return deepcopy(backend._project.get("segments", []))
+        return deepcopy(self.project_editor.project.get("segments", []))
 
     @Property("QVariantMap", notify=segmentsChanged)
     def subtitleLayoutMetrics(self) -> dict[str, float | int]:
@@ -78,12 +77,11 @@ class SubtitleFacade(FeatureFacade):
 
     @Property(int, notify=segmentsChanged)
     def segmentCount(self) -> int:
-        backend = self._backend
-        return len(backend._project.get("segments", [])) if backend._project else 0
+        return len(self.project_editor.project.get("segments", [])) if self.project_editor.project else 0
 
     def _sync_subtitle_model(self) -> None:
         backend = self._backend
-        segments = backend._project.get("segments", []) if backend._project else []
+        segments = self.project_editor.project.get("segments", []) if self.project_editor.project else []
         self._segment_by_id = {str(segment["id"]): segment for segment in segments}
         backend._subtitle_model.set_segments(segments)
         self._segment_starts = [float(item["start"]) for item in segments]
@@ -177,16 +175,14 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:
-        backend = self._backend
-        segments = backend._project.get("segments", []) if backend._project else []
+        segments = self.project_editor.project.get("segments", []) if self.project_editor.project else []
         if not 0 <= index < len(segments):
             return {}
         return self._segment_view(segments[index], index)
 
     @Slot(int, str, result=str)
     def formatSubtitlePreview(self, index: int, text: str) -> str:
-        backend = self._backend
-        segments = backend._project.get("segments", []) if backend._project else []
+        segments = self.project_editor.project.get("segments", []) if self.project_editor.project else []
         if not 0 <= index < len(segments):
             return str(text)
         draft = {**segments[index], "text": str(text)}
@@ -194,8 +190,7 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(float, result="QVariantList")
     def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
-        backend = self._backend
-        segments = backend._project.get("segments", []) if backend._project else []
+        segments = self.project_editor.project.get("segments", []) if self.project_editor.project else []
         if not segments:
             return []
         position = max(0.0, float(seconds))
@@ -211,8 +206,7 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(float, float, result="QVariantList")
     def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
-        backend = self._backend
-        segments = backend._project.get("segments", []) if backend._project else []
+        segments = self.project_editor.project.get("segments", []) if self.project_editor.project else []
         if not segments:
             return []
         viewport_start = max(0.0, float(start))
@@ -231,45 +225,40 @@ class SubtitleFacade(FeatureFacade):
 
     @Property("QVariantList", notify=projectDataChanged)
     def projectSpeakers(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return []
-        return deepcopy(backend._project.get("speakers", []))
+        return deepcopy(self.project_editor.project.get("speakers", []))
 
     @Property("QVariantList", notify=projectDataChanged)
     def subtitleWaveforms(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return []
-        return deepcopy(backend._project.get("waveforms", []))
+        return deepcopy(self.project_editor.project.get("waveforms", []))
 
     @Property(bool, notify=historyChanged)
     def canUndo(self) -> bool:
-        backend = self._backend
-        return bool(backend._undo_stack)
+        return bool(self.project_editor.undo_stack)
 
     @Property(bool, notify=historyChanged)
     def canRedo(self) -> bool:
-        backend = self._backend
-        return bool(backend._redo_stack)
+        return bool(self.project_editor.redo_stack)
 
     @Property(int, notify=selectionChanged)
     def selectedSegmentIndex(self) -> int:
-        backend = self._backend
-        return backend._selected_segment_index
+        return self.project_editor.selected_segment_index
 
     def _apply_project_speaker_color(self, index: int, color: str) -> bool:
         backend = self._backend
-        if backend._project is None or not 0 <= index < len(backend._project.get("speakers", [])):
+        if self.project_editor.project is None or not 0 <= index < len(self.project_editor.project.get("speakers", [])):
             return False
-        current = backend._project["speakers"][index]
+        current = self.project_editor.project["speakers"][index]
         if str(current.get("color", "")).upper() == color:
             return False
         updated = {**current, "color": color}
-        backend._project["speakers"][index] = updated
+        self.project_editor.project["speakers"][index] = updated
         style = str(updated.get("style", ""))
         name = str(updated.get("name", ""))
-        for waveform in backend._project.get("waveforms", []):
+        for waveform in self.project_editor.project.get("waveforms", []):
             if waveform.get("style") == style or waveform.get("speaker") == name:
                 waveform["color"] = color
 
@@ -289,13 +278,12 @@ class SubtitleFacade(FeatureFacade):
         return True
 
     def _source_speaker_color_updated(self, speaker: dict[str, str]) -> None:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return
         index = next(
             (
                 index
-                for index, project_speaker in enumerate(backend._project.get("speakers", []))
+                for index, project_speaker in enumerate(self.project_editor.project.get("speakers", []))
                 if (
                     project_speaker.get("path") == speaker.get("path")
                     or project_speaker.get("file_name") == speaker.get("file_name")
@@ -310,9 +298,13 @@ class SubtitleFacade(FeatureFacade):
     @Slot(int, str)
     def updateProjectSpeakerColor(self, index: int, color: str) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= index < len(backend._project.get("speakers", [])):
+        if (
+            backend._running
+            or self.project_editor.project is None
+            or not 0 <= index < len(self.project_editor.project.get("speakers", []))
+        ):
             return
-        speaker = backend._project["speakers"][index]
+        speaker = self.project_editor.project["speakers"][index]
         try:
             normalized = normalize_rgb_color(color)
             save_speaker_color(
@@ -328,8 +320,7 @@ class SubtitleFacade(FeatureFacade):
         backend._set_status(f"{speaker.get('name', '話者')} の字幕色を保存しました", "SAVED")
 
     def _mark_project_dirty(self) -> None:
-        backend = self._backend
-        backend._project_editor_controller.mark_dirty()
+        self.project_editor.mark_dirty()
 
     def _commit_segment_change(
         self,
@@ -342,7 +333,7 @@ class SubtitleFacade(FeatureFacade):
         backend = self._backend
         if backend._running:
             return
-        backend._project_editor_controller.commit_segment_change(
+        self.project_editor.commit_segment_change(
             before,
             after,
             selected_id,
@@ -351,13 +342,11 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(int)
     def selectSegment(self, index: int) -> None:
-        backend = self._backend
-        backend._project_editor_controller.select_segment(index)
+        self.project_editor.select_segment(index)
 
     @Slot(float, result=int)
     def segmentIndexAtTime(self, seconds: float) -> int:
-        backend = self._backend
-        segments = backend._project.get("segments", []) if backend._project else []
+        segments = self.project_editor.project.get("segments", []) if self.project_editor.project else []
         if not segments:
             return -1
         position = max(0.0, float(seconds))
@@ -390,9 +379,9 @@ class SubtitleFacade(FeatureFacade):
     @Slot(int, "QVariantMap")
     def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= index < len(backend._project["segments"]):
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
-        current = backend._project["segments"][index]
+        current = self.project_editor.project["segments"][index]
         updated = deepcopy(current)
         reflow_layout = False
         if "text" in changes:
@@ -418,7 +407,9 @@ class SubtitleFacade(FeatureFacade):
             style = str(changes["speaker"])
             updated["speaker"] = style
             updated["manual_speaker"] = True
-            speaker = next((item for item in backend._project.get("speakers", []) if item.get("style") == style), None)
+            speaker = next(
+                (item for item in self.project_editor.project.get("speakers", []) if item.get("style") == style), None
+            )
             if speaker:
                 updated["source_speaker"] = speaker.get("name", "")
                 updated["source_file"] = speaker.get("file_name", "")
@@ -444,15 +435,14 @@ class SubtitleFacade(FeatureFacade):
         )
 
     def _snap_time(self, value: float, moving_index: int, grid_seconds: float) -> float:
-        backend = self._backend
         snapped = max(0.0, value)
         if grid_seconds > 0:
             snapped = round(snapped / grid_seconds) * grid_seconds
         tolerance = max(0.04, grid_seconds * 0.65)
-        if backend._project is not None:
+        if self.project_editor.project is not None:
             edges = [
                 float(edge)
-                for index, segment in enumerate(backend._project["segments"])
+                for index, segment in enumerate(self.project_editor.project["segments"])
                 if index != moving_index
                 for edge in (segment["start"], segment["end"])
             ]
@@ -465,7 +455,7 @@ class SubtitleFacade(FeatureFacade):
     @Slot(int, float, float, float)
     def moveSegment(self, index: int, start: float, end: float, snap_seconds: float) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= index < len(backend._project["segments"]):
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
         duration = max(MIN_SEGMENT_DURATION_SECONDS, end - start)
         snapped_start = self._snap_time(start, index, max(0.0, snap_seconds))
@@ -475,27 +465,27 @@ class SubtitleFacade(FeatureFacade):
     @Slot(int, float, float)
     def resizeSegmentStart(self, index: int, start: float, snap_seconds: float) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= index < len(backend._project["segments"]):
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
-        segment = backend._project["segments"][index]
+        segment = self.project_editor.project["segments"][index]
         snapped = self._snap_time(start, index, max(0.0, snap_seconds))
         self.updateSegment(index, {"start": min(snapped, float(segment["end"]) - MIN_SEGMENT_DURATION_SECONDS)})
 
     @Slot(int, float, float)
     def resizeSegmentEnd(self, index: int, end: float, snap_seconds: float) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= index < len(backend._project["segments"]):
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
-        segment = backend._project["segments"][index]
+        segment = self.project_editor.project["segments"][index]
         snapped = self._snap_time(end, index, max(0.0, snap_seconds))
         self.updateSegment(index, {"end": max(snapped, float(segment["start"]) + MIN_SEGMENT_DURATION_SECONDS)})
 
     @Slot(float)
     def addSegment(self, at_seconds: float) -> None:
         backend = self._backend
-        if backend._running or backend._project is None:
+        if backend._running or self.project_editor.project is None:
             return
-        speakers = backend._project.get("speakers", [])
+        speakers = self.project_editor.project.get("speakers", [])
         speaker = speakers[0] if speakers else {"style": "Oz", "name": "", "track_key": "", "file_name": ""}
         start = max(0.0, float(at_seconds))
         segment = normalize_segment(
@@ -511,24 +501,30 @@ class SubtitleFacade(FeatureFacade):
                 "manual_text": True,
                 "manual_timing": True,
             },
-            len(backend._project["segments"]),
+            len(self.project_editor.project["segments"]),
         )
         self._commit_segment_change([], [segment], segment["id"])
 
     @Slot()
     def deleteSelectedSegment(self) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= backend._selected_segment_index < len(backend._project["segments"]):
+        if backend._running or self.project_editor.project is None or not 0 <= self.project_editor.selected_segment_index < len(
+            self.project_editor.project["segments"]
+        ):
             return
-        self._commit_segment_change([backend._project["segments"][backend._selected_segment_index]], [])
+        self._commit_segment_change(
+            [self.project_editor.project["segments"][self.project_editor.selected_segment_index]], []
+        )
 
     @Slot(float)
     def splitSelectedSegment(self, at_seconds: float) -> None:
         backend = self._backend
-        if backend._running or backend._project is None or not 0 <= backend._selected_segment_index < len(backend._project["segments"]):
+        if backend._running or self.project_editor.project is None or not 0 <= self.project_editor.selected_segment_index < len(
+            self.project_editor.project["segments"]
+        ):
             return
-        index = backend._selected_segment_index
-        segment = deepcopy(backend._project["segments"][index])
+        index = self.project_editor.selected_segment_index
+        segment = deepcopy(self.project_editor.project["segments"][index])
         split_at = float(at_seconds)
         if (
             not float(segment["start"]) + MIN_SEGMENT_DURATION_SECONDS
@@ -585,7 +581,7 @@ class SubtitleFacade(FeatureFacade):
         backend = self._backend
         if backend._running:
             return
-        backend._project_editor_controller.undo()
+        self.project_editor.undo()
 
     @Slot()
     def redoSubtitleEdit(self) -> None:
@@ -600,18 +596,18 @@ class SubtitleFacade(FeatureFacade):
         backend = self._backend
         if backend._running:
             return
-        backend._project_editor_controller.redo()
+        self.project_editor.redo()
 
     @Slot("QVariantMap")
     def buildSubtitlePreview(self, settings: dict[str, Any]) -> None:
         backend = self._backend
-        if backend._running or backend._project is None:
+        if backend._running or self.project_editor.project is None:
             return
         backend._update_project_settings(settings)
         if not backend.saveProject():
             return
         try:
-            output = build_project_ass(backend._project_path)
+            output = build_project_ass(self.project_editor.project_path)
         except (OSError, ValueError) as error:
             backend._set_status(f"自動保存に失敗しました: {error}", "ERROR")
             return

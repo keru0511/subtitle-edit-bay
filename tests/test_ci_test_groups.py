@@ -122,10 +122,13 @@ class CiTestGroupManifestTests(unittest.TestCase):
                 "test_source_time_basis_uses_original_source_ranges_in_final_media",
                 "tests.test_short_video_semantic_e2e.ShortVideoSemanticE2ETests."
                 "test_subtitles_follow_selected_clips_on_short_output_timeline",
+                "tests.test_silence_cut_semantic_e2e.SilenceCutSemanticE2ETests."
+                "test_silence_cut_retimes_subtitles_and_preserves_source_edits",
             ],
         )
         self.assertIn("test_audio_mix_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_manual_cut_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
+        self.assertIn("test_silence_cut_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_media_semantic_e2e", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_short_video_ass", groups["ffmpeg-runtime"]["modules"])
         self.assertIn("test_short_video_semantic_e2e", groups["ffmpeg-runtime"]["modules"])

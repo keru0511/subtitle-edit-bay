@@ -110,6 +110,17 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertEqual([word["word"] for page in pages for word in page["words"]], ["ABCDEFGH"])
         self.assertEqual(pages[0]["words"][0]["end"], 1.0)
 
+    def test_single_page_stays_visible_until_final_aligned_word(self) -> None:
+        source = "ABCDEFGHIJKLMNOP"
+        words = [
+            {"word": "ABCDEFGH", "start": 0.0, "end": 1.0},
+            {"word": "IJKLMNOP", "start": 2.0, "end": 2.95},
+        ]
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 10, "max_width": 16, "words": words})
+        self.assertEqual(len(pages), 1)
+        self.assertAlmostEqual(pages[0]["end"], 2.95)
+        self.assertEqual(pages[0]["words"], words)
+
     def test_split_word_times_stay_inside_segment_bounds(self) -> None:
         source = "字幕確認"
         pages = pack_segment_pages({"text": source, "start": 0.2, "end": 0.8, "max_width": 2,

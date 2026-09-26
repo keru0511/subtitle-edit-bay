@@ -883,7 +883,10 @@ def finalize_group_segment(
     adjusted_end = group_end + subtitle_end_padding_seconds if use_word_timing else group_end
 
     group_width = text_width("".join(_text(item["text"]) for item in group))
-    upper_bound = min(segment_end_limit, group_start + max_duration_for_width(group_width))
+    duration_limit = max_duration_for_width(group_width)
+    if use_word_timing and group_end - group_start <= ABSOLUTE_MAX_DURATION:
+        duration_limit = max(duration_limit, group_end - group_start)
+    upper_bound = min(segment_end_limit, group_start + duration_limit)
     if next_group_start is not None:
         upper_bound = min(upper_bound, next_group_start)
 
@@ -928,7 +931,7 @@ def _aligned_word_positions(page_text: str, word_text: str) -> list[int] | None:
 
 def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object, object]]) -> None:
     """ページ本文に対応する語だけを保持し、後の結合で語が重複しないようにする。"""
-    if len(pages) <= 1 or not segment.get("words"):
+    if not pages or not segment.get("words"):
         return
     words = _entry_mappings(segment["words"])
     normalized_words = [normalize_alignment_text(word.get("word", "")) for word in words]
@@ -963,10 +966,11 @@ def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object
                         fragment["end"] = timeline[overlap_end - 1]["end"]
                     page_time_start = _number(pages[page_index]["start"])
                     page_time_end = _number(pages[page_index]["end"])
-                    fragment_start = max(page_time_start, min(_number(fragment["start"]), page_time_end))
-                    fragment["start"] = fragment_start
-                    fragment["end"] = max(fragment_start, min(_number(fragment["end"]), page_time_end))
-                    assigned[page_index].append(fragment)
+                    if _number(fragment["end"]) > page_time_start and _number(fragment["start"]) < page_time_end:
+                        fragment_start = max(page_time_start, min(_number(fragment["start"]), page_time_end))
+                        fragment["start"] = fragment_start
+                        fragment["end"] = max(fragment_start, min(_number(fragment["end"]), page_time_end))
+                        assigned[page_index].append(fragment)
                 word_start = word_end
             page_start = page_end
     else:

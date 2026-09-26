@@ -119,6 +119,20 @@ The first shared controls now exist as standalone QML files and are covered by t
 単独Windowでのタブ切替・Loaderの寿命と、通常画面での認証・画面遷移・
 最小幅と標準幅の配置を回帰テストで確認する。
 
+## 共有動画プレビューの境界
+
+`components/WorkspacePreviewPanel.qml`は通常ワークスペースの映像、字幕オーバーレイ、
+再生・シーク操作と時刻表示を担当する。バックエンド、共有プレイヤー、字幕設定、配色を
+明示的に受け取り、親画面のIDや暗黙のコンテキストには依存しない。
+シークと字幕選択の要求はシグナルで親画面へ伝え、プレイヤーの映像出力先と
+シークバーの再生位置・長さを公開する。
+
+`MainWorkflowScreen.qml`は共有MediaPlayerとAudioOutputを1組だけ所有し、
+カット区間のスキップ、素材時刻と出力時刻の変換、字幕編集画面との映像出力先の切替を担う。
+専用字幕編集画面を閉じると、共有プレイヤーの出力先を通常プレビューへ戻す。
+単独Windowでのコンポーネント生成・シーク通知と、通常画面での編集画面切替、
+カット表示・字幕表示・最小幅の配置を回帰テストで確認する。
+
 ## 開始画面の境界
 
 `components/ProjectStartScreen.qml`は、プロジェクト未読み込み時の案内、

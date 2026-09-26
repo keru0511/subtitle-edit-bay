@@ -37,9 +37,17 @@ class ProcessingProgressTests(TypedTestCase):
         first_value = tracker.value
         tracker.update({"job": "transcribe", "step": "alignment", "progress": 0.1})
 
-        self.assertEqual([step["label"] for step in tracker.as_list()], [
-            "準備", "音声同期", "文字起こし", "字幕の統合・整形", "波形生成", "プロジェクト保存",
-        ])
+        self.assertEqual(
+            [step["label"] for step in tracker.as_list()],
+            [
+                "準備",
+                "音声同期",
+                "文字起こし",
+                "字幕の統合・整形",
+                "波形生成",
+                "プロジェクト保存",
+            ],
+        )
         self.assertGreaterEqual(tracker.value, first_value)
         self.assertEqual(tracker.as_list()[1]["state"], "running")
 
@@ -100,7 +108,8 @@ class ProcessingProgressTests(TypedTestCase):
         tracker = ProcessingProgress()
         tracker.start("render", skip_steps={"subtitle"})
 
-        self.assertNotIn("subtitle", [step["id"] for step in tracker.as_list()])
+        step_ids: list[object] = [step["id"] for step in tracker.as_list()]
+        self.assertNotIn("subtitle", step_ids)
         tracker.update({"job": "render", "step": "audio", "phase": "start"})
         self.assertEqual(tracker.as_list()[1]["displayStatus"], "実行中")
         for step in tracker.as_list():
@@ -115,9 +124,7 @@ class ProcessingProgressTests(TypedTestCase):
                 tracker = ProcessingProgress()
                 tracker.start("render")
                 for step in ("prepare", "subtitle", "audio", "encode", "finalize"):
-                    tracker.update(
-                        {"job": "render", "step": step, "phase": "complete", "progress": 1.0}
-                    )
+                    tracker.update({"job": "render", "step": step, "phase": "complete", "progress": 1.0})
 
                 self.assertLess(tracker.value, 1.0)
                 self.assertEqual(tracker.current_step, "finalize")

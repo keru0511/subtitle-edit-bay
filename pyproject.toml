@@ -147,6 +147,10 @@ files = [
   "tests/test_gui_source_state.py",
   "tests/test_gui_transcription_context_state.py",
   "tests/test_transcription_web_dictionary.py",
+  "src/audio_preview_cache.py",
+  "tests/test_audio_preview_cache.py",
+  "src/processing_progress.py",
+  "tests/test_processing_progress.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -283,6 +287,10 @@ module = [
   "tests.test_gui_source_state",
   "tests.test_gui_transcription_context_state",
   "tests.test_transcription_web_dictionary",
+  "src.audio_preview_cache",
+  "tests.test_audio_preview_cache",
+  "src.processing_progress",
+  "tests.test_processing_progress",
 ]
 strict = true
 disallow_any_explicit = true

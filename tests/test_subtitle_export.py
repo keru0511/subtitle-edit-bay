@@ -37,6 +37,7 @@ class SubtitleExportTests(unittest.TestCase):
             self.assertTrue(content.startswith("id,start,end,speaker,text\n"))
             self.assertIn("a,0.0,1.005,yuki,先頭\n", content)
             self.assertIn('b,2.0,3.25,keru,"日本語, ""引用""\n改行"\n', content)
+            self.assertLess(content.index("a,0.0,1.005"), content.index("b,2.0,3.25"))
 
     def test_export_refuses_implicit_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

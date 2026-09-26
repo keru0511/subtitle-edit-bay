@@ -84,7 +84,7 @@ def audio_mix_state_revision(channels: Sequence[object]) -> str:
 def build_audio_mix_context(
     channels: Sequence[object],
     *,
-    preview_levels: Mapping[str, float] | None = None,
+    preview_levels: Mapping[str, object] | None = None,
     master_level: float = 0.0,
     limiter_reduction_db: float = 0.0,
     playhead_seconds: float | None = None,

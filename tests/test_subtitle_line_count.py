@@ -84,6 +84,18 @@ class SubtitleLineCountTests(unittest.TestCase):
                 self.assertGreaterEqual(word["start"], page["start"])
                 self.assertLessEqual(word["end"], page["end"])
 
+    def test_punctuation_missing_from_alignment_keeps_page_word_fragments(self) -> None:
+        source = "今日はいい天気。明日も晴れです。"
+        words = [
+            {"word": "今日はいい天気", "start": 0.0, "end": 1.4},
+            {"word": "明日も晴れです", "start": 1.5, "end": 2.8},
+        ]
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 3, "max_width": 4, "words": words})
+        self.assertGreater(len(pages), 2)
+        for page in pages:
+            self.assertEqual("".join(word["word"] for word in page["words"]), page["text"].replace("。", ""))
+        self.assertEqual("".join(word["word"] for page in pages for word in page["words"]), source.replace("。", ""))
+
     def test_automatic_one_line_pages_preserve_text(self) -> None:
         source = "明日の予定を確認してから次の作業を始めましょう"
         for line_count in ("1", " 1 ", 1):

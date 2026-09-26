@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from typing import TypedDict
+from unicodedata import category
 
 from .data_boundary import coerce_float, coerce_int, is_object_dict, is_object_mapping, is_object_sequence
 from .typed_cache import typed_lru_cache
@@ -897,6 +899,24 @@ def _page_preserves_text(text: str, max_width: int, max_lines: int = MAX_LINES) 
     return normalize_alignment_text(rendered.replace(r"\N", "")) == normalize_alignment_text(text.replace(r"\N", ""))
 
 
+def _aligned_word_positions(page_text: str, word_text: str) -> list[int] | None:
+    """アラインメントにない句読点だけを飛ばして語の文字位置を対応させる。"""
+    positions: list[int] = []
+    cursor = 0
+    for char in word_text:
+        while cursor < len(page_text) and page_text[cursor] != char:
+            if not category(page_text[cursor]).startswith("P"):
+                return None
+            cursor += 1
+        if cursor >= len(page_text):
+            return None
+        positions.append(cursor)
+        cursor += 1
+    if any(not category(char).startswith("P") for char in page_text[cursor:]):
+        return None
+    return positions
+
+
 def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object, object]]) -> None:
     """ページ本文に対応する語だけを保持し、後の結合で語が重複しないようにする。"""
     if len(pages) <= 1 or not segment.get("words"):
@@ -905,21 +925,26 @@ def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object
     normalized_words = [normalize_alignment_text(word.get("word", "")) for word in words]
     timeline = build_character_timeline(words)
     page_lengths = [len(normalize_alignment_text(page["text"])) for page in pages]
-    exact_alignment = (
+    page_text = normalize_alignment_text("".join(_text(page["text"]) for page in pages))
+    word_positions = _aligned_word_positions(page_text, "".join(normalized_words))
+    can_partition_words = (
         all(isinstance(word.get("word"), str) for word in words)
         and len(timeline) == sum(len(item) for item in normalized_words)
-        and "".join(normalized_words) == normalize_alignment_text("".join(_text(page["text"]) for page in pages))
+        and word_positions is not None
     )
     assigned: list[list[dict[object, object]]] = [[] for _ in pages]
-    if exact_alignment:
+    if can_partition_words:
+        assert word_positions is not None
         page_start = 0
         for page_index, page_length in enumerate(page_lengths):
             page_end = page_start + page_length
+            page_word_start = bisect_left(word_positions, page_start)
+            page_word_end = bisect_left(word_positions, page_end)
             word_start = 0
             for word, normalized in zip(words, normalized_words):
                 word_end = word_start + len(normalized)
-                overlap_start = max(page_start, word_start)
-                overlap_end = min(page_end, word_end)
+                overlap_start = max(page_word_start, word_start)
+                overlap_end = min(page_word_end, word_end)
                 if overlap_start < overlap_end:
                     fragment = dict(word)
                     if overlap_start != word_start or overlap_end != word_end:

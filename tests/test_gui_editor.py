@@ -3783,6 +3783,82 @@ Window {
         self.assertEqual(self.app.segmentAt(1)["id"], "segment-a")
         self.assertEqual(self.app.segmentAt(1)["start"], 4.5)
 
+    def test_audio_workspace_editor_works_without_main_workflow_context(self) -> None:
+        self._load_project()
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentAudioWorkspaceEditor.qml"
+        qml.write_text(
+            'import QtQuick\nimport QtMultimedia\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1220
+    height: 760
+    visible: true
+    property var appBackend: backend
+    property bool editorOpen: true
+    property real savedScrollX: 180
+    property real requestedSeekPosition: -1
+    function stamp(seconds) { return String(seconds) }
+    MediaPlayer { id: sharedPlayer; objectName: "independentAudioPlayer" }
+    QtObject {
+        id: previewState
+        property bool previewReady: false
+        property bool intentionalSilence: false
+        objectName: "independentAudioPreviewState"
+    }
+    Loader {
+        anchors.fill: parent
+        active: host.editorOpen
+        sourceComponent: AudioWorkspaceEditor {
+            appBackend: host.appBackend
+            player: sharedPlayer
+            previewBridge: previewState
+            colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+                textPrimary: "#F8FAFC", textMuted: "#94A3B8", acid: "#6366F1", amber: "#F59E0B", danger: "#EF4444"})
+            formatTimestamp: host.stamp
+            speakers: host.appBackend.subtitles.projectSpeakers
+            pixelsPerSecond: 96
+            savedViewportX: host.savedScrollX
+            onSeekRequested: function(positionMs) { host.requestedSeekPosition = positionMs }
+            onViewportChangedByUser: function(viewportX) { host.savedScrollX = viewportX }
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        timeline = self._quick_item(window, "workspaceAudioTimeline")
+        status = self._quick_item(window, "workspaceAudioPreviewStatus")
+        self.assertEqual(timeline.property("pixelsPerSecond"), 96)
+        self.gui.wait_until(
+            lambda: abs(float(timeline.property("viewportX")) - 180) <= 1,
+            description="独立した音声タイムラインの開始位置",
+        )
+        self.assertEqual(status.property("text"), "ミックスを準備できないため元の音声を再生します")
+        preview_state = window.findChild(QObject, "independentAudioPreviewState")
+        preview_state.setProperty("previewReady", True)
+        self.app.processEvents()
+        self.assertEqual(status.property("text"), "共通プレビューへ接続済み")
+        preview_state.setProperty("previewReady", False)
+        preview_state.setProperty("intentionalSilence", True)
+        self.app.processEvents()
+        self.assertEqual(status.property("text"), "すべての音声トラックが無効です")
+        self.gui.click_at(window, timeline, 180, 12)
+        self.assertGreater(window.property("requestedSeekPosition"), 0)
+        timeline.setProperty("viewportX", 260.0)
+        self.app.processEvents()
+        self.assertAlmostEqual(window.property("savedScrollX"), 260.0, delta=1)
+        window.setProperty("editorOpen", False)
+        self.gui.wait_until(lambda: window.findChild(QQuickItem, "workspaceAudioTimeline") is None,
+                            description="独立した音声タイムラインの破棄")
+        window.setProperty("editorOpen", True)
+        timeline = self._quick_item(window, "workspaceAudioTimeline")
+        self.gui.wait_until(
+            lambda: abs(float(timeline.property("viewportX")) - 260) <= 1,
+            description="音声タイムラインのスクロール位置復元",
+        )
+
     def test_workspace_audio_channel_update_preserves_vertical_scroll(self) -> None:
         self.app._audio_tracks = [
             {"selector": f"0:a:{index}", "label": f"Track {index + 1}"}

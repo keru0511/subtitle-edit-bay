@@ -1019,6 +1019,11 @@ Window {
     def test_source_change_keeps_unsaved_project_when_save_fails(self) -> None:
         path, _audio, _output = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        alignment_result = {
+            "status": "解析完了", "track": "0:a:0", "detected_offset": 0.3,
+            "adjustment": 0.2, "offset": 0.5, "score": 0.9,
+        }
+        self.app._apply_alignment_result(alignment_result)
         self.app.autosave_timer.stop()
         saved_bytes = path.read_bytes()
         original_selection = deepcopy(self.app.sourceSelection)
@@ -1055,6 +1060,7 @@ Window {
             self.assertEqual(self.app._project, edited_project)
             self.assertEqual(self.app._undo_stack, edited_history)
             self.assertEqual(self.app.sourceSelection, original_selection)
+            self.assertEqual(self.app.alignmentResult, alignment_result)
             self.assertEqual(path.read_bytes(), saved_bytes)
             self.assertEqual(self.app.stage, "ERROR")
             self.assertIn("保存先を使用できません", self.app.status)
@@ -1067,6 +1073,11 @@ Window {
     def test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure(self) -> None:
         path, _audio, _output = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        alignment_result = {
+            "status": "解析完了", "track": "0:a:0", "detected_offset": 0.3,
+            "adjustment": 0.2, "offset": 0.5, "score": 0.9,
+        }
+        self.app._apply_alignment_result(alignment_result)
         self.app.autosave_timer.stop()
         other_audio = self.root / "2-bob.wav"
         other_audio.write_bytes(b"audio")
@@ -1089,6 +1100,7 @@ Window {
                     self.assertEqual(self.app._project, edited_project)
                     self.assertEqual(self.app._undo_stack, edited_history)
                     self.assertEqual(self.app.sourceSelection, original_sources)
+                    self.assertEqual(self.app.alignmentResult, alignment_result)
                     self.assertEqual(path.read_bytes(), saved_bytes)
                     self.assertEqual(self.app.stage, "ERROR")
                     self.assertIn("保存を拒否", self.app.status)

@@ -293,6 +293,7 @@ class LegacyEditBayBackend(QApplication):
 
         if not update.accepted or update.current is None:
             return
+        previous_alignment = dict(self._alignment_result)
         if update.video_changed:
             self._probe_audio_tracks(update.current.video)
         if update.media_changed:
@@ -302,9 +303,9 @@ class LegacyEditBayBackend(QApplication):
         self.sourceSelectionChanged.emit()
         self.speakersChanged.emit()
         self._update_source_status()
-        self._source_selection_updated(update)
+        self._source_selection_updated(update, previous_alignment)
 
-    def _source_selection_updated(self, update: Any) -> None:
+    def _source_selection_updated(self, update: Any, previous_alignment: dict[str, Any]) -> None:
         """Hook for project-aware backends after source state is published."""
 
     def _update_source_status(self) -> None:

@@ -441,6 +441,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._loading_project_sources = False
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
+        self._relink_alignment_result: dict[str, Any] | None = None
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._workspace_facade = WorkspaceFacade(self)
         self._subtitles_facade = SubtitleFacade(self)
@@ -1022,7 +1023,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def assPath(self) -> str:
         return self._workflow_facade.assPath
 
-    def _source_selection_updated(self, update: Any) -> None:
+    def _source_selection_updated(self, update: Any, previous_alignment: dict[str, Any]) -> None:
         previous = update.previous
         selection = update.current
         if previous is None or selection is None:
@@ -1036,13 +1037,15 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             and not self._project_source_selection_matches(selection)
         ):
             if not self._clear_project():
-                self._restore_source_selection_after_failed_save(previous)
+                self._restore_source_selection_after_failed_save(previous, previous_alignment)
         elif previous.output_dir != selection.output_dir:
             self._project["output_dir"] = selection.output_dir
             self._mark_project_dirty()
             self.projectDataChanged.emit()
 
-    def _restore_source_selection_after_failed_save(self, selection: SourceSelection) -> None:
+    def _restore_source_selection_after_failed_save(
+        self, selection: SourceSelection, alignment_result: dict[str, Any]
+    ) -> None:
         error_status = self.status
         was_loading_project_sources = self._loading_project_sources
         self._loading_project_sources = True
@@ -1050,6 +1053,8 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             self._set_source_selection(selection)
         finally:
             self._loading_project_sources = was_loading_project_sources
+        self._alignment_result = dict(alignment_result)
+        self.alignmentChanged.emit()
         if self._project is not None and self._project.get("output_dir") != selection.output_dir:
             self._project["output_dir"] = selection.output_dir
             self.projectDataChanged.emit()
@@ -1078,6 +1083,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         if self._running:
             return
         self._relink_source_selection = self._source_selection
+        self._relink_alignment_result = dict(self._alignment_result)
         self._relinking_project_sources = True
 
     @Slot()
@@ -1096,10 +1102,13 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 and not self._project_source_selection_matches(self._source_selection)
             ):
                 if not self._clear_project():
-                    self._restore_source_selection_after_failed_save(previous)
+                    self._restore_source_selection_after_failed_save(
+                        previous, self._relink_alignment_result or self._empty_alignment_result()
+                    )
         finally:
             self._relinking_project_sources = False
             self._relink_source_selection = None
+            self._relink_alignment_result = None
 
     @Slot()
     def relinkProjectSources(self) -> None:

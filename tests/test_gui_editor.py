@@ -6773,7 +6773,7 @@ Window {
         self.assertFalse(self.app.projectDirty)
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
-    def test_mixer_preview_rebuild_and_transport_buttons_use_rebuilt_audio(self) -> None:
+    def test_mixer_preview_rebuild_and_transport_controls_use_rebuilt_audio(self) -> None:
         path = self._load_project(duration_seconds=8.0)
         self._generate_black_test_video_with_audio(
             self.root / "game.mkv", self.root / "1-alice.flac", duration_seconds=8,
@@ -6818,6 +6818,17 @@ Window {
         self.gui.wait_until(
             lambda: player.position() <= 200,
             description="ミキサーの5秒戻る操作",
+        )
+        seek = self._quick_item(window, "mixerSeek")
+        seek_start = seek.mapToScene(QPointF(seek.width() * 0.05, seek.height() / 2)).toPoint()
+        seek_end = seek.mapToScene(QPointF(seek.width() * 0.75, seek.height() / 2)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=seek_start)
+        for fraction in (0.33, 0.66, 1.0):
+            QTest.mouseMove(window, seek_start + (seek_end - seek_start) * fraction, 30)
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=seek_end)
+        self.gui.wait_until(
+            lambda: 5_500 <= player.position() <= 6_500,
+            description="ミキサーのスライダーによる移動",
         )
         play_button = self._quick_item(window, "mixerPlayButton")
         self._click(window, play_button)

@@ -21,6 +21,7 @@ Item {
     signal positionUpdated(real positionMs)
     signal subtitleEditorRequested()
     signal renderRequested()
+    signal saveRequested()
     signal closeRequested()
 
     component MixerButton: SmallButton {
@@ -277,7 +278,7 @@ Item {
                 }
             }
             MixerButton { objectName: "mixerResetButton"; text: "すべての音声トラックをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.audio.resetAudioMixer() }
-            MixerButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
+            MixerButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveRequested() }
             MixerButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.subtitleEditorRequested() }
             Button {
                 id: mixerRenderButton

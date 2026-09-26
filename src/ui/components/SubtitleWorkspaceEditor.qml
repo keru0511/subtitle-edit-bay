@@ -11,6 +11,8 @@ Item {
     required property var colors
     required property var formatTimestamp
     signal seekRequested(real positionMs)
+    signal editRequested(string action, real atSeconds)
+    signal saveRequested
     signal previewRequested
 
     objectName: "workspaceSubtitleEditor"
@@ -27,36 +29,36 @@ Item {
                 colors: root.colors
                 objectName: "workspaceSubtitleUndoButton"
                 text: "元に戻す"
-                enabled: root.appBackend.subtitles.canUndo
-                onClicked: root.appBackend.subtitles.undoSubtitleEdit()
+                enabled: !root.appBackend.running && (root.appBackend.subtitles.canUndo || root.editorState.hasPendingSubtitleText)
+                onClicked: root.editRequested("undo", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "workspaceSubtitleRedoButton"
                 text: "やり直す"
-                enabled: root.appBackend.subtitles.canRedo
-                onClicked: root.appBackend.subtitles.redoSubtitleEdit()
+                enabled: !root.appBackend.running && root.appBackend.subtitles.canRedo && !root.editorState.hasPendingSubtitleText
+                onClicked: root.editRequested("redo", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "workspaceSubtitleAddButton"
                 text: "+ 字幕追加"
                 enabled: !root.appBackend.running
-                onClicked: root.appBackend.subtitles.addSegment(Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
+                onClicked: root.editRequested("add", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "workspaceSubtitleSplitButton"
                 text: "分割"
                 enabled: !root.appBackend.running && root.editorState.canSplitSelectedSegment(root.appBackend.workspace.editorPlayhead.sourcePositionMs)
-                onClicked: root.appBackend.subtitles.splitSelectedSegment(Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
+                onClicked: root.editRequested("split", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "workspaceSubtitleDeleteButton"
                 text: "削除"
                 enabled: !root.appBackend.running && root.appBackend.subtitles.selectedSegmentIndex >= 0
-                onClicked: root.appBackend.subtitles.deleteSelectedSegment()
+                onClicked: root.editRequested("delete", 0)
             }
             Item {
                 Layout.fillWidth: true
@@ -66,7 +68,7 @@ Item {
                 objectName: "workspaceSubtitleSaveButton"
                 text: "保存"
                 enabled: !root.appBackend.running
-                onClicked: root.appBackend.saveProject()
+                onClicked: root.saveRequested()
             }
             SubtitleEditorButton {
                 colors: root.colors

@@ -26,6 +26,8 @@ Item {
     signal playheadSyncRequested(real positionMs)
     signal selectionSyncRequested(var segments)
     signal speakerColorRequested(int index, string color)
+    signal editRequested(string action, real atSeconds)
+    signal saveRequested
     signal previewRequested
     signal renderRequested
     signal closeRequested
@@ -97,41 +99,41 @@ Item {
                 colors: root.colors
                 objectName: "undoCaptionButton"
                 text: "元に戻す"
-                enabled: root.appBackend.subtitles.canUndo
-                onClicked: root.appBackend.subtitles.undoSubtitleEdit()
+                enabled: !root.appBackend.running && (root.appBackend.subtitles.canUndo || root.editorState.hasPendingSubtitleText)
+                onClicked: root.editRequested("undo", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "redoCaptionButton"
                 text: "やり直す"
-                enabled: root.appBackend.subtitles.canRedo
-                onClicked: root.appBackend.subtitles.redoSubtitleEdit()
+                enabled: !root.appBackend.running && root.appBackend.subtitles.canRedo && !root.editorState.hasPendingSubtitleText
+                onClicked: root.editRequested("redo", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "addCaptionButton"
                 text: "+ 字幕追加"
-                onClicked: root.appBackend.subtitles.addSegment(root.player.position / 1000)
+                onClicked: root.editRequested("add", root.player.position / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "splitCaptionButton"
                 text: "分割"
                 enabled: root.editorState.canSplitSelectedSegment(root.player.position)
-                onClicked: root.appBackend.subtitles.splitSelectedSegment(root.player.position / 1000)
+                onClicked: root.editRequested("split", root.player.position / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "deleteCaptionButton"
                 text: "削除"
                 enabled: root.appBackend.subtitles.selectedSegmentIndex >= 0
-                onClicked: root.appBackend.subtitles.deleteSelectedSegment()
+                onClicked: root.editRequested("delete", 0)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "saveProjectButton"
                 text: "保存"
-                onClicked: root.appBackend.saveProject()
+                onClicked: root.saveRequested()
             }
             SubtitleEditorButton {
                 colors: root.colors
@@ -420,13 +422,15 @@ Item {
                                 positionViewAtIndex(selectedIndex, ListView.Contain);
                         }
                         model: root.appBackend.subtitles.subtitleModel
-                        currentIndex: root.appBackend.subtitles.selectedSegmentIndex
+                        // 行移動中の内部行番号を選択状態へ逆流させない。
+                        currentIndex: -1
+                        keyNavigationEnabled: false
+                        Keys.onUpPressed: root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
+                        Keys.onDownPressed: root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
                         Component.onCompleted: Qt.callLater(function () {
                             contentY = root.editorState.captionScrollY;
                         })
                         onContentYChanged: root.editorState.captionScrollY = contentY
-                        onCurrentIndexChanged: if (currentIndex >= 0)
-                            root.appBackend.subtitles.selectSegment(currentIndex)
                         delegate: Rectangle {
                             id: captionRow
                             required property int index
@@ -491,14 +495,20 @@ Item {
                                         })
                                     }
                                     ComboBox {
+                                        id: captionSpeakerCombo
+                                        objectName: "captionSpeakerCombo"
                                         Layout.preferredWidth: 105
                                         model: root.projectSpeakerCache
                                         textRole: "name"
                                         valueRole: "style"
-                                        Component.onCompleted: {
-                                            for (var i = 0; i < count; ++i)
-                                                if (valueAt(i) === captionRow.speaker)
-                                                    currentIndex = i;
+                                        function syncCurrentSpeaker() {
+                                            currentIndex = indexOfValue(captionRow.speaker);
+                                        }
+                                        Component.onCompleted: syncCurrentSpeaker()
+                                        onModelChanged: Qt.callLater(syncCurrentSpeaker)
+                                        Connections {
+                                            target: captionRow
+                                            function onSpeakerChanged() { captionSpeakerCombo.syncCurrentSpeaker(); }
                                         }
                                         onActivated: root.appBackend.subtitles.updateSegment(captionRow.index, {
                                             "speaker": currentValue
@@ -557,6 +567,14 @@ Item {
                                 TextArea {
                                     id: captionTextArea
                                     objectName: "captionTextArea"
+                                    property string editingSegmentId: ""
+                                    function commitText() {
+                                        var id = editingSegmentId;
+                                        editingSegmentId = "";
+                                        if (id)
+                                            root.editorState.commitSubtitleDraft(id);
+                                    }
+                                    Component.onDestruction: commitText()
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 52
                                     text: captionRow.editorText
@@ -567,19 +585,16 @@ Item {
                                     wrapMode: TextEdit.Wrap
                                     selectByMouse: true
                                     onTextChanged: {
-                                        if (activeFocus)
+                                        if (activeFocus && editingSegmentId !== "")
                                             root.editorState.updateSubtitleDraft(captionRow.index, text);
                                     }
                                     onActiveFocusChanged: {
                                         if (activeFocus) {
+                                            root.appBackend.subtitles.selectSegment(captionRow.index);
+                                            editingSegmentId = captionRow.segmentId;
                                             root.editorState.beginSubtitleDraft(captionRow.index, text);
                                         } else {
-                                            var editedText = text;
-                                            if (editedText !== captionRow.editorText)
-                                                root.appBackend.subtitles.updateSegment(captionRow.index, {
-                                                    "text": editedText
-                                                });
-                                            root.editorState.clearSubtitleDraft(captionRow.index);
+                                            commitText();
                                         }
                                     }
                                     background: Rectangle {

@@ -19,6 +19,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
+from PySide6.QtGui import QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -3606,6 +3607,399 @@ Window {
         text_area = self._quick_visual_item(subtitle_settings, "workspaceSubtitleTextArea")
         self.assertTrue(text_area.isVisible())
 
+    def _assert_caption_input_committed_before_action(self, *, expanded: bool, action: str) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        else:
+            caption = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+        # 本文はプロパティ代入ではなくキー入力で変更し、入力欄から移動せずに操作する。
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            self.assertTrue(caption.hasActiveFocus())
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            for char in "edited caption":
+                QTest.keyClick(window, Qt.Key(ord(char.upper())))
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            for char in "second line":
+                QTest.keyClick(window, Qt.Key(ord(char.upper())))
+            self.app.processEvents()
+            expected = "edited caption\nsecond line"
+            self.assertEqual(caption.property("text"), expected)
+            self.assertTrue(caption.hasActiveFocus())
+            if action == "render":
+                captured_texts = []
+
+                def capture_render(*_args: object, **_kwargs: object) -> None:
+                    captured_texts.append(load_project(path)["segments"][0]["text"])
+
+                button_name = "editorRenderButton" if expanded else "workspaceHeaderRenderButton"
+                with patch.object(self.app.workflow, "_start_command", side_effect=capture_render) as start:
+                    self._click(window, self._quick_item(window, button_name))
+                start.assert_called_once()
+                self.assertEqual(captured_texts, [expected])
+            elif action == "preview":
+                button_name = "buildAssButton" if expanded else "workspaceSubtitlePreviewButton"
+                self._click(window, self._quick_item(window, button_name))
+                self.assertEqual(self.app.stage, "ASS", self.app.status)
+                ass_text = Path(self.app._ass_path).read_text(encoding="utf-8-sig")
+                self.assertIn("edited caption", ass_text)
+                self.assertIn("second line", ass_text)
+            elif action == "save_failure":
+                button_name = "saveProjectButton" if expanded else "workspaceSubtitleSaveButton"
+                with patch("src.gui.save_project", side_effect=OSError("保存失敗の再現")):
+                    self._click(window, self._quick_item(window, button_name))
+                self.assertEqual(self.app.stage, "ERROR")
+                self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+                self.assertEqual(self.app.segmentAt(0)["text"], expected)
+                self.assertTrue(self.app.projectDirty)
+                self._click(window, self._quick_item(window, button_name))
+            elif action == "shortcut":
+                QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+                self.app.processEvents()
+            else:
+                button_name = "saveProjectButton" if expanded else "workspaceSubtitleSaveButton"
+                if action == "header_save":
+                    button_name = "workspaceHeaderSaveButton"
+                self._click(window, self._quick_item(window, button_name))
+            self.assertEqual(load_project(path)["segments"][0]["text"], expected)
+            self.assertEqual(self.app.segmentAt(0)["text"], expected)
+            self.assertFalse(self.app.projectDirty)
+
+    def test_expanded_caption_key_input_is_committed_before_save(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="save")
+
+    def test_expanded_caption_key_input_is_committed_before_render(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="render")
+
+    def test_expanded_caption_key_input_is_committed_before_save_shortcut(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="shortcut")
+
+    def test_workspace_caption_key_input_is_committed_before_save(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="save")
+
+    def test_workspace_caption_key_input_is_committed_before_render(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="render")
+
+    def test_expanded_caption_key_input_is_committed_before_preview(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="preview")
+
+    def test_workspace_caption_key_input_is_committed_before_preview(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="preview")
+
+    def test_caption_key_input_survives_failed_save_and_retry(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=True, action="save_failure")
+
+    def test_workspace_header_save_commits_caption_key_input(self) -> None:
+        self._assert_caption_input_committed_before_action(expanded=False, action="header_save")
+
+    def test_save_shortcut_preserves_selection_and_continued_typing(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QTest.keyClick(window, Qt.Key.Key_B)
+            QTest.keyClick(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+            self.app.processEvents()
+            selection = (caption.property("selectionStart"), caption.property("selectionEnd"))
+            self.assertNotEqual(*selection)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "ab")
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertEqual((caption.property("selectionStart"), caption.property("selectionEnd")), selection)
+            QTest.keyClick(window, Qt.Key.Key_C)
+            self.app.processEvents()
+            self.assertEqual(caption.property("text"), "ac")
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "ac")
+
+    def test_save_shortcut_failure_preserves_focus_for_retry(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            with patch("src.gui.save_project", side_effect=OSError("保存失敗の再現")):
+                QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+                self.app.processEvents()
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            QTest.keyClick(window, Qt.Key.Key_B)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+            self.app.processEvents()
+            self.assertEqual(load_project(path)["segments"][0]["text"], "ab")
+            self.assertFalse(self.app.projectDirty)
+
+    def test_close_rejects_failed_draft_save_and_allows_retry(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            with patch("src.gui.save_project", side_effect=OSError("終了時の保存失敗")):
+                self.assertFalse(window.close())
+                self.app.processEvents()
+            self.assertTrue(window.isVisible())
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertEqual(self.app.segmentAt(0)["text"], "a")
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertTrue(window.close())
+            self.assertFalse(window.isVisible())
+            self.assertEqual(load_project(path)["segments"][0]["text"], "a")
+            self.assertFalse(self.app.projectDirty)
+
+    def test_close_without_project_does_not_require_save(self) -> None:
+        _, window = self._load_qml()
+        self.assertFalse(self.app.projectLoaded)
+        with patch.object(self.app, "saveProject") as save:
+            self.assertTrue(window.close())
+        save.assert_not_called()
+
+    def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QObject]:
+        path = self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
+            {"id": "second", "start": 5, "end": 8, "text": "second", "speaker": "Speaker_Alice"},
+        ])
+        timer_patch = patch.object(self.app.autosave_timer, "start")
+        timer_patch.start()
+        self.addCleanup(timer_patch.stop)
+        _, window = self._load_qml()
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        else:
+            field = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+        self._click(window, field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in "edited":
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.app.processEvents()
+        self.assertEqual(field.property("text"), "edited")
+        self.assertTrue(field.hasActiveFocus())
+        return path, window
+
+    def test_expanded_speaker_selection_tracks_undo_redo_and_save(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        row = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionRow-0")
+        combo = self._quick_visual_item(row, "captionSpeakerCombo")
+        original = self.app.segmentAt(0)["speaker"]
+        self.assertEqual(combo.property("currentValue"), original)
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, combo)
+            QTest.keyClick(window, Qt.Key.Key_Down)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.app.processEvents()
+            changed = self.app.segmentAt(0)["speaker"]
+            self.assertNotEqual(changed, original)
+            for _ in range(2):
+                for button, expected in (("undoCaptionButton", original), ("redoCaptionButton", changed)):
+                    self._click(window, self._quick_item(window, button))
+                    self.assertEqual(self.app.segmentAt(0)["speaker"], expected)
+                    self.assertEqual(combo.property("currentValue"), expected)
+                    self._click(window, self._quick_item(window, "saveProjectButton"))
+                    self.assertEqual(load_project(path)["segments"][0]["speaker"], expected)
+
+    def test_expanded_speaker_selection_tracks_speaker_list_replacement(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        row = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionRow-0")
+        combo = self._quick_visual_item(row, "captionSpeakerCombo")
+        expected = self.app.segmentAt(0)["speaker"]
+        initial_index = combo.property("currentIndex")
+        self.app._project["speakers"].reverse()
+        self.app.projectDataChanged.emit()
+        self.app.processEvents()
+        self.assertNotEqual(combo.property("currentIndex"), initial_index)
+        self.assertEqual(combo.property("currentValue"), expected)
+        self.assertEqual(self.app.segmentAt(0)["speaker"], expected)
+
+    def test_expanded_pending_text_survives_reorder_without_selection_loop(self) -> None:
+        path, window = self._prepare_pending_subtitle_text(expanded=True)
+        self.app.updateSegment(0, {"start": 9.0, "end": 12.0})
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(
+            [(segment["id"], segment["text"]) for segment in load_project(path)["segments"]],
+            [("second", "second"), ("first", "edited")],
+        )
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+
+    def test_expanded_list_arrow_keys_keep_backend_selection(self) -> None:
+        _, window = self._prepare_pending_subtitle_text(expanded=True)
+        table = self._quick_item(window, "captionTable")
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        table.forceActiveFocus()
+        self.app.processEvents()
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        self.app.processEvents()
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
+        QTest.keyClick(window, Qt.Key.Key_Up)
+        self.app.processEvents()
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        QTest.keyClick(window, Qt.Key.Key_Up)
+        self.assertEqual(self.app.selectedSegmentIndex, 0)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+
+    def test_expanded_edit_selects_scrolled_row_and_keeps_following_controls(self) -> None:
+        self._load_large_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        table = self._quick_item(window, "captionTable")
+        self.app.selectSegment(2_999)
+        self.gui.wait(100)
+        # 別の選択行を残してスクロールし、本文→時刻→サイズを続けて編集する。
+        table.setProperty("contentY", 1_500 * 127.0)
+        self.gui.wait(100)
+        row = self._quick_visual_item(table, "captionRow-1500")
+        field = self._quick_visual_item(row, "captionTextArea")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, field)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_X)
+            self.assertTrue(field.hasActiveFocus())
+            self.assertEqual(field.property("text"), "x")
+            self.assertEqual(self.app.selectedSegmentIndex, 1_500)
+            time_fields = [
+                item for item in self.gui.visual_items(row)
+                if item.objectName() in ("captionStartTimeField", "captionEndTimeField")
+            ]
+            time_fields.sort(key=lambda item: item.x())
+            start = float(self.app.segmentAt(1_500)["start"]) + 0.01
+            self._click(window, time_fields[0])
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            for char in f"{start:.3f}":
+                QTest.keyClick(window, Qt.Key(ord(char)))
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            size = self._quick_visual_item(row, "captionSizeSpin")
+            size.setProperty("value", 125)
+            self.gui.emit_signal(size, "valueModified")
+            self.app.processEvents()
+        updated = self.app.segmentAt(1_500)
+        self.assertEqual(updated["text"], "x")
+        self.assertAlmostEqual(updated["start"], start, places=3)
+        self.assertEqual(updated["subtitle_font_scale"], 1.25)
+        self.assertEqual(self.app.selectedSegmentIndex, 1_500)
+
+    def _assert_pending_text_delete_preserves_neighbor(self, *, expanded: bool) -> None:
+        path, window = self._prepare_pending_subtitle_text(expanded=expanded)
+        names = ("deleteCaptionButton", "saveProjectButton", "undoCaptionButton") if expanded else (
+            "workspaceSubtitleDeleteButton", "workspaceSubtitleSaveButton", "workspaceSubtitleUndoButton"
+        )
+        self._click(window, self._quick_item(window, names[0]))
+        self._click(window, self._quick_item(window, names[1]))
+        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]], [("second", "second")])
+        self._click(window, self._quick_item(window, names[2]))
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+        self.assertEqual(self.app.segmentAt(1)["text"], "second")
+
+    def test_pending_text_delete_preserves_neighbor_in_workspace(self) -> None:
+        self._assert_pending_text_delete_preserves_neighbor(expanded=False)
+
+    def test_pending_text_delete_preserves_neighbor_in_expanded_editor(self) -> None:
+        self._assert_pending_text_delete_preserves_neighbor(expanded=True)
+
+    def test_pending_text_split_preserves_new_text_and_undo(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app.setEditorPlayhead(2_000, "source")
+        self._click(window, self._quick_item(window, "workspaceSubtitleSplitButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        segments = load_project(path)["segments"]
+        self.assertEqual([s["text"] for s in segments], ["edi", "ted", "second"])
+        self.assertEqual([(s["start"], s["end"]) for s in segments[:2]], [(0.0, 2.0), (2.0, 4.0)])
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+
+    def test_pending_text_undo_redo_survives_save(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        undo = self._quick_item(window, "workspaceSubtitleUndoButton")
+        self.assertTrue(undo.isEnabled(), "未確定の本文編集も取り消せる")
+        self._click(window, undo)
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self._click(window, self._quick_item(window, "workspaceSubtitleRedoButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+
+    def test_pending_text_add_commits_original_caption_before_new_row(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app.setEditorPlayhead(9_000, "source")
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        segments = load_project(path)["segments"]
+        self.assertEqual([s["text"] for s in segments[:2]], ["edited", "second"])
+        self.assertEqual(len(segments), 3)
+        self.assertEqual(segments[2]["start"], 9.0)
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, 2)
+        self.assertEqual(self.app.segmentAt(0)["text"], "edited")
+
+    def test_pending_text_tracks_id_after_row_reorder(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        self.app.updateSegment(0, {"start": 9.0, "end": 12.0})
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]],
+                         [("second", "second"), ("first", "edited")])
+
+    def test_pending_text_is_discarded_if_edited_caption_was_removed(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        # UI外の編集でも、消えたIDの本文が次の行へ流れないことを検証する。
+        self.app.deleteSelectedSegment()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]], [("second", "second")])
+
+    def test_pending_text_is_not_applied_to_another_project_with_same_id(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        other = load_project(path)
+        other["segments"][0]["text"] = "other project"
+        target = self.root / "other.subtitle-project.json"
+        save_project(target, other)
+        self.app.loadProject(str(target))
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(load_project(target)["segments"][0]["text"], "other project")
+
+    def test_project_open_commits_pending_text_to_original_project(self) -> None:
+        path, window = self._prepare_pending_subtitle_text()
+        other = load_project(path)
+        other["segments"][0]["text"] = "other project"
+        target = self.root / "other.subtitle-project.json"
+        save_project(target, other)
+        with patch("src.gui.QFileDialog.getOpenFileName", return_value=(str(target), "")):
+            self._click(window, self._quick_item(window, "projectOpenButton"))
+        self.assertEqual(Path(self.app.projectPath), target)
+        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(self.app.segmentAt(0)["text"], "other project")
+
     def test_workspace_subtitle_delete_undo_redo_and_save_round_trip(self) -> None:
         """削除・履歴・保存を通常編集画面の実クリックで検証する。"""
         path = self._load_project()
@@ -3987,14 +4381,21 @@ Window {
     property int previews: 0
     property int renders: 0
     property int draftIndex: editorSession.draftSegmentIndex
-    property string draftPreview: editorSession.subtitlePreviewText({sourceIndex: 0, text: "保存済み"})
+    property string draftPreview: editorSession.subtitlePreviewText({sourceIndex: 0, id: host.appBackend.subtitles.segmentAt(0).id, text: "保存済み"})
     function prepareDraft() { editorSession.beginSubtitleDraft(0, "編集中の字幕") }
     function clearDraft() { editorSession.clearSubtitleDraft(0) }
     function stamp(seconds) { return String(seconds) }
+    function editSubtitle(action, atSeconds) {
+        host.contentItem.forceActiveFocus()
+        editorSession.commitSubtitleDraft()
+        if (action === "add") host.appBackend.subtitles.addSegment(atSeconds)
+        else if (action === "undo") host.appBackend.subtitles.undoSubtitleEdit()
+    }
     SubtitleEditorState {
         id: editorSession
         objectName: "independentEditorState"
         subtitles: host.appBackend.subtitles
+        projectPath: host.appBackend.projectPath
         previewEnabled: true
     }
     MediaPlayer { id: sharedPlayer }
@@ -4009,6 +4410,8 @@ Window {
             appBackend: host.appBackend
             player: sharedPlayer
             editorState: editorSession
+            onEditRequested: function(action, atSeconds) { host.editSubtitle(action, atSeconds) }
+            onSaveRequested: host.appBackend.saveProject()
             colors: host.colors
             formatTimestamp: host.stamp
             onSeekRequested: function(positionMs) { sharedPlayer.position = positionMs }
@@ -4021,6 +4424,8 @@ Window {
             appBackend: host.appBackend
             player: sharedPlayer
             editorState: editorSession
+            onEditRequested: function(action, atSeconds) { host.editSubtitle(action, atSeconds) }
+            onSaveRequested: host.appBackend.saveProject()
             colors: host.colors
             formatTimestamp: host.stamp
             projectSpeakerCache: host.appBackend.subtitles.projectSpeakers
@@ -4207,6 +4612,19 @@ Window {
 
         self.gui.assert_no_messages_containing("TypeError", since=message_start)
 
+    def test_mixer_save_button_persists_pending_audio_edit(self) -> None:
+        path = self._load_project()
+        original = load_project(path)["audio_mix"]
+        with patch.object(self.app.autosave_timer, "start"):
+            self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
+            expected = deepcopy(self.app._project["audio_mix"])
+            self.assertNotEqual(original, expected)
+            _, window = self._load_qml()
+            self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+            self._click(window, self._quick_item(window, "mixerSaveButton"))
+        self.assertEqual(load_project(path)["audio_mix"], expected)
+        self.assertFalse(self.app.projectDirty)
+
     def test_audio_mixer_works_without_main_workflow_context(self) -> None:
         self._load_project()
         components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
@@ -4239,6 +4657,7 @@ Window {
             canRender: host.renderAllowed
             onPositionUpdated: function(positionMs) { host.cachedPosition = positionMs }
             onRenderRequested: host.renders += 1
+            onSaveRequested: host.appBackend.saveProject()
             onSubtitleEditorRequested: host.subtitleRequests += 1
             onCloseRequested: host.mixerOpen = false
         }
@@ -6884,6 +7303,13 @@ Window {
             description="horizontal sequence timeline",
         )
 
+        def wait_for_timeline_frame() -> None:
+            # 生成直後・Undo直後はレイアウトが未確定の場合がある。
+            frames = QSignalSpy(window.frameSwapped)
+            window.requestUpdate()
+            self.gui.wait_until(lambda: frames.count() > 0, description="タイムライン配置後の描画")
+
+        wait_for_timeline_frame()
         trim_end = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineTrimEnd-{first_clip_id}"
         )
@@ -6895,6 +7321,7 @@ Window {
             Qt.KeyboardModifier.NoModifier,
             trim_start,
         )
+        self.assertTrue(trim_end.property("pressed"), "終了端のハンドルを押せていない")
         for fraction in (0.25, 0.5, 0.75, 1.0):
             QTest.mouseMove(window, trim_start + (trim_finish - trim_start) * fraction, 30)
         QTest.mouseRelease(
@@ -6912,6 +7339,7 @@ Window {
         self.app.undoCutEdit()
         self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceEnd"]), initial_end)
 
+        wait_for_timeline_frame()
         trim_begin = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineTrimStart-{first_clip_id}"
         )
@@ -6941,6 +7369,7 @@ Window {
         self.app.undoCutEdit()
         self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceStart"]), 0.0)
 
+        wait_for_timeline_frame()
         move_area = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineMoveArea-{second_clip_id}"
         )

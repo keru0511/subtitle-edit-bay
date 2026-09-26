@@ -27,13 +27,14 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         sequence_panel = SEQUENCE_PANEL_QML.read_text(encoding="utf-8")
         media_bin = MEDIA_BIN_QML.read_text(encoding="utf-8")
 
+        # 保存・書き出しは入力確定を挟むため、直接呼び出しの文字列を固定しない。
+        # test_workspace_header_save_commits_caption_key_input と
+        # test_workspace_caption_key_input_is_committed_before_render が実操作を検証する。
         # The shared workflow is the only owner of navigation side effects.
+        # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
         for route in (
-            "onProjectOpenRequested: root.appBackend.browseProjectFile()",
             "onSourceSettingsRequested: sourcePopup.open()",
-            "onSaveRequested: root.appBackend.saveProject()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
-            "onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
         ):
             with self.subTest(route=route):

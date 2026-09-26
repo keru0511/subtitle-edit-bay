@@ -20,7 +20,7 @@ Item {
     property var selectedSegment: ({})
     property var beginDraft: null
     property var updateDraft: null
-    property var clearDraft: null
+    property var commitDraft: null
     signal seekRequested(real positionMilliseconds)
     signal speakerColorRequested(int speakerIndex, string currentColor)
     signal contentYChangedByUser(real value)
@@ -113,20 +113,11 @@ Item {
     }
 
     function commitCaptionText() {
-        var index = captionText.editingSegmentIndex
-        if (index < 0)
-            return
-        var editedText = captionText.text
-        var selectedIndex = root.backend.subtitles.selectedSegmentIndex
-        if (editedText !== captionText.originalText) {
-            root.backend.subtitles.updateSegment(index, {"text": editedText})
-            if (selectedIndex >= 0 && selectedIndex !== index)
-                root.backend.subtitles.selectSegment(selectedIndex)
-        }
-        if (root.clearDraft)
-            root.clearDraft(index)
+        var id = captionText.editingSegmentId
         captionText.editingSegmentIndex = -1
-        captionText.originalText = ""
+        captionText.editingSegmentId = ""
+        if (id && root.commitDraft)
+            root.commitDraft(id)
     }
 
     Component.onCompleted: refreshSelectedEditor()
@@ -324,7 +315,7 @@ Item {
                     id: captionText
                     objectName: "workspaceSubtitleTextArea"
                     property int editingSegmentIndex: -1
-                    property string originalText: ""
+                    property string editingSegmentId: ""
                     Layout.fillWidth: true
                     Layout.preferredHeight: 92
                     color: root.textColor
@@ -340,8 +331,7 @@ Item {
                     onActiveFocusChanged: {
                         if (activeFocus) {
                             editingSegmentIndex = root.backend.subtitles.selectedSegmentIndex
-                            var segment = root.backend.subtitles.segmentAt(editingSegmentIndex) || ({})
-                            originalText = String(segment.editorText || segment.text || "")
+                            editingSegmentId = root.segmentIdAt(editingSegmentIndex)
                             if (root.beginDraft && editingSegmentIndex >= 0)
                                 root.beginDraft(editingSegmentIndex, text)
                         } else if (editingSegmentIndex >= 0) {

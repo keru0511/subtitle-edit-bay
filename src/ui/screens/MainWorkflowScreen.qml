@@ -383,9 +383,23 @@ ApplicationWindow {
         root.appBackend.workflow.startTranscription(executionSettings, true)
     }
 
+    function performSubtitleEdit(action, atSeconds) {
+        if (root.appBackend.running)
+            return
+        root.commitPendingEdits()
+        switch (action) {
+        case "add": root.appBackend.subtitles.addSegment(atSeconds); break
+        case "delete": root.appBackend.subtitles.deleteSelectedSegment(); break
+        case "split": root.appBackend.subtitles.splitSelectedSegment(atSeconds); break
+        case "undo": root.appBackend.subtitles.undoSubtitleEdit(); break
+        case "redo": root.appBackend.subtitles.redoSubtitleEdit(); break
+        }
+    }
+
     SubtitleEditorState {
         id: subtitleEditorState
         subtitles: root.appBackend.subtitles
+        projectPath: root.appBackend.projectPath
         previewEnabled: root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle"
     }
     readonly property var subtitleEditorColors: ({
@@ -516,6 +530,7 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
+        root.commitPendingEdits()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         mainPlayer.videoOutput = mainVideo
@@ -573,9 +588,82 @@ ApplicationWindow {
             : root.editorPositionCache
     }
 
+    function commitInputMethod() {
+        // フォーカスを移す前にIMEの未確定文字を確定する。
+        // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
+        // qmllint disable missing-property
+        Qt.inputMethod.commit()
+        // qmllint enable missing-property
+    }
+
+    function commitPendingEdits() {
+        // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
+        root.commitInputMethod()
+        root.contentItem.forceActiveFocus()
+        subtitleEditorState.commitSubtitleDraft()
+    }
+
+    // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
+    property Item saveShortcutFocusTarget: null
+
+    function textSelection(item: var): var {
+        if (!item || item.cursorPosition === undefined || item.select === undefined)
+            return null
+        return {start: item.selectionStart, end: item.selectionEnd, cursor: item.cursorPosition}
+    }
+
+    function restoreTextSelection(item: var, selection: var) {
+        if (!item || !selection)
+            return
+        if (selection.cursor === selection.start)
+            item.select(selection.end, selection.start)
+        else
+            item.select(selection.start, selection.end)
+    }
+
+    function saveProjectFromShortcut() {
+        root.commitInputMethod()
+        root.saveShortcutFocusTarget = root.activeFocusItem
+        var selection = root.textSelection(root.saveShortcutFocusTarget)
+        var saved = root.saveProject()
+        if (root.saveShortcutFocusTarget
+                && root.saveShortcutFocusTarget.visible
+                && root.saveShortcutFocusTarget.enabled) {
+            root.saveShortcutFocusTarget.forceActiveFocus()
+            root.restoreTextSelection(root.saveShortcutFocusTarget, selection)
+        }
+        root.saveShortcutFocusTarget = null
+        return saved
+    }
+
+    function saveProject() {
+        root.commitPendingEdits()
+        return root.appBackend.saveProject()
+    }
+
+    function browseProjectFile() {
+        root.commitPendingEdits()
+        root.appBackend.browseProjectFile()
+    }
+
+    function browseProjectSaveAs() {
+        root.commitPendingEdits()
+        root.appBackend.browseProjectSaveAs()
+    }
+
+    function renderVideo() {
+        root.commitPendingEdits()
+        root.appBackend.workflow.renderVideo(root.currentSettings())
+    }
+
+    function buildSubtitlePreview() {
+        root.commitPendingEdits()
+        root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
+    }
+
     function renderFromEditor() {
         root.closeEditorScreen()
-        root.appBackend.workflow.renderVideo(root.currentSettings())
+        root.renderVideo()
     }
 
     function stamp(seconds) {
@@ -702,9 +790,9 @@ ApplicationWindow {
         accentColor: root.acid
         warningColor: root.amber
         onUpdateCheckRequested: root.appBackend.updates.checkForUpdates()
-        onProjectOpenRequested: root.appBackend.browseProjectFile()
+        onProjectOpenRequested: root.browseProjectFile()
         onSourceSettingsRequested: sourcePopup.open()
-        onSaveRequested: root.appBackend.saveProject()
+        onSaveRequested: root.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
             if (root.loginInInspector) {
@@ -720,7 +808,7 @@ ApplicationWindow {
             }
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
-        onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())
+        onRenderRequested: root.renderVideo()
     }
 
     Dialog {
@@ -867,13 +955,15 @@ ApplicationWindow {
     Component {
         id: subtitleWorkspaceEditorComponent
         SubtitleWorkspaceEditor {
+            onEditRequested: function(action, atSeconds) { root.performSubtitleEdit(action, atSeconds) }
+            onSaveRequested: root.saveProject()
             appBackend: root.appBackend
             player: mainPlayer
             editorState: subtitleEditorState
             colors: root.subtitleEditorColors
             formatTimestamp: root.stamp
             onSeekRequested: function(positionMs) { root.seekSharedPlayer(positionMs, "source") }
-            onPreviewRequested: root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
+            onPreviewRequested: root.buildSubtitlePreview()
         }
     }
 
@@ -966,7 +1056,7 @@ ApplicationWindow {
             savedContentY: root.editorCaptionScrollY
             beginDraft: subtitleEditorState.beginSubtitleDraft
             updateDraft: subtitleEditorState.updateSubtitleDraft
-            clearDraft: subtitleEditorState.clearSubtitleDraft
+            commitDraft: subtitleEditorState.commitSubtitleDraft
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }
@@ -1164,7 +1254,7 @@ ApplicationWindow {
                     Layout.preferredHeight: 48
                     text: "プロジェクトを開く"
                     enabled: !root.appBackend.running
-                    onClicked: root.appBackend.browseProjectFile()
+                    onClicked: root.browseProjectFile()
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
                 Text { text: "必要に応じて"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
@@ -1310,7 +1400,7 @@ ApplicationWindow {
                         onEditorRequested: root.openEditorScreen()
                         onMixerRequested: root.openMixerScreen()
                         onShortModeRequested: root.openShortWorkspace()
-                        onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())
+                        onRenderRequested: root.renderVideo()
                         onSaveOrStopRequested: {
                             if (!root.appBackend.running)
                                 root.appBackend.saveSettings(root.currentSettings())
@@ -1834,7 +1924,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Text { objectName: "projectSavePathText"; Layout.fillWidth: true; text: root.appBackend.projectSavePath || "動画の選択後に決まります"; color: root.textMuted; elide: Text.ElideMiddle }
-                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.appBackend.browseProjectSaveAs() }
+                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.browseProjectSaveAs() }
             }
             PanelTitle { text: "完成動画の出力先" }
             RowLayout {
@@ -1888,7 +1978,8 @@ ApplicationWindow {
                 canRender: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
                 onPositionUpdated: function(positionMs) { root.editorPositionCache = positionMs }
                 onSubtitleEditorRequested: root.openEditorScreen()
-                onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())
+                onSaveRequested: root.saveProject()
+                onRenderRequested: root.renderVideo()
                 onCloseRequested: root.closeMixerScreen()
             }
         }
@@ -1917,6 +2008,8 @@ ApplicationWindow {
         Component {
             id: editorContentComponent
             SubtitleEditorScreen {
+                onEditRequested: function(action, atSeconds) { root.performSubtitleEdit(action, atSeconds) }
+                onSaveRequested: root.saveProject()
                 appBackend: root.appBackend
                 player: mainPlayer
                 editorState: subtitleEditorState
@@ -1936,7 +2029,7 @@ ApplicationWindow {
                 onPlayheadSyncRequested: function(positionMs) { root.syncEditorPlayhead(positionMs, true) }
                 onSelectionSyncRequested: function(segments) { root.syncEditorSelectionFromActiveSegments(segments) }
                 onSpeakerColorRequested: function(index, color) { root.openSpeakerColorPicker("project", index, color) }
-                onPreviewRequested: root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
+                onPreviewRequested: root.buildSubtitlePreview()
                 onRenderRequested: root.renderFromEditor()
                 onCloseRequested: root.closeEditorScreen()
             }
@@ -2183,10 +2276,10 @@ ApplicationWindow {
         onDropped: function(drop) { root.importSourceDrop(drop) }
     }
 
-    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.appBackend.subtitles.undoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.appBackend.subtitles.redoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.appBackend.saveProject() }
-    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.subtitles.selectedSegmentIndex >= 0; onActivated: root.appBackend.subtitles.deleteSelectedSegment() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("undo") }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("redo") }
+    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProjectFromShortcut() }
+    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.subtitles.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
 
     Connections {
         target: root.appBackend
@@ -2202,7 +2295,10 @@ ApplicationWindow {
             close.accepted = false
             return
         }
-        root.appBackend.saveProject()
+        if (root.appBackend.projectLoaded && !root.saveProject()) {
+            close.accepted = false
+            return
+        }
         mainPlayer.stop()
     }
 }

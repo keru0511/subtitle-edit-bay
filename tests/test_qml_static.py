@@ -108,13 +108,12 @@ class QmlStaticTests(unittest.TestCase):
         self.assertEqual(workflow.count("WorkspaceHeader {"), 1)
         self.assertIn("workspaceKind: root.appBackend.workspace.currentWorkspace", workflow)
         self.assertIn("currentEditMode: root.appBackend.workspace.currentEditMode", workflow)
+        # 保存・書き出しの接続はtest_gui_editorの実キー入力・実クリックで検証する。
+        # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
         for action in (
-            "onProjectOpenRequested: root.appBackend.browseProjectFile()",
             "onSourceSettingsRequested: sourcePopup.open()",
-            "onSaveRequested: root.appBackend.saveProject()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
-            "onRenderRequested: root.appBackend.workflow.renderVideo(root.currentSettings())",
         ):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)

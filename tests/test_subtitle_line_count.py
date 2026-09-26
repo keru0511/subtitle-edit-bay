@@ -74,6 +74,16 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertGreater(len(pages), 1)
         self.assertEqual([item["word"] for page in pages for item in page["words"]], ["ABC"])
 
+    def test_split_word_times_stay_inside_segment_bounds(self) -> None:
+        source = "字幕確認"
+        pages = pack_segment_pages({"text": source, "start": 0.2, "end": 0.8, "max_width": 2,
+                                    "words": [{"word": source, "start": 0.0, "end": 1.0}]})
+        self.assertGreater(len(pages), 1)
+        for page in pages:
+            for word in page["words"]:
+                self.assertGreaterEqual(word["start"], page["start"])
+                self.assertLessEqual(word["end"], page["end"])
+
     def test_automatic_one_line_pages_preserve_text(self) -> None:
         source = "明日の予定を確認してから次の作業を始めましょう"
         for line_count in ("1", " 1 ", 1):

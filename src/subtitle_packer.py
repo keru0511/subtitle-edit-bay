@@ -926,6 +926,11 @@ def _assign_page_words(segment: Mapping[object, object], pages: list[dict[object
                         fragment["word"] = normalized[overlap_start - word_start:overlap_end - word_start]
                         fragment["start"] = timeline[overlap_start]["start"]
                         fragment["end"] = timeline[overlap_end - 1]["end"]
+                    page_time_start = _number(pages[page_index]["start"])
+                    page_time_end = _number(pages[page_index]["end"])
+                    fragment_start = max(page_time_start, min(_number(fragment["start"]), page_time_end))
+                    fragment["start"] = fragment_start
+                    fragment["end"] = max(fragment_start, min(_number(fragment["end"]), page_time_end))
                     assigned[page_index].append(fragment)
                 word_start = word_end
             page_start = page_end

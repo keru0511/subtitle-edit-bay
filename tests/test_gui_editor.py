@@ -4119,6 +4119,56 @@ Window {
         self.assertFalse(config["craig_pipeline"]["audio_normalize"])
         self.assertEqual(config["craig_pipeline"]["audio_target_lufs"], -18)
 
+    def test_subtitle_visual_settings_buttons_save_from_settings_screen(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self._click(window, self._quick_item(window, "settingsToggleButton"))
+        scroll_view = self._quick_item(window, "advancedSettingsScrollView")
+        self.gui.wait_until(
+            lambda: scroll_view.height() > 0,
+            description="subtitle visual settings layout",
+        )
+        controls = (
+            "fontSizeSpin",
+            "outlineThicknessSpin",
+            "volumeScaleSpin",
+        )
+        updated: dict[str, int] = {}
+        for name in controls:
+            control = self._quick_item(window, name)
+            self._assert_quick_item_within(scroll_view, control)
+            before = int(control.property("value"))
+            increase = control.mapToScene(
+                QPointF(control.width() - 8, control.height() / 2)
+            ).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
+            self.assertEqual(control.property("value"), before + 1)
+            updated[name] = before + 1
+
+        expected_font_size = max(
+            3,
+            int(
+                float(window.property("defaultSubtitleFontSize"))
+                * updated["fontSizeSpin"]
+                / 100
+                + 0.5
+            ),
+        )
+        self.assertNotEqual(expected_font_size, self.app.settings["subtitle_font_size"])
+        self.assertEqual(window.currentSettings().toVariant()["subtitle_font_size"], expected_font_size)
+        self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
+        config = json.loads(Path(self.app.gui_config_path).read_text(encoding="utf-8"))
+        self.assertEqual(self.app.settings["subtitle_font_size"], expected_font_size)
+        self.assertEqual(self.app.settings["subtitle_outline_thickness"], updated["outlineThicknessSpin"])
+        self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], updated["volumeScaleSpin"])
+        self.assertEqual(config["shared"]["subtitle_font_size"], expected_font_size)
+        self.assertEqual(config["shared"]["subtitle_outline_thickness"], updated["outlineThicknessSpin"])
+        self.assertEqual(
+            config["craig_pipeline"]["subtitle_volume_scale_percent"],
+            updated["volumeScaleSpin"],
+        )
+
     def test_settings_reject_blank_numeric_draft_and_allow_retry(self) -> None:
         self._load_project()
         _, window = self._load_qml()

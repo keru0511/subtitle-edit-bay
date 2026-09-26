@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import re
 from pathlib import Path
 
@@ -13,7 +12,8 @@ from .ass_template import (
     build_ass_header,
 )
 from .color_config import load_speaker_color_map, normalize_color_key
-from .models import SubtitleEvent
+from .data_boundary import decode_json
+from .models import SubtitleEvent as SubtitleEvent
 from .subtitle_line_count import pack_segments_with_line_count
 from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
@@ -157,7 +157,7 @@ def build_track_style_overrides(
 
 
 def parse_segments(
-    data: dict,
+    data: object,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
@@ -236,7 +236,7 @@ def render_dialogue(
 
 
 def render_ass(
-    data: dict,
+    data: object,
     width: int = 1920,
     height: int = 1080,
     track_color_map: dict[str, str] | None = None,
@@ -286,6 +286,17 @@ def render_ass(
     return "\n".join(lines) + "\n"
 
 
+class _RenderAssArgs(argparse.Namespace):
+    input: str
+    output: str
+    width: int
+    height: int
+    subtitle_font_size: int
+    subtitle_outline_color: str
+    subtitle_outline_thickness: int
+    track_color: list[str]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render ASS subtitles from WhisperX-like JSON.")
     parser.add_argument("--input", required=True, help="Path to transcript JSON.")
@@ -295,10 +306,11 @@ def main() -> None:
     parser.add_argument("--subtitle-font-size", type=int, default=DEFAULT_SUBTITLE_FONT_SIZE, help="Base ASS subtitle font size.")
     parser.add_argument("--subtitle-outline-color", default=DEFAULT_SUBTITLE_OUTLINE_COLOR, help="Global subtitle outline color such as #000000.")
     parser.add_argument("--subtitle-outline-thickness", type=int, default=DEFAULT_SUBTITLE_OUTLINE_THICKNESS, help="Global subtitle outline thickness from 0 to 20.")
-    parser.add_argument("--track-color", action="append", default=[], help="Per-track subtitle color like 0:a:1=#FFFFFF.")
-    args = parser.parse_args()
+    parser.add_argument("--track-color", action="append", default=list[str](), help="Per-track subtitle color like 0:a:1=#FFFFFF.")
+    args = _RenderAssArgs()
+    parser.parse_args(namespace=args)
 
-    data = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    data = decode_json(Path(args.input).read_text(encoding="utf-8"))
     ass = render_ass(
         data,
         width=args.width,

@@ -33,8 +33,9 @@ class AssTemplateTests(unittest.TestCase):
         self.assertIn("&H00CCBBAA", cloned)
 
     def test_build_extra_style_definitions_returns_empty_without_overrides(self) -> None:
-        self.assertEqual(build_extra_style_definitions(None), [])
-        self.assertEqual(build_extra_style_definitions({}), [])
+        expected: list[str] = []
+        self.assertEqual(build_extra_style_definitions(None), expected)
+        self.assertEqual(build_extra_style_definitions({}), expected)
 
     def test_build_extra_style_definitions_clones_each_override(self) -> None:
         overrides = {"Alice": ("Oz", "#AABBCC")}

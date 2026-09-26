@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from src.render_ass import (
     SubtitleEvent,
@@ -14,9 +19,50 @@ from src.render_ass import (
 
 
 class RenderAssExtraTests(unittest.TestCase):
+    def test_cli_renders_raw_transcript_with_typed_arguments(self) -> None:
+        segments: list[dict[str, object]] = [
+            {
+                "start": 0,
+                "end": 1,
+                "text": "字幕",
+                "speaker": None,
+                "source_track": "0:a:1",
+                "layout_packed": True,
+            }
+        ]
+        payload: dict[str, object] = {"segments": segments}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            transcript_path = Path(temp_dir) / "transcript.json"
+            ass_path = Path(temp_dir) / "subtitle.ass"
+            transcript_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "src.render_ass",
+                    "--input",
+                    str(transcript_path),
+                    "--output",
+                    str(ass_path),
+                    "--track-color",
+                    "0:a:1=#AABBCC",
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            ass = ass_path.read_text(encoding="utf-8")
+            self.assertIn("Style: Track_0_a_1", ass)
+            self.assertIn(",None,0,0,", ass)
+            self.assertIn("字幕", ass)
+
     def test_parse_track_color_args_parses_multiple_tracks(self) -> None:
         result = parse_track_color_args(["Track1=#AABBCC", "  Track2 = #DDEEFF "])
-        self.assertEqual(result, {"Track1": "#AABBCC", "Track2": "#DDEEFF"})
+        expected = {"Track1": "#AABBCC", "Track2": "#DDEEFF"}
+        self.assertEqual(result, expected)
 
     def test_parse_track_color_args_rejects_missing_equals(self) -> None:
         with self.assertRaises(SystemExit):
@@ -47,6 +93,8 @@ class RenderAssExtraTests(unittest.TestCase):
         track_map = {"Track1": "#112233"}
         override = resolve_event_style_override(event, speaker_color_map=speaker_map, track_color_map=track_map)
         self.assertIsNotNone(override)
+        if override is None:
+            self.fail("話者色の上書きが見つかりませんでした")
         style, color = override
         self.assertEqual(color, "#AABBCC")
 

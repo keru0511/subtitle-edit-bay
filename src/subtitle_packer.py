@@ -71,6 +71,13 @@ def _entry_mappings(value: object) -> list[Mapping[object, object]]:
     return [_mapping(item) for item in value]
 
 
+def _number(value: object) -> float:
+    """処理中の通常のfloatはそのまま返し、それ以外は共通境界で変換する。"""
+    if isinstance(value, float) and type(value) is float:
+        return value
+    return coerce_float(value)
+
+
 def parse_budoux_chunks(text: str) -> list[str]:
     parser = create_budoux_parser()
     if parser is None or not text:
@@ -630,8 +637,8 @@ def build_character_timeline(words: object) -> list[CharacterTiming]:
         if not normalized or start is None or end is None:
             continue
 
-        start_time = coerce_float(start)
-        end_time = effective_word_end(word)
+        start_time = _number(start)
+        end_time = _effective_word_end_mapping(word)
         if end_time <= start_time:
             continue
 
@@ -645,9 +652,13 @@ def build_character_timeline(words: object) -> list[CharacterTiming]:
 
 
 def effective_word_end(word: object) -> float:
-    word = _mapping(word)
-    start = coerce_float(word["start"])
-    end = coerce_float(word["end"])
+    return _effective_word_end_mapping(_mapping(word))
+
+
+def _effective_word_end_mapping(word: Mapping[object, object]) -> float:
+    """検証済み単語の読み取りではマッピング検査を重ねない。"""
+    start = _number(word["start"])
+    end = _number(word["end"])
     character_count = max(1, len(normalize_alignment_text(word.get("word", ""))))
     return min(end, start + MAX_ALIGNED_CHARACTER_DURATION_SECONDS * character_count)
 
@@ -666,8 +677,8 @@ def gap_boundary_indices(words: object, max_gap_seconds: float) -> set[int]:
         next_start = words[index + 1].get("start")
         if current_end is None or next_start is None:
             continue
-        inferred_end = effective_word_end(words[index])
-        if coerce_float(next_start) - inferred_end >= max_gap_seconds and cursor > 0:
+        inferred_end = _effective_word_end_mapping(words[index])
+        if _number(next_start) - inferred_end >= max_gap_seconds and cursor > 0:
             boundaries.add(cursor)
     return boundaries
 
@@ -680,7 +691,7 @@ def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[Mapp
         end = word.get("end")
         if not normalized or start is None or end is None:
             continue
-        if coerce_float(end) <= coerce_float(start):
+        if _number(end) <= _number(start):
             continue
         valid_words.append(word)
 
@@ -690,7 +701,7 @@ def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[Mapp
     groups: list[list[Mapping[object, object]]] = [[valid_words[0]]]
     for word in valid_words[1:]:
         previous = groups[-1][-1]
-        gap = coerce_float(word["start"]) - coerce_float(previous["end"])
+        gap = _number(word["start"]) - _number(previous["end"])
         if gap >= max_gap_seconds:
             groups.append([word])
         else:
@@ -713,8 +724,8 @@ def split_segment_by_word_gaps(segment: object, max_gap_seconds: float) -> list[
         split_segments.append(
             {
                 **segment,
-                "start": coerce_float(group[0]["start"]),
-                "end": coerce_float(group[-1]["end"]),
+                "start": _number(group[0]["start"]),
+                "end": _number(group[-1]["end"]),
                 "text": build_segment_text_from_words(group) or segment.get("text", ""),
                 "words": group,
             }
@@ -777,8 +788,8 @@ def build_timed_units_from_words(segment: object, unit_entries: Sequence[AtomicU
         timed_units.append(
             {
                 **segment,
-                "start": max(start, coerce_float(char_slice[0]["start"])),
-                "end": min(end, coerce_float(char_slice[-1]["end"])),
+                "start": max(start, _number(char_slice[0]["start"])),
+                "end": min(end, _number(char_slice[-1]["end"])),
                 "text": entry["text"],
                 "force_break_before": bool(entry.get("force_break_before", False)),
             }
@@ -808,19 +819,19 @@ def merge_unreadable_groups(
     while index < len(merged):
         group = merged[index]
         group_text = "".join(_text(item["text"]) for item in group)
-        group_duration = coerce_float(group[-1]["end"]) - coerce_float(group[0]["start"])
+        group_duration = _number(group[-1]["end"]) - _number(group[0]["start"])
         if text_width(group_text) >= MIN_FORCED_FRAGMENT_WIDTH and group_duration >= min_duration:
             index += 1
             continue
 
         candidates: list[tuple[int, int]] = []
         if index + 1 < len(merged):
-            next_gap = coerce_float(merged[index + 1][0]["start"]) - coerce_float(group[-1]["end"])
+            next_gap = _number(merged[index + 1][0]["start"]) - _number(group[-1]["end"])
             combined_width = text_width(group_text + "".join(_text(item["text"]) for item in merged[index + 1]))
             if next_gap <= max_merge_gap and combined_width <= max_group_width:
                 candidates.append((0, index + 1))
         if index > 0:
-            previous_gap = coerce_float(group[0]["start"]) - coerce_float(merged[index - 1][-1]["end"])
+            previous_gap = _number(group[0]["start"]) - _number(merged[index - 1][-1]["end"])
             combined_width = text_width("".join(_text(item["text"]) for item in merged[index - 1]) + group_text)
             if previous_gap <= max_merge_gap and combined_width <= max_group_width:
                 candidates.append((1, index - 1))
@@ -848,9 +859,9 @@ def finalize_group_segment(
     use_word_timing: bool,
 ) -> dict[object, object]:
     segment = _mapping(segment)
-    group_start = coerce_float(group[0]["start"])
-    group_end = coerce_float(group[-1]["end"])
-    segment_end_limit = coerce_float(segment["end"])
+    group_start = _number(group[0]["start"])
+    group_end = _number(group[-1]["end"])
+    segment_end_limit = _number(segment["end"])
     adjusted_end = group_end + subtitle_end_padding_seconds if use_word_timing else group_end
 
     group_width = text_width("".join(_text(item["text"]) for item in group))
@@ -886,8 +897,8 @@ def pack_segment_pages(
 
     require_japanese_layout_tools()
 
-    start = coerce_float(segment["start"])
-    end = coerce_float(segment["end"])
+    start = _number(segment["start"])
+    end = _number(segment["end"])
     has_word_timing = bool(segment.get("words"))
     forced_boundaries = gap_boundary_indices(segment.get("words"), subtitle_max_gap_seconds) if has_word_timing else set()
     unit_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
@@ -907,7 +918,7 @@ def pack_segment_pages(
     max_group_width = coerce_int(segment.get("max_width", DEFAULT_PAGE_WIDTH)) * MAX_LINES
 
     for unit in timed_units:
-        unit_duration = coerce_float(unit["end"]) - coerce_float(unit["start"])
+        unit_duration = _number(unit["end"]) - _number(unit["start"])
         unit_width = text_width(_text(unit["text"]))
         sentence_increment = 1 if is_sentence_like(_text(unit["text"])) else 0
         next_sentence_count = current_sentences + sentence_increment
@@ -939,16 +950,16 @@ def pack_segment_pages(
 
     results: list[dict[object, object]] = []
     for index, group in enumerate(grouped):
-        next_group_start = coerce_float(grouped[index + 1][0]["start"]) if index + 1 < len(grouped) else None
-        group_start = coerce_float(group[0]["start"])
-        group_end = coerce_float(group[-1]["end"])
+        next_group_start = _number(grouped[index + 1][0]["start"]) if index + 1 < len(grouped) else None
+        group_start = _number(group[0]["start"])
+        group_end = _number(group[-1]["end"])
         if group_end - group_start > ABSOLUTE_MAX_DURATION and len(group) > 1:
             midpoint = len(group) // 2
             results.append(
                 finalize_group_segment(
                     segment,
                     group[:midpoint],
-                    coerce_float(group[midpoint]["start"]),
+                    _number(group[midpoint]["start"]),
                     subtitle_end_padding_seconds,
                     subtitle_min_duration_seconds,
                     has_word_timing,
@@ -987,10 +998,10 @@ def pack_event(segment: object, default_max_width: int = 24) -> SubtitleEvent | 
 
     emphasis = _text(segment.get("emphasis", "normal"))
     max_width = coerce_int(segment.get("max_width", default_max_width))
-    display_duration = max(0.01, coerce_float(segment["end"]) - coerce_float(segment["start"]))
+    display_duration = max(0.01, _number(segment["end"]) - _number(segment["start"]))
     return SubtitleEvent(
-        start=coerce_float(segment["start"]),
-        end=coerce_float(segment["end"]),
+        start=_number(segment["start"]),
+        end=_number(segment["end"]),
         speaker=speaker,
         text=normalize_text(text, max_width=max_width, display_duration=display_duration),
         emphasis=emphasis,
@@ -1000,7 +1011,7 @@ def pack_event(segment: object, default_max_width: int = 24) -> SubtitleEvent | 
             "source_text": text,
             "max_width": max_width,
             "display_duration": display_duration,
-            "subtitle_font_scale": coerce_float(segment.get("subtitle_font_scale", 1.0)),
+            "subtitle_font_scale": _number(segment.get("subtitle_font_scale", 1.0)),
             "subtitle_font_family": str(segment.get("subtitle_font_family", "")),
             "source_track": str(segment.get("source_track", "")),
             "source_speaker": str(segment.get("source_speaker", "")),

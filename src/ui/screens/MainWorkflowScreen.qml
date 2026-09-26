@@ -1713,6 +1713,7 @@ ApplicationWindow {
         if (root.appBackend.running) {
             if (root.appBackend.workflow.activeJob === "update"
                     || root.appBackend.projectDirty
+                    || root.dictionaryMode
                     || subtitleEditorState.hasPendingSubtitleText
                     || subtitleEditorState.hasPendingTimeEdit) {
                 close.accepted = false

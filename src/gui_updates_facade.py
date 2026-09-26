@@ -266,7 +266,8 @@ class UpdateFacade(FeatureFacade):
         if backend._project is not None and not backend.saveProject():
             backend._set_status("プロジェクトを保存できませんでした", "ERROR")
             return
-        backend.saveSettings(backend._settings)
+        if not backend.saveSettings(backend._settings):
+            return
         try:
             expected_sha256 = backend._update_package_sha256 or update_manager.resolve_expected_sha256(
                 backend._update_info
@@ -319,7 +320,8 @@ class UpdateFacade(FeatureFacade):
         if backend._project is not None and not backend.saveProject():
             backend._set_status("プロジェクトを保存できませんでした", "ERROR")
             return
-        backend.saveSettings(backend._settings)
+        if not backend.saveSettings(backend._settings):
+            return
         backend.workflow._start_command(command, "update", "アプリケーションを更新しています")
 
     @Slot()

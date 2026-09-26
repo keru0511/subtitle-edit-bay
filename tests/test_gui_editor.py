@@ -2654,6 +2654,33 @@ Window {
         self.assertIn("render", render_command)
         self.assertNotIn("--audio-file", render_command)
 
+    def test_processing_does_not_start_when_settings_cannot_be_saved(self) -> None:
+        self._set_ready_sources()
+        self.app._dependencies = RuntimeDependencyStatus(
+            ffmpeg=True, ffprobe=True, whisperx=True, cuda=False, nvenc=False,
+        )
+        settings = {**self.app.settings, "device": "cpu"}
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch("src.gui_settings_controller.write_gui_runtime_config", side_effect=OSError("disk full")) as write,
+            patch.object(self.app.workflow, "_start_command") as start,
+        ):
+            self.app.startTranscription(settings)
+        write.assert_called_once()
+        start.assert_not_called()
+        self.assertEqual(self.app.stage, "ERROR")
+
+        self._load_project()
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch("src.gui_settings_controller.write_gui_runtime_config", side_effect=OSError("disk full")) as write,
+            patch.object(self.app.workflow, "_start_command") as start,
+        ):
+            self.app.renderVideo(settings)
+        write.assert_called_once()
+        start.assert_not_called()
+        self.assertEqual(self.app.stage, "ERROR")
+
     def test_render_automatically_selects_the_available_video_encoder(self) -> None:
         self._load_project()
 
@@ -6388,6 +6415,99 @@ Window {
         self.assertFalse(page.isVisible())
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
+
+    def test_dictionary_shortcuts_preserve_pending_input_during_processing(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        title_field = self._quick_visual_item(page, "transcriptionGameTitleField")
+        save_shortcut = window.findChild(QObject, "transcriptionDictionarySaveShortcut")
+        self.assertIsNotNone(save_shortcut)
+        self.assertTrue(save_shortcut.property("enabled"))
+        title_field.forceActiveFocus()
+        for char in "pending game":
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.app.processEvents()
+        self.assertEqual(title_field.property("text"), "pending game")
+
+        config_path = self.app.gui_config_path
+        before_config = config_path.read_bytes() if config_path.is_file() else None
+        before_context = deepcopy(self.app.transcriptionContext)
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            self.app.processEvents()
+            self.assertFalse(self._quick_item(window, "transcriptionDictionarySaveButton").isEnabled())
+            self.assertFalse(self._quick_item(window, "transcriptionDictionaryBackButton").isEnabled())
+            self.assertFalse(save_shortcut.property("enabled"))
+            QTest.keyClick(window, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
+            page.forceActiveFocus()
+            QTest.keyClick(window, Qt.Key.Key_Escape)
+            self.app.saveSettings({"model": "processing-should-not-save"})
+            self.app.processEvents()
+            self.assertTrue(page.isVisible())
+            self.assertFalse(window.close())
+            self.assertTrue(window.isVisible())
+            self.assertEqual(title_field.property("text"), "pending game")
+            self.assertEqual(self.app.transcriptionContext, before_context)
+            self.assertEqual(
+                config_path.read_bytes() if config_path.is_file() else None,
+                before_config,
+            )
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.app.processEvents()
+        self.assertTrue(self._quick_item(window, "transcriptionDictionarySaveButton").isEnabled())
+        self.assertTrue(save_shortcut.property("enabled"))
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self.assertFalse(page.isVisible())
+        self.assertEqual(self.app.transcriptionContext["game_title"], "pending game")
+        self.assertTrue(config_path.is_file())
+
+    def test_closing_dictionary_window_saves_pending_input(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        title_field = self._quick_visual_item(page, "transcriptionGameTitleField")
+        title_field.forceActiveFocus()
+        for char in "closing draft":
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.app.processEvents()
+        self.assertEqual(title_field.property("text"), "closing draft")
+
+        self.assertTrue(window.close())
+        self.assertEqual(self.app.transcriptionContext["game_title"], "closing draft")
+        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(config["craig_pipeline"]["transcription_context"]["game_title"], "closing draft")
+
+    def test_dictionary_save_failure_keeps_window_open_for_retry(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        title_field = self._quick_visual_item(page, "transcriptionGameTitleField")
+        title_field.forceActiveFocus()
+        for char in "retry draft":
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.app.processEvents()
+        config_path = self.app.gui_config_path
+        before_config = config_path.read_bytes() if config_path.is_file() else None
+
+        with patch("src.gui_settings_controller.write_gui_runtime_config", side_effect=OSError("disk full")):
+            self.assertFalse(window.close())
+        self.assertTrue(page.isVisible())
+        self.assertTrue(window.isVisible())
+        self.assertEqual(title_field.property("text"), "retry draft")
+        self.assertEqual(
+            config_path.read_bytes() if config_path.is_file() else None,
+            before_config,
+        )
+
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self.assertFalse(page.isVisible())
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(config["craig_pipeline"]["transcription_context"]["game_title"], "retry draft")
 
     def test_large_lists_stay_virtualized_and_editor_reuses_main_player(self) -> None:
         self._load_large_project()

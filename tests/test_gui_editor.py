@@ -6137,6 +6137,58 @@ Window {
         self._click(window, control("workspaceAudioMuteButton"))
         self.assertTrue(self.app.audioMixerChannels[0]["muted"])
 
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    def test_workspace_audio_actions_save_reset_and_rebuild_preview(self) -> None:
+        path = self._load_project(duration_seconds=8.0)
+        self._generate_black_test_video_with_audio(
+            self.root / "game.mkv", self.root / "1-alice.flac", duration_seconds=8,
+        )
+        self.app._reset_audio_preview_cache()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-audio"))
+        bridge = self._quick_item(window, "workspaceAudioPreviewBridge")
+        self.gui.wait_until(
+            lambda: bool(bridge.property("previewReady"))
+            and len(self.app._audio_preview_cache_paths) == 2,
+            description="通常画面の音声プレビュー準備",
+            timeout_ms=15_000,
+        )
+
+        channel_list = self._quick_item(window, "workspaceAudioChannelList")
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_visual_item(channel_list, "workspaceAudioMuteButton"))
+            self.assertTrue(self.app.audioMixerChannels[0]["muted"])
+            self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
+            self.assertTrue(load_project(path)["audio_mix"]["channels"][0]["muted"])
+
+            self._click(window, self._quick_item(window, "workspaceAudioResetButton"))
+            self.assertFalse(self.app.audioMixerChannels[0]["muted"])
+            expected = deepcopy(self.app._project["audio_mix"])
+            self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
+
+        self.assertEqual(load_project(path)["audio_mix"], expected)
+        self.assertFalse(self.app.projectDirty)
+        saved_project = path.read_bytes()
+        cache_times = {
+            channel_id: Path(cache_path).stat().st_mtime_ns
+            for channel_id, cache_path in self.app._audio_preview_cache_paths.items()
+        }
+        generation = self.app.audioPreviewGeneration
+        self._click(window, self._quick_item(window, "workspaceAudioRebuildPreviewButton"))
+        self.assertEqual(self.app.audioPreviewGeneration, generation + 1)
+        self.gui.wait_until(
+            lambda: bool(bridge.property("previewReady"))
+            and len(self.app._audio_preview_cache_paths) == 2
+            and all(
+                Path(cache_path).stat().st_mtime_ns > cache_times[channel_id]
+                for channel_id, cache_path in self.app._audio_preview_cache_paths.items()
+            ),
+            description="通常画面から再生成した音声プレビュー",
+            timeout_ms=15_000,
+        )
+        self.assertEqual(path.read_bytes(), saved_project)
+        self.assertFalse(self.app.projectDirty)
+
     def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
         self._load_project(
             segments=[

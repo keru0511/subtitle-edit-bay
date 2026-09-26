@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
+import os
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
+from typing import TypedDict
 from unittest.mock import patch
 
+from src.data_boundary import is_object_list, is_string_object_mapping
 from scripts.benchmark_transcription import (
     align_characters,
+    main as benchmark_main,
     merge_reports,
     normalize_text,
     prepare_audio,
@@ -18,9 +24,42 @@ from scripts.benchmark_transcription import (
 from tests.typed_case import TypedTestCase
 
 
+class _Segment(TypedDict, total=False):
+    text: str
+    start: object
+    end: object
+    words: list[dict[str, object]]
+
+
+class _Payload(TypedDict):
+    segments: list[_Segment]
+
+
+class _Clip(TypedDict, total=False):
+    text: str
+    start: float
+    duration: float
+
+
+class _Limits(TypedDict):
+    max_cer: float
+    max_cer_regression: float
+    timing_tolerance_seconds: float
+    max_outside_speech_characters: float
+    max_untimed_characters: float
+    max_timing_window_errors: float
+
+
+class _Manifest(TypedDict, total=False):
+    duration: float
+    clips: list[_Clip]
+    limits: _Limits
+    equivalent_spellings: dict[str, str]
+
+
 class TranscriptionBenchmarkTests(TypedTestCase):
     def setUp(self) -> None:
-        self.manifest = {
+        self.manifest: _Manifest = {
             "duration": 20,
             "clips": [
                 {"text": "はいはい", "start": 2, "duration": 2},
@@ -35,7 +74,7 @@ class TranscriptionBenchmarkTests(TypedTestCase):
                 "max_timing_window_errors": 0,
             },
         }
-        self.payload = {
+        self.payload: _Payload = {
             "segments": [
                 {
                     "text": "はいはい",
@@ -52,8 +91,8 @@ class TranscriptionBenchmarkTests(TypedTestCase):
             ]
         }
 
-    def paired_reports(self):
-        common = {
+    def paired_reports(self) -> tuple[dict[str, object], dict[str, object]]:
+        common: dict[str, object] = {
             "schema_version": 1,
             "manifest": self.manifest,
             "audio_sha256": "same-audio",
@@ -64,12 +103,14 @@ class TranscriptionBenchmarkTests(TypedTestCase):
             "failures": [],
         }
         score = score_transcript(self.payload, self.manifest)
+        baseline_score: dict[str, object] = {**score, "commit": "baseline-ref", "elapsed_seconds": 1.0}
+        candidate_score: dict[str, object] = {**score, "commit": "candidate-ref", "elapsed_seconds": 1.1}
         return (
-            {**copy.deepcopy(common), "baseline": score},
-            {**copy.deepcopy(common), "candidate": copy.deepcopy(score)},
+            {**copy.deepcopy(common), "baseline": baseline_score},
+            {**copy.deepcopy(common), "candidate": candidate_score},
         )
 
-    def test_parallel_results_reject_different_inputs_and_models(self):
+    def test_parallel_results_reject_different_inputs_and_models(self) -> None:
         for key in ["schema_version", "manifest", "audio_sha256", "versions", "model_snapshots"]:
             with self.subTest(key=key):
                 baseline, candidate = self.paired_reports()
@@ -77,7 +118,7 @@ class TranscriptionBenchmarkTests(TypedTestCase):
                 with self.assertRaisesRegex(ValueError, key):
                     merge_reports(baseline, candidate)
 
-    def test_parallel_results_require_both_successful_recognitions(self):
+    def test_parallel_results_require_both_successful_recognitions(self) -> None:
         for name in ["baseline", "candidate"]:
             for failure in [False, True]:
                 with self.subTest(name=name, failure=failure):
@@ -90,11 +131,43 @@ class TranscriptionBenchmarkTests(TypedTestCase):
                     with self.assertRaises(ValueError):
                         merge_reports(baseline, candidate)
 
-    def test_parallel_comparison_keeps_quality_gate(self):
+    def test_parallel_comparison_keeps_quality_gate(self) -> None:
         baseline, candidate = self.paired_reports()
         self.assertEqual(merge_reports(baseline, candidate)["failures"], [])
         candidate["candidate"] = score_transcript({"segments": []}, self.manifest)
         self.assertTrue(merge_reports(baseline, candidate)["failures"])
+
+    def test_merge_report_cli_writes_comparison(self) -> None:
+        baseline, candidate = self.paired_reports()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline_path = root / "baseline.json"
+            candidate_path = root / "candidate.json"
+            output = root / "result"
+            baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+            candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+            arguments = [
+                "benchmark_transcription.py",
+                "--merge-reports",
+                str(baseline_path),
+                str(candidate_path),
+                "--output",
+                str(output),
+            ]
+            previous_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            os.environ["GITHUB_STEP_SUMMARY"] = ""
+            try:
+                with patch("scripts.benchmark_transcription.sys.argv", arguments), redirect_stdout(io.StringIO()):
+                    self.assertEqual(benchmark_main(), 0)
+            finally:
+                if previous_summary is None:
+                    os.environ.pop("GITHUB_STEP_SUMMARY", None)
+                else:
+                    os.environ["GITHUB_STEP_SUMMARY"] = previous_summary
+            raw_report: object = json.loads((output / "report.json").read_text(encoding="utf-8"))
+            assert is_string_object_mapping(raw_report)
+            self.assertEqual(raw_report["failures"], [])
+            self.assertIn("比較対象: `baseline-ref`", (output / "report.md").read_text(encoding="utf-8"))
 
     def test_normalization_keeps_repetition(self) -> None:
         self.assertEqual(normalize_text("Ａ　はい、はい！いいいいいい"), "aはいはいいいいいいい")
@@ -140,7 +213,13 @@ class TranscriptionBenchmarkTests(TypedTestCase):
 
     def test_missing_or_nonfinite_word_times_fail(self) -> None:
         baseline = score_transcript(self.payload, self.manifest)
-        for update in [{"start": None}, {"end": float("nan")}, {"end": 999}, {"start": 4, "end": 2}]:
+        updates: list[dict[str, object]] = [
+            {"start": None},
+            {"end": float("nan")},
+            {"end": 999},
+            {"start": 4, "end": 2},
+        ]
+        for update in updates:
             with self.subTest(update=update):
                 changed = copy.deepcopy(self.payload)
                 changed["segments"][0]["words"][0].update(update)
@@ -164,7 +243,7 @@ class TranscriptionBenchmarkTests(TypedTestCase):
         manifest = copy.deepcopy(self.manifest)
         manifest["clips"] = [{"text": "あとから進みます", "start": 2, "duration": 3}]
         manifest["equivalent_spellings"] = {"後から": "あとから"}
-        payload = {
+        payload: _Payload = {
             "segments": [
                 {
                     "text": "後から進みます",
@@ -186,10 +265,17 @@ class TranscriptionBenchmarkTests(TypedTestCase):
 
     def test_checked_in_audio_hashes_match(self) -> None:
         directory = Path(__file__).resolve().parents[1] / "assets/asr_benchmark"
-        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(len(manifest["clips"]), 4)
-        for clip in manifest["clips"]:
-            self.assertEqual(hashlib.sha256((directory / clip["audio"]).read_bytes()).hexdigest(), clip["sha256"])
+        raw_manifest: object = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        assert is_string_object_mapping(raw_manifest)
+        clips = raw_manifest["clips"]
+        assert is_object_list(clips)
+        self.assertEqual(len(clips), 4)
+        for raw_clip in clips:
+            assert is_string_object_mapping(raw_clip)
+            audio = raw_clip["audio"]
+            sha256 = raw_clip["sha256"]
+            assert isinstance(audio, str) and isinstance(sha256, str)
+            self.assertEqual(hashlib.sha256((directory / audio).read_bytes()).hexdigest(), sha256)
 
     def test_corrupted_fixture_fails_before_decoding(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

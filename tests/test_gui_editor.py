@@ -4359,8 +4359,20 @@ Window {
             (False, "save"): "workspaceSubtitleSaveButton",
             (True, "render"): "editorRenderButton",
             (False, "render"): "workspaceHeaderRenderButton",
-        }[(expanded, action)]
-        button = self._quick_item(window, button_name)
+            (True, "preview"): "buildAssButton",
+            (False, "preview"): "workspaceSubtitlePreviewButton",
+            (False, "header_save"): "workspaceHeaderSaveButton",
+            (True, "back"): "editorBackButton",
+        }.get((expanded, action))
+        button = self._quick_item(window, button_name) if button_name else None
+
+        def trigger_action() -> None:
+            if action == "shortcut":
+                QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
+                self.app.processEvents()
+            else:
+                assert button is not None
+                self._click(window, button)
 
         with patch.object(self.app.autosave_timer, "start"):
             self._click(window, caption)
@@ -4373,15 +4385,18 @@ Window {
             self.assertEqual(caption.property("preeditText"), "日本")
 
             with patch.object(self.app.workflow, "_start_command") as start:
-                self._click(window, button)
+                trigger_action()
                 start.assert_not_called()
-            self.assertEqual(self.app.stage, "CHECK")
-            self.assertIn("確定してから", self.app.status)
+            if action != "shortcut":
+                self.assertEqual(self.app.stage, "CHECK")
+                self.assertIn("確定してから", self.app.status)
             self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
             self.assertEqual(self.app.segmentAt(0)["text"], "abcdefgh")
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(caption.property("inputMethodComposing"))
             self.assertEqual(caption.property("preeditText"), "日本")
+            if action == "back":
+                self.assertTrue(self._quick_item(window, "editorPage").isVisible())
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -4390,10 +4405,17 @@ Window {
             self.assertFalse(caption.property("inputMethodComposing"))
             if action == "render":
                 with patch.object(self.app.workflow, "_start_command") as start:
-                    self._click(window, button)
+                    trigger_action()
                     start.assert_called_once()
             else:
-                self._click(window, button)
+                trigger_action()
+            if action == "preview":
+                self.assertEqual(self.app.stage, "ASS", self.app.status)
+                self.assertIn("a日本語", Path(self.app._ass_path).read_text(encoding="utf-8-sig"))
+            elif action == "back":
+                self.assertFalse(self._quick_item(window, "editorPage").isVisible())
+                self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
+                self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
         self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
 
@@ -4405,6 +4427,86 @@ Window {
 
     def test_expanded_render_waits_for_uncommitted_ime_text(self) -> None:
         self._assert_uncommitted_ime_text_blocks_action(expanded=True, action="render")
+
+    def test_workspace_header_save_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=False, action="header_save")
+
+    def test_workspace_render_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=False, action="render")
+
+    def test_workspace_preview_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=False, action="preview")
+
+    def test_expanded_preview_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=True, action="preview")
+
+    def test_expanded_back_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=True, action="back")
+
+    def test_expanded_save_shortcut_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=True, action="shortcut")
+
+    def test_workspace_project_open_waits_for_uncommitted_ime_text(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
+            self.app.processEvents()
+            with patch("src.gui.QFileDialog.getOpenFileName", return_value=("", "")) as dialog:
+                self._click(window, self._quick_item(window, "projectOpenButton"))
+                dialog.assert_not_called()
+            self.assertEqual(self.app.stage, "CHECK")
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+
+            commit = QInputMethodEvent("", [])
+            commit.setCommitString("日本語")
+            QCoreApplication.sendEvent(caption, commit)
+            self.app.processEvents()
+            with patch("src.gui.QFileDialog.getOpenFileName", return_value=("", "")) as dialog:
+                self._click(window, self._quick_item(window, "projectOpenButton"))
+                dialog.assert_called_once()
+            self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+
+    def test_window_close_waits_for_uncommitted_ime_text(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
+            self.app.processEvents()
+            window.close()
+            self.app.processEvents()
+            self.assertTrue(window.isVisible())
+            self.assertEqual(self.app.stage, "CHECK")
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+
+            commit = QInputMethodEvent("", [])
+            commit.setCommitString("日本語")
+            QCoreApplication.sendEvent(caption, commit)
+            self.app.processEvents()
+            window.close()
+            self.app.processEvents()
+
+        self.assertFalse(window.isVisible())
+        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
 
     def test_workspace_caption_key_input_is_committed_before_render(self) -> None:
         self._assert_caption_input_committed_before_action(expanded=False, action="render")

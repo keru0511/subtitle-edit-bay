@@ -299,9 +299,12 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_cut_editing_is_locked_during_processing_and_recovers
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_shortcuts_preserve_pending_input_during_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_back_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_ime_committed_text_is_saved
+          tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_preview_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_render_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_shortcut_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_candidates_are_preserved_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_incomplete_time_input_can_be_finished_after_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_preview_play_button_starts_and_pauses_shared_player
@@ -320,7 +323,12 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_transcription_merge_append_commits_pending_time_and_preserves_subtitles
           tests.test_gui_editor.GuiEditorRegressionTests.test_transcription_merge_cancel_preserves_existing_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_web_dictionary_candidate_actions_save_and_reload_from_screen
+          tests.test_gui_editor.GuiEditorRegressionTests.test_window_close_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_header_save_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_ime_committed_text_is_saved
+          tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_preview_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_project_open_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_render_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_save_waits_for_uncommitted_ime_text
 
       - name: Run Windows FFmpeg and Qt media tests

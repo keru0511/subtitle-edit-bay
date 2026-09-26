@@ -259,6 +259,7 @@ Rectangle {
             }
             SmallButton {
                 objectName: "projectOpenButton"
+                focusPolicy: Qt.TabFocus
                 text: "開く"
                 enabled: !header.running
                 onClicked: header.projectOpenRequested()

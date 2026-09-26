@@ -970,72 +970,17 @@ ApplicationWindow {
     Component {
         id: audioWorkspaceEditorComponent
 
-        Item {
-            objectName: "workspaceAudioEditor"
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    PanelTitle { text: "音声タイムライン" }
-                    Text {
-                        text: root.appBackend.audio.audioPreviewPreparing
-                            ? "プレビュー音声を準備中…"
-                            : (workspaceAudioBridge.intentionalSilence
-                                ? "すべての音声トラックが無効です"
-                                : (workspaceAudioBridge.previewReady
-                                    ? "共通プレビューへ接続済み"
-                                    : "ミックスを準備できないため元の音声を再生します"))
-                        color: workspaceAudioBridge.previewReady
-                            || workspaceAudioBridge.intentionalSilence
-                            ? root.acid
-                            : root.textMuted
-                        font.family: "Yu Gothic UI"
-                        font.pixelSize: 9
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "再生・シークは中央プレビューと共通"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
-                }
-
-                SubtitleTimeline {
-                    appBackend: root.appBackend
-                    colors: root.subtitleEditorColors
-                    formatTimestamp: root.stamp
-                    speakers: root.projectSpeakerCache
-                    id: workspaceAudioTimeline
-                    objectName: "workspaceAudioTimeline"
-                    property bool restoringViewport: true
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    player: mainPlayer
-                    pixelsPerSecond: root.timelinePixelsPerSecond
-                    laneHeight: 34
-                    editable: false
-                    showSegments: false
-                    showTrackVolume: true
-                    lanes: root.appBackend.audio.audioMixerSequenceChannels
-                    waveforms: root.appBackend.audio.audioMixerSequenceChannels
-                    seekHandler: function(positionMilliseconds) {
-                        root.seekSharedPlayer(positionMilliseconds, "source")
-                    }
-                    onViewportXChanged: {
-                        if (!restoringViewport)
-                            root.workspaceAudioTimelineScrollX = viewportX
-                    }
-                    Timer {
-                        interval: 0
-                        running: true
-                        repeat: false
-                        onTriggered: {
-                            workspaceAudioTimeline.viewportX = root.workspaceAudioTimelineScrollX
-                            workspaceAudioTimeline.restoringViewport = false
-                        }
-                    }
-                }
-            }
+        AudioWorkspaceEditor {
+            appBackend: root.appBackend
+            player: mainPlayer
+            previewBridge: workspaceAudioBridge
+            colors: root.subtitleEditorColors
+            formatTimestamp: root.stamp
+            speakers: root.projectSpeakerCache
+            pixelsPerSecond: root.timelinePixelsPerSecond
+            savedViewportX: root.workspaceAudioTimelineScrollX
+            onSeekRequested: function(positionMs) { root.seekSharedPlayer(positionMs, "source") }
+            onViewportChangedByUser: function(viewportX) { root.workspaceAudioTimelineScrollX = viewportX }
         }
     }
 

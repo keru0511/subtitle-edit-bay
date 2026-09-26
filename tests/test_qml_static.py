@@ -30,6 +30,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
     COMPONENTS_ROOT / "AudioMixerScreen.qml",
+    COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
     COMPONENTS_ROOT / "CutModeSettings.qml",
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
@@ -407,7 +408,8 @@ class QmlStaticTests(unittest.TestCase):
         )
 
         self.assertIn('objectName: "workspaceSubtitleEditor"', (COMPONENTS_ROOT / "SubtitleWorkspaceEditor.qml").read_text(encoding="utf-8"))
-        self.assertIn('objectName: "workspaceAudioEditor"', workflow)
+        self.assertIn('AudioWorkspaceEditor {', workflow)
+        self.assertIn('objectName: "workspaceAudioEditor"', (COMPONENTS_ROOT / "AudioWorkspaceEditor.qml").read_text(encoding="utf-8"))
         self.assertEqual(workflow.count("AudioPreviewBridge {"), 1)
         self.assertNotIn("videoOutput", audio_bridge)
         self.assertNotIn("property real position", audio_bridge)

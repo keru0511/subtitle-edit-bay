@@ -287,6 +287,16 @@ jobs:
         shell: pwsh
         run: python scripts/run_ci_tests.py --group windows-runtime
 
+      - name: Run Windows subtitle GUI regression tests
+        shell: pwsh
+        run: >-
+          python -m unittest -v
+          tests.test_gui_editor.GuiEditorRegressionTests.test_incomplete_time_input_can_be_finished_after_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_pending_start_time_survives_row_recycling_during_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_pending_text_survives_processing_state_change_in_expanded_editor
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_timeline_drag_is_locked_during_processing_and_recovers
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_timeline_resize_is_locked_during_processing_and_recovers
+
       - name: Run Windows FFmpeg and Qt media tests
         shell: pwsh
         run: python scripts/run_ci_tests.py --group windows-ffmpeg-runtime

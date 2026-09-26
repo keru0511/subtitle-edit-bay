@@ -6462,6 +6462,102 @@ Window {
             "audio_mix_proposal",
         )
 
+    def test_codex_model_and_new_chat_controls_preserve_project(self) -> None:
+        path = self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready",
+            auth_state="authenticated",
+            auth_label="ChatGPT",
+            thread_id="existing-thread",
+            models=(
+                {"id": "model-a", "label": "Model A"},
+                {"id": "model-b", "label": "Model B"},
+            ),
+            selected_model="model-a",
+            messages=({"role": "user", "text": "前の会話"},),
+        )
+        self.app._codex_chat._snapshot = authenticated
+        original_gemini = self.app._gemini_chat.snapshot
+        self.addCleanup(self.app._ai_chat.select_provider, "codex")
+        self.addCleanup(setattr, self.app._gemini_chat, "_snapshot", original_gemini)
+        self.app._gemini_chat._snapshot = CodexChatSnapshot(
+            provider_id="gemini",
+            provider_name="Gemini",
+            connection_state="ready",
+            auth_state="authenticated",
+            thread_id="gemini-thread",
+            messages=({"role": "user", "text": "別の会話"},),
+            model_selection_supported=False,
+            login_available=False,
+        )
+        self.app._on_codex_chat_state(authenticated)
+        self.app._codex_proposal = {
+            "summary": "未適用の字幕案",
+            "operations": [{
+                "id": "edit-segment", "type": "update_segment", "segment_id": "segment-a",
+                "changes": {"text": "提案された本文"},
+            }],
+        }
+        self.app.codexProposalChanged.emit()
+        _, window = self._load_qml()
+        before = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            self.app._project_revision, self.app.projectDirty, path.read_bytes(),
+        )
+
+        provider_combo = self._quick_item(window, "aiProviderHeaderCombo")
+        self.assertEqual(provider_combo.property("count"), 2)
+        self._click(window, provider_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.wait_until(
+            lambda: self.app.aiChatProviderId == "gemini"
+            and self.app.codexChatMessages[0]["text"] == "別の会話"
+            and not provider_combo.property("down"),
+            description="Gemini conversation selected from screen",
+        )
+        self.assertFalse(self._quick_item(window, "codexModelCombo").isVisible())
+        self._click(window, provider_combo)
+        QTest.keyClick(window, Qt.Key.Key_Up)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.wait_until(
+            lambda: self.app.aiChatProviderId == "codex"
+            and self.app.codexChatMessages[0]["text"] == "前の会話"
+            and not provider_combo.property("down"),
+            description="Codex conversation restored from screen",
+        )
+        self.gui.wait(50)
+
+        model_combo = self._quick_item(window, "codexModelCombo")
+        self.assertTrue(model_combo.isVisible())
+        self.assertEqual(model_combo.property("currentValue"), "model-a")
+        self._click(window, model_combo)
+        self.gui.wait_until(
+            lambda: bool(model_combo.property("down")),
+            description="Codex model choices opened",
+        )
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.wait_until(
+            lambda: self.app.codexSelectedModel == "model-b"
+            and not model_combo.property("down"),
+            description="selected Codex model updated from screen",
+        )
+
+        self._click(window, self._quick_item(window, "codexNewChatButton"))
+        self.gui.wait_until(
+            lambda: not self.app._codex_chat.snapshot.thread_id
+            and not self.app._codex_chat.snapshot.messages
+            and self.app._codex_proposal is None
+            and self.app._gemini_chat.snapshot.thread_id == "gemini-thread",
+            description="new chat cleared conversation and pending proposal",
+        )
+        self.assertEqual(
+            (self.app._project, self.app._undo_stack, self.app._project_revision,
+             self.app.projectDirty, path.read_bytes()),
+            before,
+        )
+
     def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -7072,6 +7168,30 @@ Window {
         self.assertEqual(media["source_changes"], 0)
         self.assertEqual(media["loading_transitions"], 0)
         self.assertEqual(len(window.findChildren(QMediaPlayer)), initial_player_count)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    def test_main_preview_play_button_starts_and_pauses_shared_player(self) -> None:
+        self._set_ready_sources()
+        self._load_project()
+        self._generate_silence_cut_test_media(self.root / "game.mkv", self.root / "1-alice.flac")
+        _, window = self._load_qml()
+        player = self.gui.find_object(window, "mainWorkspacePlayer", QMediaPlayer)
+        button = self._quick_item(window, "mainPreviewPlayButton")
+        self.gui.wait_until(
+            lambda: player.duration() >= 2_500,
+            description="preview media loaded",
+            timeout_ms=5_000,
+        )
+        self._click(window, button)
+        self.gui.wait_until(
+            lambda: player.playbackState() == QMediaPlayer.PlaybackState.PlayingState,
+            description="preview playback started from screen",
+        )
+        self._click(window, button)
+        self.gui.wait_until(
+            lambda: player.playbackState() == QMediaPlayer.PlaybackState.PausedState,
+            description="preview playback paused from screen",
+        )
 
     def test_large_short_clip_list_stays_virtualized(self) -> None:
         self._load_large_project()
@@ -8830,6 +8950,9 @@ Window {
         self.app.processEvents()
         restart_button = self._quick_item(window, "restartApplicationButton")
         self.assertTrue(restart_button.property("visible"))
+        self._click(window, self._quick_item(window, "dismissUpdateDialogButton"))
+        self.assertFalse(dialog.property("visible"))
+
     def _make_sequence_project(self) -> tuple[Path, Path, Path]:
         first_video = self.root / "first.mp4"
         second_video = self.root / "second.mp4"

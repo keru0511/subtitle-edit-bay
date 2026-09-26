@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping, Sequence
 
+from src.data_boundary import is_object_mapping, is_object_sequence
 from src.subtitle_text_rules import reattach_leading_punctuation
 
 
@@ -13,9 +15,9 @@ def segment(
     source_track: str = "craig:oz",
     source_file: str = "",
     source_stream_id: str = "",
-    words: list[dict] | None = None,
-) -> dict:
-    result = {
+    words: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    result: dict[str, object] = {
         "start": start,
         "end": start + 1.0,
         "text": text,
@@ -31,7 +33,60 @@ def segment(
     return result
 
 
+def word_texts(value: object) -> list[str]:
+    if not is_object_mapping(value):
+        raise AssertionError("字幕が辞書ではありません")
+    segment_value: Mapping[object, object] = value
+    words = segment_value["words"]
+    if not is_object_sequence(words) or isinstance(words, (str, bytes, bytearray)):
+        raise AssertionError("単語一覧がありません")
+    result: list[str] = []
+    for word in words:
+        if not is_object_mapping(word):
+            raise AssertionError("単語が辞書ではありません")
+        value = word["word"]
+        if not isinstance(value, str):
+            raise AssertionError("単語が文字列ではありません")
+        result.append(value)
+    return result
+
+
+def caption_texts(segments: Sequence[Mapping[object, object]]) -> list[str]:
+    result: list[str] = []
+    for segment_value in segments:
+        value = segment_value["text"]
+        if not isinstance(value, str):
+            raise AssertionError("字幕が文字列ではありません")
+        result.append(value)
+    return result
+
+
 class SubtitleTextRuleTests(unittest.TestCase):
+    def test_preserves_extension_references_without_mutating_input(self) -> None:
+        extension = object()
+        aligned: dict[str, object] = {"word": "前", "extension": extension}
+        original = [segment("前", 0.0, words=[aligned]), segment("。次", 1.0)]
+
+        repaired = reattach_leading_punctuation(original)
+
+        self.assertIsNot(repaired[0], original[0])
+        self.assertIsNot(repaired[0]["words"], original[0]["words"])
+        expected_original = ["前"]
+        expected_repaired = ["前。"]
+        self.assertEqual(word_texts(original[0]), expected_original)
+        self.assertEqual(word_texts(repaired[0]), expected_repaired)
+        words = repaired[0]["words"]
+        if not is_object_sequence(words):
+            self.fail("単語一覧がありません")
+        word = words[0]
+        if not is_object_mapping(word):
+            self.fail("単語が辞書ではありません")
+        self.assertIs(word["extension"], extension)
+
+    def test_rejects_non_mapping_segment(self) -> None:
+        with self.assertRaises(TypeError):
+            reattach_leading_punctuation([None])
+
     def test_moves_leading_period_to_the_previous_caption(self) -> None:
         original = [
             segment("○○だよね", 0.0),
@@ -40,13 +95,14 @@ class SubtitleTextRuleTests(unittest.TestCase):
 
         repaired = reattach_leading_punctuation(original)
 
-        self.assertEqual([item["text"] for item in repaired], ["○○だよね。", "○○なんだけど"])
-        self.assertEqual(repaired[0]["words"][0]["word"], "○○だよね。")
-        self.assertEqual(repaired[1]["words"][0]["word"], "○○なんだけど")
+        expected = ["○○だよね。", "○○なんだけど"]
+        self.assertEqual(caption_texts(repaired), expected)
+        self.assertEqual(word_texts(repaired[0])[0], "○○だよね。")
+        self.assertEqual(word_texts(repaired[1])[0], "○○なんだけど")
         self.assertEqual(original[0]["text"], "○○だよね")
         self.assertEqual(original[1]["text"], "。○○なんだけど")
-        self.assertEqual(original[0]["words"][0]["word"], "○○だよね")
-        self.assertEqual(original[1]["words"][0]["word"], "。○○なんだけど")
+        self.assertEqual(word_texts(original[0])[0], "○○だよね")
+        self.assertEqual(word_texts(original[1])[0], "。○○なんだけど")
 
     def test_moves_all_supported_leading_closing_punctuation(self) -> None:
         punctuation = "、。！？!?"
@@ -67,14 +123,16 @@ class SubtitleTextRuleTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([item["text"] for item in repaired], ["Built with", ".NET 9", ", literally"])
+        expected = ["Built with", ".NET 9", ", literally"]
+        self.assertEqual(caption_texts(repaired), expected)
 
     def test_removes_a_punctuation_only_caption_after_reattaching_it(self) -> None:
         repaired = reattach_leading_punctuation(
             [segment("前の字幕", 0.0), segment("。！？", 1.0)]
         )
 
-        self.assertEqual([item["text"] for item in repaired], ["前の字幕。！？"])
+        expected = ["前の字幕。！？"]
+        self.assertEqual(caption_texts(repaired), expected)
 
     def test_does_not_cross_source_tracks(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -84,7 +142,8 @@ class SubtitleTextRuleTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([item["text"] for item in repaired], ["Ozの字幕", "。別話者"])
+        expected = ["Ozの字幕", "。別話者"]
+        self.assertEqual(caption_texts(repaired), expected)
 
     def test_does_not_cross_unique_sources_with_the_same_file_name_and_track(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -104,7 +163,8 @@ class SubtitleTextRuleTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([item["text"] for item in repaired], ["最初の音声", "。別の音声"])
+        expected = ["最初の音声", "。別の音声"]
+        self.assertEqual(caption_texts(repaired), expected)
 
     def test_can_reattach_across_diarized_speakers_on_the_same_track(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -114,7 +174,8 @@ class SubtitleTextRuleTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([item["text"] for item in repaired], ["前の話者。", "次の話者"])
+        expected = ["前の話者。", "次の話者"]
+        self.assertEqual(caption_texts(repaired), expected)
 
     def test_uses_time_order_even_when_input_is_grouped_by_track(self) -> None:
         later = segment("。後半", 2.0)
@@ -146,7 +207,7 @@ class SubtitleTextRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(repaired[1]["text"], "次。")
-        self.assertEqual("".join(word["word"] for word in repaired[1]["words"]), "次。")
+        self.assertEqual("".join(word_texts(repaired[1])), "次。")
 
     def test_removes_leading_punctuation_across_multiple_aligned_words(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -164,9 +225,10 @@ class SubtitleTextRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(repaired[0]["text"], "前！？")
-        self.assertEqual(repaired[0]["words"][0]["word"], "前！？")
+        self.assertEqual(word_texts(repaired[0])[0], "前！？")
         self.assertEqual(repaired[1]["text"], "次")
-        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
+        expected = ["次"]
+        self.assertEqual(word_texts(repaired[1]), expected)
 
     def test_removes_partial_aligned_prefix_when_later_punctuation_is_unaligned(self) -> None:
         original = [
@@ -185,8 +247,10 @@ class SubtitleTextRuleTests(unittest.TestCase):
 
         self.assertEqual(repaired[0]["text"], "前！？")
         self.assertEqual(repaired[1]["text"], "次")
-        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
-        self.assertEqual([word["word"] for word in original[1]["words"]], ["！", "次"])
+        expected_repaired = ["次"]
+        expected_original = ["！", "次"]
+        self.assertEqual(word_texts(repaired[1]), expected_repaired)
+        self.assertEqual(word_texts(original[1]), expected_original)
 
     def test_removes_aligned_later_mark_when_the_first_mark_is_unaligned(self) -> None:
         original = [
@@ -202,8 +266,10 @@ class SubtitleTextRuleTests(unittest.TestCase):
 
         self.assertEqual(repaired[0]["text"], "前！？")
         self.assertEqual(repaired[1]["text"], "次")
-        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
-        self.assertEqual([word["word"] for word in original[1]["words"]], ["？次"])
+        expected_repaired = ["次"]
+        expected_original = ["？次"]
+        self.assertEqual(word_texts(repaired[1]), expected_repaired)
+        self.assertEqual(word_texts(original[1]), expected_original)
 
     def test_removes_aligned_later_mark_from_a_separate_word(self) -> None:
         repaired = reattach_leading_punctuation(
@@ -222,7 +288,8 @@ class SubtitleTextRuleTests(unittest.TestCase):
 
         self.assertEqual(repaired[0]["text"], "前！？")
         self.assertEqual(repaired[1]["text"], "次")
-        self.assertEqual([word["word"] for word in repaired[1]["words"]], ["次"])
+        expected = ["次"]
+        self.assertEqual(word_texts(repaired[1]), expected)
 
 
 if __name__ == "__main__":

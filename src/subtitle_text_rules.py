@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import TypeGuard
+
+from .data_boundary import coerce_float, is_object_mapping
 
 
 LEADING_CLOSING_PUNCTUATION = frozenset("、。！？!?")
 
 
-def _stream_key(segment: dict[str, Any]) -> tuple[str, str, str]:
+def _mapping(value: object) -> Mapping[object, object]:
+    if not is_object_mapping(value):
+        raise TypeError("subtitle segment must be a mapping")
+    return value
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _stream_key(segment: Mapping[object, object]) -> tuple[str, str, str]:
     source_stream_id = str(segment.get("source_stream_id") or "")
     source_file = str(segment.get("source_file") or "")
     source_track = str(segment.get("source_track") or "")
@@ -18,9 +31,9 @@ def _stream_key(segment: dict[str, Any]) -> tuple[str, str, str]:
     return "speaker", speaker, ""
 
 
-def _start_time(segment: dict[str, Any]) -> float:
+def _start_time(segment: Mapping[object, object]) -> float:
     try:
-        return float(segment.get("start", 0.0))
+        return coerce_float(segment.get("start", 0.0))
     except (TypeError, ValueError):
         return 0.0
 
@@ -32,13 +45,13 @@ def _leading_punctuation(text: str) -> str:
     return text[:end]
 
 
-def _append_to_last_aligned_word(segment: dict[str, Any], punctuation: str) -> None:
+def _append_to_last_aligned_word(segment: dict[object, object], punctuation: str) -> None:
     words = segment.get("words")
-    if not isinstance(words, list):
+    if not _is_object_list(words):
         return
     for index in range(len(words) - 1, -1, -1):
         word = words[index]
-        if not isinstance(word, dict):
+        if not is_object_mapping(word):
             continue
         value = str(word.get("word", ""))
         if value.strip():
@@ -50,19 +63,19 @@ def _append_to_last_aligned_word(segment: dict[str, Any], punctuation: str) -> N
             return
 
 
-def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str) -> None:
+def _remove_from_leading_aligned_words(segment: dict[object, object], punctuation: str) -> None:
     words = segment.get("words")
-    if not isinstance(words, list) or not punctuation:
+    if not _is_object_list(words) or not punctuation:
         return
 
     punctuation_index = 0
-    cleaned: list[Any] = []
+    cleaned: list[object] = []
     removed_any = False
     for index, word in enumerate(words):
         if punctuation_index >= len(punctuation):
             cleaned.extend(words[index:])
             break
-        if not isinstance(word, dict):
+        if not is_object_mapping(word):
             cleaned.extend(words[index:])
             break
 
@@ -101,7 +114,7 @@ def _remove_from_leading_aligned_words(segment: dict[str, Any], punctuation: str
         segment["words"] = cleaned
 
 
-def reattach_leading_punctuation(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def reattach_leading_punctuation(segments: Sequence[object]) -> list[dict[object, object]]:
     """Move leading closing punctuation to the preceding caption in its source stream.
 
     WhisperX can place sentence punctuation at the beginning of its next segment.
@@ -110,12 +123,16 @@ def reattach_leading_punctuation(segments: list[dict[str, Any]]) -> list[dict[st
     raw transcript remains untouched because this function uses copy-on-write.
     """
 
-    repaired = [dict(segment) for segment in segments]
+    repaired = [dict(_mapping(segment)) for segment in segments]
     removed_indices: set[int] = set()
-    previous_by_stream: dict[tuple[str, str, str], dict[str, Any]] = {}
+    previous_by_stream: dict[tuple[str, str, str], dict[object, object]] = {}
+
+    def _order_key(item: tuple[int, dict[object, object]]) -> tuple[float, int]:
+        return _start_time(item[1]), item[0]
+
     ordered = sorted(
         enumerate(repaired),
-        key=lambda item: (_start_time(item[1]), item[0]),
+        key=_order_key,
     )
 
     for index, segment in ordered:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
+from .data_boundary import coerce_float, coerce_int, is_object_dict, is_object_mapping, is_object_sequence
 from .models import SubtitleEvent
 from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
@@ -23,14 +24,33 @@ ELLIPSIS = "\u2026"
 UNTRUNCATED_MAX_LINES = 999
 
 
-def format_segment_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
+def _mapping(value: object) -> Mapping[object, object]:
+    if not is_object_mapping(value):
+        raise TypeError("subtitle payload must be a mapping")
+    return value
+
+
+def _dictionary(value: object) -> dict[object, object]:
+    if not is_object_dict(value):
+        raise TypeError("subtitle segment must be a dictionary")
+    return value
+
+
+def _segments(value: object) -> list[dict[object, object]]:
+    if not is_object_sequence(value) or isinstance(value, (str, bytes, bytearray)):
+        raise TypeError("subtitle segments must be a sequence")
+    return [_dictionary(segment) for segment in value]
+
+
+def format_segment_text(segment: object, default_max_width: int = 24) -> str:
     """Return the exact ASS-ready text after manual or automatic line breaking."""
+    segment = _mapping(segment)
     text = str(segment.get("text", "")).strip()
     if not text:
         return ""
 
-    max_width = int(segment.get("max_width", default_max_width))
-    display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+    max_width = coerce_int(segment.get("max_width", default_max_width))
+    display_duration = max(0.01, coerce_float(segment["end"]) - coerce_float(segment["start"]))
     line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", SUBTITLE_LINE_COUNT_AUTO))
     max_lines = subtitle_line_count_max_lines(line_count)
     text_without_newlines = "\n" not in text and "\r" not in text
@@ -46,18 +66,19 @@ def format_segment_text(segment: dict[str, Any], default_max_width: int = 24) ->
     )
 
 
-def segment_preview_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
+def segment_preview_text(segment: object, default_max_width: int = 24) -> str:
     """Return formatted text with real newlines for Qt preview rendering."""
     return format_segment_text(segment, default_max_width=default_max_width).replace(r"\N", "\n")
 
 
-def segment_editor_text(segment: dict[str, Any], default_max_width: int = 24) -> str:
+def segment_editor_text(segment: object, default_max_width: int = 24) -> str:
     """Show automatic breaks in the editor without hiding truncated source text."""
+    segment = _mapping(segment)
     source = str(segment.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").replace(r"\N", "\n").strip()
     preview = segment_preview_text(segment, default_max_width=default_max_width)
     if preview.endswith(ELLIPSIS) and not source.endswith(ELLIPSIS):
-        max_width = int(segment.get("max_width", default_max_width))
-        display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+        max_width = coerce_int(segment.get("max_width", default_max_width))
+        display_duration = max(0.01, coerce_float(segment["end"]) - coerce_float(segment["start"]))
         expanded = normalize_text(
             source,
             max_width=max_width,
@@ -68,31 +89,32 @@ def segment_editor_text(segment: dict[str, Any], default_max_width: int = 24) ->
     return preview
 
 
-def pack_event_with_line_count(segment: dict[str, Any], default_max_width: int = 24) -> SubtitleEvent | None:
-    speaker = segment.get("speaker", "Oz")
+def pack_event_with_line_count(segment: object, default_max_width: int = 24) -> SubtitleEvent | None:
+    segment = _mapping(segment)
     text = str(segment.get("text", "")).strip()
     if not text:
         return None
 
-    emphasis = segment.get("emphasis", "normal")
-    max_width = int(segment.get("max_width", default_max_width))
-    display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+    speaker = str(segment.get("speaker", "Oz"))
+    emphasis = str(segment.get("emphasis", "normal"))
+    max_width = coerce_int(segment.get("max_width", default_max_width))
+    display_duration = max(0.01, coerce_float(segment["end"]) - coerce_float(segment["start"]))
     line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", SUBTITLE_LINE_COUNT_AUTO))
     normalized_text = format_segment_text(segment, default_max_width=default_max_width)
     return SubtitleEvent(
-        start=float(segment["start"]),
-        end=float(segment["end"]),
+        start=coerce_float(segment["start"]),
+        end=coerce_float(segment["end"]),
         speaker=speaker,
         text=normalized_text,
         emphasis=emphasis,
         position="bottom",
-        layer=int(segment.get("layout_row", 0)),
+        layer=coerce_int(segment.get("layout_row", 0)),
         metadata={
             "source_text": text,
             "max_width": max_width,
             "display_duration": display_duration,
             "subtitle_line_count": line_count,
-            "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),
+            "subtitle_font_scale": coerce_float(segment.get("subtitle_font_scale", 1.0)),
             "subtitle_font_family": str(segment.get("subtitle_font_family", "")),
             "source_track": str(segment.get("source_track", "")),
             "source_speaker": str(segment.get("source_speaker", "")),
@@ -101,7 +123,7 @@ def pack_event_with_line_count(segment: dict[str, Any], default_max_width: int =
     )
 
 
-def _manual_segment_lines(segment: dict[str, Any], max_width: int, display_duration: float) -> list[str]:
+def _manual_segment_lines(segment: Mapping[object, object], max_width: int, display_duration: float) -> list[str]:
     text = " ".join(str(segment.get("text", "")).split())
     if not text:
         return []
@@ -143,20 +165,20 @@ def _manual_segment_lines(segment: dict[str, Any], max_width: int, display_durat
 
 
 def _repack_manual_segment_by_duration(
-    segment: dict[str, Any],
+    segment: dict[object, object],
     lines: list[str],
-) -> list[dict[str, Any]]:
+) -> list[dict[object, object]]:
     if not lines:
         return [segment]
     if len(lines) <= 2:
         return [segment]
 
-    start = float(segment["start"])
-    end = float(segment["end"])
+    start = coerce_float(segment["start"])
+    end = coerce_float(segment["end"])
     duration = max(0.01, end - start)
     spans = [max(1, text_width(line)) for line in lines]
     total = sum(spans)
-    events: list[dict[str, Any]] = []
+    events: list[dict[object, object]] = []
     cursor = start
     accumulated = 0
     for index in range(0, len(lines), 2):
@@ -174,7 +196,7 @@ def _repack_manual_segment_by_duration(
                 "text": r"\N".join(chunk),
             }
         )
-        cursor = events[-1]["end"]
+        cursor = coerce_float(events[-1]["end"])
         if cursor >= end:
             break
     events[-1]["end"] = end
@@ -182,13 +204,13 @@ def _repack_manual_segment_by_duration(
 
 
 def pack_segments_with_line_count(
-    data: dict[str, Any],
+    data: object,
     default_max_width: int = 24,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
 ) -> list[SubtitleEvent]:
-    def _repack_segment(segment: dict[str, Any]) -> list[dict[str, Any]]:
+    def _repack_segment(segment: dict[object, object]) -> list[dict[object, object]]:
         text = str(segment.get("text", "")).strip()
         if (
             bool(segment.get("manual_text", False))
@@ -196,8 +218,8 @@ def pack_segments_with_line_count(
             and "\r" not in text
             and "\\N" not in text
         ):
-            max_width = int(segment.get("max_width", default_max_width))
-            duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+            max_width = coerce_int(segment.get("max_width", default_max_width))
+            duration = max(0.01, coerce_float(segment["end"]) - coerce_float(segment["start"]))
             try:
                 pages = pack_segment_pages(
                     segment,
@@ -219,7 +241,7 @@ def pack_segments_with_line_count(
         return [segment]
 
     events: list[SubtitleEvent] = []
-    for segment in data.get("segments", []):
+    for segment in _segments(_mapping(data).get("segments", [])):
         if segment.get("layout_packed"):
             pages = _repack_segment(segment)
         else:

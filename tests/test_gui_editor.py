@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import unittest
+import wave
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -6806,6 +6807,12 @@ Window {
 
     def test_subtitle_editors_work_without_main_workflow_context(self) -> None:
         self._load_project()
+        seek_source = self.root / "independent-editor-seek.wav"
+        with wave.open(str(seek_source), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(8000)
+            wav.writeframes(b"\0\0" * (8000 * 4))
         components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
         qml = self.root / "IndependentSubtitleEditor.qml"
         qml.write_text(
@@ -6841,7 +6848,7 @@ Window {
         projectPath: host.appBackend.projectPath
         previewEnabled: true
     }
-    MediaPlayer { id: sharedPlayer }
+    MediaPlayer { id: sharedPlayer; objectName: "independentPlayer" }
     VideoOutput { id: originalOutput; visible: false }
     Loader {
         anchors.fill: parent
@@ -6890,6 +6897,11 @@ Window {
             encoding="utf-8",
         )
         _, window = self.gui.load_qml(qml)
+        player = window.findChild(QObject, "independentPlayer")
+        self.assertIsNotNone(player)
+        player.setProperty("source", QUrl.fromLocalFile(str(seek_source)))
+        self.gui.wait_until(lambda: player.property("duration") >= 4000,
+                            description="独立した字幕編集画面のシーク可能な素材")
         original_count = self.app.segmentCount
         self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
         self.assertEqual(self.app.segmentCount, original_count + 1)
@@ -6902,13 +6914,35 @@ Window {
         self.assertIsNotNone(editor_state)
         editor_state.setProperty("pixelsPerSecond", 96)
         editor_state.setProperty("snapMilliseconds", 250)
+        expected_zoom = 96.0
+        expected_snap = 0.25
         for expected_attachment_count in (1, 2):
             window.setProperty("expandedEditor", True)
             self.gui.wait_until(lambda: window.property("attachments") == expected_attachment_count,
                                 description="独立編集画面の生成")
             timeline = self._quick_item(window, "editorTimeline")
-            self.assertEqual(timeline.property("pixelsPerSecond"), 96)
-            self.assertEqual(timeline.property("snapSeconds"), 0.25)
+            self.assertAlmostEqual(timeline.property("pixelsPerSecond"), expected_zoom)
+            self.assertAlmostEqual(timeline.property("snapSeconds"), expected_snap)
+            if expected_attachment_count == 1:
+                seek_slider = self._quick_item(window, "editorSeekSlider")
+                self.assertEqual(seek_slider.property("to"), 4000)
+                self._drag_slider(window, seek_slider, 0.7)
+                self.assertGreater(player.property("position"), 2500)
+                self.assertLess(player.property("position"), 3200)
+                self.assertEqual(editor_state.property("positionMs"), player.property("position"))
+
+                zoom_slider = self._quick_item(window, "editorTimelineZoomSlider")
+                self._drag_slider(window, zoom_slider, 0.7)
+                expected_zoom = float(editor_state.property("pixelsPerSecond"))
+                self.assertGreater(expected_zoom, 110)
+                self.assertAlmostEqual(timeline.property("pixelsPerSecond"), expected_zoom)
+
+                snap_spin = self._quick_item(window, "editorSnapSpin")
+                self._click(window, snap_spin)
+                QTest.keyClick(window, Qt.Key.Key_Up)
+                expected_snap = 0.26
+                self.assertEqual(editor_state.property("snapMilliseconds"), 260)
+                self.assertAlmostEqual(timeline.property("snapSeconds"), expected_snap)
             self._click(window, self._quick_item(window, "buildAssButton"))
             self.assertEqual(window.property("previews"), expected_attachment_count)
             self._click(window, self._quick_item(window, "editorRenderButton"))
@@ -6916,7 +6950,10 @@ Window {
             self._click(window, self._quick_item(window, "editorBackButton"))
             self.gui.wait_until(lambda: window.property("detachments") == expected_attachment_count,
                                 description="共有プレイヤーの表示先を復元")
-            self.assertEqual(self._quick_item(window, "workspaceSubtitleTimeline").property("pixelsPerSecond"), 96)
+            self.gui.wait_until(
+                lambda: abs(float(self._quick_item(window, "workspaceSubtitleTimeline").property("pixelsPerSecond")) - expected_zoom) < 0.001,
+                description="通常画面へ戻った後の字幕タイムライン倍率",
+            )
         self.assertTrue(QMetaObject.invokeMethod(window, "clearDraft"))
         self.assertEqual(window.property("draftIndex"), -1)
         self.assertEqual(window.property("draftPreview"), "保存済み")
@@ -9073,12 +9110,13 @@ Window {
             self.app.processEvents()
             self.assertEqual(transition_combo.property("currentValue"), transition_type)
 
-            duration_slider.setProperty("value", duration)
+            self._drag_slider(window, duration_slider, duration / 2)
             self.app.processEvents()
 
             transition = self.app.shortVideoSettings["transition"]
             self.assertEqual(transition["type"], transition_type)
-            self.assertAlmostEqual(float(transition["duration"]), duration)
+            self.assertAlmostEqual(float(transition["duration"]), duration, delta=0.1)
+            self.assertAlmostEqual(float(duration_slider.property("value")), float(transition["duration"]))
 
     def test_short_mode_settings_controls_save_round_trip(self) -> None:
         project_path = self._load_project()
@@ -9144,6 +9182,40 @@ Window {
         self.assertEqual(saved["bgm"]["path"], str(bgm_path))
         for field, expected in (("in", 0.5), ("out", 2.0), ("start", 1.0), ("volume", volume)):
             self.assertAlmostEqual(saved["bgm"][field], expected)
+
+    def test_short_mode_sliders_follow_full_drag_and_save(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        original_transition_duration = float(self.app.shortVideoSettings["transition"]["duration"])
+        original_bgm_volume = float(self.app.shortVideoSettings["bgm"]["volume"])
+
+        transition_slider = self._quick_item(window, "shortModeTransitionDurationSlider")
+        self._drag_slider(window, transition_slider, 0.9)
+        transition_duration = float(self.app.shortVideoSettings["transition"]["duration"])
+        self.assertGreaterEqual(transition_duration, 1.7)
+        self.assertLessEqual(transition_duration, 1.9)
+        self.app.undoEdit()
+        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], original_transition_duration)
+        self.app.redoEdit()
+        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration)
+
+        volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
+        self._drag_slider(window, volume_slider, 0.9)
+        bgm_volume = float(self.app.shortVideoSettings["bgm"]["volume"])
+        self.assertGreaterEqual(bgm_volume, 0.85)
+        self.assertLessEqual(bgm_volume, 0.951)
+        self.app.undoEdit()
+        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], original_bgm_volume)
+        self.app.redoEdit()
+        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume)
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved = load_project(project_path)["short_video"]
+        self.assertAlmostEqual(saved["transition"]["duration"], transition_duration)
+        self.assertAlmostEqual(saved["bgm"]["volume"], bgm_volume)
 
     def test_short_mode_clip_model_materializes_only_requested_rows(self) -> None:
         segment_count = 3_000

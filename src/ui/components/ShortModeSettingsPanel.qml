@@ -83,7 +83,7 @@ ColumnLayout {
             fitCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.fitOptions, s.global_fit)
             if (!bgColorField.draftEdited) bgColorField.text = s.global_background_color
             transitionCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.transitionOptions, s.transition.type)
-            transitionDuration.value = s.transition.duration
+            if (!transitionDuration.pressed) transitionDuration.value = s.transition.duration
             scaleSpin.value = s.subtitle_scale_percent
 
             var bgm = s.bgm || {}
@@ -91,7 +91,8 @@ ColumnLayout {
             if (!bgmIn.draftEdited) bgmIn.text = bgm["in"] ? bgm["in"].toString() : "0"
             if (!bgmOut.draftEdited) bgmOut.text = bgm.out ? bgm.out.toString() : "0"
             if (!bgmStart.draftEdited) bgmStart.text = bgm.start ? bgm.start.toString() : "0"
-            bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
+            if (!bgmVolumeSlider.pressed)
+                bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
         } finally {
             settingsRoot.refreshingSettings = false
         }
@@ -211,11 +212,13 @@ ColumnLayout {
             objectName: "shortModeTransitionDurationSlider"
             from: 0; to: 2.0; stepSize: 0.1
             enabled: settingsRoot.editingEnabled
-            onValueChanged: {
+            function commitDuration() {
                 if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
                     settingsRoot.appBackend.shortVideo.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
             }
+            onMoved: if (!pressed) commitDuration()
+            onPressedChanged: if (!pressed) commitDuration()
         }
     }
 
@@ -345,7 +348,8 @@ ColumnLayout {
                 objectName: "shortModeBgmVolumeSlider"
                 from: 0.0; to: 1.0; stepSize: 0.05
                 enabled: settingsRoot.editingEnabled
-                onValueChanged: _sendBgmUpdate({"volume": value})
+                onMoved: if (!pressed) settingsRoot._sendBgmUpdate({"volume": value})
+                onPressedChanged: if (!pressed) settingsRoot._sendBgmUpdate({"volume": value})
             }
         }
     }

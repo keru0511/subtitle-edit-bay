@@ -233,6 +233,7 @@ Item {
                         spacing: 1
                         Slider {
                             id: editorSeek
+                            objectName: "editorSeekSlider"
                             Layout.fillWidth: true
                             from: 0
                             to: 1
@@ -275,6 +276,7 @@ Item {
                     }
                     SpinBox {
                         id: snapSpin
+                        objectName: "editorSnapSpin"
                         from: 0
                         to: 1000
                         stepSize: 10
@@ -293,6 +295,7 @@ Item {
                         font.pixelSize: 9
                     }
                     Slider {
+                        objectName: "editorTimelineZoomSlider"
                         Layout.preferredWidth: 140
                         from: 16
                         to: 180

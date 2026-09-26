@@ -86,7 +86,7 @@ Rectangle {
                 required property int index
                 property string operationId: card.operationIdFor(modelData, index)
                 width: proposalList.width
-                height: 28
+                height: Math.max(28, implicitHeight)
                 CheckBox {
                     objectName: "codexOperationCheck"
                     checked: card.isOperationSelected(parent.operationId)

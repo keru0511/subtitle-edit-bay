@@ -1988,7 +1988,17 @@ Window {
         self.app.processEvents()
         apply_button = self._quick_item(window, "codexApplyButton")
         allow_silence_button = self._quick_item(window, "codexAudioAllowSilenceButton")
+        proposal_card = self._quick_item(window, "codexChatProposalCard")
         self.assertTrue(apply_button.property("enabled"))
+
+        def audio_proposal_layout_ready() -> bool:
+            if not proposal_card.property("audioProposal") or not allow_silence_button.isVisible():
+                return False
+            apply_bottom = apply_button.mapToItem(
+                proposal_card, QPointF(0, apply_button.height()),
+            ).y()
+            allow_top = allow_silence_button.mapToItem(proposal_card, QPointF(0, 0)).y()
+            return allow_top >= apply_bottom and proposal_card.height() >= allow_top + allow_silence_button.height()
 
         channels = self.app.audioMixerChannels
         self.assertTrue(channels)
@@ -2023,7 +2033,10 @@ Window {
 
             self.app._audio_mix_proposal = audio_proposal
             self.app.audioMixProposalChanged.emit()
-            self.app.processEvents()
+            self.gui.wait_until(
+                audio_proposal_layout_ready,
+                description="処理中に音量案が画面へ表示される",
+            )
             self.assertFalse(apply_button.property("enabled"))
             self.assertFalse(allow_silence_button.property("enabled"))
             self.assertFalse(self.app.applyAudioMixProposal())
@@ -2037,12 +2050,14 @@ Window {
             self.app._running = False
             self.app.runningChanged.emit()
 
-        self.app.processEvents()
-        self.assertTrue(apply_button.property("enabled"))
-        self.assertTrue(allow_silence_button.property("enabled"))
+        self.gui.wait_until(
+            lambda: audio_proposal_layout_ready()
+            and apply_button.property("enabled") and allow_silence_button.property("enabled"),
+            description="処理終了後に音量案の操作が戻る",
+        )
         for control in (apply_button, allow_silence_button, self._quick_item(window, "codexDiscardButton")):
             self._assert_quick_item_within(window.contentItem(), control)
-            self._assert_quick_item_within(self._quick_item(window, "codexChatProposalCard"), control)
+            self._assert_quick_item_within(proposal_card, control)
             self._assert_button_content_fits(control)
         def operation_check() -> QQuickItem:
             return self._quick_visual_item(
@@ -2050,6 +2065,7 @@ Window {
             )
 
         self.assertTrue(operation_check().property("checked"))
+        self._assert_quick_item_within(self._quick_item(window, "codexProposalList"), operation_check())
         self._click(window, operation_check())
         self.gui.wait_until(
             lambda: not operation_check().property("checked")
@@ -2070,7 +2086,6 @@ Window {
             deepcopy(self.app._project), deepcopy(self.app._undo_stack),
             self.app._project_revision, self.app.projectDirty, path.read_bytes(),
         )
-        proposal_card = self._quick_item(window, "codexChatProposalCard")
         discard_button = self._quick_item(window, "codexDiscardButton")
         self.assertIsNotNone(self.app._codex_proposal)
         self.gui.wait_until(

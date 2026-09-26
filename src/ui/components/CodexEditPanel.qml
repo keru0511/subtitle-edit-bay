@@ -100,6 +100,8 @@ Rectangle {
             Layout.fillWidth: true
             Button {
                 objectName: "codexApplyButton"
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 text: "選択した変更を適用"
                 enabled: backend && !backend.running && card.operations.length > 0
                     && card.selectedOperationIds().length > 0
@@ -114,16 +116,9 @@ Rectangle {
                 }
             }
             Button {
-                objectName: "codexAudioAllowSilenceButton"
-                visible: card.audioProposal
-                text: "無音化を許可して適用"
-                enabled: backend && !backend.running && card.operations.length > 0
-                    && card.selectedOperationIds().length > 0
-                    && ["starting", "authenticating", "running"].indexOf(backend.audio.audioMixProposalState) < 0
-                onClicked: backend.audio.applyAudioMixProposal(card.selectedOperationIds(), true)
-            }
-            Button {
                 objectName: "codexDiscardButton"
+                Layout.preferredWidth: 64
+                Layout.minimumWidth: 64
                 text: "破棄"
                 enabled: card.operations.length > 0
                 onClicked: {
@@ -133,7 +128,16 @@ Rectangle {
                         backend.ai.discardCodexProposal()
                 }
             }
-            Item { Layout.fillWidth: true }
+        }
+        Button {
+            objectName: "codexAudioAllowSilenceButton"
+            Layout.fillWidth: true
+            visible: card.audioProposal
+            text: "無音化を許可して適用"
+            enabled: backend && !backend.running && card.operations.length > 0
+                && card.selectedOperationIds().length > 0
+                && ["starting", "authenticating", "running"].indexOf(backend.audio.audioMixProposalState) < 0
+            onClicked: backend.audio.applyAudioMixProposal(card.selectedOperationIds(), true)
         }
     }
     // qmllint enable unqualified

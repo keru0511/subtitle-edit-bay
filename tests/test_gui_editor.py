@@ -1997,14 +1997,20 @@ Window {
         self.app.processEvents()
         self.assertTrue(apply_button.property("enabled"))
         self.assertTrue(allow_silence_button.property("enabled"))
-        operation_check = self._quick_visual_item(
-            self._quick_item(window, "codexProposalList"), "codexOperationCheck",
-        )
-        self.assertTrue(operation_check.property("checked"))
-        self._click(window, operation_check)
-        self.assertFalse(operation_check.property("checked"))
+        for control in (apply_button, allow_silence_button, self._quick_item(window, "codexDiscardButton")):
+            self._assert_quick_item_within(window.contentItem(), control)
+            self._assert_quick_item_within(self._quick_item(window, "codexChatProposalCard"), control)
+            self._assert_button_content_fits(control)
+        def operation_check() -> QQuickItem:
+            return self._quick_visual_item(
+                self._quick_item(window, "codexProposalList"), "codexOperationCheck",
+            )
+
+        self.assertTrue(operation_check().property("checked"))
+        self._click(window, operation_check())
+        self.assertFalse(operation_check().property("checked"))
         self.assertFalse(apply_button.property("enabled"))
-        self._click(window, operation_check)
+        self._click(window, operation_check())
         self.assertTrue(apply_button.property("enabled"))
         self._click(window, apply_button)
         self.assertEqual(self.app.audioMixerChannels[0]["volume_percent"], 110.0)
@@ -4330,6 +4336,66 @@ Window {
     def test_expanded_ime_committed_text_is_saved(self) -> None:
         self._assert_committed_ime_text_is_saved(expanded=True)
 
+    def _assert_uncommitted_ime_text_blocks_action(self, *, expanded: bool, action: str) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+        else:
+            caption = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+        button_name = {
+            (True, "save"): "saveProjectButton",
+            (False, "save"): "workspaceSubtitleSaveButton",
+            (True, "render"): "editorRenderButton",
+            (False, "render"): "workspaceHeaderRenderButton",
+        }[(expanded, action)]
+        button = self._quick_item(window, button_name)
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
+            self.app.processEvents()
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(caption.property("preeditText"), "日本")
+
+            with patch.object(self.app.workflow, "_start_command") as start:
+                self._click(window, button)
+                start.assert_not_called()
+            self.assertEqual(self.app.stage, "CHECK")
+            self.assertIn("確定してから", self.app.status)
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(self.app.segmentAt(0)["text"], "abcdefgh")
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(caption.property("preeditText"), "日本")
+
+            commit = QInputMethodEvent("", [])
+            commit.setCommitString("日本語")
+            QCoreApplication.sendEvent(caption, commit)
+            self.app.processEvents()
+            self.assertFalse(caption.property("inputMethodComposing"))
+            if action == "render":
+                with patch.object(self.app.workflow, "_start_command") as start:
+                    self._click(window, button)
+                    start.assert_called_once()
+            else:
+                self._click(window, button)
+
+        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+
+    def test_workspace_save_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=False, action="save")
+
+    def test_expanded_save_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=True, action="save")
+
+    def test_expanded_render_waits_for_uncommitted_ime_text(self) -> None:
+        self._assert_uncommitted_ime_text_blocks_action(expanded=True, action="render")
+
     def test_workspace_caption_key_input_is_committed_before_render(self) -> None:
         self._assert_caption_input_committed_before_action(expanded=False, action="render")
 
@@ -6507,6 +6573,7 @@ Window {
 
         provider_combo = self._quick_item(window, "aiProviderHeaderCombo")
         self.assertEqual(provider_combo.property("count"), 2)
+        self._assert_quick_item_within(window.contentItem(), provider_combo)
         self._click(window, provider_combo)
         QTest.keyClick(window, Qt.Key.Key_Down)
         QTest.keyClick(window, Qt.Key.Key_Return)
@@ -6531,6 +6598,7 @@ Window {
         model_combo = self._quick_item(window, "codexModelCombo")
         self.assertTrue(model_combo.isVisible())
         self.assertEqual(model_combo.property("currentValue"), "model-a")
+        self._assert_quick_item_within(window.contentItem(), model_combo)
         self._click(window, model_combo)
         self.gui.wait_until(
             lambda: bool(model_combo.property("down")),
@@ -6544,7 +6612,9 @@ Window {
             description="selected Codex model updated from screen",
         )
 
-        self._click(window, self._quick_item(window, "codexNewChatButton"))
+        new_chat_button = self._quick_item(window, "codexNewChatButton")
+        self._assert_quick_item_within(window.contentItem(), new_chat_button)
+        self._click(window, new_chat_button)
         self.gui.wait_until(
             lambda: not self.app._codex_chat.snapshot.thread_id
             and not self.app._codex_chat.snapshot.messages

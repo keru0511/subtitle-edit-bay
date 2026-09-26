@@ -268,7 +268,8 @@ ApplicationWindow {
     function requestTranscription() {
         if (!root.workflowCapabilities.canTranscribe)
             return
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         if (root.appBackend.projectLoaded)
             transcriptionMergeDialog.open()
         else if (root.appBackend.transcriptionProjectExists())
@@ -292,7 +293,8 @@ ApplicationWindow {
     function performSubtitleEdit(action, atSeconds) {
         if (root.appBackend.running)
             return
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         switch (action) {
         case "add": root.appBackend.subtitles.addSegment(atSeconds); break
         case "delete": root.appBackend.subtitles.deleteSelectedSegment(); break
@@ -437,11 +439,13 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return false
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         mainPlayer.videoOutput = mainVideo
         root.activeOverlay = ""
+        return true
     }
 
     function openMixerScreen() {
@@ -498,19 +502,28 @@ ApplicationWindow {
     function commitInputMethod() {
         // フォーカスを移す前にIMEの未確定文字を確定する。
         // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
+        var focusedInput = root.activeFocusItem
         // qmllint disable missing-property
         Qt.inputMethod.commit()
+        var stillComposing = focusedInput && focusedInput.inputMethodComposing === true
         // qmllint enable missing-property
+        if (stillComposing) {
+            root.appBackend.reportPendingInputMethod()
+            return false
+        }
+        return true
     }
 
     function commitPendingEdits() {
         if (root.appBackend.running)
-            return
+            return true
         // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
-        root.commitInputMethod()
+        if (!root.commitInputMethod())
+            return false
         root.contentItem.forceActiveFocus()
         subtitleEditorState.commitSubtitleDraft()
         subtitleEditorState.commitTimeDraft()
+        return true
     }
 
     // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
@@ -532,7 +545,8 @@ ApplicationWindow {
     }
 
     function saveProjectFromShortcut() {
-        root.commitInputMethod()
+        if (!root.commitInputMethod())
+            return false
         root.saveShortcutFocusTarget = root.activeFocusItem
         var selection = root.textSelection(root.saveShortcutFocusTarget)
         var saved = root.saveProject()
@@ -549,32 +563,38 @@ ApplicationWindow {
     function saveProject() {
         if (root.appBackend.running)
             return false
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return false
         return root.appBackend.saveProject()
     }
 
     function browseProjectFile() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.browseProjectFile()
     }
 
     function browseProjectSaveAs() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.browseProjectSaveAs()
     }
 
     function renderVideo() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.workflow.renderVideo(root.currentSettings())
     }
 
     function buildSubtitlePreview() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
     }
 
     function renderFromEditor() {
-        root.closeEditorScreen()
+        if (!root.closeEditorScreen())
+            return
         root.renderVideo()
     }
 

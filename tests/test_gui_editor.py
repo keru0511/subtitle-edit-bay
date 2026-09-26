@@ -5819,6 +5819,55 @@ Window {
         self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
         self.assertEqual(self.app.subtitleSegments, original)
 
+    def test_workspace_subtitle_time_speaker_font_and_size_are_saved(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        settings = self._quick_item(window, "workspaceSubtitleSettings")
+        self.gui.wait_until(settings.isVisible, description="通常画面の字幕設定")
+
+        with patch.object(self.app.autosave_timer, "start"):
+            end_field = self._quick_visual_item(settings, "workspaceSubtitleEndField")
+            self._click(window, end_field)
+            self._replace_focused_time(window, end_field, "3.500")
+            speaker = self._quick_visual_item(settings, "workspaceSubtitleSpeakerCombo")
+            self._click(window, speaker)
+            QTest.keyClick(window, Qt.Key.Key_Down)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.gui.wait_until(
+                lambda: self.app.segmentAt(0)["speaker"] == "Speaker_Bob",
+                description="通常画面の話者選択",
+            )
+
+            font = self._quick_visual_item(settings, "workspaceSubtitleFontCombo")
+            self.assertGreater(font.property("count"), 1)
+            self._click(window, font)
+            QTest.keyClick(window, Qt.Key.Key_Down)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.gui.wait_until(
+                lambda: bool(self.app.segmentAt(0)["subtitle_font_family"]),
+                description="通常画面のフォント選択",
+            )
+            expected_font = self.app.segmentAt(0)["subtitle_font_family"]
+
+            size = self._quick_visual_item(settings, "workspaceSubtitleSizeSpin")
+            self.assertEqual(size.property("value"), 100)
+            increase = size.mapToScene(QPointF(size.width() - 8, size.height() / 2)).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
+            self.gui.wait_until(
+                lambda: self.app.segmentAt(0)["subtitle_font_scale"] > 1.0,
+                description="通常画面の文字サイズ",
+            )
+            expected_scale = self.app.segmentAt(0)["subtitle_font_scale"]
+            self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+
+        saved = load_project(path)["segments"][0]
+        self.assertEqual(saved["end"], 3.5)
+        self.assertEqual(saved["speaker"], "Speaker_Bob")
+        self.assertEqual(saved["subtitle_font_family"], expected_font)
+        self.assertAlmostEqual(saved["subtitle_font_scale"], expected_scale)
+        self.assertFalse(self.app.projectDirty)
+
     def test_subtitle_edit_controls_follow_processing_state(self) -> None:
         """処理中は字幕を編集できず、終了後は同じ画面から再開できる。"""
         self._load_project()

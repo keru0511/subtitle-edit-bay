@@ -11299,6 +11299,27 @@ Window {
             description="sequence clip delegate after redo",
         )
 
+    def test_media_bin_add_button_imports_asset_and_saves_from_screen(self) -> None:
+        path, _first_video, second_video = self._make_sequence_project()
+        _, window = self._load_qml()
+        add_button = self._quick_item(window, "mediaBinAddButton")
+        self._assert_quick_item_within(self._quick_item(window, "workspaceMediaBin"), add_button)
+        with (
+            patch("src.gui_sequence_facade.QFileDialog.getOpenFileName", return_value=(str(second_video), "")) as choose,
+            patch("src.gui_sequence_facade.probe_media_duration", return_value=8.0),
+            patch.object(self.app.autosave_timer, "start"),
+        ):
+            self._click(window, add_button)
+            choose.assert_called_once()
+            self.assertEqual(len(self.app.mediaBinAssets), 2)
+            self.assertEqual(len(load_project(path)["sequence"]["assets"]), 1)
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        saved_assets = load_project(path)["sequence"]["assets"]
+        self.assertEqual(len(saved_assets), 2)
+        self.assertEqual(Path(saved_assets[-1]["path"]), second_video.resolve())
+        self.assertFalse(self.app.projectDirty)
+
     def test_sequence_remove_button_undo_redo_and_save_from_screen(self) -> None:
         path, _first_video, second_video = self._make_sequence_project()
         second_asset_id = self._add_second_sequence_asset(second_video)

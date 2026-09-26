@@ -327,6 +327,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_preview_works_without_main_workflow_context
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_inserts_before_clip_and_appends_after_last
+          tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_add_button_imports_asset_and_saves_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_onto_clip_card_inserts_before_it
           tests.test_gui_editor.GuiEditorRegressionTests.test_pending_start_time_survives_row_recycling_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_pending_text_survives_processing_state_change_in_expanded_editor

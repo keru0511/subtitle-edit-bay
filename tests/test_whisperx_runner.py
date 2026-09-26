@@ -51,7 +51,7 @@ class WhisperxRunnerTests(unittest.TestCase):
             output = run(build_parser().parse_args(command[3:]))
             options = backend.load_model.call_args.kwargs
             self.assertEqual(options["asr_options"]["beam_size"], 10)
-            self.assertEqual(options["asr_options"]["repetition_penalty"], 1.1)
+            self.assertEqual(options["asr_options"]["repetition_penalty"], 1.2)
             self.assertEqual(options["asr_options"]["no_repeat_ngram_size"], 0)
             self.assertFalse(options["asr_options"]["condition_on_previous_text"])
             self.assertEqual(options["asr_options"]["initial_prompt"], "ゲーム実況")

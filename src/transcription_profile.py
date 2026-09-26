@@ -7,11 +7,11 @@ DEFAULT_VAD_OFFSET = 0.363
 
 def first_pass_profile() -> dict[str, str | int | float]:
     return {
-        "version": "first-pass-v2",
+        "version": "first-pass-v3",
         "vad_method": "pyannote",
         "chunk_size": 15,
         "beam_size": 10,
-        "repetition_penalty": 1.1,
+        "repetition_penalty": 1.2,
         "no_repeat_ngram_size": 0,
         "batch_size": 8,
         "interpolate_method": "nearest",

@@ -74,7 +74,7 @@ class TranscriptionExecutionTests(unittest.TestCase):
         result = self.transcribe(cache_settings={"model": "large-v3"})
         metadata = json.loads(result.cache_metadata_path.read_text())
         self.assertEqual(metadata["settings"]["model"], "large-v3")
-        self.assertEqual(metadata["settings"]["execution"]["profile"]["repetition_penalty"], 1.2)
+        self.assertEqual(metadata["settings"]["execution"]["profile"]["repetition_penalty"], 1.1)
 
     def test_failure_invalidates_previous_metadata(self) -> None:
         self.transcribe()

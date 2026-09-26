@@ -17,6 +17,7 @@ from .editor_workspace import (
     build_edit_mode_capabilities,
 )
 from .video_timeline import VideoTimeline, VideoTimelineError, timeline_from_project
+from .gui_workspace_controller import WorkspacePlayerPayload
 
 from .gui_feature_facade import FeatureFacade
 
@@ -52,7 +53,7 @@ class WorkspaceFacade(FeatureFacade):
         return backend._workspace_navigation.current_workspace
 
     @Property("QVariantMap", notify=workspacePlayerStateChanged)
-    def workspacePlayerState(self) -> dict[str, Any]:
+    def workspacePlayerState(self) -> WorkspacePlayerPayload:
         """Return the active workspace player state at the navigation boundary."""
 
         backend = self._backend
@@ -60,7 +61,7 @@ class WorkspaceFacade(FeatureFacade):
         return backend._workspace_navigation.current_player.as_dict()
 
     @Property("QVariantMap", notify=workspacePlayerStateChanged)
-    def workspacePlayerStates(self) -> dict[str, dict[str, Any]]:
+    def workspacePlayerStates(self) -> dict[str, WorkspacePlayerPayload]:
         """Expose isolated transport snapshots for diagnostics and QML."""
 
         backend = self._backend

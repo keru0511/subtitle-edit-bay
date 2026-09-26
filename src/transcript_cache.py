@@ -3,22 +3,24 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
+
+from .data_boundary import decode_json, is_object_mapping
 
 CACHE_METADATA_SCHEMA_VERSION = 1
 
 
-def _stable_json(payload: Mapping[str, Any]) -> str:
+def _stable_json(payload: Mapping[str, object]) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def stable_payload_hash(payload: Mapping[str, Any] | Sequence[str] | str | None) -> str:
+def stable_payload_hash(payload: Mapping[str, object] | Sequence[str] | str | None) -> str:
     if payload is None:
-        normalized: Any = None
+        normalized: object = None
     elif isinstance(payload, str):
         normalized = payload
     elif isinstance(payload, Mapping):
-        normalized = json.loads(_stable_json(payload))
+        normalized = decode_json(_stable_json(payload))
     else:
         normalized = list(payload)
     encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -64,7 +66,7 @@ def write_transcript_cache_metadata(
     transcript_path: str | Path,
     *,
     fingerprint: str,
-    settings: Mapping[str, Any] | None = None,
+    settings: Mapping[str, object] | None = None,
 ) -> Path:
     metadata_path = transcript_cache_metadata_path(transcript_path)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,21 +79,21 @@ def write_transcript_cache_metadata(
     return metadata_path
 
 
-def read_transcript_cache_metadata(transcript_path: str | Path) -> dict[str, Any] | None:
+def read_transcript_cache_metadata(transcript_path: str | Path) -> dict[object, object] | None:
     metadata_path = transcript_cache_metadata_path(transcript_path)
     if not metadata_path.exists():
         return None
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = decode_json(metadata_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
-    if not isinstance(metadata, dict):
+    if not is_object_mapping(metadata):
         return None
     if metadata.get("schema_version") != CACHE_METADATA_SCHEMA_VERSION:
         return None
     if not isinstance(metadata.get("fingerprint"), str):
         return None
-    return metadata
+    return dict(metadata)
 
 
 def transcript_cache_is_valid(

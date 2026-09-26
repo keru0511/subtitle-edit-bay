@@ -6744,7 +6744,90 @@ Window {
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
 
+    def test_web_dictionary_candidate_actions_save_and_reload_from_screen(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        panel = self._quick_item(window, "mainTranscriptionContextPanel")
+        title = self._quick_visual_item(panel, "transcriptionGameTitleField")
+        self._click(window, title)
+        title.setProperty("text", "Splatoon 3")
+        self._quick_visual_item(panel, "transcriptionWebDictionarySnippetField").setProperty(
+            "text", "Bomba and Ink"
+        )
+        self._click(window, self._quick_item(window, "transcriptionWebDictionaryRefreshButton"))
+        candidates = self.app.transcriptionContext["web_dictionary_candidates"]
+        self.assertIn("Splatoon 3", candidates)
+        self.assertIn("Bomba", candidates)
+        self.assertIn("Ink", candidates)
+
+        web_switch = self._quick_item(window, "transcriptionWebDictionarySwitch")
+        self._click(window, web_switch)
+        self.assertTrue(self.app.transcriptionContext["web_dictionary_enabled"])
+        web_switch.forceActiveFocus()
+        QTest.keyClick(window, Qt.Key.Key_Space)
+        self.app.processEvents()
+        self.assertFalse(self.app.transcriptionContext["web_dictionary_enabled"])
+        QTest.keyClick(window, Qt.Key.Key_Space)
+        self.app.processEvents()
+        self.assertTrue(self.app.transcriptionContext["web_dictionary_enabled"])
+        manual_field = self._quick_visual_item(panel, "transcriptionWebDictionaryManualTermField")
+        manual_field.setProperty("text", "CustomTerm")
+        self._click(window, self._quick_item(window, "transcriptionWebDictionaryAddButton"))
+        self.assertIn("CustomTerm", self.app.transcriptionContext["web_dictionary_candidates"])
+        self.assertEqual(manual_field.property("text"), "")
+
+        self._click(window, self._quick_item(window, "transcriptionWebDictionarySelectAllButton"))
+        self.assertEqual(
+            self.app.transcriptionContext["web_dictionary_terms"],
+            self.app.transcriptionContext["web_dictionary_candidates"],
+        )
+        self._click(window, self._quick_item(window, "transcriptionWebDictionaryClearAllButton"))
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [])
+
+        candidate_list = self._quick_item(window, "transcriptionWebDictionaryCandidateList")
+        self.app.processEvents()
+        def active_candidate(name: str) -> QQuickItem:
+            def matches() -> list[QQuickItem]:
+                return [
+                    item for item in self.gui.visual_items(candidate_list)
+                    if item.objectName() == name and item.isVisible()
+                    and item.parentItem().property("index") >= 0
+                    and 0 <= item.mapToItem(candidate_list, QPointF(item.width() / 2, item.height() / 2)).y()
+                    <= candidate_list.height()
+                ]
+            self.gui.wait_until(lambda: bool(matches()), description=f"{name} の有効な行")
+            return min(matches(), key=lambda item: item.parentItem().property("index"))
+
+        first_candidate = active_candidate("transcriptionWebDictionaryCandidateItem")
+        first_term = first_candidate.property("text")
+        self._click(window, first_candidate)
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [first_term])
+        self._click(window, active_candidate("transcriptionWebDictionaryRemoveButton"))
+        self.assertNotIn(first_term, self.app.transcriptionContext["web_dictionary_candidates"])
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [])
+        self._click(window, self._quick_item(window, "transcriptionWebDictionarySelectAllButton"))
+
+        expected = deepcopy(self.app.transcriptionContext)
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        saved = config["craig_pipeline"]["transcription_context"]
+        self.assertEqual(saved["web_dictionary_candidates"], expected["web_dictionary_candidates"])
+        self.assertEqual(saved["web_dictionary_terms"], expected["web_dictionary_terms"])
+        self.assertTrue(saved["web_dictionary_enabled"])
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_candidates"], expected["web_dictionary_candidates"])
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], expected["web_dictionary_terms"])
+
     def test_dictionary_shortcuts_preserve_pending_input_during_processing(self) -> None:
+        self.app.setTranscriptionContext({
+            **self.app.transcriptionContext,
+            "web_dictionary_enabled": True,
+            "web_dictionary_candidates": ["Bomba"],
+            "web_dictionary_terms": ["Bomba"],
+            "web_dictionary_candidate_metadata": [
+                {"term": "Bomba", "source": "manual", "score": "0.00"},
+            ],
+        })
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
         page = self._quick_item(window, "transcriptionDictionaryPage")
@@ -6768,10 +6851,22 @@ Window {
             self.assertFalse(self._quick_item(window, "transcriptionDictionarySaveButton").isEnabled())
             self.assertFalse(self._quick_item(window, "transcriptionDictionaryBackButton").isEnabled())
             self.assertFalse(save_shortcut.property("enabled"))
+            for name in (
+                "transcriptionWebDictionarySwitch",
+                "transcriptionWebDictionaryRefreshButton",
+                "transcriptionWebDictionaryAddButton",
+                "transcriptionWebDictionarySelectAllButton",
+                "transcriptionWebDictionaryClearAllButton",
+                "transcriptionWebDictionaryCandidateItem",
+                "transcriptionWebDictionaryRemoveButton",
+            ):
+                self.assertFalse(self._quick_visual_item(page, name).isEnabled(), name)
             QTest.keyClick(window, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
             page.forceActiveFocus()
             QTest.keyClick(window, Qt.Key.Key_Escape)
             self.app.saveSettings({"model": "processing-should-not-save"})
+            self.app.refreshTranscriptionWebDictionary("", "Newterm")
+            self.app.setTranscriptionContext({**before_context, "web_dictionary_candidates": []})
             self.app.processEvents()
             self.assertTrue(page.isVisible())
             self.assertFalse(window.close())

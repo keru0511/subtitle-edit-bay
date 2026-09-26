@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import unittest
+from types import SimpleNamespace
 from typing import Mapping
 
 from src.codex_actions import (
@@ -295,6 +296,32 @@ class CodexActionTests(TypedTestCase):
 
 
 class GuiActionBackendTests(TypedTestCase):
+    def test_processing_state_reads_workflow_progress(self) -> None:
+        class Progress:
+            value = 0.42
+            status = "running"
+
+            @staticmethod
+            def as_list() -> list[dict[str, object]]:
+                return [{"id": "encode", "state": "running"}]
+
+        class Workflow:
+            processing_progress = Progress()
+
+        class GuiStub:
+            _project_revision = 4
+            _running = True
+            _active_job = "render"
+            workflow = Workflow()
+
+        state = GuiActionBackend(GuiStub()).inspect("inspect_processing_state", {}).state
+
+        assert state is not None
+        self.assertEqual(state["active_job"], "render")
+        self.assertEqual(state["progress"], 0.42)
+        self.assertEqual(state["status"], "running")
+        self.assertEqual(state["steps"], [{"id": "encode", "state": "running"}])
+
     def test_subtitle_proposal_processing_state_does_not_reuse_normal_job_progress(self) -> None:
         class SessionSnapshot:
             state = "running"
@@ -320,7 +347,9 @@ class GuiActionBackendTests(TypedTestCase):
             _codex_session = Session()
 
             def __init__(self, normal_status: str, normal_progress: float) -> None:
-                self._processing_progress = ProcessingProgress(normal_status, normal_progress)
+                self.workflow = SimpleNamespace(
+                    processing_progress=ProcessingProgress(normal_status, normal_progress)
+                )
 
         for normal_status, normal_progress in (("idle", 0.0), ("completed", 1.0)):
             with self.subTest(normal_status=normal_status):

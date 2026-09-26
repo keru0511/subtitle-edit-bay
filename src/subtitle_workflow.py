@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import subprocess
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -87,7 +88,7 @@ from .subtitle_workflow_transcription import transcribe_to_project_with_context
 from .transcribe import probe_audio_streams
 from .transcription_context_config import transcription_context_from_runtime_config
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
-from .video_timeline import intersect_ranges, timeline_from_project
+from .video_timeline import VideoTimeline, intersect_ranges, timeline_from_project
 from .sequence_render import (
     SequenceRenderError,
     prepare_sequence_render,
@@ -136,6 +137,30 @@ class SubtitleProjectResult:
     merged_path: Path
     filtered_path: Path
     project: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _RenderAudioPlan:
+    audio_mix: dict[str, Any]
+    use_audio_mix: bool
+    has_audio_stream: bool
+    offset_seconds: float
+
+
+@dataclass(frozen=True)
+class _RenderEncoding:
+    video_codec: str
+    audio_codec: str
+    output_audio_track: str
+    nvenc_preset: str
+    nvenc_cq: int
+    x264_crf: int
+
+
+@dataclass(frozen=True)
+class _SilenceCutPlan:
+    no_speech_ranges: list[tuple[float, float]]
+    keep_ranges: list[tuple[float, float]]
 
 
 def resolve_subtitle_inputs(
@@ -268,8 +293,14 @@ def build_project_stage(
     duration_seconds: float,
     render_settings: dict[str, Any] | None = None,
 ) -> SubtitleProjectResult:
-    merged_path = write_json(str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.merged.json"), {"segments": refine_result.merged_segments})
-    filtered_path = write_json(str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.filtered.json"), {"segments": refine_result.filtered_segments})
+    merged_path = write_json(
+        str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.merged.json"),
+        {"segments": refine_result.merged_segments},
+    )
+    filtered_path = write_json(
+        str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.filtered.json"),
+        {"segments": refine_result.filtered_segments},
+    )
     project = create_project(
         video_path=inputs.video_path,
         output_dir=inputs.output_dir,
@@ -352,7 +383,9 @@ def _project_speakers(
                 "track_key": track_key,
                 "file_name": audio_file.name,
                 "path": str(audio_file.resolve()),
-                "color": track_color_map.get(track_key, DEFAULT_SPEAKER_COLORS[index % len(DEFAULT_SPEAKER_COLORS)]).upper(),
+                "color": track_color_map.get(
+                    track_key, DEFAULT_SPEAKER_COLORS[index % len(DEFAULT_SPEAKER_COLORS)]
+                ).upper(),
             }
         )
     return speakers
@@ -540,8 +573,12 @@ def _ass_build_options(
         "subtitle_outline_color": str(settings.get("outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)),
         "subtitle_outline_thickness": int(settings.get("outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
         "subtitle_max_gap_seconds": float(settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
-        "subtitle_end_padding_seconds": float(settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)),
-        "subtitle_min_duration_seconds": float(settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)),
+        "subtitle_end_padding_seconds": float(
+            settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)
+        ),
+        "subtitle_min_duration_seconds": float(
+            settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)
+        ),
     }
 
 
@@ -644,6 +681,245 @@ def build_project_ass(
     return output
 
 
+def _resolve_render_audio(project: dict[str, Any], video_path: str) -> _RenderAudioPlan:
+    """書き出しに使う音声経路を、保存済み設定を変更せず決定する。"""
+
+    audio_mix = deepcopy(project.get("audio_mix", {}))
+    use_audio_mix = bool(audio_mix.get("customized", False))
+    offset_seconds = float(project.get("transcription", {}).get("offset_seconds", 0.0))
+    if use_audio_mix:
+        for channel in active_audio_mix_channels(audio_mix):
+            if channel.get("kind") == "external" and not Path(str(channel.get("path", ""))).is_file():
+                raise SystemExit(f"Mixer audio source was not found: {channel.get('path', '')}")
+    has_audio_stream = True
+    if not use_audio_mix:
+        try:
+            probed_audio_streams = probe_audio_streams(video_path)
+            has_audio_stream = bool(probed_audio_streams)
+            actual_video_track_selectors = {entry["selector"] for entry in video_track_entries(probed_audio_streams)}
+            has_known_video_tracks = True
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            has_known_video_tracks = False
+            actual_video_track_selectors = set()
+            has_audio_stream = True
+        has_real_video_track = any(
+            isinstance(channel, dict)
+            and channel.get("kind") == "video"
+            and str(channel.get("selector", "")).strip()
+            and (has_known_video_tracks and str(channel.get("selector", "")) in actual_video_track_selectors)
+            for channel in (audio_mix.get("channels") if isinstance(audio_mix.get("channels"), list) else [])
+        )
+        has_enabled_external = any(
+            isinstance(channel, dict) and channel.get("kind") == "external" and bool(channel.get("enabled"))
+            for channel in audio_mix.get("channels", [])
+        )
+        if has_enabled_external:
+            use_audio_mix = True
+        elif not has_real_video_track:
+            for channel in audio_mix.get("channels", []):
+                if (
+                    isinstance(channel, dict)
+                    and channel.get("kind") == "external"
+                    and Path(str(channel.get("path", ""))).is_file()
+                ):
+                    channel["enabled"] = True
+                    use_audio_mix = True
+                    break
+    return _RenderAudioPlan(audio_mix, use_audio_mix, has_audio_stream, offset_seconds)
+
+
+def _cut_media_for_render(
+    video_path: str,
+    output: Path,
+    keep_ranges: list[tuple[float, float]],
+    *,
+    encoding: _RenderEncoding,
+    audio: _RenderAudioPlan,
+    audio_filter: str | None,
+) -> None:
+    """通常動画のカット処理に共通するエンコード設定を適用する。"""
+
+    cut_media_ranges(
+        video_path,
+        str(output),
+        keep_ranges,
+        video_codec=encoding.video_codec,
+        audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
+        nvenc_preset=encoding.nvenc_preset,
+        nvenc_cq=encoding.nvenc_cq,
+        x264_crf=encoding.x264_crf,
+        audio_filter=audio_filter,
+        audio_track=encoding.output_audio_track,
+        audio_mix=audio.audio_mix if audio.use_audio_mix else None,
+        audio_offset_seconds=audio.offset_seconds,
+        include_audio=audio.has_audio_stream or audio.use_audio_mix,
+        progress_callback=log_progress,
+    )
+
+
+def _begin_render_encoding(keep_ranges: list[tuple[float, float]]) -> None:
+    """カット後の長さを通知してエンコード進捗を開始する。"""
+
+    emit_progress_event("render", "audio", phase="complete", progress=1.0)
+    emit_progress_event(
+        "render",
+        "encode",
+        phase="metadata",
+        duration=sum(max(0.0, end - start) for start, end in keep_ranges),
+    )
+    emit_progress_event("render", "encode", phase="start")
+
+
+def _plan_silence_cut(
+    project: dict[str, Any],
+    video_path: str,
+    timeline: VideoTimeline,
+    manual_keep_ranges: list[tuple[float, float]],
+    *,
+    has_legacy_singleton_trim: bool,
+    audio: _RenderAudioPlan,
+    encoding: _RenderEncoding,
+    no_speech_min_seconds: float,
+    speech_padding_seconds: float,
+    speech_threshold_db: str,
+    speech_min_clip_seconds: float,
+) -> _SilenceCutPlan | None:
+    """音声を調べて無音カット範囲を決める。書き出し用ファイルは作らない。"""
+
+    source_paths = [
+        str(source.get("path", ""))
+        for source in project.get("audio_sources", [])
+        if Path(str(source.get("path", ""))).is_file()
+    ]
+    detection_sources: list[tuple[str, str | None]] = [(path, None) for path in source_paths]
+    if not detection_sources:
+        try:
+            probed_audio_streams = probe_audio_streams(video_path)
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            probed_audio_streams = []
+        available_video_tracks = {entry["selector"] for entry in video_track_entries(probed_audio_streams)}
+        selected_video_track = next(
+            (
+                str(channel.get("selector"))
+                for channel in active_audio_mix_channels(audio.audio_mix)
+                if channel.get("kind") == "video" and str(channel.get("selector", "")) in available_video_tracks
+            ),
+            "",
+        )
+        if not selected_video_track:
+            candidate = str(encoding.output_audio_track or "")
+            selected_video_track = (
+                candidate if candidate in available_video_tracks else next(iter(available_video_tracks), "")
+            )
+        if selected_video_track:
+            detection_sources = [(video_path, selected_video_track)]
+
+    if not detection_sources:
+        log_progress("No audio source is available for silence detection; disabling silence cut")
+        return None
+
+    for source_path, _audio_track in detection_sources:
+        log_progress(f"Detecting speech in {Path(source_path).name}")
+
+    def detect_source(source: tuple[str, str | None]) -> list[tuple[float, float]]:
+        source_path, audio_track = source
+        options: dict[str, Any] = {
+            "noise": normalize_db_threshold(speech_threshold_db),
+            "duration": DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
+        }
+        if audio_track:
+            options["audio_track"] = audio_track
+        return detect_speech_ranges(source_path, **options)
+
+    speech_ranges: list[tuple[float, float]] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(4, len(detection_sources)))) as executor:
+        for source_ranges in executor.map(detect_source, detection_sources):
+            speech_ranges.extend(source_ranges)
+    duration = float(project.get("video", {}).get("duration_seconds", 0.0)) or probe_media_duration(video_path)
+    no_speech_ranges, keep_ranges = build_no_speech_plan(
+        duration,
+        speech_ranges,
+        audio.offset_seconds,
+        min_no_speech_seconds=no_speech_min_seconds,
+        padding=speech_padding_seconds,
+        min_clip_duration=speech_min_clip_seconds,
+    )
+    if timeline.has_cuts or has_legacy_singleton_trim:
+        keep_ranges = intersect_ranges(manual_keep_ranges, keep_ranges)
+    if not keep_ranges:
+        raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
+    return _SilenceCutPlan(no_speech_ranges, keep_ranges)
+
+
+def _render_sequence_project(
+    project_path: str | Path,
+    project: dict[str, Any],
+    output: Path,
+    *,
+    encoding: _RenderEncoding,
+    audio_normalize: bool,
+    audio_target_lufs: float,
+    audio_loudness_range: float,
+    audio_true_peak_db: float,
+    cut_no_speech: bool,
+) -> Path:
+    """複数クリップの計画作成と書き出しを既存のシーケンス境界に委ねる。"""
+
+    try:
+        sequence_plan = prepare_sequence_render(
+            project,
+            probe_duration=probe_media_duration,
+            probe_audio_streams=probe_audio_streams,
+            probe_video_stream=probe_video_stream,
+            output_audio_track=encoding.output_audio_track,
+            cut_no_speech=cut_no_speech,
+        )
+    except SequenceRenderError as error:
+        raise SystemExit(str(error)) from error
+    emit_progress_event("render", "prepare", phase="complete", progress=1.0)
+    emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
+    emit_progress_event("render", "audio", phase="start")
+    audio_filter = (
+        build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db)
+        if audio_normalize and sequence_plan.include_audio
+        else None
+    )
+    emit_progress_event("render", "audio", phase="complete", progress=1.0)
+    emit_progress_event("render", "encode", phase="metadata", duration=sequence_plan.output_duration)
+    emit_progress_event("render", "encode", phase="start")
+    log_progress(f"Rendering multi-clip sequence to {output.name}")
+    render_sequence_video(
+        sequence_plan,
+        output,
+        video_codec=encoding.video_codec,
+        audio_codec=encoding.audio_codec,
+        nvenc_preset=encoding.nvenc_preset,
+        nvenc_cq=encoding.nvenc_cq,
+        x264_crf=encoding.x264_crf,
+        audio_filter=audio_filter,
+        progress_callback=log_progress,
+    )
+    emit_progress_event("render", "encode", phase="complete", progress=1.0)
+    emit_progress_event("render", "finalize", phase="start")
+    project["render_settings"] = {
+        **project.get("render_settings", {}),
+        "video_codec": encoding.video_codec,
+        "audio_codec": encoding.audio_codec,
+        "output_audio_track": encoding.output_audio_track,
+        "audio_normalize": audio_normalize,
+        "audio_target_lufs": audio_target_lufs,
+        "sequence_clip_count": len(sequence_plan.clips),
+        "manual_cut_count": 0,
+        "output_duration_seconds": sequence_plan.output_duration,
+        "last_output": str(output.resolve()),
+    }
+    project["render_settings"].pop("last_cut_output", None)
+    save_project(project_path, project)
+    emit_progress_event("render", "finalize", phase="complete", progress=1.0)
+    log_progress(f"Render complete: {output}")
+    return output
+
+
 def render_project_video(
     project_path: str | Path,
     output_path: str | Path | None = None,
@@ -679,70 +955,75 @@ def render_project_video(
     # same non-destructive cut/subtitle path.  Other explicit singleton edits
     # must reach sequence preflight and fail closed rather than being lost.
     legacy_singleton_keep_ranges = _legacy_singleton_sequence_keep_ranges(project, project_sequence)
-    if legacy_singleton_keep_ranges is None and not _is_safe_legacy_singleton_compatibility(
-        project, project_sequence
-    ):
-        try:
-            sequence_plan = prepare_sequence_render(
-                project,
-                probe_duration=probe_media_duration,
-                probe_audio_streams=probe_audio_streams,
-                probe_video_stream=probe_video_stream,
-                output_audio_track=output_audio_track,
-                cut_no_speech=cut_no_speech,
-            )
-        except SequenceRenderError as error:
-            raise SystemExit(str(error)) from error
-        emit_progress_event("render", "prepare", phase="complete", progress=1.0)
-        emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
-        emit_progress_event("render", "audio", phase="start")
-        audio_filter = (
-            build_loudnorm_filter(
-                audio_target_lufs,
-                audio_loudness_range,
-                audio_true_peak_db,
-            )
-            if audio_normalize and sequence_plan.include_audio
-            else None
-        )
-        emit_progress_event("render", "audio", phase="complete", progress=1.0)
-        emit_progress_event(
-            "render",
-            "encode",
-            phase="metadata",
-            duration=sequence_plan.output_duration,
-        )
-        emit_progress_event("render", "encode", phase="start")
-        log_progress(f"Rendering multi-clip sequence to {output.name}")
-        render_sequence_video(
-            sequence_plan,
+    encoding = _RenderEncoding(video_codec, audio_codec, output_audio_track, nvenc_preset, nvenc_cq, x264_crf)
+    if legacy_singleton_keep_ranges is None and not _is_safe_legacy_singleton_compatibility(project, project_sequence):
+        return _render_sequence_project(
+            project_path,
+            project,
             output,
-            video_codec=video_codec,
-            audio_codec=audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=audio_filter,
-            progress_callback=log_progress,
+            encoding=encoding,
+            audio_normalize=audio_normalize,
+            audio_target_lufs=audio_target_lufs,
+            audio_loudness_range=audio_loudness_range,
+            audio_true_peak_db=audio_true_peak_db,
+            cut_no_speech=cut_no_speech,
         )
-        emit_progress_event("render", "encode", phase="complete", progress=1.0)
-        emit_progress_event("render", "finalize", phase="start")
-        project["render_settings"] = {
-            **project.get("render_settings", {}),
-            "video_codec": video_codec,
-            "audio_codec": audio_codec,
-            "output_audio_track": output_audio_track,
-            "audio_normalize": audio_normalize,
-            "audio_target_lufs": audio_target_lufs,
-            "sequence_clip_count": len(sequence_plan.clips),
-            "manual_cut_count": 0,
-            "output_duration_seconds": sequence_plan.output_duration,
-            "last_output": str(output.resolve()),
-        }
-        save_project(project_path, project)
-        emit_progress_event("render", "finalize", phase="complete", progress=1.0)
-        log_progress(f"Render complete: {output}")
-        return output
+    return _render_single_source_project(
+        project_path,
+        project,
+        output,
+        encoding=encoding,
+        legacy_singleton_keep_ranges=legacy_singleton_keep_ranges,
+        audio_normalize=audio_normalize,
+        audio_target_lufs=audio_target_lufs,
+        audio_loudness_range=audio_loudness_range,
+        audio_true_peak_db=audio_true_peak_db,
+        cut_no_speech=cut_no_speech,
+        no_speech_min_seconds=no_speech_min_seconds,
+        speech_padding_seconds=speech_padding_seconds,
+        speech_threshold_db=speech_threshold_db,
+        speech_min_clip_seconds=speech_min_clip_seconds,
+    )
+
+
+@dataclass(frozen=True)
+class _SingleSourceRenderPlan:
+    video_path: str
+    timeline: VideoTimeline
+    manual_keep_ranges: list[tuple[float, float]]
+    has_legacy_singleton_trim: bool
+    has_render_ranges: bool
+    ass_path: Path | None
+    audio: _RenderAudioPlan
+    loudnorm_filter: str | None
+    silence: _SilenceCutPlan | None
+
+
+@dataclass(frozen=True)
+class _SingleSourceRenderResult:
+    cut_output: Path | None
+    keep_ranges: list[tuple[float, float]]
+    cut_no_speech: bool
+
+
+def _prepare_single_source_render(
+    project_path: str | Path,
+    project: dict[str, Any],
+    *,
+    encoding: _RenderEncoding,
+    legacy_singleton_keep_ranges: list[tuple[float, float]] | None,
+    audio_normalize: bool,
+    audio_target_lufs: float,
+    audio_loudness_range: float,
+    audio_true_peak_db: float,
+    cut_no_speech: bool,
+    no_speech_min_seconds: float,
+    speech_padding_seconds: float,
+    speech_threshold_db: str,
+    speech_min_clip_seconds: float,
+) -> _SingleSourceRenderPlan:
+    """単一動画の入力と字幕・音声・カット範囲を確定する。"""
+
     video_path = str(project["video"]["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
@@ -756,12 +1037,10 @@ def render_project_video(
         )
     has_legacy_singleton_trim = legacy_singleton_keep_ranges is not None
     has_render_ranges = timeline.has_cuts or has_legacy_singleton_trim
-    render_keep_ranges = manual_keep_ranges if has_render_ranges else []
     emit_progress_event("render", "prepare", phase="complete", progress=1.0)
     emit_progress_event("render", "subtitle", phase="start")
     has_subtitles = any(
-        isinstance(segment, dict) and str(segment.get("text", "")).strip()
-        for segment in project.get("segments", [])
+        isinstance(segment, dict) and str(segment.get("text", "")).strip() for segment in project.get("segments", [])
     )
     ass_path = (
         build_project_ass(
@@ -774,330 +1053,276 @@ def render_project_video(
     )
     emit_progress_event("render", "subtitle", phase="complete", progress=1.0)
     emit_progress_event("render", "audio", phase="start")
-    loudnorm_filter = build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
-    audio_mix = project.get("audio_mix", {})
-    use_audio_mix = bool(audio_mix.get("customized", False))
-    offset_seconds = float(project.get("transcription", {}).get("offset_seconds", 0.0))
-    if use_audio_mix:
-        for channel in active_audio_mix_channels(audio_mix):
-            if channel.get("kind") == "external" and not Path(str(channel.get("path", ""))).is_file():
-                raise SystemExit(f"Mixer audio source was not found: {channel.get('path', '')}")
-    has_audio_stream = True
-    if not use_audio_mix:
-        try:
-            probed_audio_streams = probe_audio_streams(video_path)
-            has_audio_stream = bool(probed_audio_streams)
-            actual_video_track_selectors = {
-                entry["selector"] for entry in video_track_entries(probed_audio_streams)
-            }
-            has_known_video_tracks = True
-        except (OSError, subprocess.CalledProcessError, ValueError):
-            has_known_video_tracks = False
-            actual_video_track_selectors = set()
-            has_audio_stream = True
-        has_real_video_track = any(
-            isinstance(channel, dict)
-            and channel.get("kind") == "video"
-            and str(channel.get("selector", "")).strip()
-            and (
-                has_known_video_tracks
-                and str(channel.get("selector", "")) in actual_video_track_selectors
-            )
-            for channel in (audio_mix.get("channels") if isinstance(audio_mix.get("channels"), list) else [])
-        )
-        has_enabled_external = any(
-            isinstance(channel, dict)
-            and channel.get("kind") == "external"
-            and bool(channel.get("enabled"))
-            for channel in audio_mix.get("channels", [])
-        )
-        if has_enabled_external:
-            use_audio_mix = True
-        elif not has_real_video_track:
-            for channel in audio_mix.get("channels", []):
-                if (
-                    isinstance(channel, dict)
-                    and channel.get("kind") == "external"
-                    and Path(str(channel.get("path", ""))).is_file()
-                ):
-                    channel["enabled"] = True
-                    use_audio_mix = True
-                    break
-
-    cut_output: Path | None = None
-    if cut_no_speech:
-        source_paths = [
-            str(source.get("path", ""))
-            for source in project.get("audio_sources", [])
-            if Path(str(source.get("path", ""))).is_file()
-        ]
-        detection_sources: list[tuple[str, str | None]] = [(path, None) for path in source_paths]
-        if not detection_sources:
-            try:
-                probed_audio_streams = probe_audio_streams(video_path)
-            except (OSError, subprocess.CalledProcessError, ValueError):
-                probed_audio_streams = []
-            available_video_tracks = {
-                entry["selector"] for entry in video_track_entries(probed_audio_streams)
-            }
-            selected_video_track = next(
-                (
-                    str(channel.get("selector"))
-                    for channel in active_audio_mix_channels(audio_mix)
-                    if channel.get("kind") == "video"
-                    and str(channel.get("selector", "")) in available_video_tracks
-                ),
-                "",
-            )
-            if not selected_video_track:
-                candidate = str(output_audio_track or "")
-                selected_video_track = (
-                    candidate
-                    if candidate in available_video_tracks
-                    else next(iter(available_video_tracks), "")
-                )
-            if selected_video_track:
-                detection_sources = [(video_path, selected_video_track)]
-
-        if not detection_sources:
-            log_progress("No audio source is available for silence detection; disabling silence cut")
-            cut_no_speech = False
-
-    if cut_no_speech:
-        speech_ranges: list[tuple[float, float]] = []
-        for source_path, _audio_track in detection_sources:
-            log_progress(f"Detecting speech in {Path(source_path).name}")
-
-        def detect_source(source: tuple[str, str | None]) -> list[tuple[float, float]]:
-            source_path, audio_track = source
-            options: dict[str, Any] = {
-                "noise": normalize_db_threshold(speech_threshold_db),
-                "duration": DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
-            }
-            if audio_track:
-                options["audio_track"] = audio_track
-            return detect_speech_ranges(source_path, **options)
-
-        with ThreadPoolExecutor(max_workers=max(1, min(4, len(detection_sources)))) as executor:
-            for source_ranges in executor.map(detect_source, detection_sources):
-                speech_ranges.extend(source_ranges)
-        duration = float(project.get("video", {}).get("duration_seconds", 0.0)) or probe_media_duration(video_path)
-        no_speech_ranges, keep_ranges = build_no_speech_plan(
-            duration,
-            speech_ranges,
-            offset_seconds,
-            min_no_speech_seconds=no_speech_min_seconds,
-            padding=speech_padding_seconds,
-            min_clip_duration=speech_min_clip_seconds,
-        )
-        if timeline.has_cuts or has_legacy_singleton_trim:
-            keep_ranges = intersect_ranges(manual_keep_ranges, keep_ranges)
-        if not keep_ranges:
-            raise SystemExit("No speech activity was detected; refusing to cut the entire video.")
-        render_keep_ranges = keep_ranges
-        if has_subtitles:
-            cut_ass = Path(project_path).with_name(f".{Path(project_path).stem}.cut.ass")
-            transcript = project_to_transcript(project, project_is_validated=True)
-            cut_transcript = {"segments": retime_segments_for_keep_ranges(transcript["segments"], keep_ranges)}
-            try:
-                build_ass_from_data(
-                    cut_transcript,
-                    str(cut_ass),
-                    **_ass_build_options(project),
-                )
-                cut_output = output.with_name(f"{output.stem}.silence-cut{output.suffix or '.mp4'}")
-                log_progress(f"Cutting {len(no_speech_ranges)} silent ranges to {cut_output.name}")
-                cut_media_ranges(
-                    video_path,
-                    str(cut_output),
-                    keep_ranges,
-                    video_codec=video_codec,
-                    audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-                    nvenc_preset=nvenc_preset,
-                    nvenc_cq=nvenc_cq,
-                    x264_crf=x264_crf,
-                    audio_filter=loudnorm_filter,
-                    audio_track=output_audio_track,
-                    audio_mix=audio_mix if use_audio_mix else None,
-                    audio_offset_seconds=offset_seconds,
-                    include_audio=has_audio_stream or use_audio_mix,
-                    progress_callback=log_progress,
-                )
-                emit_progress_event("render", "audio", phase="complete", progress=1.0)
-                emit_progress_event(
-                    "render",
-                    "encode",
-                    phase="metadata",
-                    duration=sum(max(0.0, end - start) for start, end in keep_ranges),
-                )
-                emit_progress_event("render", "encode", phase="start")
-                log_progress(f"Rendering edited subtitles to {output.name}")
-                run_ffmpeg_burn(
-                    str(cut_output),
-                    str(cut_ass),
-                    str(output),
-                    video_codec=video_codec,
-                    audio_codec="copy",
-                    nvenc_preset=nvenc_preset,
-                    nvenc_cq=nvenc_cq,
-                    x264_crf=x264_crf,
-                    progress_callback=log_progress,
-                )
-            finally:
-                cut_ass.unlink(missing_ok=True)
-        else:
-            cut_output = output
-            emit_progress_event("render", "audio", phase="complete", progress=1.0)
-            emit_progress_event(
-                "render",
-                "encode",
-                phase="metadata",
-                duration=sum(max(0.0, end - start) for start, end in keep_ranges),
-            )
-            emit_progress_event("render", "encode", phase="start")
-            log_progress(f"Cutting {len(no_speech_ranges)} silent ranges to {output.name}")
-            cut_media_ranges(
-                video_path,
-                str(output),
-                keep_ranges,
-                video_codec=video_codec,
-                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=loudnorm_filter,
-                audio_track=output_audio_track,
-                audio_mix=audio_mix if use_audio_mix else None,
-                audio_offset_seconds=offset_seconds,
-                include_audio=has_audio_stream or use_audio_mix,
-                progress_callback=log_progress,
-            )
-    elif has_render_ranges:
-        if not manual_keep_ranges:
-            raise SystemExit("Manual cuts would remove the entire video; refusing to render.")
-        if has_subtitles:
-            cut_output = output.with_name(f"{output.stem}.timeline-cut{output.suffix or '.mp4'}")
-            log_progress(f"Applying {len(timeline.cuts)} manual cuts to {cut_output.name}")
-            cut_media_ranges(
-                video_path,
-                str(cut_output),
-                manual_keep_ranges,
-                video_codec=video_codec,
-                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=loudnorm_filter,
-                audio_track=output_audio_track,
-                audio_mix=audio_mix if use_audio_mix else None,
-                audio_offset_seconds=offset_seconds,
-                include_audio=has_audio_stream or use_audio_mix,
-                progress_callback=log_progress,
-            )
-            emit_progress_event("render", "audio", phase="complete", progress=1.0)
-            emit_progress_event(
-                "render",
-                "encode",
-                phase="metadata",
-                duration=sum(max(0.0, end - start) for start, end in manual_keep_ranges),
-            )
-            emit_progress_event("render", "encode", phase="start")
-            log_progress(f"Rendering edited subtitles to {output.name}")
-            run_ffmpeg_burn(
-                str(cut_output),
-                str(ass_path),
-                str(output),
-                video_codec=video_codec,
-                audio_codec="copy",
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                include_audio=has_audio_stream or use_audio_mix,
-                progress_callback=log_progress,
-            )
-        else:
-            cut_output = output
-            emit_progress_event("render", "audio", phase="complete", progress=1.0)
-            emit_progress_event(
-                "render",
-                "encode",
-                phase="metadata",
-                duration=sum(max(0.0, end - start) for start, end in manual_keep_ranges),
-            )
-            emit_progress_event("render", "encode", phase="start")
-            log_progress(f"Applying {len(timeline.cuts)} manual cuts to {output.name}")
-            cut_media_ranges(
-                video_path,
-                str(output),
-                manual_keep_ranges,
-                video_codec=video_codec,
-                audio_codec=DEFAULT_FILTERED_AUDIO_CODEC,
-                nvenc_preset=nvenc_preset,
-                nvenc_cq=nvenc_cq,
-                x264_crf=x264_crf,
-                audio_filter=loudnorm_filter,
-                audio_track=output_audio_track,
-                audio_mix=audio_mix if use_audio_mix else None,
-                audio_offset_seconds=offset_seconds,
-                include_audio=has_audio_stream or use_audio_mix,
-                progress_callback=log_progress,
-            )
-    else:
-        emit_progress_event("render", "audio", phase="complete", progress=1.0)
-        output_duration = float(project.get("video", {}).get("duration_seconds", 0.0))
-        if output_duration > 0.0:
-            emit_progress_event("render", "encode", phase="metadata", duration=output_duration)
-        emit_progress_event("render", "encode", phase="start")
-        log_progress(f"Rendering edited subtitles to {output.name}")
-        burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC if loudnorm_filter or use_audio_mix else audio_codec
-        if _is_mp4_output(output) and burn_audio_codec == "copy":
-            burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC
-        run_ffmpeg_burn(
+    loudnorm_filter = (
+        build_loudnorm_filter(audio_target_lufs, audio_loudness_range, audio_true_peak_db) if audio_normalize else None
+    )
+    audio = _resolve_render_audio(project, video_path)
+    silence = (
+        _plan_silence_cut(
+            project,
             video_path,
-            str(ass_path) if ass_path is not None else None,
-            str(output),
-            video_codec=video_codec,
-            audio_codec=burn_audio_codec,
-            nvenc_preset=nvenc_preset,
-            nvenc_cq=nvenc_cq,
-            x264_crf=x264_crf,
-            audio_filter=loudnorm_filter,
-            audio_track=output_audio_track,
-            audio_mix=audio_mix if use_audio_mix else None,
-            audio_offset_seconds=offset_seconds,
-            include_audio=has_audio_stream,
-            progress_callback=log_progress,
+            timeline,
+            manual_keep_ranges,
+            has_legacy_singleton_trim=has_legacy_singleton_trim,
+            audio=audio,
+            encoding=encoding,
+            no_speech_min_seconds=no_speech_min_seconds,
+            speech_padding_seconds=speech_padding_seconds,
+            speech_threshold_db=speech_threshold_db,
+            speech_min_clip_seconds=speech_min_clip_seconds,
         )
+        if cut_no_speech
+        else None
+    )
+    if silence is None and has_render_ranges and not manual_keep_ranges:
+        raise SystemExit("Manual cuts would remove the entire video; refusing to render.")
+    return _SingleSourceRenderPlan(
+        video_path,
+        timeline,
+        manual_keep_ranges,
+        has_legacy_singleton_trim,
+        has_render_ranges,
+        ass_path,
+        audio,
+        loudnorm_filter,
+        silence,
+    )
+
+
+def _render_cut_with_subtitles(
+    plan: _SingleSourceRenderPlan,
+    output: Path,
+    cut_output: Path,
+    keep_ranges: list[tuple[float, float]],
+    ass_path: Path,
+    message: str,
+    encoding: _RenderEncoding,
+) -> None:
+    """カット済み動画と字幕を合成する共通経路。"""
+
+    log_progress(message.format(output=cut_output.name))
+    _cut_media_for_render(
+        plan.video_path,
+        cut_output,
+        keep_ranges,
+        encoding=encoding,
+        audio=plan.audio,
+        audio_filter=plan.loudnorm_filter,
+    )
+    _begin_render_encoding(keep_ranges)
+    log_progress(f"Rendering edited subtitles to {output.name}")
+    run_ffmpeg_burn(
+        str(cut_output),
+        str(ass_path),
+        str(output),
+        video_codec=encoding.video_codec,
+        audio_codec="copy",
+        nvenc_preset=encoding.nvenc_preset,
+        nvenc_cq=encoding.nvenc_cq,
+        x264_crf=encoding.x264_crf,
+        include_audio=plan.audio.has_audio_stream or plan.audio.use_audio_mix,
+        progress_callback=log_progress,
+    )
+
+
+def _render_cut_source(
+    project_path: str | Path,
+    project: dict[str, Any],
+    plan: _SingleSourceRenderPlan,
+    output: Path,
+    encoding: _RenderEncoding,
+) -> _SingleSourceRenderResult:
+    """手動カットと無音カットを一つの出力経路で扱う。"""
+
+    silence = plan.silence
+    keep_ranges = silence.keep_ranges if silence else plan.manual_keep_ranges
+    if silence:
+        message = f"Cutting {len(silence.no_speech_ranges)} silent ranges to {{output}}"
+        suffix = "silence-cut"
+    else:
+        message = f"Applying {len(plan.timeline.cuts)} manual cuts to {{output}}"
+        suffix = "timeline-cut"
+    if plan.ass_path is None:
+        _begin_render_encoding(keep_ranges)
+        log_progress(message.format(output=output.name))
+        _cut_media_for_render(
+            plan.video_path,
+            output,
+            keep_ranges,
+            encoding=encoding,
+            audio=plan.audio,
+            audio_filter=plan.loudnorm_filter,
+        )
+        return _SingleSourceRenderResult(output, keep_ranges, silence is not None)
+
+    cut_output = output.with_name(f"{output.stem}.{suffix}{output.suffix or '.mp4'}")
+    if silence is None:
+        _render_cut_with_subtitles(plan, output, cut_output, keep_ranges, plan.ass_path, message, encoding)
+    else:
+        cut_ass = Path(project_path).with_name(f".{Path(project_path).stem}.cut.ass")
+        transcript = project_to_transcript(project, project_is_validated=True)
+        cut_transcript = {"segments": retime_segments_for_keep_ranges(transcript["segments"], keep_ranges)}
+        try:
+            build_ass_from_data(cut_transcript, str(cut_ass), **_ass_build_options(project))
+            _render_cut_with_subtitles(plan, output, cut_output, keep_ranges, cut_ass, message, encoding)
+        finally:
+            cut_ass.unlink(missing_ok=True)
+    return _SingleSourceRenderResult(cut_output, keep_ranges, silence is not None)
+
+
+def _render_uncut_source(
+    project: dict[str, Any],
+    plan: _SingleSourceRenderPlan,
+    output: Path,
+    encoding: _RenderEncoding,
+) -> None:
+    """カット不要の動画を字幕・音声設定に従って書き出す。"""
+
+    emit_progress_event("render", "audio", phase="complete", progress=1.0)
+    output_duration = float(project.get("video", {}).get("duration_seconds", 0.0))
+    if output_duration > 0.0:
+        emit_progress_event("render", "encode", phase="metadata", duration=output_duration)
+    emit_progress_event("render", "encode", phase="start")
+    log_progress(f"Rendering edited subtitles to {output.name}")
+    audio = plan.audio
+    burn_audio_codec = (
+        DEFAULT_FILTERED_AUDIO_CODEC if plan.loudnorm_filter or audio.use_audio_mix else encoding.audio_codec
+    )
+    if _is_mp4_output(output) and burn_audio_codec == "copy":
+        burn_audio_codec = DEFAULT_FILTERED_AUDIO_CODEC
+    run_ffmpeg_burn(
+        plan.video_path,
+        str(plan.ass_path) if plan.ass_path is not None else None,
+        str(output),
+        video_codec=encoding.video_codec,
+        audio_codec=burn_audio_codec,
+        nvenc_preset=encoding.nvenc_preset,
+        nvenc_cq=encoding.nvenc_cq,
+        x264_crf=encoding.x264_crf,
+        audio_filter=plan.loudnorm_filter,
+        audio_track=encoding.output_audio_track,
+        audio_mix=audio.audio_mix if audio.use_audio_mix else None,
+        audio_offset_seconds=audio.offset_seconds,
+        include_audio=audio.has_audio_stream,
+        progress_callback=log_progress,
+    )
+
+
+def _execute_single_source_render(
+    project_path: str | Path,
+    project: dict[str, Any],
+    plan: _SingleSourceRenderPlan,
+    output: Path,
+    encoding: _RenderEncoding,
+) -> _SingleSourceRenderResult:
+    if plan.silence is not None or plan.has_render_ranges:
+        result = _render_cut_source(project_path, project, plan, output, encoding)
+    else:
+        _render_uncut_source(project, plan, output, encoding)
+        result = _SingleSourceRenderResult(None, [], False)
     emit_progress_event("render", "encode", phase="complete", progress=1.0)
+    return result
+
+
+def _finalize_single_source_render(
+    project_path: str | Path,
+    project: dict[str, Any],
+    plan: _SingleSourceRenderPlan,
+    result: _SingleSourceRenderResult,
+    output: Path,
+    encoding: _RenderEncoding,
+    *,
+    audio_normalize: bool,
+    audio_target_lufs: float,
+    no_speech_min_seconds: float,
+    speech_padding_seconds: float,
+    speech_threshold_db: str,
+    speech_min_clip_seconds: float,
+) -> Path:
+    """書き出し結果のみをプロジェクト設定に記録する。"""
+
     emit_progress_event("render", "finalize", phase="start")
     project["render_settings"] = {
         **project.get("render_settings", {}),
-        "video_codec": video_codec,
-        "audio_codec": audio_codec,
-        "output_audio_track": output_audio_track,
+        "video_codec": encoding.video_codec,
+        "audio_codec": encoding.audio_codec,
+        "output_audio_track": encoding.output_audio_track,
         "audio_normalize": audio_normalize,
         "audio_target_lufs": audio_target_lufs,
-        "cut_no_speech": cut_no_speech,
+        "cut_no_speech": result.cut_no_speech,
         "no_speech_min_seconds": no_speech_min_seconds,
         "speech_padding_seconds": speech_padding_seconds,
         "speech_threshold_db": speech_threshold_db,
         "speech_min_clip_seconds": speech_min_clip_seconds,
-        "manual_cut_count": len(timeline.cuts),
-        "sequence_clip_count": 1 if has_legacy_singleton_trim else 0,
-        "legacy_singleton_trim": has_legacy_singleton_trim,
+        "manual_cut_count": len(plan.timeline.cuts),
+        "sequence_clip_count": 1 if plan.has_legacy_singleton_trim else 0,
+        "legacy_singleton_trim": plan.has_legacy_singleton_trim,
         "output_duration_seconds": (
-            round(sum(end - start for start, end in render_keep_ranges), 3)
-            if render_keep_ranges
-            else timeline.source_duration
+            round(sum(end - start for start, end in result.keep_ranges), 3)
+            if result.keep_ranges
+            else plan.timeline.source_duration
         ),
         "last_output": str(output.resolve()),
     }
-    if cut_output is not None:
-        project["render_settings"]["last_cut_output"] = str(cut_output.resolve())
+    if result.cut_output is not None:
+        project["render_settings"]["last_cut_output"] = str(result.cut_output.resolve())
+    else:
+        project["render_settings"].pop("last_cut_output", None)
     save_project(project_path, project)
     emit_progress_event("render", "finalize", phase="complete", progress=1.0)
     log_progress(f"Render complete: {output}")
     return output
+
+
+def _render_single_source_project(
+    project_path: str | Path,
+    project: dict[str, Any],
+    output: Path,
+    *,
+    encoding: _RenderEncoding,
+    legacy_singleton_keep_ranges: list[tuple[float, float]] | None,
+    audio_normalize: bool,
+    audio_target_lufs: float,
+    audio_loudness_range: float,
+    audio_true_peak_db: float,
+    cut_no_speech: bool,
+    no_speech_min_seconds: float,
+    speech_padding_seconds: float,
+    speech_threshold_db: str,
+    speech_min_clip_seconds: float,
+) -> Path:
+    """単一動画の計画、実行、結果の保存を順に進める。"""
+
+    plan = _prepare_single_source_render(
+        project_path,
+        project,
+        encoding=encoding,
+        legacy_singleton_keep_ranges=legacy_singleton_keep_ranges,
+        audio_normalize=audio_normalize,
+        audio_target_lufs=audio_target_lufs,
+        audio_loudness_range=audio_loudness_range,
+        audio_true_peak_db=audio_true_peak_db,
+        cut_no_speech=cut_no_speech,
+        no_speech_min_seconds=no_speech_min_seconds,
+        speech_padding_seconds=speech_padding_seconds,
+        speech_threshold_db=speech_threshold_db,
+        speech_min_clip_seconds=speech_min_clip_seconds,
+    )
+    result = _execute_single_source_render(project_path, project, plan, output, encoding)
+    return _finalize_single_source_render(
+        project_path,
+        project,
+        plan,
+        result,
+        output,
+        encoding,
+        audio_normalize=audio_normalize,
+        audio_target_lufs=audio_target_lufs,
+        no_speech_min_seconds=no_speech_min_seconds,
+        speech_padding_seconds=speech_padding_seconds,
+        speech_threshold_db=speech_threshold_db,
+        speech_min_clip_seconds=speech_min_clip_seconds,
+    )
 
 
 def render_project_short_video(
@@ -1126,8 +1351,7 @@ def render_project_short_video(
     if audio_codec == "copy":
         audio_codec = "aac"
     has_subtitles = any(
-        isinstance(segment, dict) and str(segment.get("text", "")).strip()
-        for segment in project.get("segments", [])
+        isinstance(segment, dict) and str(segment.get("text", "")).strip() for segment in project.get("segments", [])
     )
     ass_path = build_short_video_ass(project_path, _project=project) if has_subtitles else None
     result = render_short_video(
@@ -1189,15 +1413,23 @@ def main() -> None:
     transcribe.add_argument("--audio-file", action="append")
     transcribe.add_argument("--video-audio-track")
     transcribe.add_argument("--output-dir", required=True)
-    transcribe.add_argument("--render-output-dir", help="Completed video export directory; an empty value leaves it unset. Defaults to --output-dir for legacy CLI calls.")
-    transcribe.add_argument("--context-base-dir", help="Base directory for relative transcription dictionary paths. Defaults to --output-dir.")
+    transcribe.add_argument(
+        "--render-output-dir",
+        help="Completed video export directory; an empty value leaves it unset. Defaults to --output-dir for legacy CLI calls.",
+    )
+    transcribe.add_argument(
+        "--context-base-dir",
+        help="Base directory for relative transcription dictionary paths. Defaults to --output-dir.",
+    )
     transcribe.add_argument("--project-path", help="Explicit editable project output path.")
     transcribe.add_argument("--reference-audio")
     transcribe.add_argument("--reference-track")
     transcribe.add_argument("--alignment-offset-adjustment", type=float, default=None)
     transcribe.add_argument("--skip-existing-transcripts", action=argparse.BooleanOptionalAction, default=None)
     transcribe.add_argument("--transcription-context-file", help="Path to a transcription context JSON file.")
-    transcribe.add_argument("--overwrite-project", action="store_true", help="Explicitly replace an existing editable project.")
+    transcribe.add_argument(
+        "--overwrite-project", action="store_true", help="Explicitly replace an existing editable project."
+    )
     transcribe.add_argument("--run", action="store_true")
 
     ass = subparsers.add_parser("ass", help="Generate ASS from an edited project.")
@@ -1277,7 +1509,11 @@ def main() -> None:
 
     if args.phase == "render-short":
         if not args.run:
-            print(Path(args.output) if args.output else resolve_render_output_path(args.project, load_project(args.project), short=True))
+            print(
+                Path(args.output)
+                if args.output
+                else resolve_render_output_path(args.project, load_project(args.project), short=True)
+            )
             return
         settings = settings_from_config(config)
         dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=False)
@@ -1290,7 +1526,9 @@ def main() -> None:
         return
 
     if not args.run:
-        print(Path(args.output) if args.output else resolve_render_output_path(args.project, load_project(args.project)))
+        print(
+            Path(args.output) if args.output else resolve_render_output_path(args.project, load_project(args.project))
+        )
         return
     settings = settings_from_config(config)
     dependency_error = format_dependency_error(check_runtime_dependencies(), require_whisperx=False)

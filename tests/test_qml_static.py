@@ -33,6 +33,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
     COMPONENTS_ROOT / "AudioMixerScreen.qml",
+    COMPONENTS_ROOT / "AudioMixerPreviewSession.qml",
     COMPONENTS_ROOT / "AudioMixerChannelStrip.qml",
     COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
     COMPONENTS_ROOT / "SourceSettingsPopup.qml",

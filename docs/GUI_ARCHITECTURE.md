@@ -63,7 +63,7 @@ The first shared controls now exist as standalone QML files and are covered by t
 ## 音量ミキサー画面の境界
 
 `components/AudioMixerScreen.qml`は専用ミキサーの表示、音量・ミュート・ソロ操作、
-プレビュー用MediaPlayerと音声トラックの再生同期、横スクロールの復元を担当する。
+再生操作の入力、横スクロールの復元を担当する。
 バックエンド、配色、時刻表示関数、話者、表示倍率、開始位置、書き出し可否を
 プロパティで受け取り、親画面のIDや暗黙のコンテキスト変数を参照しない。
 再生位置の更新、字幕編集への移動、保存、書き出し、閉じる操作はシグナルで親へ通知する。
@@ -82,8 +82,10 @@ The first shared controls now exist as standalone QML files and are covered by t
 レベル表示、ミュート・ソロ・使用状態の表示と操作を担当する。
 チャンネルデータ、プレビュー音量、処理中状態、配色を明示的に受け取り、
 変更要求だけを親画面へ通知する。音量のdB変換は表示部品内で管理する。
-`AudioMixerScreen.qml`は横スクロール位置の復元、バックエンドへの編集確定、
-再生同期を担当する。単独Windowでの操作通知と処理中の操作制限、
+`AudioMixerPreviewSession.qml`は再生時計、トラックごとのプレビュープレイヤー、
+シークと再生状態の同期を担当し、音声バックエンドと開始位置を明示的に受け取る。
+`AudioMixerScreen.qml`は再生操作の表示と入力、横スクロール位置の復元、
+バックエンドへのチャンネル編集確定を担当する。単独Windowでの操作通知と処理中の操作制限、
 通常画面での編集・再生成・横スクロール保持を確認する。
 
 共通コントロールの置き換えは別PRとして扱う。

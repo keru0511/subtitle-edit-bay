@@ -344,8 +344,8 @@ Window {
         self.app._subtitle_model.set_segments(self.app._project["segments"])
         self.app._source_selection = SourceSelection(video="leaked-video.mkv")
         self.app._active_job = "leaked-job"
-        self.app._highlight_candidates = [{"id": "leaked-highlight"}]
-        self.app._update_busy = True
+        self.app.shortVideo._highlight_state.candidates = [{"id": "leaked-highlight"}]
+        self.app.updates._state.busy = True
         self.app._config = {"leaked": True}
         self.app._transcription_context = {
             **base_transcription_context,
@@ -376,8 +376,8 @@ Window {
         self.assertEqual(self.app._subtitle_model.rowCount(), 0)
         self.assertEqual(self.app.sourceSelection["video"], "")
         self.assertEqual(self.app._active_job, "")
-        self.assertEqual(self.app._highlight_candidates, [])
-        self.assertFalse(self.app._update_busy)
+        self.assertEqual(self.app.shortVideo._highlight_state.candidates, [])
+        self.assertFalse(self.app.updates._state.busy)
         self.assertEqual(self.app._config, base_config)
         self.assertEqual(self.app.transcriptionContext, base_transcription_context)
         self.assertFalse(leaked_codex_thread.is_alive())
@@ -1391,7 +1391,7 @@ Window {
             before = self.app.editorPlayhead
             with patch.object(self.app, "_start_process"):
                 self.app.transcribeProject(self.app.settings, integration)
-            generated_path = Path(self.app._transcription_generated_project_path)
+            generated_path = Path(self.app.workflow._state.transcription_generated_project_path)
             generated = create_project(
                 video_path=self.app._project["video"]["path"], output_dir=generated_path.parent,
                 segments=[{"start": 4, "end": 5, "text": "generated"}], duration_seconds=30,
@@ -1491,7 +1491,7 @@ Window {
         self.assertEqual(saved_segment["subtitle_font_family"], "Yu Mincho")
 
         result_path = self.root / "reloaded-project.json"
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
         probe = subprocess.run(
             [
                 process_python,
@@ -2807,7 +2807,7 @@ Window {
         self.app._active_job = "render"
         self.app._running = True
         self.app._cancel_requested = False
-        self.app._processing_progress.start("render")
+        self.app.workflow._state.processing_progress.start("render")
         self.app._update_stage(final_events)
         self.assertLess(self.app.progressPercent, 100)
         self.app._process_finished(7, QProcess.ExitStatus.NormalExit)
@@ -2818,7 +2818,7 @@ Window {
         self.app._active_job = "render"
         self.app._running = True
         self.app._cancel_requested = True
-        self.app._processing_progress.start("render")
+        self.app.workflow._state.processing_progress.start("render")
         self.app._update_stage(final_events)
         self.assertLess(self.app.progressPercent, 100)
         self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
@@ -2830,7 +2830,7 @@ Window {
         self.app._active_job = "update"
         self.app._running = True
         self.app._progress = 0.02
-        self.app._processing_progress.start("update")
+        self.app.workflow._state.processing_progress.start("update")
 
         self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
 
@@ -2851,7 +2851,7 @@ Window {
                 self.app._finish_processing_progress("completed")
                 self.assertEqual(self.app.progressPercent, 100)
 
-                self.app._processing_progress.start(job)
+                self.app.workflow._state.processing_progress.start(job)
                 self.app._update_stage(
                     f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
                 )
@@ -2860,7 +2860,7 @@ Window {
                 self.assertEqual(self.app.progressPercent, before)
                 self.assertEqual(self.app.progressState, "cancelled")
 
-                self.app._processing_progress.start(job)
+                self.app.workflow._state.processing_progress.start(job)
                 self.app._update_stage(
                     f'PROGRESS_EVENT {{"job":"{job}","step":"{step}","phase":"start","progress":0.25}}'
                 )
@@ -2870,24 +2870,24 @@ Window {
                 self.assertEqual(self.app.progressState, "error")
 
     def test_processing_progress_uses_tracker_value_and_short_output_duration(self) -> None:
-        self.app._processing_machine_event_seen = False
+        self.app.workflow._state.processing_machine_event_seen = False
         self.app._progress = 0.0
-        self.app._processing_progress.start("transcribe")
+        self.app.workflow._state.processing_progress.start("transcribe")
         self.app._update_stage("[subtitle_workflow] Building waveform for 1-alice.flac")
         self.assertEqual(self.app.progress, 0.0)
 
-        self.app._processing_progress.start("transcribe")
+        self.app.workflow._state.processing_progress.start("transcribe")
         self.app._update_stage(
             'PROGRESS_EVENT {"job":"transcribe","step":"alignment","phase":"start","progress":0.5}'
         )
-        self.assertEqual(self.app.progress, self.app._processing_progress.value)
+        self.assertEqual(self.app.progress, self.app.workflow._state.processing_progress.value)
         self.assertEqual(self.app.progressPercent, round(self.app.progress * 100))
 
         self.app._update_stage("[subtitle_workflow] Refining merged subtitle segments")
-        self.assertEqual(self.app.progress, self.app._processing_progress.value)
+        self.assertEqual(self.app.progress, self.app.workflow._state.processing_progress.value)
         self.assertEqual(self.app.progressPercent, round(self.app.progress * 100))
 
-        self.app._processing_progress.start("render_short")
+        self.app.workflow._state.processing_progress.start("render_short")
         self.app._update_stage(
             'PROGRESS_EVENT {"job":"render_short","step":"encode","phase":"start","progress":0.0}'
         )
@@ -2900,15 +2900,15 @@ Window {
                 )
             )
         )
-        self.assertEqual(self.app._ffmpeg_duration_seconds, 30.0)
+        self.assertEqual(self.app.workflow._state.ffmpeg_duration_seconds, 30.0)
         encode_step = next(step for step in self.app.progressSteps if step["id"] == "encode")
         self.assertAlmostEqual(encode_step["progress"], 0.5)
 
     def test_processing_progress_ignores_legacy_encode_marker_and_refreshes_cut_duration(self) -> None:
-        self.app._processing_machine_event_seen = False
-        self.app._ffmpeg_duration_seconds = 0.0
-        self.app._ffmpeg_duration_from_event = False
-        self.app._processing_progress.start("render")
+        self.app.workflow._state.processing_machine_event_seen = False
+        self.app.workflow._state.ffmpeg_duration_seconds = 0.0
+        self.app.workflow._state.ffmpeg_duration_from_event = False
+        self.app.workflow._state.processing_progress.start("render")
         self.app._update_stage(
             "\n".join(
                 (
@@ -2930,13 +2930,13 @@ Window {
                 )
             )
         )
-        self.assertEqual(self.app._ffmpeg_duration_seconds, 3600.0)
+        self.assertEqual(self.app.workflow._state.ffmpeg_duration_seconds, 3600.0)
         self.app._update_stage(
             'PROGRESS_EVENT {"job":"render","step":"encode","phase":"start","progress":0.0}'
         )
-        self.assertEqual(self.app._ffmpeg_duration_seconds, 0.0)
+        self.assertEqual(self.app.workflow._state.ffmpeg_duration_seconds, 0.0)
         self.app._update_stage("Duration: 00:20:00.00, start: 0.000000, bitrate: 100 kb/s")
-        self.assertEqual(self.app._ffmpeg_duration_seconds, 1200.0)
+        self.assertEqual(self.app.workflow._state.ffmpeg_duration_seconds, 1200.0)
 
     def test_startup_system_log_contains_runtime_dependencies_config_and_completion(self) -> None:
         startup_log = self._startup_log_text
@@ -3167,10 +3167,10 @@ Window {
         self.app._running = False
         generated_path = self.root / ".failed-transcription.subtitle-project.json"
         generated_path.write_text("temporary", encoding="utf-8")
-        self.app._transcription_merge_mode = "merge"
-        self.app._transcription_preserved_project = {"segments": []}
-        self.app._transcription_preserved_project_path = str(self.root / "preserved.subtitle-project.json")
-        self.app._transcription_generated_project_path = str(generated_path)
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = {"segments": []}
+        self.app.workflow._state.transcription_preserved_project_path = str(self.root / "preserved.subtitle-project.json")
+        self.app.workflow._state.transcription_generated_project_path = str(generated_path)
 
         with (
             patch("src.gui.runtime_diagnostic_info", return_value={}),
@@ -3192,9 +3192,9 @@ Window {
         self.assertIn("QProcessエラー: プロセスを開始できません", diagnostic)
         self.assertIn("launcher stderr", diagnostic)
         self.assertEqual(self.app.activeJob, "")
-        self.assertEqual(self.app._transcription_merge_mode, "")
-        self.assertIsNone(self.app._transcription_preserved_project)
-        self.assertEqual(self.app._transcription_preserved_project_path, "")
+        self.assertEqual(self.app.workflow._state.transcription_merge_mode, "")
+        self.assertIsNone(self.app.workflow._state.transcription_preserved_project)
+        self.assertEqual(self.app.workflow._state.transcription_preserved_project_path, "")
         self.assertFalse(generated_path.exists())
 
     def test_starting_a_new_process_discards_the_previous_error_snapshot(self) -> None:
@@ -3205,12 +3205,12 @@ Window {
             patch.object(self.app.process, "readAllStandardOutput", return_value=b"failed\n"),
         ):
             self.app._process_finished(9, QProcess.ExitStatus.NormalExit)
-        self.assertIsNotNone(self.app._last_process_diagnostic)
+        self.assertIsNotNone(self.app.workflow._state.last_process_diagnostic)
 
         with patch.object(self.app, "_start_process"):
             self.app._start_command(["python", "worker.py"], "render", "開始しています")
 
-        self.assertIsNone(self.app._last_process_diagnostic)
+        self.assertIsNone(self.app.workflow._state.last_process_diagnostic)
         self.assertFalse(self.app.hasLastProcessDiagnostic)
 
     def test_cancel_fallback_does_not_kill_replacement_process(self) -> None:
@@ -4656,7 +4656,7 @@ Window {
 
     def test_qml_processing_progress_reserves_space_above_application_log(self) -> None:
         self._load_project()
-        self.app._processing_progress.start("render")
+        self.app.workflow._state.processing_progress.start("render")
         self.app.progressDetailsChanged.emit()
         _, window = self._load_qml()
         self.gui.resize(window, 1220, 760)
@@ -4722,7 +4722,7 @@ Window {
         self.app._codex_chat._snapshot = authenticated
         self.app._on_codex_chat_state(authenticated)
 
-        self.app._processing_progress.start("render")
+        self.app.workflow._state.processing_progress.start("render")
         self.app._running = True
         self.app.progressDetailsChanged.emit()
         self.app.runningChanged.emit()
@@ -4754,7 +4754,7 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
-        self.app._processing_progress.start("render_short")
+        self.app.workflow._state.processing_progress.start("render_short")
         self.app._running = True
         self.app.progressDetailsChanged.emit()
         self.app.runningChanged.emit()
@@ -5488,7 +5488,7 @@ Window {
         self.app._on_codex_chat_state(authenticated)
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
 
-        self.app._processing_progress.start("render_short")
+        self.app.workflow._state.processing_progress.start("render_short")
         self.app._running = True
         self.app.progressDetailsChanged.emit()
         self.app.runningChanged.emit()
@@ -5915,7 +5915,7 @@ Window {
         video = self.root / "game.mkv"
         audio = self.root / "1-alice.flac"
         self._generate_black_test_video_with_audio(video, audio)
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
         self.app.workspace_root = Path(__file__).resolve().parents[1]
         captured_options: dict[str, object] = {}
 
@@ -6013,7 +6013,7 @@ Window {
         self._generate_silence_cut_test_media(video, audio)
         self.app._project["video"]["duration_seconds"] = 3.0
         save_project(project_path, self.app._project)
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
         self.app.workspace_root = Path(__file__).resolve().parents[1]
 
         def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
@@ -6076,7 +6076,7 @@ Window {
         video = self.root / "game.mkv"
         external_audio = self.root / "1-alice.flac"
         self._generate_black_test_video_with_audio(video, external_audio)
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
         self.app.workspace_root = Path(__file__).resolve().parents[1]
 
         def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
@@ -6834,7 +6834,7 @@ Window {
         )
         save_project(template_path, project)
         helper_path = Path(__file__).with_name("fake_transcription_process.py").resolve()
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
         captured_options: dict[str, object] = {}
 
         def build_test_command(config_path: Path, **kwargs: object) -> list[str]:
@@ -6942,9 +6942,9 @@ Window {
                     save_project(project_path, preserved)
                     self.app._project = deepcopy(generated)
                     self.app._project_path = str(project_path)
-                    self.app._transcription_merge_mode = mode
-                    self.app._transcription_preserved_project = deepcopy(preserved)
-                    self.app._transcription_preserved_project_path = str(custom_project_path)
+                    self.app.workflow._state.transcription_merge_mode = mode
+                    self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+                    self.app.workflow._state.transcription_preserved_project_path = str(custom_project_path)
 
                     self.assertTrue(self.app._merge_preserved_transcription_segments())
                     saved = load_project(custom_project_path)
@@ -6957,10 +6957,9 @@ Window {
                     self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
                     self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
         finally:
-            self.app._transcription_merge_mode = ""
-            self.app._transcription_preserved_segments = []
-            self.app._transcription_preserved_project = None
-            self.app._transcription_preserved_project_path = ""
+            self.app.workflow._state.transcription_merge_mode = ""
+            self.app.workflow._state.transcription_preserved_project = None
+            self.app.workflow._state.transcription_preserved_project_path = ""
 
     def test_followup_transcription_uses_private_project_path_without_overwriting_default(self) -> None:
         video, audio, output = self._set_ready_sources()
@@ -7005,9 +7004,9 @@ Window {
         self.app._project_path = str(project_path)
         self.app._active_job = "transcribe"
         self.app._running = True
-        self.app._transcription_merge_mode = "merge"
-        self.app._transcription_preserved_project = preserved
-        self.app._transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = preserved
+        self.app.workflow._state.transcription_preserved_project_path = str(project_path)
 
         with (
             patch.object(self.app.workflow, "_read_process_output"),
@@ -7026,7 +7025,7 @@ Window {
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()
         helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
 
         def build_wait_command(_config_path: Path, **_kwargs: object) -> list[str]:
             return [
@@ -7070,10 +7069,10 @@ Window {
         assert project_a is not None
         generated_a_path = self.root / ".project-a.transcribing.subtitle-project.json"
         save_project(generated_a_path, project_a)
-        self.app._transcription_merge_mode = "merge"
-        self.app._transcription_preserved_project = deepcopy(project_a)
-        self.app._transcription_preserved_project_path = str(project_a_path)
-        self.app._transcription_generated_project_path = str(generated_a_path)
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = deepcopy(project_a)
+        self.app.workflow._state.transcription_preserved_project_path = str(project_a_path)
+        self.app.workflow._state.transcription_generated_project_path = str(generated_a_path)
         self.app._active_job = "transcribe"
         self.app._running = True
         self.app._cancel_requested = True
@@ -7081,9 +7080,9 @@ Window {
         with patch.object(self.app.workflow, "_read_process_output"):
             self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
 
-        self.assertEqual(self.app._transcription_merge_mode, "")
-        self.assertIsNone(self.app._transcription_preserved_project)
-        self.assertEqual(self.app._transcription_preserved_project_path, "")
+        self.assertEqual(self.app.workflow._state.transcription_merge_mode, "")
+        self.assertIsNone(self.app.workflow._state.transcription_preserved_project)
+        self.assertEqual(self.app.workflow._state.transcription_preserved_project_path, "")
         self.assertFalse(generated_a_path.exists())
 
         project_b_root = self.root / "project-b"
@@ -7154,7 +7153,7 @@ Window {
         )
         save_project(template_path, project)
         helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
-        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+        process_python = sys.executable
         attempts = 0
 
         def build_attempt_command(_config_path: Path, **_kwargs: object) -> list[str]:
@@ -7316,7 +7315,7 @@ Window {
         with patch.object(updater, "fetch_latest_release", return_value=info) as fetch:
             self.app.checkForUpdates()
             QTest.qWait(50)
-            while self.app._update_busy:
+            while self.app.updates._state.busy:
                 self.app.processEvents()
                 QTest.qWait(50)
             fetch.assert_called_once_with(self.app.workspace_root)
@@ -7329,7 +7328,7 @@ Window {
         self.assertFalse(self.app.updateBusy)
 
     def test_backend_apply_update_starts_update_command(self) -> None:
-        self.app._update_info = self._fake_update_info()
+        self.app.updates._state.info = self._fake_update_info()
         with (
             patch("sys.platform", "win32"),
             patch("shutil.which", return_value="powershell.exe"),
@@ -7342,12 +7341,12 @@ Window {
                 self.assertEqual(program, "powershell.exe")
                 self.assertIn("-File", args)
                 self.assertIn("update.ps1", " ".join(args))
-                self.assertNotIn(self.app._update_info.download_url, args)
+                self.assertNotIn(self.app.updates._state.info.download_url, args)
             else:
                 self.assertEqual(program, sys.executable)
                 self.assertIn("-m", args)
                 self.assertIn("src.updater", args)
-                self.assertIn(self.app._update_info.download_url, args)
+                self.assertIn(self.app.updates._state.info.download_url, args)
             self.app.process.started.emit()
         self.assertEqual(self.app._active_job, "update")
         self.assertTrue(self.app.running)
@@ -7359,7 +7358,7 @@ Window {
         self.assertIn("完了", self.app.status)
 
     def test_backend_unsupported_update_does_not_save_or_start(self) -> None:
-        self.app._update_info = self._fake_update_info()
+        self.app.updates._state.info = self._fake_update_info()
         with (
             patch("sys.platform", "darwin"),
             patch.object(self.app, "saveProject") as save_project,
@@ -7373,7 +7372,7 @@ Window {
         self.assertIn("未対応", self.app.status)
 
     def test_backend_apply_update_blocked_when_project_dirty(self) -> None:
-        self.app._update_info = self._fake_update_info()
+        self.app.updates._state.info = self._fake_update_info()
         self.app._project_dirty = True
         with patch.object(self.app.process, "start") as start:
             self.app.applyUpdate()
@@ -7381,7 +7380,7 @@ Window {
         self.assertIn("未保存", self.app.status)
 
     def test_backend_update_cannot_be_cancelled_or_dismissed(self) -> None:
-        self.app._update_info = self._fake_update_info()
+        self.app.updates._state.info = self._fake_update_info()
         self.app._running = True
         self.app._active_job = "update"
 
@@ -7390,7 +7389,7 @@ Window {
         self.assertIn("停止できません", self.app.status)
 
         self.app.dismissUpdateInfo()
-        self.assertIsNotNone(self.app._update_info)
+        self.assertIsNotNone(self.app.updates._state.info)
         self.assertIn("閉じられません", self.app.status)
 
     def test_backend_restart_application_launches_and_quits(self) -> None:
@@ -7409,7 +7408,7 @@ Window {
         with patch.object(updater, "fetch_latest_release", return_value=self._fake_update_info()):
             self._click(window, check_button)
             self.gui.wait_until(
-                lambda: not self.app._update_busy,
+                lambda: not self.app.updates._state.busy,
                 description="update check completion",
             )
 
@@ -7417,11 +7416,11 @@ Window {
         apply_button = self._quick_item(window, "applyUpdateButton")
         self.assertTrue(apply_button.property("visible"))
 
-        self.app._update_download_active = True
-        self.app._update_busy = True
-        self.app._update_download_bytes = 128
-        self.app._update_download_total = 256
-        self.app._update_download_cancel = threading.Event()
+        self.app.updates._state.download_active = True
+        self.app.updates._state.busy = True
+        self.app.updates._state.download_bytes = 128
+        self.app.updates._state.download_total = 256
+        self.app.updates._state.download_cancel = threading.Event()
         self.app.updateBusyChanged.emit()
         self.app.updateDownloadProgressChanged.emit()
         progress = self._quick_item(window, "updateDownloadProgressBar")
@@ -7433,7 +7432,7 @@ Window {
         self.assertEqual(progress.property("value"), 128)
         self.assertEqual(progress.property("to"), 256)
         self._click(window, cancel)
-        self.assertTrue(self.app._update_download_cancel.is_set())
+        self.assertTrue(self.app.updates._state.download_cancel.is_set())
 
         self.app.updateDownloadFinished.emit("", "ダウンロードをキャンセルしました")
         self.gui.wait_until(
@@ -7444,7 +7443,7 @@ Window {
             ),
             description="cancelled update download completion",
         )
-        self.app._update_package_ready = True
+        self.app.updates._state.package_ready = True
         self.app.updatePackageReadyChanged.emit()
         self.gui.wait_until(
             lambda: (
@@ -7454,7 +7453,7 @@ Window {
             ),
             description="verified update package action",
         )
-        self.app._update_package_ready = False
+        self.app.updates._state.package_ready = False
         self.app.updatePackageReadyChanged.emit()
 
         # 成功フローは対応OSとして実行する。未対応OSの拒否は別テストで検証する。
@@ -7994,9 +7993,9 @@ Window {
 
         undo_button = self._quick_item(window, "highlightUndoRejectButton")
         retry_button = self._quick_item(window, "highlightRetryButton")
-        self.app._highlight_status = "completed"
+        self.app.shortVideo._highlight_state.status = "completed"
         self.app.highlightAnalysisChanged.emit()
-        self.app._highlight_candidates = [
+        self.app.shortVideo._highlight_state.candidates = [
             {"id": "rejected", "start": 2.0, "end": 3.0, "score": 0.8}
         ]
         self.app.highlightCandidatesChanged.emit()
@@ -8028,7 +8027,7 @@ Window {
                     description="highlight retry worker started",
                 )
                 self.gui.wait_until(
-                    lambda: self.app._highlight_rejected == []
+                    lambda: self.app.shortVideo._highlight_state.rejected == []
                     and not bool(undo_button.property("enabled")),
                     description="undo disabled while retry worker is blocked",
                 )
@@ -8039,7 +8038,7 @@ Window {
             lambda: self.app.highlightAnalysisState == "completed",
             description="highlight retry completion",
         )
-        self.assertEqual(self.app._highlight_rejected, [])
+        self.assertEqual(self.app.shortVideo._highlight_state.rejected, [])
         self.assertFalse(undo_button.property("enabled"))
 
     def test_codex_header_ai_button_switches_inspector_tabs(self) -> None:
@@ -8119,7 +8118,7 @@ Window {
         self.assertEqual(self._qml_value(preview, "clipData").get("start"), 0.0)
         self.assertEqual(self._qml_value(preview, "clipData").get("end"), 2.0)
 
-        self.app._highlight_candidates = [
+        self.app.shortVideo._highlight_state.candidates = [
             {
                 "id": "candidate-outside-selected-clip",
                 "start": 5.0,

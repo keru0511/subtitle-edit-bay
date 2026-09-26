@@ -1,9 +1,7 @@
-"""Re-export the subtitle layout surface for migrated callers.
+"""既存の ``subtitle_layout.packer`` import 経路を維持する互換層。
 
-The layout rules, tokenizer factories, and scoring helpers live in the
-``subtitle_layout`` submodules and are imported directly by ``subtitle_packer``.
-This module keeps the ``subtitle_layout.packer`` import path stable while the
-remaining packer functions still live in ``subtitle_packer``.
+規則・解析器・採点・改行処理は ``subtitle_layout`` の各モジュールに置き、
+字幕のページ分割と時間割り当ては ``subtitle_packer`` に残す。
 """
 
 from __future__ import annotations

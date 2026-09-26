@@ -34,6 +34,8 @@ class SequenceFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        self._playhead_seconds = 0.0
+        self._error = ""
         backend.sequenceChanged.connect(self.sequenceChanged.emit)
 
     def _sequence_model_for_facade(self) -> VideoSequence | None:
@@ -44,12 +46,10 @@ class SequenceFacade(FeatureFacade):
         facade builds a detached view for presentation.
         """
 
-        backend = self._backend
-
-        if backend._project is None or backend._project_editor_controller is None:
+        if self.project_editor.project is None:
             return None
         try:
-            return backend._project_editor_controller.sequence_model()
+            return self.project_editor.sequence_model()
         except SubtitleProjectError:
             return None
 
@@ -104,9 +104,9 @@ class SequenceFacade(FeatureFacade):
 
     def _sequence_failure(self, message: str) -> bool:
         backend = self._backend
-        backend._sequence_error = str(message)
+        self._error = str(message)
         backend.sequenceChanged.emit()
-        backend._set_status(backend._sequence_error, "CHECK")
+        backend._set_status(self._error, "CHECK")
         return False
 
     def _apply_sequence_mutation(
@@ -117,11 +117,11 @@ class SequenceFacade(FeatureFacade):
         backend = self._backend
         if backend._running:
             return self._sequence_failure("処理中はsequenceを変更できません")
-        if backend._project is None or backend._project_editor_controller is None:
+        if self.project_editor.project is None:
             return self._sequence_failure("先に編集プロジェクトを開いてください")
-        backend._sequence_error = ""
+        self._error = ""
         try:
-            updated = backend._project_editor_controller.apply_sequence_mutation(mutation)
+            updated = self.project_editor.apply_sequence_mutation(mutation)
         except (SubtitleProjectError, VideoSequenceError, TypeError, ValueError) as error:
             return self._sequence_failure(f"sequenceを変更できません: {error}")
         if updated is None:
@@ -147,7 +147,6 @@ class SequenceFacade(FeatureFacade):
 
     @Property("QVariantMap", notify=sequenceChanged)
     def sequencePlayhead(self) -> dict[str, Any]:
-        backend = self._backend
         model = self._sequence_model_for_facade()
         if model is None or not model.clips:
             return {
@@ -158,7 +157,7 @@ class SequenceFacade(FeatureFacade):
             }
         timeline = model.timeline
         output_seconds = min(
-            max(0.0, backend._sequence_playhead_seconds),
+            max(0.0, self._playhead_seconds),
             timeline.total_duration,
         )
         # Keep output-to-source mapping in the #404 domain API.  QML only
@@ -173,8 +172,7 @@ class SequenceFacade(FeatureFacade):
 
     @Property(str, notify=sequenceChanged)
     def sequenceError(self) -> str:
-        backend = self._backend
-        return backend._sequence_error
+        return self._error
 
     @Slot(str, result=bool)
     def addSequenceAsset(self, path: str) -> bool:
@@ -325,7 +323,7 @@ class SequenceFacade(FeatureFacade):
             return self._sequence_failure("再生位置が不正です")
         if not math.isfinite(requested):
             return self._sequence_failure("再生位置が不正です")
-        backend._sequence_playhead_seconds = min(max(0.0, requested), model.output_duration)
-        backend._sequence_error = ""
+        self._playhead_seconds = min(max(0.0, requested), model.output_duration)
+        self._error = ""
         backend.sequenceChanged.emit()
         return True

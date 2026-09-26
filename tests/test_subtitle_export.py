@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +7,7 @@ from pathlib import Path
 from src.subtitle_export import SubtitleExportError, export_csv, export_srt, export_vtt
 
 
-def _segments():
+def _segments() -> list[dict[str, object]]:
     return [
         {"id": "b", "start": 2.0, "end": 3.25, "speaker": "keru", "text": '日本語, "引用"\n改行'},
         {"id": "a", "start": 0.0, "end": 1.005, "speaker": "yuki", "text": "先頭"},
@@ -16,7 +15,7 @@ def _segments():
 
 
 class SubtitleExportTests(unittest.TestCase):
-    def test_srt_and_vtt_sort_and_preserve_text(self):
+    def test_srt_and_vtt_sort_and_preserve_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             srt = tmp_path / "字幕 日本語.srt"
@@ -30,17 +29,17 @@ class SubtitleExportTests(unittest.TestCase):
             self.assertLess(srt_text.index("先頭"), srt_text.index("日本語"))
             self.assertIn('日本語, "引用"\n改行', srt_text)
 
-    def test_csv_uses_stable_columns_and_escaping(self):
+    def test_csv_uses_stable_columns_and_escaping(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             destination = Path(temp_dir) / "字幕.csv"
             export_csv(_segments(), destination)
-            with destination.open(encoding="utf-8", newline="") as handle:
-                rows = list(csv.DictReader(handle))
-            self.assertEqual(list(rows[0]), ["id", "start", "end", "speaker", "text"])
-            self.assertEqual(rows[0]["id"], "a")
-            self.assertEqual(rows[1]["text"], '日本語, "引用"\n改行')
+            content = destination.read_text(encoding="utf-8")
+            self.assertTrue(content.startswith("id,start,end,speaker,text\n"))
+            self.assertIn("a,0.0,1.005,yuki,先頭\n", content)
+            self.assertIn('b,2.0,3.25,keru,"日本語, ""引用""\n改行"\n', content)
+            self.assertLess(content.index("a,0.0,1.005"), content.index("b,2.0,3.25"))
 
-    def test_export_refuses_implicit_overwrite(self):
+    def test_export_refuses_implicit_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             destination = Path(temp_dir) / "existing.srt"
             destination.write_text("original", encoding="utf-8")
@@ -49,3 +48,33 @@ class SubtitleExportTests(unittest.TestCase):
             self.assertEqual(destination.read_text(encoding="utf-8"), "original")
             export_srt(_segments(), destination, overwrite=True)
             self.assertNotEqual(destination.read_text(encoding="utf-8"), "original")
+
+    def test_export_preserves_numeric_times_and_arbitrary_csv_fields(self) -> None:
+        segments: list[object] = [
+            {"start": "1.5", "end": 2, "text": None, "id": 7, "speaker": None},
+            {"start": 1.5, "end": 3, "text": "後続", "id": "later", "speaker": 42},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            export_srt(segments, root / "output.srt")
+            export_csv(segments, root / "output.csv")
+            srt = (root / "output.srt").read_text(encoding="utf-8")
+            csv_text = (root / "output.csv").read_text(encoding="utf-8")
+        self.assertIn("1\n00:00:01,500 --> 00:00:02,000\n", srt)
+        self.assertLess(srt.index("00:00:02,000"), srt.index("後続"))
+        self.assertEqual(csv_text.splitlines()[1], "7,1.5,2.0,,")
+        self.assertEqual(csv_text.splitlines()[2], "later,1.5,3.0,42,後続")
+
+    def test_export_rejects_non_mapping_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "invalid.srt"
+            with self.assertRaisesRegex(SubtitleExportError, "segment 0 must be an object"):
+                export_srt([None], destination)
+            self.assertFalse(destination.exists())
+
+    def test_export_accepts_buffer_time_values(self) -> None:
+        segments: list[object] = [{"start": memoryview(b"1.5"), "end": b"2.0", "text": "字幕"}]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "buffer.srt"
+            export_srt(segments, destination)
+            self.assertIn("00:00:01,500 --> 00:00:02,000", destination.read_text(encoding="utf-8"))

@@ -7220,6 +7220,13 @@ Window {
             description="horizontal sequence timeline",
         )
 
+        def wait_for_timeline_frame() -> None:
+            # 生成直後・Undo直後はレイアウトが未確定の場合がある。
+            frames = QSignalSpy(window.frameSwapped)
+            window.requestUpdate()
+            self.gui.wait_until(lambda: frames.count() > 0, description="タイムライン配置後の描画")
+
+        wait_for_timeline_frame()
         trim_end = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineTrimEnd-{first_clip_id}"
         )
@@ -7231,6 +7238,7 @@ Window {
             Qt.KeyboardModifier.NoModifier,
             trim_start,
         )
+        self.assertTrue(trim_end.property("pressed"), "終了端のハンドルを押せていない")
         for fraction in (0.25, 0.5, 0.75, 1.0):
             QTest.mouseMove(window, trim_start + (trim_finish - trim_start) * fraction, 30)
         QTest.mouseRelease(
@@ -7248,6 +7256,7 @@ Window {
         self.app.undoCutEdit()
         self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceEnd"]), initial_end)
 
+        wait_for_timeline_frame()
         trim_begin = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineTrimStart-{first_clip_id}"
         )
@@ -7277,6 +7286,7 @@ Window {
         self.app.undoCutEdit()
         self.assertAlmostEqual(float(self.app.sequenceClips[0]["sourceStart"]), 0.0)
 
+        wait_for_timeline_frame()
         move_area = self._quick_visual_item(
             window.contentItem(), f"sequenceTimelineMoveArea-{second_clip_id}"
         )

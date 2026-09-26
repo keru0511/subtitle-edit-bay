@@ -3,9 +3,10 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleWorkflowContextCliTests(unittest.TestCase):
+class SubtitleWorkflowContextCliTests(TypedTestCase):
     def test_transcribe_phase_passes_cli_context_file_to_context_entrypoint(self) -> None:
         import src.subtitle_workflow as subtitle_workflow
 

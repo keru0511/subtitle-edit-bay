@@ -8,9 +8,10 @@ from src.processing_progress import (
     parse_progress_events,
     progress_event_line,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ProcessingProgressTests(unittest.TestCase):
+class ProcessingProgressTests(TypedTestCase):
     def test_event_protocol_is_path_free_and_round_trips(self) -> None:
         line = progress_event_line("transcribe", "alignment", phase="start")
 
@@ -36,9 +37,17 @@ class ProcessingProgressTests(unittest.TestCase):
         first_value = tracker.value
         tracker.update({"job": "transcribe", "step": "alignment", "progress": 0.1})
 
-        self.assertEqual([step["label"] for step in tracker.as_list()], [
-            "準備", "音声同期", "文字起こし", "字幕の統合・整形", "波形生成", "プロジェクト保存",
-        ])
+        self.assertEqual(
+            [step["label"] for step in tracker.as_list()],
+            [
+                "準備",
+                "音声同期",
+                "文字起こし",
+                "字幕の統合・整形",
+                "波形生成",
+                "プロジェクト保存",
+            ],
+        )
         self.assertGreaterEqual(tracker.value, first_value)
         self.assertEqual(tracker.as_list()[1]["state"], "running")
 
@@ -99,7 +108,8 @@ class ProcessingProgressTests(unittest.TestCase):
         tracker = ProcessingProgress()
         tracker.start("render", skip_steps={"subtitle"})
 
-        self.assertNotIn("subtitle", [step["id"] for step in tracker.as_list()])
+        step_ids: list[object] = [step["id"] for step in tracker.as_list()]
+        self.assertNotIn("subtitle", step_ids)
         tracker.update({"job": "render", "step": "audio", "phase": "start"})
         self.assertEqual(tracker.as_list()[1]["displayStatus"], "実行中")
         for step in tracker.as_list():
@@ -114,9 +124,7 @@ class ProcessingProgressTests(unittest.TestCase):
                 tracker = ProcessingProgress()
                 tracker.start("render")
                 for step in ("prepare", "subtitle", "audio", "encode", "finalize"):
-                    tracker.update(
-                        {"job": "render", "step": step, "phase": "complete", "progress": 1.0}
-                    )
+                    tracker.update({"job": "render", "step": step, "phase": "complete", "progress": 1.0})
 
                 self.assertLess(tracker.value, 1.0)
                 self.assertEqual(tracker.current_step, "finalize")

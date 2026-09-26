@@ -7,7 +7,9 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
+
+from .data_boundary import coerce_float, coerce_int, decode_json, is_object_list, is_object_mapping
 
 
 FEEDBACK_SCHEMA_VERSION = 1
@@ -28,7 +30,7 @@ class HighlightFeedbackEvent:
         cls,
         candidate_id: str,
         event: str,
-        features: Mapping[str, float | str] | None = None,
+        features: Mapping[object, object] | None = None,
     ) -> "HighlightFeedbackEvent":
         if event not in ALLOWED_EVENTS:
             raise ValueError(f"unsupported feedback event: {event}")
@@ -38,9 +40,9 @@ class HighlightFeedbackEvent:
             if feature not in ALLOWED_FEATURES:
                 continue
             if feature in NUMERIC_FEATURES:
-                if type(value) not in (int, float) or not math.isfinite(float(value)):
+                if type(value) not in (int, float) or not math.isfinite(coerce_float(value)):
                     continue
-                safe_features[feature] = float(value)
+                safe_features[feature] = coerce_float(value)
             elif feature == "category" and isinstance(value, str):
                 safe_features[feature] = value
         return cls(
@@ -50,7 +52,7 @@ class HighlightFeedbackEvent:
             timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "candidate_id": self.candidate_id,
             "event": self.event,
@@ -71,11 +73,11 @@ class HighlightFeedbackStore:
         if not self.path.is_file():
             self.events = []
             return []
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or int(payload.get("schema_version", 0)) != FEEDBACK_SCHEMA_VERSION:
+        payload = decode_json(self.path.read_text(encoding="utf-8"))
+        if not is_object_mapping(payload) or coerce_int(payload.get("schema_version", 0)) != FEEDBACK_SCHEMA_VERSION:
             raise ValueError("unsupported highlight feedback schema")
         raw_events = payload.get("events", [])
-        if not isinstance(raw_events, list):
+        if not is_object_list(raw_events):
             raise ValueError("highlight feedback events must be an array")
         self.events = [self._from_json(item) for item in raw_events]
         return list(self.events)
@@ -84,7 +86,7 @@ class HighlightFeedbackStore:
         self,
         candidate_id: str,
         event: str,
-        features: Mapping[str, float | str] | None = None,
+        features: Mapping[object, object] | None = None,
     ) -> HighlightFeedbackEvent:
         created = HighlightFeedbackEvent.create(candidate_id, event, features)
         next_events = [*self.events, created]
@@ -103,8 +105,12 @@ class HighlightFeedbackStore:
         temp_path = Path(handle.name)
         try:
             with handle:
+                payload: dict[str, object] = {
+                    "schema_version": FEEDBACK_SCHEMA_VERSION,
+                    "events": [item.to_json() for item in events],
+                }
                 json.dump(
-                    {"schema_version": FEEDBACK_SCHEMA_VERSION, "events": [item.to_json() for item in events]},
+                    payload,
                     handle,
                     ensure_ascii=False,
                     indent=2,
@@ -114,7 +120,7 @@ class HighlightFeedbackStore:
             temp_path.unlink(missing_ok=True)
             raise
 
-    def export(self) -> dict[str, Any]:
+    def export(self) -> dict[str, object]:
         return {"schema_version": FEEDBACK_SCHEMA_VERSION, "events": [item.to_json() for item in self.events]}
 
     def reset(self) -> None:
@@ -126,11 +132,14 @@ class HighlightFeedbackStore:
         self.path.unlink(missing_ok=True)
 
     @staticmethod
-    def _from_json(payload: Mapping[str, Any]) -> HighlightFeedbackEvent:
+    def _from_json(payload: object) -> HighlightFeedbackEvent:
+        if not is_object_mapping(payload):
+            raise ValueError("highlight feedback event must be an object")
+        raw_features = payload.get("features")
         event = HighlightFeedbackEvent.create(
             str(payload.get("candidate_id", "")),
             str(payload.get("event", "")),
-            payload.get("features") if isinstance(payload.get("features"), Mapping) else {},
+            raw_features if is_object_mapping(raw_features) else {},
         )
         return HighlightFeedbackEvent(
             candidate_id=event.candidate_id,
@@ -138,4 +147,3 @@ class HighlightFeedbackStore:
             features=event.features,
             timestamp=str(payload.get("timestamp", event.timestamp)),
         )
-

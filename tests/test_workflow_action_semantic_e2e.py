@@ -14,10 +14,11 @@ from tests.media_test_helpers import (
     extract_rgb_frame, mean_rgb, measure_audio_level, media_duration_seconds,
     probe_media, require_media_tools, run_media_command, video_stream,
 )
+from tests.typed_case import TypedTestCase
 
 
 @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1")
-class WorkflowActionSemanticE2ETests(unittest.TestCase):
+class WorkflowActionSemanticE2ETests(TypedTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         require_media_tools()

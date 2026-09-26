@@ -10,9 +10,10 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication, QProcess
 
 from src.qprocess_launcher import prepare_qprocess_launch
+from tests.typed_case import TypedTestCase
 
 
-class QProcessLauncherTest(unittest.TestCase):
+class QProcessLauncherTest(TypedTestCase):
     def test_non_windows_launch_is_unchanged(self) -> None:
         if os.name == "nt":
             self.skipTest("Non-Windows behavior")

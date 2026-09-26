@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def create_manifest(modules: list[str] | None = None) -> dict[str, object]:
     return {"schema_version": 1, "groups": groups}
 
 
-class CiTestGroupManifestTests(unittest.TestCase):
+class CiTestGroupManifestTests(TypedTestCase):
     def test_repository_manifest_classifies_every_test_module_once(self) -> None:
         groups = CI_TESTS.load_manifest()
 
@@ -161,7 +162,7 @@ class CiTestGroupManifestTests(unittest.TestCase):
                 CI_TESTS.validate_manifest(manifest, tests_dir)
 
 
-class CiTestRunnerTests(unittest.TestCase):
+class CiTestRunnerTests(TypedTestCase):
     def _install_synthetic_module(self, module_name: str, module: ModuleType) -> None:
         package_name, attribute_name = module_name.rsplit(".", 1)
         package = sys.modules[package_name]
@@ -231,7 +232,7 @@ class CiTestRunnerTests(unittest.TestCase):
         self.assertIn("1 × `runtime dependency unavailable`", summary)
 
 
-class CiWorkflowContractTests(unittest.TestCase):
+class CiWorkflowContractTests(TypedTestCase):
     def test_ci_uses_classified_groups_without_windows_full_discovery(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 

@@ -8,13 +8,14 @@ from pathlib import Path
 
 from src.short_video_schema import ShortVideo, ShortVideoClip, ShortVideoTransition
 from src.short_video_timeline import build_short_video_timeline
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MOCK_PATH = REPO_ROOT / "docs" / "ui-redesign-mockup.html"
 
 
-class ShortWorkspaceContractTests(unittest.TestCase):
+class ShortWorkspaceContractTests(TypedTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.node = shutil.which("node")

@@ -3,11 +3,13 @@ from __future__ import annotations
 import unittest
 
 from src import gui_state_base
+from src.data_boundary import is_object_mapping
 from src.gui_runtime_state import build_gui_command, build_gui_runtime_config
 from src.runtime_settings import gui_runtime_config_updates
+from tests.typed_case import TypedTestCase
 
 
-class GuiRuntimeSettingsTests(unittest.TestCase):
+class GuiRuntimeSettingsTests(TypedTestCase):
     def test_gui_runtime_helpers_are_reexported_for_existing_callers(self) -> None:
         self.assertIs(gui_state_base.build_gui_runtime_config, build_gui_runtime_config)
         self.assertIs(gui_state_base.build_gui_command, build_gui_command)
@@ -71,20 +73,27 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
         speakers = [{"track_key": "craig:alice", "color": "#FF0000"}]
 
         resolved = build_gui_runtime_config(base_config, settings, speakers)
+        shared = resolved["shared"]
+        craig = resolved["craig_pipeline"]
+        if not is_object_mapping(shared) or not is_object_mapping(craig):
+            self.fail("設定ファイルのセクションはオブジェクトである必要がある")
 
-        self.assertEqual(resolved["shared"]["model"], "tiny")
-        self.assertEqual(resolved["shared"]["codex_model"], "gpt-fast")
-        self.assertEqual(resolved["shared"]["device"], "cpu")
-        self.assertEqual(resolved["shared"]["compute_type"], "int8")
-        self.assertEqual(resolved["craig_pipeline"]["video_codec"], "libx264")
-        self.assertFalse(resolved["craig_pipeline"]["audio_normalize"])
-        self.assertEqual(resolved["craig_pipeline"]["postprocess_workers"], 2)
-        self.assertAlmostEqual(resolved["craig_pipeline"]["alignment_offset_adjustment"], 0.25)
-        self.assertEqual(resolved["craig_pipeline"]["track_color"], ["craig:alice=#FF0000"])
-        self.assertNotIn("unknown_setting", resolved["shared"])
-        self.assertNotIn("unknown_setting", resolved["craig_pipeline"])
+        self.assertEqual(shared["model"], "tiny")
+        self.assertEqual(shared["codex_model"], "gpt-fast")
+        self.assertEqual(shared["device"], "cpu")
+        self.assertEqual(shared["compute_type"], "int8")
+        self.assertEqual(craig["video_codec"], "libx264")
+        self.assertFalse(craig["audio_normalize"])
+        self.assertEqual(craig["postprocess_workers"], 2)
+        adjustment = craig["alignment_offset_adjustment"]
+        if not isinstance(adjustment, (int, float)):
+            self.fail("補正秒数は数値である必要がある")
+        self.assertAlmostEqual(adjustment, 0.25)
+        self.assertEqual(craig["track_color"], ["craig:alice=#FF0000"])
+        self.assertNotIn("unknown_setting", shared)
+        self.assertNotIn("unknown_setting", craig)
         for one_shot_key in ("video", "audio_file", "output_dir", "reference_track", "target"):
-            self.assertNotIn(one_shot_key, resolved["craig_pipeline"])
+            self.assertNotIn(one_shot_key, craig)
 
     def test_build_gui_runtime_config_writes_normalized_transcription_context(self) -> None:
         resolved = build_gui_runtime_config(
@@ -101,8 +110,11 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
             },
         )
 
+        craig = resolved["craig_pipeline"]
+        if not is_object_mapping(craig):
+            self.fail("craig_pipeline はオブジェクトである必要がある")
         self.assertEqual(
-            resolved["craig_pipeline"]["transcription_context"],
+            craig["transcription_context"],
             {
                 "game_title": "Splatoon 3",
                 "game_notes": "ranked session",
@@ -128,7 +140,10 @@ class GuiRuntimeSettingsTests(unittest.TestCase):
             [],
         )
 
-        self.assertEqual(resolved["craig_pipeline"]["transcription_context"], {"game_title": "Existing"})
+        craig = resolved["craig_pipeline"]
+        if not is_object_mapping(craig):
+            self.fail("craig_pipeline はオブジェクトである必要がある")
+        self.assertEqual(craig["transcription_context"], {"game_title": "Existing"})
 
     def test_build_gui_command_keeps_existing_pipeline_invocation_shape(self) -> None:
         command = build_gui_command(

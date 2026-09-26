@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 
 DEFAULT_MEMORY_CHARS = 50_000
@@ -57,8 +57,12 @@ class ProcessDiagnosticSnapshot:
 def redact_text(value: object, *, paths: bool = False) -> str:
     """Remove credentials from log text, optionally masking local paths."""
     text = str(value)
+
+    def redact_secret(match: re.Match[str]) -> str:
+        return f"{match.group(1)}[REDACTED]"
+
     for pattern in _SECRET_PATTERNS:
-        text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
+        text = pattern.sub(redact_secret, text)
     if paths:
         text = _WINDOWS_PATH_PATTERN.sub("<local-path>", text)
         text = _WINDOWS_PATH_TOKEN_PATTERN.sub("<local-path>", text)
@@ -128,7 +132,7 @@ class ApplicationLogger:
     ) -> None:
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         safe_message = redact_text(message)
-        record: dict[str, Any] = {
+        record: dict[str, object] = {
             "timestamp": timestamp,
             "severity": str(severity).upper(),
             "component": str(component),
@@ -256,7 +260,7 @@ class ApplicationLogger:
         except OSError as error:
             self._write_error = str(error)
 
-    def _write_record(self, record: Mapping[str, Any]) -> None:
+    def _write_record(self, record: Mapping[str, object]) -> None:
         try:
             self._ensure_directory()
             if self.log_path.exists() and self.log_path.stat().st_size >= self.max_file_bytes:

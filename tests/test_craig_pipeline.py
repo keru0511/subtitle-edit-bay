@@ -27,9 +27,10 @@ from src.craig_pipeline import (
     transcribe_audio_file,
     transcribe_craig_audio_files,
 )
+from tests.typed_case import TypedTestCase
 
 
-class CraigPipelineTests(unittest.TestCase):
+class CraigPipelineTests(TypedTestCase):
     def test_main_reports_missing_dependencies_before_processing_media(self) -> None:
         import sys
         import src.craig_pipeline as craig_pipeline

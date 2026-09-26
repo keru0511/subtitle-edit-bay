@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, replace
-from typing import Any, Mapping
+from typing import Mapping, cast
+
+from .data_boundary import coerce_float, decode_json, is_object_mapping
 
 
 PROGRESS_EVENT_PREFIX = "PROGRESS_EVENT "
@@ -30,7 +32,7 @@ class ProgressStep:
     state: str = "pending"
     progress: float = 0.0
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "id": self.id,
             "label": self.label,
@@ -85,17 +87,18 @@ def progress_event_line(
     return PROGRESS_EVENT_PREFIX + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def parse_progress_events(output: str) -> tuple[dict[str, Any], ...]:
-    events: list[dict[str, Any]] = []
+def parse_progress_events(output: str) -> tuple[dict[str, object], ...]:
+    events: list[dict[str, object]] = []
     for line in str(output).splitlines():
         if not line.startswith(PROGRESS_EVENT_PREFIX):
             continue
         try:
-            payload = json.loads(line[len(PROGRESS_EVENT_PREFIX) :])
+            payload = decode_json(line[len(PROGRESS_EVENT_PREFIX) :])
         except (TypeError, ValueError):
             continue
-        if isinstance(payload, Mapping) and payload.get("job") and payload.get("step"):
-            events.append(dict(payload))
+        if is_object_mapping(payload) and payload.get("job") and payload.get("step"):
+            if all(isinstance(key, str) for key in payload):
+                events.append(dict(cast(Mapping[str, object], payload)))
     return tuple(events)
 
 
@@ -105,11 +108,7 @@ def parse_ffmpeg_timestamp(line: str) -> float | None:
     if match is None:
         return None
     try:
-        return (
-            int(match.group("hours")) * 3600
-            + int(match.group("minutes")) * 60
-            + float(match.group("seconds"))
-        )
+        return int(match.group("hours")) * 3600 + int(match.group("minutes")) * 60 + float(match.group("seconds"))
     except (TypeError, ValueError):
         return None
 
@@ -128,9 +127,7 @@ class ProcessingProgress:
     def start(self, job: str, *, skip_steps: set[str] | None = None) -> None:
         skipped = skip_steps or set()
         definitions = tuple(
-            definition
-            for definition in STEP_DEFINITIONS.get(str(job), ())
-            if definition[0] not in skipped
+            definition for definition in STEP_DEFINITIONS.get(str(job), ()) if definition[0] not in skipped
         )
         self.job = str(job)
         self.status = "running"
@@ -139,7 +136,7 @@ class ProcessingProgress:
         self.steps = tuple(ProgressStep(*definition) for definition in definitions)
         self._weight_total = sum(step.weight for step in self.steps)
 
-    def update(self, event: Mapping[str, Any]) -> bool:
+    def update(self, event: Mapping[str, object]) -> bool:
         if str(event.get("job", "")) != self.job:
             return False
         step_id = str(event.get("step", ""))
@@ -147,7 +144,7 @@ class ProcessingProgress:
         if index < 0:
             return False
         try:
-            step_progress = max(0.0, min(1.0, float(event.get("progress", 0.0))))
+            step_progress = max(0.0, min(1.0, coerce_float(event.get("progress", 0.0))))
         except (TypeError, ValueError):
             step_progress = 0.0
         phase = str(event.get("phase", "progress"))
@@ -169,14 +166,8 @@ class ProcessingProgress:
             else:
                 updated.append(step)
         self.steps = tuple(updated)
-        terminal_pending = (
-            phase in {"complete", "completed"} and index == len(self.steps) - 1
-        )
-        self.current_step = (
-            step_id
-            if terminal_pending
-            else ("" if phase in {"complete", "completed"} else step_id)
-        )
+        terminal_pending = phase in {"complete", "completed"} and index == len(self.steps) - 1
+        self.current_step = step_id if terminal_pending else ("" if phase in {"complete", "completed"} else step_id)
         calculated = sum(step.weight * step.progress for step in self.steps)
         if self._weight_total > 0.0:
             calculated /= self._weight_total
@@ -186,9 +177,7 @@ class ProcessingProgress:
     def finish(self, outcome: str) -> None:
         self.status = str(outcome)
         if outcome == "completed":
-            self.steps = tuple(
-                replace(step, state="completed", progress=1.0) for step in self.steps
-            )
+            self.steps = tuple(replace(step, state="completed", progress=1.0) for step in self.steps)
             self.value = 1.0
             self.current_step = ""
             return
@@ -200,11 +189,8 @@ class ProcessingProgress:
             terminal_state = "cancelled" if outcome == "cancelled" else "error"
             self.current_step = terminal_step
             self.steps = tuple(
-                replace(step, state=terminal_state)
-                if step.id == terminal_step
-                else step
-                for step in self.steps
+                replace(step, state=terminal_state) if step.id == terminal_step else step for step in self.steps
             )
 
-    def as_list(self) -> list[dict[str, Any]]:
+    def as_list(self) -> list[dict[str, object]]:
         return [step.to_dict() for step in self.steps]

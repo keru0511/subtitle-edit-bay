@@ -12,9 +12,16 @@ from src.runtime_config import (
     load_command_runtime_config,
     load_runtime_config,
     resolve_bool_option,
+    resolve_integer_option,
     resolve_list_option,
+    resolve_number_option,
     resolve_option,
+    resolve_required_integer_option,
+    resolve_required_number_option,
+    resolve_required_string_option,
+    resolve_string_option,
 )
+from tests.typed_case import TypedTestCase
 
 
 def config_json(payload: Mapping[str, object]) -> str:
@@ -27,7 +34,7 @@ def section(payload: Mapping[str, object], key: str) -> Mapping[object, object]:
     return value
 
 
-class RuntimeConfigTests(unittest.TestCase):
+class RuntimeConfigTests(TypedTestCase):
     def test_load_runtime_config_reads_utf8_sig_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "runtime_config.json"
@@ -191,6 +198,24 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_resolve_bool_option_uses_default_when_missing(self) -> None:
         resolved = resolve_bool_option(None, {}, "audio_normalize", True)
         self.assertTrue(resolved)
+
+    def test_typed_scalar_resolvers_preserve_nullable_values_and_numeric_config(self) -> None:
+        config: dict[str, object] = {"language": None, "min_speakers": None, "vad_onset": None, "gap": 1}
+        self.assertIsNone(resolve_string_option(None, config, "language", "ja"))
+        self.assertIsNone(resolve_integer_option(None, config, "min_speakers", 3))
+        self.assertIsNone(resolve_number_option(None, config, "vad_onset", 0.5))
+        self.assertEqual(resolve_required_string_option(None, config, "model", "large-v3"), "large-v3")
+        self.assertEqual(resolve_required_integer_option(None, config, "width", 1920), 1920)
+        self.assertEqual(resolve_required_number_option(None, config, "gap", 0.3), 1.0)
+        self.assertEqual(resolve_required_string_option("cpu", {"device": "cuda"}, "device", "auto"), "cpu")
+
+    def test_typed_scalar_resolvers_reject_wrong_types_and_required_null(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "model"):
+            resolve_required_string_option(None, {"model": None}, "model", "large-v3")
+        with self.assertRaisesRegex(SystemExit, "width"):
+            resolve_required_integer_option(None, {"width": True}, "width", 1920)
+        with self.assertRaisesRegex(SystemExit, "gap"):
+            resolve_required_number_option(None, {"gap": "0.3"}, "gap", 0.3)
 
 
 if __name__ == "__main__":

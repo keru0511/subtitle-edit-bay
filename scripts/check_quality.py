@@ -3,14 +3,34 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+@dataclass
+class QualityArgs(argparse.Namespace):
+    lint_only: bool = False
+    format_only: bool = False
+    type_only: bool = False
+    tests_only: bool = False
+    include_format: bool = False
+    include_type_check: bool = False
+    fix_format: bool = False
+    skip_lint: bool = False
+    skip_tests: bool = False
+    install_runtime: bool = False
+    install_dev: bool = False
+    test_dir: str = "tests"
+    test_pattern: str = "test_*.py"
+    paths: list[str] | None = None
+    type_platform: Literal["linux", "win32", "darwin"] | None = None
+
+
+def parse_args(argv: Sequence[str] | None = None) -> QualityArgs:
     parser = argparse.ArgumentParser(
         description="Run local quality checks using the same entrypoint as CI.",
     )
@@ -90,7 +110,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("linux", "win32", "darwin"),
         help="型チェックで評価するOS。--type-onlyまたは--include-type-checkと併用する。",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=QualityArgs())
 
     exclusive_modes = (args.lint_only, args.format_only, args.type_only, args.tests_only)
     if sum(1 for enabled in exclusive_modes if enabled) > 1:
@@ -121,11 +141,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def quality_targets(args: argparse.Namespace) -> list[str]:
+def quality_targets(args: QualityArgs) -> list[str]:
     return list(args.paths or ["."])
 
 
-def build_steps(args: argparse.Namespace) -> list[list[str]]:
+def build_steps(args: QualityArgs) -> list[list[str]]:
     steps: list[list[str]] = []
     if args.install_runtime:
         steps.append([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])

@@ -5,9 +5,10 @@ import unittest
 from src.data_boundary import is_object_mapping, is_object_sequence
 from src.subtitle_project_model import SubtitleProject, migrate_project_payload
 from src.subtitle_project_schema import SubtitleProjectError
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleProjectModelTests(unittest.TestCase):
+class SubtitleProjectModelTests(TypedTestCase):
     def test_project_model_parses_and_round_trips_payload(self) -> None:
         payload = {
             "schema_version": 1,

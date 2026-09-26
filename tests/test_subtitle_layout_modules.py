@@ -4,9 +4,10 @@ import unittest
 
 from src import subtitle_packer
 from src.subtitle_layout import rules, tokenize
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLayoutModuleTests(unittest.TestCase):
+class SubtitleLayoutModuleTests(TypedTestCase):
     def test_extracted_rules_match_legacy_packer_constants(self) -> None:
         self.assertEqual(rules.MAX_LINES, subtitle_packer.MAX_LINES)
         self.assertEqual(rules.ELLIPSIS, subtitle_packer.ELLIPSIS)

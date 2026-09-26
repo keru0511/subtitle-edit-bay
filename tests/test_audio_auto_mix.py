@@ -10,13 +10,15 @@ from src.audio_auto_mix import (
     predict_limiter_reduction,
     suggest_channel_gains,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AudioAutoMixTests(unittest.TestCase):
+class AudioAutoMixTests(TypedTestCase):
     def test_estimate_level_trims_outlier_and_rejects_short_input(self) -> None:
         self.assertIsNone(estimate_level_db([0.1] * 3))
         level = estimate_level_db([0.1] * 100 + [1.0] * 2)
-        self.assertIsNotNone(level)
+        if level is None:
+            self.fail("長い音声サンプルでは音量が推定できる")
         self.assertLess(level, -15)
 
     def test_gain_suggestions_are_bounded_and_respect_exclusion(self) -> None:
@@ -48,13 +50,7 @@ class AudioAutoMixTests(unittest.TestCase):
             hold_seconds=0.0,
             release_seconds=0.25,
         )
-        self.assertTrue(
-            all(
-                point.gain_db <= -12.0
-                for point in envelope
-                if 1.0 <= point.timestamp < 4.0
-            )
-        )
+        self.assertTrue(all(point.gain_db <= -12.0 for point in envelope if 1.0 <= point.timestamp < 4.0))
 
     def test_ducking_envelope_merges_release_overlap_with_next_attack(self) -> None:
         envelope = build_ducking_envelope(
@@ -66,18 +62,12 @@ class AudioAutoMixTests(unittest.TestCase):
             release_seconds=0.25,
         )
 
-        self.assertTrue(
-            all(
-                point.gain_db <= -12.0
-                for point in envelope
-                if 1.0 <= point.timestamp < 3.0
-            )
-        )
+        self.assertTrue(all(point.gain_db <= -12.0 for point in envelope if 1.0 <= point.timestamp < 3.0))
 
     def test_limiter_prediction_and_synthetic_multiple_channels(self) -> None:
         reduction = predict_limiter_reduction({"a": -2.0, "b": -10.0}, {"a": 3.0, "b": 0.0})
-        expected_peak_db = 20.0 * math.log10(10.0 ** (1.0 / 20.0) + 10.0 ** (-10.0 / 20.0))
-        self.assertAlmostEqual(reduction, expected_peak_db + 1.0)
+        expected_peak_db = 20.0 * math.log10(math.pow(10.0, 1.0 / 20.0) + math.pow(10.0, -10.0 / 20.0))
+        self.assertTrue(math.isclose(reduction, expected_peak_db + 1.0, abs_tol=1e-7))
         suggestions = suggest_channel_gains({"a": [0.1] * 50, "b": [0.11] * 50})
         self.assertEqual(len(suggestions), 2)
 

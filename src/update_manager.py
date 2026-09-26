@@ -11,7 +11,9 @@ import urllib.request
 import zipfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
+
+from .data_boundary import coerce_int, decode_json, is_object_dict, is_object_mapping
 
 
 class UpdatePackageError(RuntimeError):
@@ -26,6 +28,20 @@ ProgressCallback = Callable[[int, int, float], None]
 EXPECTED_WINDOWS_SIGNER_SUBJECT = "CN=Subtitle Edit Bay"
 
 
+class CancellationEvent(Protocol):
+    def is_set(self) -> bool: ...
+
+
+class _DownloadResponse(Protocol):
+    headers: Mapping[str, str]
+
+    def read(self, size: int = -1) -> bytes: ...
+
+    def __enter__(self) -> _DownloadResponse: ...
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool | None: ...
+
+
 def update_download_directory(project_root: Path) -> Path:
     """Return a user-data directory outside the installed application."""
 
@@ -34,20 +50,21 @@ def update_download_directory(project_root: Path) -> Path:
     return update_directory()
 
 
-def _info_value(info: Any, name: str, default: Any = None) -> Any:
-    if isinstance(info, Mapping):
+def _info_value(info: object, name: str, default: object = None) -> object:
+    if is_object_mapping(info):
         return info.get(name, default)
-    return getattr(info, name, default)
+    # 更新情報はdataclassとテスト用の属性オブジェクトを受け取る。
+    return cast(object, getattr(info, name, default))
 
 
 def _checksum_from_text(value: str) -> str:
     match = re.search(r"\b([0-9a-fA-F]{64})\b", value)
     if not match:
         raise UpdatePackageError("checksum file does not contain a SHA-256 value")
-    return match.group(1).lower()
+    return cast(str, match.group(1)).lower()
 
 
-def resolve_expected_sha256(info: Any, *, timeout: float = 30.0) -> str:
+def resolve_expected_sha256(info: object, *, timeout: float = 30.0) -> str:
     expected = str(_info_value(info, "sha256", "") or "").strip().lower()
     if expected:
         if not re.fullmatch(r"[0-9a-f]{64}", expected):
@@ -58,13 +75,14 @@ def resolve_expected_sha256(info: Any, *, timeout: float = 30.0) -> str:
         raise UpdatePackageError("release does not provide a package checksum")
     request = urllib.request.Request(checksum_url, headers={"User-Agent": "subtitle-edit-bay-updater"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opened = cast(_DownloadResponse, urllib.request.urlopen(request, timeout=timeout))
+        with opened as response:
             return _checksum_from_text(response.read().decode("utf-8", errors="replace"))
     except OSError as error:
         raise UpdatePackageError(f"checksumを取得できません: {error}") from error
 
 
-def _sha256(path: Path, *, cancel_event: Any = None) -> str:
+def _sha256(path: Path, *, cancel_event: CancellationEvent | None = None) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while True:
@@ -131,10 +149,10 @@ def validate_package(
 
 
 def download_package(
-    info: Any,
+    info: object,
     destination: Path,
     *,
-    cancel_event: Any = None,
+    cancel_event: CancellationEvent | None = None,
     progress_callback: ProgressCallback | None = None,
     timeout: float = 120.0,
 ) -> Path:
@@ -144,7 +162,7 @@ def download_package(
     if not url:
         raise UpdatePackageError("release package URL is empty")
     expected_sha256 = resolve_expected_sha256(info, timeout=timeout)
-    expected_size = int(_info_value(info, "package_size", 0) or 0)
+    expected_size = coerce_int(_info_value(info, "package_size", 0) or 0)
     expected_version = str(_info_value(info, "latest_version", "") or "")
     destination = destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -170,8 +188,9 @@ def download_package(
                         progress_callback(downloaded, total, downloaded / max(time.monotonic() - started, 0.001))
         else:
             request = urllib.request.Request(url, headers={"User-Agent": "subtitle-edit-bay-updater"})
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                total = int(response.headers.get("Content-Length", expected_size) or expected_size or 0)
+            opened = cast(_DownloadResponse, urllib.request.urlopen(request, timeout=timeout))
+            with opened as response:
+                total = coerce_int(response.headers.get("Content-Length") or expected_size)
                 with partial.open("wb") as target:
                     while True:
                         if cancel_event is not None and cancel_event.is_set():
@@ -217,19 +236,24 @@ def build_installer_helper_command(
 
     try:
         return build_installer_command(
-            project_root, package_path, expected_version=expected_version,
-            expected_sha256=expected_sha256, result_path=result_path,
+            project_root,
+            package_path,
+            expected_version=expected_version,
+            expected_sha256=expected_sha256,
+            result_path=result_path,
             expected_signer_subject=expected_signer_subject,
         )
     except ValueError as error:
         raise UpdatePackageError(str(error)) from error
 
 
-def read_update_result(path: Path) -> dict[str, Any] | None:
+def read_update_result(path: Path) -> dict[str, object] | None:
     if not path.is_file():
         return None
     try:
-        result = json.loads(path.read_text(encoding="utf-8"))
+        result = decode_json(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"status": "invalid", "message": "更新結果を読み込めません"}
-    return result if isinstance(result, dict) else {"status": "invalid", "message": "更新結果の形式が不正です"}
+    if not is_object_dict(result) or any(not isinstance(key, str) for key in result):
+        return {"status": "invalid", "message": "更新結果の形式が不正です"}
+    return cast(dict[str, object], result)

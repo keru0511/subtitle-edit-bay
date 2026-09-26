@@ -13,6 +13,7 @@ from src.gemini_acp_provider import (
     GeminiAcpProvider,
 )
 from src.gemini_runtime import GeminiRuntimeInfo
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,7 +34,7 @@ def fake_command() -> list[str]:
     return [sys.executable, "-u", str(FAKE_SERVER), "--acp"]
 
 
-class GeminiAcpClientTests(unittest.TestCase):
+class GeminiAcpClientTests(TypedTestCase):
     def test_command_rejects_experimental_and_automatic_approval_modes(self) -> None:
         with self.assertRaises(ValueError):
             GeminiAcpClient(fake_command() + ["--experimental-acp"])
@@ -158,7 +159,7 @@ class GeminiAcpClientTests(unittest.TestCase):
             client.stop()
 
 
-class GeminiAcpProviderTests(unittest.TestCase):
+class GeminiAcpProviderTests(TypedTestCase):
     def provider(self, *, environment: dict[str, str] | None = None) -> GeminiAcpProvider:
         return GeminiAcpProvider(
             workspace_root=ROOT,

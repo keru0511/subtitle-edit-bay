@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +13,7 @@ RUNTIME_CONTRACT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNTIME_CONTRACT)
 
 
-class RuntimeContractTests(unittest.TestCase):
+class RuntimeContractTests(TypedTestCase):
     def test_contract_imports_real_whisperx_processing_entrypoints(self) -> None:
         contract = RUNTIME_CONTRACT.load_contract(ROOT)
 

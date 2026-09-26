@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from src.transcript_cache import transcript_cache_metadata_path, write_transcript_cache_metadata
 from src.transcription_execution import transcribe_audio_with_cache
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionExecutionTests(unittest.TestCase):
+class TranscriptionExecutionTests(TypedTestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

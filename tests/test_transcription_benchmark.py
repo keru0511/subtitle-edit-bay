@@ -4,7 +4,6 @@ import copy
 import hashlib
 import json
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,9 +15,10 @@ from scripts.benchmark_transcription import (
     quality_failures,
     score_transcript,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionBenchmarkTests(unittest.TestCase):
+class TranscriptionBenchmarkTests(TypedTestCase):
     def setUp(self) -> None:
         self.manifest = {
             "duration": 20,

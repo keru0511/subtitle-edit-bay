@@ -3,15 +3,16 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.asr_ci_runtime import cache_key, prepare_runtime, runtime_context
+from tests.typed_case import TypedTestCase
 
 
-class AsrCiRuntimeTests(unittest.TestCase):
+class AsrCiRuntimeTests(TypedTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -28,6 +29,19 @@ class AsrCiRuntimeTests(unittest.TestCase):
             before = cache_key(self.root, self.venv, runtime_context())
         with patch.dict(os.environ, {"ImageOS": "win25", "ImageVersion": "new"}):
             self.assertEqual(before, cache_key(self.root, self.venv, runtime_context()))
+
+    def test_cache_key_runs_as_standalone_script(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "scripts/asr_ci_runtime.py"
+        completed = subprocess.run(
+            [sys.executable, str(script), "cache-key", "--venv", str(self.venv)],
+            cwd=self.root,
+            env={**os.environ, "ImageOS": "win25"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(completed.stdout.startswith("asr-runtime-v2-"))
 
     def test_incompatible_runtime_and_paths_invalidate_cache(self):
         with patch.dict(os.environ, {"ImageOS": "win25"}):

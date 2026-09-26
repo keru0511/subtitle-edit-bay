@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_object_list
 from src.color_config import normalize_rgb_color, save_speaker_color
 from src.runtime_config import (
     load_command_runtime_config,
@@ -44,9 +45,10 @@ from src.transcription_dictionary import (
     normalize_dictionary_term,
     transcription_dictionary_from_mapping,
 )
+from tests.typed_case import TypedTestCase
 
 
-class RuntimeConfigValidationTests(unittest.TestCase):
+class RuntimeConfigValidationTests(TypedTestCase):
     def test_load_runtime_config_returns_empty_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             self.assertEqual(load_runtime_config(Path(temp_dir) / "missing.json"), {})
@@ -85,7 +87,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
             resolve_bool_option(None, {"flag": "yes"}, "flag", False)
 
 
-class ColorConfigValidationTests(unittest.TestCase):
+class ColorConfigValidationTests(TypedTestCase):
     def test_normalize_rgb_color_accepts_six_digit_hash(self) -> None:
         self.assertEqual(normalize_rgb_color("#AABBCC"), "#AABBCC")
 
@@ -122,7 +124,7 @@ class ColorConfigValidationTests(unittest.TestCase):
                 save_speaker_color(path, file_name="", speaker_name="", color="#AABBCC")
 
 
-class TranscriptionContextValidationTests(unittest.TestCase):
+class TranscriptionContextValidationTests(TypedTestCase):
     def test_clean_text_handles_none_and_invalid(self) -> None:
         self.assertEqual(transcription_context_from_mapping({"game_title": None}).game_title, "")
         with self.assertRaises(TranscriptionContextError):
@@ -153,7 +155,7 @@ class TranscriptionContextValidationTests(unittest.TestCase):
         self.assertEqual(normalized["creator_terms"], ["スプラ"])
 
 
-class TranscriptionContextConfigValidationTests(unittest.TestCase):
+class TranscriptionContextConfigValidationTests(TypedTestCase):
     def test_context_from_value_accepts_none_and_instance(self) -> None:
         from src.transcription_context import TranscriptionContext
         from src.transcription_context_config import _context_from_value
@@ -205,7 +207,7 @@ class TranscriptionContextConfigValidationTests(unittest.TestCase):
             transcription_context_from_runtime_config([1, 2])
 
 
-class TranscriptionDictionaryValidationTests(unittest.TestCase):
+class TranscriptionDictionaryValidationTests(TypedTestCase):
     def test_normalize_dictionary_term_valid(self) -> None:
         term = normalize_dictionary_term({"term": "ナワバリ"}, 0)
         self.assertEqual(term.term, "ナワバリ")
@@ -275,7 +277,7 @@ class TranscriptionDictionaryValidationTests(unittest.TestCase):
         self.assertEqual(enabled_dictionary_terms(dictionary, include_aliases=False), ["A"])
 
 
-class SubtitleProjectValidationTests(unittest.TestCase):
+class SubtitleProjectValidationTests(TypedTestCase):
     def test_derive_project_path(self) -> None:
         path = derive_project_path("/tmp/game.mp4", "/out")
         self.assertEqual(path.name, "game.subtitle-project.json")
@@ -343,7 +345,9 @@ class SubtitleProjectValidationTests(unittest.TestCase):
             segments=[{"start": 0, "end": 1, "text": "hi", "speaker": "Oz"}],
         )
         self.assertEqual(project["project_type"], "subtitle-edit-project")
-        self.assertEqual(len(project["segments"]), 1)
+        segments = project["segments"]
+        assert is_object_list(segments)
+        self.assertEqual(len(segments), 1)
 
     def test_project_from_transcript_requires_segments(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

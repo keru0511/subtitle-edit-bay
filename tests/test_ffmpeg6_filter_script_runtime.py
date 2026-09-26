@@ -1,27 +1,29 @@
 from __future__ import annotations
 
 from array import array
-import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Mapping
 
+from src.data_boundary import decode_json, is_object_list, is_object_mapping
 from src.ffmpeg_filter_script import (
     LEGACY_FILTER_SCRIPT_OPTION,
     detect_filter_complex_script_option,
 )
 from src.short_video import render_short_video
 from src.silence_cut import cut_media_ranges
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG6_COMPAT") == "1",
     "set RUN_FFMPEG6_COMPAT=1 to exercise the pinned FFmpeg 6 runtime",
 )
-class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
+class FFmpeg6FilterScriptRuntimeTests(TypedTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
@@ -213,7 +215,14 @@ class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
             "json",
             str(output),
         ])
-        streams = json.loads(probe.stdout)["streams"]
+        probe_payload = decode_json(probe.stdout)
+        assert is_object_mapping(probe_payload)
+        raw_streams = probe_payload["streams"]
+        assert is_object_list(raw_streams)
+        streams: list[Mapping[object, object]] = []
+        for stream in raw_streams:
+            assert is_object_mapping(stream)
+            streams.append(stream)
         video = next(stream for stream in streams if stream["codec_type"] == "video")
         self.assertEqual(video["width"], width)
         self.assertEqual(video["height"], height)

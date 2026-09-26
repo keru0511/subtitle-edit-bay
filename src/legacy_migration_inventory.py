@@ -7,7 +7,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, cast, overload
 
 from .legacy_migration_types import (
     CATEGORY_CACHE,
@@ -81,7 +81,8 @@ def _is_link_like(path: Path, metadata: os.stat_result) -> bool:
     # Windows junctions are reparse points.  Do not follow them during an
     # inventory even on Python versions without Path.is_junction().
     reparse_point = 0x400
-    return bool(getattr(metadata, "st_file_attributes", 0) & reparse_point)
+    attributes = cast(object, getattr(metadata, "st_file_attributes", 0))
+    return isinstance(attributes, int) and bool(attributes & reparse_point)
 
 
 def _size_without_following_links(path: Path) -> tuple[int, str | None]:
@@ -287,10 +288,10 @@ def build_legacy_inventory(legacy_root: str | os.PathLike[str]) -> LegacyInvento
 
     entries: list[InventoryEntry] = []
     if root_observation.exists and root_observation.node_type == "directory" and root_observation.safe:
-        candidates = list(_CANDIDATE_PATHS)
+        candidates: list[tuple[str, str]] = list(_CANDIDATE_PATHS)
         candidates.extend(_project_file_candidates(root))
         seen: set[tuple[str, str]] = set()
-        for category, relative in sorted(candidates, key=lambda item: (item[1], item[0])):
+        for category, relative in sorted(candidates, key=_candidate_sort_key):
             key = (category, relative)
             if key in seen:
                 continue
@@ -320,6 +321,30 @@ def inventory_legacy_root(legacy_root: str | os.PathLike[str]) -> LegacyInventor
     """Descriptive alias for :func:`build_legacy_inventory`."""
 
     return build_legacy_inventory(legacy_root)
+
+
+def _candidate_sort_key(item: tuple[str, str]) -> tuple[str, str]:
+    return item[1], item[0]
+
+
+@overload
+def build_migration_plan(
+    inventory: LegacyInventory,
+    destination: None = None,
+    *,
+    options: SettingsMigrationOptions | None = None,
+    capabilities: RuntimeCapabilities | None = None,
+) -> LegacyMigrationPlan: ...
+
+
+@overload
+def build_migration_plan(
+    inventory: LegacyInventory,
+    destination: str | os.PathLike[str],
+    *,
+    options: SettingsMigrationOptions | None = None,
+    capabilities: RuntimeCapabilities | None = None,
+) -> LegacySettingsMigrationPlan: ...
 
 
 def build_migration_plan(

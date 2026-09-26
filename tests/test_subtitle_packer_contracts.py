@@ -6,9 +6,10 @@ import unittest
 from copy import deepcopy
 
 from src import subtitle_packer as packer
+from tests.typed_case import TypedTestCase
 
 
-class SubtitlePackerContractTests(unittest.TestCase):
+class SubtitlePackerContractTests(TypedTestCase):
     def test_character_timing_skips_incomplete_words_and_limits_long_alignment(self) -> None:
         words: list[dict[str, object]] = [
             {"word": "字幕", "start": "1.0", "end": "9.0"},

@@ -13,6 +13,7 @@ from src.video_encoding import select_automatic_video_codec
 from tests.media_test_helpers import (
     FrameDifference,
     FrameRegion,
+    MediaFixture,
     MediaSegment,
     assert_frame_difference_absent,
     assert_frame_difference_present,
@@ -29,6 +30,7 @@ from tests.media_test_helpers import (
     run_media_command,
     video_stream,
 )
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +44,7 @@ LINE_COUNT_TEXT = "SEMANTIC LINE TEST"
 MANUAL_BREAK_TEXT = "SEMANTIC LINE\nTEST"
 
 
-class MediaCommandDiagnosticTests(unittest.TestCase):
+class MediaCommandDiagnosticTests(TypedTestCase):
     def test_failure_reports_command_output_and_fixture_context(self) -> None:
         command = [
             sys.executable,
@@ -98,7 +100,21 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class MediaSemanticE2ETests(unittest.TestCase):
+class MediaSemanticE2ETests(TypedTestCase):
+    _temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    fixture: MediaFixture
+    selected_codec: str
+    control_ass: Path
+    one_line_ass: Path
+    two_line_ass: Path
+    manual_break_ass: Path
+    control_output: Path
+    one_line_output: Path
+    two_line_output: Path
+    manual_break_output: Path
+    output_probes: dict[str, dict[str, object]]
+
     @classmethod
     def setUpClass(cls) -> None:
         require_media_tools()

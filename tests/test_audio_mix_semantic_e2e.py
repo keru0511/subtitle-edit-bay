@@ -24,6 +24,7 @@ from tests.media_test_helpers import (
     require_media_tools,
     run_media_command,
 )
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +64,7 @@ def _channel_state(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class AudioMixSemanticE2ETests(unittest.TestCase):
+class AudioMixSemanticE2ETests(TypedTestCase):
     _temporary: tempfile.TemporaryDirectory[str]
     root: Path
     video: MediaFixture

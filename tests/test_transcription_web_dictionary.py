@@ -7,9 +7,10 @@ from src.transcription_web_dictionary import (
     build_web_dictionary_candidates,
     normalize_web_dictionary_candidate_metadata,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionWebDictionaryTests(unittest.TestCase):
+class TranscriptionWebDictionaryTests(TypedTestCase):
     def test_build_web_dictionary_candidates_extracts_terms_from_title_and_notes(self) -> None:
         candidates = build_web_dictionary_candidates(
             "Splatoon 3",

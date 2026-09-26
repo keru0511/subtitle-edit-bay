@@ -9,9 +9,10 @@ from pathlib import Path
 
 from src.gui_project_editor_controller import ProjectEditorController
 from src.subtitle_project import SubtitleProjectError, create_project, load_project, save_project
+from tests.typed_case import TypedTestCase
 
 
-class ProjectEditorControllerTests(unittest.TestCase):
+class ProjectEditorControllerTests(TypedTestCase):
     def _project(self, root: Path) -> dict[str, object]:
         return create_project(
             video_path=root / "capture.mp4",

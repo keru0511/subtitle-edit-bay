@@ -12,9 +12,10 @@ from src.media_probe import probe_media_duration, probe_media_stream_types
 from src.process_utils import hidden_subprocess_kwargs
 from src.subtitle_workflow_transcription import _extract_video_audio_track
 from src.transcribe import probe_audio_streams, run_command_with_utf8_log
+from tests.typed_case import TypedTestCase
 
 
-class HiddenSubprocessOptionsTests(unittest.TestCase):
+class HiddenSubprocessOptionsTests(TypedTestCase):
     def test_non_windows_returns_no_platform_specific_options(self) -> None:
         with mock.patch("src.process_utils.os.name", "posix"):
             self.assertEqual(hidden_subprocess_kwargs(), {})
@@ -87,7 +88,7 @@ class HiddenSubprocessOptionsTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["creationflags"], 4)
 
 
-class ProcessBoundaryTests(unittest.TestCase):
+class ProcessBoundaryTests(TypedTestCase):
     def test_windows_stop_targets_tree_and_force_is_explicit(self):
         from src.process_utils import stop_process
 

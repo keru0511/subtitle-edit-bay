@@ -14,9 +14,10 @@ from src.application_logging import (
     default_log_directory,
     redact_text,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ApplicationLoggingTests(unittest.TestCase):
+class ApplicationLoggingTests(TypedTestCase):
     def test_default_directory_matches_installer_launcher_contract(self) -> None:
         with patch.dict(os.environ, {"LOCALAPPDATA": "C:/LocalAppData"}):
             self.assertEqual(
@@ -230,7 +231,7 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertNotIn(r"C:\private", diagnostic)
 
 
-class PlatformPathTests(unittest.TestCase):
+class PlatformPathTests(TypedTestCase):
     def test_log_fallback_preserves_existing_workspace_location(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(default_log_directory("workspace"), Path("workspace/.local/logs"))

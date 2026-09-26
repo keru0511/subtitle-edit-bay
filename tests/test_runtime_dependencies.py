@@ -1,9 +1,10 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from src.runtime_dependencies import (
@@ -13,21 +14,18 @@ from src.runtime_dependencies import (
     format_dependency_error,
     runtime_diagnostic_info,
 )
+from tests.typed_case import TypedTestCase
 
 
-class RuntimeDependencyTests(unittest.TestCase):
-    @mock.patch("src.runtime_dependencies._ffmpeg_nvenc_available", return_value=True)
-    @mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=True)
-    @mock.patch("src.runtime_dependencies._module_importable", return_value=True)
-    @mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe")
-    def test_check_runtime_dependencies_reports_ready(
-        self,
-        _which: mock.Mock,
-        _importable: mock.Mock,
-        _cuda: mock.Mock,
-        nvenc: mock.Mock,
-    ) -> None:
-        status = check_runtime_dependencies(probe_nvenc=True)
+class RuntimeDependencyTests(TypedTestCase):
+    def test_check_runtime_dependencies_reports_ready(self) -> None:
+        with (
+            mock.patch("src.runtime_dependencies._ffmpeg_nvenc_available", return_value=True) as nvenc,
+            mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=True),
+            mock.patch("src.runtime_dependencies._module_importable", return_value=True),
+            mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe"),
+        ):
+            status = check_runtime_dependencies(probe_nvenc=True)
 
         self.assertTrue(status.ready)
         self.assertEqual(status.missing(), [])
@@ -36,20 +34,26 @@ class RuntimeDependencyTests(unittest.TestCase):
         self.assertTrue(status.nvenc)
         nvenc.assert_called_once_with("tool.exe")
 
-    @mock.patch("src.runtime_dependencies.subprocess.run")
-    def test_nvenc_probe_encodes_a_real_frame(self, run: mock.Mock) -> None:
-        run.return_value.returncode = 0
+    def test_nvenc_probe_encodes_a_real_frame(self) -> None:
+        command_seen: list[str] = []
+        timeout_seen: object = None
 
-        self.assertTrue(_ffmpeg_nvenc_available("ffmpeg.exe"))
-        command = run.call_args.args[0]
-        self.assertIn("h264_nvenc", command)
-        self.assertIn("color=c=black:s=256x144:r=1", command)
-        self.assertEqual(run.call_args.kwargs["timeout"], 8)
+        def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal command_seen, timeout_seen
+            command_seen = command
+            timeout_seen = kwargs.get("timeout")
+            return subprocess.CompletedProcess(command, 0)
 
-    @mock.patch("src.runtime_dependencies.subprocess.run", side_effect=OSError("failed"))
-    def test_nvenc_probe_falls_back_when_encoder_cannot_start(self, _run: mock.Mock) -> None:
-        self.assertFalse(_ffmpeg_nvenc_available("ffmpeg.exe"))
-        self.assertFalse(_ffmpeg_nvenc_available(None))
+        with mock.patch("src.runtime_dependencies.subprocess.run", side_effect=fake_run):
+            self.assertTrue(_ffmpeg_nvenc_available("ffmpeg.exe"))
+        self.assertIn("h264_nvenc", command_seen)
+        self.assertIn("color=c=black:s=256x144:r=1", command_seen)
+        self.assertEqual(timeout_seen, 8)
+
+    def test_nvenc_probe_falls_back_when_encoder_cannot_start(self) -> None:
+        with mock.patch("src.runtime_dependencies.subprocess.run", side_effect=OSError("failed")):
+            self.assertFalse(_ffmpeg_nvenc_available("ffmpeg.exe"))
+            self.assertFalse(_ffmpeg_nvenc_available(None))
 
     def test_format_dependency_error_includes_install_hints(self) -> None:
         status = RuntimeDependencyStatus(ffmpeg=False, ffprobe=False, whisperx=False)
@@ -74,50 +78,58 @@ class RuntimeDependencyTests(unittest.TestCase):
 
         self.assertEqual(format_dependency_error(status, require_whisperx=False), "")
 
-    @mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=object())
-    @mock.patch("src.runtime_dependencies.shutil.which", return_value="ffmpeg.exe")
-    @mock.patch("src.runtime_dependencies.subprocess.run")
-    def test_runtime_diagnostic_reports_torch_cuda_and_ffmpeg_versions(
-        self,
-        run: mock.Mock,
-        _which: mock.Mock,
-        _find_spec: mock.Mock,
-    ) -> None:
-        run.return_value = SimpleNamespace(
-            returncode=0,
-            stdout="ffmpeg version 7.1-full_build\nconfiguration...",
-            stderr="",
-        )
-        fake_torch = SimpleNamespace(
-            __version__="2.8.0+cu128",
-            version=SimpleNamespace(cuda="12.8"),
-            cuda=SimpleNamespace(
-                is_available=lambda: True,
-                get_device_name=lambda _index: "NVIDIA GeForce RTX 4070",
-            ),
-        )
+    def test_runtime_diagnostic_reports_torch_cuda_and_ffmpeg_versions(self) -> None:
+        commands: list[list[str]] = []
 
-        with mock.patch.dict(sys.modules, {"torch": fake_torch}):
-            diagnostic = runtime_diagnostic_info()
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, 0, stdout="ffmpeg version 7.1-full_build\nconfiguration...", stderr=""
+            )
+
+        def get_device_name(_index: int) -> str:
+            return "NVIDIA GeForce RTX 4070"
+
+        fake_torch = ModuleType("torch")
+        setattr(fake_torch, "__version__", "2.8.0+cu128")
+        setattr(fake_torch, "version", SimpleNamespace(cuda="12.8"))
+        setattr(fake_torch, "cuda", SimpleNamespace(is_available=lambda: True, get_device_name=get_device_name))
+
+        previous_torch = sys.modules.get("torch")
+        sys.modules["torch"] = fake_torch
+        try:
+            with (
+                mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=object()),
+                mock.patch("src.runtime_dependencies.shutil.which", return_value="ffmpeg.exe"),
+                mock.patch("src.runtime_dependencies.subprocess.run", side_effect=fake_run),
+            ):
+                diagnostic = runtime_diagnostic_info()
+        finally:
+            if previous_torch is None:
+                sys.modules.pop("torch", None)
+            else:
+                sys.modules["torch"] = previous_torch
 
         self.assertEqual(diagnostic["ffmpeg"], "ffmpeg version 7.1-full_build")
         self.assertEqual(diagnostic["pytorch"], "2.8.0+cu128")
         self.assertEqual(diagnostic["pytorch_cuda_build"], "12.8")
         self.assertTrue(diagnostic["cuda_available"])
         self.assertEqual(diagnostic["cuda_device"], "NVIDIA GeForce RTX 4070")
-        self.assertEqual(run.call_args.args[0], ["ffmpeg.exe", "-version"])
+        self.assertEqual(commands[0], ["ffmpeg.exe", "-version"])
 
-    @mock.patch("src.runtime_dependencies.importlib.import_module", side_effect=OSError("broken DLL"))
-    @mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=False)
-    @mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe")
-    def test_broken_whisperx_import_is_not_reported_as_ready(
-        self, _which: mock.Mock, _cuda: mock.Mock, _import: mock.Mock
-    ) -> None:
-        self.assertFalse(check_runtime_dependencies().whisperx)
+    def test_broken_whisperx_import_is_not_reported_as_ready(self) -> None:
+        with (
+            mock.patch("src.runtime_dependencies.shutil.which", return_value="tool.exe"),
+            mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=False),
+            mock.patch("src.runtime_dependencies.importlib.import_module", side_effect=OSError("broken DLL")),
+        ):
+            self.assertFalse(check_runtime_dependencies().whisperx)
 
-    @mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=None)
-    def test_runtime_diagnostic_includes_saved_manifest(self, _find_spec: mock.Mock) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+    def test_runtime_diagnostic_includes_saved_manifest(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch("src.runtime_dependencies.importlib.util.find_spec", return_value=None),
+        ):
             root = Path(temp_dir)
             (root / ".local").mkdir()
             expected = {"profile": "cpu", "lock_sha256": "a" * 64}

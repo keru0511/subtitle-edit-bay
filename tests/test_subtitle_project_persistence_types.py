@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-import unittest
 from pathlib import Path
 
 import numpy as np
@@ -22,9 +21,10 @@ from src.subtitle_project import (
     save_project,
     validate_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleProjectPersistenceTypeTests(unittest.TestCase):
+class SubtitleProjectPersistenceTypeTests(TypedTestCase):
     def test_read_only_converters_accept_string_key_projects(self) -> None:
         project: dict[str, object] = {"video": {"path": "game.mkv"}, "segments": []}
         view = project_to_view_payload(project)

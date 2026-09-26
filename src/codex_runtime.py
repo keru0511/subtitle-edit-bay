@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from .application_logging import redact_text
+from .process_utils import VersionProbeRun, hidden_subprocess_kwargs
 
 
 CODEX_MIN_VERSION = (0, 1, 0)
@@ -60,7 +61,7 @@ def detect_codex(
     *,
     environment: Mapping[str, str] | None = None,
     which: Callable[[str], str | None] = shutil.which,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    run: VersionProbeRun = subprocess.run,
 ) -> CodexRuntimeInfo:
     env = dict(os.environ if environment is None else environment)
     candidates: list[str] = []
@@ -95,7 +96,7 @@ def detect_codex(
                 timeout=5,
                 check=False,
                 shell=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=hidden_subprocess_kwargs().get("creationflags", 0),
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -153,8 +154,11 @@ def _codex_desktop_executables(environment: Mapping[str, str]) -> list[str]:
         except OSError:
             return -1
 
+    def sort_key(path: Path) -> tuple[int, str]:
+        return modified_time(path), str(path).casefold()
+
     executables.sort(
-        key=lambda path: (modified_time(path), str(path).casefold()),
+        key=sort_key,
         reverse=True,
     )
     return [str(path) for path in executables]

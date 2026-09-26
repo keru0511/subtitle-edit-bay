@@ -34,9 +34,10 @@ from tests.media_test_helpers import (
     probe_media,
     video_stream,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ShortVideoTimelineTests(unittest.TestCase):
+class ShortVideoTimelineTests(TypedTestCase):
     def test_short_render_events_follow_processing_boundaries_and_use_output_duration(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -209,7 +210,7 @@ class ShortVideoTimelineTests(unittest.TestCase):
                 self.assertIn(f",{expected_font_size},", ass_text)
 
 
-class ShortVideoRenderE2ETests(unittest.TestCase):
+class ShortVideoRenderE2ETests(TypedTestCase):
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",

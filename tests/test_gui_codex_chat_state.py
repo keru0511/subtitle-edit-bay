@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from src.gui_codex_chat_state import CodexChatController
+from tests.typed_case import TypedTestCase
 
 
 CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
@@ -172,7 +173,7 @@ def wait_for(predicate, timeout: float = 2.0) -> None:
         raise AssertionError("condition was not reached")
 
 
-class CodexChatControllerTests(unittest.TestCase):
+class CodexChatControllerTests(TypedTestCase):
     def test_connection_error_clears_provider_and_normal_connect_retries(self) -> None:
         first_client = FailingStartClient()
         second_client = FakeChatClient()

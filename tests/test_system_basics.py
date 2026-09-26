@@ -16,9 +16,10 @@ from src.subtitle_project import (
     save_project,
     create_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class SystemBehaviorTests(unittest.TestCase):
+class SystemBehaviorTests(TypedTestCase):
     def test_default_runtime_config_resolves_core_transcription_settings(self) -> None:
         config = load_runtime_config(DEFAULT_RUNTIME_CONFIG)
         shared = config.get("shared", {})

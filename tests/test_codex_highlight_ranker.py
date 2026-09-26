@@ -1,35 +1,48 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
 
 from src.codex_highlight_ranker import (
     HighlightRankerSettings,
     build_ranker_context,
     rank_highlight_candidates,
 )
+from src.data_boundary import is_object_mapping
+from tests.typed_case import TypedTestCase
 
 
 class FakeRankerClient:
     def __init__(self, output: object) -> None:
         self.output = output
-        self.context = None
-        self.thread_params = None
-        self.turn_params = None
+        self.context: Mapping[str, object] = {}
+        self.thread_params: dict[str, object] = {}
+        self.turn_params: dict[str, object] = {}
 
-    def thread_start(self, params=None):
+    def thread_start(self, params: Mapping[str, object] | None = None) -> Mapping[str, object]:
         self.thread_params = dict(params or {})
         return {"threadId": "thread-highlight"}
 
-    def turn_start(self, **kwargs):
+    def turn_start(self, **kwargs: object) -> Mapping[str, object]:
         self.turn_params = dict(kwargs)
-        self.context = kwargs["context"]
+        context = kwargs["context"]
+        if not is_object_mapping(context):
+            raise AssertionError("ranker context must be an object")
+        self.context = {str(key): value for key, value in context.items()}
         return {"output": self.output}
 
 
-class CodexHighlightRankerTests(unittest.TestCase):
+class CodexHighlightRankerTests(TypedTestCase):
     def setUp(self) -> None:
-        self.candidates = [
-            {"id": "h1", "start": 1.0, "end": 5.0, "score": 0.8, "category": "conversation", "subtitle_excerpt": "A" * 300},
+        self.candidates: list[dict[str, object]] = [
+            {
+                "id": "h1",
+                "start": 1.0,
+                "end": 5.0,
+                "score": 0.8,
+                "category": "conversation",
+                "subtitle_excerpt": "A" * 300,
+            },
             {"id": "h2", "start": 20.0, "end": 24.0, "score": 0.4, "category": "conversation", "subtitle_excerpt": "B"},
         ]
 
@@ -41,10 +54,12 @@ class CodexHighlightRankerTests(unittest.TestCase):
 
     def test_valid_semantic_scores_are_combined(self) -> None:
         client = FakeRankerClient(
-            {"rankings": [
-                {"id": "h1", "semantic_score": 0.1, "category": "reaction", "reason": "反応が強い", "hook": "驚き"},
-                {"id": "h2", "semantic_score": 0.9, "category": "gameplay", "reason": "展開がある", "hook": "展開"},
-            ]}
+            {
+                "rankings": [
+                    {"id": "h1", "semantic_score": 0.1, "category": "reaction", "reason": "反応が強い", "hook": "驚き"},
+                    {"id": "h2", "semantic_score": 0.9, "category": "gameplay", "reason": "展開がある", "hook": "展開"},
+                ]
+            }
         )
         result = rank_highlight_candidates(self.candidates, client=client)
         self.assertFalse(result.fallback)

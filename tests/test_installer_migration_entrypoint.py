@@ -15,9 +15,10 @@ from src.installer_migration_entrypoint import (
     apply_installer_migration,
     build_installer_migration_plan,
 )
+from tests.typed_case import TypedTestCase
 
 
-class InstallerMigrationEntrypointTests(unittest.TestCase):
+class InstallerMigrationEntrypointTests(TypedTestCase):
     def _fixture(self, root: Path) -> tuple[Path, Path]:
         source = root / "legacy-bat-zip"
         destination = root / "installer"

@@ -440,9 +440,17 @@ def _cleanup_path_nodes(root: Path, target: Path) -> tuple[tuple[Path, bool, int
     return tuple(nodes)
 
 
+def _path_depth(path: Path) -> int:
+    return len(path.parts)
+
+
+def _cleanup_node_depth(node: tuple[Path, bool, int]) -> int:
+    return _path_depth(node[0])
+
+
 def _remove_cleanup_nodes(nodes: Sequence[tuple[Path, bool, int]]) -> int:
     reclaimed = 0
-    for path, is_directory, size in sorted(nodes, key=lambda item: len(item[0].parts), reverse=True):
+    for path, is_directory, size in sorted(nodes, key=_cleanup_node_depth, reverse=True):
         metadata, error = _safe_lstat(path)
         if error or metadata is None:
             continue
@@ -482,7 +490,7 @@ def apply_cache_cleanup(
     # Callers must name at least one candidate ID explicitly, either when the
     # plan is built or when it is applied.
     if not requested_ids:
-        skipped = tuple(
+        unselected_entries = tuple(
             CacheCleanupSkip(
                 candidate_id=entry.candidate_id,
                 path=entry.path,
@@ -497,7 +505,7 @@ def apply_cache_cleanup(
             schema_version=CACHE_CLEANUP_SCHEMA_VERSION,
             source=plan.source,
             removed=(),
-            skipped=skipped,
+            skipped=unselected_entries,
             reclaimed_bytes=0,
             diagnostics=plan.diagnostics + ("cleanup skipped: explicit candidate selection is required",),
             completed_at=timestamp,
@@ -573,7 +581,8 @@ def apply_cache_cleanup(
         unique_nodes.setdefault(target, nodes)
     removed: list[str] = []
     reclaimed_bytes = 0
-    for target, nodes in sorted(unique_nodes.items(), key=lambda item: len(item[0].parts), reverse=True):
+    for target in sorted(unique_nodes, key=_path_depth, reverse=True):
+        nodes = unique_nodes[target]
         reclaimed_bytes += _remove_cleanup_nodes(nodes)
         removed.append(str(target))
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

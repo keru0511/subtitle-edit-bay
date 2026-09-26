@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -14,7 +15,7 @@ import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import Sequence
+from typing import IO, BinaryIO, Mapping, Sequence, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -25,6 +26,7 @@ from scripts.release_readiness import (
     CI_DELEGATED_JOB_NAMES,
     CI_RELEASE_CANDIDATE_PROFILE,
 )
+from src.data_boundary import decode_json, is_object_list, is_object_mapping
 
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -71,7 +73,15 @@ class SuccessfulJobHistory:
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         redirected = super().redirect_request(request, fp, code, msg, headers, newurl)
         if (
             redirected is not None
@@ -138,8 +148,8 @@ class GitHubApi:
             },
         )
         try:
-            with urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=30) as response:
-                return json.load(response)
+            with cast(BinaryIO, urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=30)) as response:
+                return decode_json(response.read())
         except urllib.error.HTTPError as exc:
             raise ReleaseCandidateError(f"GitHub API request failed with HTTP {exc.code}: {url}") from exc
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
@@ -152,13 +162,15 @@ class GitHubApi:
             page_query.update({"per_page": PER_PAGE, "page": page})
             payload = self.get(path, page_query)
             if key is not None:
-                if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+                if not is_object_mapping(payload):
                     raise ReleaseCandidateError(f"GitHub API response has no {key!r} array: {path}")
-                items = payload[key]
+                items = payload.get(key)
             else:
-                if not isinstance(payload, list):
-                    raise ReleaseCandidateError(f"GitHub API response must be an array: {path}")
                 items = payload
+            if not is_object_list(items):
+                if key is not None:
+                    raise ReleaseCandidateError(f"GitHub API response has no {key!r} array: {path}")
+                raise ReleaseCandidateError(f"GitHub API response must be an array: {path}")
             collected.extend(items)
             if len(items) < PER_PAGE:
                 return collected
@@ -181,7 +193,7 @@ class GitHubApi:
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
             with (
-                urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=60) as response,
+                cast(BinaryIO, urllib.request.build_opener(_SafeRedirectHandler()).open(request, timeout=60)) as response,
                 destination.open("wb") as output,
             ):
                 digest = hashlib.sha256()
@@ -267,9 +279,9 @@ def download_verified_artifact(
 
 
 def _object(value: object, context: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ReleaseCandidateError(f"{context} must be an object")
-    return value
+    if not is_object_mapping(value) or not all(isinstance(key, str) for key in value):
+        raise ReleaseCandidateError(f"{context} must be an object with string keys")
+    return {key: item for key, item in value.items() if isinstance(key, str)}
 
 
 def _string(value: object, context: str) -> str:
@@ -329,7 +341,7 @@ def _commit_identity(api: GitHubApi, sha: str, context: str) -> tuple[str, tuple
     commit = _object(api.get(f"/repos/{api.repository}/git/commits/{sha}"), context)
     tree_sha = _sha(_nested(commit, "tree", "sha"), f"{context} tree SHA")
     parents_value = commit.get("parents")
-    if not isinstance(parents_value, list):
+    if not is_object_list(parents_value):
         raise ReleaseCandidateError(f"{context} parents must be an array")
     parents = tuple(
         _sha(_object(parent, f"{context} parent").get("sha"), f"{context} parent SHA") for parent in parents_value
@@ -338,7 +350,7 @@ def _commit_identity(api: GitHubApi, sha: str, context: str) -> tuple[str, tuple
 
 
 def _run_matches_pull(
-    run: dict[str, object],
+    run: Mapping[object, object],
     pull_number: int,
     head_sha: str,
     head_branch: str,
@@ -346,9 +358,9 @@ def _run_matches_pull(
     workflow_path: str,
 ) -> bool:
     pulls = run.get("pull_requests")
-    if not isinstance(pulls, list):
+    if not is_object_list(pulls):
         return False
-    numbers = {value.get("number") for value in pulls if isinstance(value, dict)}
+    numbers = {value.get("number") for value in pulls if is_object_mapping(value)}
     # GitHub may clear this association after merge. A non-empty contradictory
     # association is rejected; an empty list is bound through immutable head,
     # branch, repository, workflow and (later) candidate commit/tree identity.
@@ -360,7 +372,7 @@ def _run_matches_pull(
         and run.get("path") == workflow_path
         and run.get("head_sha") == head_sha
         and run.get("head_branch") == head_branch
-        and isinstance(head_repository, dict)
+        and is_object_mapping(head_repository)
         and head_repository.get("full_name") == repository
     )
 
@@ -381,7 +393,7 @@ def _latest_workflow_run(
     matches = [
         _object(run, "workflow run")
         for run in runs
-        if isinstance(run, dict)
+        if is_object_mapping(run)
         and _run_matches_pull(run, pull_number, head_sha, head_branch, api.repository, workflow_path)
     ]
     if not matches:
@@ -625,27 +637,73 @@ def select_release_candidate(
 
 
 def write_github_outputs(path: Path, candidate: ReleaseCandidate) -> None:
-    values = asdict(candidate)
+    values = _candidate_payload(candidate)
     with path.open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={value}\n")
 
 
+def _candidate_payload(candidate: ReleaseCandidate) -> dict[str, object]:
+    # ReleaseCandidate only contains integer and string fields.
+    return cast(dict[str, object], asdict(candidate))
+
+
 def _load_candidate(path: Path) -> ReleaseCandidate:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = decode_json(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read selected candidate: {exc}") from exc
-    if not isinstance(payload, dict) or set(payload) != set(ReleaseCandidate.__dataclass_fields__):
+    if not is_object_mapping(payload) or set(payload) != set(cast(Mapping[str, object], ReleaseCandidate.__annotations__)):
         raise ReleaseCandidateError("selected candidate has an unknown schema or field set")
-    try:
-        candidate = ReleaseCandidate(**payload)
-    except TypeError as exc:
-        raise ReleaseCandidateError(f"selected candidate is malformed: {exc}") from exc
+
+    def candidate_string(field_name: str) -> str:
+        value = payload.get(field_name)
+        if not isinstance(value, str):
+            raise ReleaseCandidateError(f"selected candidate {field_name} must be a string")
+        return value
+
+    def candidate_integer(field_name: str) -> int:
+        value = payload.get(field_name)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ReleaseCandidateError(f"selected candidate {field_name} must be an integer")
+        return value
+
+    candidate = ReleaseCandidate(
+        schema_version=candidate_integer("schema_version"),
+        repository=candidate_string("repository"),
+        pull_request_number=candidate_integer("pull_request_number"),
+        pull_request_head_sha=candidate_string("pull_request_head_sha"),
+        pull_request_head_branch=candidate_string("pull_request_head_branch"),
+        pull_request_base_sha=candidate_string("pull_request_base_sha"),
+        candidate_source_sha=candidate_string("candidate_source_sha"),
+        candidate_source_tree=candidate_string("candidate_source_tree"),
+        release_commit_sha=candidate_string("release_commit_sha"),
+        release_commit_tree=candidate_string("release_commit_tree"),
+        release_version=candidate_string("release_version"),
+        workflow_path=candidate_string("workflow_path"),
+        workflow_run_id=candidate_integer("workflow_run_id"),
+        workflow_run_attempt=candidate_integer("workflow_run_attempt"),
+        artifact_workflow_run_attempt=candidate_integer("artifact_workflow_run_attempt"),
+        installer_smoke_workflow_run_attempt=candidate_integer("installer_smoke_workflow_run_attempt"),
+        ci_workflow_run_id=candidate_integer("ci_workflow_run_id"),
+        ci_workflow_run_attempt=candidate_integer("ci_workflow_run_attempt"),
+        ci_artifact_workflow_run_attempt=candidate_integer("ci_artifact_workflow_run_attempt"),
+        ci_candidate_source_sha=candidate_string("ci_candidate_source_sha"),
+        ci_candidate_source_tree=candidate_string("ci_candidate_source_tree"),
+        ci_artifact_id=candidate_integer("ci_artifact_id"),
+        ci_artifact_name=candidate_string("ci_artifact_name"),
+        ci_artifact_digest=candidate_string("ci_artifact_digest"),
+        ci_artifact_expires_at=candidate_string("ci_artifact_expires_at"),
+        artifact_id=candidate_integer("artifact_id"),
+        artifact_name=candidate_string("artifact_name"),
+        artifact_digest=candidate_string("artifact_digest"),
+        artifact_expires_at=candidate_string("artifact_expires_at"),
+    )
     if candidate.schema_version != 1:
         raise ReleaseCandidateError("selected candidate has an unknown schema")
     if not REPOSITORY_PATTERN.fullmatch(candidate.repository):
         raise ReleaseCandidateError("selected candidate repository is invalid")
+    candidate_values = _candidate_payload(candidate)
     for field_name in (
         "pull_request_head_sha",
         "pull_request_base_sha",
@@ -656,7 +714,7 @@ def _load_candidate(path: Path) -> ReleaseCandidate:
         "release_commit_sha",
         "release_commit_tree",
     ):
-        _sha(getattr(candidate, field_name), f"selected candidate {field_name}")
+        _sha(candidate_values[field_name], f"selected candidate {field_name}")
     for field_name in (
         "pull_request_number",
         "workflow_run_id",
@@ -669,7 +727,7 @@ def _load_candidate(path: Path) -> ReleaseCandidate:
         "ci_artifact_id",
         "artifact_id",
     ):
-        _integer(getattr(candidate, field_name), f"selected candidate {field_name}")
+        _integer(candidate_values[field_name], f"selected candidate {field_name}")
     if candidate.workflow_path != WORKFLOW_PATH:
         raise ReleaseCandidateError("selected candidate workflow path is invalid")
     if not candidate.pull_request_head_branch:
@@ -694,7 +752,7 @@ def _artifact_by_name(
     matches = [
         _object(artifact, "workflow artifact")
         for artifact in artifacts
-        if isinstance(artifact, dict) and artifact.get("name") == artifact_name
+        if is_object_mapping(artifact) and artifact.get("name") == artifact_name
     ]
     if not matches and allow_missing:
         return None
@@ -728,7 +786,7 @@ def resolve_release_candidate(
     )
     if existing is None:
         candidate = select_release_candidate(api, release_commit_sha, release_version)
-        output.write_text(json.dumps(asdict(candidate), indent=2) + "\n", encoding="utf-8")
+        output.write_text(json.dumps(_candidate_payload(candidate), indent=2) + "\n", encoding="utf-8")
         return candidate, False
 
     download_verified_artifact(
@@ -748,10 +806,10 @@ def resolve_release_candidate(
         raise ReleaseCandidateError("saved promotion decision does not match this release request")
     promotion_path = decision_directory / "release-promotion.json"
     try:
-        promotion = json.loads(promotion_path.read_text(encoding="utf-8"))
+        promotion = decode_json(promotion_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read saved promotion record: {exc}") from exc
-    if not isinstance(promotion, dict):
+    if not is_object_mapping(promotion):
         raise ReleaseCandidateError("saved promotion record must be an object")
     installer_sha256 = _string(promotion.get("installer_sha256"), "saved installer SHA-256")
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -783,10 +841,10 @@ def download_named_run_artifact(
 def verify_preparation_binding(candidate_path: Path, preparation_path: Path) -> None:
     candidate = _load_candidate(candidate_path)
     try:
-        preparation = json.loads(preparation_path.read_text(encoding="utf-8-sig"))
+        preparation = decode_json(preparation_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read preparation identity: {exc}") from exc
-    if not isinstance(preparation, dict):
+    if not is_object_mapping(preparation):
         raise ReleaseCandidateError("release preparation must be an object")
     expected = {
         "repository": candidate.repository,
@@ -800,7 +858,7 @@ def verify_preparation_binding(candidate_path: Path, preparation_path: Path) -> 
         "workflow_run_attempt": candidate.artifact_workflow_run_attempt,
     }
     producer = preparation.get("producer")
-    if not isinstance(producer, dict):
+    if not is_object_mapping(producer):
         raise ReleaseCandidateError("release preparation has no producer identity")
     if producer != expected:
         raise ReleaseCandidateError("release preparation producer does not match the selected workflow run")
@@ -844,7 +902,7 @@ def write_ci_validation_identity(
 def verify_ci_validation_binding(candidate_path: Path, identity_path: Path) -> None:
     candidate = _load_candidate(candidate_path)
     try:
-        actual = json.loads(identity_path.read_text(encoding="utf-8-sig"))
+        actual = decode_json(identity_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read CI validation identity: {exc}") from exc
     expected = {
@@ -871,10 +929,10 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
     if not re.fullmatch(r"[0-9a-f]{64}", installer_sha256):
         raise ReleaseCandidateError("installer SHA-256 must be 64 lowercase hexadecimal characters")
     try:
-        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        candidate = decode_json(candidate_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read selected candidate: {exc}") from exc
-    if not isinstance(candidate, dict) or candidate.get("schema_version") != 1:
+    if not is_object_mapping(candidate) or candidate.get("schema_version") != 1:
         raise ReleaseCandidateError("selected candidate has an unknown schema")
     record = {
         "schema_version": 1,
@@ -949,15 +1007,49 @@ def write_promotion_record(path: Path, candidate_path: Path, installer_sha256: s
 
 def verify_promotion_record(path: Path, expected_path: Path) -> None:
     try:
-        actual = json.loads(path.read_text(encoding="utf-8"))
-        expected = json.loads(expected_path.read_text(encoding="utf-8"))
+        actual = decode_json(path.read_text(encoding="utf-8"))
+        expected = decode_json(expected_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseCandidateError(f"could not read promotion record: {exc}") from exc
     if actual != expected:
         raise ReleaseCandidateError("published promotion record does not match the selected candidate")
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+class _ReleaseCandidateArgs(argparse.Namespace):
+    command: str
+    repository: str
+    release_commit_sha: str
+    release_version: str
+    output: Path
+    github_output: Path
+    current_run_id: int
+    decision_artifact_name: str
+    decision_directory: Path
+    artifact_id: int
+    artifact_digest: str
+    destination: Path
+    expected_file: list[str]
+    run_id: int
+    artifact_name: str
+    candidate: Path
+    preparation: Path
+    pull_request_number: int
+    pull_request_head_sha: str
+    pull_request_base_sha: str
+    pull_request_head_branch: str
+    source_sha: str
+    source_tree: str
+    workflow_run_id: int
+    workflow_run_attempt: int
+    validation_profile: str
+    delegated_workflow: str
+    identity: Path
+    installer_sha256: str
+    actual: Path
+    expected: Path
+
+
+def parse_args(argv: Sequence[str] | None = None) -> _ReleaseCandidateArgs:
     parser = argparse.ArgumentParser(description="Select and record a verified release candidate artifact.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     select = subparsers.add_parser("select")
@@ -1013,7 +1105,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify = subparsers.add_parser("verify-promotion")
     verify.add_argument("--actual", type=Path, required=True)
     verify.add_argument("--expected", type=Path, required=True)
-    return parser.parse_args(argv)
+    args = _ReleaseCandidateArgs()
+    parser.parse_args(argv, namespace=args)
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1027,7 +1121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if args.command == "select":
                 candidate = select_release_candidate(api, args.release_commit_sha, args.release_version)
-                args.output.write_text(json.dumps(asdict(candidate), indent=2) + "\n", encoding="utf-8")
+                args.output.write_text(json.dumps(_candidate_payload(candidate), indent=2) + "\n", encoding="utf-8")
                 write_github_outputs(args.github_output, candidate)
             elif args.command == "resolve":
                 candidate, reused = resolve_release_candidate(

@@ -13,6 +13,7 @@ from src.ai_provider import (
     AIProviderState,
 )
 from src.gui_codex_chat_state import CodexChatController
+from tests.typed_case import TypedTestCase
 
 
 def wait_for(predicate, timeout: float = 2.0) -> None:
@@ -129,7 +130,7 @@ class FakeProvider:
         self._state = AIProviderState(availability="disconnected")
 
 
-class AIProviderControllerTests(unittest.TestCase):
+class AIProviderControllerTests(TypedTestCase):
     def test_fake_provider_streams_through_controller_without_provider_rpc_names(self) -> None:
         provider = FakeProvider()
         controller = CodexChatController(

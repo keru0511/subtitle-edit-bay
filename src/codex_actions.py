@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
 import math
-from typing import Any, Callable, Mapping, Protocol
+from typing import Callable, Mapping, Protocol, cast
 
 from .audio_mix_proposal import AudioMixProposalError, build_audio_mix_context
 from .audio_mixer import is_opaque_audio_channel_id
+from .data_boundary import coerce_float, is_object_iterable, is_object_mapping, is_object_sequence
 
 ACTION_SCHEMA_VERSION = 1
 
@@ -59,17 +60,17 @@ class ActionRejected(ValueError):
 class ActionRequest:
     kind: ActionKind
     type: str
-    args: Mapping[str, Any]
+    args: Mapping[str, object]
     scope_id: str
     project_revision: int | None = None
     schema_version: int = ACTION_SCHEMA_VERSION
 
     @classmethod
-    def from_json(cls, payload: Mapping[str, Any]) -> "ActionRequest":
-        if not isinstance(payload, Mapping):
+    def from_json(cls, payload: object) -> "ActionRequest":
+        if not is_object_mapping(payload):
             raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "action must be an object")
         allowed = {"schema_version", "kind", "type", "args", "scope_id", "project_revision"}
-        unknown = sorted(set(payload) - allowed)
+        unknown = sorted(str(key) for key in payload if key not in allowed)
         if unknown:
             raise ActionRejected(
                 ActionErrorCode.INVALID_SCHEMA,
@@ -80,15 +81,16 @@ class ActionRequest:
                 ActionErrorCode.INVALID_SCHEMA,
                 f"schema_version must be {ACTION_SCHEMA_VERSION}",
             )
+        kind_value = payload.get("kind")
         try:
-            kind = ActionKind(payload.get("kind"))
+            kind = ActionKind(kind_value)
         except ValueError as error:
             raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "kind must be inspect, propose, or execute") from error
         action_type = payload.get("type")
         if not isinstance(action_type, str) or not action_type.strip():
             raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "type must be a non-empty string")
         args = payload.get("args")
-        if not isinstance(args, Mapping):
+        if not is_object_mapping(args) or not all(isinstance(key, str) for key in args):
             raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "args must be an object")
         scope_id = payload.get("scope_id")
         if not isinstance(scope_id, str) or not scope_id.strip():
@@ -102,7 +104,7 @@ class ActionRequest:
         return cls(
             kind=kind,
             type=action_type,
-            args=deepcopy(dict(args)),
+            args=deepcopy({key: value for key, value in args.items() if isinstance(key, str)}),
             scope_id=scope_id,
             project_revision=revision,
         )
@@ -124,15 +126,15 @@ class ActionScope:
 
 @dataclass(frozen=True)
 class FieldSchema:
-    types: tuple[type, ...]
+    types: tuple[type[object], ...]
     required: bool = False
-    choices: frozenset[Any] | None = None
+    choices: frozenset[object] | None = None
     minimum: float | None = None
     maximum: float | None = None
     non_empty: bool = False
 
 
-DestructivePredicate = Callable[[Mapping[str, Any]], bool]
+DestructivePredicate = Callable[[Mapping[str, object]], bool]
 
 
 @dataclass(frozen=True)
@@ -148,9 +150,9 @@ class ActionDefinition:
 @dataclass(frozen=True)
 class HandlerResult:
     message: str
-    state: Mapping[str, Any] | None = None
-    proposal: Mapping[str, Any] | None = None
-    job: Mapping[str, Any] | None = None
+    state: Mapping[str, object] | None = None
+    proposal: Mapping[str, object] | None = None
+    job: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -160,12 +162,12 @@ class ActionResult:
     code: str = ""
     message: str = ""
     revision: int | None = None
-    current_state: Mapping[str, Any] | None = None
-    proposal: Mapping[str, Any] | None = None
-    job: Mapping[str, Any] | None = None
+    current_state: Mapping[str, object] | None = None
+    proposal: Mapping[str, object] | None = None
+    job: Mapping[str, object] | None = None
 
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def to_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "status": self.status.value,
             "action_type": self.action_type,
             "code": self.code,
@@ -189,11 +191,78 @@ class ActionBackend(Protocol):
     @property
     def active_job(self) -> str: ...
 
-    def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult: ...
+    def inspect(self, action_type: str, args: Mapping[str, object]) -> HandlerResult: ...
 
-    def propose(self, action_type: str, args: Mapping[str, Any], revision: int) -> HandlerResult: ...
+    def propose(self, action_type: str, args: Mapping[str, object], revision: int) -> HandlerResult: ...
 
-    def execute(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult: ...
+    def execute(self, action_type: str, args: Mapping[str, object]) -> HandlerResult: ...
+
+
+class _ProposalSnapshot(Protocol):
+    state: str
+
+
+class _ProposalSession(Protocol):
+    running: bool
+    snapshot: _ProposalSnapshot
+
+
+class _ProcessingProgress(Protocol):
+    value: float
+    status: str
+
+    def as_list(self) -> list[dict[str, object]]: ...
+
+
+class _WorkflowProgress(Protocol):
+    @property
+    def processing_progress(self) -> _ProcessingProgress: ...
+
+
+class _DependencyState(Protocol):
+    ready: bool
+    ffmpeg: bool
+    ffprobe: bool
+    whisperx: bool
+    cuda: bool
+    nvenc: bool
+
+
+class _GuiActionSurface(Protocol):
+    """Codex操作が参照するGUIの固定インターフェース。"""
+
+    _project_revision: int
+    _running: bool
+    _active_job: str
+    _project: Mapping[str, object] | None
+    _project_dirty: bool
+    _selected_segment_index: int
+    _codex_session: _ProposalSession
+    _codex_audio_mix_session: _ProposalSession
+    _processing_progress: _ProcessingProgress
+    workflow: _WorkflowProgress
+    _dependencies: _DependencyState
+    highlightAnalysisState: str
+    highlightAnalysisProgress: float
+    subtitleSegments: list[Mapping[str, object]]
+    cutTimeline: Mapping[str, object]
+    editorPlayhead: Mapping[str, object]
+    actionCapabilities: Mapping[str, object]
+    settings: Mapping[str, object]
+
+    def startCodexEdit(self, intent: str, scope: str, range_start: float, range_end: float) -> None: ...
+
+    def start_codex_audio_mix_proposal(self, *, intent: str, revision: int, context: Mapping[str, object]) -> bool: ...
+
+    def transcribeProject(self, settings: dict[str, object], mode: str) -> None: ...
+
+    def startHighlightAnalysis(self) -> bool: ...
+
+    def renderVideo(self, settings: dict[str, object]) -> None: ...
+
+    def renderShortVideo(self) -> None: ...
+
+    def codex_render_output_exists(self, *, short: bool) -> bool: ...
 
 
 ACTION_DEFINITIONS: Mapping[str, ActionDefinition] = {
@@ -284,8 +353,8 @@ class ActionDispatcher:
     def allowed_action_types(self) -> tuple[str, ...]:
         return tuple(sorted(self._definitions))
 
-    def dispatch(self, payload: Mapping[str, Any], *, trusted_scope: ActionScope) -> ActionResult:
-        action_type = str(payload.get("type", "")) if isinstance(payload, Mapping) else ""
+    def dispatch(self, payload: object, *, trusted_scope: ActionScope) -> ActionResult:
+        action_type = str(payload.get("type", "")) if is_object_mapping(payload) else ""
         try:
             request = ActionRequest.from_json(payload)
             action_type = request.type
@@ -367,7 +436,7 @@ class ActionDispatcher:
             raise ActionRejected(ActionErrorCode.STALE_REVISION, "project revision is stale")
 
     @staticmethod
-    def _validate_args(args: Mapping[str, Any], fields: Mapping[str, FieldSchema]) -> None:
+    def _validate_args(args: Mapping[str, object], fields: Mapping[str, FieldSchema]) -> None:
         unknown = sorted(set(args) - set(fields))
         if unknown:
             raise ActionRejected(
@@ -403,7 +472,7 @@ class ActionDispatcher:
         if args.get("selection_scope") == "time_range":
             start = args.get("range_start")
             end = args.get("range_end")
-            if start is None or end is None or float(end) <= float(start):
+            if start is None or end is None or coerce_float(end) <= coerce_float(start):
                 raise ActionRejected(ActionErrorCode.INVALID_SCHEMA, "time_range requires an increasing range")
 
     def _call_handler(self, request: ActionRequest) -> HandlerResult:
@@ -418,9 +487,9 @@ class ActionDispatcher:
 class GuiActionBackend:
     """Fixed adapter to existing GUI methods; no reflection or arbitrary method names."""
 
-    def __init__(self, backend: Any) -> None:
-        self._gui = backend
-        self._inspect_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
+    def __init__(self, backend: object) -> None:
+        self._gui = cast(_GuiActionSurface, backend)
+        self._inspect_handlers: Mapping[str, Callable[[Mapping[str, object]], HandlerResult]] = {
             "inspect_project_state": self._inspect_project,
             "inspect_subtitle_state": self._inspect_subtitles,
             "inspect_audio_mix_state": self._inspect_audio,
@@ -430,16 +499,23 @@ class GuiActionBackend:
             "inspect_render_state": self._inspect_render,
             "inspect_selection_state": self._inspect_selection,
         }
-        self._propose_handlers: Mapping[str, Callable[[Mapping[str, Any], int], HandlerResult]] = {
+        self._propose_handlers: Mapping[str, Callable[[Mapping[str, object], int], HandlerResult]] = {
             "propose_subtitle_edit": self._propose_subtitle,
             "propose_audio_mix": self._propose_audio,
         }
-        self._execute_handlers: Mapping[str, Callable[[Mapping[str, Any]], HandlerResult]] = {
+        self._execute_handlers: Mapping[str, Callable[[Mapping[str, object]], HandlerResult]] = {
             "start_transcription": self._start_transcription,
             "start_highlight_analysis": self._start_highlight,
             "render_normal": self._render_normal,
             "render_short": self._render_short,
         }
+
+    def _optional_gui_value(self, name: str, default: object = None) -> object:
+        return cast(object, getattr(self._gui, name, default))
+
+    def _optional_session(self, name: str) -> _ProposalSession | None:
+        value = self._optional_gui_value(name)
+        return None if value is None else cast(_ProposalSession, value)
 
     @property
     def current_revision(self) -> int:
@@ -451,67 +527,73 @@ class GuiActionBackend:
             return str(self._gui._active_job or "processing")
         if str(self._gui.highlightAnalysisState) in {"running", "cancelling"}:
             return "highlight_analysis"
-        codex_session = getattr(self._gui, "_codex_session", None)
+        codex_session = self._optional_session("_codex_session")
         if codex_session is not None and bool(codex_session.running):
             return "subtitle_proposal"
-        audio_session = getattr(self._gui, "_codex_audio_mix_session", None)
+        audio_session = self._optional_session("_codex_audio_mix_session")
         if audio_session is not None and bool(audio_session.running):
             return "audio_mix_proposal"
         return ""
 
-    def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
+    def inspect(self, action_type: str, args: Mapping[str, object]) -> HandlerResult:
         handler = self._inspect_handlers.get(action_type)
         if handler is None:
             raise ActionRejected(ActionErrorCode.UNKNOWN_ACTION, "inspect action has no backend handler")
         return handler(args)
 
-    def propose(self, action_type: str, args: Mapping[str, Any], revision: int) -> HandlerResult:
+    def propose(self, action_type: str, args: Mapping[str, object], revision: int) -> HandlerResult:
         handler = self._propose_handlers.get(action_type)
         if handler is None:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "proposal domain is not available")
         return handler(args, revision)
 
-    def execute(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
+    def execute(self, action_type: str, args: Mapping[str, object]) -> HandlerResult:
         handler = self._execute_handlers.get(action_type)
         if handler is None:
             raise ActionRejected(ActionErrorCode.UNKNOWN_ACTION, "execute action has no backend handler")
         return handler(args)
 
-    def _inspect_project(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_project(self, _args: Mapping[str, object]) -> HandlerResult:
         project = self._gui._project
+        segments = project.get("segments", []) if project else []
         state = {
             "loaded": project is not None,
             "dirty": bool(self._gui._project_dirty),
             "revision": self.current_revision,
-            "segment_count": len(project.get("segments", [])) if project else 0,
+            "segment_count": len(segments) if is_object_sequence(segments) else 0,
             "has_video": bool(project and project.get("video")),
         }
         return HandlerResult("project state inspected", state=state)
 
-    def _inspect_subtitles(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_subtitles(self, _args: Mapping[str, object]) -> HandlerResult:
         segments = self._gui.subtitleSegments
         safe_fields = {"id", "start", "end", "text", "speaker", "emphasis", "position"}
         safe = [{key: value for key, value in item.items() if key in safe_fields} for item in segments]
         return HandlerResult("subtitle state inspected", state={"segments": safe})
 
-    def _inspect_audio(self, _args: Mapping[str, Any]) -> HandlerResult:
-        channels = list(getattr(self._gui, "audioMixerChannels", ()))
-        raw_preview_levels = getattr(self._gui, "audioPreviewLevels", {})
-        preview_levels = raw_preview_levels if isinstance(raw_preview_levels, Mapping) else {}
+    def _inspect_audio(self, _args: Mapping[str, object]) -> HandlerResult:
+        raw_channels = self._optional_gui_value("audioMixerChannels", ())
+        if not is_object_iterable(raw_channels):
+            raise TypeError("audioMixerChannels must be iterable")
+        channels = list(raw_channels)
+        raw_preview_levels = self._optional_gui_value("audioPreviewLevels", {})
+        preview_levels = (
+            {key: value for key, value in raw_preview_levels.items() if isinstance(key, str)}
+            if is_object_mapping(raw_preview_levels)
+            else {}
+        )
         try:
-            master_level = float(getattr(self._gui, "audioMasterLevel", 0.0))
+            master_level = coerce_float(self._optional_gui_value("audioMasterLevel", 0.0))
         except (TypeError, ValueError, OverflowError):
             master_level = 0.0
         try:
-            limiter_reduction_db = float(getattr(self._gui, "audioLimiterReductionDb", 0.0))
+            limiter_reduction_db = coerce_float(self._optional_gui_value("audioLimiterReductionDb", 0.0))
         except (TypeError, ValueError, OverflowError):
             limiter_reduction_db = 0.0
-        playhead = getattr(self._gui, "editorPlayhead", {})
+        playhead = self._optional_gui_value("editorPlayhead", {})
         try:
             playhead_seconds = (
-                float(playhead.get("sourcePositionMs", 0)) / 1000.0
-                if isinstance(playhead, Mapping)
-                else 0.0
+                coerce_float(playhead.get("sourcePositionMs", 0)) / 1000.0 if is_object_mapping(playhead) else 0.0
             )
         except (TypeError, ValueError, OverflowError):
             playhead_seconds = 0.0
@@ -527,11 +609,11 @@ class GuiActionBackend:
         except AudioMixProposalError:
             # Keep inspect useful for older GUI adapters while never exposing a
             # legacy/path-derived identifier to Codex.
-            safe_channels: list[dict[str, Any]] = []
+            safe_channels: list[dict[str, object]] = []
             for index, item in enumerate(channels):
-                if not isinstance(item, Mapping):
+                if not is_object_mapping(item):
                     continue
-                channel = dict(item)
+                channel = {key: value for key, value in item.items() if isinstance(key, str)}
                 channel_id = str(channel.get("id", "")).strip()
                 if not is_opaque_audio_channel_id(channel_id):
                     identity = "|".join(
@@ -562,11 +644,12 @@ class GuiActionBackend:
                 }
         return HandlerResult("audio mix state inspected", state=context)
 
-    def _inspect_timeline(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_timeline(self, _args: Mapping[str, object]) -> HandlerResult:
         return HandlerResult("timeline state inspected", state=deepcopy(dict(self._gui.cutTimeline)))
 
-    def _inspect_processing(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_processing(self, _args: Mapping[str, object]) -> HandlerResult:
         active_job = self.active_job
+        state: dict[str, object]
         if active_job == "highlight_analysis":
             state = {
                 "active_job": active_job,
@@ -606,7 +689,7 @@ class GuiActionBackend:
             }
         return HandlerResult("processing state inspected", state=state)
 
-    def _inspect_dependencies(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_dependencies(self, _args: Mapping[str, object]) -> HandlerResult:
         dependencies = self._gui._dependencies
         state = {
             "ready": bool(dependencies.ready),
@@ -618,34 +701,37 @@ class GuiActionBackend:
         }
         return HandlerResult("dependency state inspected", state=state)
 
-    def _inspect_render(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_render(self, _args: Mapping[str, object]) -> HandlerResult:
         return HandlerResult("render state inspected", state=deepcopy(dict(self._gui.actionCapabilities)))
 
-    def _inspect_selection(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _inspect_selection(self, _args: Mapping[str, object]) -> HandlerResult:
         segment_id = ""
         index = int(self._gui._selected_segment_index)
-        segments = self._gui._project.get("segments", []) if self._gui._project else []
+        raw_segments = self._gui._project.get("segments", []) if self._gui._project else []
+        segments = raw_segments if is_object_sequence(raw_segments) else []
         if 0 <= index < len(segments):
-            segment_id = str(segments[index].get("id", ""))
+            segment = segments[index]
+            if is_object_mapping(segment):
+                segment_id = str(segment.get("id", ""))
         return HandlerResult(
             "selection state inspected",
             state={"segment_id": segment_id, "playhead": deepcopy(dict(self._gui.editorPlayhead))},
         )
 
-    def _propose_subtitle(self, args: Mapping[str, Any], _revision: int) -> HandlerResult:
+    def _propose_subtitle(self, args: Mapping[str, object], _revision: int) -> HandlerResult:
         if bool(self._gui._codex_session.running):
             raise ActionRejected(ActionErrorCode.JOB_CONFLICT, "a subtitle proposal is already being generated")
         self._gui.startCodexEdit(
             str(args["intent"]),
             str(args["selection_scope"]),
-            float(args.get("range_start", 0.0)),
-            float(args.get("range_end", 0.0)),
+            coerce_float(args.get("range_start", 0.0)),
+            coerce_float(args.get("range_end", 0.0)),
         )
         if not self._gui._codex_session.running:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "subtitle proposal could not be started")
         return HandlerResult("subtitle proposal generation started", state={"status": "running"})
 
-    def _propose_audio(self, args: Mapping[str, Any], revision: int) -> HandlerResult:
+    def _propose_audio(self, args: Mapping[str, object], revision: int) -> HandlerResult:
         if self.active_job:
             raise ActionRejected(ActionErrorCode.JOB_CONFLICT, "another job or proposal is already running")
         inspected = self._inspect_audio({})
@@ -662,7 +748,7 @@ class GuiActionBackend:
             )
         return HandlerResult("audio mix proposal generation started", state={"status": "running"})
 
-    def _start_transcription(self, args: Mapping[str, Any]) -> HandlerResult:
+    def _start_transcription(self, args: Mapping[str, object]) -> HandlerResult:
         capabilities = self._gui.actionCapabilities
         if not capabilities.get("canTranscribe"):
             raise ActionRejected(
@@ -673,24 +759,24 @@ class GuiActionBackend:
         self._require_started_job("transcribe")
         return HandlerResult("transcription started", job={"type": "transcribe", "status": "running"})
 
-    def _start_highlight(self, _args: Mapping[str, Any]) -> HandlerResult:
+    def _start_highlight(self, _args: Mapping[str, object]) -> HandlerResult:
         if not self._gui.startHighlightAnalysis():
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, "highlight analysis is unavailable")
         return HandlerResult("highlight analysis started", job={"type": "highlight_analysis", "status": "running"})
 
-    def _render_normal(self, args: Mapping[str, Any]) -> HandlerResult:
+    def _render_normal(self, args: Mapping[str, object]) -> HandlerResult:
         self._require_render("normal", args)
         self._gui.renderVideo(dict(self._gui.settings))
         self._require_started_job("render")
         return HandlerResult("normal render started", job={"type": "render", "status": "running"})
 
-    def _render_short(self, args: Mapping[str, Any]) -> HandlerResult:
+    def _render_short(self, args: Mapping[str, object]) -> HandlerResult:
         self._require_render("short", args)
         self._gui.renderShortVideo()
         self._require_started_job("render_short")
         return HandlerResult("short render started", job={"type": "render_short", "status": "running"})
 
-    def _require_render(self, kind: str, args: Mapping[str, Any]) -> None:
+    def _require_render(self, kind: str, args: Mapping[str, object]) -> None:
         capabilities = self._gui.actionCapabilities
         prefix = "normal" if kind == "normal" else "short"
         if capabilities.get(f"{prefix}RenderNeedsOutput"):
@@ -716,5 +802,5 @@ class GuiActionBackend:
             raise ActionRejected(ActionErrorCode.PRECONDITION_FAILED, f"{expected} job could not be started")
 
 
-def build_gui_action_dispatcher(backend: Any) -> ActionDispatcher:
+def build_gui_action_dispatcher(backend: object) -> ActionDispatcher:
     return ActionDispatcher(GuiActionBackend(backend))

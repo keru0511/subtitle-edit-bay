@@ -12,9 +12,10 @@ from src.transcription_context_config import (
     resolve_transcription_context_file_path,
     transcription_context_from_runtime_config,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionContextConfigTests(unittest.TestCase):
+class TranscriptionContextConfigTests(TypedTestCase):
     def test_missing_context_returns_default_shape(self) -> None:
         context = normalized_transcription_context_from_runtime_config({})
 

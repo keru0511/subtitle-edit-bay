@@ -17,6 +17,7 @@ from scripts.gui_performance_report import SCENARIO_NAMES
 from scripts.plan_gui_performance import validate_inputs, select_comparison_commit, main as plan_main
 from scripts.run_gui_performance import parse_args, _run_controller
 from tests.workflow_contracts import load_workflow
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,7 +81,7 @@ def shard_report(kind: str, repetition: int, *, repetitions: int = 3) -> dict[st
     }
 
 
-class GuiPerformanceInputPlanTests(unittest.TestCase):
+class GuiPerformanceInputPlanTests(TypedTestCase):
     def test_manual_repetition_bounds_create_complete_matrix(self) -> None:
         for repetitions in (1, 3, 10):
             with self.subTest(repetitions=repetitions):
@@ -186,7 +187,7 @@ class GuiPerformanceInputPlanTests(unittest.TestCase):
                 parse_args(["--repetitions", "1", "--repetition-index", "4", "--total-repetitions", "3"])
 
 
-class GuiPerformanceAggregationTests(unittest.TestCase):
+class GuiPerformanceAggregationTests(TypedTestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -373,7 +374,7 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
                 self.aggregate(reports)
 
 
-class SharedBenchmarkMediaTests(unittest.TestCase):
+class SharedBenchmarkMediaTests(TypedTestCase):
     def test_pair_reuses_media_but_keeps_project_and_result_files_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -420,7 +421,7 @@ class SharedBenchmarkMediaTests(unittest.TestCase):
             self.assertTrue((root / "reference.json").is_file())
 
 
-class GuiPerformanceWorkflowContractTests(unittest.TestCase):
+class GuiPerformanceWorkflowContractTests(TypedTestCase):
     def test_workflow_pairs_revisions_in_repetition_matrix_and_has_strict_gate(self) -> None:
         workflow = load_workflow(WORKFLOW)
         jobs = workflow["jobs"]

@@ -9,9 +9,10 @@ from src.subtitle_project import SubtitleProjectError, create_project, load_proj
 from src.transcription_context import (
     normalize_transcription_context,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionContextTests(unittest.TestCase):
+class TranscriptionContextTests(TypedTestCase):
     def test_project_context_round_trips_through_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

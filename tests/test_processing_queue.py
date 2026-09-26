@@ -5,9 +5,10 @@ import unittest
 from pathlib import Path
 
 from src.processing_queue import ProcessingQueue, ProcessingQueueError
+from tests.typed_case import TypedTestCase
 
 
-class ProcessingQueueTests(unittest.TestCase):
+class ProcessingQueueTests(TypedTestCase):
     def test_persistence_resume_stale_and_secret_redaction(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "input.mkv"

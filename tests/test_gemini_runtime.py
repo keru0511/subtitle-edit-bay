@@ -11,9 +11,10 @@ from src.gemini_runtime import (
     detect_gemini,
     redact_gemini_diagnostic,
 )
+from tests.typed_case import TypedTestCase
 
 
-class GeminiRuntimeTests(unittest.TestCase):
+class GeminiRuntimeTests(TypedTestCase):
     def test_detection_uses_official_acp_command_and_no_shell(self) -> None:
         calls: list[tuple[list[str], dict[str, object]]] = []
 

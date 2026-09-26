@@ -12,6 +12,7 @@ from scripts.generate_large_gui_fixture import (
     write_fixture_project,
 )
 from scripts.gui_performance_report import SCENARIO_NAMES, aggregate_runs
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +83,7 @@ def _performance_report_with_event_loop_maxima(
     }
 
 
-class GuiPerformanceFixtureTests(unittest.TestCase):
+class GuiPerformanceFixtureTests(TypedTestCase):
     def test_required_large_fixture_sizes_are_repeatable_and_varied(self) -> None:
         three_thousand = generate_segments(3_000)
         ten_thousand = generate_segments(10_000)

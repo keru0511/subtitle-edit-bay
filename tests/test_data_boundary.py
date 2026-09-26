@@ -13,6 +13,7 @@ from src.data_boundary import (
     is_object_list,
     is_object_mapping,
     is_object_sequence,
+    is_string_object_mapping,
 )
 from tests.typed_case import TypedTestCase
 
@@ -40,6 +41,14 @@ class DataBoundaryTests(TypedTestCase):
             self.fail("シーケンスとして読み取れる必要があります")
         self.assertEqual(values[0], "value")
         self.assertFalse(is_object_mapping(values))
+
+    def test_string_mapping_rejects_non_string_keys(self) -> None:
+        payload: object = UserDict({"message": [1, None]})
+        if not is_string_object_mapping(payload):
+            self.fail("文字列キーのマッピングを受け入れる必要があります")
+        self.assertEqual(payload["message"], [1, None])
+        self.assertFalse(is_string_object_mapping(UserDict({1: "value"})))
+        self.assertFalse(is_string_object_mapping([]))
 
     def test_sequence_guard_does_not_assume_string_elements(self) -> None:
         payload: object = (1, None, "value")

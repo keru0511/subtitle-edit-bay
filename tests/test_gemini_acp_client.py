@@ -7,29 +7,44 @@ import unittest
 from pathlib import Path
 
 from src import gemini_acp_client, gemini_acp_provider
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parent.parent
 FAKE_SERVER = Path(__file__).resolve().parent / "fake_gemini_acp_server.py"
 
 
-class GeminiAcpClientModuleTests(unittest.TestCase):
+class GeminiAcpClientModuleTests(TypedTestCase):
     def test_legacy_provider_exports_reference_the_client_module(self) -> None:
-        for name in (
-            "ACP_PROTOCOL_VERSION",
-            "DEFAULT_GEMINI_CLIENT_NAME",
-            "GeminiAcpClient",
-            "GeminiAcpClientProtocol",
-            "GeminiAcpError",
-            "GeminiAcpNotification",
-            "GeminiAcpRequestTimeout",
-            "GeminiAcpRpcError",
-        ):
+        exports: tuple[tuple[str, object, object], ...] = (
+            ("ACP_PROTOCOL_VERSION", gemini_acp_provider.ACP_PROTOCOL_VERSION, gemini_acp_client.ACP_PROTOCOL_VERSION),
+            (
+                "DEFAULT_GEMINI_CLIENT_NAME",
+                gemini_acp_provider.DEFAULT_GEMINI_CLIENT_NAME,
+                gemini_acp_client.DEFAULT_GEMINI_CLIENT_NAME,
+            ),
+            ("GeminiAcpClient", gemini_acp_provider.GeminiAcpClient, gemini_acp_client.GeminiAcpClient),
+            (
+                "GeminiAcpClientProtocol",
+                gemini_acp_provider.GeminiAcpClientProtocol,
+                gemini_acp_client.GeminiAcpClientProtocol,
+            ),
+            ("GeminiAcpError", gemini_acp_provider.GeminiAcpError, gemini_acp_client.GeminiAcpError),
+            (
+                "GeminiAcpNotification",
+                gemini_acp_provider.GeminiAcpNotification,
+                gemini_acp_client.GeminiAcpNotification,
+            ),
+            (
+                "GeminiAcpRequestTimeout",
+                gemini_acp_provider.GeminiAcpRequestTimeout,
+                gemini_acp_client.GeminiAcpRequestTimeout,
+            ),
+            ("GeminiAcpRpcError", gemini_acp_provider.GeminiAcpRpcError, gemini_acp_client.GeminiAcpRpcError),
+        )
+        for name, provided, expected in exports:
             with self.subTest(name=name):
-                self.assertIs(
-                    getattr(gemini_acp_provider, name),
-                    getattr(gemini_acp_client, name),
-                )
+                self.assertIs(provided, expected)
 
     def test_direct_client_import_completes_acp_turn(self) -> None:
         notifications: list[gemini_acp_client.GeminiAcpNotification] = []

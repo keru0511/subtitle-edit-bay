@@ -10,11 +10,11 @@ from collections import deque
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Protocol, Sequence, TextIO, cast
+from typing import Callable, Mapping, Sequence, cast
 
 from .application_logging import redact_text
 from .data_boundary import coerce_int, decode_json, is_object_dict, is_object_list, is_object_mapping
-from .process_utils import hidden_subprocess_kwargs
+from .process_utils import TextPipedProcess, hidden_subprocess_kwargs
 
 
 DEFAULT_CODEX_COMMAND = ("codex", "app-server", "--listen", "stdio://")
@@ -44,21 +44,6 @@ class CodexRpcError(CodexAppServerError):
 class CodexNotification:
     method: str
     params: Mapping[str, object]
-
-
-class _TextProcess(Protocol):
-    """text=Trueで起動したapp-serverの入出力と停止操作。"""
-
-    stdin: TextIO | None
-    stdout: TextIO | None
-
-    def poll(self) -> int | None: ...
-
-    def wait(self, timeout: float | None = None) -> int: ...
-
-    def terminate(self) -> None: ...
-
-    def kill(self) -> None: ...
 
 
 def _turn_id(params: Mapping[str, object]) -> str:
@@ -176,7 +161,7 @@ class CodexAppServerClient:
         self.notification_callback = notification_callback
         self.disconnect_callback = disconnect_callback
         self.log_callback = log_callback
-        self._process: _TextProcess | None = None
+        self._process: TextPipedProcess | None = None
         self._reader_thread: threading.Thread | None = None
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -212,7 +197,7 @@ class CodexAppServerClient:
         creationflags = hidden_subprocess_kwargs().get("creationflags", 0)
         try:
             self._process = cast(
-                _TextProcess,
+                TextPipedProcess,
                 subprocess.Popen(
                     list(self.command),
                     cwd=self.cwd,

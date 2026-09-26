@@ -12,9 +12,11 @@ import threading
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence, SupportsInt, cast
+from typing import Callable, Mapping, Protocol, Sequence, SupportsInt, cast
 
 from .application_logging import redact_text
+from .data_boundary import decode_json, is_string_object_mapping
+from .process_utils import TextPipedProcess, hidden_subprocess_kwargs
 
 
 ACP_PROTOCOL_VERSION = 1
@@ -43,7 +45,7 @@ class GeminiAcpNotification:
     """Gemini CLI から受け取った ACP 通知。"""
 
     method: str
-    params: Mapping[str, Any]
+    params: Mapping[str, object]
     session_id: str = ""
     turn_id: str = ""
 
@@ -52,31 +54,31 @@ class GeminiAcpClientProtocol(Protocol):
     notification_callback: Callable[[GeminiAcpNotification], None] | None
     disconnect_callback: Callable[[Exception], None] | None
 
-    def start(self) -> Mapping[str, Any]: ...
+    def start(self) -> Mapping[str, object]: ...
 
     def stop(self) -> None: ...
 
     def request(
         self,
         method: str,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, object] | None = None,
         *,
         timeout: float | None = None,
         allow_uninitialized: bool = False,
-    ) -> Any: ...
+    ) -> object: ...
 
-    def authenticate(self, method_id: str) -> Mapping[str, Any] | None: ...
+    def authenticate(self, method_id: str) -> Mapping[str, object] | None: ...
 
-    def new_session(self, *, cwd: str | Path, model_id: str = "") -> Mapping[str, Any]: ...
+    def new_session(self, *, cwd: str | Path, model_id: str = "") -> Mapping[str, object]: ...
 
     def load_session(
         self,
         *,
         session_id: str,
         cwd: str | Path,
-    ) -> Mapping[str, Any]: ...
+    ) -> Mapping[str, object]: ...
 
-    def prompt(self, *, session_id: str, text: str, turn_id: str) -> Mapping[str, Any]: ...
+    def prompt(self, *, session_id: str, text: str, turn_id: str) -> Mapping[str, object]: ...
 
     def cancel(self, *, session_id: str, turn_id: str) -> None: ...
 
@@ -105,11 +107,11 @@ class GeminiAcpClient:
         self.notification_callback = notification_callback
         self.disconnect_callback = disconnect_callback
         self.log_callback = log_callback
-        self._process: subprocess.Popen[str] | None = None
+        self._process: TextPipedProcess | None = None
         self._reader_thread: threading.Thread | None = None
         self._write_lock = threading.Lock()
         self._state_lock = threading.RLock()
-        self._pending: dict[int, Future[Any]] = {}
+        self._pending: dict[int, Future[object]] = {}
         self._next_request_id = 1
         self._active_turns: dict[str, str] = {}
         self._initialized = False
@@ -125,7 +127,7 @@ class GeminiAcpClient:
         with self._state_lock:
             return self._initialized
 
-    def start(self) -> Mapping[str, Any]:
+    def start(self) -> Mapping[str, object]:
         if self.is_running:
             if not self.initialized:
                 raise GeminiAcpError("Gemini ACP is starting")
@@ -134,21 +136,24 @@ class GeminiAcpClient:
         environment = os.environ.copy()
         environment.update(self.environment)
         environment.setdefault("PYTHONUTF8", "1")
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        creationflags = hidden_subprocess_kwargs().get("creationflags", 0)
         try:
-            self._process = subprocess.Popen(
-                list(self.command),
-                cwd=self.cwd,
-                env=environment,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                creationflags=creationflags,
-                shell=False,
+            self._process = cast(
+                TextPipedProcess,
+                subprocess.Popen(
+                    list(self.command),
+                    cwd=self.cwd,
+                    env=environment,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=creationflags,
+                    shell=False,
+                ),
             )
         except OSError as error:
             self._process = None
@@ -180,7 +185,7 @@ class GeminiAcpClient:
                 },
                 allow_uninitialized=True,
             )
-            if not isinstance(result, Mapping):
+            if not is_string_object_mapping(result):
                 raise GeminiAcpError("Gemini ACP initialize response is malformed")
             if _int_or_default(result.get("protocolVersion"), -1) != ACP_PROTOCOL_VERSION:
                 raise GeminiAcpError("Gemini ACP protocol version is unsupported")
@@ -225,17 +230,17 @@ class GeminiAcpClient:
     def request(
         self,
         method: str,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str, object] | None = None,
         *,
         timeout: float | None = None,
         allow_uninitialized: bool = False,
-    ) -> Any:
+    ) -> object:
         if not self.is_running:
             raise GeminiAcpError("Gemini ACPが起動していません")
         if not allow_uninitialized and not self.initialized:
             raise GeminiAcpError("Gemini ACPのinitializeが完了していません")
         request_id = self._reserve_request()
-        future: Future[Any] = Future()
+        future: Future[object] = Future()
         with self._state_lock:
             self._pending[request_id] = future
         try:
@@ -257,7 +262,7 @@ class GeminiAcpClient:
             with self._state_lock:
                 self._pending.pop(request_id, None)
 
-    def notify(self, method: str, params: Mapping[str, Any] | None = None) -> None:
+    def notify(self, method: str, params: Mapping[str, object] | None = None) -> None:
         if not self.is_running:
             raise GeminiAcpError("Gemini ACPが起動していません")
         if not self.initialized:
@@ -270,13 +275,13 @@ class GeminiAcpClient:
             }
         )
 
-    def authenticate(self, method_id: str) -> Mapping[str, Any] | None:
+    def authenticate(self, method_id: str) -> Mapping[str, object] | None:
         if not str(method_id).strip():
             raise ValueError("Gemini ACP authentication method is required")
         result = self.request("authenticate", {"methodId": str(method_id).strip()})
-        return dict(result) if isinstance(result, Mapping) else None
+        return dict(result) if is_string_object_mapping(result) else None
 
-    def new_session(self, *, cwd: str | Path, model_id: str = "") -> Mapping[str, Any]:
+    def new_session(self, *, cwd: str | Path, model_id: str = "") -> Mapping[str, object]:
         result = self.request(
             "session/new",
             {
@@ -284,7 +289,7 @@ class GeminiAcpClient:
                 "mcpServers": [],
             },
         )
-        if not isinstance(result, Mapping):
+        if not is_string_object_mapping(result):
             raise GeminiAcpError("Gemini ACP newSession response is malformed")
         session_id = _extract_session_id(result)
         if not session_id:
@@ -296,7 +301,7 @@ class GeminiAcpClient:
             )
         return dict(result)
 
-    def load_session(self, *, session_id: str, cwd: str | Path) -> Mapping[str, Any]:
+    def load_session(self, *, session_id: str, cwd: str | Path) -> Mapping[str, object]:
         result = self.request(
             "session/load",
             {
@@ -305,11 +310,11 @@ class GeminiAcpClient:
                 "mcpServers": [],
             },
         )
-        if not isinstance(result, Mapping):
+        if not is_string_object_mapping(result):
             raise GeminiAcpError("Gemini ACP loadSession response is malformed")
         return dict(result) | {"sessionId": str(session_id)}
 
-    def prompt(self, *, session_id: str, text: str, turn_id: str) -> Mapping[str, Any]:
+    def prompt(self, *, session_id: str, text: str, turn_id: str) -> Mapping[str, object]:
         session_key = str(session_id)
         with self._state_lock:
             self._active_turns[session_key] = str(turn_id)
@@ -321,7 +326,7 @@ class GeminiAcpClient:
                     "prompt": [{"type": "text", "text": str(text)}],
                 },
             )
-            if not isinstance(result, Mapping):
+            if not is_string_object_mapping(result):
                 raise GeminiAcpError("Gemini ACP prompt response is malformed")
             return dict(result)
         finally:
@@ -340,7 +345,7 @@ class GeminiAcpClient:
             self._next_request_id += 1
             return request_id
 
-    def _send(self, message: Mapping[str, Any]) -> None:
+    def _send(self, message: Mapping[str, object]) -> None:
         process = self._process
         if process is None or process.stdin is None or process.poll() is not None:
             raise GeminiAcpError("Gemini ACPへ書き込めません")
@@ -362,11 +367,11 @@ class GeminiAcpClient:
                 if not line:
                     continue
                 try:
-                    message = json.loads(line)
+                    message = decode_json(line)
                 except json.JSONDecodeError:
                     self._notify_protocol_error("JSONメッセージを解釈できませんでした")
                     continue
-                if not isinstance(message, Mapping):
+                if not is_string_object_mapping(message):
                     self._notify_protocol_error("JSON-RPCメッセージがオブジェクトではありません")
                     continue
                 self._handle_message(message)
@@ -383,7 +388,7 @@ class GeminiAcpClient:
                     except Exception as callback_error:
                         self._log(f"disconnect callback failed: {_safe_error(callback_error)}", error=True)
 
-    def _handle_message(self, message: Mapping[str, Any]) -> None:
+    def _handle_message(self, message: Mapping[str, object]) -> None:
         message_id = message.get("id")
         if message_id is not None and ("result" in message or "error" in message):
             request_id = _request_id_as_int(message_id)
@@ -400,7 +405,7 @@ class GeminiAcpClient:
                 return
             if "error" in message:
                 payload = message.get("error")
-                if isinstance(payload, Mapping):
+                if is_string_object_mapping(payload):
                     code = _int_or_default(payload.get("code"), -32000)
                     detail = payload.get("message", "Gemini ACP request failed")
                 else:
@@ -416,7 +421,7 @@ class GeminiAcpClient:
             self._notify_protocol_error("メッセージにmethodがありません")
             return
         params = message.get("params")
-        safe_params = dict(params) if isinstance(params, Mapping) else {}
+        safe_params: dict[str, object] = dict(params) if is_string_object_mapping(params) else {}
         if message_id is not None:
             self._send_request_denial(message_id, method)
         session_id = str(safe_params.get("sessionId") or "")
@@ -517,7 +522,7 @@ def _is_permission_request(method: str) -> bool:
     return "permission" in lowered or "tool_call" in lowered or "toolcall" in lowered
 
 
-def _extract_session_id(result: Mapping[str, Any]) -> str:
+def _extract_session_id(result: Mapping[str, object]) -> str:
     return str(result.get("sessionId") or result.get("session_id") or "").strip()
 
 

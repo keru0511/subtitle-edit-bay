@@ -5,11 +5,13 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Callable, Mapping
 
 from src.ai_provider import AIProviderEvent, AIProviderPrompt
 from src.gemini_acp_provider import (
     GeminiAcpClient,
     GeminiAcpError,
+    GeminiAcpNotification,
     GeminiAcpProvider,
 )
 from src.gemini_runtime import GeminiRuntimeInfo
@@ -20,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FAKE_SERVER = Path(__file__).resolve().parent / "fake_gemini_acp_server.py"
 
 
-def wait_for(predicate, timeout: float = 3.0) -> None:
+def wait_for(predicate: Callable[[], bool], timeout: float = 3.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if predicate():
@@ -53,7 +55,7 @@ class GeminiAcpClientTests(TypedTestCase):
         client.stop()
 
     def test_malformed_message_does_not_break_stream(self) -> None:
-        events: list[object] = []
+        events: list[GeminiAcpNotification] = []
         environment = {"FAKE_ACP_MALFORMED": "1"}
         client = GeminiAcpClient(
             fake_command(),
@@ -71,13 +73,13 @@ class GeminiAcpClientTests(TypedTestCase):
                 turn_id="turn-1",
             )
             self.assertEqual(response["stopReason"], "end_turn")
-            self.assertTrue(any(getattr(event, "method", "") == "protocol/error" for event in events))
-            self.assertTrue(any(getattr(event, "method", "") == "session/update" for event in events))
+            self.assertTrue(any(event.method == "protocol/error" for event in events))
+            self.assertTrue(any(event.method == "session/update" for event in events))
         finally:
             client.stop()
 
     def test_permission_request_is_denied_without_exception(self) -> None:
-        events: list[object] = []
+        events: list[GeminiAcpNotification] = []
         client = GeminiAcpClient(
             fake_command(),
             cwd=ROOT,
@@ -98,7 +100,7 @@ class GeminiAcpClientTests(TypedTestCase):
             )
             self.assertEqual(response["stopReason"], "end_turn")
             permission = [
-                event for event in events if getattr(event, "method", "") == "session/request_permission"
+                event for event in events if event.method == "session/request_permission"
             ]
             self.assertEqual(len(permission), 1)
         finally:
@@ -108,7 +110,14 @@ class GeminiAcpClientTests(TypedTestCase):
         sent: list[dict[str, object]] = []
 
         class StubClient(GeminiAcpClient):
-            def request(self, method, params=None, **kwargs):  # type: ignore[no-untyped-def]
+            def request(
+                self,
+                method: str,
+                params: Mapping[str, object] | None = None,
+                *,
+                timeout: float | None = None,
+                allow_uninitialized: bool = False,
+            ) -> object:
                 sent.append({"method": method, "params": params or {}})
                 if method == "session/new":
                     return {"sessionId": "session-stable"}
@@ -116,15 +125,15 @@ class GeminiAcpClientTests(TypedTestCase):
                     return {"stopReason": "end_turn"}
                 raise AssertionError(method)
 
-            def notify(self, method, params=None):  # type: ignore[no-untyped-def]
+            def notify(self, method: str, params: Mapping[str, object] | None = None) -> None:
                 sent.append({"method": method, "params": params or {}})
 
             @property
-            def is_running(self):
+            def is_running(self) -> bool:
                 return True
 
             @property
-            def initialized(self):
+            def initialized(self) -> bool:
                 return True
 
         client = StubClient(fake_command())
@@ -196,9 +205,9 @@ class GeminiAcpProviderTests(TypedTestCase):
             provider.close()
 
     def test_connect_restores_saved_preferred_model_from_initial_inventory(self) -> None:
-        class InitialModelClient:
-            notification_callback = None
-            disconnect_callback = None
+        class InitialModelClient(GeminiAcpClient):
+            def __init__(self) -> None:
+                super().__init__(fake_command())
 
             def start(self) -> dict[str, object]:
                 return {
@@ -213,7 +222,7 @@ class GeminiAcpProviderTests(TypedTestCase):
                     },
                 }
 
-            def stop(self) -> None:
+            def stop(self, timeout: float = 5.0) -> None:
                 return None
 
         provider = GeminiAcpProvider(
@@ -330,14 +339,14 @@ class GeminiAcpProviderTests(TypedTestCase):
             provider.close()
 
     def test_connect_failure_is_redacted_and_does_not_log_credentials(self) -> None:
-        class BrokenClient:
-            notification_callback = None
-            disconnect_callback = None
+        class BrokenClient(GeminiAcpClient):
+            def __init__(self) -> None:
+                super().__init__(fake_command())
 
-            def start(self):
+            def start(self) -> Mapping[str, object]:
                 raise OSError('api_key="secret-value" /home/user/private.json')
 
-            def stop(self):
+            def stop(self, timeout: float = 5.0) -> None:
                 return None
 
         provider = GeminiAcpProvider(client_factory=BrokenClient)

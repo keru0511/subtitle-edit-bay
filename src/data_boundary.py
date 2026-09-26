@@ -12,6 +12,11 @@ def is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
+def is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """JSONなどの文字列キーを持つマッピングか確認する。"""
+    return is_object_mapping(value) and all(isinstance(key, str) for key in value)
+
+
 def is_object_sequence(value: object) -> TypeGuard[Sequence[object]]:
     """要素の型を仮定せず、読み取り可能なシーケンスとして扱う。"""
     return isinstance(value, Sequence)

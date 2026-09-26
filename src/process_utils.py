@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Literal, Protocol, TypedDict
+from typing import Literal, Protocol, TextIO, TypedDict
 
 
 class SubprocessOptions(TypedDict, total=False):
@@ -46,6 +46,21 @@ def detached_subprocess_kwargs() -> SubprocessOptions:
 
 class StoppableProcess(Protocol):
     """Qtの型に依存せず停止を要求する最小インターフェース。"""
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+
+class TextPipedProcess(Protocol):
+    """text=Trueで起動した子プロセスの標準入出力と停止操作。"""
+
+    stdin: TextIO | None
+    stdout: TextIO | None
+
+    def poll(self) -> int | None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
 
     def terminate(self) -> None: ...
 

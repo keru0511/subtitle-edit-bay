@@ -24,7 +24,13 @@ ColumnLayout {
     }
     property int selectedIndex: 0
     property bool activeTimeInputIncomplete: false
+    property var activeTimeDelegate: null
     signal selected(int index)
+
+    function commitPendingEdits() {
+        return !clipListRoot.activeTimeDelegate
+            || clipListRoot.activeTimeDelegate.commitTimeFields()
+    }
 
     GridLayout {
         Layout.fillWidth: true
@@ -86,7 +92,8 @@ ColumnLayout {
             Layout.columnSpan: 4
             Layout.fillWidth: true
             text: "ショートに追加"
-            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && (
+            enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                && !clipListRoot.activeTimeInputIncomplete && (
                 (clipSourceCombo.currentValue === "segment"
                     && segmentCombo.currentValue !== undefined && segmentCombo.currentValue !== "")
                 || (clipSourceCombo.currentValue === "range"
@@ -96,7 +103,7 @@ ColumnLayout {
                         || Number(rangeEndField.text) <= clipListRoot.appBackend.projectDuration))
             )
             onClicked: {
-                if (clipListRoot.appBackend) {
+                if (clipListRoot.appBackend && clipListRoot.commitPendingEdits()) {
                     if (clipSourceCombo.currentValue === "range") {
                         clipListRoot.appBackend.shortVideo.addShortVideoClipByRange(
                             Number(rangeStartField.text), Number(rangeEndField.text))
@@ -135,12 +142,54 @@ ColumnLayout {
             id: clipItem
             required property int index
             required property var clipData
+            property bool committingTimeFields: false
             objectName: "shortModeClipItem" + index
             width: clipListView.width
             height: 174
             color: clipListRoot.selectedIndex === index ? "#21262D" : "#161B22"
             border.color: clipListRoot.selectedIndex === index ? "#6366F1" : "#30363D"
             radius: 8
+
+            function commitTimeFields() {
+                if (clipItem.committingTimeFields)
+                    return true
+                var startEdited = startTimeField.draftEdited
+                var endEdited = endTimeField.draftEdited
+                if (!startEdited && !endEdited) {
+                    if (clipListRoot.activeTimeDelegate === clipItem)
+                        clipListRoot.activeTimeDelegate = null
+                    return true
+                }
+                if ((startEdited && !startTimeField.draftAcceptable)
+                        || (endEdited && !endTimeField.draftAcceptable))
+                    return false
+                var changes = {}
+                if (startEdited) changes.start = Number(startTimeField.draftText)
+                if (endEdited) changes.end = Number(endTimeField.draftText)
+                clipItem.committingTimeFields = true
+                try {
+                    startTimeField.draftEdited = false
+                    endTimeField.draftEdited = false
+                    if (clipListRoot.activeTimeDelegate === clipItem)
+                        clipListRoot.activeTimeDelegate = null
+                    startTimeField.focus = false
+                    endTimeField.focus = false
+                    var accepted = clipListRoot.appBackend
+                        && clipListRoot.appBackend.shortVideo.updateShortVideoClip(clipItem.index, changes)
+                    if (!accepted) {
+                        startTimeField.text = Number(clipItem.clipData.start).toFixed(3)
+                        endTimeField.text = Number(clipItem.clipData.end).toFixed(3)
+                    }
+                    return accepted
+                } finally {
+                    clipItem.committingTimeFields = false
+                }
+            }
+
+            Component.onDestruction: {
+                if (clipListRoot.activeTimeDelegate === clipItem)
+                    clipListRoot.activeTimeDelegate = null
+            }
 
             MouseArea {
                 anchors.fill: parent
@@ -184,16 +233,30 @@ ColumnLayout {
                             Layout.preferredWidth: 82
                             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                             text: Number(clipItem.clipData.start).toFixed(3)
+                            property bool draftEdited: false
+                            property string draftText: ""
+                            property bool draftAcceptable: true
+                            onTextEdited: {
+                                draftEdited = true
+                                draftText = text
+                                draftAcceptable = acceptableInput
+                                clipListRoot.activeTimeDelegate = clipItem
+                            }
                             onAcceptableInputChanged: {
+                                if (draftEdited) draftAcceptable = acceptableInput
                                 if (activeFocus)
                                     clipListRoot.activeTimeInputIncomplete = !acceptableInput
                             }
                             onActiveFocusChanged: clipListRoot.activeTimeInputIncomplete = activeFocus && !acceptableInput
                             onEditingFinished: {
-                                var accepted = clipListRoot.appBackend
-                                    && clipListRoot.appBackend.shortVideo.updateShortVideoClip(index, {"start": Number(text)})
-                                if (!accepted) text = Number(clipItem.clipData.start).toFixed(3)
-                                focus = false
+                                if (clipItem.committingTimeFields) return
+                                if (!draftEdited && activeFocus
+                                        && Number(text) !== Number(clipItem.clipData.start)) {
+                                    draftEdited = true
+                                    draftText = text
+                                    draftAcceptable = acceptableInput
+                                }
+                                clipItem.commitTimeFields()
                             }
                             Binding {
                                 target: startTimeField
@@ -209,16 +272,30 @@ ColumnLayout {
                             Layout.preferredWidth: 82
                             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                             text: Number(clipItem.clipData.end).toFixed(3)
+                            property bool draftEdited: false
+                            property string draftText: ""
+                            property bool draftAcceptable: true
+                            onTextEdited: {
+                                draftEdited = true
+                                draftText = text
+                                draftAcceptable = acceptableInput
+                                clipListRoot.activeTimeDelegate = clipItem
+                            }
                             onAcceptableInputChanged: {
+                                if (draftEdited) draftAcceptable = acceptableInput
                                 if (activeFocus)
                                     clipListRoot.activeTimeInputIncomplete = !acceptableInput
                             }
                             onActiveFocusChanged: clipListRoot.activeTimeInputIncomplete = activeFocus && !acceptableInput
                             onEditingFinished: {
-                                var accepted = clipListRoot.appBackend
-                                    && clipListRoot.appBackend.shortVideo.updateShortVideoClip(index, {"end": Number(text)})
-                                if (!accepted) text = Number(clipItem.clipData.end).toFixed(3)
-                                focus = false
+                                if (clipItem.committingTimeFields) return
+                                if (!draftEdited && activeFocus
+                                        && Number(text) !== Number(clipItem.clipData.end)) {
+                                    draftEdited = true
+                                    draftText = text
+                                    draftAcceptable = acceptableInput
+                                }
+                                clipItem.commitTimeFields()
                             }
                             Binding {
                                 target: endTimeField
@@ -239,9 +316,10 @@ ColumnLayout {
                     textRole: "label"
                     valueRole: "value"
                     enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                        && !clipListRoot.activeTimeInputIncomplete
                     currentIndex: clipListRoot.indexForFit(clipItem.clipData.fit)
                     onActivated: function(_controlIndex) {
-                        if (clipListRoot.appBackend) {
+                        if (clipListRoot.appBackend && clipListRoot.commitPendingEdits()) {
                             clipListRoot.appBackend.shortVideo.updateShortVideoClip(
                                 clipItem.index,
                                 {"fit": fitCombo.currentValue}
@@ -255,9 +333,10 @@ ColumnLayout {
                     Button {
                         objectName: "shortModeMoveUpButton" + index
                         text: "▲"
-                        enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running && index > 0
+                        enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                            && !clipListRoot.activeTimeInputIncomplete && index > 0
                         onClicked: {
-                            if (clipListRoot.appBackend) {
+                            if (clipListRoot.appBackend && clipListRoot.commitPendingEdits()) {
                                 clipListRoot.appBackend.shortVideo.moveShortVideoClip(index, index - 1)
                             }
                         }
@@ -266,9 +345,10 @@ ColumnLayout {
                         objectName: "shortModeMoveDownButton" + index
                         text: "▼"
                         enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                            && !clipListRoot.activeTimeInputIncomplete
                             && index < clipListView.count - 1
                         onClicked: {
-                            if (clipListRoot.appBackend) {
+                            if (clipListRoot.appBackend && clipListRoot.commitPendingEdits()) {
                                 clipListRoot.appBackend.shortVideo.moveShortVideoClip(index, index + 2)
                             }
                         }
@@ -279,8 +359,9 @@ ColumnLayout {
                     objectName: "shortModeDeleteButton" + index
                     text: "✕"
                     enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
+                        && !clipListRoot.activeTimeInputIncomplete
                     onClicked: {
-                        if (clipListRoot.appBackend) {
+                        if (clipListRoot.appBackend && clipListRoot.commitPendingEdits()) {
                             clipListRoot.appBackend.shortVideo.removeShortVideoClip(index)
                         }
                     }

@@ -336,12 +336,17 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_background_color_survives_volume_change_before_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_bgm_time_survives_volume_change_before_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_initialization_is_locked_during_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_reorder_waits_for_incomplete_time
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_time_is_saved_before_deleting_another_clip
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_time_stays_with_clip_when_reordered_before_return
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_time_survives_settings_change_before_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_background_color_dialog_applies_selected_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_saves_bgm_time_typed_without_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_saves_clip_time_typed_without_return
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_rejects_incomplete_color_after_focus_moves
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_waits_for_incomplete_background_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_export_waits_for_incomplete_clip_time_and_retries
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_incomplete_clip_time_stays_visible_after_settings_change
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_clip_mutation_controls_dispatch_runtime_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_fit_combo_updates_its_delegate_clip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_gui_adds_direct_range_clip_when_segments_exist

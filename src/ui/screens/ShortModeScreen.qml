@@ -54,12 +54,16 @@ Item {
             return false
         }
         // qmllint enable missing-property
+        if (!clipList.commitPendingEdits()) {
+            shortRoot.inputValidationMessage = "クリップの時刻を保存できませんでした"
+            return false
+        }
         if (!settingsPanel.commitPendingEdits()) {
             shortRoot.inputValidationMessage = "ショート設定を保存できませんでした"
             return false
         }
         shortRoot.inputValidationMessage = ""
-        // 編集中の時刻やBGM設定の onEditingFinished を、画面遷移より先に実行する。
+        // 範囲指定などの入力欄の onEditingFinished を、画面遷移より先に実行する。
         shortRoot.forceActiveFocus()
         return true
     }

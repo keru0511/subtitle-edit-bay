@@ -18,8 +18,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QCoreApplication, QMetaObject, QObject, QPoint, QPointF, QProcess, Qt, QUrl
+from PySide6.QtGui import QInputMethodEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -4198,6 +4198,46 @@ Window {
 
     def test_workspace_caption_key_input_is_committed_before_save(self) -> None:
         self._assert_caption_input_committed_before_action(expanded=False, action="save")
+
+    def _assert_committed_ime_text_is_saved(self, *, expanded: bool) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+            save_button = self._quick_item(window, "saveProjectButton")
+        else:
+            caption = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+            save_button = self._quick_item(window, "workspaceSubtitleSaveButton")
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
+            self.app.processEvents()
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(caption.property("preeditText"), "日本")
+            self.assertEqual(caption.property("text"), "a")
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+
+            commit = QInputMethodEvent("", [])
+            commit.setCommitString("日本語")
+            QCoreApplication.sendEvent(caption, commit)
+            self.app.processEvents()
+            self.assertFalse(caption.property("inputMethodComposing"))
+            self.assertEqual(caption.property("text"), "a日本語")
+            self._click(window, save_button)
+
+        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+
+    def test_workspace_ime_committed_text_is_saved(self) -> None:
+        self._assert_committed_ime_text_is_saved(expanded=False)
+
+    def test_expanded_ime_committed_text_is_saved(self) -> None:
+        self._assert_committed_ime_text_is_saved(expanded=True)
 
     def test_workspace_caption_key_input_is_committed_before_render(self) -> None:
         self._assert_caption_input_committed_before_action(expanded=False, action="render")

@@ -32,6 +32,11 @@ ColumnLayout {
             || clipListRoot.activeTimeDelegate.commitTimeFields()
     }
 
+    function refreshIncompleteTimeInput() {
+        var delegate = clipListRoot.activeTimeDelegate
+        clipListRoot.activeTimeInputIncomplete = Boolean(delegate && delegate.hasIncompleteTimeDrafts())
+    }
+
     GridLayout {
         Layout.fillWidth: true
         columns: 4
@@ -150,6 +155,11 @@ ColumnLayout {
             border.color: clipListRoot.selectedIndex === index ? "#6366F1" : "#30363D"
             radius: 8
 
+            function hasIncompleteTimeDrafts() {
+                return (startTimeField.draftEdited && !startTimeField.draftAcceptable)
+                    || (endTimeField.draftEdited && !endTimeField.draftAcceptable)
+            }
+
             function commitTimeFields() {
                 if (clipItem.committingTimeFields)
                     return true
@@ -158,6 +168,7 @@ ColumnLayout {
                 if (!startEdited && !endEdited) {
                     if (clipListRoot.activeTimeDelegate === clipItem)
                         clipListRoot.activeTimeDelegate = null
+                    clipListRoot.refreshIncompleteTimeInput()
                     return true
                 }
                 if ((startEdited && !startTimeField.draftAcceptable)
@@ -172,6 +183,7 @@ ColumnLayout {
                     endTimeField.draftEdited = false
                     if (clipListRoot.activeTimeDelegate === clipItem)
                         clipListRoot.activeTimeDelegate = null
+                    clipListRoot.refreshIncompleteTimeInput()
                     startTimeField.focus = false
                     endTimeField.focus = false
                     var accepted = clipListRoot.appBackend
@@ -189,6 +201,7 @@ ColumnLayout {
             Component.onDestruction: {
                 if (clipListRoot.activeTimeDelegate === clipItem)
                     clipListRoot.activeTimeDelegate = null
+                clipListRoot.refreshIncompleteTimeInput()
             }
 
             MouseArea {
@@ -241,13 +254,13 @@ ColumnLayout {
                                 draftText = text
                                 draftAcceptable = acceptableInput
                                 clipListRoot.activeTimeDelegate = clipItem
+                                clipListRoot.refreshIncompleteTimeInput()
                             }
                             onAcceptableInputChanged: {
                                 if (draftEdited) draftAcceptable = acceptableInput
-                                if (activeFocus)
-                                    clipListRoot.activeTimeInputIncomplete = !acceptableInput
+                                clipListRoot.refreshIncompleteTimeInput()
                             }
-                            onActiveFocusChanged: clipListRoot.activeTimeInputIncomplete = activeFocus && !acceptableInput
+                            onActiveFocusChanged: clipListRoot.refreshIncompleteTimeInput()
                             onEditingFinished: {
                                 if (clipItem.committingTimeFields) return
                                 if (!draftEdited && activeFocus
@@ -261,7 +274,9 @@ ColumnLayout {
                             Binding {
                                 target: startTimeField
                                 property: "text"
-                                value: Number(clipItem.clipData.start).toFixed(3)
+                                value: startTimeField.draftEdited
+                                    ? startTimeField.draftText
+                                    : Number(clipItem.clipData.start).toFixed(3)
                                 when: !startTimeField.activeFocus
                             }
                         }
@@ -280,13 +295,13 @@ ColumnLayout {
                                 draftText = text
                                 draftAcceptable = acceptableInput
                                 clipListRoot.activeTimeDelegate = clipItem
+                                clipListRoot.refreshIncompleteTimeInput()
                             }
                             onAcceptableInputChanged: {
                                 if (draftEdited) draftAcceptable = acceptableInput
-                                if (activeFocus)
-                                    clipListRoot.activeTimeInputIncomplete = !acceptableInput
+                                clipListRoot.refreshIncompleteTimeInput()
                             }
-                            onActiveFocusChanged: clipListRoot.activeTimeInputIncomplete = activeFocus && !acceptableInput
+                            onActiveFocusChanged: clipListRoot.refreshIncompleteTimeInput()
                             onEditingFinished: {
                                 if (clipItem.committingTimeFields) return
                                 if (!draftEdited && activeFocus
@@ -300,7 +315,9 @@ ColumnLayout {
                             Binding {
                                 target: endTimeField
                                 property: "text"
-                                value: Number(clipItem.clipData.end).toFixed(3)
+                                value: endTimeField.draftEdited
+                                    ? endTimeField.draftText
+                                    : Number(clipItem.clipData.end).toFixed(3)
                                 when: !endTimeField.activeFocus
                             }
                         }

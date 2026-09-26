@@ -9194,6 +9194,91 @@ Window {
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
         self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
 
+    def test_short_incomplete_clip_time_blocks_export_after_focus_moves(self) -> None:
+        path = self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="ショートクリップの編集欄",
+        )
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_Backspace)
+        self.assertFalse(start_field.property("acceptableInput"))
+
+        bgm_start = self._quick_item(window, "shortModeBgmStartField")
+        self._click(window, bgm_start)
+        self.assertTrue(bgm_start.hasActiveFocus())
+        start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
+        self.assertEqual(start_field.property("text"), "")
+        self.assertFalse(self._quick_item(window, "shortModeExportButton").property("enabled"))
+        self.assertFalse(self._quick_item(window, "shortModeBackButton").property("enabled"))
+
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        self._replace_focused_time(window, start_field, "0.500")
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+
+    def test_short_incomplete_clip_time_survives_list_scroll(self) -> None:
+        path = self._load_project(
+            segments=[
+                {
+                    "id": f"recycled-short-{index}",
+                    "start": float(index * 2),
+                    "end": float(index * 2 + 1),
+                    "text": f"clip {index}",
+                    "speaker": "Speaker_Alice",
+                }
+                for index in range(20)
+            ]
+        )
+        self.app.initializeShortVideoClips()
+        self.assertEqual(len(self.app.shortVideoClips), 20)
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="先頭のショートクリップ編集欄",
+        )
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_Backspace)
+        self.assertEqual(start_field.property("text"), "")
+        bgm_start = self._quick_item(window, "shortModeBgmStartField")
+        self._click(window, bgm_start)
+        self.assertTrue(bgm_start.hasActiveFocus())
+
+        self.gui.set_property(
+            clip_list,
+            "contentY",
+            max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+        )
+        self.assertGreater(float(clip_list.property("contentY")), 0)
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField19") is not None,
+            description="末尾のショートクリップ",
+        )
+        self.assertFalse(self._quick_item(window, "shortModeExportButton").property("enabled"))
+        self.assertFalse(self._quick_item(window, "shortModeBackButton").property("enabled"))
+
+        self.gui.set_property(clip_list, "contentY", 0)
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
+            description="先頭クリップの再表示",
+        )
+        start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
+        self.assertEqual(start_field.property("text"), "")
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        self._replace_focused_time(window, start_field, "0.500")
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+
     def test_short_clip_time_survives_settings_change_before_return(self) -> None:
         path = self._load_project()
         self.app.initializeShortVideoClips()

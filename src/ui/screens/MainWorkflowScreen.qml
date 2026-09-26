@@ -1,6 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQml.Models
 import QtQuick.Controls
 import QtQuick.Dialogs
 import "../components"
@@ -208,9 +207,9 @@ ApplicationWindow {
             "speech_padding_seconds": Number(speechPaddingField.text),
             "speech_threshold_db": String(Number(speechThresholdField.text)) + "dB",
             "postprocess_workers": workersSpin.value,
-            "reference_audio": root.appBackend.speakers.length > 0 ? referenceCombo.currentValue : "",
-            "reference_track": root.appBackend.audioTracks.length > 0 ? trackCombo.currentValue : "",
-            "alignment_offset_adjustment": Number(manualOffsetField.text || 0)
+            "reference_audio": root.appBackend.speakers.length > 0 ? sourcePopup.referenceAudioValue : "",
+            "reference_track": root.appBackend.audioTracks.length > 0 ? sourcePopup.referenceTrackValue : "",
+            "alignment_offset_adjustment": Number(sourcePopup.manualOffsetText || 0)
         }
     }
 
@@ -263,21 +262,6 @@ ApplicationWindow {
         return stageLabel + " · " + statusLabel
     }
 
-    function alignmentStatusLabel(value) {
-        var labels = {
-            "未解析": "未解析",
-            "running": "調整中",
-            "success": "調整完了",
-            "completed": "調整完了",
-            "error": "調整に失敗しました"
-        }
-        var text = String(value || "")
-        var key = text.toLowerCase()
-        if (labels[key] !== undefined)
-            return labels[key]
-        return /^[\u3040-\u30ff\u3400-\u9fff]/.test(text) ? text : "結果を確認中"
-    }
-
     function formatBytes(value) {
         var bytes = Number(value || 0)
         if (!isFinite(bytes) || bytes <= 0)
@@ -309,7 +293,7 @@ ApplicationWindow {
         workersSpin.value = Number(coalesceSetting(value.postprocess_workers, 4))
         modelCombo.currentIndex = Math.max(0, modelCombo.find(coalesceSetting(value.model, "large-v3")))
         deviceCombo.currentIndex = Math.max(0, deviceCombo.find(coalesceSetting(value.device, "cuda")))
-        manualOffsetField.text = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
+        sourcePopup.manualOffsetText = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function toggleSettingsPopup() {
         if (advancedSettingsPopup.opened)
@@ -1705,189 +1689,13 @@ ApplicationWindow {
       }
   }
 
-  Popup {
-        objectName: "sourcePopup"
+    SourceSettingsPopup {
         id: sourcePopup
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(620, Overlay.overlay.width - 32)
-        height: Math.min(680, Overlay.overlay.height - 32)
-        modal: true; focus: true; closePolicy: Popup.CloseOnEscape
-        onOpened: root.appBackend.beginSourceRelink()
-        onClosed: root.appBackend.finishSourceRelink()
-        background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
-        ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
-            RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
-            ScrollView {
-                id: sourceSettingsScrollView
-                objectName: "sourceSettingsScrollView"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                contentHeight: Math.max(
-                    sourceSettingsContent.implicitHeight,
-                    sourceSettingsContent.childrenRect.y + sourceSettingsContent.childrenRect.height
-                )
-                clip: true
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                ScrollBar.vertical: ScrollBar {
-                    objectName: "sourceSettingsVerticalScrollBar"
-                    policy: ScrollBar.AsNeeded
-                }
-                ColumnLayout {
-                    id: sourceSettingsContent
-                    objectName: "sourceSettingsContent"
-                    width: sourceSettingsScrollView.availableWidth
-                    spacing: 12
-            Rectangle {
-                objectName: "sourceDependencyWarning"
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? 62 : 0
-                visible: !root.appBackend.dependencyStatus.ready
-                radius: 8
-                color: "#30201C"
-                border.color: root.danger
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 9
-                    Text {
-                        Layout.fillWidth: true
-                        text: "不足ツール: " + root.appBackend.dependencyStatus.missing.join(", ")
-                        color: root.textPrimary
-                        font.family: "Yu Gothic UI"
-                        font.pixelSize: 10
-                        wrapMode: Text.Wrap
-                    }
-                    SmallButton { text: "再確認"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
-                }
-            }
-            Rectangle {
-                objectName: "sourcePopupDropTarget"
-                Layout.fillWidth: true
-                Layout.preferredHeight: 68
-                radius: 9
-                color: sourcePopupDropArea.containsDrag ? "#263326" : root.raised
-                border.color: sourcePopupDropArea.containsDrag ? root.acid : root.border
-                border.width: sourcePopupDropArea.containsDrag ? 2 : 1
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 3
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画・話者音声をここにドロップ"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画1件と複数の音声を自動判別します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                }
-                DropArea {
-                    id: sourcePopupDropArea
-                    anchors.fill: parent
-                    enabled: !root.appBackend.running
-                    onEntered: function(drag) { drag.accepted = drag.hasUrls }
-                    onDropped: function(drop) { root.importSourceDrop(drop) }
-                }
-            }
-            PanelTitle { text: "動画" }
-            RowLayout { Layout.fillWidth: true; Text { objectName: "sourceVideoPathText"; Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
-            PanelTitle { text: "話者音声" }
-            ListView {
-                id: sourceAudioList
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(48, Math.min(124, contentHeight))
-                clip: true; spacing: 5; model: root.appBackend.speakers
-                delegate: Rectangle { id: sourceAudioDelegate; required property int index; required property var modelData; width: sourceAudioList.width; height: 38; radius: 7; color: root.raised
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: 7
-                        Button {
-                            objectName: "sourceSpeakerColorButton"
-                            Layout.preferredWidth: 24
-                            Layout.preferredHeight: 24
-                            enabled: !root.appBackend.running
-                            onClicked: root.openSpeakerColorPicker("source", sourceAudioDelegate.index, sourceAudioDelegate.modelData.color)
-                            contentItem: Rectangle { radius: 4; color: sourceAudioDelegate.modelData.color; border.color: root.textPrimary }
-                            background: Rectangle { radius: 5; color: "transparent"; border.color: root.border }
-                            ToolTip.visible: hovered
-                            ToolTip.text: "字幕色を変更"
-                        }
-                        Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle }
-                        ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) }
-                    }
-                }
-            }
-            RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
-            PanelTitle { text: "文字起こし対象と音声同期" }
-            RowLayout {
-                Layout.fillWidth: true
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Text { text: "動画音声トラック"; color: root.textMuted; font.pixelSize: 9 }
-                    ComboBox {
-                        id: trackCombo
-                        objectName: "videoAudioTrackCombo"
-                        Layout.fillWidth: true
-                        model: root.appBackend.audioTracks
-                        textRole: "label"
-                        valueRole: "selector"
-                    }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Text { text: "同期の基準音声"; color: root.textMuted; font.pixelSize: 9 }
-                    ComboBox {
-                        id: referenceCombo
-                        objectName: "referenceAudioCombo"
-                        Layout.fillWidth: true
-                        model: root.appBackend.speakers
-                        textRole: "file_name"
-                        valueRole: "path"
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { text: "手動補正（秒）"; color: root.textMuted; font.pixelSize: 9 }
-                TimeField {
-                    id: manualOffsetField
-                    objectName: "manualAlignmentOffsetField"
-                    Layout.fillWidth: true
-                    text: "0.000"
-                    validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 }
-                }
-                SmallButton {
-                    objectName: "analyzeAlignmentButton"
-                    text: root.appBackend.alignmentBusy ? "調整中" : "音声のずれを自動調整"
-                    enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
-                    onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
-                }
-            }
-            Text {
-                Layout.fillWidth: true
-                text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status)
-                    + (root.appBackend.alignmentResult.offset !== undefined
-                        ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒"
-                        : "")
-                color: root.textMuted
-                font.pixelSize: 9
-                font.family: "Yu Gothic UI"
-            }
-            PanelTitle { text: "プロジェクト保存先" }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { objectName: "projectSavePathText"; Layout.fillWidth: true; text: root.appBackend.projectSavePath || "動画の選択後に決まります"; color: root.textMuted; elide: Text.ElideMiddle }
-                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.browseProjectSaveAs() }
-            }
-            PanelTitle { text: "完成動画の出力先" }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { objectName: "videoOutputDirectoryText"; Layout.fillWidth: true; text: root.appBackend.videoOutputDirectory || "書き出すときに選択できます"; color: root.textMuted; elide: Text.ElideMiddle }
-                SmallButton { objectName: "videoOutputDirectoryButton"; text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() }
-            }
-            Item { Layout.fillWidth: true; Layout.preferredHeight: 8 }
-                }
-            }
-            RowLayout {
-                objectName: "sourcePopupFooter"
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                Button { objectName: "sourceRelinkButton"; text: "素材を再指定"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() }
-                Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() }
-            }
-        }
+        appBackend: root.appBackend
+        colors: root.subtitleEditorColors
+        onSourceDropped: function(drop) { root.importSourceDrop(drop) }
+        onSpeakerColorRequested: function(index, color) { root.openSpeakerColorPicker("source", index, color) }
+        onSaveAsRequested: root.browseProjectSaveAs()
     }
 
     Rectangle {

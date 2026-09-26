@@ -523,6 +523,70 @@ Window {
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
 
+    def test_source_settings_popup_works_without_main_workflow_context(self) -> None:
+        path, _, _ = self._make_project()
+        self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self.app.autosave_timer.stop()
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentSourceSettings.qml"
+        qml.write_text(
+            'import QtQuick\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1220
+    height: 760
+    visible: true
+    property var appBackend: backend
+    property int saveAsRequests: 0
+    property int pickedSpeakerIndex: -1
+    property string pickedSpeakerColor: ""
+    function openSourceSettings() { sourcePopup.open() }
+    SourceSettingsPopup {
+        id: sourcePopup
+        appBackend: host.appBackend
+        colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+            textPrimary: "#F8FAFC", textMuted: "#94A3B8", acid: "#6366F1", amber: "#F59E0B", danger: "#EF4444"})
+        onSaveAsRequested: host.saveAsRequests += 1
+        onSpeakerColorRequested: function(index, color) {
+            host.pickedSpeakerIndex = index
+            host.pickedSpeakerColor = color
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        popup = window.findChild(QObject, "sourcePopup")
+        self.assertIsNotNone(popup)
+        self.assertFalse(self.app._relinking_project_sources)
+        for _ in range(2):
+            self.assertTrue(QMetaObject.invokeMethod(window, "openSourceSettings"))
+            self.gui.wait_until(
+                lambda: popup.property("visible") and self.app._relinking_project_sources,
+                description="素材設定の再指定開始",
+            )
+            self.assertEqual(popup.property("manualOffsetText"), "0.000")
+            self.assertEqual(popup.property("referenceAudioValue"), self.app.speakers[0]["path"])
+            self.assertEqual(popup.property("referenceTrackValue"), self.app.audioTracks[0]["selector"])
+            self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "projectSaveAsButton"), "clicked"))
+            self.assertEqual(window.property("saveAsRequests"), _ + 1)
+            scroll_view = self._quick_item(window, "sourceSettingsScrollView")
+            scroll_view.property("contentItem").setProperty("contentY", 180.0)
+            audio_list = self._quick_item(window, "sourceAudioList")
+            self.assertEqual(audio_list.property("count"), 1)
+            color_button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
+            self.assertTrue(QMetaObject.invokeMethod(color_button, "clicked"))
+            self.assertEqual(window.property("pickedSpeakerIndex"), 0)
+            self.assertEqual(window.property("pickedSpeakerColor"), self.app.speakers[0]["color"])
+            self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "sourceDoneButton"), "clicked"))
+            self.gui.wait_until(
+                lambda: not popup.property("visible") and not self.app._relinking_project_sources,
+                description="素材設定の再指定終了",
+            )
+        self.assertTrue(self.app.projectLoaded)
+
     def test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription(self) -> None:
         video = self.root / "multi-track.mkv"
         video.write_bytes(b"video")

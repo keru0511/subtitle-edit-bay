@@ -217,6 +217,10 @@ files = [
   "scripts/ci_impact.py",
   "scripts/release_readiness.py",
   "tests/test_ci_impact.py",
+  "src/assemble_video.py",
+  "tests/test_assemble_video.py",
+  "src/workflow_actions.py",
+  "tests/test_workflow_actions.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -424,6 +428,10 @@ module = [
   "scripts.ci_impact",
   "scripts.release_readiness",
   "tests.test_ci_impact",
+  "src.assemble_video",
+  "tests.test_assemble_video",
+  "src.workflow_actions",
+  "tests.test_workflow_actions",
 ]
 strict = true
 disallow_any_explicit = true

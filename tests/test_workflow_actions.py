@@ -8,8 +8,12 @@ from unittest.mock import patch
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import create_project, load_project, resolve_render_output_path, save_project
 from src.workflow_actions import (
-    prepare_render_request, render_capability, render_output_path,
-    transcription_capability, validate_render_output,
+    ActionCapability,
+    prepare_render_request,
+    render_capability,
+    render_output_path,
+    transcription_capability,
+    validate_render_output,
 )
 from tests.typed_case import TypedTestCase
 
@@ -23,15 +27,29 @@ class WorkflowActionTests(TypedTestCase):
         self.video.write_bytes(b"fixture")
         self.path = str(self.root / "project.subtitle-project.json")
         self.project = create_project(
-            video_path=self.video, output_dir=self.root, segments=[], duration_seconds=2,
+            video_path=self.video,
+            output_dir=self.root,
+            segments=[],
+            duration_seconds=2,
         )
-        self.project["short_video"] = {"enabled": True, "clips": [{"start": 0, "end": 1}]}
+        self.short_video: dict[object, object] = {"enabled": True, "clips": [{"start": 0, "end": 1}]}
+        self.project["short_video"] = self.short_video
         self.dependencies = RuntimeDependencyStatus(True, True, False, cuda=False, nvenc=False)
 
-    def transcription(self, dependencies, *, device="cpu", **kwargs):
+    def transcription(
+        self,
+        dependencies: RuntimeDependencyStatus,
+        *,
+        device: str = "cpu",
+        running: bool = False,
+    ) -> ActionCapability:
         return transcription_capability(
-            dependencies, device=device, has_video=True, has_audio=True,
-            project_path=self.path, **kwargs,
+            dependencies,
+            device=device,
+            has_video=True,
+            has_audio=True,
+            project_path=self.path,
+            running=running,
         )
 
     def test_whisperx_and_cuda_only_gate_the_corresponding_transcription(self) -> None:
@@ -48,12 +66,17 @@ class WorkflowActionTests(TypedTestCase):
                     with self.subTest(short=short, cuda=cuda, nvenc=nvenc):
                         request = prepare_render_request(
                             replace(self.dependencies, cuda=cuda, nvenc=nvenc),
-                            self.project, self.path, self.root / "config.json", short=short,
+                            self.project,
+                            self.path,
+                            self.root / "config.json",
+                            short=short,
                         )
                         self.assertEqual(request.video_codec, codec)
                         self.assertEqual(request.job, "render_short" if short else "render")
                         self.assertIn("render-short" if short else "render", request.command)
-                        self.assertEqual(request.command[request.command.index("--output") + 1], str(request.output_path))
+                        self.assertEqual(
+                            request.command[request.command.index("--output") + 1], str(request.output_path)
+                        )
 
     def test_ffmpeg_and_ffprobe_are_required_for_both_artifacts(self) -> None:
         for short in (False, True):
@@ -62,16 +85,19 @@ class WorkflowActionTests(TypedTestCase):
                     with self.assertRaisesRegex(ValueError, missing):
                         prepare_render_request(
                             replace(self.dependencies, **{missing: False}),
-                            self.project, self.path, "config.json", short=short,
+                            self.project,
+                            self.path,
+                            "config.json",
+                            short=short,
                         )
 
     def test_short_requires_clips_but_normal_does_not(self) -> None:
-        self.project["short_video"]["clips"] = []
+        self.short_video["clips"] = []
         self.assertTrue(render_capability(self.dependencies, self.project, self.path).enabled)
         self.assertFalse(render_capability(self.dependencies, self.project, self.path, short=True).enabled)
 
     def test_short_render_rejects_an_ambiguous_output_timeline_basis(self) -> None:
-        self.project["short_video"]["time_basis"] = "output"
+        self.short_video["time_basis"] = "output"
 
         capability = render_capability(
             self.dependencies,
@@ -97,10 +123,22 @@ class WorkflowActionTests(TypedTestCase):
     def test_missing_project_video_and_busy_state_prevent_start(self) -> None:
         self.assertFalse(render_capability(self.dependencies, None, "").enabled)
         for short in (False, True):
-            self.assertFalse(render_capability(self.dependencies, self.project, self.path, short=short, running=True).enabled)
+            self.assertFalse(
+                render_capability(self.dependencies, self.project, self.path, short=short, running=True).enabled
+            )
         self.video.unlink()
         self.assertFalse(render_capability(self.dependencies, self.project, self.path).enabled)
         self.assertFalse(self.transcription(replace(self.dependencies, whisperx=True), running=True).enabled)
+
+    def test_malformed_project_sections_do_not_crash_preflight(self) -> None:
+        self.project["video"] = None
+        self.assertFalse(render_capability(self.dependencies, self.project, self.path).enabled)
+        self.project["video"] = {"path": str(self.video)}
+        self.project["audio_sources"] = [None]
+        self.assertFalse(render_capability(self.dependencies, self.project, self.path).enabled)
+        self.project["audio_sources"] = []
+        self.project["short_video"] = None
+        self.assertFalse(render_capability(self.dependencies, self.project, self.path, short=True).enabled)
 
     def test_unset_export_directory_roundtrips_and_only_blocks_render(self) -> None:
         project = create_project(video_path=self.video, segments=[])

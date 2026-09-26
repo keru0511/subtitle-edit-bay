@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import tempfile
 import unittest
@@ -41,30 +40,36 @@ class AssembleVideoTests(TypedTestCase):
     def test_probe_video_frame_rate_from_avg_frame_rate(self) -> None:
         with mock.patch("src.assemble_video.subprocess.run") as run:
             run.return_value = mock.MagicMock(
-                stdout=json.dumps({"streams": [{"avg_frame_rate": "60000/1001", "r_frame_rate": "0/0"}]})
+                stdout='{"streams": [{"avg_frame_rate": "60000/1001", "r_frame_rate": "0/0"}]}'
             )
             self.assertEqual(probe_video_frame_rate("/tmp/video.mkv"), "60000/1001")
 
     def test_probe_video_frame_rate_falls_back_to_r_frame_rate(self) -> None:
         with mock.patch("src.assemble_video.subprocess.run") as run:
             run.return_value = mock.MagicMock(
-                stdout=json.dumps({"streams": [{"avg_frame_rate": "0/0", "r_frame_rate": "30000/1001"}]})
+                stdout='{"streams": [{"avg_frame_rate": "0/0", "r_frame_rate": "30000/1001"}]}'
             )
             self.assertEqual(probe_video_frame_rate("/tmp/video.mkv"), "30000/1001")
 
     def test_probe_video_frame_rate_raises_without_video_stream(self) -> None:
         with mock.patch("src.assemble_video.subprocess.run") as run:
-            run.return_value = mock.MagicMock(stdout=json.dumps({"streams": []}))
+            run.return_value = mock.MagicMock(stdout='{"streams": []}')
             with self.assertRaises(ValueError):
                 probe_video_frame_rate("/tmp/video.mkv")
 
     def test_probe_video_frame_rate_raises_for_invalid_fractions(self) -> None:
         with mock.patch("src.assemble_video.subprocess.run") as run:
-            run.return_value = mock.MagicMock(
-                stdout=json.dumps({"streams": [{"avg_frame_rate": "0/0", "r_frame_rate": "0/0"}]})
-            )
+            run.return_value = mock.MagicMock(stdout='{"streams": [{"avg_frame_rate": "0/0", "r_frame_rate": "0/0"}]}')
             with self.assertRaises(ValueError):
                 probe_video_frame_rate("/tmp/video.mkv")
+
+    def test_probe_video_frame_rate_rejects_non_stream_payload(self) -> None:
+        with mock.patch("src.assemble_video.subprocess.run") as run:
+            for payload in ("[]", '{"streams": "invalid"}', '{"streams": [null]}'):
+                with self.subTest(payload=payload):
+                    run.return_value = mock.MagicMock(stdout=payload)
+                    with self.assertRaises(ValueError):
+                        probe_video_frame_rate("/tmp/video.mkv")
 
     def test_probe_video_frame_rate_raises_on_subprocess_error(self) -> None:
         with mock.patch("src.assemble_video.subprocess.run") as run:

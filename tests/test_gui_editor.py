@@ -4805,11 +4805,8 @@ Window {
         self._click(window, self._quick_item(window, "editorModeButton-cut"))
         settings = self._quick_item(window, "workspaceCutSettings")
         timeline = self._quick_item(window, "workspaceCutTimeline")
-        selected_cut = self._quick_visual_item(
-            self._quick_item(window, "workspaceCutEditor"),
-            f"workspaceCutRange-{cut_ids[0]}",
-        )
-        self._click(window, selected_cut)
+        select_cut = self._quick_visual_item(settings, f"workspaceCutSelectButton-{cut_ids[0]}")
+        self._click(window, select_cut)
         self.assertEqual(window.property("selectedCutId"), cut_ids[0])
 
         with patch.object(self.app.autosave_timer, "start"):
@@ -7041,6 +7038,18 @@ Window {
                 self.assertGreater(player.property("position"), 2500)
                 self.assertLess(player.property("position"), 3200)
                 self.assertEqual(editor_state.property("positionMs"), player.property("position"))
+
+                playback_button = self._quick_item(window, "editorPlaybackButton")
+                self._click(window, playback_button)
+                self.gui.wait_until(
+                    lambda: player.property("playbackState") == QMediaPlayer.PlaybackState.PlayingState,
+                    description="拡大字幕編集での再生開始",
+                )
+                self._click(window, playback_button)
+                self.gui.wait_until(
+                    lambda: player.property("playbackState") == QMediaPlayer.PlaybackState.PausedState,
+                    description="拡大字幕編集での一時停止",
+                )
 
                 zoom_slider = self._quick_item(window, "editorTimelineZoomSlider")
                 self._drag_slider(window, zoom_slider, 0.7)

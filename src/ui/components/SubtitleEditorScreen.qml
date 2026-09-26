@@ -242,6 +242,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             ToolButton {
+                                objectName: "editorPlaybackButton"
                                 text: root.player.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
                                 onClicked: root.player.playbackState === MediaPlayer.PlayingState ? root.player.pause() : root.player.play()
                             }

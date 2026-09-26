@@ -10,6 +10,7 @@ from src.data_boundary import (
     decode_json,
     is_object_iterable,
     is_object_dict,
+    is_object_list,
     is_object_mapping,
     is_object_sequence,
 )
@@ -47,6 +48,8 @@ class DataBoundaryTests(TypedTestCase):
             self.fail("シーケンスとして読み取れる必要があります")
         self.assertEqual(payload[0], 1)
         self.assertIsNone(payload[1])
+        self.assertFalse(is_object_list(payload))
+        self.assertTrue(is_object_list([1, None]))
         self.assertFalse(is_object_sequence(object()))
         self.assertFalse(is_object_mapping(object()))
 

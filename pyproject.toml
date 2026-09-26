@@ -40,9 +40,11 @@ files = [
   "src/gui_workspace_controller.py",
   "tests/test_transcript_cache.py",
   "src/data_boundary.py",
+  "src/channel_presets.py",
   "src/runtime_config.py",
   "src/runtime_config_schema.py",
   "tests/test_data_boundary.py",
+  "tests/test_channel_presets.py",
   "tests/test_runtime_config.py",
   "src/transcribe.py",
   "src/media_probe.py",
@@ -129,6 +131,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
   "src.data_boundary",
+  "src.channel_presets",
   "src.application_logging",
   "src.ai_provider",
   "src.codex_runtime",
@@ -139,6 +142,7 @@ module = [
   "src.runtime_config",
   "src.runtime_config_schema",
   "tests.test_data_boundary",
+  "tests.test_channel_presets",
   "tests.test_runtime_config",
   "src.transcribe",
   "src.media_probe",

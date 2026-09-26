@@ -17,6 +17,11 @@ def is_object_sequence(value: object) -> TypeGuard[Sequence[object]]:
     return isinstance(value, Sequence)
 
 
+def is_object_list(value: object) -> TypeGuard[list[object]]:
+    """JSON配列などの更新可能なリストを、要素型を仮定せずに扱う。"""
+    return isinstance(value, list)
+
+
 def decode_json(text: str) -> object:
     """JSONを未検証の値として受け渡す。構造・値の検証は呼び出し元が行う。"""
     payload: object = json.loads(text)

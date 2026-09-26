@@ -221,6 +221,9 @@ files = [
   "tests/test_assemble_video.py",
   "src/workflow_actions.py",
   "tests/test_workflow_actions.py",
+  "tests/fake_processing_process.py",
+  "scripts/check_unittest_discovery.py",
+  "tests/test_unittest_discovery.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -432,6 +435,9 @@ module = [
   "tests.test_assemble_video",
   "src.workflow_actions",
   "tests.test_workflow_actions",
+  "tests.fake_processing_process",
+  "scripts.check_unittest_discovery",
+  "tests.test_unittest_discovery",
 ]
 strict = true
 disallow_any_explicit = true

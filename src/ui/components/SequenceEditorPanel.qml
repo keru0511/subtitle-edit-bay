@@ -546,11 +546,31 @@ Rectangle {
                                 ? root.accentColor : root.borderColor
                             border.width: root.hoverIndex === clipItem.index ? 2 : 1
 
-                            Drag.active: reorderHandler.active
-                            Drag.source: clipItem
-                            Drag.supportedActions: Qt.MoveAction
-                            Drag.hotSpot.x: width / 2
-                            Drag.hotSpot.y: height / 2
+                            Rectangle {
+                                id: reorderPreview
+                                parent: Overlay.overlay
+                                width: clipItem.width
+                                height: clipItem.height
+                                visible: dragging
+                                z: 100
+                                radius: clipItem.radius
+                                color: root.raisedColor
+                                border.color: root.accentColor
+                                opacity: 0.85
+                                property bool dragging: false
+                                property real originX: 0
+                                property real originY: 0
+                                Drag.active: dragging
+                                Drag.source: clipItem
+                                Drag.supportedActions: Qt.MoveAction
+                                Drag.hotSpot.x: reorderHandler.centroid.pressPosition.x
+                                Drag.hotSpot.y: reorderHandler.centroid.pressPosition.y
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "クリップを移動"
+                                    color: root.textColor
+                                }
+                            }
 
                             TapHandler {
                                 onTapped: {
@@ -565,10 +585,24 @@ Rectangle {
                                 id: reorderHandler
                                 enabled: root.backend && !root.backend.running
                                 target: null
+                                onActiveTranslationChanged: {
+                                    if (active) {
+                                        reorderPreview.x = reorderPreview.originX + activeTranslation.x
+                                        reorderPreview.y = reorderPreview.originY + activeTranslation.y
+                                    }
+                                }
                                 onActiveChanged: {
                                     if (active) {
+                                        var origin = clipItem.mapToItem(reorderPreview.parent, 0, 0)
+                                        reorderPreview.originX = origin.x
+                                        reorderPreview.originY = origin.y
+                                        reorderPreview.x = origin.x + activeTranslation.x
+                                        reorderPreview.y = origin.y + activeTranslation.y
+                                        reorderPreview.dragging = true
                                         root.activeDragClipId = clipItem.clipId
                                     } else {
+                                        reorderPreview.Drag.drop()
+                                        reorderPreview.dragging = false
                                         if (root.activeDragClipId === clipItem.clipId)
                                             root.activeDragClipId = ""
                                         root.hoverIndex = -1

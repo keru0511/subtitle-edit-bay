@@ -1631,6 +1631,53 @@ Window {
         self.assertFalse(busy_enter.isAccepted())
         self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
 
+    def test_source_popup_drop_target_imports_video(self) -> None:
+        video = self.root / "capture.mkv"
+        video.write_bytes(b"video")
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        popup = window.findChild(QObject, "sourcePopup")
+        self.assertTrue(popup.property("visible"))
+        target = self._quick_item(window, "sourcePopupDropArea")
+        self.assertTrue(target.isVisible())
+        self.assertTrue(target.isEnabled())
+        point = target.mapToScene(QPointF(target.width() / 2, target.height() / 2)).toPoint()
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(video.resolve()))])
+
+        with patch.object(self.app, "_probe_audio_tracks"):
+            enter = QDragEnterEvent(
+                point, Qt.DropAction.CopyAction, mime,
+                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+            )
+            QCoreApplication.sendEvent(window, enter)
+            self.assertTrue(enter.isAccepted())
+            self.assertTrue(target.property("containsDrag"))
+            drop = QDropEvent(
+                QPointF(point), Qt.DropAction.CopyAction, mime,
+                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+            )
+            QCoreApplication.sendEvent(window, drop)
+
+        self.assertTrue(drop.isAccepted())
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(target.isEnabled())
+        other_video = self.root / "other.mkv"
+        other_video.write_bytes(b"other video")
+        other_mime = QMimeData()
+        other_mime.setUrls([QUrl.fromLocalFile(str(other_video.resolve()))])
+        busy_enter = QDragEnterEvent(
+            point, Qt.DropAction.CopyAction, other_mime,
+            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+        )
+        QCoreApplication.sendEvent(window, busy_enter)
+        self.assertFalse(busy_enter.isAccepted())
+        self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
+
     def test_video_file_dialog_allows_extended_video_extensions(self) -> None:
         video = self.root / "capture.avi"
         video.write_bytes(b"video")
@@ -9641,6 +9688,121 @@ Window {
         self.gui.wait_until(lambda: len(self.app.sequenceClips) == 3, description="末尾の後へ追加")
         self.assertEqual(str(self.app.sequenceClips[1]["clipId"]), first_clip_id)
         self.assertEqual(self.app.sequenceClips[2]["assetId"], asset_id)
+
+    def test_media_bin_drag_onto_clip_card_inserts_before_it(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        asset_id = self._add_second_sequence_asset(second_video)
+        first_clip_id = str(self.app.sequenceClips[0]["clipId"])
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(
+            lambda: clip_list.isVisible()
+            and self._quick_visual_item(clip_list, "sequenceClipDropArea").height() > 20,
+            description="クリップ詳細カードの配置",
+        )
+        media_list = self._quick_item(window, "mediaBinList")
+        media_list.setProperty(
+            "contentY",
+            max(0.0, float(media_list.property("contentHeight")) - media_list.height()),
+        )
+        self.gui.process_events()
+        card = self.gui.find_visual_item_by_properties(
+            window, {"assetId": asset_id}, required_properties=("assetId",),
+        )
+        target = self._quick_visual_item(clip_list, "sequenceClipDropArea")
+        self.assertTrue(target.isVisible())
+        self.assertTrue(target.isEnabled())
+        self._assert_quick_item_within(window.contentItem(), target)
+
+        start = card.mapToScene(QPointF(25, 25)).toPoint()
+        end = target.mapToScene(QPointF(target.width() / 2, target.height() / 2)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        for fraction in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0):
+            QTest.mouseMove(window, start + (end - start) * fraction, 30)
+        self.assertTrue(target.property("containsDrag"))
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.gui.wait_until(lambda: len(self.app.sequenceClips) == 2, description="詳細カードの前へ挿入")
+        self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.assertEqual(str(self.app.sequenceClips[1]["clipId"]), first_clip_id)
+
+    def test_sequence_clip_card_drag_reorders_before_target(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        asset_id = self._add_second_sequence_asset(second_video)
+        self.assertTrue(self.app.addSequenceClip(asset_id))
+        first_clip_id = str(self.app.sequenceClips[0]["clipId"])
+        second_clip_id = str(self.app.sequenceClips[1]["clipId"])
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(
+            lambda: clip_list.isVisible()
+            and len(self.gui.visual_items_with_properties(clip_list, "clipId")) >= 2,
+            description="2件のクリップ詳細カード",
+        )
+        clip_list.setProperty("contentY", 70.0)
+        self.gui.process_events()
+        source = self.gui.find_visual_item_by_properties(
+            clip_list, {"clipId": first_clip_id}, required_properties=("clipId",),
+        )
+        target_card = self.gui.find_visual_item_by_properties(
+            clip_list, {"clipId": second_clip_id}, required_properties=("clipId",),
+        )
+        target = self._quick_visual_item(target_card, "sequenceClipDropArea")
+        self.assertTrue(target.isVisible())
+        self.assertTrue(target.isEnabled())
+
+        start = source.mapToScene(QPointF(20, 100)).toPoint()
+        end = target.mapToScene(QPointF(20, 30)).toPoint()
+        self.assertLess(end.y(), clip_list.mapToScene(QPointF(0, clip_list.height())).y())
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        for fraction in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0):
+            QTest.mouseMove(window, start + (end - start) * fraction, 30)
+        self.assertEqual(
+            self._quick_item(window, "workspaceSequenceEditor").property("activeDragClipId"),
+            first_clip_id,
+        )
+        self.assertTrue(target.property("containsDrag"))
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.gui.wait_until(
+            lambda: str(self.app.sequenceClips[0]["clipId"]) == second_clip_id,
+            description="詳細カードからの並べ替え",
+        )
+        self.app.undoCutEdit()
+        self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
+
+    def test_sequence_clip_card_drag_cancel_restores_position(self) -> None:
+        self._make_sequence_project()
+        first_clip_id = str(self.app.sequenceClips[0]["clipId"])
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(lambda: clip_list.isVisible(), description="クリップ詳細カード")
+        card = self.gui.find_visual_item_by_properties(
+            clip_list, {"clipId": first_clip_id}, required_properties=("clipId",),
+        )
+        original_position = card.position()
+        start = card.mapToScene(QPointF(20, 30)).toPoint()
+        end = start + QPoint(70, 145)
+        self.assertGreater(end.y(), clip_list.mapToScene(QPointF(0, clip_list.height())).y())
+        self.assertLess(end.y(), window.height())
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        for fraction in (0.2, 0.4, 0.6, 0.8, 1.0):
+            QTest.mouseMove(window, start + (end - start) * fraction, 30)
+        editor = self._quick_item(window, "workspaceSequenceEditor")
+        self.assertEqual(editor.property("activeDragClipId"), first_clip_id)
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.gui.process_events()
+        self.assertEqual(editor.property("activeDragClipId"), "")
+        self.assertEqual(card.position(), original_position)
+        self.assertEqual(len(self.app.sequenceClips), 1)
+        self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
 
     def test_sequence_timeline_drag_trims_and_reorders_clips(self) -> None:
         _, _, second_video = self._make_sequence_project()

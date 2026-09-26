@@ -157,6 +157,7 @@ Popup {
                     }
                     DropArea {
                         id: sourcePopupDropArea
+                        objectName: "sourcePopupDropArea"
                         anchors.fill: parent
                         enabled: !root.appBackend.running
                         onEntered: function (drag) {

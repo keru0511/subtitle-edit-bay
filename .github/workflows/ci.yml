@@ -303,6 +303,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_login_route_dispatches_login_reconnect_and_browser
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_model_and_new_chat_controls_preserve_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_cut_editing_is_locked_during_processing_and_recovers
+          tests.test_gui_editor.GuiEditorRegressionTests.test_cut_restore_and_clear_buttons_update_history_and_saved_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_confirmation_switch_saves_and_reopens_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_detail_fields_save_pending_input_and_reload
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry

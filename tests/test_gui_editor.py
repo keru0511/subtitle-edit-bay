@@ -4575,6 +4575,82 @@ Window {
         start_field = self._quick_visual_item(settings, "cutRangeStartField")
         self.gui.wait_until(lambda: start_field.property("text") == "5.000", description="cut settings reopened after undo")
 
+    def test_cut_restore_and_clear_buttons_update_history_and_saved_project(self) -> None:
+        path = self._load_project(duration_seconds=30.0)
+        self.assertTrue(self.app.addCut(5.0, 7.0))
+        self.assertTrue(self.app.addCut(9.0, 11.0))
+        cut_ids = [str(cut["id"]) for cut in self.app.cutTimeline["cuts"]]
+        self.assertTrue(self.app.saveProject())
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        settings = self._quick_item(window, "workspaceCutSettings")
+        timeline = self._quick_item(window, "workspaceCutTimeline")
+        selected_cut = self._quick_visual_item(
+            self._quick_item(window, "workspaceCutEditor"),
+            f"workspaceCutRange-{cut_ids[0]}",
+        )
+        self._click(window, selected_cut)
+        self.assertEqual(window.property("selectedCutId"), cut_ids[0])
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_visual_item(settings, "restoreCutRangeButton"))
+            self.assertEqual(
+                [cut["id"] for cut in self.app.cutTimeline["cuts"]], cut_ids[1:],
+            )
+            self.assertEqual(len(load_project(path)["timeline"]["cuts"]), 2)
+
+            self._click(window, self._quick_visual_item(settings, "undoCutButton"))
+            self.assertEqual(
+                [cut["id"] for cut in self.app.cutTimeline["cuts"]], cut_ids,
+            )
+            uncut_position = timeline.mapToScene(
+                QPointF(timeline.width() * 0.4, timeline.height() * 0.5)
+            ).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=uncut_position)
+            self.assertEqual(window.property("selectedCutId"), "")
+            self.assertEqual(settings.property("selectedCutId"), "")
+            start_field = self._quick_visual_item(settings, "cutRangeStartField")
+            end_field = self._quick_visual_item(settings, "cutRangeEndField")
+            self._click(window, start_field)
+            self._replace_focused_time(window, start_field, "5.500")
+            self._click(window, end_field)
+            self._replace_focused_time(window, end_field, "6.500")
+            self.gui.wait_until(
+                lambda: start_field.property("text") == "5.500"
+                and end_field.property("text") == "6.500",
+                description="range restore fields",
+            )
+            self.assertEqual(
+                self._quick_visual_item(settings, "restoreCutRangeButton").property("text"),
+                "選択範囲を復元",
+            )
+            self._click(window, self._quick_visual_item(settings, "restoreCutRangeButton"))
+            self.assertEqual(
+                [
+                    (cut["source_start"], cut["source_end"])
+                    for cut in self.app.cutTimeline["cuts"]
+                ],
+                [(5.0, 5.5), (6.5, 7.0), (9.0, 11.0)],
+            )
+            self._click(window, self._quick_visual_item(settings, "undoCutButton"))
+            self.assertEqual(
+                [cut["id"] for cut in self.app.cutTimeline["cuts"]], cut_ids,
+            )
+            self._click(window, self._quick_visual_item(settings, "clearCutsButton"))
+            self.assertEqual(self.app.cutTimeline["cuts"], [])
+            self._click(window, self._quick_visual_item(settings, "undoCutButton"))
+            self.assertEqual(
+                [cut["id"] for cut in self.app.cutTimeline["cuts"]], cut_ids,
+            )
+            self._click(window, self._quick_visual_item(settings, "redoCutButton"))
+            self.assertEqual(self.app.cutTimeline["cuts"], [])
+            self.assertEqual(len(load_project(path)["timeline"]["cuts"]), 2)
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        self.assertEqual(load_project(path)["timeline"]["cuts"], [])
+        self.assertFalse(self.app.projectDirty)
+
     def test_loading_legacy_project_resolves_duration_for_cut_editor(self) -> None:
         path, _, _ = self._make_project(duration_seconds=0.0)
         with patch("src.subtitle_project.probe_media_duration", return_value=30.0):
@@ -11269,12 +11345,24 @@ Window {
                 description="シーケンスの音量スライダー",
             )
             expected_volume = self.app.sequenceClips[0]["volume"]
+            audio_offset = self._quick_visual_item(clip_list, "sequenceAudioOffset")
+            self._assert_quick_item_within(clip_list, audio_offset)
+            increase = audio_offset.mapToScene(
+                QPointF(audio_offset.width() - 8, audio_offset.height() * 0.25)
+            ).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
+            self.gui.wait_until(
+                lambda: self.app.sequenceClips[0]["audioOffset"] > 0,
+                description="シーケンスの音声位置補正",
+            )
+            expected_offset = self.app.sequenceClips[0]["audioOffset"]
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
         saved_clip = load_project(path)["sequence"]["clips"][0]
         self.assertFalse(saved_clip["audio_linked"])
         self.assertTrue(saved_clip["muted"])
         self.assertAlmostEqual(saved_clip["volume"], expected_volume, places=2)
+        self.assertAlmostEqual(saved_clip["audio_offset_seconds"], expected_offset, places=3)
         self.assertFalse(self.app.projectDirty)
 
     def test_sequence_transition_controls_from_card_are_saved(self) -> None:

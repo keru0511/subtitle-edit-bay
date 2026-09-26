@@ -14,6 +14,7 @@ WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
 WORKSPACE_HEADER_QML = COMPONENTS_ROOT / "WorkspaceHeader.qml"
+START_SCREEN_QML = COMPONENTS_ROOT / "ProjectStartScreen.qml"
 SEQUENCE_EDITOR_QML = COMPONENTS_ROOT / "SequenceEditorPanel.qml"
 SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "ContextActionBar.qml",
@@ -32,6 +33,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioMixerScreen.qml",
     COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
     COMPONENTS_ROOT / "SourceSettingsPopup.qml",
+    START_SCREEN_QML,
     COMPONENTS_ROOT / "CutModeSettings.qml",
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
@@ -140,14 +142,19 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("FileDialog", header)
 
     def test_start_screen_uses_project_actions_instead_of_workflow_steps(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "screens" / "MainWorkflowScreen.qml").read_text(encoding="utf-8")
-        self.assertIn('objectName: "projectStartScreen"', source)
-        self.assertIn('objectName: "newVideoEditButton"', source)
-        self.assertIn('objectName: "startScreenOpenProjectButton"', source)
-        self.assertIn('objectName: "startWithTranscriptionButton"', source)
-        self.assertIn('objectName: "startScreenSettingsButton"', source)
-        self.assertNotIn('"文字起こし後に自動作成"', source)
-        self.assertNotIn('model: ["素材", "文字起こし", "字幕・カット・音量", "書き出し"]', source)
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        start_screen = START_SCREEN_QML.read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("ProjectStartScreen {"), 1)
+        for object_name in (
+            "projectStartScreen",
+            "newVideoEditButton",
+            "startScreenOpenProjectButton",
+            "startWithTranscriptionButton",
+            "startScreenSettingsButton",
+        ):
+            self.assertIn(f'objectName: "{object_name}"', start_screen)
+        self.assertNotIn('"文字起こし後に自動作成"', workflow + start_screen)
+        self.assertNotIn('model: ["素材", "文字起こし", "字幕・カット・音量", "書き出し"]', workflow + start_screen)
 
     def test_qml_files_pass_qmllint_without_warnings(self) -> None:
         executable_name = "pyside6-qmllint.exe" if os.name == "nt" else "pyside6-qmllint"
@@ -281,7 +288,13 @@ class QmlStaticTests(unittest.TestCase):
             "codex edit": (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8"),
             "highlight": (COMPONENTS_ROOT / "HighlightCandidateList.qml").read_text(encoding="utf-8"),
             "dictionary": (COMPONENTS_ROOT / "TranscriptionContextPanel.qml").read_text(encoding="utf-8"),
-            "workflow": WORKFLOW_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8") + (COMPONENTS_ROOT / "AudioMixerScreen.qml").read_text(encoding="utf-8") + (COMPONENTS_ROOT / "SourceSettingsPopup.qml").read_text(encoding="utf-8"),
+            "workflow": "".join(path.read_text(encoding="utf-8") for path in (
+                WORKFLOW_QML,
+                START_SCREEN_QML,
+                COMPONENTS_ROOT / "SubtitleEditorScreen.qml",
+                COMPONENTS_ROOT / "AudioMixerScreen.qml",
+                COMPONENTS_ROOT / "SourceSettingsPopup.qml",
+            )),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
         }

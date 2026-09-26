@@ -411,6 +411,65 @@ Window {
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(len(load_project(video.with_suffix(".subtitle-project.json"))["segments"]), 1)
 
+    def test_project_start_screen_works_without_main_workflow_context(self) -> None:
+        self.app._set_status("素材を確認してください", "CHECK")
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentProjectStartScreen.qml"
+        qml.write_text(
+            'import QtQuick\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1220
+    height: 760
+    visible: true
+    property int newEditRequests: 0
+    property int openProjectRequests: 0
+    property int transcriptionRequests: 0
+    property int sourceSettingsRequests: 0
+    property int dictionaryRequests: 0
+    property int processingSettingsRequests: 0
+    ProjectStartScreen {
+        anchors.fill: parent
+        appBackend: backend
+        colors: ({panel: "#131A26", border: "#243044", textPrimary: "#F8FAFC",
+            textMuted: "#94A3B8", acid: "#6366F1", amber: "#F59E0B", danger: "#EF4444"})
+        transcriptionBlockReason: "文字起こしを確認してください"
+        onNewVideoEditRequested: host.newEditRequests += 1
+        onOpenProjectRequested: host.openProjectRequests += 1
+        onStartTranscriptionRequested: host.transcriptionRequests += 1
+        onSourceSettingsRequested: host.sourceSettingsRequests += 1
+        onDictionaryRequested: host.dictionaryRequests += 1
+        onProcessingSettingsRequested: host.processingSettingsRequests += 1
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        start_screen = self._quick_item(window, "projectStartScreen")
+        self.assertTrue(start_screen.isVisible())
+        self.assertEqual(self._quick_item(window, "startScreenStatusText").property("text"), "素材を確認してください")
+        self.assertEqual(
+            self._quick_item(window, "startScreenTranscriptionBlockReason").property("text"),
+            "文字起こしを確認してください",
+        )
+        for button_name, request_name in (
+            ("newVideoEditButton", "newEditRequests"),
+            ("startScreenOpenProjectButton", "openProjectRequests"),
+            ("startWithTranscriptionButton", "transcriptionRequests"),
+            ("startScreenSourceSetupButton", "sourceSettingsRequests"),
+            ("startScreenDictionaryButton", "dictionaryRequests"),
+            ("startScreenSettingsButton", "processingSettingsRequests"),
+        ):
+            with self.subTest(button=button_name):
+                self._click(window, self._quick_item(window, button_name))
+                self.assertEqual(window.property(request_name), 1)
+        self.app._set_status("読み込みに失敗しました", "ERROR")
+        self.gui.wait_until(
+            lambda: self._quick_item(window, "startScreenStatusText").property("text") == "読み込みに失敗しました",
+            description="開始画面のエラー表示",
+        )
+
     def test_project_start_screen_prioritizes_new_edit_and_existing_project(self) -> None:
         _, window = self._load_qml()
         start_screen = self._quick_item(window, "projectStartScreen")

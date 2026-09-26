@@ -1050,6 +1050,9 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             self._set_source_selection(selection)
         finally:
             self._loading_project_sources = was_loading_project_sources
+        if self._project is not None and self._project.get("output_dir") != selection.output_dir:
+            self._project["output_dir"] = selection.output_dir
+            self.projectDataChanged.emit()
         self._set_status(error_status, "ERROR")
 
     def _normalized_source_path(self, value: str) -> str:

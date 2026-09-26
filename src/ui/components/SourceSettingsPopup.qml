@@ -236,6 +236,8 @@ Popup {
                             ToolButton {
                                 objectName: "sourceAudioRemoveButton-" + sourceAudioDelegate.index
                                 text: "×"
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
                                 enabled: !root.appBackend.running
                                 onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index)
                             }

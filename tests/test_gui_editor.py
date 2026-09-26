@@ -972,27 +972,39 @@ Window {
         ) as choose_audio:
             self._click(window, self._quick_item(window, "sourceAudioAddButton"))
         choose_audio.assert_called_once()
-        self.assertEqual(audio_list.property("count"), 2)
-        self.assertEqual(
-            self.app.sourceSelection["audio_files"],
-            [str(original_audio.resolve()), str(added_audio.resolve())],
+        self.gui.wait_until(
+            lambda: audio_list.property("count") == 2
+            and self.app.sourceSelection["audio_files"] == [str(original_audio.resolve()), str(added_audio.resolve())],
+            description="話者音声の追加と一覧反映",
+        )
+        remove_button = self._quick_visual_item(audio_list, "sourceAudioRemoveButton-1")
+        self.gui.wait_until(
+            lambda: self.gui.assert_item_within(audio_list, remove_button) is None,
+            description="２件目の削除ボタンの表示範囲",
+        )
+        self._click(window, remove_button)
+        self.gui.wait_until(
+            lambda: audio_list.property("count") == 1
+            and self.app.sourceSelection["audio_files"] == [str(original_audio.resolve())],
+            description="２件目の話者音声の削除と一覧反映",
         )
 
-        remove_button = self._quick_visual_item(audio_list, "sourceAudioRemoveButton-1")
-        self._click(window, remove_button)
-        self.assertEqual(audio_list.property("count"), 1)
-        self.assertEqual(self.app.sourceSelection["audio_files"], [str(original_audio.resolve())])
-
         self._click(window, self._quick_item(window, "sourceAudioClearButton"))
-        self.assertEqual(audio_list.property("count"), 0)
-        self.assertEqual(self.app.sourceSelection["audio_files"], [])
+        self.gui.wait_until(
+            lambda: audio_list.property("count") == 0 and self.app.sourceSelection["audio_files"] == [],
+            description="話者音声の全消去と一覧反映",
+        )
 
         with patch(
             "src.gui_base.QFileDialog.getOpenFileNames",
             return_value=([str(added_audio)], ""),
         ):
             self._click(window, self._quick_item(window, "sourceAudioAddButton"))
-        self.assertEqual(self.app.sourceSelection["audio_files"], [str(added_audio.resolve())])
+        self.gui.wait_until(
+            lambda: audio_list.property("count") == 1
+            and self.app.sourceSelection["audio_files"] == [str(added_audio.resolve())],
+            description="話者音声の再追加と一覧反映",
+        )
         self._click(window, self._quick_item(window, "sourceDoneButton"))
 
         with patch("src.gui.probe_media_duration", return_value=30.0):
@@ -1009,8 +1021,8 @@ Window {
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
         self.app.autosave_timer.stop()
         saved_bytes = path.read_bytes()
-        original_sources = list(self.app.sourceSelection["audio_files"])
-        self.assertTrue(original_sources)
+        original_selection = deepcopy(self.app.sourceSelection)
+        self.assertTrue(original_selection["audio_files"])
         _, window = self._load_qml()
         with patch.object(self.app.autosave_timer, "start"):
             self.app.subtitles.updateSegment(0, {"text": "保存待ちの字幕"})
@@ -1022,6 +1034,19 @@ Window {
             self._click(window, self._quick_item(window, "sourceAudioClearButton"))
             self.assertEqual(self.app.sourceSelection["audio_files"], [])
             self.assertTrue(self.app.projectLoaded)
+            alternate_output = self.root / "alternate-output"
+            alternate_output.mkdir()
+            output_button = self._quick_item(window, "videoOutputDirectoryButton")
+            viewport = self._quick_item(window, "sourceSettingsScrollView").property("contentItem")
+            button_top = output_button.mapToItem(viewport, QPointF()).y()
+            viewport.setProperty("contentY", max(0.0, float(viewport.property("contentY")) + button_top - 20.0))
+            self.gui.wait_until(
+                lambda: self.gui.assert_item_within(viewport, output_button) is None,
+                description="素材設定の出力先ボタンの表示範囲",
+            )
+            with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
+                self._click(window, output_button)
+            self.assertEqual(self.app.sourceSelection["output_dir"], str(alternate_output))
 
             with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
                 self._click(window, self._quick_item(window, "sourceDoneButton"))
@@ -1029,7 +1054,7 @@ Window {
             self.assertTrue(self.app.projectDirty)
             self.assertEqual(self.app._project, edited_project)
             self.assertEqual(self.app._undo_stack, edited_history)
-            self.assertEqual(self.app.sourceSelection["audio_files"], original_sources)
+            self.assertEqual(self.app.sourceSelection, original_selection)
             self.assertEqual(path.read_bytes(), saved_bytes)
             self.assertEqual(self.app.stage, "ERROR")
             self.assertIn("保存先を使用できません", self.app.status)
@@ -1037,6 +1062,7 @@ Window {
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
             self.assertFalse(self.app.projectDirty)
             self.assertEqual(load_project(path)["segments"][0]["text"], "保存待ちの字幕")
+            self.assertEqual(load_project(path)["output_dir"], original_selection["output_dir"])
 
     def test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure(self) -> None:
         path, _audio, _output = self._make_project()
@@ -2016,12 +2042,16 @@ Window {
         popup = window.findChild(QObject, "sourcePopup")
         self.gui.wait_until(lambda: popup.property("visible"), description="素材設定を開く")
         scroll_view = self._quick_item(window, "sourceSettingsScrollView")
-        scroll_view.property("contentItem").setProperty("contentY", 180.0)
-        self.gui.process_events()
+        viewport = scroll_view.property("contentItem")
         audio_list = self._quick_item(window, "sourceAudioList")
         self.assertTrue(audio_list.isVisible())
         button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
-        self._assert_quick_item_within(scroll_view.property("contentItem"), button)
+        button_top = button.mapToItem(viewport, QPointF()).y()
+        viewport.setProperty("contentY", max(0.0, float(viewport.property("contentY")) + button_top - 20.0))
+        self.gui.wait_until(
+            lambda: self.gui.assert_item_within(viewport, button) is None,
+            description="素材話者の色ボタンの表示範囲",
+        )
         self._click(window, button)
         dialog = window.findChild(QObject, "speakerColorDialog")
         self.assertIsNotNone(dialog)
@@ -2033,7 +2063,10 @@ Window {
         self.assertEqual(window.property("colorTarget"), "")
 
         button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
-        self._assert_quick_item_within(scroll_view.property("contentItem"), button)
+        self.gui.wait_until(
+            lambda: self.gui.assert_item_within(viewport, button) is None,
+            description="色変更後の素材話者ボタンの表示範囲",
+        )
         self._click(window, button)
         self.assertTrue(dialog.property("visible"))
         dialog.setProperty("selectedColor", QColor("#FEDCBA"))

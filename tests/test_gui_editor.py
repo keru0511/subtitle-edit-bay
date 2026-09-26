@@ -9200,6 +9200,11 @@ Window {
         self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], original_transition_duration)
         self.app.redoEdit()
         self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration)
+        transition_slider.forceActiveFocus()
+        QTest.keyClick(window, Qt.Key.Key_Left)
+        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration - 0.1)
+        self.app.undoEdit()
+        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration)
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self._drag_slider(window, volume_slider, 0.9)
@@ -9209,6 +9214,11 @@ Window {
         self.app.undoEdit()
         self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], original_bgm_volume)
         self.app.redoEdit()
+        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume)
+        volume_slider.forceActiveFocus()
+        QTest.keyClick(window, Qt.Key.Key_Left)
+        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume - 0.05)
+        self.app.undoEdit()
         self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume)
 
         self._click(window, self._quick_item(window, "shortModeBackButton"))

@@ -7,7 +7,10 @@ import json
 import math
 from pathlib import Path, PureWindowsPath
 import re
-from typing import Any, Iterable, Mapping, Sequence, cast
+from collections.abc import Iterable, Mapping, Sequence
+from typing import cast
+
+from .data_boundary import coerce_float, is_object_list, is_object_mapping
 
 from .audio_mixer import (
     AUDIO_CHANNEL_CHANGE_FIELDS,
@@ -42,7 +45,7 @@ class AudioMixProposalError(ValueError):
     """Raised when a Codex audio proposal is invalid, unsafe, or stale."""
 
 
-def _reject_unknown(value: Mapping[str, Any], allowed: frozenset[str], field: str) -> None:
+def _reject_unknown(value: Mapping[object, object], allowed: frozenset[str], field: str) -> None:
     unknown = sorted(str(key) for key in value if not isinstance(key, str) or key not in allowed)
     if unknown:
         raise AudioMixProposalError(f"{field} contains unsupported fields: {', '.join(unknown)}")
@@ -50,7 +53,7 @@ def _reject_unknown(value: Mapping[str, Any], allowed: frozenset[str], field: st
 
 def _bounded_level(value: object, *, maximum: float = 1.0) -> float:
     try:
-        number = float(cast(Any, value))
+        number = coerce_float(value)
     except (TypeError, ValueError, OverflowError):
         return 0.0
     if not math.isfinite(number):
@@ -68,14 +71,18 @@ def _path_free_label(value: object, *, kind: str, index: int) -> str:
     return f"{'動画' if kind == 'video' else '外部'}音声 {index + 1}"
 
 
-def audio_mix_state_revision(channels: Sequence[Mapping[str, Any]]) -> str:
-    safe = [{key: channel.get(key) for key in AUDIO_CONTEXT_FIELDS} for channel in channels]
+def audio_mix_state_revision(channels: Sequence[object]) -> str:
+    safe: list[dict[str, object]] = []
+    for index, channel in enumerate(channels):
+        if not is_object_mapping(channel):
+            raise AudioMixProposalError(f"channels[{index}] must be an object")
+        safe.append({key: channel.get(key) for key in AUDIO_CONTEXT_FIELDS})
     encoded = json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def build_audio_mix_context(
-    channels: Sequence[Mapping[str, Any]],
+    channels: Sequence[object],
     *,
     preview_levels: Mapping[str, float] | None = None,
     master_level: float = 0.0,
@@ -83,14 +90,14 @@ def build_audio_mix_context(
     playhead_seconds: float | None = None,
     range_seconds: tuple[float, float] | None = None,
     project_revision: int | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Build the complete path-free snapshot passed to Codex."""
 
     levels = preview_levels or {}
-    safe_channels: list[dict[str, Any]] = []
+    safe_channels: list[dict[str, object]] = []
     channel_ids: set[str] = set()
     for index, channel in enumerate(channels):
-        if not isinstance(channel, Mapping):
+        if not is_object_mapping(channel):
             raise AudioMixProposalError(f"channels[{index}] must be an object")
         channel_id = str(channel.get("id", "")).strip()
         if not is_opaque_audio_channel_id(channel_id):
@@ -117,7 +124,7 @@ def build_audio_mix_context(
                 "preview_level": _bounded_level(levels.get(channel_id, 0.0)),
             }
         )
-    context: dict[str, Any] = {
+    context: dict[str, object] = {
         "channels": safe_channels,
         "master_level": _bounded_level(master_level),
         "limiter_reduction_db": _bounded_level(limiter_reduction_db, maximum=float("inf")),
@@ -153,7 +160,7 @@ def build_audio_mix_proposal_prompt(intent: str) -> str:
     )
 
 
-def _validated_changes(value: object, field: str) -> dict[str, Any]:
+def _validated_changes(value: object, field: str) -> dict[str, float | bool]:
     try:
         return validate_audio_channel_changes(value)
     except AudioMixError as error:
@@ -164,20 +171,20 @@ def _validated_changes(value: object, field: str) -> dict[str, Any]:
 class AudioMixProposalOperation:
     id: str
     channel_id: str
-    changes: Mapping[str, Any]
+    changes: Mapping[str, float | bool]
     reason: str
-    before: Mapping[str, Any] | None = None
+    before: Mapping[str, object] | None = None
     type: str = AUDIO_OPERATION_TYPE
 
     @classmethod
     def from_json(
         cls,
-        payload: Mapping[str, Any],
+        payload: object,
         index: int,
         *,
         stored: bool,
     ) -> AudioMixProposalOperation:
-        if not isinstance(payload, Mapping):
+        if not is_object_mapping(payload):
             raise AudioMixProposalError(f"operations[{index}] must be an object")
         _reject_unknown(
             payload,
@@ -209,8 +216,8 @@ class AudioMixProposalOperation:
             before=before,
         )
 
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def to_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "id": self.id,
             "type": self.type,
             "channel_id": self.channel_id,
@@ -234,11 +241,11 @@ class AudioMixProposal:
     @classmethod
     def from_json(
         cls,
-        payload: Mapping[str, Any],
+        payload: object,
         *,
         stored: bool = False,
     ) -> AudioMixProposal:
-        if not isinstance(payload, Mapping):
+        if not is_object_mapping(payload):
             raise AudioMixProposalError("proposal must be an object")
         _reject_unknown(payload, ROOT_FIELDS, "proposal")
         schema_version = payload.get("schema_version")
@@ -248,8 +255,9 @@ class AudioMixProposal:
         if not isinstance(summary, str) or not summary.strip():
             raise AudioMixProposalError("proposal.summary must be a non-empty string")
         warnings = payload.get("warnings")
-        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+        if not is_object_list(warnings) or not all(isinstance(item, str) for item in warnings):
             raise AudioMixProposalError("proposal.warnings must be an array of strings")
+        warning_texts = [item for item in warnings if isinstance(item, str)]
         base_revision = payload.get("base_revision")
         if type(base_revision) is not int or base_revision < 0:
             raise AudioMixProposalError("proposal.base_revision must be a non-negative integer")
@@ -257,7 +265,7 @@ class AudioMixProposal:
         if not isinstance(state_revision, str) or not _STATE_REVISION_PATTERN.fullmatch(state_revision):
             raise AudioMixProposalError("proposal.audio_state_revision must be a SHA-256 revision")
         raw_operations = payload.get("operations")
-        if not isinstance(raw_operations, list) or not raw_operations:
+        if not is_object_list(raw_operations) or not raw_operations:
             raise AudioMixProposalError("proposal.operations must be a non-empty array")
         operations = tuple(
             AudioMixProposalOperation.from_json(item, index, stored=stored) for index, item in enumerate(raw_operations)
@@ -270,13 +278,13 @@ class AudioMixProposal:
             raise AudioMixProposalError("audio proposal must contain at most one operation per channel")
         return cls(
             summary=summary.strip(),
-            warnings=tuple(warnings),
+            warnings=tuple(warning_texts),
             base_revision=base_revision,
             audio_state_revision=state_revision,
             operations=operations,
         )
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
             "summary": self.summary,
@@ -288,11 +296,11 @@ class AudioMixProposal:
 
 
 def _channels_by_id(
-    channels: Sequence[Mapping[str, Any]],
-) -> dict[str, Mapping[str, Any]]:
-    by_id: dict[str, Mapping[str, Any]] = {}
+    channels: Sequence[object],
+) -> dict[str, Mapping[object, object]]:
+    by_id: dict[str, Mapping[object, object]] = {}
     for index, channel in enumerate(channels):
-        if not isinstance(channel, Mapping):
+        if not is_object_mapping(channel):
             raise AudioMixProposalError(f"audio channels[{index}] must be an object")
         channel_id = str(channel.get("id", ""))
         if not is_opaque_audio_channel_id(channel_id):
@@ -305,10 +313,10 @@ def _channels_by_id(
 
 def _require_current_state(
     proposal: AudioMixProposal,
-    channels: Sequence[Mapping[str, Any]],
+    channels: Sequence[object],
     *,
     current_revision: int,
-) -> dict[str, Mapping[str, Any]]:
+) -> dict[str, Mapping[object, object]]:
     if proposal.base_revision != current_revision:
         raise AudioMixProposalError("audio mix proposal is stale")
     if proposal.audio_state_revision != audio_mix_state_revision(channels):
@@ -326,11 +334,11 @@ def _require_current_state(
 
 
 def build_audio_mix_proposal(
-    codex_output: Mapping[str, Any],
-    channels: Sequence[Mapping[str, Any]],
+    codex_output: object,
+    channels: Sequence[object],
     *,
     project_revision: int,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Validate Codex output against its source snapshot and add backend-owned before values."""
 
     parsed = AudioMixProposal.from_json(codex_output)
@@ -346,16 +354,16 @@ def build_audio_mix_proposal(
 
 
 def apply_audio_mix_proposal(
-    audio_mix: Mapping[str, Any],
-    proposal: Mapping[str, Any],
+    audio_mix: Mapping[str, object],
+    proposal: object,
     *,
     current_revision: int,
     selected_operation_ids: Iterable[str] | None = None,
     allow_silence: bool = False,
-) -> tuple[dict[str, Any], tuple[str, ...]]:
+) -> tuple[dict[object, object], tuple[str, ...]]:
     parsed = AudioMixProposal.from_json(proposal, stored=True)
     channels = audio_mix.get("channels")
-    if not isinstance(channels, list):
+    if not is_object_list(channels):
         raise AudioMixProposalError("audio mix channels must be an array")
     _require_current_state(parsed, channels, current_revision=current_revision)
 
@@ -369,7 +377,7 @@ def apply_audio_mix_proposal(
     if not operations:
         raise AudioMixProposalError("no audio operations were selected")
 
-    updated = deepcopy(dict(audio_mix))
+    updated = cast(dict[object, object], deepcopy(dict(audio_mix)))
     changed_ids: list[str] = []
     try:
         for operation in operations:
@@ -391,19 +399,21 @@ def apply_audio_mix_proposal(
     return updated, tuple(changed_ids)
 
 
-_AUDIO_CHANGE_OUTPUT_SCHEMA: dict[str, Any] = {
+_AUDIO_CHANGE_PROPERTIES: dict[str, object] = {
+    "volume_percent": {"type": "number", "minimum": 0, "maximum": MAX_VOLUME_PERCENT},
+    "muted": {"type": "boolean"},
+    "solo": {"type": "boolean"},
+    "enabled": {"type": "boolean"},
+}
+
+_AUDIO_CHANGE_OUTPUT_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
     "minProperties": 1,
-    "properties": {
-        "volume_percent": {"type": "number", "minimum": 0, "maximum": MAX_VOLUME_PERCENT},
-        "muted": {"type": "boolean"},
-        "solo": {"type": "boolean"},
-        "enabled": {"type": "boolean"},
-    },
+    "properties": _AUDIO_CHANGE_PROPERTIES,
 }
 
-AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA: dict[str, Any] = {
+AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
@@ -443,4 +453,4 @@ AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-assert set(_AUDIO_CHANGE_OUTPUT_SCHEMA["properties"]) == set(AUDIO_CHANNEL_CHANGE_FIELDS)
+assert set(_AUDIO_CHANGE_PROPERTIES) == set(AUDIO_CHANNEL_CHANGE_FIELDS)

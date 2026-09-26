@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import unittest
+from collections.abc import Mapping, Sequence
 
 from src.audio_mix_proposal import (
     AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA,
@@ -15,6 +16,7 @@ from src.audio_mix_proposal import (
     build_audio_mix_proposal_prompt,
 )
 from src.audio_mixer import reconcile_audio_mix
+from src.data_boundary import is_object_dict, is_object_list, is_object_mapping
 from tests.typed_case import TypedTestCase
 
 
@@ -22,7 +24,29 @@ VOICE_ID = "audio:" + "1" * 32
 BGM_ID = "audio:" + "2" * 32
 
 
-def channels() -> list[dict]:
+def _object_dict(value: object) -> dict[object, object]:
+    if not is_object_dict(value):
+        raise AssertionError("expected an object")
+    return value
+
+
+def _object_mapping(value: object) -> Mapping[object, object]:
+    if not is_object_mapping(value):
+        raise AssertionError("expected an object")
+    return value
+
+
+def _object_list(value: object) -> list[object]:
+    if not is_object_list(value):
+        raise AssertionError("expected an array")
+    return value
+
+
+def _entry(payload: object, field: str, index: int) -> dict[object, object]:
+    return _object_dict(_object_list(_object_mapping(payload)[field])[index])
+
+
+def channels() -> list[dict[str, object]]:
     return [
         {
             "id": VOICE_ID,
@@ -48,11 +72,11 @@ def channels() -> list[dict]:
 
 
 def codex_output(
-    current: list[dict],
-    operations: list[dict],
+    current: Sequence[object],
+    operations: Sequence[object],
     *,
     revision: int = 7,
-) -> dict:
+) -> dict[str, object]:
     return {
         "schema_version": 1,
         "summary": "音量バランスを調整します",
@@ -66,10 +90,10 @@ def codex_output(
 def operation(
     operation_id: str,
     channel_id: str,
-    changes: dict,
+    changes: dict[str, object],
     *,
     reason: str = "現在のレベル差を整えるため",
-) -> dict:
+) -> dict[str, object]:
     return {
         "id": operation_id,
         "type": "update_audio_channel",
@@ -80,11 +104,11 @@ def operation(
 
 
 def stored_proposal(
-    current: list[dict],
-    operations: list[dict],
+    current: Sequence[object],
+    operations: Sequence[object],
     *,
     revision: int = 7,
-) -> dict:
+) -> dict[str, object]:
     return build_audio_mix_proposal(
         codex_output(current, operations, revision=revision),
         current,
@@ -106,14 +130,15 @@ class AudioMixProposalTests(TypedTestCase):
             project_revision=8,
         )
 
-        self.assertEqual(context["channels"][0]["id"], VOICE_ID)
-        self.assertEqual(context["channels"][0]["label"], "外部音声 1")
-        self.assertEqual(context["channels"][0]["preview_level"], 0.7)
+        first_channel = _entry(context, "channels", 0)
+        self.assertEqual(first_channel["id"], VOICE_ID)
+        self.assertEqual(first_channel["label"], "外部音声 1")
+        self.assertEqual(first_channel["preview_level"], 0.7)
         self.assertEqual(context["master_level"], 0.8)
         self.assertEqual(context["limiter_reduction_db"], 1.5)
         self.assertEqual(context["playhead_seconds"], 12.25)
         self.assertEqual(context["project_revision"], 8)
-        self.assertNotIn("path", context["channels"][0])
+        self.assertNotIn("path", first_channel)
         self.assertNotIn("C:\\Users", repr(context))
 
     def test_legacy_project_without_track_key_never_exposes_absolute_source_path(self) -> None:
@@ -159,18 +184,22 @@ class AudioMixProposalTests(TypedTestCase):
         proposal = build_audio_mix_proposal(raw, current, project_revision=7)
 
         self.assertEqual(current, before)
-        self.assertEqual(proposal["operations"][0]["before"], {"volume_percent": 100.0})
-        self.assertEqual(proposal["operations"][1]["changes"], {"volume_percent": 72.0})
+        self.assertEqual(_entry(proposal, "operations", 0)["before"], {"volume_percent": 100.0})
+        self.assertEqual(_entry(proposal, "operations", 1)["changes"], {"volume_percent": 72.0})
         self.assertIn("preview_level", build_audio_mix_proposal_prompt("声を聞きやすくして"))
 
     def test_output_schema_is_closed_at_root_operation_and_changes(self) -> None:
-        operation_schema = AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA["properties"]["operations"]["items"]
+        properties = _object_mapping(AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA["properties"])
+        operations_schema = _object_mapping(properties["operations"])
+        operation_schema = _object_mapping(operations_schema["items"])
+        operation_properties = _object_mapping(operation_schema["properties"])
+        changes_schema = _object_mapping(operation_properties["changes"])
 
         self.assertFalse(AUDIO_MIX_PROPOSAL_OUTPUT_SCHEMA["additionalProperties"])
         self.assertFalse(operation_schema["additionalProperties"])
-        self.assertFalse(operation_schema["properties"]["changes"]["additionalProperties"])
+        self.assertFalse(changes_schema["additionalProperties"])
         self.assertEqual(
-            set(operation_schema["properties"]["changes"]["properties"]),
+            set(_object_mapping(changes_schema["properties"])),
             {"volume_percent", "muted", "solo", "enabled"},
         )
 
@@ -194,8 +223,8 @@ class AudioMixProposalTests(TypedTestCase):
         )
 
         self.assertEqual(changed, (VOICE_ID,))
-        self.assertTrue(updated["channels"][0]["muted"])
-        self.assertFalse(updated["channels"][1]["muted"])
+        self.assertTrue(_entry(updated, "channels", 0)["muted"])
+        self.assertFalse(_entry(updated, "channels", 1)["muted"])
         self.assertTrue(updated["customized"])
         self.assertFalse(mix["customized"])
 
@@ -242,7 +271,7 @@ class AudioMixProposalTests(TypedTestCase):
             apply_audio_mix_proposal(mix, proposal, current_revision=6)
 
         changed = deepcopy(mix)
-        changed["channels"][1]["volume_percent"] = 90.0
+        _entry(changed, "channels", 1)["volume_percent"] = 90.0
         with self.assertRaisesRegex(AudioMixProposalError, "state changed"):
             apply_audio_mix_proposal(changed, proposal, current_revision=5)
 
@@ -256,7 +285,7 @@ class AudioMixProposalTests(TypedTestCase):
             current,
             [operation("unknown", BGM_ID, {"muted": True})],
         )
-        unknown["operations"][0]["type"] = "delete_audio_channel"
+        _entry(unknown, "operations", 0)["type"] = "delete_audio_channel"
         invalid_volume = codex_output(
             current,
             [operation("too-loud", BGM_ID, {"volume_percent": 201})],
@@ -301,10 +330,10 @@ class AudioMixProposalTests(TypedTestCase):
         unknown_root["method"] = "saveProject"
         candidates.append(unknown_root)
         unknown_operation = deepcopy(raw)
-        unknown_operation["operations"][0]["method"] = "updateAudioMixChannel"
+        _entry(unknown_operation, "operations", 0)["method"] = "updateAudioMixChannel"
         candidates.append(unknown_operation)
         unknown_change = deepcopy(raw)
-        unknown_change["operations"][0]["changes"]["path"] = "C:/private/audio.wav"
+        _object_dict(_entry(unknown_change, "operations", 0)["changes"])["path"] = "C:/private/audio.wav"
         candidates.append(unknown_change)
 
         for candidate in candidates:
@@ -312,8 +341,8 @@ class AudioMixProposalTests(TypedTestCase):
                 with self.assertRaisesRegex(AudioMixProposalError, "unsupported"):
                     build_audio_mix_proposal(candidate, current, project_revision=7)
 
-        stored = stored_proposal(current, raw["operations"])
-        stored["operations"][0]["before"]["method"] = "ignored"
+        stored = stored_proposal(current, _object_list(raw["operations"]))
+        _object_dict(_entry(stored, "operations", 0)["before"])["method"] = "ignored"
         with self.assertRaisesRegex(AudioMixProposalError, "unsupported"):
             apply_audio_mix_proposal(
                 {"version": 1, "customized": False, "channels": current},
@@ -363,7 +392,7 @@ class AudioMixProposalTests(TypedTestCase):
             current_revision=2,
             allow_silence=True,
         )
-        self.assertTrue(updated["channels"][0]["muted"])
+        self.assertTrue(_entry(updated, "channels", 0)["muted"])
 
     def test_zero_volume_every_output_requires_separate_confirmation(self) -> None:
         current = [channels()[0]]

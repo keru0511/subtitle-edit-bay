@@ -11,11 +11,10 @@ from typing import Any
 
 from PySide6.QtCore import (
     QObject,
-    Signal,
 )
 from PySide6.QtWidgets import QFileDialog
 
-from .qt_decorators import Property, Slot
+from .qt_decorators import Property, Signal, Slot
 from .color_config import normalize_rgb_color
 from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 

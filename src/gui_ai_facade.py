@@ -11,11 +11,10 @@ from uuid import uuid4
 
 from PySide6.QtCore import (
     QUrl,
-    Signal,
 )
 from PySide6.QtGui import QDesktopServices
 
-from .qt_decorators import Property, Slot
+from .qt_decorators import Property, Signal, Slot
 from .audio_mix_proposal import (
     AudioMixProposalError,
     build_audio_mix_proposal,

@@ -24,7 +24,9 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
-from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtTest import QTest
+
+from tests.qt_signal_spy import QSignalSpy
 
 from scripts.generate_large_gui_fixture import generate_segments
 from src.audio_mix_proposal import audio_mix_state_revision, build_audio_mix_proposal

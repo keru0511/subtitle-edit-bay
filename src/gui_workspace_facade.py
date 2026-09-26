@@ -5,11 +5,8 @@ from typing import TYPE_CHECKING
 from copy import deepcopy
 from typing import Any
 
-from PySide6.QtCore import (
-    Signal,
-)
 
-from .qt_decorators import Property, Slot
+from .qt_decorators import Property, Signal, Slot
 from .editor_workspace import (
     EditModeCapabilities,
     EditorWorkspaceState,

@@ -25,14 +25,13 @@ from PySide6.QtCore import (
     QTimer,
     Qt,
     QUrl,
-    Signal,
 )
 from PySide6.QtGui import QDesktopServices, QFontDatabase
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
-from .qt_decorators import Property, Slot
+from .qt_decorators import Property, Signal, Slot
 from .platform_paths import audio_preview_directory
 
 from .audio_mixer import (

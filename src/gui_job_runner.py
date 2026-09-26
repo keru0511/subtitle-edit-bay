@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer
 
+from .qt_decorators import Signal
 from .process_utils import stop_process
 from .processing_progress import parse_progress_events
 from .qprocess_launcher import prepare_qprocess_launch
@@ -21,9 +23,14 @@ class GuiJobRunner(QObject):
 
     started = Signal()
     outputReceived = Signal(str)
-    machineProgress = Signal(object)
-    finished = Signal(int, object)
-    errorOccurred = Signal(object)
+    if TYPE_CHECKING:
+        machineProgress = Signal(dict[str, object])
+        finished = Signal(int, QProcess.ExitStatus)
+        errorOccurred = Signal(QProcess.ProcessError)
+    else:
+        machineProgress = Signal(object)
+        finished = Signal(int, object)
+        errorOccurred = Signal(object)
     terminal = Signal(str, int, str)
     launchPreparationFailed = Signal(str)
 

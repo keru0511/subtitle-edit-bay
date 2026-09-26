@@ -7,13 +7,15 @@ import time
 from typing import Mapping
 
 import numpy as np
-from PySide6.QtCore import QIODevice, QObject, QTimer, Signal
+from PySide6.QtCore import QIODevice, QObject, QTimer
 from PySide6.QtMultimedia import (
     QAudioBuffer,
     QAudioFormat,
     QAudioSink,
     QMediaDevices,
 )
+
+from .qt_decorators import Signal
 
 
 MIX_SAMPLE_RATE = 48_000

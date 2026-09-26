@@ -6,12 +6,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
-from PySide6.QtCore import (
-    Signal,
-)
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 
-from .qt_decorators import Property, Slot
+from .qt_decorators import Property, Signal, Slot
 from .audio_mixer import (
     DEFAULT_AUDIO_TRACK,
     active_audio_mix_channels,

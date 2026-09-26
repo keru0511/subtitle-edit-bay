@@ -113,6 +113,8 @@ class SubtitlePackerContractTests(unittest.TestCase):
             with self.subTest(words=words):
                 with self.assertRaises(TypeError):
                     packer.build_character_timeline(words)
+        with self.assertRaises(TypeError):
+            packer.pack_segments({"segments": None})
         for field in ("text", "speaker", "emphasis"):
             segment: dict[str, object] = {"text": "字幕", "start": 0, "end": 1, field: None}
             with self.subTest(field=field):

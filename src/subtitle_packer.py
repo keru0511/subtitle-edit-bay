@@ -66,8 +66,6 @@ def _text(value: object) -> str:
 
 
 def _entry_mappings(value: object) -> list[Mapping[object, object]]:
-    if value is None:
-        return []
     if not is_object_sequence(value) or isinstance(value, (str, bytes, bytearray)):
         raise TypeError("subtitle entries must be a sequence of mappings")
     return [_mapping(item) for item in value]
@@ -625,7 +623,7 @@ def duration_for_width(width: int, total_width: int, total_duration: float) -> f
 
 def build_character_timeline(words: object) -> list[CharacterTiming]:
     timeline: list[CharacterTiming] = []
-    for word in _entry_mappings(words):
+    for word in _entry_mappings([] if words is None else words):
         normalized = normalize_alignment_text(word.get("word", ""))
         start = word.get("start")
         end = word.get("end")
@@ -656,7 +654,7 @@ def effective_word_end(word: object) -> float:
 
 def gap_boundary_indices(words: object, max_gap_seconds: float) -> set[int]:
     boundaries: set[int] = set()
-    words = _entry_mappings(words)
+    words = _entry_mappings([] if words is None else words)
     if not words:
         return boundaries
 
@@ -676,7 +674,7 @@ def gap_boundary_indices(words: object, max_gap_seconds: float) -> set[int]:
 
 def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[Mapping[object, object]]]:
     valid_words: list[Mapping[object, object]] = []
-    for word in _entry_mappings(words):
+    for word in _entry_mappings([] if words is None else words):
         normalized = normalize_alignment_text(word.get("word", ""))
         start = word.get("start")
         end = word.get("end")

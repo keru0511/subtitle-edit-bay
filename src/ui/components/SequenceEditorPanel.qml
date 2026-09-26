@@ -81,7 +81,7 @@ Rectangle {
                 return index
             cursor += clipWidth + sequenceTimelineList.spacing
         }
-        return clips.length - 1
+        return clips.length
     }
 
     ColumnLayout {
@@ -312,28 +312,6 @@ Rectangle {
                                     property: "displaySourceEnd"
                                     value: Number(timelineClip.modelData.sourceEnd || 0)
                                     when: !timelineTrimEndArea.pressed
-                                }
-
-                                DropArea {
-                                    objectName: "sequenceTimelineClipDropArea"
-                                    anchors.fill: parent
-                                    z: 20
-                                    enabled: root.backend && !root.backend.running
-                                    onEntered: function(drag) {
-                                        var assetId = root.assetIdFromDrag(drag)
-                                        drag.accepted = assetId.length > 0
-                                        if (assetId.length > 0)
-                                            root.hoverIndex = timelineClip.index
-                                    }
-                                    onExited: if (root.hoverIndex === timelineClip.index) root.hoverIndex = -1
-                                    onDropped: function(drop) {
-                                        var assetId = root.assetIdFromDrag(drop)
-                                        if (assetId.length > 0 && root.backend) {
-                                            root.backend.sequence.insertSequenceClip(assetId, timelineClip.index)
-                                            root.hoverIndex = -1
-                                            drop.acceptProposedAction()
-                                        }
-                                    }
                                 }
 
                                 Text {

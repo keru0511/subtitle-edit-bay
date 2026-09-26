@@ -9575,6 +9575,73 @@ Window {
         self.assertIn("sequenceClipEndField", checked_controls)
         self.assertIn("sequenceAudioLinkedCheck", checked_controls)
 
+    def test_media_bin_drag_inserts_before_clip_and_appends_after_last(self) -> None:
+        _, _, second_video = self._make_sequence_project()
+        asset_id = self._add_second_sequence_asset(second_video)
+        first_clip_id = str(self.app.sequenceClips[0]["clipId"])
+        _, window = self._load_qml()
+        self.app.selectEditMode("cut")
+        window.setProperty("editTool", "sequence")
+        self.gui.wait_until(
+            lambda: self._quick_item(window, "sequenceTimelineList").isVisible()
+            and self._quick_visual_item(
+                window.contentItem(), f"sequenceTimelineClip-{first_clip_id}",
+            ).height() > 20,
+            description="既存クリップのタイムライン配置",
+        )
+        media_list = self._quick_item(window, "mediaBinList")
+        media_list.setProperty(
+            "contentY",
+            max(0.0, float(media_list.property("contentHeight")) - media_list.height()),
+        )
+        self.gui.process_events()
+        card = self.gui.find_visual_item_by_properties(
+            window, {"assetId": asset_id}, required_properties=("assetId",),
+        )
+        target = self._quick_visual_item(
+            window.contentItem(), f"sequenceTimelineClip-{first_clip_id}",
+        )
+        drop_area = self._quick_item(window, "sequenceTimelineDropArea")
+        self.assertTrue(target.isVisible())
+        self.assertTrue(drop_area.isEnabled())
+        self.assertGreater(target.width(), 100)
+        self.assertGreater(target.height(), 20)
+
+        start = card.mapToScene(QPointF(25, 25)).toPoint()
+        end = target.mapToScene(QPointF(25, target.height() / 2)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        for fraction in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0):
+            QTest.mouseMove(window, start + (end - start) * fraction, 30)
+        self.assertTrue(drop_area.property("containsDrag"))
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.gui.wait_until(lambda: len(self.app.sequenceClips) == 2, description="既存クリップの前へ挿入")
+        self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.assertEqual(str(self.app.sequenceClips[1]["clipId"]), first_clip_id)
+
+        timeline = self._quick_item(window, "sequenceTimelineList")
+        timeline.setProperty(
+            "contentX",
+            max(0.0, float(timeline.property("contentWidth")) - timeline.width()),
+        )
+        media_list.setProperty(
+            "contentY",
+            max(0.0, float(media_list.property("contentHeight")) - media_list.height()),
+        )
+        self.gui.process_events()
+        card = self.gui.find_visual_item_by_properties(
+            window, {"assetId": asset_id}, required_properties=("assetId",),
+        )
+        start = card.mapToScene(QPointF(25, 25)).toPoint()
+        end = drop_area.mapToScene(QPointF(drop_area.width() - 10, drop_area.height() / 2)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        for fraction in (0.1, 0.2, 0.4, 0.6, 0.8, 1.0):
+            QTest.mouseMove(window, start + (end - start) * fraction, 30)
+        self.assertTrue(drop_area.property("containsDrag"))
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.gui.wait_until(lambda: len(self.app.sequenceClips) == 3, description="末尾の後へ追加")
+        self.assertEqual(str(self.app.sequenceClips[1]["clipId"]), first_clip_id)
+        self.assertEqual(self.app.sequenceClips[2]["assetId"], asset_id)
+
     def test_sequence_timeline_drag_trims_and_reorders_clips(self) -> None:
         _, _, second_video = self._make_sequence_project()
         second_asset_id = self._add_second_sequence_asset(second_video)

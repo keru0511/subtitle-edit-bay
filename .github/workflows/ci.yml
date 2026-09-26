@@ -313,6 +313,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_log_actions_fit_and_work_at_minimum_window_width
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_preview_play_button_starts_and_pauses_shared_player
           tests.test_gui_editor.GuiEditorRegressionTests.test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions
+          tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_inserts_before_clip_and_appends_after_last
           tests.test_gui_editor.GuiEditorRegressionTests.test_pending_start_time_survives_row_recycling_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_pending_text_survives_processing_state_change_in_expanded_editor
           tests.test_gui_editor.GuiEditorRegressionTests.test_processing_does_not_start_when_settings_cannot_be_saved

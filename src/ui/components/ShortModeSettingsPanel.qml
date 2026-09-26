@@ -30,6 +30,11 @@ ColumnLayout {
         return 0
     }
 
+    function hasIncompleteInput() {
+        return !bgColorField.acceptableInput || !bgmIn.acceptableInput
+            || !bgmOut.acceptableInput || !bgmStart.acceptableInput
+    }
+
     function refresh() {
         if (!settingsRoot.appBackend || settingsRoot.refreshingSettings) return
         // 表示値の反映で発火する変更通知をユーザーの編集として扱わない。

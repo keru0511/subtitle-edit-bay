@@ -312,6 +312,19 @@ Window {
     def _click(self, window: QObject, item: QQuickItem) -> None:
         self.gui.click(window, item)
 
+    def _click_disabled(self, window: QObject, item: QQuickItem) -> None:
+        self.gui.wait_until(
+            lambda: not item.isEnabled(),
+            description=f"{item.objectName()} の無効化",
+        )
+        center = item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
+        QTest.mouseClick(
+            window,
+            Qt.MouseButton.LeftButton,
+            pos=QPoint(round(center.x()), round(center.y())),
+        )
+        self.app.processEvents()
+
     def _click_short_clip_control(self, window: QObject, clip_list: QQuickItem, name: str) -> QQuickItem:
         for _ in range(4):
             control = self._quick_visual_item(clip_list, name)
@@ -9069,13 +9082,13 @@ Window {
         self.assertFalse(start_field.property("acceptableInput"))
 
         with patch.object(self.app.workflow, "_start_command") as start:
-            self._click(window, self._quick_item(window, "shortModeExportButton"))
+            self._click_disabled(window, self._quick_item(window, "shortModeExportButton"))
         start.assert_not_called()
         self.assertTrue(start_field.hasActiveFocus())
         validation_message = self._quick_item(window, "shortModeInputValidationMessage")
         self.assertTrue(validation_message.isVisible())
         self.assertIn("入力途中", validation_message.property("text"))
-        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click_disabled(window, self._quick_item(window, "shortModeBackButton"))
         self.assertTrue(self._quick_item(window, "shortModeScreen").isVisible())
         self.assertTrue(start_field.hasActiveFocus())
         self.assertEqual(self.app.shortVideoClips[0]["start"], 0.0)
@@ -9104,7 +9117,7 @@ Window {
         self.assertFalse(color_field.property("acceptableInput"))
 
         with patch.object(self.app.workflow, "_start_command") as start:
-            self._click(window, self._quick_item(window, "shortModeExportButton"))
+            self._click_disabled(window, self._quick_item(window, "shortModeExportButton"))
         start.assert_not_called()
         self.assertTrue(color_field.hasActiveFocus())
         validation_message = self._quick_item(window, "shortModeInputValidationMessage")
@@ -9122,6 +9135,25 @@ Window {
         start.assert_called_once()
         self.assertEqual(load_project(path)["short_video"]["global_background_color"], "#112233")
         self.assertFalse(validation_message.isVisible())
+
+    def test_short_export_rejects_incomplete_color_after_focus_moves(self) -> None:
+        self._load_project()
+        self.app.initializeShortVideoClips()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        color_field = self._quick_item(window, "shortModeBackgroundColorField")
+        self._click(window, color_field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_Backspace)
+        self.assertFalse(color_field.property("acceptableInput"))
+        QTest.keyClick(window, Qt.Key.Key_Tab)
+        self.assertFalse(color_field.hasActiveFocus())
+        self.assertEqual(color_field.property("text"), "")
+
+        with patch.object(self.app.workflow, "_start_command") as start:
+            self._click_disabled(window, self._quick_item(window, "shortModeExportButton"))
+        start.assert_not_called()
+        self.assertTrue(self._quick_item(window, "shortModeInputValidationMessage").isVisible())
 
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),

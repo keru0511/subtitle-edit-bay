@@ -23,6 +23,7 @@ ColumnLayout {
         return 0
     }
     property int selectedIndex: 0
+    property bool activeTimeInputIncomplete: false
     signal selected(int index)
 
     GridLayout {
@@ -183,6 +184,11 @@ ColumnLayout {
                             Layout.preferredWidth: 82
                             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                             text: Number(clipItem.clipData.start).toFixed(3)
+                            onAcceptableInputChanged: {
+                                if (activeFocus)
+                                    clipListRoot.activeTimeInputIncomplete = !acceptableInput
+                            }
+                            onActiveFocusChanged: clipListRoot.activeTimeInputIncomplete = activeFocus && !acceptableInput
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
                                     && clipListRoot.appBackend.shortVideo.updateShortVideoClip(index, {"start": Number(text)})
@@ -203,6 +209,11 @@ ColumnLayout {
                             Layout.preferredWidth: 82
                             enabled: clipListRoot.appBackend && !clipListRoot.appBackend.running
                             text: Number(clipItem.clipData.end).toFixed(3)
+                            onAcceptableInputChanged: {
+                                if (activeFocus)
+                                    clipListRoot.activeTimeInputIncomplete = !acceptableInput
+                            }
+                            onActiveFocusChanged: clipListRoot.activeTimeInputIncomplete = activeFocus && !acceptableInput
                             onEditingFinished: {
                                 var accepted = clipListRoot.appBackend
                                     && clipListRoot.appBackend.shortVideo.updateShortVideoClip(index, {"end": Number(text)})

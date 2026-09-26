@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import math
 import subprocess
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,13 +28,35 @@ if TYPE_CHECKING:
     from .gui import EditBayBackend
 
 
+@dataclass(frozen=True, slots=True)
+class SequenceDependencies:
+    """シーケンス編集がバックエンドへ要求する操作を明示する。"""
+
+    local_path: Callable[[object], Path]
+    validate_media_file: Callable[[Path, set[str], str], tuple[bool, str]]
+    normalize_source_path: Callable[[str], str]
+    set_status: Callable[[str, str], None]
+
+    @classmethod
+    def from_backend(cls, backend: EditBayBackend) -> SequenceDependencies:
+        """旧バックエンドの操作を窓口の依存へ接続する。"""
+
+        return cls(
+            local_path=lambda value: backend._local_path(value),
+            validate_media_file=lambda source, streams, label: backend._is_supported_media_file(source, streams, label),
+            normalize_source_path=lambda value: backend._normalized_source_path(value),
+            set_status=lambda message, stage: backend._set_status(message, stage),
+        )
+
+
 class SequenceFacade(FeatureFacade):
     """素材とシーケンス編集の画面窓口。"""
 
     sequenceChanged = Signal()
 
-    def __init__(self, backend: "EditBayBackend") -> None:
+    def __init__(self, backend: "EditBayBackend", dependencies: SequenceDependencies | None = None) -> None:
         super().__init__(backend)
+        self._dependencies = dependencies if dependencies is not None else SequenceDependencies.from_backend(backend)
         self._playhead_seconds = 0.0
         self._error = ""
         backend.sequenceChanged.connect(self.sequenceChanged.emit)
@@ -106,7 +129,7 @@ class SequenceFacade(FeatureFacade):
         backend = self._backend
         self._error = str(message)
         backend.sequenceChanged.emit()
-        backend._set_status(self._error, "CHECK")
+        self._dependencies.set_status(self._error, "CHECK")
         return False
 
     def _apply_sequence_mutation(
@@ -115,7 +138,7 @@ class SequenceFacade(FeatureFacade):
         success_message: str,
     ) -> bool:
         backend = self._backend
-        if backend._running:
+        if backend.running:
             return self._sequence_failure("処理中はsequenceを変更できません")
         if self.project_editor.project is None:
             return self._sequence_failure("先に編集プロジェクトを開いてください")
@@ -126,7 +149,7 @@ class SequenceFacade(FeatureFacade):
             return self._sequence_failure(f"sequenceを変更できません: {error}")
         if updated is None:
             return self._sequence_failure("sequenceを変更できません")
-        backend._set_status(success_message, "EDIT")
+        self._dependencies.set_status(success_message, "EDIT")
         return True
 
     @Property("QVariantMap", notify=sequenceChanged)
@@ -177,16 +200,16 @@ class SequenceFacade(FeatureFacade):
     @Slot(str, result=bool)
     def addSequenceAsset(self, path: str) -> bool:
         backend = self._backend
-        if backend._running:
+        if backend.running:
             return self._sequence_failure("処理中はsequence素材を変更できません")
-        candidate = backend._local_path(path)
+        candidate = self._dependencies.local_path(path)
         try:
             candidate = candidate.expanduser().resolve(strict=True)
         except (OSError, RuntimeError, TypeError, ValueError) as error:
             return self._sequence_failure(f"動画素材を確認できません: {error}")
         if not candidate.is_file():
             return self._sequence_failure("動画素材ファイルが存在しません")
-        supported, reason = backend._is_supported_media_file(
+        supported, reason = self._dependencies.validate_media_file(
             candidate,
             {"video"},
             "sequence動画素材",
@@ -196,8 +219,8 @@ class SequenceFacade(FeatureFacade):
         model = self._sequence_model_for_facade()
         if model is None:
             return self._sequence_failure("sequenceを読み込めません")
-        normalized = backend._normalized_source_path(str(candidate))
-        if any(backend._normalized_source_path(asset.path) == normalized for asset in model.assets):
+        normalized = self._dependencies.normalize_source_path(str(candidate))
+        if any(self._dependencies.normalize_source_path(asset.path) == normalized for asset in model.assets):
             return self._sequence_failure("同じ動画素材は既にmedia binにあります")
         try:
             duration = float(probe_media_duration(candidate))
@@ -221,7 +244,7 @@ class SequenceFacade(FeatureFacade):
     @Slot(result=str)
     def browseSequenceAsset(self) -> str:
         backend = self._backend
-        if backend._running:
+        if backend.running:
             self._sequence_failure("処理中はsequence素材を変更できません")
             return ""
         start_dir = str(backend.workspace_root)

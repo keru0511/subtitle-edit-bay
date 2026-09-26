@@ -1,35 +1,88 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from collections.abc import Mapping, Sequence
+from typing import TypedDict
+
+from .data_boundary import coerce_float, coerce_int, is_object_dict, is_object_mapping, is_object_sequence
+from .typed_cache import typed_lru_cache
 
 from .models import SubtitleEvent
 from .subtitle_layout.rules import (
     CLAUSE_BREAK_TOKENS as CLAUSE_BREAK_TOKENS,
-    ELLIPSIS,
-    LEADING_AVOID_CHARS,
+    ELLIPSIS as ELLIPSIS,
+    LEADING_AVOID_CHARS as LEADING_AVOID_CHARS,
     LEADING_BOUNDARY_PENALTIES as LEADING_BOUNDARY_PENALTIES,
-    LEFT_BOUNDARY_AVOID_WORDS,
-    MAX_LINES,
-    RIGHT_BOUNDARY_AVOID_WORDS,
-    SOFT_BREAK_CHARS,
-    STRONG_BREAK_CHARS,
-    TRAILING_AVOID_CHARS,
+    LEFT_BOUNDARY_AVOID_WORDS as LEFT_BOUNDARY_AVOID_WORDS,
+    MAX_LINES as MAX_LINES,
+    RIGHT_BOUNDARY_AVOID_WORDS as RIGHT_BOUNDARY_AVOID_WORDS,
+    SOFT_BREAK_CHARS as SOFT_BREAK_CHARS,
+    STRONG_BREAK_CHARS as STRONG_BREAK_CHARS,
+    TRAILING_AVOID_CHARS as TRAILING_AVOID_CHARS,
 )
 from .subtitle_layout.scoring import (
-    TARGET_READING_SPEED,
+    TARGET_READING_SPEED as TARGET_READING_SPEED,
     TIMING_BALANCE_WEIGHT as TIMING_BALANCE_WEIGHT,
     char_bucket as char_bucket,
-    chunk_boundaries,
-    clause_break_bonus,
-    connected_char_penalty,
-    display_width,
+    chunk_boundaries as chunk_boundaries,
+    clause_break_bonus as clause_break_bonus,
+    connected_char_penalty as connected_char_penalty,
+    display_width as display_width,
     duration_pressure as duration_pressure,
-    is_protected_inline_split,
-    leading_boundary_penalty,
-    text_width,
-    timing_balance_penalty,
+    is_protected_inline_split as is_protected_inline_split,
+    leading_boundary_penalty as leading_boundary_penalty,
+    text_width as text_width,
+    timing_balance_penalty as timing_balance_penalty,
 )
-from .subtitle_layout.tokenize import create_budoux_parser, create_janome_tokenizer
+from .subtitle_layout.tokenize import (
+    create_budoux_parser as create_budoux_parser,
+    create_janome_tokenizer as create_janome_tokenizer,
+)
+
+
+class _AtomicUnitText(TypedDict):
+    text: str
+
+
+class AtomicUnitEntry(_AtomicUnitText, total=False):
+    force_break_before: bool
+
+
+class CharacterTiming(TypedDict):
+    start: float
+    end: float
+
+
+def _mapping(value: object) -> Mapping[object, object]:
+    """拡張フィールドを保持したまま、読み取りに必要な辞書構造を検証する。"""
+    if not is_object_mapping(value):
+        raise TypeError("subtitle payload must be a mapping")
+    return value
+
+
+def _dictionary(value: object) -> dict[object, object]:
+    """更新可能な辞書として返す公開APIでは元の辞書参照を維持する。"""
+    if not is_object_dict(value):
+        raise TypeError("subtitle payload must be a dictionary")
+    return value
+
+
+def _text(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("subtitle text must be a string")
+    return value
+
+
+def _entry_mappings(value: object) -> list[Mapping[object, object]]:
+    if not is_object_sequence(value) or isinstance(value, (str, bytes, bytearray)):
+        raise TypeError("subtitle entries must be a sequence of mappings")
+    return [_mapping(item) for item in value]
+
+
+def _number(value: object) -> float:
+    """処理中の通常のfloatはそのまま返し、それ以外は共通境界で変換する。"""
+    if isinstance(value, float) and type(value) is float:
+        return value
+    return coerce_float(value)
 
 
 def parse_budoux_chunks(text: str) -> list[str]:
@@ -56,12 +109,12 @@ def require_japanese_layout_tools() -> None:
         )
 
 
-@lru_cache(maxsize=4096)
+@typed_lru_cache(maxsize=4096)
 def budoux_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, parse_budoux_chunks(text))
 
 
-@lru_cache(maxsize=4096)
+@typed_lru_cache(maxsize=4096)
 def morpheme_boundaries(text: str) -> set[int]:
     return chunk_boundaries(text, parse_morpheme_chunks(text))
 
@@ -85,7 +138,7 @@ def best_chunk_split_index(current: list[str], max_width: int) -> int | None:
         return None
 
     full_text = "".join(current)
-    candidates: list[tuple[tuple[int, int, int, int, int, int, int], int]] = []
+    candidates: list[tuple[tuple[int, int, int, int, int, int], int]] = []
     for index in range(1, len(current)):
         left = "".join(current[:index]).rstrip()
         right = "".join(current[index:]).lstrip()
@@ -122,7 +175,11 @@ def best_chunk_split_index(current: list[str], max_width: int) -> int | None:
 
     balanced_candidates = [item for item in candidates if min(text_width("".join(current[:item[1]]).rstrip()), text_width("".join(current[item[1]:]).lstrip())) > 5]
     pool = balanced_candidates or candidates
-    return min(pool, key=lambda item: item[0])[1]
+
+    def candidate_score(item: tuple[tuple[int, int, int, int, int, int], int]) -> tuple[int, int, int, int, int, int]:
+        return item[0]
+
+    return min(pool, key=candidate_score)[1]
 
 
 def split_by_width_naturally(text: str, max_width: int) -> list[str]:
@@ -264,7 +321,10 @@ def build_two_line_candidate(text: str, max_width: int, display_duration: float 
     if not viable_candidates:
         return None
 
-    break_index = min(viable_candidates, key=lambda candidate: score_break(text, candidate, max_width, display_duration=display_duration))
+    def candidate_score(candidate: int) -> tuple[int, int, int, int, int, int, int, int]:
+        return score_break(text, candidate, max_width, display_duration=display_duration)
+
+    break_index = min(viable_candidates, key=candidate_score)
     return text[:break_index].rstrip() + r"\N" + text[break_index:].lstrip()
 
 
@@ -295,7 +355,7 @@ def build_truncated_two_line_candidate(lines: list[str], max_width: int, max_lin
             right_width = text_width(right)
             if left_width > max_width * 1.45 or right_width > max_width * 1.45:
                 continue
-            score = score_truncated_break(joined, candidate, max_width, display_duration=display_duration) + (-source_limit,)
+            score: tuple[int, int, int, int, int, int, int, int, int] = (*score_truncated_break(joined, candidate, max_width, display_duration=display_duration), -source_limit)
             visible = [left, right]
             if best_choice is None or score < best_choice[0]:
                 best_choice = (score, visible)
@@ -390,7 +450,7 @@ CONNECTORS = [
 CONNECTORS = [connector.encode("ascii").decode("unicode_escape") for connector in CONNECTORS]
 
 
-def normalize_alignment_text(text: str) -> str:
+def normalize_alignment_text(text: object) -> str:
     return "".join(str(text).split())
 
 
@@ -487,7 +547,11 @@ def snap_forced_boundaries(text: str, boundaries: set[int], radius: int = GAP_BO
         candidates = [candidate for candidate in natural_boundaries if abs(candidate - boundary) <= radius]
         if not candidates:
             continue
-        best = min(candidates, key=lambda candidate: (abs(candidate - boundary), candidate))
+
+        def distance(candidate: int) -> tuple[int, int]:
+            return (abs(candidate - boundary), candidate)
+
+        best = min(candidates, key=distance)
         left_width = text_width(text[:best].strip())
         right_width = text_width(text[best:].strip())
         if left_width < MIN_FORCED_FRAGMENT_WIDTH or right_width < MIN_FORCED_FRAGMENT_WIDTH:
@@ -545,14 +609,14 @@ def split_text_by_boundaries(text: str, boundaries: set[int]) -> list[str]:
     return parts
 
 
-def split_into_atomic_unit_entries(text: str, forced_boundaries: set[int] | None = None) -> list[dict]:
+def split_into_atomic_unit_entries(text: str, forced_boundaries: set[int] | None = None) -> list[AtomicUnitEntry]:
     normalized = " ".join(text.split())
     if not normalized:
         return []
 
     snapped_boundaries = snap_forced_boundaries(normalized, forced_boundaries or set())
     fragments = split_text_by_boundaries(normalized, snapped_boundaries)
-    entries: list[dict] = []
+    entries: list[AtomicUnitEntry] = []
     for fragment_index, fragment in enumerate(fragments):
         fragment_units = split_into_atomic_units(fragment)
         for unit_index, unit in enumerate(fragment_units):
@@ -571,17 +635,17 @@ def duration_for_width(width: int, total_width: int, total_duration: float) -> f
     return total_duration * (width / total_width)
 
 
-def build_character_timeline(words: list[dict] | None) -> list[dict]:
-    timeline: list[dict] = []
-    for word in words or []:
+def build_character_timeline(words: object) -> list[CharacterTiming]:
+    timeline: list[CharacterTiming] = []
+    for word in _entry_mappings([] if words is None else words):
         normalized = normalize_alignment_text(word.get("word", ""))
         start = word.get("start")
         end = word.get("end")
         if not normalized or start is None or end is None:
             continue
 
-        start_time = float(start)
-        end_time = effective_word_end(word)
+        start_time = _number(start)
+        end_time = _effective_word_end_mapping(word)
         if end_time <= start_time:
             continue
 
@@ -594,15 +658,21 @@ def build_character_timeline(words: list[dict] | None) -> list[dict]:
     return timeline
 
 
-def effective_word_end(word: dict) -> float:
-    start = float(word["start"])
-    end = float(word["end"])
+def effective_word_end(word: object) -> float:
+    return _effective_word_end_mapping(_mapping(word))
+
+
+def _effective_word_end_mapping(word: Mapping[object, object]) -> float:
+    """検証済み単語の読み取りではマッピング検査を重ねない。"""
+    start = _number(word["start"])
+    end = _number(word["end"])
     character_count = max(1, len(normalize_alignment_text(word.get("word", ""))))
     return min(end, start + MAX_ALIGNED_CHARACTER_DURATION_SECONDS * character_count)
 
 
-def gap_boundary_indices(words: list[dict] | None, max_gap_seconds: float) -> set[int]:
+def gap_boundary_indices(words: object, max_gap_seconds: float) -> set[int]:
     boundaries: set[int] = set()
+    words = _entry_mappings([] if words is None else words)
     if not words:
         return boundaries
 
@@ -614,31 +684,31 @@ def gap_boundary_indices(words: list[dict] | None, max_gap_seconds: float) -> se
         next_start = words[index + 1].get("start")
         if current_end is None or next_start is None:
             continue
-        inferred_end = effective_word_end(words[index])
-        if float(next_start) - inferred_end >= max_gap_seconds and cursor > 0:
+        inferred_end = _effective_word_end_mapping(words[index])
+        if _number(next_start) - inferred_end >= max_gap_seconds and cursor > 0:
             boundaries.add(cursor)
     return boundaries
 
 
-def split_words_on_gaps(words: list[dict] | None, max_gap_seconds: float) -> list[list[dict]]:
-    valid_words: list[dict] = []
-    for word in words or []:
+def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[dict[object, object]]]:
+    valid_words: list[dict[object, object]] = []
+    for word in _entry_mappings([] if words is None else words):
         normalized = normalize_alignment_text(word.get("word", ""))
         start = word.get("start")
         end = word.get("end")
         if not normalized or start is None or end is None:
             continue
-        if float(end) <= float(start):
+        if _number(end) <= _number(start):
             continue
-        valid_words.append(word)
+        valid_words.append(_dictionary(word))
 
     if not valid_words:
         return []
 
-    groups: list[list[dict]] = [[valid_words[0]]]
+    groups: list[list[dict[object, object]]] = [[valid_words[0]]]
     for word in valid_words[1:]:
         previous = groups[-1][-1]
-        gap = float(word["start"]) - float(previous["end"])
+        gap = _number(word["start"]) - _number(previous["end"])
         if gap >= max_gap_seconds:
             groups.append([word])
         else:
@@ -646,22 +716,23 @@ def split_words_on_gaps(words: list[dict] | None, max_gap_seconds: float) -> lis
     return groups
 
 
-def build_segment_text_from_words(words: list[dict]) -> str:
-    return "".join(str(word.get("word", "")) for word in words).strip()
+def build_segment_text_from_words(words: object) -> str:
+    return "".join(str(word.get("word", "")) for word in _entry_mappings(words)).strip()
 
 
-def split_segment_by_word_gaps(segment: dict, max_gap_seconds: float) -> list[dict]:
+def split_segment_by_word_gaps(segment: object, max_gap_seconds: float) -> list[dict[object, object]]:
+    segment = _dictionary(segment)
     word_groups = split_words_on_gaps(segment.get("words"), max_gap_seconds)
     if len(word_groups) <= 1:
         return [segment]
 
-    split_segments: list[dict] = []
+    split_segments: list[dict[object, object]] = []
     for group in word_groups:
         split_segments.append(
             {
                 **segment,
-                "start": float(group[0]["start"]),
-                "end": float(group[-1]["end"]),
+                "start": _number(group[0]["start"]),
+                "end": _number(group[-1]["end"]),
                 "text": build_segment_text_from_words(group) or segment.get("text", ""),
                 "words": group,
             }
@@ -669,13 +740,14 @@ def split_segment_by_word_gaps(segment: dict, max_gap_seconds: float) -> list[di
     return split_segments
 
 
-def build_timed_units_from_width(segment: dict, unit_entries: list[dict], start: float, end: float) -> list[dict]:
+def build_timed_units_from_width(segment: object, unit_entries: Sequence[AtomicUnitEntry], start: float, end: float) -> list[dict[object, object]]:
+    segment = _mapping(segment)
     total_duration = max(0.01, end - start)
     texts = [entry["text"] for entry in unit_entries]
     widths = [max(1, text_width(text)) for text in texts]
     total_width = sum(widths)
 
-    timed_units: list[dict] = []
+    timed_units: list[dict[object, object]] = []
     cursor = start
     for index, entry in enumerate(unit_entries):
         raw_duration = duration_for_width(widths[index], total_width, total_duration)
@@ -691,7 +763,8 @@ def build_timed_units_from_width(segment: dict, unit_entries: list[dict], start:
     return timed_units
 
 
-def build_timed_units_from_words(segment: dict, unit_entries: list[dict], start: float, end: float) -> list[dict]:
+def build_timed_units_from_words(segment: object, unit_entries: Sequence[AtomicUnitEntry], start: float, end: float) -> list[dict[object, object]]:
+    segment = _mapping(segment)
     timeline = build_character_timeline(segment.get("words"))
     if not timeline:
         return []
@@ -702,7 +775,7 @@ def build_timed_units_from_words(segment: dict, unit_entries: list[dict], start:
     if total_unit_length <= 0 or total_chars <= 0:
         return []
 
-    timed_units: list[dict] = []
+    timed_units: list[dict[object, object]] = []
     cursor = 0
     consumed_units = 0
     for index, entry in enumerate(unit_entries):
@@ -722,8 +795,8 @@ def build_timed_units_from_words(segment: dict, unit_entries: list[dict], start:
         timed_units.append(
             {
                 **segment,
-                "start": max(start, float(char_slice[0]["start"])),
-                "end": min(end, float(char_slice[-1]["end"])),
+                "start": max(start, _number(char_slice[0]["start"])),
+                "end": min(end, _number(char_slice[-1]["end"])),
                 "text": entry["text"],
                 "force_break_before": bool(entry.get("force_break_before", False)),
             }
@@ -743,30 +816,30 @@ def max_duration_for_width(width: int) -> float:
 
 
 def merge_unreadable_groups(
-    groups: list[list[dict]],
+    groups: list[list[dict[object, object]]],
     max_group_width: int,
     min_duration: float,
     max_merge_gap: float,
-) -> list[list[dict]]:
+) -> list[list[dict[object, object]]]:
     merged = [list(group) for group in groups]
     index = 0
     while index < len(merged):
         group = merged[index]
-        group_text = "".join(item["text"] for item in group)
-        group_duration = float(group[-1]["end"]) - float(group[0]["start"])
+        group_text = "".join(_text(item["text"]) for item in group)
+        group_duration = _number(group[-1]["end"]) - _number(group[0]["start"])
         if text_width(group_text) >= MIN_FORCED_FRAGMENT_WIDTH and group_duration >= min_duration:
             index += 1
             continue
 
         candidates: list[tuple[int, int]] = []
         if index + 1 < len(merged):
-            next_gap = float(merged[index + 1][0]["start"]) - float(group[-1]["end"])
-            combined_width = text_width(group_text + "".join(item["text"] for item in merged[index + 1]))
+            next_gap = _number(merged[index + 1][0]["start"]) - _number(group[-1]["end"])
+            combined_width = text_width(group_text + "".join(_text(item["text"]) for item in merged[index + 1]))
             if next_gap <= max_merge_gap and combined_width <= max_group_width:
                 candidates.append((0, index + 1))
         if index > 0:
-            previous_gap = float(group[0]["start"]) - float(merged[index - 1][-1]["end"])
-            combined_width = text_width("".join(item["text"] for item in merged[index - 1]) + group_text)
+            previous_gap = _number(group[0]["start"]) - _number(merged[index - 1][-1]["end"])
+            combined_width = text_width("".join(_text(item["text"]) for item in merged[index - 1]) + group_text)
             if previous_gap <= max_merge_gap and combined_width <= max_group_width:
                 candidates.append((1, index - 1))
         if not candidates:
@@ -785,19 +858,20 @@ def merge_unreadable_groups(
 
 
 def finalize_group_segment(
-    segment: dict,
-    group: list[dict],
+    segment: object,
+    group: list[dict[object, object]],
     next_group_start: float | None,
     subtitle_end_padding_seconds: float,
     subtitle_min_duration_seconds: float,
     use_word_timing: bool,
-) -> dict:
-    group_start = float(group[0]["start"])
-    group_end = float(group[-1]["end"])
-    segment_end_limit = float(segment["end"])
+) -> dict[object, object]:
+    segment = _mapping(segment)
+    group_start = _number(group[0]["start"])
+    group_end = _number(group[-1]["end"])
+    segment_end_limit = _number(segment["end"])
     adjusted_end = group_end + subtitle_end_padding_seconds if use_word_timing else group_end
 
-    group_width = text_width("".join(item["text"] for item in group))
+    group_width = text_width("".join(_text(item["text"]) for item in group))
     upper_bound = min(segment_end_limit, group_start + max_duration_for_width(group_width))
     if next_group_start is not None:
         upper_bound = min(upper_bound, next_group_start)
@@ -812,25 +886,26 @@ def finalize_group_segment(
         **segment,
         "start": group_start,
         "end": adjusted_end,
-        "text": "".join(item["text"] for item in group).strip(),
+        "text": "".join(_text(item["text"]) for item in group).strip(),
         "layout_packed": True,
     }
 
 
 def pack_segment_pages(
-    segment: dict,
+    segment: object,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-) -> list[dict]:
-    text = segment.get("text", "").strip()
+) -> list[dict[object, object]]:
+    segment = _mapping(segment)
+    text = _text(segment.get("text", "")).strip()
     if not text:
         return []
 
     require_japanese_layout_tools()
 
-    start = float(segment["start"])
-    end = float(segment["end"])
+    start = _number(segment["start"])
+    end = _number(segment["end"])
     has_word_timing = bool(segment.get("words"))
     forced_boundaries = gap_boundary_indices(segment.get("words"), subtitle_max_gap_seconds) if has_word_timing else set()
     unit_entries = split_into_atomic_unit_entries(text, forced_boundaries=forced_boundaries)
@@ -842,17 +917,17 @@ def pack_segment_pages(
         timed_units = build_timed_units_from_width(segment, unit_entries, start, end)
         has_word_timing = False
 
-    grouped: list[list[dict]] = []
-    current_group: list[dict] = []
+    grouped: list[list[dict[object, object]]] = []
+    current_group: list[dict[object, object]] = []
     current_duration = 0.0
     current_width = 0
     current_sentences = 0
-    max_group_width = int(segment.get("max_width", DEFAULT_PAGE_WIDTH)) * MAX_LINES
+    max_group_width = coerce_int(segment.get("max_width", DEFAULT_PAGE_WIDTH)) * MAX_LINES
 
     for unit in timed_units:
-        unit_duration = float(unit["end"]) - float(unit["start"])
-        unit_width = text_width(unit["text"])
-        sentence_increment = 1 if is_sentence_like(unit["text"]) else 0
+        unit_duration = _number(unit["end"]) - _number(unit["start"])
+        unit_width = text_width(_text(unit["text"]))
+        sentence_increment = 1 if is_sentence_like(_text(unit["text"])) else 0
         next_sentence_count = current_sentences + sentence_increment
         should_split = bool(current_group) and (
             bool(unit.get("force_break_before"))
@@ -880,18 +955,18 @@ def pack_segment_pages(
         subtitle_max_gap_seconds,
     )
 
-    results: list[dict] = []
+    results: list[dict[object, object]] = []
     for index, group in enumerate(grouped):
-        next_group_start = float(grouped[index + 1][0]["start"]) if index + 1 < len(grouped) else None
-        group_start = float(group[0]["start"])
-        group_end = float(group[-1]["end"])
+        next_group_start = _number(grouped[index + 1][0]["start"]) if index + 1 < len(grouped) else None
+        group_start = _number(group[0]["start"])
+        group_end = _number(group[-1]["end"])
         if group_end - group_start > ABSOLUTE_MAX_DURATION and len(group) > 1:
             midpoint = len(group) // 2
             results.append(
                 finalize_group_segment(
                     segment,
                     group[:midpoint],
-                    float(group[midpoint]["start"]),
+                    _number(group[midpoint]["start"]),
                     subtitle_end_padding_seconds,
                     subtitle_min_duration_seconds,
                     has_word_timing,
@@ -921,28 +996,29 @@ def pack_segment_pages(
     return results
 
 
-def pack_event(segment: dict, default_max_width: int = 24) -> SubtitleEvent | None:
-    speaker = segment.get("speaker", "Oz")
-    text = segment.get("text", "").strip()
+def pack_event(segment: object, default_max_width: int = 24) -> SubtitleEvent | None:
+    segment = _mapping(segment)
+    speaker = _text(segment.get("speaker", "Oz"))
+    text = _text(segment.get("text", "")).strip()
     if not text:
         return None
 
-    emphasis = segment.get("emphasis", "normal")
-    max_width = int(segment.get("max_width", default_max_width))
-    display_duration = max(0.01, float(segment["end"]) - float(segment["start"]))
+    emphasis = _text(segment.get("emphasis", "normal"))
+    max_width = coerce_int(segment.get("max_width", default_max_width))
+    display_duration = max(0.01, _number(segment["end"]) - _number(segment["start"]))
     return SubtitleEvent(
-        start=float(segment["start"]),
-        end=float(segment["end"]),
+        start=_number(segment["start"]),
+        end=_number(segment["end"]),
         speaker=speaker,
         text=normalize_text(text, max_width=max_width, display_duration=display_duration),
         emphasis=emphasis,
         position="bottom",
-        layer=int(segment.get("layout_row", 0)),
+        layer=coerce_int(segment.get("layout_row", 0)),
         metadata={
             "source_text": text,
             "max_width": max_width,
             "display_duration": display_duration,
-            "subtitle_font_scale": float(segment.get("subtitle_font_scale", 1.0)),
+            "subtitle_font_scale": _number(segment.get("subtitle_font_scale", 1.0)),
             "subtitle_font_family": str(segment.get("subtitle_font_family", "")),
             "source_track": str(segment.get("source_track", "")),
             "source_speaker": str(segment.get("source_speaker", "")),
@@ -952,14 +1028,14 @@ def pack_event(segment: dict, default_max_width: int = 24) -> SubtitleEvent | No
 
 
 def pack_segments(
-    data: dict,
+    data: object,
     default_max_width: int = 24,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
 ) -> list[SubtitleEvent]:
     events: list[SubtitleEvent] = []
-    for segment in data.get("segments", []):
+    for segment in _entry_mappings(_mapping(data).get("segments", [])):
         pages = [segment] if segment.get("layout_packed") else pack_segment_pages(
             segment,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,

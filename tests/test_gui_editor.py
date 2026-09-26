@@ -3986,6 +3986,26 @@ Window {
         self.assertTrue(window.close())
         self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
 
+    def test_close_during_processing_keeps_existing_unsaved_edit(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self.app.updateSegment(0, {"text": "未保存の字幕"})
+        self.app.autosave_timer.stop()
+        saved_bytes = path.read_bytes()
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(window.close())
+        self.assertTrue(window.isVisible())
+        self.assertEqual(path.read_bytes(), saved_bytes)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(window.close())
+        self.assertEqual(load_project(path)["segments"][0]["text"], "未保存の字幕")
+
     def test_transcription_request_commits_pending_time_before_merge_choice(self) -> None:
         self._set_ready_sources()
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
@@ -4268,6 +4288,34 @@ Window {
         self.app.processEvents()
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+
+    def test_pending_end_time_survives_processing_and_selection_change(self) -> None:
+        path = self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
+            {"id": "second", "start": 5, "end": 8, "text": "second", "speaker": "Speaker_Alice"},
+        ])
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionEndTimeField")
+        self._click(window, field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in "3.500":
+            QTest.keyClick(window, Qt.Key(ord(char)))
+        self.app.processEvents()
+        self.assertEqual(field.property("text"), "3.500")
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.subtitles.selectSegment(1)
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["end"], 4.0)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(load_project(path)["segments"][0]["end"], 3.5)
+        self.assertEqual(self.app.selectedSegmentIndex, 1)
 
     def test_pending_start_time_survives_mode_and_selection_changes_during_processing(self) -> None:
         path = self._load_project(segments=[
@@ -4666,6 +4714,75 @@ Window {
         self.app.processEvents()
         self.assertTrue(split_button.isEnabled())
 
+    def test_subtitle_timeline_drag_is_locked_during_processing_and_recovers(self) -> None:
+        self._load_project()
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        timeline = self._quick_item(window, "workspaceSubtitleTimeline")
+
+        def drag_caption(distance: int) -> None:
+            clip = self._quick_visual_item(timeline, "timelineCaption-0")
+            center = clip.mapToScene(QPointF(clip.width() / 2, clip.height() / 2))
+            start = QPoint(round(center.x()), round(center.y()))
+            QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
+            for fraction in (0.25, 0.5, 0.75, 1.0):
+                QTest.mouseMove(window, QPoint(start.x() + round(distance * fraction), start.y()), 30)
+            QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=QPoint(start.x() + distance, start.y()))
+            self.app.processEvents()
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(timeline.property("editable"))
+        drag_caption(48)
+        self.assertEqual(self.app.segmentAt(0)["start"], 0.0)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(timeline.property("editable"))
+        drag_caption(48)
+        self.assertGreater(self.app.segmentAt(0)["start"], 0.0)
+
+    def test_subtitle_timeline_resize_is_locked_during_processing_and_recovers(self) -> None:
+        self._load_project()
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        timeline = self._quick_item(window, "workspaceSubtitleTimeline")
+
+        def handle_point(name: str) -> QPoint:
+            clip = self._quick_visual_item(timeline, "timelineCaption-0")
+            handle = self._quick_visual_item(clip, name)
+            edge = handle.mapToScene(QPointF(handle.width() / 2, handle.height() / 2))
+            return QPoint(round(edge.x()), round(edge.y()))
+
+        def drag_handle(start: QPoint, distance: int) -> None:
+            QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
+            for fraction in (0.25, 0.5, 0.75, 1.0):
+                QTest.mouseMove(window, QPoint(start.x() + round(distance * fraction), start.y()), 30)
+            QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=QPoint(start.x() + distance, start.y()))
+            self.app.processEvents()
+
+        original_start = self.app.segmentAt(0)["start"]
+        original_end = self.app.segmentAt(0)["end"]
+        start_handle_point = handle_point("timelineCaptionStartHandle")
+        end_handle_point = handle_point("timelineCaptionEndHandle")
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        drag_handle(start_handle_point, 48)
+        drag_handle(end_handle_point, 48)
+        self.assertEqual(self.app.segmentAt(0)["start"], original_start)
+        self.assertEqual(self.app.segmentAt(0)["end"], original_end)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        drag_handle(handle_point("timelineCaptionEndHandle"), 48)
+        self.assertGreater(self.app.segmentAt(0)["end"], original_end)
+        drag_handle(handle_point("timelineCaptionStartHandle"), 48)
+        self.assertGreater(self.app.segmentAt(0)["start"], original_start)
+
     def test_subtitle_backend_rejects_mutations_during_processing(self) -> None:
         """画面以外の字幕編集入口も処理中のprojectと履歴を変えない。"""
         actions = (
@@ -4678,6 +4795,7 @@ Window {
             ("削除", self.app.subtitles.deleteSelectedSegment),
             ("Undo", self.app.subtitles.undoEdit),
             ("Redo", self.app.subtitles.redoEdit),
+            ("話者色", lambda: self.app.subtitles.updateProjectSpeakerColor(0, "#445566")),
             ("プレビュー更新", lambda: self.app.subtitles.buildSubtitlePreview({"subtitle_font_size": 60})),
         )
         for name, action in actions:
@@ -4696,6 +4814,7 @@ Window {
                     deepcopy(self.app._redo_stack),
                     self.app.projectDirty,
                     path.read_bytes(),
+                    self.app.color_config_path.read_bytes() if self.app.color_config_path.exists() else None,
                 )
                 self.app._running = True
                 try:
@@ -4707,6 +4826,7 @@ Window {
                             self.app._redo_stack,
                             self.app.projectDirty,
                             path.read_bytes(),
+                            self.app.color_config_path.read_bytes() if self.app.color_config_path.exists() else None,
                         ),
                         before,
                     )

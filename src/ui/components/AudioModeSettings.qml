@@ -162,7 +162,21 @@ Item {
                             stepSize: 1
                             value: Number(channelCard.modelData.volume_percent || 0)
                             enabled: !root.backend.running && channelCard.modelData.enabled
-                            onMoved: root.updateChannel(channelCard.index, {"volume_percent": value})
+                            function commitVolume() {
+                                if (root.backend.running || !channelCard.modelData.enabled)
+                                    return
+                                var volume = Math.round(value)
+                                if (volume !== Number(channelCard.modelData.volume_percent || 0))
+                                    root.updateChannel(channelCard.index, {"volume_percent": volume})
+                            }
+                            onMoved: {
+                                if (!pressed)
+                                    commitVolume()
+                            }
+                            onPressedChanged: {
+                                if (!pressed)
+                                    commitVolume()
+                            }
                         }
                         Text { text: Math.round(volumeSlider.value) + "%"; color: root.textColor; font.family: "Cascadia Mono"; font.pixelSize: 9 }
                     }

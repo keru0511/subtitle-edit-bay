@@ -6228,6 +6228,49 @@ Window {
         self._click(window, control("workspaceAudioMuteButton"))
         self.assertTrue(self.app.audioMixerChannels[0]["muted"])
 
+    def test_workspace_audio_use_volume_and_solo_controls_are_saved(self) -> None:
+        path = self._load_project()
+        self.app.audio.updateAudioMixChannel(0, {"enabled": True})
+        self.assertTrue(self.app.audioMixerChannels[0]["enabled"])
+        self.assertTrue(self.app.saveProject())
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-audio"))
+        channel_list = self._quick_item(window, "workspaceAudioChannelList")
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_visual_item(channel_list, "workspaceAudioEnabledCheck"))
+            self.assertFalse(self.app.audioMixerChannels[0]["enabled"])
+            self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
+            self.assertFalse(load_project(path)["audio_mix"]["channels"][0]["enabled"])
+
+            self._click(window, self._quick_visual_item(channel_list, "workspaceAudioEnabledCheck"))
+            self.assertTrue(self.app.audioMixerChannels[0]["enabled"])
+            volume_slider = self._quick_visual_item(channel_list, "workspaceAudioVolumeSlider")
+            self.assertTrue(volume_slider.isEnabled())
+            self._drag_slider(window, volume_slider, 0.7)
+            self.assertGreater(
+                self.app.audioMixerChannels[0]["volume_percent"], 120,
+                self.app.audioMixerChannels[0],
+            )
+            dragged_volume = self.app.audioMixerChannels[0]["volume_percent"]
+            volume_slider = self._quick_visual_item(channel_list, "workspaceAudioVolumeSlider")
+            volume_slider.forceActiveFocus()
+            QTest.keyClick(window, Qt.Key.Key_Left)
+            self.gui.wait_until(
+                lambda: self.app.audioMixerChannels[0]["volume_percent"] < dragged_volume,
+                description="音量スライダーのキー操作",
+            )
+            expected_volume = self.app.audioMixerChannels[0]["volume_percent"]
+            self._click(window, self._quick_visual_item(channel_list, "workspaceAudioSoloButton"))
+            self.assertTrue(self.app.audioMixerChannels[0]["solo"])
+            self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
+
+        saved_channel = load_project(path)["audio_mix"]["channels"][0]
+        self.assertTrue(saved_channel["enabled"])
+        self.assertAlmostEqual(saved_channel["volume_percent"], expected_volume, places=2)
+        self.assertTrue(saved_channel["solo"])
+        self.assertFalse(self.app.projectDirty)
+
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_workspace_audio_actions_save_reset_and_rebuild_preview(self) -> None:
         path = self._load_project(duration_seconds=8.0)

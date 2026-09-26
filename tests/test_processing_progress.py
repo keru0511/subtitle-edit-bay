@@ -8,9 +8,10 @@ from src.processing_progress import (
     parse_progress_events,
     progress_event_line,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ProcessingProgressTests(unittest.TestCase):
+class ProcessingProgressTests(TypedTestCase):
     def test_event_protocol_is_path_free_and_round_trips(self) -> None:
         line = progress_event_line("transcribe", "alignment", phase="start")
 

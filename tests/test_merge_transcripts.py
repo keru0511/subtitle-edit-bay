@@ -22,9 +22,10 @@ from src.merge_transcripts import (
     split_segment,
     write_merged_transcript,
 )
+from tests.typed_case import TypedTestCase
 
 
-class MergeTranscriptsTests(unittest.TestCase):
+class MergeTranscriptsTests(TypedTestCase):
     def test_load_transcript_reads_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "transcript.json"

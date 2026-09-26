@@ -7,6 +7,7 @@ from pathlib import Path
 from src.gui_project_editor_controller import ProjectEditorController
 from src.subtitle_project import create_project, load_project
 from src.video_sequence import SequenceTransition, VideoSequence
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +19,7 @@ SEQUENCE_PANEL_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "SequenceEd
 MEDIA_BIN_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "MediaBinPanel.qml"
 
 
-class ProductionIntegrationContractTests(unittest.TestCase):
+class ProductionIntegrationContractTests(TypedTestCase):
     def test_production_workflow_routes_all_cross_workspace_actions_to_backend(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         short_screen = SHORT_SCREEN_QML.read_text(encoding="utf-8")

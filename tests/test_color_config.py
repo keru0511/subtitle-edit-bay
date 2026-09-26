@@ -7,9 +7,10 @@ from pathlib import Path
 
 from src.color_config import load_speaker_color_map, normalize_rgb_color, save_speaker_color
 from src.data_boundary import decode_json, is_object_mapping
+from tests.typed_case import TypedTestCase
 
 
-class ColorConfigTests(unittest.TestCase):
+class ColorConfigTests(TypedTestCase):
     def test_normalize_rgb_color_accepts_qml_rgb_and_argb_values(self) -> None:
         self.assertEqual(normalize_rgb_color("#12abef"), "#12ABEF")
         self.assertEqual(normalize_rgb_color("#FF12ABEF"), "#12ABEF")

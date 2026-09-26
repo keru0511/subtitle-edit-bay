@@ -6,6 +6,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 UI_ROOT = Path(__file__).resolve().parents[1] / "src" / "ui"
@@ -62,7 +63,7 @@ QML_LINT_FILES = (
 )
 
 
-class QmlStaticTests(unittest.TestCase):
+class QmlStaticTests(TypedTestCase):
     def test_sequence_editor_uses_backend_view_and_mutation_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "MediaBinPanel.qml").read_text(encoding="utf-8")

@@ -6,9 +6,10 @@ import unittest
 from unittest import mock
 
 from src.media_probe import probe_media_duration, probe_media_stream_types, probe_video_stream
+from tests.typed_case import TypedTestCase
 
 
-class MediaProbeTests(unittest.TestCase):
+class MediaProbeTests(TypedTestCase):
     def test_probe_media_duration_parses_ffprobe_output(self) -> None:
         with mock.patch("src.media_probe.subprocess.run") as run:
             run.return_value = mock.MagicMock(stdout="  123.4567  \n")

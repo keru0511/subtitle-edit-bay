@@ -10,9 +10,10 @@ from src.audio_auto_mix import (
     predict_limiter_reduction,
     suggest_channel_gains,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AudioAutoMixTests(unittest.TestCase):
+class AudioAutoMixTests(TypedTestCase):
     def test_estimate_level_trims_outlier_and_rejects_short_input(self) -> None:
         self.assertIsNone(estimate_level_db([0.1] * 3))
         level = estimate_level_db([0.1] * 100 + [1.0] * 2)

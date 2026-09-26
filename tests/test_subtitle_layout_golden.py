@@ -4,13 +4,14 @@ import unittest
 from unittest import mock
 
 from src.subtitle_packer import normalize_text
+from tests.typed_case import TypedTestCase
 
 
 def jp(value: str) -> str:
     return value.encode("ascii").decode("unicode_escape")
 
 
-class SubtitleLayoutGoldenTests(unittest.TestCase):
+class SubtitleLayoutGoldenTests(TypedTestCase):
     def test_short_reaction_stays_on_one_line(self) -> None:
         self.assertEqual(normalize_text(jp(r"\u3046\u3093"), max_width=12, max_lines=2), jp(r"\u3046\u3093"))
 

@@ -12,6 +12,7 @@ from src.codex_edit_proposal import (
     build_undo_entry,
 )
 from src.subtitle_project import create_project
+from tests.typed_case import TypedTestCase
 
 
 def _project() -> dict[str, object]:
@@ -27,7 +28,7 @@ def _project() -> dict[str, object]:
         )
 
 
-class CodexEditProposalTests(unittest.TestCase):
+class CodexEditProposalTests(TypedTestCase):
     def test_schema_rejects_unknown_operation_fields(self) -> None:
         with self.assertRaisesRegex(EditProposalError, "unsupported fields"):
             CodexEditProposal.from_json(

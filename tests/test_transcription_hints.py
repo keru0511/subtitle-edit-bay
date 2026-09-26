@@ -5,9 +5,10 @@ import unittest
 from src.transcription_context import TranscriptionContext
 from src.transcription_dictionary import transcription_dictionary_from_mapping
 from src.transcription_hints import build_transcription_hints
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionHintsTests(unittest.TestCase):
+class TranscriptionHintsTests(TypedTestCase):
     def test_empty_context_produces_no_hints(self) -> None:
         hints = build_transcription_hints(TranscriptionContext())
 

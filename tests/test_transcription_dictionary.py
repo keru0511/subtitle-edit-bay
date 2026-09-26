@@ -13,9 +13,10 @@ from src.transcription_dictionary import (
     load_transcription_dictionary,
     transcription_dictionary_from_mapping,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionDictionaryTests(unittest.TestCase):
+class TranscriptionDictionaryTests(TypedTestCase):
     def test_dictionary_normalizes_terms_aliases_and_sources(self) -> None:
         dictionary = transcription_dictionary_from_mapping(
             {

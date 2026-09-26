@@ -12,6 +12,7 @@ from src.transcription_hint_workflow import (
     load_confirmed_transcription_dictionary,
     resolve_confirmed_dictionary_path,
 )
+from tests.typed_case import TypedTestCase
 
 
 def write_dictionary(path: Path) -> None:
@@ -38,7 +39,7 @@ def write_dictionary(path: Path) -> None:
     )
 
 
-class TranscriptionHintWorkflowTests(unittest.TestCase):
+class TranscriptionHintWorkflowTests(TypedTestCase):
     def test_unconfirmed_dictionary_path_is_inert(self) -> None:
         with TemporaryDirectory() as directory:
             tmp_path = Path(directory)

@@ -10,9 +10,10 @@ from src.channel_presets import (
     create_channel_preset,
     diff_channel_preset,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ChannelPresetTests(unittest.TestCase):
+class ChannelPresetTests(TypedTestCase):
     def test_absolute_media_paths_are_excluded_on_every_platform(self) -> None:
         preset = create_channel_preset(
             "paths",

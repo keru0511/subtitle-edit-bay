@@ -13,6 +13,7 @@ from src.codex_actions import (
     GuiActionBackend,
     HandlerResult,
 )
+from tests.typed_case import TypedTestCase
 
 
 class FakeBackend:
@@ -63,7 +64,7 @@ def request(
     return payload
 
 
-class CodexActionTests(unittest.TestCase):
+class CodexActionTests(TypedTestCase):
     def setUp(self) -> None:
         self.backend = FakeBackend()
         self.dispatcher = ActionDispatcher(self.backend)
@@ -284,7 +285,7 @@ class CodexActionTests(unittest.TestCase):
         self.assertNotIn("C:/", result.message)
 
 
-class GuiActionBackendTests(unittest.TestCase):
+class GuiActionBackendTests(TypedTestCase):
     def test_subtitle_proposal_processing_state_does_not_reuse_normal_job_progress(self) -> None:
         class SessionSnapshot:
             state = "running"

@@ -10,9 +10,10 @@ from src.gui_state import (
     build_speaker_entries_from_files,
     write_gui_runtime_config,
 )
+from tests.typed_case import TypedTestCase
 
 
-class GuiStateTests(unittest.TestCase):
+class GuiStateTests(TypedTestCase):
     def test_source_selection_starts_empty_and_serializes_audio_files_as_list(self) -> None:
         selection = SourceSelection()
 

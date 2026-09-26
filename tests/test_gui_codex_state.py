@@ -10,6 +10,7 @@ from src.gui_codex_state import (
     CodexSessionSnapshot,
     build_codex_context,
 )
+from tests.typed_case import TypedTestCase
 
 
 class FakeNotification:
@@ -73,7 +74,7 @@ class BlockingAccountClient(FakeClient):
         return {"authenticated": True}
 
 
-class GuiCodexStateTests(unittest.TestCase):
+class GuiCodexStateTests(TypedTestCase):
     def test_context_supports_all_scopes_without_media_paths(self) -> None:
         project = {
             "video": {"path": "C:/secret/video.mkv"},

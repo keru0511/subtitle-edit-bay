@@ -13,9 +13,10 @@ from src.data_boundary import (
     is_object_mapping,
     is_object_sequence,
 )
+from tests.typed_case import TypedTestCase
 
 
-class DataBoundaryTests(unittest.TestCase):
+class DataBoundaryTests(TypedTestCase):
     def test_mutable_dict_guard_preserves_identity_and_unknown_values(self) -> None:
         original: dict[str, object] = {"value": [1, None]}
         incoming: object = original

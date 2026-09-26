@@ -19,9 +19,10 @@ from src.installer_migration import (
     validated_runtime_config,
 )
 from src.runtime_config import load_command_runtime_config
+from tests.typed_case import TypedTestCase
 
 
-class InstallerMigrationTests(unittest.TestCase):
+class InstallerMigrationTests(TypedTestCase):
     def _workspaces(self, root: Path) -> tuple[Path, Path]:
         source = root / "legacy"
         destination = root / "installed"

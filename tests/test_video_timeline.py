@@ -11,9 +11,10 @@ from src.video_timeline import (
     VideoTimelineError,
     timeline_from_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class VideoTimelineTests(unittest.TestCase):
+class VideoTimelineTests(TypedTestCase):
     def test_unknown_media_duration_does_not_use_last_subtitle_as_video_end(self) -> None:
         project = create_project(
             video_path="source.mp4",

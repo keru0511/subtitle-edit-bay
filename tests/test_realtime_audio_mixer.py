@@ -13,9 +13,10 @@ from src.realtime_audio_mixer import (
     buffered_output_start_frame,
     encode_float32,
 )
+from tests.typed_case import TypedTestCase
 
 
-class RealtimeAudioMixerTests(unittest.TestCase):
+class RealtimeAudioMixerTests(TypedTestCase):
     def test_converts_qt_integer_pcm_to_float_frames(self) -> None:
         audio_format = QAudioFormat()
         audio_format.setSampleRate(48_000)

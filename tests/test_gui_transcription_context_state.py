@@ -7,9 +7,10 @@ from src.gui_transcription_context_state import (
     gui_transcription_context_state_from_config,
 )
 from src.transcription_context import TranscriptionContextError
+from tests.typed_case import TypedTestCase
 
 
-class GuiTranscriptionContextStateTests(unittest.TestCase):
+class GuiTranscriptionContextStateTests(TypedTestCase):
     def test_helpers_are_reexported_for_existing_gui_imports(self) -> None:
         self.assertIs(gui_state_base.GuiTranscriptionContextState, GuiTranscriptionContextState)
         self.assertIs(gui_state_base.gui_state_to_transcription_context, gui_state_to_transcription_context)

@@ -6,9 +6,10 @@ from unittest import mock
 
 from src.highlight_feedback import HighlightFeedbackStore
 from src.highlight_preferences import HighlightPreferenceModel, PreferenceSettings
+from tests.typed_case import TypedTestCase
 
 
-class HighlightPreferenceTests(unittest.TestCase):
+class HighlightPreferenceTests(TypedTestCase):
     def test_feedback_store_excludes_text_and_supports_export_reset_delete(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = HighlightFeedbackStore(f"{temp_dir}/feedback.json")

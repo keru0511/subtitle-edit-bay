@@ -12,9 +12,10 @@ from src.codex_runtime import (
     detect_codex,
     redact_codex_diagnostic,
 )
+from tests.typed_case import TypedTestCase
 
 
-class CodexRuntimeTests(unittest.TestCase):
+class CodexRuntimeTests(TypedTestCase):
     def test_detection_prefers_explicit_executable_and_uses_no_shell(self) -> None:
         calls: list[tuple[list[str], dict[str, object]]] = []
 

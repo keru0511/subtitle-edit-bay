@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import tempfile
-import unittest
 from unittest.mock import patch
 
 from src.runtime_dependencies import RuntimeDependencyStatus
@@ -12,9 +11,10 @@ from src.workflow_actions import (
     prepare_render_request, render_capability, render_output_path,
     transcription_capability, validate_render_output,
 )
+from tests.typed_case import TypedTestCase
 
 
-class WorkflowActionTests(unittest.TestCase):
+class WorkflowActionTests(TypedTestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

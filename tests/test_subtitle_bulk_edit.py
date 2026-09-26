@@ -13,9 +13,10 @@ from src.subtitle_bulk_edit import (
     preview_bulk_edit,
 )
 from src.subtitle_project import create_project
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleBulkEditTests(unittest.TestCase):
+class SubtitleBulkEditTests(TypedTestCase):
     def _project(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as temp_dir:
             return create_project(

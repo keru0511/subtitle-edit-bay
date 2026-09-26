@@ -12,9 +12,10 @@ from src.transcript_cache import (
     transcript_cache_metadata_path,
     write_transcript_cache_metadata,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptCacheTests(unittest.TestCase):
+class TranscriptCacheTests(TypedTestCase):
     def test_fingerprint_changes_with_asr_context_and_dictionary_inputs(self) -> None:
         base = build_transcript_cache_fingerprint(
             model="large-v3",

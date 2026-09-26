@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.ci_impact import JOBS, changed_paths, main, plan_changes
 from scripts.release_readiness import ReleaseReadinessError, assert_ci_validation_results
+from tests.typed_case import TypedTestCase
 
 
-class CiImpactTests(unittest.TestCase):
+class CiImpactTests(TypedTestCase):
     def test_documentation_avoids_expensive_jobs(self):
         plan = plan_changes(["README.md", "docs/CI_TEST_GROUPS.md", "AGENTS.md"])
         self.assertEqual([job for job, enabled in plan.items() if enabled], ["python-quality"])

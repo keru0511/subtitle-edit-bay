@@ -15,9 +15,10 @@ from src.youtube_text import (
     load_merged_transcript,
     write_youtube_texts,
 )
+from tests.typed_case import TypedTestCase
 
 
-class YoutubeTextTests(unittest.TestCase):
+class YoutubeTextTests(TypedTestCase):
     def test_clean_text_normalizes_whitespace_and_newlines(self) -> None:
         self.assertEqual(clean_text("  hello   world" + chr(10)), "hello world")
         self.assertEqual(clean_text("あ" + chr(10) + chr(10) + "い"), "あ い")

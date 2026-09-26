@@ -4,13 +4,14 @@ import ast
 import re
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_DOCUMENT = REPOSITORY_ROOT / "docs" / "cutover-403-audit.md"
 
 
-class CutoverAuditContractTests(unittest.TestCase):
+class CutoverAuditContractTests(TypedTestCase):
     def setUp(self) -> None:
         self.document = AUDIT_DOCUMENT.read_text(encoding="utf-8")
 

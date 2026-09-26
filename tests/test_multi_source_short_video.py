@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unittest
 
 from src.multi_source_short_video import (
     MultiSourceError,
@@ -14,13 +13,14 @@ from src.multi_source_short_video import (
     relink_source,
     speaker_style_key,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _single_project():
     return {"video_path": "C:/素材/一つ目.mkv", "clips": [{"source_start": 0, "source_end": 2}]}
 
 
-class MultiSourceShortVideoTests(unittest.TestCase):
+class MultiSourceShortVideoTests(TypedTestCase):
     def test_single_source_migrates_without_losing_legacy_fields(self):
         project = ensure_multi_source_project(_single_project())
         self.assertEqual(project["video_path"], "C:/素材/一つ目.mkv")

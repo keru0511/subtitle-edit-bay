@@ -18,9 +18,10 @@ from src.audio_preview_cache import (
     prune_audio_preview_cache,
     prepare_audio_preview_cache,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AudioPreviewCacheTests(unittest.TestCase):
+class AudioPreviewCacheTests(TypedTestCase):
     def _project(self, root: Path) -> dict[str, object]:
         video = root / "capture.mkv"
         video.write_bytes(b"video-source")

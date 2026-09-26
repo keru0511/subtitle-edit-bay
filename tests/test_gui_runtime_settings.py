@@ -5,9 +5,10 @@ import unittest
 from src import gui_state_base
 from src.gui_runtime_state import build_gui_command, build_gui_runtime_config
 from src.runtime_settings import gui_runtime_config_updates
+from tests.typed_case import TypedTestCase
 
 
-class GuiRuntimeSettingsTests(unittest.TestCase):
+class GuiRuntimeSettingsTests(TypedTestCase):
     def test_gui_runtime_helpers_are_reexported_for_existing_callers(self) -> None:
         self.assertIs(gui_state_base.build_gui_runtime_config, build_gui_runtime_config)
         self.assertIs(gui_state_base.build_gui_command, build_gui_command)

@@ -15,6 +15,7 @@ from src.runtime_config import (
     resolve_list_option,
     resolve_option,
 )
+from tests.typed_case import TypedTestCase
 
 
 def config_json(payload: Mapping[str, object]) -> str:
@@ -27,7 +28,7 @@ def section(payload: Mapping[str, object], key: str) -> Mapping[object, object]:
     return value
 
 
-class RuntimeConfigTests(unittest.TestCase):
+class RuntimeConfigTests(TypedTestCase):
     def test_load_runtime_config_reads_utf8_sig_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "runtime_config.json"

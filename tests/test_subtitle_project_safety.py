@@ -4,9 +4,10 @@ from pathlib import Path
 
 from src.subtitle_project import create_project, derive_project_path, load_project, save_project
 from src.subtitle_workflow import transcribe_to_project
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleProjectSafetyTests(unittest.TestCase):
+class SubtitleProjectSafetyTests(TypedTestCase):
     def test_transcription_refuses_to_overwrite_existing_edits_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

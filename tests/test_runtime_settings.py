@@ -16,9 +16,10 @@ from src.runtime_settings import (
     settings_to_flat_dict,
     transcribe_runtime_options,
 )
+from tests.typed_case import TypedTestCase
 
 
-class RuntimeSettingsTests(unittest.TestCase):
+class RuntimeSettingsTests(TypedTestCase):
     def test_default_craig_runtime_config_maps_to_typed_settings(self) -> None:
         settings = load_runtime_settings("craig_pipeline", DEFAULT_RUNTIME_CONFIG)
 

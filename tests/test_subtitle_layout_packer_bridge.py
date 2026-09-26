@@ -8,9 +8,10 @@ from src import subtitle_line_count
 from src import subtitle_packer
 from src.subtitle_layout import packer as layout_packer
 from src.subtitle_layout import rules, scoring, tokenize
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLayoutPackerBridgeTests(unittest.TestCase):
+class SubtitleLayoutPackerBridgeTests(TypedTestCase):
     def test_bridge_binds_legacy_rules_and_tokenizer_factories(self) -> None:
         self.assertIs(subtitle_packer.ELLIPSIS, rules.ELLIPSIS)
         self.assertIs(subtitle_packer.STRONG_BREAK_CHARS, rules.STRONG_BREAK_CHARS)

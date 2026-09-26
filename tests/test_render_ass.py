@@ -49,6 +49,7 @@ from src.transcribe import (
     validate_hf_token,
 )
 from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
+from tests.typed_case import TypedTestCase
 
 
 def _fake_process(
@@ -62,7 +63,7 @@ def _fake_process(
     return process
 
 
-class RenderAssTests(unittest.TestCase):
+class RenderAssTests(TypedTestCase):
     def test_temporary_ass_path_cleans_apostrophe_copy_after_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             subtitle = Path(temp_dir) / "O'Brien" / "caption.ass"

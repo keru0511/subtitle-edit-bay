@@ -11,9 +11,10 @@ from src.batch import (
     iter_video_files,
     process_video,
 )
+from tests.typed_case import TypedTestCase
 
 
-class BatchTests(unittest.TestCase):
+class BatchTests(TypedTestCase):
     def test_iter_video_files_filters_and_sorts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

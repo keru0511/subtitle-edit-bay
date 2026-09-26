@@ -7,6 +7,7 @@ from src.codex_highlight_ranker import (
     build_ranker_context,
     rank_highlight_candidates,
 )
+from tests.typed_case import TypedTestCase
 
 
 class FakeRankerClient:
@@ -26,7 +27,7 @@ class FakeRankerClient:
         return {"output": self.output}
 
 
-class CodexHighlightRankerTests(unittest.TestCase):
+class CodexHighlightRankerTests(TypedTestCase):
     def setUp(self) -> None:
         self.candidates = [
             {"id": "h1", "start": 1.0, "end": 5.0, "score": 0.8, "category": "conversation", "subtitle_excerpt": "A" * 300},

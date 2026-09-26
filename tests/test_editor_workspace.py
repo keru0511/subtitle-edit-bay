@@ -6,6 +6,7 @@ from src.editor_workspace import (
     EditorWorkspaceState,
     build_edit_mode_capabilities,
 )
+from tests.typed_case import TypedTestCase
 
 
 class OffsetTimeMapping:
@@ -16,7 +17,7 @@ class OffsetTimeMapping:
         return position_ms + 1_000
 
 
-class EditorWorkspaceStateTests(unittest.TestCase):
+class EditorWorkspaceStateTests(TypedTestCase):
     def test_capabilities_are_independent_per_editing_feature(self) -> None:
         capabilities = build_edit_mode_capabilities(
             project_loaded=True,

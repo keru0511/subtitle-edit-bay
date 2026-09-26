@@ -1,9 +1,9 @@
-import unittest
 
 from src.codex_chat_routing import route_subtitle_chat_request
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleChatRoutingTests(unittest.TestCase):
+class SubtitleChatRoutingTests(TypedTestCase):
     def test_direct_subtitle_edit_request_is_routed_to_a_proposal(self) -> None:
         route = route_subtitle_chat_request(
             "字幕を編集して",

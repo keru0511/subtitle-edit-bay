@@ -13,9 +13,10 @@ from src.gui_workflow_facade import WorkflowFacade
 from src.gui_workspace_facade import WorkspaceFacade
 from src.gui_base import EditBayBackend as LegacyEditBayBackendAlias
 from src.gui_base import LegacyEditBayBackend
+from tests.typed_case import TypedTestCase
 
 
-class GuiBackendMetaObjectTests(unittest.TestCase):
+class GuiBackendMetaObjectTests(TypedTestCase):
     def test_feature_facades_expose_typed_properties_slots_and_notify_signals(self) -> None:
         backend_meta = EditBayBackend.staticMetaObject
         for name, facade_type in (

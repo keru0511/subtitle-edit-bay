@@ -4,13 +4,14 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
-class RuntimeActivationTests(unittest.TestCase):
+class RuntimeActivationTests(TypedTestCase):
     def _run(self, root: Path, body: str) -> subprocess.CompletedProcess[str]:
         script = root / "activate-test.ps1"
         helper = str(ROOT / "scripts" / "runtime_activation.ps1").replace("'", "''")

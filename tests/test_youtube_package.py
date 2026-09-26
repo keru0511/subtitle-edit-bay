@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,6 +18,7 @@ from src.youtube_package import (
     rename_chapter,
     write_post_package,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _project():
@@ -36,7 +36,7 @@ def _project():
     }
 
 
-class YouTubePackageTests(unittest.TestCase):
+class YouTubePackageTests(TypedTestCase):
     def test_package_reuses_text_and_supports_chapter_edits(self):
         chapters = add_chapter(_project()["chapters"], Chapter("main", 10, "本編"))
         chapters = rename_chapter(chapters, "main", "本編 改訂")

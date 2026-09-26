@@ -13,6 +13,7 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
+from tests.typed_case import TypedTestCase
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -53,7 +54,7 @@ from tests.edit_bay_gui_test_session import EditBayGuiTestSession
 from tests.gui_test_harness import GuiTestHarness, MediaPlayerSignalProbe
 
 
-class GuiEditorRegressionTests(unittest.TestCase):
+class GuiEditorRegressionTests(TypedTestCase):
     _session: EditBayGuiTestSession
     app: EditBayBackend
     _codex_chat_connect_calls: int

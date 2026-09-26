@@ -13,6 +13,7 @@ from src.highlight_candidates import (
     highlight_cache_key,
 )
 from src.highlight_signals import build_speech_signals
+from tests.typed_case import TypedTestCase
 
 
 SEGMENTS = [
@@ -23,7 +24,7 @@ SEGMENTS = [
 ]
 
 
-class HighlightCandidateTests(unittest.TestCase):
+class HighlightCandidateTests(TypedTestCase):
     def test_signals_normalize_audio_and_fallback_to_subtitles(self) -> None:
         signals = build_speech_signals(
             SEGMENTS,

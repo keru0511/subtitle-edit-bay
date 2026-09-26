@@ -15,12 +15,13 @@ from src.codex_app_server_client import (
     _redact_log,
     _redact_payload,
 )
+from tests.typed_case import TypedTestCase
 
 
 CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
 
 
-class CodexAppServerClientTests(unittest.TestCase):
+class CodexAppServerClientTests(TypedTestCase):
     def _client(self, notifications: list[object], logs: list[str]) -> CodexAppServerClient:
         fake_server = Path(__file__).with_name("fake_codex_app_server.py")
         return CodexAppServerClient(

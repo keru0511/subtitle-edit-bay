@@ -11,9 +11,10 @@ from unittest.mock import patch
 from src.burn_subs import build_ffmpeg_command
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_video
+from tests.typed_case import TypedTestCase
 
 
-class Issue241WorkflowTests(unittest.TestCase):
+class Issue241WorkflowTests(TypedTestCase):
     def test_empty_project_is_a_valid_editable_project(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

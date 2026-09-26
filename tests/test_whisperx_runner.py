@@ -3,16 +3,16 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import unittest
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from src.transcribe import build_whisperx_command, run_command_with_utf8_log
 from src.whisperx_runner import build_parser, run
+from tests.typed_case import TypedTestCase
 
 
-class WhisperxRunnerTests(unittest.TestCase):
+class WhisperxRunnerTests(TypedTestCase):
     def backend(self) -> ModuleType:
         backend = ModuleType("whisperx")
         backend.load_audio = MagicMock(return_value=object())

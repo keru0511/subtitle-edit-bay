@@ -7,9 +7,10 @@ from src.transcription_hint_plan import (
     build_craig_transcription_hint_plan,
     confirmed_dictionary_hash,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionHintPlanTests(unittest.TestCase):
+class TranscriptionHintPlanTests(TypedTestCase):
     def test_builds_confirmed_dictionary_hints_and_cache_settings(self) -> None:
         context = TranscriptionContext(
             game_title="Splatoon 3",

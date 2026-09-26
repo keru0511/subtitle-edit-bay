@@ -18,9 +18,10 @@ from src.transcribe import (
     run_command_with_utf8_log,
     validate_hf_token,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscribeTests(unittest.TestCase):
+class TranscribeTests(TypedTestCase):
     def test_probe_audio_streams_parses_json(self) -> None:
         streams = [
             {

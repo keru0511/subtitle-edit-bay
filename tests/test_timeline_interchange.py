@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-import unittest
 from pathlib import Path
 
 from src.data_boundary import decode_json, is_object_dict, is_object_mapping, is_object_sequence
@@ -14,6 +13,7 @@ from src.timeline_interchange import (
     export_warnings,
     import_timeline_json,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _project() -> dict[str, object]:
@@ -37,7 +37,7 @@ def _project() -> dict[str, object]:
     }
 
 
-class TimelineInterchangeTests(unittest.TestCase):
+class TimelineInterchangeTests(TypedTestCase):
     def test_document_preserves_unknown_fields_and_does_not_mutate_project(self) -> None:
         project = _project()
         project["extension"] = {"enabled": True}

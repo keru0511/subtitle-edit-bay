@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.ai_provider import AIProviderEvent, AIProviderPrompt
 from src.codex_ai_provider import CodexAIProvider
+from tests.typed_case import TypedTestCase
 
 
 class Notification:
@@ -80,7 +81,7 @@ class FakeCodexClient:
         return {}
 
 
-class CodexAIProviderTests(unittest.TestCase):
+class CodexAIProviderTests(TypedTestCase):
     def test_account_model_session_stream_and_cancel_are_adapterized(self) -> None:
         client = FakeCodexClient()
         provider = CodexAIProvider(client_factory=lambda: client)

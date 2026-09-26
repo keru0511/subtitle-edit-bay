@@ -15,6 +15,7 @@ from src.audio_mix_proposal import (
     build_audio_mix_proposal_prompt,
 )
 from src.audio_mixer import reconcile_audio_mix
+from tests.typed_case import TypedTestCase
 
 
 VOICE_ID = "audio:" + "1" * 32
@@ -91,7 +92,7 @@ def stored_proposal(
     )
 
 
-class AudioMixProposalTests(unittest.TestCase):
+class AudioMixProposalTests(TypedTestCase):
     def test_context_is_path_free_and_includes_levels_revision_and_opaque_ids(self) -> None:
         current = channels()
         current[0]["label"] = r"C:\Users\alice\private\voice.wav"

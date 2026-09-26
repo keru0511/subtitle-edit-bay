@@ -11,6 +11,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QCoreApplication, QObject
 
 from src.gui_job_runner import GuiJobRunner
+from tests.typed_case import TypedTestCase
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -56,7 +57,7 @@ def _python_process(code: str) -> list[str]:
     return [sys.executable, "-c", code]
 
 
-class GuiJobRunnerTests(unittest.TestCase):
+class GuiJobRunnerTests(TypedTestCase):
     def test_start_success_collects_stdout_stderr_and_machine_progress(self) -> None:
         application = _application()
         runner = GuiJobRunner(Path.cwd())

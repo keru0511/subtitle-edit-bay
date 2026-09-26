@@ -6,9 +6,10 @@ import unittest
 from pathlib import Path
 
 from src.gui_settings_controller import SettingsController
+from tests.typed_case import TypedTestCase
 
 
-class SettingsControllerTests(unittest.TestCase):
+class SettingsControllerTests(TypedTestCase):
     def _base_config(self, root: Path) -> Path:
         path = root / "base-runtime.json"
         path.write_text(

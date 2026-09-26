@@ -9,9 +9,10 @@ from src.craig_transcription_execution import (
     transcribe_craig_audio_file_with_cache,
 )
 from src.transcription_execution import TranscriptionExecutionResult
+from tests.typed_case import TypedTestCase
 
 
-class CraigTranscriptionExecutionTests(unittest.TestCase):
+class CraigTranscriptionExecutionTests(TypedTestCase):
     def test_resolves_hint_by_audio_name(self) -> None:
         hint = CraigTranscriptionHint(initial_prompt="game", hotwords=("weapon",))
 

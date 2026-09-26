@@ -15,13 +15,14 @@ from src.ffmpeg_filter_script import (
 )
 from src.short_video import render_short_video
 from src.silence_cut import cut_media_ranges
+from tests.typed_case import TypedTestCase
 
 
 @unittest.skipUnless(
     os.environ.get("RUN_FFMPEG6_COMPAT") == "1",
     "set RUN_FFMPEG6_COMPAT=1 to exercise the pinned FFmpeg 6 runtime",
 )
-class FFmpeg6FilterScriptRuntimeTests(unittest.TestCase):
+class FFmpeg6FilterScriptRuntimeTests(TypedTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):

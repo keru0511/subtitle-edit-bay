@@ -23,6 +23,7 @@ from tests.media_test_helpers import (
     require_media_tools,
     video_stream,
 )
+from tests.typed_case import TypedTestCase
 
 
 FIXTURE_FPS = 30
@@ -38,7 +39,7 @@ THIRD_AFTER_TONE_HZ = 1_540
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class SequenceRenderSemanticE2ETests(unittest.TestCase):
+class SequenceRenderSemanticE2ETests(TypedTestCase):
     _temporary: tempfile.TemporaryDirectory[str]
     root: Path
     first_fixture: MediaFixture

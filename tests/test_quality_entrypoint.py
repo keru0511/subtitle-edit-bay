@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,7 @@ def load_quality_module():
     return module
 
 
-class QualityEntrypointTests(unittest.TestCase):
+class QualityEntrypointTests(TypedTestCase):
     def test_lint_only_runs_only_ruff(self) -> None:
         quality = load_quality_module()
 

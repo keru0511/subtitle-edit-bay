@@ -6,9 +6,10 @@ from pathlib import Path
 
 from src.audio_mixer import reconcile_audio_mix
 from src.subtitle_project import create_project, load_project, save_project
+from tests.typed_case import TypedTestCase
 
 
-class AudioMixerTests(unittest.TestCase):
+class AudioMixerTests(TypedTestCase):
     def test_reconcile_preserves_external_controls_without_video_tracks_after_reload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

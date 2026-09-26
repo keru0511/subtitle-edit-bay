@@ -11,6 +11,7 @@ from src.gemini_acp_provider import GeminiAcpClient, GeminiAcpProvider
 from src.gui_ai_facade import AIChatFacade
 from src.gui_ai_chat_state import AIProviderChatRouter
 from src.gui_codex_chat_state import CodexChatController, CodexChatSnapshot
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,7 +120,7 @@ def wait_for(predicate, timeout: float = 3.0) -> None:
         raise AssertionError("condition was not reached")
 
 
-class AIProviderChatRouterTests(unittest.TestCase):
+class AIProviderChatRouterTests(TypedTestCase):
     def setUp(self) -> None:
         self.codex = StubChatController(
             snapshot(
@@ -190,7 +191,7 @@ class AIProviderChatRouterTests(unittest.TestCase):
         self.assertEqual(self.router.snapshot.selected_model, "gpt")
 
 
-class GeminiAuthHintTests(unittest.TestCase):
+class GeminiAuthHintTests(TypedTestCase):
     @staticmethod
     def _hint(*, auth_state: str, login_available: bool) -> str:
         backend = SimpleNamespace(
@@ -236,7 +237,7 @@ class GeminiAuthHintTests(unittest.TestCase):
         self.assertEqual(self._hint(auth_state="unauthenticated", login_available=True), "")
 
 
-class GeminiProviderFactoryTests(unittest.TestCase):
+class GeminiProviderFactoryTests(TypedTestCase):
     def test_factory_passes_saved_model_to_gemini_provider(self) -> None:
         backend = SimpleNamespace(
             workspace_root=ROOT,
@@ -250,7 +251,7 @@ class GeminiProviderFactoryTests(unittest.TestCase):
         )
 
 
-class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
+class GeminiRouterFakeAcpE2ETests(TypedTestCase):
     def test_gemini_chat_controller_streams_through_provider_router(self) -> None:
         provider = GeminiAcpProvider(
             workspace_root=ROOT,

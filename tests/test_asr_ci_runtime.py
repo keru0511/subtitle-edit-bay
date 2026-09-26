@@ -4,14 +4,14 @@ import json
 import os
 import subprocess
 import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.asr_ci_runtime import cache_key, prepare_runtime, runtime_context
+from tests.typed_case import TypedTestCase
 
 
-class AsrCiRuntimeTests(unittest.TestCase):
+class AsrCiRuntimeTests(TypedTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

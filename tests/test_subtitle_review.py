@@ -4,9 +4,10 @@ import unittest
 
 from src.subtitle_review import SubtitleReviewCancelled, SubtitleReviewQueue, generate_review_queue
 from src.subtitle_review_rules import review_segment_rules
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleReviewTests(unittest.TestCase):
+class SubtitleReviewTests(TypedTestCase):
     def setUp(self) -> None:
         self.segments: list[dict[str, object]] = [
             {

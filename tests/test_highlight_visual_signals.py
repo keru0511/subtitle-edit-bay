@@ -13,9 +13,10 @@ from src.highlight_visual_signals import (
     extract_visual_signals,
     visual_signal_cache_key,
 )
+from tests.typed_case import TypedTestCase
 
 
-class HighlightVisualSignalTests(unittest.TestCase):
+class HighlightVisualSignalTests(TypedTestCase):
     def test_feature_flag_disabled_keeps_baseline_without_running_ffmpeg(self) -> None:
         called = []
         result = extract_visual_signals("video.mkv", [(0, 5)], runner=lambda *args, **kwargs: called.append(True))

@@ -6,9 +6,10 @@ from unittest.mock import patch
 
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import build_project_ass, render_project_video
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleWorkflowCutTests(unittest.TestCase):
+class SubtitleWorkflowCutTests(TypedTestCase):
     def test_project_ass_maps_source_subtitles_to_manual_cut_output_time(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

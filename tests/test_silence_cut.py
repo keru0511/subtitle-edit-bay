@@ -17,6 +17,7 @@ from src.silence_cut import (
     retime_segments_for_keep_ranges,
     shift_ranges,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _fake_process(
@@ -30,7 +31,7 @@ def _fake_process(
     return process
 
 
-class SilenceCutTests(unittest.TestCase):
+class SilenceCutTests(TypedTestCase):
     def test_build_silencedetect_command_uses_requested_thresholds(self) -> None:
         command = build_silencedetect_command("input.mp4", noise="-30dB", duration=0.6)
         self.assertEqual(command[:2], ["ffmpeg", "-i"])

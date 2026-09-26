@@ -17,6 +17,7 @@ from src.burn_subs import (
     temporary_ass_path,
 )
 from src.ffmpeg_execution import run_ffmpeg_command
+from tests.typed_case import TypedTestCase
 
 
 def _fake_process(
@@ -30,7 +31,7 @@ def _fake_process(
     return process
 
 
-class BurnSubsTests(unittest.TestCase):
+class BurnSubsTests(TypedTestCase):
     def test_build_ass_filter_escapes_path(self) -> None:
         self.assertEqual(build_ass_filter("C:\\Users\\sub.ass"), r"ass='C\:/Users/sub.ass'")
 

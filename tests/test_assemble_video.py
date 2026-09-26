@@ -17,9 +17,10 @@ from src.assemble_video import (
     probe_video_frame_rate,
     write_concat_manifest,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AssembleVideoTests(unittest.TestCase):
+class AssembleVideoTests(TypedTestCase):
     def test_format_filter_number(self) -> None:
         self.assertEqual(format_filter_number(-16.0), "-16")
         self.assertEqual(format_filter_number(-1.5), "-1.5")

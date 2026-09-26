@@ -19,6 +19,7 @@ from src.update_manager import (
     download_package,
     validate_package,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _installer(path: Path) -> str:
@@ -26,7 +27,7 @@ def _installer(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-class UpdateManagerTests(unittest.TestCase):
+class UpdateManagerTests(TypedTestCase):
     def test_download_verifies_size_hash_and_reports_byte_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
@@ -142,7 +143,7 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertTrue(info.manifest_url.endswith("setup.exe.manifest.json"))
 
 
-class PlatformUpdateTests(unittest.TestCase):
+class PlatformUpdateTests(TypedTestCase):
     def test_non_windows_rejects_update_check_before_network_access(self):
         for platform in ("darwin", "linux"):
             with (

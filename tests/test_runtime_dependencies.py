@@ -13,9 +13,10 @@ from src.runtime_dependencies import (
     format_dependency_error,
     runtime_diagnostic_info,
 )
+from tests.typed_case import TypedTestCase
 
 
-class RuntimeDependencyTests(unittest.TestCase):
+class RuntimeDependencyTests(TypedTestCase):
     @mock.patch("src.runtime_dependencies._ffmpeg_nvenc_available", return_value=True)
     @mock.patch("src.runtime_dependencies._torch_cuda_available", return_value=True)
     @mock.patch("src.runtime_dependencies._module_importable", return_value=True)

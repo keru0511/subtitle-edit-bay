@@ -4,13 +4,14 @@ from pathlib import Path
 import unittest
 
 import yaml
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPENDABOT_CONFIG = REPO_ROOT / ".github" / "dependabot.yml"
 
 
-class DependabotConfigTests(unittest.TestCase):
+class DependabotConfigTests(TypedTestCase):
     def test_dependabot_updates_cover_repository_dependency_sources(self) -> None:
         config = yaml.safe_load(DEPENDABOT_CONFIG.read_text(encoding="utf-8"))
 

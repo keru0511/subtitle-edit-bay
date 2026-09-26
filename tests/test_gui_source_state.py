@@ -7,9 +7,10 @@ from pathlib import Path
 
 from src import gui_state_base
 from src.gui_source_state import SourceSelection, build_speaker_entries_from_files
+from tests.typed_case import TypedTestCase
 
 
-class GuiSourceStateTests(unittest.TestCase):
+class GuiSourceStateTests(TypedTestCase):
     def test_source_selection_serializes_audio_files_as_list(self) -> None:
         selection = SourceSelection(
             video="video.mkv",

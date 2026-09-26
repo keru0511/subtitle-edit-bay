@@ -33,6 +33,7 @@ from tests.media_test_helpers import (
     require_media_tools,
     video_stream,
 )
+from tests.typed_case import TypedTestCase
 
 
 FIXTURE_FPS = 15
@@ -50,7 +51,7 @@ TONE_BY_CLIP = {"A": 440, "B": 880, "C": 1320}
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class ShortVideoSemanticE2ETests(unittest.TestCase):
+class ShortVideoSemanticE2ETests(TypedTestCase):
     """Verify the rendered C -> A short against source-timeline semantics.
 
     Clip ranges are source-video times in the current short-video contract.  The

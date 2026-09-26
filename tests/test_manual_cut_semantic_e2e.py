@@ -23,6 +23,7 @@ from tests.media_test_helpers import (
     probe_media,
     require_media_tools,
 )
+from tests.typed_case import TypedTestCase
 
 
 FIXTURE_FPS = 30
@@ -47,7 +48,7 @@ ALL_FIXTURE_FREQUENCIES = (440, 660, 880, 1100)
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class ManualCutSemanticE2ETests(unittest.TestCase):
+class ManualCutSemanticE2ETests(TypedTestCase):
     _temporary: tempfile.TemporaryDirectory[str]
     root: Path
     fixture: MediaFixture

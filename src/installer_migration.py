@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 from .color_config import normalize_rgb_color
+from .data_boundary import decode_json, is_object_dict, is_object_list
 from .runtime_config_schema import MIGRATED_WORKSPACE_PATH_SETTINGS, validate_runtime_config_payload
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .transcription_dictionary import TranscriptionDictionaryError, load_transcription_dictionary
@@ -71,14 +72,21 @@ def validate_legacy_workspace(source: str | Path, destination: str | Path) -> Pa
     return source_path
 
 
-def _load_object(path: Path) -> dict[str, Any]:
+def _load_object(path: Path) -> dict[str, object]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        payload = decode_json(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise MigrationError(f"invalid JSON: {path}") from exc
-    if not isinstance(payload, dict):
+    if not is_object_dict(payload) or not all(isinstance(key, str) for key in payload):
         raise MigrationError(f"JSON root must be an object: {path}")
-    return payload
+    return cast(dict[str, object], payload)
+
+
+def _mutable_section(config: dict[str, object], name: str) -> dict[object, object]:
+    section = config.setdefault(name, {})
+    if not is_object_dict(section):
+        raise MigrationError(f"runtime config section must be an object: {name}")
+    return section
 
 
 def _contains_secret(value: object) -> bool:
@@ -97,7 +105,7 @@ def _contains_secret(value: object) -> bool:
 def validated_runtime_config(
     source_path: str | Path,
     capabilities: RuntimeCapabilities,
-) -> tuple[dict[str, Any], tuple[str, ...]]:
+) -> tuple[dict[str, object], tuple[str, ...]]:
     path = Path(source_path)
     if path.is_symlink():
         raise MigrationError(f"runtime config must not be a symbolic link: {path}")
@@ -112,7 +120,7 @@ def validated_runtime_config(
 
     legacy_root = path.parent.parent.resolve()
     for section_name, section in migrated.items():
-        if not isinstance(section, dict):
+        if not is_object_dict(section):
             continue
         for key in MIGRATED_WORKSPACE_PATH_SETTINGS:
             value = section.get(key)
@@ -126,7 +134,7 @@ def validated_runtime_config(
             adjusted.append(f"{section_name}.{key}={value} -> {resolved_path}")
 
     old_craig = source.get("craig_pipeline")
-    if isinstance(old_craig, dict) and "transcription_context" in old_craig:
+    if is_object_dict(old_craig) and "transcription_context" in old_craig:
         try:
             context = normalize_transcription_context(old_craig["transcription_context"])
         except TranscriptionContextError as exc:
@@ -143,13 +151,13 @@ def validated_runtime_config(
                 except (OSError, TranscriptionDictionaryError) as exc:
                     raise MigrationError(f"confirmed transcription dictionary is invalid: {dictionary_path}") from exc
             context["dictionary_path"] = str(dictionary_path)
-        migrated.setdefault("craig_pipeline", {})["transcription_context"] = context
+        _mutable_section(migrated, "craig_pipeline")["transcription_context"] = context
 
     shared = migrated.get("shared")
     if not capabilities.cuda:
-        shared_device = shared.get("device", "cpu") if isinstance(shared, dict) else "cpu"
+        shared_device = shared.get("device", "cpu") if is_object_dict(shared) else "cpu"
         for section_name, section in migrated.items():
-            if not isinstance(section, dict):
+            if not is_object_dict(section):
                 continue
             effective_device = section.get("device", shared_device)
             changed = False
@@ -163,21 +171,23 @@ def validated_runtime_config(
                 adjusted.append(f"{section_name}.device/compute_type -> cpu/int8")
     if not capabilities.nvenc:
         for section_name, section in migrated.items():
-            video_codec = section.get("video_codec") if isinstance(section, dict) else None
+            if not is_object_dict(section):
+                continue
+            video_codec = section.get("video_codec")
             if isinstance(video_codec, str) and video_codec.endswith("_nvenc"):
                 section["video_codec"] = "libx264"
                 adjusted.append(f"{section_name}.video_codec={video_codec} -> libx264")
     return migrated, tuple(adjusted)
 
 
-def validated_speaker_colors(source_path: str | Path) -> dict[str, Any]:
+def validated_speaker_colors(source_path: str | Path) -> dict[str, object]:
     path = Path(source_path)
     if path.is_symlink():
         raise MigrationError(f"speaker color config must not be a symbolic link: {path}")
     payload = _load_object(path)
     for section_name in ("speakers", "files"):
         section = payload.get(section_name, {})
-        if not isinstance(section, dict):
+        if not is_object_dict(section):
             raise MigrationError(f"speaker color section must be an object: {section_name}")
         for name, entry in section.items():
             if not isinstance(name, str) or not name.strip():
@@ -185,10 +195,10 @@ def validated_speaker_colors(source_path: str | Path) -> dict[str, Any]:
             color: object
             if isinstance(entry, str):
                 color = entry
-            elif isinstance(entry, dict):
+            elif is_object_dict(entry):
                 color = entry.get("color")
                 aliases = entry.get("aliases", [])
-                if not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases):
+                if not is_object_list(aliases) or not all(isinstance(alias, str) for alias in aliases):
                     raise MigrationError(f"speaker color aliases must be strings: {section_name}.{name}")
             else:
                 raise MigrationError(f"speaker color entry must be a string or object: {section_name}.{name}")
@@ -248,8 +258,8 @@ def _normalized_path_key(value: str | Path) -> str:
     return str(_resolved(value)).casefold()
 
 
-def _merged_workspace_registry(path: Path, source: Path, references: Sequence[str]) -> dict[str, Any]:
-    workspaces: dict[str, dict[str, Any]] = {}
+def _merged_workspace_registry(path: Path, source: Path, references: Sequence[str]) -> dict[str, object]:
+    workspaces: dict[str, dict[str, object]] = {}
     if path.exists():
         if path.is_symlink() or not path.is_file():
             raise MigrationError(f"legacy workspace registry must be a regular file: {path}")
@@ -257,18 +267,26 @@ def _merged_workspace_registry(path: Path, source: Path, references: Sequence[st
         if payload.get("schema_version") != MIGRATION_SCHEMA_VERSION:
             raise MigrationError(f"unsupported legacy workspace registry schema: {path}")
         entries = payload.get("workspaces")
-        if not isinstance(entries, list):
+        if not is_object_list(entries):
             raise MigrationError(f"legacy workspace registry must contain an array: {path}")
         for entry in entries:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            if not is_object_dict(entry):
+                raise MigrationError(f"invalid legacy workspace entry: {path}")
+            entry_path = entry.get("path")
+            if not isinstance(entry_path, str):
                 raise MigrationError(f"invalid legacy workspace entry: {path}")
             resources = entry.get("resources")
-            if not isinstance(resources, list) or not all(isinstance(item, str) for item in resources):
+            if not is_object_list(resources):
                 raise MigrationError(f"invalid legacy workspace resources: {path}")
-            normalized_path = str(_resolved(entry["path"]))
+            normalized_path = str(_resolved(entry_path))
+            resolved_resources: set[str] = set()
+            for item in resources:
+                if not isinstance(item, str):
+                    raise MigrationError(f"invalid legacy workspace resources: {path}")
+                resolved_resources.add(str(_resolved(item)))
             workspaces[_normalized_path_key(normalized_path)] = {
                 "path": normalized_path,
-                "resources": sorted({str(_resolved(item)) for item in resources}),
+                "resources": sorted(resolved_resources),
             }
     normalized_source = str(source)
     workspaces[_normalized_path_key(normalized_source)] = {
@@ -292,7 +310,11 @@ def _snapshot_targets(paths: Sequence[Path]) -> tuple[dict[Path, bytes | None], 
         while not parent.exists():
             parent_candidates.add(parent)
             parent = parent.parent
-    return snapshots, tuple(sorted(parent_candidates, key=lambda item: len(item.parts), reverse=True))
+
+    def path_depth(item: Path) -> int:
+        return len(item.parts)
+
+    return snapshots, tuple(sorted(parent_candidates, key=path_depth, reverse=True))
 
 
 def _require_targets_within_destination(destination: Path, paths: Sequence[Path]) -> None:
@@ -361,7 +383,7 @@ def migrate_legacy_workspace(
     possible_targets = (new_config, new_colors, workspace_path, record_path)
     _require_targets_within_destination(destination_path, possible_targets)
 
-    prepared_config: dict[str, Any] | None = None
+    prepared_config: dict[str, object] | None = None
     if options.runtime_config and old_config.is_file() and not old_config.is_symlink():
         if new_config.exists() and not options.overwrite:
             preserved.append(str(new_config))
@@ -371,7 +393,7 @@ def migrate_legacy_workspace(
     elif options.runtime_config and old_config.is_symlink():
         raise MigrationError(f"runtime config must not be a symbolic link: {old_config}")
 
-    prepared_colors: dict[str, Any] | None = None
+    prepared_colors: dict[str, object] | None = None
     if options.speaker_colors and old_colors.is_file():
         if new_colors.exists() and not options.overwrite:
             preserved.append(str(new_colors))
@@ -381,7 +403,7 @@ def migrate_legacy_workspace(
     # Complete all reads, validation, enumeration and merge preparation before
     # changing the destination. The writes below form one rollback boundary.
     references = _workspace_references(source_path) if options.workspace_reference else ()
-    workspace_payload: dict[str, Any] | None = None
+    workspace_payload: dict[str, object] | None = None
     if references:
         workspace_payload = _merged_workspace_registry(workspace_path, source_path, references)
 
@@ -408,8 +430,8 @@ def migrate_legacy_workspace(
     if workspace_payload is not None:
         writes.append((workspace_path, workspace_payload))
         copied.append(str(workspace_path))
-    result = MigrationResult(**{**asdict(result), "copied": tuple(copied)})
-    writes.append((record_path, asdict(result)))
+    result = replace(result, copied=tuple(copied))
+    writes.append((record_path, cast(object, asdict(result))))
     _require_targets_within_destination(destination_path, [path for path, _payload in writes])
     snapshots, created_parents = _snapshot_targets([path for path, _payload in writes])
     try:
@@ -425,7 +447,19 @@ def migrate_legacy_workspace(
     return result
 
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+@dataclass(frozen=True)
+class MigrationCliArgs:
+    source: str
+    destination: str
+    cuda: bool
+    nvenc: bool
+    overwrite: bool
+    skip_runtime_config: bool
+    skip_speaker_colors: bool
+    skip_workspace_reference: bool
+
+
+def _parse_args(argv: Sequence[str] | None) -> MigrationCliArgs:
     parser = argparse.ArgumentParser(description="Migrate a BAT/ZIP workspace into an Installer installation.")
     parser.add_argument("--source", required=True)
     parser.add_argument("--destination", required=True)
@@ -435,7 +469,21 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--skip-runtime-config", action="store_true")
     parser.add_argument("--skip-speaker-colors", action="store_true")
     parser.add_argument("--skip-workspace-reference", action="store_true")
-    return parser.parse_args(argv)
+    parsed = cast(Mapping[str, object], vars(parser.parse_args(argv)))
+    source = parsed.get("source")
+    destination = parsed.get("destination")
+    if not isinstance(source, str) or not isinstance(destination, str):
+        raise MigrationError("migration source and destination must be paths")
+    return MigrationCliArgs(
+        source=source,
+        destination=destination,
+        cuda=bool(parsed.get("cuda")),
+        nvenc=bool(parsed.get("nvenc")),
+        overwrite=bool(parsed.get("overwrite")),
+        skip_runtime_config=bool(parsed.get("skip_runtime_config")),
+        skip_speaker_colors=bool(parsed.get("skip_speaker_colors")),
+        skip_workspace_reference=bool(parsed.get("skip_workspace_reference")),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -455,7 +503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except MigrationError as exc:
         print(f"Migration failed: {exc}")
         return 2
-    print(json.dumps(asdict(result), ensure_ascii=False))
+    print(json.dumps(cast(object, asdict(result)), ensure_ascii=False))
     return 0
 
 

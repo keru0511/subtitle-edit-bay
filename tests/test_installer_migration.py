@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from src import installer_migration
+from src.data_boundary import decode_json, is_object_dict, is_object_list
 from src.installer_migration import (
     MigrationError,
     MigrationOptions,
@@ -20,6 +21,51 @@ from src.installer_migration import (
 )
 from src.runtime_config import load_command_runtime_config
 from tests.typed_case import TypedTestCase
+
+
+def _dump_json(payload: object) -> str:
+    return json.dumps(payload)
+
+
+def _json_object(text: str) -> dict[object, object]:
+    payload = decode_json(text)
+    if not is_object_dict(payload):
+        raise AssertionError("expected a JSON object")
+    return payload
+
+
+def _field(payload: object, *keys: str) -> object:
+    value = payload
+    for key in keys:
+        if not is_object_dict(value):
+            raise AssertionError(f"expected a JSON object before {key}")
+        value = value[key]
+    return value
+
+
+def _array_field(payload: object, key: str) -> list[object]:
+    value = _field(payload, key)
+    if not is_object_list(value):
+        raise AssertionError(f"expected a JSON array at {key}")
+    return value
+
+
+def _object_field(payload: object, key: str) -> dict[object, object]:
+    value = _field(payload, key)
+    if not is_object_dict(value):
+        raise AssertionError(f"expected a JSON object at {key}")
+    return value
+
+
+def _string_field(payload: object, key: str) -> str:
+    value = _field(payload, key)
+    if not isinstance(value, str):
+        raise AssertionError(f"expected a string at {key}")
+    return value
+
+
+def _path_field(payload: object, key: str) -> Path:
+    return Path(_string_field(payload, key))
 
 
 class InstallerMigrationTests(TypedTestCase):
@@ -37,7 +83,7 @@ class InstallerMigrationTests(TypedTestCase):
             "shared": {"device": "cuda", "compute_type": "float16", "language": "ja"},
             "craig_pipeline": {"video_codec": "h264_nvenc", "x264_crf": 18},
         }
-        (destination / "assets" / "runtime_config.json").write_text(json.dumps(template), encoding="utf-8")
+        (destination / "assets" / "runtime_config.json").write_text(_dump_json(template), encoding="utf-8")
         return source, destination
 
     def test_migrates_validated_user_data_without_reusing_venv_or_moving_projects(self) -> None:
@@ -63,10 +109,10 @@ class InstallerMigrationTests(TypedTestCase):
             }
             dictionary = source / "dictionaries" / "game.json"
             dictionary.parent.mkdir()
-            dictionary.write_text(json.dumps({"game_title": "Test Game", "terms": []}), encoding="utf-8")
-            (source / ".gui" / "runtime_config.json").write_text(json.dumps(old_config), encoding="utf-8")
+            dictionary.write_text(_dump_json({"game_title": "Test Game", "terms": []}), encoding="utf-8")
+            (source / ".gui" / "runtime_config.json").write_text(_dump_json(old_config), encoding="utf-8")
             colors = {"speakers": {"Alice": {"color": "#AABBCC"}}, "files": {}}
-            (source / "assets" / "speaker_colors.json").write_text(json.dumps(colors), encoding="utf-8")
+            (source / "assets" / "speaker_colors.json").write_text(_dump_json(colors), encoding="utf-8")
             old_python = source / ".venv" / "Scripts" / "python.exe"
             old_python.parent.mkdir(parents=True)
             old_python.write_bytes(b"legacy-runtime")
@@ -81,17 +127,17 @@ class InstallerMigrationTests(TypedTestCase):
                 now=datetime(2026, 9, 7, tzinfo=timezone.utc),
             )
 
-            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
-            self.assertEqual(migrated["shared"]["device"], "cpu")
-            self.assertEqual(migrated["shared"]["compute_type"], "int8")
-            self.assertEqual(migrated["craig_pipeline"]["video_codec"], "libx264")
+            migrated = _json_object((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertEqual(_field(migrated, "shared", "device"), "cpu")
+            self.assertEqual(_field(migrated, "shared", "compute_type"), "int8")
+            self.assertEqual(_field(migrated, "craig_pipeline", "video_codec"), "libx264")
             self.assertEqual(
-                migrated["craig_pipeline"]["transcription_context"]["dictionary_path"],
+                _field(migrated, "craig_pipeline", "transcription_context", "dictionary_path"),
                 str(dictionary.resolve()),
             )
-            self.assertNotIn("obsolete_setting", migrated["shared"])
+            self.assertNotIn("obsolete_setting", _object_field(migrated, "shared"))
             self.assertNotIn("unknown_section", migrated)
-            self.assertEqual(json.loads((destination / "assets" / "speaker_colors.json").read_text()), colors)
+            self.assertEqual(_json_object((destination / "assets" / "speaker_colors.json").read_text()), colors)
             self.assertFalse((destination / ".venv").exists())
             self.assertTrue(old_python.exists())
             self.assertTrue(media.exists())
@@ -102,17 +148,17 @@ class InstallerMigrationTests(TypedTestCase):
             self.assertIn(str(source / "video_import"), result.cleanup_blockers)
             record = destination / ".local" / "migration" / "migration-20260907T000000Z.json"
             self.assertTrue(record.is_file())
-            self.assertFalse(json.loads(record.read_text())["runtime_reused"])
+            self.assertFalse(_json_object(record.read_text())["runtime_reused"])
 
     def test_existing_installer_data_is_preserved_without_explicit_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             old = {"shared": {"device": "cpu", "compute_type": "int8", "language": "en"}}
             current = {"shared": {"device": "cpu", "compute_type": "int8", "language": "ja"}}
-            (source / ".gui" / "runtime_config.json").write_text(json.dumps(old), encoding="utf-8")
+            (source / ".gui" / "runtime_config.json").write_text(_dump_json(old), encoding="utf-8")
             current_path = destination / ".gui" / "runtime_config.json"
             current_path.parent.mkdir()
-            current_path.write_text(json.dumps(current), encoding="utf-8")
+            current_path.write_text(_dump_json(current), encoding="utf-8")
 
             result = migrate_legacy_workspace(
                 source,
@@ -120,14 +166,14 @@ class InstallerMigrationTests(TypedTestCase):
                 capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
             )
 
-            self.assertEqual(json.loads(current_path.read_text()), current)
+            self.assertEqual(_json_object(current_path.read_text()), current)
             self.assertIn(str(current_path), result.preserved)
 
     def test_explicit_overwrite_replaces_existing_installer_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             old = {"shared": {"device": "cpu", "compute_type": "int8", "language": "en"}}
-            (source / ".gui" / "runtime_config.json").write_text(json.dumps(old), encoding="utf-8")
+            (source / ".gui" / "runtime_config.json").write_text(_dump_json(old), encoding="utf-8")
             current_path = destination / ".gui" / "runtime_config.json"
             current_path.parent.mkdir()
             current_path.write_text("{}", encoding="utf-8")
@@ -139,14 +185,14 @@ class InstallerMigrationTests(TypedTestCase):
                 options=MigrationOptions(overwrite=True),
             )
 
-            self.assertEqual(json.loads(current_path.read_text())["shared"]["language"], "en")
+            self.assertEqual(_field(_json_object(current_path.read_text()), "shared", "language"), "en")
 
     def test_secret_like_runtime_config_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             old_path = source / ".gui" / "runtime_config.json"
             old_path.write_text(
-                json.dumps({"shared": {"device": "cpu", "api_token": "do-not-copy"}}),
+                _dump_json({"shared": {"device": "cpu", "api_token": "do-not-copy"}}),
                 encoding="utf-8",
             )
 
@@ -161,7 +207,7 @@ class InstallerMigrationTests(TypedTestCase):
             source, _destination = self._workspaces(Path(temporary))
             old_path = source / ".gui" / "runtime_config.json"
             old_path.write_text(
-                json.dumps(
+                _dump_json(
                     {
                         "shared": {"codex_model": "gpt-fast", "device": "cpu"},
                         "craig_pipeline": {"reference_audio": None},
@@ -173,11 +219,11 @@ class InstallerMigrationTests(TypedTestCase):
                 old_path,
                 RuntimeCapabilities(cuda=False, nvenc=False),
             )
-            self.assertEqual(migrated["shared"]["codex_model"], "gpt-fast")
-            self.assertIsNone(migrated["craig_pipeline"]["reference_audio"])
+            self.assertEqual(_field(migrated, "shared", "codex_model"), "gpt-fast")
+            self.assertIsNone(_field(migrated, "craig_pipeline", "reference_audio"))
 
             old_path.write_text(
-                json.dumps({"craig_pipeline": {"reference_audio": {}}}),
+                _dump_json({"craig_pipeline": {"reference_audio": {}}}),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(MigrationError, "reference_audio"):
@@ -189,7 +235,7 @@ class InstallerMigrationTests(TypedTestCase):
             source, _destination = self._workspaces(root)
             old_path = source / ".gui" / "runtime_config.json"
             old_path.write_text(
-                json.dumps(
+                _dump_json(
                     {
                         "shared": {"device": "cuda", "compute_type": "float16"},
                         "pipeline": {"device": "cuda", "compute_type": "float16"},
@@ -204,7 +250,7 @@ class InstallerMigrationTests(TypedTestCase):
                 RuntimeCapabilities(cuda=False, nvenc=False),
             )
             migrated_path = root / "migrated.json"
-            migrated_path.write_text(json.dumps(migrated), encoding="utf-8")
+            migrated_path.write_text(_dump_json(migrated), encoding="utf-8")
 
             for command in ("pipeline", "batch", "craig_pipeline"):
                 with self.subTest(command=command):
@@ -217,7 +263,7 @@ class InstallerMigrationTests(TypedTestCase):
             source, _destination = self._workspaces(Path(temporary))
             old_path = source / ".gui" / "runtime_config.json"
             old_path.write_text(
-                json.dumps(
+                _dump_json(
                     {
                         "shared": {"language": None, "vad_onset": None, "vad_offset": None},
                         "pipeline": {"min_speakers": None, "max_speakers": None},
@@ -231,18 +277,18 @@ class InstallerMigrationTests(TypedTestCase):
                 RuntimeCapabilities(cuda=False, nvenc=False),
             )
 
-            self.assertIsNone(migrated["shared"]["language"])
-            self.assertIsNone(migrated["shared"]["vad_onset"])
-            self.assertIsNone(migrated["shared"]["vad_offset"])
-            self.assertIsNone(migrated["pipeline"]["min_speakers"])
-            self.assertIsNone(migrated["pipeline"]["max_speakers"])
+            self.assertIsNone(_field(migrated, "shared", "language"))
+            self.assertIsNone(_field(migrated, "shared", "vad_onset"))
+            self.assertIsNone(_field(migrated, "shared", "vad_offset"))
+            self.assertIsNone(_field(migrated, "pipeline", "min_speakers"))
+            self.assertIsNone(_field(migrated, "pipeline", "max_speakers"))
 
     def test_migration_replaces_every_nvenc_codec_without_nvenc(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source, _destination = self._workspaces(Path(temporary))
             old_path = source / ".gui" / "runtime_config.json"
             old_path.write_text(
-                json.dumps(
+                _dump_json(
                     {
                         "shared": {"video_codec": "hevc_nvenc"},
                         "pipeline": {"video_codec": "h264_nvenc"},
@@ -259,7 +305,7 @@ class InstallerMigrationTests(TypedTestCase):
 
             for section in ("shared", "pipeline", "craig_pipeline"):
                 with self.subTest(section=section):
-                    self.assertEqual(migrated[section]["video_codec"], "libx264")
+                    self.assertEqual(_field(migrated, section, "video_codec"), "libx264")
             self.assertTrue(any("hevc_nvenc -> libx264" in item for item in adjusted))
 
     def test_migration_anchors_relative_media_paths_to_legacy_workspace(self) -> None:
@@ -272,7 +318,7 @@ class InstallerMigrationTests(TypedTestCase):
             op.write_bytes(b"op")
             old_path = source / ".gui" / "runtime_config.json"
             old_path.write_text(
-                json.dumps(
+                _dump_json(
                     {
                         "batch": {
                             "input_dir": "video_import",
@@ -295,14 +341,14 @@ class InstallerMigrationTests(TypedTestCase):
 
             migrated_path = destination / ".gui" / "runtime_config.json"
             effective = load_command_runtime_config("batch", migrated_path)
-            self.assertEqual(Path(effective["input_dir"]), source / "video_import")
-            self.assertEqual(Path(effective["output_dir"]), source / "video_export")
-            self.assertEqual(Path(effective["input_root"]), source / "video_import")
-            self.assertEqual(Path(effective["export_root"]), source / "video_export")
-            self.assertEqual(Path(effective["op_file"]), op)
-            self.assertTrue(Path(effective["op_file"]).is_file())
+            self.assertEqual(_path_field(effective, "input_dir"), source / "video_import")
+            self.assertEqual(_path_field(effective, "output_dir"), source / "video_export")
+            self.assertEqual(_path_field(effective, "input_root"), source / "video_import")
+            self.assertEqual(_path_field(effective, "export_root"), source / "video_export")
+            self.assertEqual(_path_field(effective, "op_file"), op)
+            self.assertTrue(_path_field(effective, "op_file").is_file())
             self.assertIsNone(effective["ed_file"])
-            self.assertNotEqual(Path(effective["input_dir"]), destination / "video_import")
+            self.assertNotEqual(_path_field(effective, "input_dir"), destination / "video_import")
 
     def test_destination_parent_symlink_cannot_write_into_legacy_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -311,7 +357,7 @@ class InstallerMigrationTests(TypedTestCase):
             media.parent.mkdir()
             media.write_bytes(b"media")
             old_config = source / ".gui" / "runtime_config.json"
-            old_config.write_text(json.dumps({"shared": {"language": "ja"}}), encoding="utf-8")
+            old_config.write_text(_dump_json({"shared": {"language": "ja"}}), encoding="utf-8")
             old_before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
             gui_link = destination / ".gui"
             try:
@@ -330,15 +376,16 @@ class InstallerMigrationTests(TypedTestCase):
             self.assertEqual(old_after, old_before)
             self.assertFalse((source / ".gui" / "legacy_workspaces.json").exists())
 
-    @unittest.skipUnless(os.name == "nt", "destination junction verification is Windows-only")
     def test_destination_parent_junction_cannot_write_into_legacy_workspace(self) -> None:
+        if os.name != "nt":
+            self.skipTest("destination junction verification is Windows-only")
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             media = source / "video_import" / "clip.mp4"
             media.parent.mkdir()
             media.write_bytes(b"media")
             old_config = source / ".gui" / "runtime_config.json"
-            old_config.write_text(json.dumps({"shared": {"language": "ja"}}), encoding="utf-8")
+            old_config.write_text(_dump_json({"shared": {"language": "ja"}}), encoding="utf-8")
             old_before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
             gui_junction = destination / ".gui"
             created = subprocess.run(
@@ -369,11 +416,11 @@ class InstallerMigrationTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             (source / ".gui" / "runtime_config.json").write_text(
-                json.dumps({"shared": {"device": "cpu", "compute_type": "int8"}}),
+                _dump_json({"shared": {"device": "cpu", "compute_type": "int8"}}),
                 encoding="utf-8",
             )
             (source / "assets" / "speaker_colors.json").write_text(
-                json.dumps({"speakers": {"Alice": {"color": "not-a-color"}}}),
+                _dump_json({"speakers": {"Alice": {"color": "not-a-color"}}}),
                 encoding="utf-8",
             )
 
@@ -391,7 +438,7 @@ class InstallerMigrationTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             old_config = {"shared": {"device": "cpu", "language": "en"}}
-            (source / ".gui" / "runtime_config.json").write_text(json.dumps(old_config), encoding="utf-8")
+            (source / ".gui" / "runtime_config.json").write_text(_dump_json(old_config), encoding="utf-8")
             media = source / "video_import" / "clip.mp4"
             media.parent.mkdir()
             media.write_bytes(b"media")
@@ -428,7 +475,7 @@ class InstallerMigrationTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspaces(Path(temporary))
             (source / ".gui" / "runtime_config.json").write_text(
-                json.dumps({"shared": {"device": "cpu", "codex_model": "gpt-fast"}}),
+                _dump_json({"shared": {"device": "cpu", "codex_model": "gpt-fast"}}),
                 encoding="utf-8",
             )
             original_write = installer_migration._write_json_atomic
@@ -466,12 +513,12 @@ class InstallerMigrationTests(TypedTestCase):
                     capabilities=RuntimeCapabilities(cuda=False, nvenc=False),
                 )
 
-            registry = json.loads((destination / ".gui" / "legacy_workspaces.json").read_text())
+            registry = _json_object((destination / ".gui" / "legacy_workspaces.json").read_text())
             self.assertEqual(
-                {entry["path"] for entry in registry["workspaces"]},
+                {_string_field(entry, "path") for entry in _array_field(registry, "workspaces")},
                 {str(source_a.resolve()), str(source_b.resolve())},
             )
-            self.assertEqual(len(registry["workspaces"]), 2)
+            self.assertEqual(len(_array_field(registry, "workspaces")), 2)
 
     def test_rejects_non_product_folder_and_destination_as_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -497,7 +544,9 @@ class InstallerMigrationTests(TypedTestCase):
         setup = (repository / "scripts" / "setup.ps1").read_text(encoding="utf-8-sig")
         review_path = repository / "scripts" / "migration_review.ps1"
         review_bytes = review_path.read_bytes()
-        self.assertTrue(review_bytes.startswith(b"\xef\xbb\xbf"), "Windows PowerShell scripts with Japanese text need a UTF-8 BOM")
+        self.assertTrue(
+            review_bytes.startswith(b"\xef\xbb\xbf"), "Windows PowerShell scripts with Japanese text need a UTF-8 BOM"
+        )
         review = review_bytes.decode("utf-8-sig")
         installer_smoke = (repository / "scripts" / "test_installer.ps1").read_text(encoding="utf-8-sig")
         installer = (repository / "installer" / "SubtitleEditBay.iss").read_text(encoding="utf-8-sig")
@@ -543,7 +592,7 @@ class InstallerMigrationTests(TypedTestCase):
         self.assertIn("Verified pip cache was not classified as reusable", installer_smoke)
         self.assertIn("Unconfirmed cleanup removed the old .venv", installer_smoke)
         self.assertIn('Name: "legacymigration"', installer)
-        self.assertIn('Flags: unchecked checkedonce', installer)
+        self.assertIn("Flags: unchecked checkedonce", installer)
         self.assertIn("WizardIsTaskSelected('legacymigration')", installer)
         self.assertIn('--migration-source "', installer)
         self.assertIn("--skip-runtime-config", installer)
@@ -578,8 +627,9 @@ class InstallerMigrationTests(TypedTestCase):
         self.assertIn("shell32.lib", launcher_build)
         self.assertIn('setup.ps1" %*', setup_batch)
 
-    @unittest.skipUnless(os.name == "nt", "PowerShell setup preflight is Windows-only")
     def test_pending_request_is_reused_before_runtime_setup(self) -> None:
+        if os.name != "nt":
+            self.skipTest("PowerShell setup preflight is Windows-only")
         powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
         if not powershell:
             self.skipTest("PowerShell is unavailable")
@@ -589,7 +639,7 @@ class InstallerMigrationTests(TypedTestCase):
             source, _destination = self._workspaces(root)
             pending = root / "pending-request.json"
             pending.write_text(
-                json.dumps(
+                _dump_json(
                     {
                         "schema_version": 1,
                         "source": str(source),
@@ -619,8 +669,8 @@ class InstallerMigrationTests(TypedTestCase):
                 check=False,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            result = json.loads(completed.stdout.strip().splitlines()[-1])
-            self.assertEqual(Path(result["source"]), source.resolve())
+            result = _json_object(completed.stdout.strip().splitlines()[-1])
+            self.assertEqual(_path_field(result, "source"), source.resolve())
             self.assertTrue(result["skip_runtime_config"])
             self.assertFalse(result["skip_speaker_colors"])
             self.assertTrue(result["skip_workspace_reference"])
@@ -647,13 +697,14 @@ class InstallerMigrationTests(TypedTestCase):
             )
             self.assertEqual(repeated.returncode, 0, repeated.stderr)
             self.assertEqual(
-                json.loads(repeated.stdout.strip().splitlines()[-1]),
+                _json_object(repeated.stdout.strip().splitlines()[-1]),
                 result,
                 "a postponed or failed setup must reuse the same pending request on repair",
             )
 
-    @unittest.skipUnless(os.name == "nt", "PowerShell setup preflight is Windows-only")
     def test_setup_rejects_destination_as_source_before_mutating_state(self) -> None:
+        if os.name != "nt":
+            self.skipTest("PowerShell setup preflight is Windows-only")
         powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
         if not powershell:
             self.skipTest("PowerShell is unavailable")

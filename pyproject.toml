@@ -158,6 +158,11 @@ files = [
   "src/highlight_feedback.py",
   "src/highlight_preferences.py",
   "tests/test_highlight_preferences.py",
+  "src/installer_migration.py",
+  "tests/test_installer_migration.py",
+  "tests/fake_transcription_process.py",
+  "tests/test_runtime_activation.py",
+  "tests/test_audio_auto_mix.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -305,6 +310,11 @@ module = [
   "src.highlight_feedback",
   "src.highlight_preferences",
   "tests.test_highlight_preferences",
+  "src.installer_migration",
+  "tests.test_installer_migration",
+  "tests.fake_transcription_process",
+  "tests.test_runtime_activation",
+  "tests.test_audio_auto_mix",
 ]
 strict = true
 disallow_any_explicit = true

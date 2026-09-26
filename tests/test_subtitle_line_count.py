@@ -11,6 +11,47 @@ from src.subtitle_project import SubtitleProjectError, create_project
 
 
 class SubtitleLineCountTests(unittest.TestCase):
+    def test_automatic_pages_preserve_recognized_text_with_uneven_breaks(self) -> None:
+        texts = [
+            "少し待ってこの問題が解決しなかったら最初から再開しますか",
+            "では次にあの設定で開始できなかったら最初から再開しますか",
+            "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ",
+        ]
+        for packer in [legacy_pack_segments, pack_segments_with_line_count]:
+            for source in texts:
+                with self.subTest(packer=packer.__name__, source=source):
+                    events = packer({"segments": [{"text": source, "start": 0, "end": 3}]})
+                    self.assertEqual("".join(event.text.replace(r"\N", "") for event in events), source)
+                    self.assertTrue(all(event.text.count(r"\N") <= 1 for event in events))
+
+    def test_oversized_atomic_unit_preserves_words_and_real_times(self) -> None:
+        source = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        words = [
+            {"word": char, "start": 10 + index * 0.1, "end": 10 + (index + 1) * 0.1}
+            for index, char in enumerate(source)
+        ]
+        events = pack_segments_with_line_count({"segments": [{
+            "text": source, "start": 10, "end": 13.6, "max_width": 8, "words": words,
+        }]})
+        cursor = 0
+        for event in events:
+            visible = event.text.replace(r"\N", "")
+            self.assertEqual(visible, source[cursor:cursor + len(visible)])
+            self.assertAlmostEqual(event.start, words[cursor]["start"])
+            cursor += len(visible)
+            self.assertGreaterEqual(event.end + 1e-9, words[cursor - 1]["end"])
+            self.assertLessEqual(event.end, min(13.6, words[cursor - 1]["end"] + 0.080001))
+        self.assertEqual(cursor, len(source))
+        self.assertTrue(all(left.end <= right.start for left, right in zip(events, events[1:])))
+
+    def test_automatic_one_line_pages_preserve_text(self) -> None:
+        source = "明日の予定を確認してから次の作業を始めましょう"
+        events = pack_segments_with_line_count({"segments": [{
+            "text": source, "start": 0, "end": 5, "max_width": 12, "subtitle_line_count": "1",
+        }]})
+        self.assertEqual("".join(event.text for event in events), source)
+        self.assertTrue(all(r"\N" not in event.text for event in events))
+
     def test_project_segments_default_to_auto_line_count(self) -> None:
         project = create_project(
             video_path="video.mkv",

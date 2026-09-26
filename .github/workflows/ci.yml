@@ -298,6 +298,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_audio_use_volume_and_solo_controls_are_saved
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_subtitle_time_speaker_font_and_size_are_saved
           tests.test_gui_editor.GuiEditorRegressionTests.test_mixer_preview_rebuild_and_transport_controls_use_rebuilt_audio
+          tests.test_gui_editor.GuiEditorRegressionTests.test_mixer_fader_drag_reaches_target_and_saves
           tests.test_gui_editor.GuiEditorRegressionTests.test_mixer_reset_button_restores_and_saves_defaults_after_edit
           tests.test_gui_editor.GuiEditorRegressionTests.test_autosave_waits_until_processing_finishes
           tests.test_gui_editor.GuiEditorRegressionTests.test_closing_dictionary_window_saves_pending_input

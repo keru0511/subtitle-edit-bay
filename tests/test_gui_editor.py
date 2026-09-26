@@ -7338,6 +7338,49 @@ Window {
             [channel["volume_percent"] for channel in self.app.audioMixerChannels],
             volumes_before,
         )
+
+    def test_mixer_fader_drag_reaches_target_and_saves(self) -> None:
+        path = self._load_project()
+        channel_id = str(self.app.audioMixerChannels[0]["id"])
+        self.app.updateAudioMixChannel(0, {"enabled": True})
+        self.assertTrue(self.app.audioMixerChannels[0]["enabled"])
+        initial_volume = float(self.app.audioMixerChannels[0]["volume_percent"])
+        self.app.autosave_timer.stop()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        channel_list = self._quick_item(window, "mixerChannelList")
+        strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
+        fader = self._quick_visual_item(strip, "mixerChannelFader")
+        self.gui.wait_until(lambda: fader.height() >= 180, description="mixer fader layout")
+        handle = fader.property("handle")
+        self.assertIsInstance(handle, QQuickItem)
+        start = handle.mapToScene(QPointF(handle.width() / 2, handle.height() / 2)).toPoint()
+        finish = fader.mapToScene(QPointF(fader.width() / 2, fader.height() * 0.75)).toPoint()
+        QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
+        self.assertTrue(bool(fader.property("pressed")))
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            QTest.mouseMove(window, start + (finish - start) * fraction, 30)
+            self.assertTrue(bool(fader.property("pressed")), f"drag fraction={fraction}")
+            self.assertEqual(float(self.app.audioMixerChannels[0]["volume_percent"]), initial_volume)
+        QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=finish)
+        self.gui.process_events()
+
+        volume = next(
+            float(channel["volume_percent"])
+            for channel in self.app.audioMixerChannels
+            if str(channel["id"]) == channel_id
+        )
+        self.assertGreater(volume, 0.0)
+        self.assertLess(volume, 5.0)
+        self._click(window, self._quick_item(window, "mixerSaveButton"))
+        saved = next(
+            channel
+            for channel in load_project(path)["audio_mix"]["channels"]
+            if str(channel["id"]) == channel_id
+        )
+        self.assertAlmostEqual(float(saved["volume_percent"]), volume, delta=0.1)
+
     def test_editor_render_action_returns_to_main_and_starts_render(self) -> None:
         self._load_project()
         _, window = self._load_qml()

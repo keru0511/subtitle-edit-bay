@@ -86,7 +86,10 @@ Rectangle {
                     stepSize: 0.5
                     value: root.volumePercentToDb(root.modelData.volume_percent)
                     enabled: !root.running && root.modelData.enabled
-                    onMoved: root.changeRequested({"volume_percent": root.dbToVolumePercent(value)})
+                    onMoved: {
+                        if (!pressed)
+                            root.changeRequested({"volume_percent": root.dbToVolumePercent(value)})
+                    }
                     onPressedChanged: if (!pressed) root.changeRequested({"volume_percent": root.dbToVolumePercent(value)})
                     background: Rectangle {
                         x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2

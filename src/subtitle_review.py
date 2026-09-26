@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Mapping
 
+from .data_boundary import coerce_float
 from .subtitle_review_rules import RULE_VERSION, review_segment_rules
 
 
 REVIEW_STATUSES = {"open", "resolved", "ignored", "false_positive", "stale"}
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
 @dataclass(frozen=True)
@@ -20,7 +22,7 @@ class SubtitleReviewIssue:
     rule_version: str
     severity: str
     reasons: tuple[str, ...]
-    evidence: Mapping[str, Any]
+    evidence: Mapping[str, object]
     project_revision: int
     content_fingerprint: str
     status: str = "open"
@@ -29,7 +31,7 @@ class SubtitleReviewIssue:
     logical_key: str = ""
     supersedes: str = ""
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "issue_id": self.issue_id,
             "segment_ids": list(self.segment_ids),
@@ -52,18 +54,23 @@ class SubtitleReviewCancelled(RuntimeError):
     pass
 
 
+def _segment_order(segment: dict[str, object]) -> tuple[float, str]:
+    return coerce_float(segment.get("start", 0.0)), str(segment.get("id", ""))
+
+
+def _issue_order(issue: SubtitleReviewIssue) -> tuple[int, tuple[str, ...], str]:
+    return _SEVERITY_ORDER.get(issue.severity, 9), issue.segment_ids, issue.rule_id
+
+
 def generate_review_queue(
-    segments: Iterable[Mapping[str, Any]],
+    segments: Iterable[Mapping[str, object]],
     *,
     project_revision: int = 0,
     rule_version: str = RULE_VERSION,
     cancel_check: Callable[[], bool] | None = None,
     progress_callback: Callable[[float], None] | None = None,
 ) -> list[SubtitleReviewIssue]:
-    ordered = sorted(
-        [dict(item) for item in segments],
-        key=lambda item: (float(item.get("start", 0.0)), str(item.get("id", ""))),
-    )
+    ordered = sorted([dict(item) for item in segments], key=_segment_order)
     issues: list[SubtitleReviewIssue] = []
     for index, segment in enumerate(ordered):
         if cancel_check and cancel_check():
@@ -90,8 +97,7 @@ def generate_review_queue(
             )
         if progress_callback:
             progress_callback((index + 1) / max(1, len(ordered)))
-    severity_order = {"high": 0, "medium": 1, "low": 2}
-    return sorted(issues, key=lambda item: (severity_order.get(item.severity, 9), item.segment_ids, item.rule_id))
+    return sorted(issues, key=_issue_order)
 
 
 class SubtitleReviewQueue:
@@ -102,7 +108,7 @@ class SubtitleReviewQueue:
         if status not in REVIEW_STATUSES - {"stale"}:
             raise ValueError(f"unsupported review status: {status}")
         issue = self.issues[issue_id]
-        updated = SubtitleReviewIssue(**{**issue.__dict__, "status": status, "reviewed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        updated = replace(issue, status=status, reviewed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         self.issues[issue_id] = updated
         return updated
 
@@ -112,9 +118,7 @@ class SubtitleReviewQueue:
     ) -> list[SubtitleReviewIssue]:
         """Merge a newly generated queue without losing review decisions."""
         generated_items = list(generated)
-        existing_by_key = {
-            _issue_logical_key(issue): issue for issue in self.issues.values()
-        }
+        existing_by_key = {_issue_logical_key(issue): issue for issue in self.issues.values()}
         reconciled: dict[str, SubtitleReviewIssue] = {}
         matched_keys: set[str] = set()
         for current in generated_items:
@@ -125,57 +129,54 @@ class SubtitleReviewQueue:
                 reconciled[current.issue_id] = current
                 continue
             if previous.content_fingerprint == current.content_fingerprint:
-                reconciled[previous.issue_id] = SubtitleReviewIssue(
-                    **{
-                        **current.__dict__,
-                        "issue_id": previous.issue_id,
-                        "status": previous.status,
-                        "created_at": previous.created_at or current.created_at,
-                        "reviewed_at": previous.reviewed_at,
-                        "logical_key": key,
-                        "supersedes": previous.supersedes,
-                    }
+                reconciled[previous.issue_id] = replace(
+                    current,
+                    issue_id=previous.issue_id,
+                    status=previous.status,
+                    created_at=previous.created_at or current.created_at,
+                    reviewed_at=previous.reviewed_at,
+                    logical_key=key,
+                    supersedes=previous.supersedes,
                 )
                 continue
-            reconciled[previous.issue_id] = SubtitleReviewIssue(
-                **{**previous.__dict__, "status": "stale"}
-            )
-            reconciled[current.issue_id] = SubtitleReviewIssue(
-                **{**current.__dict__, "logical_key": key, "supersedes": previous.issue_id}
-            )
+            reconciled[previous.issue_id] = replace(previous, status="stale")
+            reconciled[current.issue_id] = replace(current, logical_key=key, supersedes=previous.issue_id)
         for issue in self.issues.values():
             key = _issue_logical_key(issue)
             if key not in matched_keys and issue.issue_id not in reconciled:
-                reconciled[issue.issue_id] = SubtitleReviewIssue(
-                    **{**issue.__dict__, "status": "stale"}
-                )
+                reconciled[issue.issue_id] = replace(issue, status="stale")
         self.issues = reconciled
         return list(self.issues.values())
 
-    def mark_stale(self, segments: Iterable[Mapping[str, Any]], rule_version: str = RULE_VERSION) -> list[SubtitleReviewIssue]:
+    def mark_stale(
+        self, segments: Iterable[Mapping[str, object]], rule_version: str = RULE_VERSION
+    ) -> list[SubtitleReviewIssue]:
         by_id = {str(item.get("id")): item for item in segments}
         updated: list[SubtitleReviewIssue] = []
         for issue_id, issue in list(self.issues.items()):
             segment = by_id.get(issue.segment_ids[0]) if issue.segment_ids else None
             if segment is None or _fingerprint(segment, issue.rule_id, rule_version) != issue.content_fingerprint:
-                changed = SubtitleReviewIssue(**{**issue.__dict__, "status": "stale"})
+                changed = replace(issue, status="stale")
                 self.issues[issue_id] = changed
                 updated.append(changed)
         return updated
 
-    def filtered(self, *, status: str | None = None, severity: str | None = None, rule_id: str | None = None) -> list[SubtitleReviewIssue]:
+    def filtered(
+        self, *, status: str | None = None, severity: str | None = None, rule_id: str | None = None
+    ) -> list[SubtitleReviewIssue]:
         return [
-            item for item in self.issues.values()
+            item
+            for item in self.issues.values()
             if (status is None or item.status == status)
             and (severity is None or item.severity == severity)
             and (rule_id is None or item.rule_id == rule_id)
         ]
 
-    def to_json(self) -> list[dict[str, Any]]:
+    def to_json(self) -> list[dict[str, object]]:
         return [item.to_json() for item in self.issues.values()]
 
 
-def _fingerprint(segment: Mapping[str, Any], rule_id: str, rule_version: str) -> str:
+def _fingerprint(segment: Mapping[str, object], rule_id: str, rule_version: str) -> str:
     payload = {
         "id": segment.get("id"),
         "start": segment.get("start"),
@@ -201,4 +202,3 @@ def _logical_key(segment_ids: Iterable[str], rule_id: str, rule_version: str) ->
 
 def _issue_logical_key(issue: SubtitleReviewIssue) -> str:
     return issue.logical_key or _logical_key(issue.segment_ids, issue.rule_id, issue.rule_version)
-

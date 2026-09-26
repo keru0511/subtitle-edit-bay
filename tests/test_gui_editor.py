@@ -11605,6 +11605,8 @@ Window {
             self.assertTrue(self.app.sequenceClips[0]["muted"])
 
             volume_slider = self._quick_visual_item(clip_list, "sequenceClipVolumeSlider")
+            self.gui.wait_until(lambda: volume_slider.width() >= 75, description="シーケンス音量欄の配置")
+            volume_before_drag = self.app.sequenceClips[0]["volume"]
             start = volume_slider.mapToScene(
                 QPointF(volume_slider.width() * 0.5, volume_slider.height() / 2)
             ).toPoint()
@@ -11612,13 +11614,13 @@ Window {
                 QPointF(volume_slider.width() * 0.75, volume_slider.height() / 2)
             ).toPoint()
             QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
-            for fraction in (0.5, 1.0):
+            self.assertTrue(bool(volume_slider.property("pressed")))
+            for fraction in (0.25, 0.5, 0.75, 1.0):
                 QTest.mouseMove(window, start + (end - start) * fraction, 30)
+                self.assertTrue(bool(volume_slider.property("pressed")), f"drag fraction={fraction}")
+                self.assertEqual(self.app.sequenceClips[0]["volume"], volume_before_drag)
             QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=end)
-            self.gui.wait_until(
-                lambda: 1.3 <= self.app.sequenceClips[0]["volume"] <= 1.9,
-                description="シーケンスの音量スライダー",
-            )
+            self.assertAlmostEqual(self.app.sequenceClips[0]["volume"], 2.0, delta=0.05)
             expected_volume = self.app.sequenceClips[0]["volume"]
             audio_offset = self._quick_visual_item(clip_list, "sequenceAudioOffset")
             self._assert_quick_item_within(clip_list, audio_offset)

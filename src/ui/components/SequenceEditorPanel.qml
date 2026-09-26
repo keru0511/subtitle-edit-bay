@@ -778,11 +778,19 @@ Rectangle {
                                         from: 0
                                         to: 2
                                         value: Number(clipItem.modelData.volume || 0)
-                                        onMoved: {
+                                        function commitVolume() {
                                             if (root.backend)
                                                 root.backend.sequence.setSequenceClipAudio(
                                                     clipItem.clipId, audioLinkedCheck.checked, value,
                                                     Number(audioOffset.value) / 1000, mutedCheck.checked)
+                                        }
+                                        onMoved: {
+                                            if (!pressed)
+                                                commitVolume()
+                                        }
+                                        onPressedChanged: {
+                                            if (!pressed)
+                                                commitVolume()
                                         }
                                     }
                                     CheckBox {

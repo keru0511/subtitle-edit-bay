@@ -11161,6 +11161,47 @@ Window {
             description="sequence clip delegate after redo",
         )
 
+    def test_sequence_remove_button_undo_redo_and_save_from_screen(self) -> None:
+        path, _first_video, second_video = self._make_sequence_project()
+        second_asset_id = self._add_second_sequence_asset(second_video)
+        self.assertTrue(self.app.addSequenceClip(second_asset_id))
+        self.assertTrue(self.app.saveProject())
+        clip_ids = [str(clip["clipId"]) for clip in self.app.sequenceClips]
+        self.assertEqual(len(clip_ids), 2)
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
+        panel = self._quick_item(window, "workspaceSequenceEditor")
+        clip_list = self._quick_item(window, "sequenceClipList")
+        self.gui.wait_until(
+            lambda: panel.isVisible() and clip_list.property("count") == 2
+            and any(
+                item.property("clipId") == clip_ids[0]
+                for item in self.gui.visual_items_with_properties(clip_list, "clipId")
+            ),
+            description="削除対象のシーケンスカード",
+        )
+        clip_card = self.gui.find_visual_item_by_properties(
+            clip_list, {"clipId": clip_ids[0]}, required_properties=("clipId",),
+        )
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, self._quick_visual_item(clip_card, "removeSequenceClipButton"))
+            self.assertEqual([clip["clipId"] for clip in self.app.sequenceClips], clip_ids[1:])
+            self.assertEqual(len(load_project(path)["sequence"]["clips"]), 2)
+
+            self._click(window, self._quick_item(window, "sequenceUndoButton"))
+            self.assertEqual([clip["clipId"] for clip in self.app.sequenceClips], clip_ids)
+            self._click(window, self._quick_item(window, "sequenceRedoButton"))
+            self.assertEqual([clip["clipId"] for clip in self.app.sequenceClips], clip_ids[1:])
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        self.assertEqual(
+            [clip["id"] for clip in load_project(path)["sequence"]["clips"]],
+            clip_ids[1:],
+        )
+        self.assertFalse(self.app.projectDirty)
+
     def test_highlight_candidates_are_preserved_during_processing(self) -> None:
         project_path = self._load_project()
         _, window = self._load_qml()

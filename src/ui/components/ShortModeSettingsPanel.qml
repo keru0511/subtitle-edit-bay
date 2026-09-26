@@ -116,6 +116,7 @@ ColumnLayout {
             border.color: "#30363D"
         }
         Button {
+            objectName: "shortModeBackgroundColorButton"
             Layout.preferredWidth: 32
             text: "..."
             enabled: settingsRoot.editingEnabled
@@ -125,6 +126,7 @@ ColumnLayout {
 
     ColorDialog {
         id: bgColorDialog
+        objectName: "shortModeBackgroundColorDialog"
         title: "背景色を選択"
         onAccepted: {
             if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {

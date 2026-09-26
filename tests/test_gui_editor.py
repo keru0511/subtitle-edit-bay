@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QCoreApplication, QMetaObject, QMimeData, QObject, QPoint, QPointF, QProcess, Qt, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QInputMethodEvent, QKeySequence
+from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QInputMethodEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
@@ -1709,6 +1709,38 @@ Window {
         self.app.setAudioFiles([str(audio)], False)
         self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
 
+    def test_source_speaker_color_dialog_applies_and_cancel_preserves_color(self) -> None:
+        self._set_ready_sources()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        popup = window.findChild(QObject, "sourcePopup")
+        self.gui.wait_until(lambda: popup.property("visible"), description="素材設定を開く")
+        scroll_view = self._quick_item(window, "sourceSettingsScrollView")
+        scroll_view.property("contentItem").setProperty("contentY", 180.0)
+        self.gui.process_events()
+        audio_list = self._quick_item(window, "sourceAudioList")
+        self.assertTrue(audio_list.isVisible())
+        button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
+        self._assert_quick_item_within(scroll_view.property("contentItem"), button)
+        self._click(window, button)
+        dialog = window.findChild(QObject, "speakerColorDialog")
+        self.assertIsNotNone(dialog)
+        self.assertTrue(dialog.property("visible"))
+        self.assertEqual(window.property("colorTarget"), "source")
+        dialog.setProperty("selectedColor", QColor("#12ABEF"))
+        self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
+        self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
+        self.assertEqual(window.property("colorTarget"), "")
+
+        button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
+        self._assert_quick_item_within(scroll_view.property("contentItem"), button)
+        self._click(window, button)
+        self.assertTrue(dialog.property("visible"))
+        dialog.setProperty("selectedColor", QColor("#FEDCBA"))
+        self.assertTrue(QMetaObject.invokeMethod(dialog, "reject"))
+        self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
+        self.assertEqual(window.property("colorTarget"), "")
+
     def test_invalid_source_speaker_color_is_rejected(self) -> None:
         self._set_ready_sources()
         original = self.app.speakers[0]["color"]
@@ -1732,6 +1764,28 @@ Window {
         self.assertTrue(self.app.projectDirty)
         payload = json.loads(self.app.color_config_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["speakers"]["Alice"]["color"], "#445566")
+
+    def test_project_speaker_color_dialog_applies_and_cancel_preserves_color(self) -> None:
+        self._load_project()
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        button = self._quick_item(window, "workspaceSubtitleSpeakerColorButton")
+        self.assertTrue(button.isEnabled())
+        self._click(window, button)
+        dialog = window.findChild(QObject, "speakerColorDialog")
+        self.assertIsNotNone(dialog)
+        self.assertTrue(dialog.property("visible"))
+        self.assertEqual(window.property("colorTarget"), "project")
+        dialog.setProperty("selectedColor", QColor("#445566"))
+        self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
+        self.assertEqual(self.app.projectSpeakers[0]["color"], "#445566")
+        self.assertEqual(window.property("colorTarget"), "")
+
+        self._click(window, button)
+        dialog.setProperty("selectedColor", QColor("#FEDCBA"))
+        self.assertTrue(QMetaObject.invokeMethod(dialog, "reject"))
+        self.assertEqual(self.app.projectSpeakers[0]["color"], "#445566")
+        self.assertEqual(window.property("colorTarget"), "")
 
     def test_audio_mixer_preview_applies_channel_state_gain_and_source_metadata(self) -> None:
         self._load_project()
@@ -3815,7 +3869,14 @@ Window {
         font_size.setProperty("value", 900)
         self.assertEqual(window.property("subtitleFontSizePercent"), 900)
         self.assertEqual(window.property("selectedSubtitleFontSize"), 450)
-        self._quick_item(window, "outlineColorButton").setProperty("colorValue", "#456789")
+        outline_button = self._quick_item(window, "outlineColorButton")
+        self._click(window, outline_button)
+        outline_dialog = window.findChild(QObject, "outlineColorDialog")
+        self.assertIsNotNone(outline_dialog)
+        self.assertTrue(outline_dialog.property("visible"))
+        outline_dialog.setProperty("selectedColor", QColor("#456789"))
+        self.assertTrue(QMetaObject.invokeMethod(outline_dialog, "accept"))
+        self.assertEqual(outline_button.property("colorValue"), "#456789")
         self._quick_item(window, "outlineThicknessSpin").setProperty("value", 9)
         self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
         self.assertEqual(window.currentSettings().toVariant()["subtitle_font_size"], 450)
@@ -9988,6 +10049,21 @@ Window {
                     control = self.gui.find_item(window, name)
                     self._assert_quick_item_within(owner, control)
                     self._assert_quick_item_within(window.contentItem(), control)
+
+    def test_short_background_color_dialog_applies_selected_color(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        button = self._quick_item(window, "shortModeBackgroundColorButton")
+        self.assertTrue(button.isEnabled())
+        self._click(window, button)
+        dialog = window.findChild(QObject, "shortModeBackgroundColorDialog")
+        self.assertIsNotNone(dialog)
+        self.assertTrue(dialog.property("visible"))
+        dialog.setProperty("selectedColor", QColor("#123456"))
+        self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
+        self.assertEqual(self.app.shortVideo.shortVideoSettings["global_background_color"], "#123456")
+        self.assertEqual(self._quick_item(window, "shortModeBackgroundColorField").property("text"), "#123456")
 
     def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]

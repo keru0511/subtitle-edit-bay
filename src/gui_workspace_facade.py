@@ -13,9 +13,11 @@ from PySide6.QtCore import (
 
 from .editor_workspace import (
     EditModeCapabilities,
+    EditorWorkspaceState,
     TimeMapping,
     build_edit_mode_capabilities,
 )
+from .gui_workspace_controller import WorkspaceNavigationController
 from .video_timeline import VideoTimeline, VideoTimelineError, timeline_from_project
 
 from .gui_feature_facade import FeatureFacade
@@ -36,6 +38,9 @@ class WorkspaceFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        self._editor_workspace = EditorWorkspaceState()
+        self._workspace_navigation = WorkspaceNavigationController()
+        self._cut_editor_available = True
         backend.cutTimelineChanged.connect(self.cutTimelineChanged.emit)
         backend.editorCapabilitiesChanged.connect(self.editorCapabilitiesChanged.emit)
         backend.editorModeChanged.connect(self.editorModeChanged.emit)
@@ -45,27 +50,21 @@ class WorkspaceFacade(FeatureFacade):
 
     @Property(str, notify=workspaceChanged)
     def currentWorkspace(self) -> str:
-        """Return the backend-owned workspace identity for QML."""
+        """Return the workspace identity owned by this facade."""
 
-        backend = self._backend
-
-        return backend._workspace_navigation.current_workspace
+        return self._workspace_navigation.current_workspace
 
     @Property("QVariantMap", notify=workspacePlayerStateChanged)
     def workspacePlayerState(self) -> dict[str, Any]:
         """Return the active workspace player state at the navigation boundary."""
 
-        backend = self._backend
-
-        return backend._workspace_navigation.current_player.as_dict()
+        return self._workspace_navigation.current_player.as_dict()
 
     @Property("QVariantMap", notify=workspacePlayerStateChanged)
     def workspacePlayerStates(self) -> dict[str, dict[str, Any]]:
         """Expose isolated transport snapshots for diagnostics and QML."""
 
-        backend = self._backend
-
-        return backend._workspace_navigation.player_states()
+        return self._workspace_navigation.player_states()
 
     @Slot(str, int, bool, result=bool)
     def setWorkspacePlayerState(
@@ -75,7 +74,7 @@ class WorkspaceFacade(FeatureFacade):
         playing: bool,
     ) -> bool:
         backend = self._backend
-        changed = backend._workspace_navigation.update_player_state(
+        changed = self._workspace_navigation.update_player_state(
             workspace,
             position_ms,
             playing=playing,
@@ -87,7 +86,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(str, result=bool)
     def switchWorkspace(self, workspace: str) -> bool:
         backend = self._backend
-        result = backend._workspace_navigation.switch_workspace(
+        result = self._workspace_navigation.switch_workspace(
             workspace,
             running=backend._running,
             active_job=backend._active_job,
@@ -106,20 +105,19 @@ class WorkspaceFacade(FeatureFacade):
             project_loaded=backend.projectLoaded,
             preview_available=bool(backend.previewUrl),
             audio_available=backend.audio.audioMixerAvailable,
-            cut_available=backend._cut_editor_available,
+            cut_available=self._cut_editor_available,
         )
 
     def _refresh_editor_workspace(self) -> None:
         backend = self._backend
-        mode_changed = backend._editor_workspace.ensure_available_mode(self._edit_mode_capabilities())
+        mode_changed = self._editor_workspace.ensure_available_mode(self._edit_mode_capabilities())
         backend.editorCapabilitiesChanged.emit()
         if mode_changed:
             backend.editorModeChanged.emit()
 
     @Property(str, notify=editorModeChanged)
     def currentEditMode(self) -> str:
-        backend = self._backend
-        return backend._editor_workspace.current_mode
+        return self._editor_workspace.current_mode
 
     @Property("QVariantMap", notify=editorCapabilitiesChanged)
     def editorModeCapabilities(self) -> dict[str, object]:
@@ -127,8 +125,7 @@ class WorkspaceFacade(FeatureFacade):
 
     @Property("QVariantMap", notify=editorPlayheadChanged)
     def editorPlayhead(self) -> dict[str, object]:
-        backend = self._backend
-        return backend._editor_workspace.playhead
+        return self._editor_workspace.playhead
 
     def _cut_timeline_model(self) -> VideoTimeline:
         if self.project_editor.project is None:
@@ -163,7 +160,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(str, result=bool)
     def selectEditMode(self, mode: str) -> bool:
         backend = self._backend
-        changed = backend._editor_workspace.select_mode(mode, self._edit_mode_capabilities())
+        changed = self._editor_workspace.select_mode(mode, self._edit_mode_capabilities())
         if changed:
             backend.editorModeChanged.emit()
         return changed
@@ -171,7 +168,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(int, str, result=bool)
     def setEditorPlayhead(self, position_ms: int, basis: str) -> bool:
         backend = self._backend
-        changed = backend._editor_workspace.set_playhead(position_ms, basis)
+        changed = self._editor_workspace.set_playhead(position_ms, basis)
         if changed:
             backend.editorPlayheadChanged.emit()
         return changed
@@ -181,7 +178,7 @@ class WorkspaceFacade(FeatureFacade):
 
         backend = self._backend
 
-        backend._editor_workspace.set_mapping(mapping)
+        self._editor_workspace.set_mapping(mapping)
         backend.editorPlayheadChanged.emit()
 
     def _sync_project_timeline(self) -> None:
@@ -192,18 +189,16 @@ class WorkspaceFacade(FeatureFacade):
     def set_cut_editor_available(self, available: bool) -> None:
         """Enable the cut mode when the non-destructive cut editor is connected."""
 
-        backend = self._backend
-
         available = bool(available)
-        if backend._cut_editor_available == available:
+        if self._cut_editor_available == available:
             return
-        backend._cut_editor_available = available
+        self._cut_editor_available = available
         self._refresh_editor_workspace()
 
     def _reset_editor_timing(self) -> None:
         backend = self._backend
-        backend._editor_workspace.set_mapping(None)
-        backend._editor_workspace.reset_playhead()
+        self._editor_workspace.set_mapping(None)
+        self._editor_workspace.reset_playhead()
         backend.editorPlayheadChanged.emit()
 
     def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:

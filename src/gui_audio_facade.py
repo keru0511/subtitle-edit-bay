@@ -55,6 +55,7 @@ class AudioFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        self._audio_preview: AudioPreviewController | None = None
         backend.audioMasterMetricsChanged.connect(self.audioMasterMetricsChanged.emit)
         backend.audioMixProposalChanged.connect(self.audioMixProposalChanged.emit)
         backend.audioMixerPreviewChannelsChanged.connect(self.audioMixerPreviewChannelsChanged.emit)
@@ -62,6 +63,20 @@ class AudioFacade(FeatureFacade):
         backend.audioPreviewCacheChanged.connect(self.audioPreviewCacheChanged.emit)
         backend.audioPreviewLevelsChanged.connect(self.audioPreviewLevelsChanged.emit)
         backend.projectDataChanged.connect(self.projectDataChanged.emit)
+
+    def bind_audio_preview(self, controller: AudioPreviewController) -> None:
+        """音声プレビューの所有者を起動時に一度だけ受け取る。"""
+
+        if self._audio_preview is not None:
+            raise RuntimeError("音声プレビューは既に接続されています")
+        self._audio_preview = controller
+
+    @property
+    def audio_preview(self) -> AudioPreviewController:
+        controller = self._audio_preview
+        if controller is None:
+            raise RuntimeError("音声プレビューの初期化が完了していません")
+        return controller
 
     @Property("QVariantMap", notify=audioMixProposalChanged)
     def audioMixProposal(self) -> dict[str, Any]:
@@ -80,32 +95,27 @@ class AudioFacade(FeatureFacade):
 
     @Property(bool, notify=audioPreviewCacheChanged)
     def audioPreviewPreparing(self) -> bool:
-        backend = self._backend
-        return backend._audio_preview_preparing
+        return self.audio_preview.preparing
 
     @Property(int, notify=audioPreviewCacheChanged)
     def audioPreviewGeneration(self) -> int:
-        backend = self._backend
-        return backend._audio_preview_generation
+        return self.audio_preview.generation
 
     @Property(str, notify=audioPreviewCacheChanged)
     def audioPreviewCacheSummary(self) -> str:
-        backend = self._backend
-        return backend._audio_preview_controller.audio_preview_cache_summary
+        return self.audio_preview.audio_preview_cache_summary
 
     @Property(str, notify=audioMixerPreviewChannelsChanged)
     def audioPreviewClockUrl(self) -> str:
-        backend = self._backend
-        return backend._audio_preview_controller.audio_preview_clock_url
+        return self.audio_preview.audio_preview_clock_url
 
     def _reset_audio_preview_cache(self) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.reset_cache()
+        self.audio_preview.reset_cache()
 
     @Slot()
     def prepareAudioMixerPreview(self) -> None:
         backend = self._backend
-        backend._audio_preview_controller.prepare_preview(
+        self.audio_preview.prepare_preview(
             ffmpeg_available=backend._dependencies.ffmpeg,
         )
 
@@ -115,36 +125,30 @@ class AudioFacade(FeatureFacade):
         request_id: int,
         result: AudioPreviewCacheResult,
     ) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.apply_audio_preview_cache(request_id, result)
+        self.audio_preview.apply_audio_preview_cache(request_id, result)
 
     @Slot()
     def clearAudioPreviewCache(self) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.clear_cache()
+        self.audio_preview.clear_cache()
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerChannels(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        return backend._audio_preview_controller.mixer_channels
+        return self.audio_preview.mixer_channels
 
     @Property(bool, notify=projectDataChanged)
     def audioMixerAvailable(self) -> bool:
         return bool(self.audioMixerChannels)
 
     def _enabled_audio_mixer_channel_ids(self) -> set[str]:
-        backend = self._backend
-        return backend._audio_preview_controller.enabled_channel_ids()
+        return self.audio_preview.enabled_channel_ids()
 
     @Property(bool, notify=projectDataChanged)
     def audioMixerPreviewComplete(self) -> bool:
-        backend = self._backend
-        return backend._audio_preview_controller.preview_complete
+        return self.audio_preview.preview_complete
 
     @Property(bool, notify=projectDataChanged)
     def audioMixerIntentionalSilence(self) -> bool:
-        backend = self._backend
-        return backend._audio_preview_controller.intentional_silence
+        return self.audio_preview.intentional_silence
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
@@ -194,44 +198,36 @@ class AudioFacade(FeatureFacade):
         return sequence
 
     def _audio_mixer_channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
-        backend = self._backend
-        return backend._audio_preview_controller.channel_view(channel)
+        return self.audio_preview.channel_view(channel)
 
     def _audio_mixer_preview_state(
         self,
     ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, float]]:
-        backend = self._backend
-        return backend._audio_preview_controller.preview_state()
+        return self.audio_preview.preview_state()
 
     def _notify_audio_mixer_preview(self, *, structure_changed: bool) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.notify_preview(structure_changed=structure_changed)
+        self.audio_preview.notify_preview(structure_changed=structure_changed)
 
     @Property("QVariantList", notify=audioMixerPreviewChannelsChanged)
     def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        return backend._audio_preview_controller.preview_channels
+        return self.audio_preview.preview_channels
 
     @Property("QVariantMap", notify=audioMixerPreviewGainsChanged)
     def audioMixerPreviewGains(self) -> dict[str, float]:
-        backend = self._backend
-        return backend._audio_preview_controller.preview_gains
+        return self.audio_preview.preview_gains
 
     def _audio_preview_output(self, channel_id: str) -> QAudioBufferOutput:
-        backend = self._backend
-        return backend._audio_preview_controller.preview_output(channel_id)
+        return self.audio_preview.preview_output(channel_id)
 
     @staticmethod
     def _audio_buffer_peak(buffer: QAudioBuffer) -> float:
         return AudioPreviewController.audio_buffer_peak(buffer)
 
     def _receive_audio_preview_buffer(self, channel_id: str, buffer: QAudioBuffer) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.receive_preview_buffer(channel_id, buffer)
+        self.audio_preview.receive_preview_buffer(channel_id, buffer)
 
     def _publish_audio_preview_levels(self) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.publish_levels()
+        self.audio_preview.publish_levels()
 
     @Property("QVariantMap", notify=audioPreviewLevelsChanged)
     def audioPreviewLevels(self) -> dict[str, float]:
@@ -240,38 +236,31 @@ class AudioFacade(FeatureFacade):
 
     @Slot(float, float)
     def _update_audio_master_metrics(self, level: float, reduction_db: float) -> None:
-        backend = self._backend
-        backend._audio_preview_controller._update_master_metrics(level, reduction_db)
+        self.audio_preview._update_master_metrics(level, reduction_db)
 
     @Property(float, notify=audioMasterMetricsChanged)
     def audioMasterLevel(self) -> float:
-        backend = self._backend
-        return backend._audio_preview_controller.master_level
+        return self.audio_preview.master_level
 
     @Property(float, notify=audioMasterMetricsChanged)
     def audioLimiterReductionDb(self) -> float:
-        backend = self._backend
-        return backend._audio_preview_controller.limiter_reduction_db
+        return self.audio_preview.limiter_reduction_db
 
     @Slot(int)
     def startAudioMixerPreview(self, position_milliseconds: int) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.start_preview(position_milliseconds)
+        self.audio_preview.start_preview(position_milliseconds)
 
     @Slot()
     def pauseAudioMixerPreview(self) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.pause_preview()
+        self.audio_preview.pause_preview()
 
     @Slot(int, bool)
     def seekAudioMixerPreview(self, position_milliseconds: int, playing: bool) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.seek_preview(position_milliseconds, playing)
+        self.audio_preview.seek_preview(position_milliseconds, playing)
 
     @Slot()
     def stopAudioMixerPreview(self) -> None:
-        backend = self._backend
-        backend._audio_preview_controller.stop_preview()
+        self.audio_preview.stop_preview()
 
     def _mixer_video_tracks(self) -> list[dict[str, str]]:
         backend = self._backend

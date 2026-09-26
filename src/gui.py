@@ -63,10 +63,6 @@ from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color
 from .gui_base import APP_TITLE, LegacyEditBayBackend
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
-from .gui_workspace_controller import WorkspaceNavigationController
-from .editor_workspace import (
-    EditorWorkspaceState,
-)
 from .media_probe import probe_media_duration
 from .subtitle_project import (
     SubtitleProjectError,
@@ -77,7 +73,6 @@ from .subtitle_project import (
     project_work_directory,
     save_project,
 )
-from .processing_progress import ProcessingProgress
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
 from .video_sequence import VideoSequence, VideoSequenceError
@@ -88,11 +83,10 @@ from .gui_short_video_facade import ShortVideoFacade
 from .gui_audio_facade import AudioFacade
 from .gui_sequence_facade import SequenceFacade
 from .gui_workflow_facade import WorkflowFacade
-from .gui_ai_facade import AIChatFacade
+from .gui_ai_facade import AIChatFacade, AIServices
 from .gui_updates_facade import UpdateFacade
-from .gui_feature_state_compat import FeatureStateCompatibility
 from .gui_models import ShortVideoClipListModel, SubtitleListModel
-from .gui_compatibility_bridge import QmlCompatibilityBridge
+from .gui_backend_compatibility import LegacyBackendCompatibility
 
 
 def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
@@ -109,7 +103,7 @@ def build_font_choices(font_families: list[str]) -> list[dict[str, str]]:
     ]
 
 
-class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEditBayBackend):
+class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     projectChanged = Signal()
     projectDataChanged = Signal()
     segmentsChanged = Signal()
@@ -456,10 +450,6 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
         self._workflow_facade = WorkflowFacade(self)
         self._ai_facade = AIChatFacade(self)
         self._updates_facade = UpdateFacade(self)
-        self._editor_workspace = EditorWorkspaceState()
-        self._workspace_navigation = WorkspaceNavigationController()
-        self._sequence_playhead_seconds = 0.0
-        self._sequence_error = ""
         for signal in (
             self.dependenciesChanged,
             self.sourceSelectionChanged,
@@ -477,18 +467,10 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
         # notifications only tell QML to read a fresh view.
         self.projectChanged.connect(self.sequenceChanged.emit)
         self.projectDataChanged.connect(self.sequenceChanged.emit)
-        self._cut_editor_available = True
         self.projectChanged.connect(self._refresh_editor_workspace)
         self.projectDataChanged.connect(self._refresh_editor_workspace)
         self.sourceSelectionChanged.connect(self._refresh_editor_workspace)
-        self._processing_progress = ProcessingProgress()
-        self._ffmpeg_duration_seconds = 0.0
-        self._ffmpeg_duration_from_event = False
-        self._processing_machine_event_seen = False
         self._application_logger.application_info = dict(self._application_info)
-        self._last_process_diagnostic: ProcessDiagnosticSnapshot | None = None
-        self._pending_process_error = ""
-        self._process_output_tail = ""
         self._log = self._application_logger.text
         self._record_startup_diagnostics()
         self._font_choices = build_font_choices(QFontDatabase.families())
@@ -499,11 +481,6 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
             self,
         )
         self.shortVideoChanged.connect(self._refresh_short_video_clip_data)
-        self._transcription_merge_mode = ""
-        self._transcription_preserved_segments: list[dict[str, Any]] = []
-        self._transcription_preserved_project: dict[str, Any] | None = None
-        self._transcription_preserved_project_path = ""
-        self._transcription_generated_project_path = ""
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setSingleShot(True)
         self.autosave_timer.setInterval(700)
@@ -556,6 +533,7 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
             ),
             clear_cache=lambda root: clear_audio_preview_cache(root),
         )
+        self._audio_facade.bind_audio_preview(self._audio_preview_controller)
         self.audio_preview_cache_root = cache_root
         self._audio_preview_controller.cacheChanged.connect(self.audioPreviewCacheChanged.emit)
         self._audio_preview_controller.previewChannelsChanged.connect(self.audioMixerPreviewChannelsChanged.emit)
@@ -621,6 +599,15 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
             on_state=self._on_codex_chat_state,
             on_selected_provider=self._persist_ai_provider,
         )
+        self._ai_facade.bind_services(
+            AIServices(
+                codex_session=self._codex_session,
+                audio_mix_session=self._codex_audio_mix_session,
+                codex_chat=self._codex_chat,
+                chat_router=self._ai_chat,
+                actions=self._codex_actions,
+            )
+        )
         self.aboutToQuit.connect(self._ai_chat.shutdown)
         self._ai_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)
@@ -681,7 +668,7 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
 
     @Property(bool, notify=lastProcessDiagnosticChanged)
     def hasLastProcessDiagnostic(self) -> bool:
-        return self._last_process_diagnostic is not None
+        return self.workflow._state.last_process_diagnostic is not None
 
     @Property(str, notify=updateInfoChanged)
     def updateCurrentVersion(self) -> str:
@@ -1799,7 +1786,7 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
         outcome: str,
         exit_code: int | None,
     ) -> None:
-        self._last_process_diagnostic = ProcessDiagnosticSnapshot(
+        self.workflow._state.last_process_diagnostic = ProcessDiagnosticSnapshot(
             occurred_at=datetime.now().astimezone().isoformat(timespec="seconds"),
             job=job,
             component=job or "process",
@@ -1807,7 +1794,7 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
             status=self.status,
             outcome=outcome,
             exit_code=exit_code,
-            process_error=self._pending_process_error,
+            process_error=self.workflow._state.pending_process_error,
             log_text=self._application_logger.text,
             related_log_tail=self._related_process_log_tail(),
             runtime=runtime_diagnostic_info(),
@@ -1826,10 +1813,10 @@ class EditBayBackend(FeatureStateCompatibility, QmlCompatibilityBridge, LegacyEd
 
     @Slot()
     def copyErrorLogsToClipboard(self) -> None:
-        if self._last_process_diagnostic is not None:
+        if self.workflow._state.last_process_diagnostic is not None:
             self.clipboard().setText(
                 self._application_logger.diagnostic_text(
-                    snapshot=self._last_process_diagnostic,
+                    snapshot=self.workflow._state.last_process_diagnostic,
                 )
             )
             return

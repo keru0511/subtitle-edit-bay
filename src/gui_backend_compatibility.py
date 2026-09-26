@@ -1,4 +1,4 @@
-"""既存QML公開APIを機能別窓口へ接続する互換ブリッジ。"""
+"""旧バックエンドのPython・Qt公開APIを機能別窓口へ接続する。"""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from .video_timeline import VideoTimeline
 from .workflow_actions import ActionCapability
 
 
-class QmlCompatibilityBridge:
-    """旧バックエンドのスロット呼び出しを各機能窓口へ転送する。"""
+class LegacyBackendCompatibility:
+    """旧APIの利用者を保ち、処理と状態の所有権は各機能窓口に置く。"""
 
     @Slot(str, int, bool, result=bool)
     def setWorkspacePlayerState(

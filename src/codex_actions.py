@@ -596,12 +596,13 @@ class GuiActionBackend:
                 "steps": [],
             }
         else:
+            progress = self._gui.workflow.processing_progress
             state = {
                 "active_job": active_job,
                 "running": bool(self._gui._running),
-                "progress": float(self._gui._processing_progress.value),
-                "status": str(self._gui._processing_progress.status),
-                "steps": self._gui._processing_progress.as_list(),
+                "progress": float(progress.value),
+                "status": str(progress.status),
+                "steps": progress.as_list(),
             }
         return HandlerResult("processing state inspected", state=state)
 

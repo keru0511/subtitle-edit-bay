@@ -8716,6 +8716,73 @@ Window {
             description="sequence clip delegate after redo",
         )
 
+    def test_highlight_candidates_are_preserved_during_processing(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+
+        candidate = {
+            "id": "candidate-a",
+            "start": 1.0,
+            "end": 2.0,
+            "score": 0.8,
+            "source_segment_ids": ["segment-a"],
+        }
+        rejected = {"id": "candidate-b", "start": 2.0, "end": 3.0, "score": 0.7}
+        self.app._highlight_status = "completed"
+        self.app._highlight_candidates = [candidate]
+        self.app._highlight_rejected = [rejected]
+        self.app.highlightAnalysisChanged.emit()
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(candidate_list, "highlightRejectButton") is not None,
+            description="highlight candidate controls",
+        )
+        controls = {
+            "retry": self._quick_item(window, "highlightRetryButton"),
+            "undo": self._quick_item(window, "highlightUndoRejectButton"),
+            "add": self._quick_visual_item(candidate_list, "highlightAddButton"),
+            "reject": self._quick_visual_item(candidate_list, "highlightRejectButton"),
+        }
+        for name, control in controls.items():
+            self.assertTrue(control.property("enabled"), name)
+
+        before_project = deepcopy(self.app._project)
+        before_file = project_path.read_bytes()
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in controls.items():
+            self.assertFalse(control.property("enabled"), name)
+
+        retry_button = controls["retry"]
+        point = retry_button.mapToScene(QPointF(retry_button.width() / 2, retry_button.height() / 2))
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                         pos=QPoint(round(point.x()), round(point.y())))
+        self.assertFalse(self.app.retryHighlightAnalysis())
+        self.assertFalse(self.app.addHighlightCandidate(0))
+        self.assertFalse(self.app.rejectHighlightCandidate(0))
+        self.assertFalse(self.app.undoHighlightRejection())
+        self.assertEqual(self.app._highlight_candidates, [candidate])
+        self.assertEqual(self.app._highlight_rejected, [rejected])
+        self.assertEqual(self.app._project, before_project)
+        self.assertEqual(project_path.read_bytes(), before_file)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        for name, control in controls.items():
+            self.assertTrue(control.property("enabled"), name)
+        self._click(window, controls["reject"])
+        self.gui.wait_until(
+            lambda: self.app._highlight_candidates == []
+            and self.app._highlight_rejected == [rejected, candidate],
+            description="highlight candidate rejection after processing",
+        )
+
     def test_highlight_retry_resets_rejected_candidates_before_worker_completion(self) -> None:
         self._load_project()
         _, window = self._load_qml()

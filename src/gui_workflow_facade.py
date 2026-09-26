@@ -102,17 +102,17 @@ class WorkflowFacade(FeatureFacade):
         if selected_mode not in {"replace", "merge"}:
             backend._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
             return
-        if backend._project is None:
+        if self.project_editor.project is None:
             self._reset_transcription_integration_state()
             self.startTranscription(settings, False)
             return
         if not backend.saveProject():
             return
         backend._transcription_merge_mode = selected_mode
-        backend._transcription_preserved_project = deepcopy(backend._project)
-        backend._transcription_preserved_project_path = backend._project_path
+        backend._transcription_preserved_project = deepcopy(self.project_editor.project)
+        backend._transcription_preserved_project_path = self.project_editor.project_path
         backend._transcription_preserved_segments = (
-            deepcopy(backend._project.get("segments", [])) if selected_mode == "merge" else []
+            deepcopy(self.project_editor.project.get("segments", [])) if selected_mode == "merge" else []
         )
         default_project_path = backend._default_project_path()
         if default_project_path is None:
@@ -126,9 +126,9 @@ class WorkflowFacade(FeatureFacade):
 
     def _merge_preserved_transcription_segments(self) -> bool:
         backend = self._backend
-        if backend._project is None or backend._transcription_preserved_project is None:
+        if self.project_editor.project is None or backend._transcription_preserved_project is None:
             return False
-        generated = deepcopy(backend._project)
+        generated = deepcopy(self.project_editor.project)
         preserved = deepcopy(backend._transcription_preserved_project)
         generated_segments = deepcopy(generated.get("segments", []))
         if backend._transcription_merge_mode == "merge":
@@ -154,11 +154,11 @@ class WorkflowFacade(FeatureFacade):
             if key in generated:
                 preserved[key] = deepcopy(generated[key])
         backend._project = preserved
-        preserved_project_path = backend._transcription_preserved_project_path or backend._project_path
+        preserved_project_path = backend._transcription_preserved_project_path or self.project_editor.project_path
         backend._project_path = preserved_project_path
-        backend._apply_project_subtitle_settings(backend._project)
-        backend._selected_segment_index = 0 if backend._project["segments"] else -1
-        backend._project_editor_controller.save(preserved_project_path, emit=False)
+        backend._apply_project_subtitle_settings(self.project_editor.project)
+        backend._selected_segment_index = 0 if self.project_editor.project["segments"] else -1
+        self.project_editor.save(preserved_project_path, emit=False)
         backend._project_dirty = False
         backend.workspace._sync_project_timeline()
         backend.subtitles._sync_subtitle_model()
@@ -174,10 +174,10 @@ class WorkflowFacade(FeatureFacade):
             return
         backend._project = deepcopy(backend._transcription_preserved_project)
         backend._project_path = backend._transcription_preserved_project_path
-        backend._apply_project_subtitle_settings(backend._project)
-        backend._project_editor_controller.save(backend._project_path, emit=False)
+        backend._apply_project_subtitle_settings(self.project_editor.project)
+        self.project_editor.save(self.project_editor.project_path, emit=False)
         backend._project_dirty = False
-        backend._selected_segment_index = 0 if backend._project.get("segments") else -1
+        backend._selected_segment_index = 0 if self.project_editor.project.get("segments") else -1
         backend.subtitles._sync_subtitle_model()
         backend.workspace._sync_project_timeline()
         backend.projectChanged.emit()
@@ -215,8 +215,8 @@ class WorkflowFacade(FeatureFacade):
         backend._active_job = job
         backend.activeJobChanged.emit()
         skip_steps: set[str] = set()
-        if job == "render" and backend._project is not None:
-            segments = backend._project.get("segments", ())
+        if job == "render" and self.project_editor.project is not None:
+            segments = self.project_editor.project.get("segments", ())
             if not isinstance(segments, (list, tuple)) or not segments:
                 skip_steps.add("subtitle")
         backend._processing_progress.start(job, skip_steps=skip_steps)
@@ -284,14 +284,14 @@ class WorkflowFacade(FeatureFacade):
         transcribe = self._transcription_capability(device)
         normal = render_capability(
             backend._dependencies,
-            backend._project,
-            backend._project_path,
+            self.project_editor.project,
+            self.project_editor.project_path,
             running=backend._running,
         )
         short = render_capability(
             backend._dependencies,
-            backend._project,
-            backend._project_path,
+            self.project_editor.project,
+            self.project_editor.project_path,
             short=True,
             running=backend._running,
         )
@@ -301,8 +301,8 @@ class WorkflowFacade(FeatureFacade):
                 not backend.videoOutputDirectory
                 and render_capability(
                     backend._dependencies,
-                    backend._project,
-                    backend._project_path,
+                    self.project_editor.project,
+                    self.project_editor.project_path,
                     short=is_short,
                     running=backend._running,
                     require_output=False,
@@ -367,7 +367,7 @@ class WorkflowFacade(FeatureFacade):
             output_dir=str(project_work_directory(backend.projectSavePath)),
             render_output_dir=backend.videoOutputDirectory,
             context_base_dir=str(
-                (backend._project or {}).get("transcription", {}).get("context_base_dir")
+                (self.project_editor.project or {}).get("transcription", {}).get("context_base_dir")
                 or Path(backend.projectSavePath).parent
             ),
             reference_audio=reference_audio,
@@ -389,13 +389,13 @@ class WorkflowFacade(FeatureFacade):
 
     def _start_render(self, settings: dict[str, Any], *, short: bool) -> None:
         backend = self._backend
-        if backend._running or backend._project is None:
+        if backend._running or self.project_editor.project is None:
             return
         backend.refreshDependencies()
         preflight = render_capability(
             backend._dependencies,
-            backend._project,
-            backend._project_path,
+            self.project_editor.project,
+            self.project_editor.project_path,
             short=short,
             require_output=False,
         )
@@ -410,8 +410,8 @@ class WorkflowFacade(FeatureFacade):
         try:
             request = prepare_render_request(
                 backend._dependencies,
-                backend._project,
-                backend._project_path,
+                self.project_editor.project,
+                self.project_editor.project_path,
                 backend.gui_config_path,
                 short=short,
             )

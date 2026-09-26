@@ -255,8 +255,8 @@ class AIChatFacade(FeatureFacade):
         route = route_subtitle_chat_request(
             message,
             requested_scope,
-            project_loaded=backend._project is not None,
-            has_selection=backend._selected_segment_index >= 0,
+            project_loaded=self.project_editor.project is not None,
+            has_selection=self.project_editor.selected_segment_index >= 0,
             current_time=float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
             range_start=range_start,
             range_end=range_end,
@@ -287,7 +287,7 @@ class AIChatFacade(FeatureFacade):
                 "selection_scope": route.scope,
             },
             "scope_id": scope_id,
-            "project_revision": backend._project_revision,
+            "project_revision": self.project_editor.project_revision,
         }
         if route.scope == "time_range":
             payload["args"].update({"range_start": route.range_start, "range_end": route.range_end})
@@ -296,7 +296,7 @@ class AIChatFacade(FeatureFacade):
             trusted_scope=ActionScope(
                 id=scope_id,
                 allowed_actions=frozenset({"propose_subtitle_edit"}),
-                project_revision=backend._project_revision,
+                project_revision=self.project_editor.project_revision,
             ),
         )
         if result.status.value != "success":
@@ -381,14 +381,14 @@ class AIChatFacade(FeatureFacade):
             "type": "propose_audio_mix",
             "args": {"intent": str(message).strip()},
             "scope_id": scope_id,
-            "project_revision": backend._project_revision,
+            "project_revision": self.project_editor.project_revision,
         }
         result = self.dispatch_codex_action(
             payload,
             trusted_scope=ActionScope(
                 id=scope_id,
                 allowed_actions=frozenset({"propose_audio_mix"}),
-                project_revision=backend._project_revision,
+                project_revision=self.project_editor.project_revision,
             ),
         )
         if result.status.value != "success":
@@ -477,27 +477,29 @@ class AIChatFacade(FeatureFacade):
         range_end: float = 0.0,
     ) -> None:
         backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             backend._set_status("先に編集プロジェクトを開いてください", "CHECK")
             return
         if backend._codex_session.running or backend._codex_audio_mix_session.running:
             return
         selected_ids = (
-            {str(backend._project.get("segments", [])[backend._selected_segment_index].get("id"))}
-            if 0 <= backend._selected_segment_index < len(backend._project.get("segments", []))
+            {str(self.project_editor.project.get("segments", [])[self.project_editor.selected_segment_index].get("id"))}
+            if 0 <= self.project_editor.selected_segment_index < len(self.project_editor.project.get("segments", []))
             else set()
         )
         current_time = backend._codex_current_time
         if current_time is None:
-            if 0 <= backend._selected_segment_index < len(backend._project.get("segments", [])):
+            if 0 <= self.project_editor.selected_segment_index < len(self.project_editor.project.get("segments", [])):
                 current_time = float(
-                    backend._project["segments"][backend._selected_segment_index].get("start", range_start)
+                    self.project_editor.project["segments"][self.project_editor.selected_segment_index].get(
+                        "start", range_start
+                    )
                 )
             else:
                 current_time = range_start
         try:
             context = build_codex_context(
-                backend._project,
+                self.project_editor.project,
                 scope,
                 selected_segment_ids=selected_ids,
                 current_time=current_time,
@@ -510,7 +512,7 @@ class AIChatFacade(FeatureFacade):
                 prompt=prompt,
                 context=context,
                 output_schema=CODEX_OUTPUT_SCHEMA,
-                revision=backend._project_revision,
+                revision=self.project_editor.project_revision,
             )
             backend._set_status("Codexへ編集案を依頼しています", "CODEX")
         except (CodexSessionError, ValueError) as error:
@@ -535,25 +537,26 @@ class AIChatFacade(FeatureFacade):
     @Slot("QVariantList")
     def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
         backend = self._backend
-        if backend._project is None or not backend._codex_proposal:
+        if self.project_editor.project is None or not backend._codex_proposal:
             backend._set_status("適用するCodex編集案がありません", "CHECK")
             return
-        before = deepcopy(backend._project.get("segments", []))
+        before = deepcopy(self.project_editor.project.get("segments", []))
         try:
             result = backend._codex_session.apply_to_project(
-                backend._project,
+                self.project_editor.project,
                 backend._codex_proposal,
                 selected_operation_ids={str(item) for item in (selected_operation_ids or [])} or None,
-                current_revision=backend._project_revision,
+                current_revision=self.project_editor.project_revision,
             )
             after = result.project.get("segments", [])
             before_by_id = {item["id"]: item for item in before}
             after_by_id = {item["id"]: item for item in after}
             changed_ids = {
-                segment_id for segment_id in before_by_id.keys() | after_by_id.keys()
+                segment_id
+                for segment_id in before_by_id.keys() | after_by_id.keys()
                 if before_by_id.get(segment_id) != after_by_id.get(segment_id)
             }
-            backend._project_editor_controller.commit_segment_change(
+            self.project_editor.commit_segment_change(
                 [item for item in before if item["id"] in changed_ids],
                 [item for item in after if item["id"] in changed_ids],
                 result.changed_segment_ids[0] if result.changed_segment_ids else None,
@@ -587,12 +590,12 @@ class AIChatFacade(FeatureFacade):
     def codex_render_output_exists(self, *, short: bool) -> bool:
         """Check overwrite policy using the same output resolver as GUI render."""
 
-        backend = self._backend
-
-        if backend._project is None or not backend._project_path:
+        if self.project_editor.project is None or not self.project_editor.project_path:
             return False
         try:
-            return render_output_path(backend._project_path, backend._project, short=short).exists()
+            return render_output_path(
+                self.project_editor.project_path, self.project_editor.project, short=short
+            ).exists()
         except ValueError:
             return False
 
@@ -628,14 +631,14 @@ class AIChatFacade(FeatureFacade):
 
     def _on_codex_audio_mix_proposal(self, proposal: Mapping[str, Any]) -> None:
         backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             backend._codex_chat.fail_proposal("編集プロジェクトが閉じられました。", cancelled=False)
             return
         try:
             stored = build_audio_mix_proposal(
                 proposal,
                 backend.audio.audioMixerChannels,
-                project_revision=backend._project_revision,
+                project_revision=self.project_editor.project_revision,
             )
         except (AudioMixProposalError, ValueError, TypeError) as error:
             backend._codex_chat.fail_proposal(f"音量ミキサーの変更案を検証できません: {error}")

@@ -131,10 +131,9 @@ class WorkspaceFacade(FeatureFacade):
         return backend._editor_workspace.playhead
 
     def _cut_timeline_model(self) -> VideoTimeline:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return VideoTimeline.from_json(None, source_duration=0.0)
-        return timeline_from_project(backend._project)
+        return timeline_from_project(self.project_editor.project)
 
     @Property("QVariantMap", notify=cutTimelineChanged)
     def cutTimeline(self) -> dict[str, Any]:
@@ -187,7 +186,7 @@ class WorkspaceFacade(FeatureFacade):
 
     def _sync_project_timeline(self) -> None:
         backend = self._backend
-        self.set_editor_time_mapping(self._cut_timeline_model() if backend._project is not None else None)
+        self.set_editor_time_mapping(self._cut_timeline_model() if self.project_editor.project is not None else None)
         backend.cutTimelineChanged.emit()
 
     def set_cut_editor_available(self, available: bool) -> None:
@@ -209,13 +208,13 @@ class WorkspaceFacade(FeatureFacade):
 
     def _commit_timeline(self, timeline: VideoTimeline, status: str) -> bool:
         backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return False
-        before = deepcopy(backend._project.get("timeline", {}))
+        before = deepcopy(self.project_editor.project.get("timeline", {}))
         after = timeline.to_json()
         if before == after:
             return False
-        backend._project_editor_controller.commit_timeline_change(after)
+        self.project_editor.commit_timeline_change(after)
         self._sync_project_timeline()
         backend._set_status(status, "EDIT")
         return True
@@ -223,7 +222,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(float, float, result=bool)
     def addCut(self, source_start: float, source_end: float) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         try:
             timeline = self._cut_timeline_model().add_cut(source_start, source_end)
@@ -235,7 +234,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(str, float, float, result=bool)
     def updateCutRange(self, cut_id: str, source_start: float, source_end: float) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         try:
             timeline = self._cut_timeline_model().update_cut(
@@ -251,7 +250,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(str, result=bool)
     def restoreCut(self, cut_id: str) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         try:
             timeline = self._cut_timeline_model().restore_cut(str(cut_id))
@@ -263,7 +262,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(float, float, result=bool)
     def restoreRange(self, source_start: float, source_end: float) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         try:
             timeline = self._cut_timeline_model().restore_range(source_start, source_end)
@@ -275,7 +274,7 @@ class WorkspaceFacade(FeatureFacade):
     @Slot(result=bool)
     def clearCuts(self) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         return self._commit_timeline(
             self._cut_timeline_model().clear_cuts(),

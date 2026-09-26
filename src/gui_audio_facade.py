@@ -148,25 +148,25 @@ class AudioFacade(FeatureFacade):
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return []
 
         active_ids = {
-            str(channel.get("id", "")) for channel in active_audio_mix_channels(backend._project.get("audio_mix", {}))
+            str(channel.get("id", ""))
+            for channel in active_audio_mix_channels(self.project_editor.project.get("audio_mix", {}))
         }
         waveforms_by_path = {
             str(Path(str(waveform.get("source_path", ""))).resolve()).casefold(): waveform
-            for waveform in backend._project.get("waveforms", [])
+            for waveform in self.project_editor.project.get("waveforms", [])
             if isinstance(waveform, dict) and waveform.get("source_path")
         }
         duration = max(
             0.0,
-            float(backend._project.get("video", {}).get("duration_seconds", 0.0)),
+            float(self.project_editor.project.get("video", {}).get("duration_seconds", 0.0)),
         )
         colors = ("#6FA8DC", "#93C47D", "#F6B26B", "#E78284", "#81C8BE")
         sequence: list[dict[str, Any]] = []
-        for index, channel in enumerate(backend._project.get("audio_mix", {}).get("channels", [])):
+        for index, channel in enumerate(self.project_editor.project.get("audio_mix", {}).get("channels", [])):
             if not isinstance(channel, dict) or not bool(channel.get("enabled")):
                 continue
             view = self._audio_mixer_channel_view(channel)
@@ -288,9 +288,12 @@ class AudioFacade(FeatureFacade):
     @Slot(int, "QVariantMap")
     def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return
-        draft = {**backend._project, "audio_sources": deepcopy(backend._project.get("audio_sources", []))}
+        draft = {
+            **self.project_editor.project,
+            "audio_sources": deepcopy(self.project_editor.project.get("audio_sources", [])),
+        }
         audio_mix = reconcile_audio_mix(draft, self._mixer_video_tracks())
         channels = audio_mix["channels"]
         if not 0 <= index < len(channels):
@@ -304,10 +307,9 @@ class AudioFacade(FeatureFacade):
         except AudioMixError:
             backend._set_status("音量ミキサーの変更内容を確認してください", "CHECK")
             return
-        backend._project_editor_controller.commit_section_change("audio_mix", updated_audio_mix)
+        self.project_editor.commit_section_change("audio_mix", updated_audio_mix)
         self._notify_audio_mixer_preview(
-            structure_changed=enabled_before
-            != bool(updated_audio_mix["channels"][index].get("enabled"))
+            structure_changed=enabled_before != bool(updated_audio_mix["channels"][index].get("enabled"))
         )
         backend._set_status("音量ミキサー設定を更新しました", "EDIT")
 
@@ -319,10 +321,10 @@ class AudioFacade(FeatureFacade):
         context: Mapping[str, Any] | None = None,
     ) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             backend._set_status("音量ミキサーの変更案には編集プロジェクトが必要です", "CHECK")
             return False
-        if revision != backend._project_revision:
+        if revision != self.project_editor.project_revision:
             backend._set_status("音量ミキサーの変更案が古くなっています", "CHECK")
             return False
         if backend._codex_session.running or backend._codex_audio_mix_session.running:
@@ -361,8 +363,7 @@ class AudioFacade(FeatureFacade):
 
     @Slot(str, result=bool)
     def proposeAudioMix(self, intent: str) -> bool:
-        backend = self._backend
-        return self.start_codex_audio_mix_proposal(intent=intent, revision=backend._project_revision)
+        return self.start_codex_audio_mix_proposal(intent=intent, revision=self.project_editor.project_revision)
 
     @Slot()
     def stopCodexAudioMixProposal(self) -> None:
@@ -380,22 +381,20 @@ class AudioFacade(FeatureFacade):
         allow_silence: bool = False,
     ) -> bool:
         backend = self._backend
-        if backend._project is None or not backend._audio_mix_proposal:
+        if self.project_editor.project is None or not backend._audio_mix_proposal:
             backend._set_status("適用する音量ミキサーの変更案がありません", "CHECK")
             return False
         if backend._codex_audio_mix_session.running:
             backend._set_status("音量ミキサーの変更案を生成中です", "BUSY")
             return False
-        before = deepcopy(backend._project.get("audio_mix", {}))
+        before = deepcopy(self.project_editor.project.get("audio_mix", {}))
         try:
             updated, _changed_ids = apply_audio_mix_proposal(
                 before,
                 backend._audio_mix_proposal,
-                current_revision=backend._project_revision,
+                current_revision=self.project_editor.project_revision,
                 selected_operation_ids=(
-                    None
-                    if selected_operation_ids is None
-                    else {str(item) for item in selected_operation_ids}
+                    None if selected_operation_ids is None else {str(item) for item in selected_operation_ids}
                 ),
                 allow_silence=bool(allow_silence),
             )
@@ -405,7 +404,7 @@ class AudioFacade(FeatureFacade):
         if updated == before:
             backend._set_status("音量ミキサーの変更はありません", "CHECK")
             return False
-        backend._project_editor_controller.commit_section_change("audio_mix", updated)
+        self.project_editor.commit_section_change("audio_mix", updated)
         self._notify_audio_mixer_preview(structure_changed=True)
         backend._audio_mix_proposal = None
         backend.audioMixProposalChanged.emit()
@@ -422,13 +421,16 @@ class AudioFacade(FeatureFacade):
     @Slot()
     def resetAudioMixer(self) -> None:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return
-        draft = {**backend._project, "audio_sources": deepcopy(backend._project.get("audio_sources", []))}
+        draft = {
+            **self.project_editor.project,
+            "audio_sources": deepcopy(self.project_editor.project.get("audio_sources", [])),
+        }
         audio_mix = reset_audio_mix(draft, self._mixer_video_tracks())
         if not audio_mix["channels"]:
             backend._set_status("動画内または外部の音声トラックがありません", "CHECK")
             return
-        backend._project_editor_controller.commit_section_change("audio_mix", audio_mix)
+        self.project_editor.commit_section_change("audio_mix", audio_mix)
         self._notify_audio_mixer_preview(structure_changed=True)
         backend._set_status("音量ミキサーを既定値へ戻しました", "EDIT")

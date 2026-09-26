@@ -1046,7 +1046,7 @@ Window {
             )
             with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
                 self._click(window, output_button)
-            self.assertEqual(self.app.sourceSelection["output_dir"], str(alternate_output))
+            self.assertTrue(Path(self.app.sourceSelection["output_dir"]).samefile(alternate_output))
 
             with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
                 self._click(window, self._quick_item(window, "sourceDoneButton"))

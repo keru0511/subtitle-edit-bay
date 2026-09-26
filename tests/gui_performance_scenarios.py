@@ -387,7 +387,9 @@ if hasattr(EditBayBackend, "subtitles"):
 
         def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
             self._backend.gui_diagnostics["preview_format_requests"] += 1
-            cache = getattr(self._backend, "_subtitle_preview_text_cache", {})
+            # 所有先を移す前の比較対象も同じハーネスで計測する。
+            cache_owner = self if hasattr(self, "_subtitle_preview_text_cache") else self._backend
+            cache = getattr(cache_owner, "_subtitle_preview_text_cache", {})
             segment_id = str(segment.get("id", ""))
             signature_builder = getattr(self, "_subtitle_preview_signature", None)
             signature = signature_builder(segment) if callable(signature_builder) else None
@@ -844,12 +846,20 @@ class GuiPerformanceScenarioRunner:
             caption_table = self.harness.find_item(self._window(), "captionTable")
             delegate = self._caption_delegate(caption_table, index)
 
+            field_candidates = self.harness.visual_items_with_properties(
+                delegate, "validator", "background", "text"
+            )
             time_fields = [
-                item
-                for item in self.harness.visual_items_with_properties(delegate, "validator", "background", "text")
-                if item.metaObject().className() == "TimeField"
-                if callable(getattr(getattr(item, "editingFinished", None), "emit", None))
+                item for item in field_candidates
+                if item.objectName() in {"captionStartTimeField", "captionEndTimeField"}
             ]
+            if not time_fields:
+                # 比較対象の旧QMLにはobjectNameがないため、従来の探索を残す。
+                time_fields = [
+                    item for item in field_candidates
+                    if item.metaObject().className() == "TimeField"
+                    if callable(getattr(getattr(item, "editingFinished", None), "emit", None))
+                ]
             time_fields.sort(key=lambda item: item.x())
             if len(time_fields) != 2:
                 raise AssertionError(f"Expected two caption time fields, found {len(time_fields)}")

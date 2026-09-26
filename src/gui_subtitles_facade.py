@@ -39,6 +39,15 @@ class SubtitleFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        # 保存データから導出する表示状態は、字幕窓口のインスタンスが所有する。
+        self._segment_by_id: dict[str, dict[str, Any]] = {}
+        self._subtitle_layout_metrics: dict[str, float | int] = {
+            "maxFontScale": 1.0,
+            "maxLayoutRow": 0,
+        }
+        self._subtitle_preview_text_cache: dict[str, tuple[tuple[object, ...], str]] = {}
+        self._segment_starts: list[float] = []
+        self._segment_prefix_max_end: list[float] = []
         backend.historyChanged.connect(self.historyChanged.emit)
         backend.projectDataChanged.connect(self.projectDataChanged.emit)
         backend.segmentsChanged.connect(self.segmentsChanged.emit)
@@ -55,8 +64,7 @@ class SubtitleFacade(FeatureFacade):
     def subtitleLayoutMetrics(self) -> dict[str, float | int]:
         """Return the small aggregate QML needs without copying every segment."""
 
-        backend = self._backend
-        return dict(backend._subtitle_layout_metrics)
+        return dict(self._subtitle_layout_metrics)
 
     @Property(QObject, constant=True)
     def subtitleModel(self) -> QObject:
@@ -76,9 +84,9 @@ class SubtitleFacade(FeatureFacade):
     def _sync_subtitle_model(self) -> None:
         backend = self._backend
         segments = backend._project.get("segments", []) if backend._project else []
-        backend._segment_by_id = {str(segment["id"]): segment for segment in segments}
+        self._segment_by_id = {str(segment["id"]): segment for segment in segments}
         backend._subtitle_model.set_segments(segments)
-        backend._segment_starts = [float(item["start"]) for item in segments]
+        self._segment_starts = [float(item["start"]) for item in segments]
         prefix: list[float] = []
         max_end = 0.0
         max_font_scale = 1.0
@@ -91,15 +99,15 @@ class SubtitleFacade(FeatureFacade):
                 max(0.1, float(segment.get("subtitle_font_scale", 1.0))),
             )
             max_layout_row = max(max_layout_row, int(segment.get("layout_row", 0)))
-        backend._segment_prefix_max_end = prefix
-        backend._subtitle_layout_metrics = {
+        self._segment_prefix_max_end = prefix
+        self._subtitle_layout_metrics = {
             "maxFontScale": max_font_scale,
             "maxLayoutRow": max_layout_row,
         }
         segment_ids = {str(segment["id"]) for segment in segments}
-        backend._subtitle_preview_text_cache = {
+        self._subtitle_preview_text_cache = {
             segment_id: cached
-            for segment_id, cached in backend._subtitle_preview_text_cache.items()
+            for segment_id, cached in self._subtitle_preview_text_cache.items()
             if segment_id in segment_ids
         }
         backend.shortVideo._refresh_short_video_clip_data()
@@ -139,14 +147,13 @@ class SubtitleFacade(FeatureFacade):
         )
 
     def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
-        backend = self._backend
         segment_id = str(segment["id"])
         signature = self._subtitle_preview_signature(segment)
-        cached = backend._subtitle_preview_text_cache.get(segment_id)
+        cached = self._subtitle_preview_text_cache.get(segment_id)
         if cached is not None and cached[0] == signature:
             return cached[1]
         preview_text = segment_preview_text(segment)
-        backend._subtitle_preview_text_cache[segment_id] = (signature, preview_text)
+        self._subtitle_preview_text_cache[segment_id] = (signature, preview_text)
         return preview_text
 
     def _segment_view(self, segment: dict[str, Any], source_index: int | None = None) -> dict[str, Any]:
@@ -166,8 +173,7 @@ class SubtitleFacade(FeatureFacade):
         return view
 
     def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
-        backend = self._backend
-        return backend._segment_by_id.get(str(segment_id))
+        return self._segment_by_id.get(str(segment_id))
 
     @Slot(int, result="QVariantMap")
     def segmentAt(self, index: int) -> dict[str, Any]:
@@ -193,9 +199,9 @@ class SubtitleFacade(FeatureFacade):
         if not segments:
             return []
         position = max(0.0, float(seconds))
-        index = bisect_right(backend._segment_starts, position) - 1
+        index = bisect_right(self._segment_starts, position) - 1
         active: list[dict[str, Any]] = []
-        while index >= 0 and backend._segment_prefix_max_end[index] >= position:
+        while index >= 0 and self._segment_prefix_max_end[index] >= position:
             segment = segments[index]
             if float(segment["end"]) >= position:
                 active.append(self._segment_view(segment, index))
@@ -211,8 +217,8 @@ class SubtitleFacade(FeatureFacade):
             return []
         viewport_start = max(0.0, float(start))
         viewport_end = max(viewport_start, float(end))
-        first = bisect_left(backend._segment_starts, viewport_start)
-        while first > 0 and backend._segment_prefix_max_end[first - 1] >= viewport_start:
+        first = bisect_left(self._segment_starts, viewport_start)
+        while first > 0 and self._segment_prefix_max_end[first - 1] >= viewport_start:
             first -= 1
         visible: list[dict[str, Any]] = []
         for index in range(first, len(segments)):
@@ -353,8 +359,8 @@ class SubtitleFacade(FeatureFacade):
         if not segments:
             return -1
         position = max(0.0, float(seconds))
-        index = bisect_right(backend._segment_starts, position) - 1
-        while index >= 0 and backend._segment_prefix_max_end[index] >= position:
+        index = bisect_right(self._segment_starts, position) - 1
+        while index >= 0 and self._segment_prefix_max_end[index] >= position:
             segment = segments[index]
             if float(segment["start"]) <= position <= float(segment["end"]):
                 return index

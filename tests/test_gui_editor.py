@@ -2036,6 +2036,57 @@ Window {
             self.assertEqual(updated[0]["text"], "updated preview")
             self.assertEqual(formatter.call_count, 2)
 
+    def test_subtitle_display_state_tracks_timing_edits_and_undo_redo(self) -> None:
+        self._load_project(segments=[
+            {"id": "first", "start": 0, "end": 2, "text": "before", "speaker": "Speaker_Alice"},
+            {"id": "later", "start": 5, "end": 7, "text": "later", "speaker": "Speaker_Bob"},
+        ])
+        subtitles = self.app.subtitles
+        self.assertEqual(subtitles.activeSubtitleSegments(1)[0]["preview_text"], "before")
+        subtitles.updateSegment(0, {"start": 8, "end": 10, "text": "after", "subtitle_font_scale": 3.0})
+        self.assertEqual(subtitles.activeSubtitleSegments(1), [])
+        self.assertEqual(subtitles.segmentIndexAtTime(9), 1)
+        self.assertEqual(subtitles.visibleSubtitleSegments(8, 10)[0]["preview_text"], "after")
+        self.assertEqual(subtitles.subtitleLayoutMetrics["maxFontScale"], 3.0)
+        subtitles.undoEdit()
+        self.assertEqual(subtitles.segmentIndexAtTime(1), 0)
+        self.assertEqual(subtitles.activeSubtitleSegments(1)[0]["preview_text"], "before")
+        self.assertEqual(subtitles.activeSubtitleSegments(9), [])
+        self.assertEqual(subtitles.subtitleLayoutMetrics["maxFontScale"], 1.0)
+        subtitles.redoEdit()
+        self.assertEqual(subtitles.activeSubtitleSegments(9)[0]["preview_text"], "after")
+        self.assertEqual(subtitles.subtitleLayoutMetrics["maxFontScale"], 3.0)
+        # ショート側も字幕窓口の最新ID索引を利用する。
+        self.assertTrue(self.app.shortVideo.addShortVideoClip("first"))
+        self.assertEqual(self.app.shortVideo.shortVideoClipAt(0)["preview_text"], "after")
+
+    def test_subtitle_display_state_rebuilds_when_project_reuses_ids_or_is_empty(self) -> None:
+        self._load_project(segments=[
+            {"id": "shared", "start": 0, "end": 2, "text": "old", "subtitle_font_scale": 3.0},
+            {"id": "removed", "start": 0, "end": 2, "text": "removed"},
+        ])
+        subtitles = self.app.subtitles
+        self.assertEqual({item["preview_text"] for item in subtitles.activeSubtitleSegments(1)}, {"old", "removed"})
+        path = self._load_project(segments=[
+            {"id": "shared", "start": 5, "end": 7, "text": "new", "subtitle_font_scale": 1.5},
+        ])
+        self.assertEqual(subtitles.activeSubtitleSegments(1), [])
+        self.assertEqual(subtitles.segmentIndexAtTime(1), -1)
+        self.assertEqual(subtitles.visibleSubtitleSegments(5, 7)[0]["preview_text"], "new")
+        self.assertEqual(subtitles.subtitleLayoutMetrics, {"maxFontScale": 1.5, "maxLayoutRow": 0})
+        self.assertFalse(self.app.shortVideo.addShortVideoClip("removed"))
+        self.assertTrue(self.app.shortVideo.addShortVideoClip("shared"))
+        self.assertEqual(self.app.shortVideo.shortVideoClipAt(0)["preview_text"], "new")
+        empty_project = load_project(path)
+        empty_project["segments"] = []
+        save_project(path, empty_project)
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.assertEqual(subtitles.activeSubtitleSegments(6), [])
+        self.assertEqual(subtitles.visibleSubtitleSegments(0, 10), [])
+        self.assertEqual(subtitles.segmentIndexAtTime(6), -1)
+        self.assertEqual(subtitles.subtitleLayoutMetrics, {"maxFontScale": 1.0, "maxLayoutRow": 0})
+        self.assertFalse(self.app.shortVideo.addShortVideoClip("shared"))
+
     def test_playback_time_selects_latest_active_subtitle_and_keeps_last_in_gaps(self) -> None:
         self._load_project(
             segments=[
@@ -3749,6 +3800,44 @@ Window {
         self.assertTrue(field.hasActiveFocus())
         return path, window
 
+    def test_expanded_speaker_selection_tracks_undo_redo_and_save(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        row = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionRow-0")
+        combo = self._quick_visual_item(row, "captionSpeakerCombo")
+        original = self.app.segmentAt(0)["speaker"]
+        self.assertEqual(combo.property("currentValue"), original)
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, combo)
+            QTest.keyClick(window, Qt.Key.Key_Down)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.app.processEvents()
+            changed = self.app.segmentAt(0)["speaker"]
+            self.assertNotEqual(changed, original)
+            for _ in range(2):
+                for button, expected in (("undoCaptionButton", original), ("redoCaptionButton", changed)):
+                    self._click(window, self._quick_item(window, button))
+                    self.assertEqual(self.app.segmentAt(0)["speaker"], expected)
+                    self.assertEqual(combo.property("currentValue"), expected)
+                    self._click(window, self._quick_item(window, "saveProjectButton"))
+                    self.assertEqual(load_project(path)["segments"][0]["speaker"], expected)
+
+    def test_expanded_speaker_selection_tracks_speaker_list_replacement(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        row = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionRow-0")
+        combo = self._quick_visual_item(row, "captionSpeakerCombo")
+        expected = self.app.segmentAt(0)["speaker"]
+        initial_index = combo.property("currentIndex")
+        self.app._project["speakers"].reverse()
+        self.app.projectDataChanged.emit()
+        self.app.processEvents()
+        self.assertNotEqual(combo.property("currentIndex"), initial_index)
+        self.assertEqual(combo.property("currentValue"), expected)
+        self.assertEqual(self.app.segmentAt(0)["speaker"], expected)
+
     def test_expanded_pending_text_survives_reorder_without_selection_loop(self) -> None:
         path, window = self._prepare_pending_subtitle_text(expanded=True)
         self.app.updateSegment(0, {"start": 9.0, "end": 12.0})
@@ -3799,7 +3888,7 @@ Window {
             self.assertEqual(self.app.selectedSegmentIndex, 1_500)
             time_fields = [
                 item for item in self.gui.visual_items(row)
-                if item.metaObject().className() == "TimeField"
+                if item.objectName() in ("captionStartTimeField", "captionEndTimeField")
             ]
             time_fields.sort(key=lambda item: item.x())
             start = float(self.app.segmentAt(1_500)["start"]) + 0.01
@@ -4271,6 +4360,123 @@ Window {
         self.assertEqual(self.app.settings["speech_padding_seconds"], 0.0)
         self.assertEqual(self.app.settings["audio_target_lufs"], 0.0)
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], 0)
+
+    def test_subtitle_editors_work_without_main_workflow_context(self) -> None:
+        self._load_project()
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentSubtitleEditor.qml"
+        qml.write_text(
+            'import QtQuick\nimport QtMultimedia\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1600
+    height: 1000
+    visible: true
+    property var appBackend: backend
+    property bool expandedEditor: false
+    property var colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+        textPrimary: "#F8FAFC", textMuted: "#94A3B8", acid: "#6366F1", amber: "#F59E0B", danger: "#EF4444"})
+    property int attachments: 0
+    property int detachments: 0
+    property int previews: 0
+    property int renders: 0
+    property int draftIndex: editorSession.draftSegmentIndex
+    property string draftPreview: editorSession.subtitlePreviewText({sourceIndex: 0, id: host.appBackend.subtitles.segmentAt(0).id, text: "保存済み"})
+    function prepareDraft() { editorSession.beginSubtitleDraft(0, "編集中の字幕") }
+    function clearDraft() { editorSession.clearSubtitleDraft(0) }
+    function stamp(seconds) { return String(seconds) }
+    function editSubtitle(action, atSeconds) {
+        host.contentItem.forceActiveFocus()
+        editorSession.commitSubtitleDraft()
+        if (action === "add") host.appBackend.subtitles.addSegment(atSeconds)
+        else if (action === "undo") host.appBackend.subtitles.undoSubtitleEdit()
+    }
+    SubtitleEditorState {
+        id: editorSession
+        objectName: "independentEditorState"
+        subtitles: host.appBackend.subtitles
+        projectPath: host.appBackend.projectPath
+        previewEnabled: true
+    }
+    MediaPlayer { id: sharedPlayer }
+    VideoOutput { id: originalOutput; visible: false }
+    Loader {
+        anchors.fill: parent
+        sourceComponent: host.expandedEditor ? fullEditor : workspaceEditor
+    }
+    Component {
+        id: workspaceEditor
+        SubtitleWorkspaceEditor {
+            appBackend: host.appBackend
+            player: sharedPlayer
+            editorState: editorSession
+            onEditRequested: function(action, atSeconds) { host.editSubtitle(action, atSeconds) }
+            onSaveRequested: host.appBackend.saveProject()
+            colors: host.colors
+            formatTimestamp: host.stamp
+            onSeekRequested: function(positionMs) { sharedPlayer.position = positionMs }
+            onPreviewRequested: host.previews += 1
+        }
+    }
+    Component {
+        id: fullEditor
+        SubtitleEditorScreen {
+            appBackend: host.appBackend
+            player: sharedPlayer
+            editorState: editorSession
+            onEditRequested: function(action, atSeconds) { host.editSubtitle(action, atSeconds) }
+            onSaveRequested: host.appBackend.saveProject()
+            colors: host.colors
+            formatTimestamp: host.stamp
+            projectSpeakerCache: host.appBackend.subtitles.projectSpeakers
+            subtitleLayoutMetricsCache: host.appBackend.subtitles.subtitleLayoutMetrics
+            selectedSubtitleFontSize: 50
+            defaultSubtitleFontSize: 50
+            selectedSubtitleOutlineColor: "#000000"
+            selectedSubtitleOutlineThickness: 3
+            statusText: "独立した字幕編集画面"
+            onPreviewAttached: function(output) { sharedPlayer.videoOutput = output; host.attachments += 1 }
+            onPreviewDetached: { sharedPlayer.videoOutput = originalOutput; host.detachments += 1 }
+            onPreviewRequested: host.previews += 1
+            onRenderRequested: host.renders += 1
+            onCloseRequested: host.expandedEditor = false
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        original_count = self.app.segmentCount
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self.assertEqual(self.app.segmentCount, original_count + 1)
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.segmentCount, original_count)
+        self.assertTrue(QMetaObject.invokeMethod(window, "prepareDraft"))
+        self.assertEqual(window.property("draftIndex"), 0)
+        self.assertEqual(window.property("draftPreview"), self.app.formatSubtitlePreview(0, "編集中の字幕"))
+        editor_state = window.findChild(QObject, "independentEditorState")
+        self.assertIsNotNone(editor_state)
+        editor_state.setProperty("pixelsPerSecond", 96)
+        editor_state.setProperty("snapMilliseconds", 250)
+        for expected_attachment_count in (1, 2):
+            window.setProperty("expandedEditor", True)
+            self.gui.wait_until(lambda: window.property("attachments") == expected_attachment_count,
+                                description="独立編集画面の生成")
+            timeline = self._quick_item(window, "editorTimeline")
+            self.assertEqual(timeline.property("pixelsPerSecond"), 96)
+            self.assertEqual(timeline.property("snapSeconds"), 0.25)
+            self._click(window, self._quick_item(window, "buildAssButton"))
+            self.assertEqual(window.property("previews"), expected_attachment_count)
+            self._click(window, self._quick_item(window, "editorRenderButton"))
+            self.assertEqual(window.property("renders"), expected_attachment_count)
+            self._click(window, self._quick_item(window, "editorBackButton"))
+            self.gui.wait_until(lambda: window.property("detachments") == expected_attachment_count,
+                                description="共有プレイヤーの表示先を復元")
+            self.assertEqual(self._quick_item(window, "workspaceSubtitleTimeline").property("pixelsPerSecond"), 96)
+        self.assertTrue(QMetaObject.invokeMethod(window, "clearDraft"))
+        self.assertEqual(window.property("draftIndex"), -1)
+        self.assertEqual(window.property("draftPreview"), "保存済み")
 
     def test_qml_editor_content_is_loaded_only_when_opened(self) -> None:
         self._load_project()

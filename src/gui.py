@@ -700,20 +700,12 @@ class EditBayBackend(LegacyEditBayBackend):
         self._record_startup_diagnostics()
         self._font_choices = build_font_choices(QFontDatabase.families())
         self._subtitle_model = SubtitleListModel(self)
-        self._segment_by_id: dict[str, dict[str, Any]] = {}
         self._short_video_clip_model = ShortVideoClipListModel(
             self._short_video_clip_count,
             self._short_video_clip_view_at,
             self,
         )
         self.shortVideoChanged.connect(self._refresh_short_video_clip_data)
-        self._subtitle_layout_metrics: dict[str, float | int] = {
-            "maxFontScale": 1.0,
-            "maxLayoutRow": 0,
-        }
-        self._subtitle_preview_text_cache: dict[str, tuple[tuple[object, ...], str]] = {}
-        self._segment_starts: list[float] = []
-        self._segment_prefix_max_end: list[float] = []
         self._transcription_merge_mode = ""
         self._transcription_preserved_segments: list[dict[str, Any]] = []
         self._transcription_preserved_project: dict[str, Any] | None = None

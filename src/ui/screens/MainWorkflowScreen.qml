@@ -18,8 +18,8 @@ ApplicationWindow {
         return snapshot ? root.appBackend.workflow.actionCapabilitiesForDevice(deviceCombo.currentText) : ({})
     }
     property real timelinePixelsPerSecond: 34
-    property real editorPixelsPerSecond: 64
-    property int snapMilliseconds: 100
+    property alias editorPixelsPerSecond: subtitleEditorState.pixelsPerSecond
+    property alias snapMilliseconds: subtitleEditorState.snapMilliseconds
     readonly property int defaultSubtitleFontSize: 50
     property int subtitleFontSizePercent: 100
     property string subtitleOutlineColor: "#000000"
@@ -33,22 +33,17 @@ ApplicationWindow {
     property var projectSpeakerCache: root.appBackend.subtitles.projectSpeakers
     property var subtitleWaveformCache: root.appBackend.subtitles.subtitleWaveforms
     property var subtitleLayoutMetricsCache: root.appBackend.subtitles.subtitleLayoutMetrics
-    property real editorPositionCache: 0
-    property real editorTimelineScrollX: 0
-    property real editorCaptionScrollY: 0
+    property alias editorPositionCache: subtitleEditorState.positionMs
+    property alias editorTimelineScrollX: subtitleEditorState.timelineScrollX
+    property alias editorCaptionScrollY: subtitleEditorState.captionScrollY
     property real workspaceAudioTimelineScrollX: 0
     property real workspaceAudioSettingsScrollY: 0
     property int sharedSeekRevision: 0
     property bool applyingSharedSeek: false
     property real pendingSharedSourcePosition: -1
     property var pendingWelcomeTranscriptionRequest: null
-    property int editorDraftSegmentIndex: -1
-    property string editorDraftText: ""
-    property string editorDraftSegmentId: ""
-    property string editorDraftProjectPath: ""
-    property string editorDraftOriginalText: ""
-    readonly property bool hasPendingSubtitleText: editorDraftSegmentId !== ""
-        && editorDraftText !== editorDraftOriginalText
+    property alias editorDraftSegmentIndex: subtitleEditorState.draftSegmentIndex
+    property alias editorDraftText: subtitleEditorState.draftText
     property string activeOverlay: ""
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
@@ -388,73 +383,6 @@ ApplicationWindow {
         root.appBackend.workflow.startTranscription(executionSettings, true)
     }
 
-    function canSplitSelectedSegment(positionMs) {
-        var index = root.appBackend.subtitles.selectedSegmentIndex
-        var segmentCount = root.appBackend.subtitles.segmentCount
-        if (index < 0 || index >= segmentCount)
-            return false
-        var segment = root.appBackend.subtitles.segmentAt(index)
-        var seconds = Number(positionMs) / 1000
-        return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
-    }
-
-    function subtitleIndexForId(segmentId, preferredIndex) {
-        if (!segmentId)
-            return -1
-        if (preferredIndex >= 0
-                && String(root.appBackend.subtitles.segmentAt(preferredIndex).id || "") === segmentId)
-            return preferredIndex
-        for (var index = 0; index < root.appBackend.subtitles.segmentCount; ++index) {
-            if (String(root.appBackend.subtitles.segmentAt(index).id || "") === segmentId)
-                return index
-        }
-        return -1
-    }
-
-    function beginSubtitleDraft(segmentIndex, text) {
-        var segment = root.appBackend.subtitles.segmentAt(segmentIndex)
-        root.editorDraftSegmentIndex = segmentIndex
-        root.editorDraftSegmentId = String(segment.id || "")
-        root.editorDraftProjectPath = root.appBackend.projectPath
-        root.editorDraftOriginalText = String(text)
-        root.editorDraftText = String(text)
-    }
-
-    function updateSubtitleDraft(segmentIndex, text) {
-        if (root.editorDraftSegmentId !== "")
-            root.editorDraftText = String(text)
-    }
-
-    function clearSubtitleDraft() {
-        root.editorDraftSegmentIndex = -1
-        root.editorDraftSegmentId = ""
-        root.editorDraftProjectPath = ""
-        root.editorDraftOriginalText = ""
-        root.editorDraftText = ""
-    }
-
-    function commitSubtitleDraft(expectedId) {
-        if (expectedId !== undefined && expectedId !== root.editorDraftSegmentId)
-            return
-        var id = root.editorDraftSegmentId
-        var projectPath = root.editorDraftProjectPath
-        var preferredIndex = root.editorDraftSegmentIndex
-        var text = root.editorDraftText
-        var changed = root.hasPendingSubtitleText
-        // モデル更新・フォーカス通知が再入しても同じ入力を二度反映しない。
-        root.clearSubtitleDraft()
-        if (!changed || projectPath !== root.appBackend.projectPath)
-            return
-        var index = root.subtitleIndexForId(id, preferredIndex)
-        if (index < 0)
-            return // 削除済みの字幕の本文を、同じ行に移動した別の字幕へ反映しない。
-        var selectedIndex = root.appBackend.subtitles.selectedSegmentIndex
-        var selectedId = String(root.appBackend.subtitles.segmentAt(selectedIndex).id || "")
-        root.appBackend.subtitles.updateSegment(index, {"text": text})
-        if (selectedId !== id)
-            root.appBackend.subtitles.selectSegment(root.subtitleIndexForId(selectedId, selectedIndex))
-    }
-
     function performSubtitleEdit(action, atSeconds) {
         if (root.appBackend.running)
             return
@@ -468,15 +396,22 @@ ApplicationWindow {
         }
     }
 
-    function subtitlePreviewText(segmentData) {
-        var sourceIndex = Number(segmentData.sourceIndex)
-        if ((root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle")
-                && String(segmentData.id || "") === root.editorDraftSegmentId)
-            return root.appBackend.subtitles.formatSubtitlePreview(sourceIndex, root.editorDraftText)
-        if (segmentData.preview_text !== undefined)
-            return String(segmentData.preview_text)
-        return String(segmentData.text || "")
+    SubtitleEditorState {
+        id: subtitleEditorState
+        subtitles: root.appBackend.subtitles
+        projectPath: root.appBackend.projectPath
+        previewEnabled: root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle"
     }
+    readonly property var subtitleEditorColors: ({
+        panel: root.panel,
+        raised: root.raised,
+        border: root.border,
+        textPrimary: root.textPrimary,
+        textMuted: root.textMuted,
+        acid: root.acid,
+        amber: root.amber,
+        danger: root.danger
+    })
 
     function editModeTitle(mode) {
         return {"subtitle": "字幕", "cut": "カット", "audio": "音量"}[mode] || "編集"
@@ -675,7 +610,7 @@ ApplicationWindow {
         // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
         root.commitInputMethod()
         root.contentItem.forceActiveFocus()
-        root.commitSubtitleDraft()
+        subtitleEditorState.commitSubtitleDraft()
     }
 
     // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
@@ -748,24 +683,6 @@ ApplicationWindow {
         var remainder = (safe % 60).toFixed(2)
         return (hours > 0 ? String(hours).padStart(2, "0") + ":" : "")
             + String(minutes).padStart(2, "0") + ":" + String(remainder).padStart(5, "0")
-    }
-
-    function speakerColor(style) {
-        var speakers = root.projectSpeakerCache
-        for (var i = 0; i < speakers.length; ++i) {
-            if (speakers[i].style === style)
-                return speakers[i].color
-        }
-        return root.amber
-    }
-
-    function laneForStyle(style) {
-        var speakers = root.projectSpeakerCache
-        for (var i = 0; i < speakers.length; ++i) {
-            if (speakers[i].style === style)
-                return i
-        }
-        return 0
     }
 
     component PanelTitle: Text {
@@ -850,398 +767,6 @@ ApplicationWindow {
             radius: 6
             color: "#101512"
             border.color: timeControl.activeFocus ? root.acid : root.border
-        }
-    }
-
-    component SubtitleTimeline: Rectangle {
-        id: timelineRoot
-        property MediaPlayer player
-        property real pixelsPerSecond: 40
-        property real snapSeconds: 0.1
-        property int laneHeight: 42
-        readonly property int rulerHeight: 28
-        readonly property int laneInset: 3
-        property bool editable: true
-        property bool showSegments: true
-        property bool showTrackVolume: false
-        property var seekHandler: null
-        property var lanes: root.projectSpeakerCache
-        property var waveforms: root.subtitleWaveformCache
-        property alias viewportX: timelineFlick.contentX
-        property alias viewportY: timelineFlick.contentY
-        property var visibleSegments: []
-        property var visibleRulerTicks: []
-
-        function refreshViewport() {
-            if (timelineRoot.pixelsPerSecond <= 0)
-                return
-            var pixels = timelineRoot.pixelsPerSecond
-            var padding = Math.max(2, timelineFlick.width / pixels * 0.25)
-            var viewportStart = Math.max(0, timelineFlick.contentX / pixels - padding)
-            var viewportEnd = (timelineFlick.contentX + timelineFlick.width) / pixels + padding
-            timelineRoot.visibleSegments = timelineRoot.showSegments
-                ? root.appBackend.subtitles.visibleSubtitleSegments(viewportStart, viewportEnd)
-                : []
-
-            var ticks = []
-            var firstTick = Math.max(0, Math.floor(viewportStart / 10) * 10)
-            var lastTick = Math.ceil(viewportEnd / 10) * 10
-            for (var tick = firstTick; tick <= lastTick; tick += 10)
-                ticks.push(tick)
-            timelineRoot.visibleRulerTicks = ticks
-        }
-
-        function followPlaybackPosition(positionMs) {
-            if (timelineRoot.pixelsPerSecond <= 0 || timelineFlick.width <= 0)
-                return
-            var targetX = Math.max(0, Number(positionMs) / 1000 * timelineRoot.pixelsPerSecond)
-            var viewportWidth = timelineFlick.width
-            var anchorX = viewportWidth * 0.35
-            var currentX = timelineFlick.contentX
-            var desiredX = currentX
-            if (targetX < currentX || targetX > currentX + viewportWidth)
-                desiredX = targetX - anchorX
-            else if (timelineRoot.player
-                     && timelineRoot.player.playbackState === MediaPlayer.PlayingState
-                     && targetX > currentX + anchorX)
-                desiredX = targetX - anchorX
-            var maximumX = Math.max(0, timelineFlick.contentWidth - viewportWidth)
-            desiredX = Math.max(0, Math.min(maximumX, desiredX))
-            if (Math.abs(desiredX - currentX) > 0.5)
-                timelineFlick.contentX = desiredX
-        }
-
-        function laneForItem(item) {
-            var key = item && item.lane_id !== undefined ? item.lane_id : (item ? item.style : "")
-            for (var index = 0; index < timelineRoot.lanes.length; ++index) {
-                var lane = timelineRoot.lanes[index]
-                var laneKey = lane && lane.lane_id !== undefined ? lane.lane_id : lane.style
-                if (laneKey === key)
-                    return index
-            }
-            return 0
-        }
-
-        onPixelsPerSecondChanged: timelineRoot.refreshViewport()
-        signal segmentActivated(int index)
-        Connections {
-            target: root.appBackend.subtitles
-            function onSegmentsChanged() { Qt.callLater(timelineRoot.refreshViewport) }
-        }
-        Connections {
-            target: timelineRoot.player
-            function onPositionChanged() {
-                if (timelineRoot.player)
-                    timelineRoot.followPlaybackPosition(timelineRoot.player.position)
-            }
-        }
-
-        color: "#0E1311"
-        border.color: root.border
-        radius: 10
-        clip: true
-
-        Flickable {
-            id: timelineFlick
-            anchors.fill: parent
-            anchors.leftMargin: 86
-            clip: true
-            interactive: true
-            boundsBehavior: Flickable.StopAtBounds
-            contentWidth: Math.max(width, root.appBackend.projectDuration * timelineRoot.pixelsPerSecond + 120)
-            contentHeight: timelineRoot.rulerHeight + Math.max(1, timelineRoot.lanes.length) * timelineRoot.laneHeight
-            onContentXChanged: timelineRoot.refreshViewport()
-            onWidthChanged: timelineRoot.refreshViewport()
-            Component.onCompleted: timelineRoot.refreshViewport()
-
-            Item {
-                id: timelineCanvas
-                width: timelineFlick.contentWidth
-                height: timelineFlick.contentHeight
-
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.LeftButton
-                    onClicked: function(mouse) {
-                        var position = Math.max(0, mouse.x / timelineRoot.pixelsPerSecond * 1000)
-                        if (timelineRoot.seekHandler)
-                            timelineRoot.seekHandler(position)
-                        else if (timelineRoot.player)
-                            timelineRoot.player.position = position
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.visibleRulerTicks
-                    delegate: Item {
-                        id: rulerTick
-                        required property var modelData
-                        x: Number(modelData) * timelineRoot.pixelsPerSecond
-                        width: 1
-                        height: timelineCanvas.height
-                        Rectangle { anchors.fill: parent; color: "#26302B" }
-                        Text {
-                            x: 4
-                            y: 3
-                            text: root.stamp(rulerTick.modelData)
-                            color: root.textMuted
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: 9
-                        }
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.lanes
-                    delegate: Rectangle {
-                        required property int index
-                        objectName: "timelineLaneBody-" + index
-                        y: timelineRoot.rulerHeight + index * timelineRoot.laneHeight
-                        width: timelineCanvas.width
-                        height: timelineRoot.laneHeight
-                        color: index % 2 === 0 ? "#111714" : "#0D1210"
-                        border.color: "#202923"
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.showTrackVolume ? timelineRoot.lanes : []
-                    delegate: Rectangle {
-                        id: trackVolumeBar
-                        objectName: "mixerSequenceVolumeBar"
-                        required property var modelData
-                        property int laneIndex: timelineRoot.laneForItem(modelData)
-                        property real volumeRatio: Math.max(0, Math.min(1, Number(modelData.volume_percent || 0) / 100))
-                        x: Math.max(0, Number(modelData.offset_seconds || 0)) * timelineRoot.pixelsPerSecond
-                        y: timelineRoot.rulerHeight + laneIndex * timelineRoot.laneHeight + (timelineRoot.laneHeight - height) / 2
-                        width: Math.max(4, Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond)
-                        height: Math.max(3, (timelineRoot.laneHeight - 12) * volumeRatio)
-                        radius: 3
-                        color: modelData.color || root.amber
-                        opacity: modelData.audible ? 0.32 : 0.09
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.waveforms
-                    delegate: Item {
-                        id: waveDelegate
-                        required property var modelData
-                        property int laneIndex: timelineRoot.laneForItem(modelData)
-                        x: Number(modelData.offset_seconds || 0) * timelineRoot.pixelsPerSecond
-                        y: timelineRoot.rulerHeight + laneIndex * timelineRoot.laneHeight + timelineRoot.laneInset
-                        width: Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond
-                        height: timelineRoot.laneHeight - timelineRoot.laneInset * 2
-                        opacity: modelData.audible === false ? 0.08 : 0.3
-                        Canvas {
-                            anchors.fill: parent
-                            property var peaks: waveDelegate.modelData.peaks || []
-                            property color waveformColor: waveDelegate.modelData.color || root.amber
-                            onPeaksChanged: requestPaint()
-                            onWaveformColorChanged: requestPaint()
-                            onWidthChanged: requestPaint()
-                            onHeightChanged: requestPaint()
-                            onPaint: {
-                                var context = getContext("2d")
-                                context.clearRect(0, 0, width, height)
-                                if (peaks.length === 0)
-                                    return
-                                context.fillStyle = waveformColor
-                                var step = width / peaks.length
-                                var barWidth = Math.max(1, step - 0.5)
-                                for (var i = 0; i < peaks.length; ++i) {
-                                    var barHeight = Math.max(1, Number(peaks[i]) * height)
-                                    context.fillRect(
-                                        i * step,
-                                        (height - barHeight) / 2,
-                                        barWidth,
-                                        barHeight
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.visibleSegments
-                    delegate: Rectangle {
-                        id: captionClip
-                        required property var modelData
-                        property int sourceIndex: modelData ? Number(modelData.sourceIndex) : -1
-                        objectName: "timelineCaption-" + sourceIndex
-                        // visibleSubtitleSegments returns a flat segment view. Keep
-                        // compatibility with explicitly wrapped diagnostic data.
-                        property var segment: modelData && modelData.segment
-                            ? modelData.segment
-                            : (modelData || ({}))
-                        property real originalX: 0
-                        property real originalWidth: 0
-                        property real pointerStart: 0
-                        visible: sourceIndex >= 0 && segment.start !== undefined && segment.end !== undefined
-                        x: Number(segment.start || 0) * timelineRoot.pixelsPerSecond
-                        y: timelineRoot.rulerHeight + root.laneForStyle(segment.speaker || "") * timelineRoot.laneHeight + timelineRoot.laneInset
-                        width: Math.max(10, (Number(segment.end || 0) - Number(segment.start || 0)) * timelineRoot.pixelsPerSecond)
-                        height: timelineRoot.laneHeight - timelineRoot.laneInset * 2 - 1
-                        radius: 6
-                        color: root.speakerColor(segment.speaker || "")
-                        opacity: root.appBackend.subtitles.selectedSegmentIndex === sourceIndex ? 1 : 0.78
-                        border.color: root.appBackend.subtitles.selectedSegmentIndex === sourceIndex ? root.textPrimary : "#66101010"
-                        border.width: root.appBackend.subtitles.selectedSegmentIndex === sourceIndex ? 2 : 1
-
-                        Text {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            text: captionClip.segment.text || ""
-                            color: "#10140F"
-                            font.family: captionClip.segment.subtitle_font_family || "Yu Gothic UI"
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
-                        MouseArea {
-                            id: moveArea
-                            anchors.fill: parent
-                            anchors.leftMargin: 7
-                            anchors.rightMargin: 7
-                            enabled: timelineRoot.editable
-                            cursorShape: Qt.SizeHorCursor
-                            drag.target: captionClip
-                            drag.axis: Drag.XAxis
-                            drag.minimumX: 0
-                            drag.maximumX: Math.max(0, timelineCanvas.width - captionClip.width)
-                            onPressed: {
-                                root.appBackend.subtitles.selectSegment(captionClip.sourceIndex)
-                                timelineRoot.segmentActivated(captionClip.sourceIndex)
-                            }
-                            onReleased: root.appBackend.subtitles.moveSegment(
-                                captionClip.sourceIndex,
-                                captionClip.x / timelineRoot.pixelsPerSecond,
-                                (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
-                                timelineRoot.snapSeconds
-                            )
-                        }
-
-                        Rectangle {
-                            id: leftHandle
-                            z: 3
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 7
-                            height: parent.height
-                            radius: 3
-                            color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.subtitles.selectedSegmentIndex === captionClip.sourceIndex
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.SizeHorCursor
-                                onPressed: function(mouse) {
-                                    captionClip.originalX = captionClip.x
-                                    captionClip.originalWidth = captionClip.width
-                                    captionClip.pointerStart = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                }
-                                onPositionChanged: function(mouse) {
-                                    if (!pressed) return
-                                    var pointer = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                    var delta = Math.min(captionClip.originalWidth - 4, pointer - captionClip.pointerStart)
-                                    captionClip.x = Math.max(0, captionClip.originalX + delta)
-                                    captionClip.width = captionClip.originalWidth - (captionClip.x - captionClip.originalX)
-                                }
-                                onReleased: root.appBackend.subtitles.resizeSegmentStart(
-                                    captionClip.sourceIndex,
-                                    captionClip.x / timelineRoot.pixelsPerSecond,
-                                    timelineRoot.snapSeconds
-                                )
-                            }
-                        }
-
-                        Rectangle {
-                            id: rightHandle
-                            z: 3
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 7
-                            height: parent.height
-                            radius: 3
-                            color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.subtitles.selectedSegmentIndex === captionClip.sourceIndex
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.SizeHorCursor
-                                onPressed: function(mouse) {
-                                    captionClip.originalWidth = captionClip.width
-                                    captionClip.pointerStart = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                }
-                                onPositionChanged: function(mouse) {
-                                    if (!pressed) return
-                                    var pointer = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                    captionClip.width = Math.max(4, captionClip.originalWidth + pointer - captionClip.pointerStart)
-                                }
-                                onReleased: root.appBackend.subtitles.resizeSegmentEnd(
-                                    captionClip.sourceIndex,
-                                    (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
-                                    timelineRoot.snapSeconds
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    z: 10
-                    x: Math.max(0, (timelineRoot.player ? timelineRoot.player.position : 0) / 1000 * timelineRoot.pixelsPerSecond)
-                    y: 0
-                    width: 2
-                    height: timelineCanvas.height
-                    color: root.acid
-                    Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 9
-                        height: 9
-                        radius: 5
-                        color: root.acid
-                    }
-                }
-            }
-            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOn }
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-        }
-
-        Column {
-            anchors.left: parent.left
-            y: timelineRoot.rulerHeight - timelineFlick.contentY
-            width: 86
-            height: timelineRoot.lanes.length * timelineRoot.laneHeight
-            Repeater {
-                model: timelineRoot.lanes
-                delegate: Rectangle {
-                    id: laneLabel
-                    required property int index
-                    required property var modelData
-                    objectName: "timelineLaneLabel-" + index
-                    width: 86
-                    height: timelineRoot.laneHeight
-                    color: "#171E1A"
-                    border.color: root.border
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 6
-                        Rectangle { width: 7; height: 22; radius: 3; color: laneLabel.modelData.color }
-                        Text {
-                            width: 62
-                            text: laneLabel.modelData.name
-                            color: root.textPrimary
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 10
-                            elide: Text.ElideRight
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1439,72 +964,16 @@ ApplicationWindow {
 
     Component {
         id: subtitleWorkspaceEditorComponent
-
-        Item {
-            objectName: "workspaceSubtitleEditor"
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 5
-                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.subtitles.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
-                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.subtitles.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
-                    SmallButton {
-                        objectName: "workspaceSubtitleAddButton"
-                        text: "+ 字幕追加"
-                        enabled: !root.appBackend.running
-                        onClicked: root.performSubtitleEdit("add", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
-                    }
-                    SmallButton {
-                        objectName: "workspaceSubtitleSplitButton"
-                        text: "分割"
-                        enabled: !root.appBackend.running
-                            && root.canSplitSelectedSegment(root.appBackend.workspace.editorPlayhead.sourcePositionMs)
-                        onClicked: root.performSubtitleEdit("split", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
-                    }
-                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.subtitles.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
-                    Item { Layout.fillWidth: true }
-                    SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.saveProject() }
-                    SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.buildSubtitlePreview() }
-                }
-
-                SubtitleTimeline {
-                    id: workspaceSubtitleTimeline
-                    objectName: "workspaceSubtitleTimeline"
-                    property bool restoringViewport: true
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    player: mainPlayer
-                    pixelsPerSecond: root.editorPixelsPerSecond
-                    snapSeconds: root.snapMilliseconds / 1000
-                    editable: true
-                    seekHandler: function(positionMilliseconds) {
-                        root.seekSharedPlayer(positionMilliseconds, "source")
-                    }
-                    onViewportXChanged: {
-                        if (!restoringViewport)
-                            root.editorTimelineScrollX = viewportX
-                    }
-                    onSegmentActivated: function(index) {
-                        var segment = root.appBackend.subtitles.segmentAt(index)
-                        if (segment)
-                            root.seekSharedPlayer(Number(segment.start) * 1000, "source")
-                    }
-                    Timer {
-                        interval: 0
-                        running: true
-                        repeat: false
-                        onTriggered: {
-                            workspaceSubtitleTimeline.viewportX = root.editorTimelineScrollX
-                            workspaceSubtitleTimeline.restoringViewport = false
-                        }
-                    }
-                }
-            }
+        SubtitleWorkspaceEditor {
+            onEditRequested: function(action, atSeconds) { root.performSubtitleEdit(action, atSeconds) }
+            onSaveRequested: root.saveProject()
+            appBackend: root.appBackend
+            player: mainPlayer
+            editorState: subtitleEditorState
+            colors: root.subtitleEditorColors
+            formatTimestamp: root.stamp
+            onSeekRequested: function(positionMs) { root.seekSharedPlayer(positionMs, "source") }
+            onPreviewRequested: root.buildSubtitlePreview()
         }
     }
 
@@ -1542,6 +1011,10 @@ ApplicationWindow {
                 }
 
                 SubtitleTimeline {
+                    appBackend: root.appBackend
+                    colors: root.subtitleEditorColors
+                    formatTimestamp: root.stamp
+                    speakers: root.projectSpeakerCache
                     id: workspaceAudioTimeline
                     objectName: "workspaceAudioTimeline"
                     property bool restoringViewport: true
@@ -1591,9 +1064,9 @@ ApplicationWindow {
             mutedColor: root.textMuted
             accentColor: root.acid
             savedContentY: root.editorCaptionScrollY
-            beginDraft: root.beginSubtitleDraft
-            updateDraft: root.updateSubtitleDraft
-            commitDraft: root.commitSubtitleDraft
+            beginDraft: subtitleEditorState.beginSubtitleDraft
+            updateDraft: subtitleEditorState.updateSubtitleDraft
+            commitDraft: subtitleEditorState.commitSubtitleDraft
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }
@@ -2007,7 +1480,7 @@ ApplicationWindow {
                             outlineColor: root.selectedSubtitleOutlineColor
                             outlineThickness: root.selectedSubtitleOutlineThickness
                             speakerColors: root.projectSpeakerCache
-                            subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
+                            subtitleTextResolver: function(segmentData) { return subtitleEditorState.subtitlePreviewText(segmentData) }
                             onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
                                 mainSubtitleOverlay.activeSegments
                             )
@@ -2821,6 +2294,10 @@ ApplicationWindow {
                                 Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                             }
                             SubtitleTimeline {
+                                appBackend: root.appBackend
+                                colors: root.subtitleEditorColors
+                                formatTimestamp: root.stamp
+                                speakers: root.projectSpeakerCache
                                 objectName: "mixerSequence"
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
@@ -3068,320 +2545,31 @@ ApplicationWindow {
 
         Component {
             id: editorContentComponent
-            Item {
-                id: editorContent
-                property bool selectionSyncReady: false
-
-                Component.onCompleted: {
-                    // Reuse the decoded source and move its output to the editor preview.
-                    var requestedPosition = root.editorPositionCache
-                    mainPlayer.pause()
-                    mainPlayer.videoOutput = editorVideo
-                    mainPlayer.position = requestedPosition
-                    editorSeek.to = Math.max(1, mainPlayer.duration)
-                    editorSeek.value = mainPlayer.position
-                    editorContent.selectionSyncReady = true
-                    root.syncEditorPlayhead(requestedPosition, true)
-                }
-                Component.onDestruction: {
-                    root.editorPositionCache = mainPlayer.position
-                    mainPlayer.pause()
-                    mainPlayer.videoOutput = mainVideo
-                }
-                Connections {
-                    target: mainPlayer
-                    function onPositionChanged() {
-                        root.editorPositionCache = mainPlayer.position
-                        if (!editorSeek.pressed)
-                            editorSeek.value = mainPlayer.position
-                    }
-                    function onDurationChanged() {
-                        editorSeek.to = Math.max(1, mainPlayer.duration)
-                    }
-                }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-            RowLayout {
-                Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10 + root.codexDrawerHeaderInset; spacing: 8
-                Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
-                Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: !root.appBackend.running && (root.appBackend.subtitles.canUndo || root.hasPendingSubtitleText); onClicked: root.performSubtitleEdit("undo") }
-                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.subtitles.canRedo && !root.hasPendingSubtitleText; onClicked: root.performSubtitleEdit("redo") }
-                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; onClicked: root.performSubtitleEdit("add", mainPlayer.position / 1000) }
-                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.performSubtitleEdit("split", mainPlayer.position / 1000) }
-                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: root.appBackend.subtitles.selectedSegmentIndex >= 0; onClicked: root.performSubtitleEdit("delete") }
-                SmallButton { objectName: "saveProjectButton"; text: "保存"; onClicked: root.saveProject() }
-                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; onClicked: root.buildSubtitlePreview() }
-                Button {
-                    id: editorRenderButton
-                    objectName: "editorRenderButton"
-                    implicitHeight: 34
-                    text: root.appBackend.workflow.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
-                    enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                    onClicked: root.renderFromEditor()
-                    contentItem: Text { text: editorRenderButton.text; color: editorRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 7; color: editorRenderButton.enabled ? root.acid : "#252C28" }
-                }
-                SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; onClicked: root.closeEditorScreen() }
-            }
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-
-            RowLayout {
-                Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 10; spacing: 10
-                ColumnLayout {
-                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 760; spacing: 8
-                    Rectangle {
-                        Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; radius: 10; color: "#060806"; border.color: root.border; clip: true
-                        VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
-                        SubtitleOverlay {
-                            id: editorOverlay
-                            objectName: "editorSubtitleOverlay"
-                            anchors.fill: editorVideo
-                            appBackend: root.appBackend
-                            player: mainPlayer
-                            layoutMetrics: root.subtitleLayoutMetricsCache
-                            active: root.editorMode
-                            captionObjectPrefix: "editorSubtitleOverlayCaption"
-                            baseFontSize: root.selectedSubtitleFontSize
-                            defaultSubtitleFontSize: root.defaultSubtitleFontSize
-                            outlineColor: root.selectedSubtitleOutlineColor
-                            outlineThickness: root.selectedSubtitleOutlineThickness
-                            speakerColors: root.projectSpeakerCache
-                            subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
-                            onActiveSegmentsChanged: {
-                                if (editorContent.selectionSyncReady)
-                                    root.syncEditorSelectionFromActiveSegments(editorOverlay.activeSegments)
-                            }
-                        }
-                        ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
-                            Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
-                            RowLayout { Layout.fillWidth: true
-                                ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                                Text { Layout.fillWidth: true; text: root.stamp(mainPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
-                                Text { text: editorOverlay.activeSegments.length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
-                            }
-                        }
-                    }
-                    RowLayout { Layout.fillWidth: true
-                        PanelTitle { text: "タイムライン" }
-                        Item { Layout.fillWidth: true }
-                        Text { text: "スナップ"; color: root.textMuted; font.pixelSize: 9 }
-                        SpinBox { id: snapSpin; from: 0; to: 1000; stepSize: 10; value: root.snapMilliseconds; editable: true; onValueModified: root.snapMilliseconds = value }
-                        Text { text: "ms"; color: root.textMuted; font.pixelSize: 9 }
-                        Text { text: "表示倍率"; color: root.textMuted; font.pixelSize: 9 }
-                        Slider { Layout.preferredWidth: 140; from: 16; to: 180; value: root.editorPixelsPerSecond; onMoved: root.editorPixelsPerSecond = value }
-                    }
-                    SubtitleTimeline {
-                        objectName: "editorTimeline"
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(320, 90 + Math.max(1, root.projectSpeakerCache.length) * 42)
-                        player: mainPlayer
-                        pixelsPerSecond: root.editorPixelsPerSecond
-                        snapSeconds: root.snapMilliseconds / 1000
-                        editable: true
-                        Component.onCompleted: Qt.callLater(function() { viewportX = root.editorTimelineScrollX })
-                        onViewportXChanged: root.editorTimelineScrollX = viewportX
-                        onSegmentActivated: function(index) {
-                            var segment = root.appBackend.subtitles.segmentAt(index)
-                            if (segment) mainPlayer.position = Number(segment.start) * 1000
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.preferredWidth: 620; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
-                    ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 7
-                        RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "話者ごとの字幕色" }
-                            Item { Layout.fillWidth: true }
-                            Text { text: "色を押して変更"; color: root.textMuted; font.pixelSize: 8 }
-                        }
-                        ListView {
-                            id: projectSpeakerColorList
-                            objectName: "projectSpeakerColorList"
-                            Layout.fillWidth: true; Layout.preferredHeight: 36
-                            orientation: ListView.Horizontal; spacing: 6; clip: true
-                            model: root.projectSpeakerCache
-                            delegate: Button {
-                                id: projectSpeakerColorButton
-                                required property int index
-                                required property var modelData
-                                width: 128; height: 34
-                                enabled: !root.appBackend.running
-                                onClicked: root.openSpeakerColorPicker("project", index, modelData.color)
-                                contentItem: Row {
-                                    spacing: 6
-                                    Rectangle { width: 20; height: 20; radius: 5; color: projectSpeakerColorButton.modelData.color; border.color: root.textPrimary }
-                                    Text { width: 94; text: projectSpeakerColorButton.modelData.name; color: root.textPrimary; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
-                                }
-                                background: Rectangle { radius: 7; color: projectSpeakerColorButton.hovered ? "#27312C" : root.raised; border.color: projectSpeakerColorButton.hovered ? root.acid : root.border }
-                                ToolTip.visible: hovered
-                                ToolTip.text: modelData.name + " の字幕色を変更"
-                            }
-                            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
-                        }
-                        RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "字幕一覧" }
-                            Item { Layout.fillWidth: true }
-                            Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
-                        }
-                        ListView {
-                            id: captionTable
-                            objectName: "captionTable"
-                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5
-                            function revealSelectedCaption() {
-                                var selectedIndex = root.appBackend.subtitles.selectedSegmentIndex
-                                if (selectedIndex >= 0)
-                                    positionViewAtIndex(selectedIndex, ListView.Contain)
-                            }
-                            model: root.appBackend.subtitles.subtitleModel
-                            // モデルの移動・復元中の一時的な行番号を選択状態へ逆流させない。
-                            currentIndex: -1
-                            keyNavigationEnabled: false
-                            Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
-                            Keys.onUpPressed: root.appBackend.subtitles.selectSegment(Math.max(0, root.appBackend.subtitles.selectedSegmentIndex - 1))
-                            Keys.onDownPressed: root.appBackend.subtitles.selectSegment(Math.min(count - 1, root.appBackend.subtitles.selectedSegmentIndex + 1))
-                            onContentYChanged: root.editorCaptionScrollY = contentY
-                            delegate: Rectangle {
-                                id: captionRow
-                                required property int index
-                                objectName: "captionRow-" + index
-                                required property string segmentId
-                                required property real start
-                                required property real end
-                                required property string text
-                                required property string editorText
-                                required property string speaker
-                                required property int layoutRow
-                                required property real subtitleFontScale
-                                required property string subtitleFontFamily
-                                width: captionTable.width; height: 122; radius: 8
-                                color: root.appBackend.subtitles.selectedSegmentIndex === index ? "#263326" : root.raised
-                                border.color: root.appBackend.subtitles.selectedSegmentIndex === index ? root.acid : root.border
-                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.subtitles.selectSegment(captionRow.index); mainPlayer.position = captionRow.start * 1000 } }
-                                ColumnLayout { anchors.fill: parent; anchors.margins: 7; spacing: 5
-                                    RowLayout { Layout.fillWidth: true; spacing: 5
-                                        Text { text: String(captionRow.index + 1).padStart(4, "0"); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9 }
-                                        TimeField { Layout.preferredWidth: 72; text: captionRow.start.toFixed(3); onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {"start": Number(text)}) }
-                                        TimeField { Layout.preferredWidth: 72; text: captionRow.end.toFixed(3); onEditingFinished: root.appBackend.subtitles.updateSegment(captionRow.index, {"end": Number(text)}) }
-                                        ComboBox {
-                                            Layout.preferredWidth: 105
-                                            model: root.projectSpeakerCache
-                                            textRole: "name"
-                                            valueRole: "style"
-                                            Component.onCompleted: {
-                                                for (var i = 0; i < count; ++i) if (valueAt(i) === captionRow.speaker) currentIndex = i
-                                            }
-                                            onActivated: root.appBackend.subtitles.updateSegment(captionRow.index, {"speaker": currentValue})
-                                        }
-                                        ComboBox {
-                                            id: captionFontCombo
-                                            objectName: "captionFontCombo"
-                                            Layout.preferredWidth: 130
-                                            model: root.appBackend.subtitles.fontChoices
-                                            textRole: "label"
-                                            valueRole: "family"
-                                            function syncCurrentFont() {
-                                                for (var i = 0; i < count; ++i) {
-                                                    if (valueAt(i) === captionRow.subtitleFontFamily) {
-                                                        currentIndex = i
-                                                        return
-                                                    }
-                                                }
-                                                currentIndex = 0
-                                            }
-                                            Component.onCompleted: syncCurrentFont()
-                                            Connections {
-                                                target: captionRow
-                                                function onSubtitleFontFamilyChanged() { captionFontCombo.syncCurrentFont() }
-                                            }
-                                            onActivated: root.appBackend.subtitles.updateSegment(captionRow.index, {"subtitle_font_family": currentValue})
-                                        }
-                                        CompactSpinBox {
-                                            objectName: "captionSizeSpin"
-                                            Layout.preferredWidth: 106; from: 50; to: 200; stepSize: 5
-                                            value: Math.round(captionRow.subtitleFontScale * 100)
-                                            onValueModified: root.appBackend.subtitles.updateSegment(captionRow.index, {"subtitle_font_scale": value / 100})
-                                        }
-                                        Text { text: "%"; color: root.textMuted; font.pixelSize: 9 }
-                                    }
-                                    TextArea {
-                                        id: captionTextArea
-                                        objectName: "captionTextArea"
-                                        property string editingSegmentId: ""
-                                        function commitText() {
-                                            var id = editingSegmentId
-                                            editingSegmentId = ""
-                                            if (id)
-                                                root.commitSubtitleDraft(id)
-                                        }
-                                        Component.onDestruction: commitText()
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 52
-                                        text: captionRow.editorText
-                                        color: root.textPrimary; selectionColor: root.acid; font.family: captionRow.subtitleFontFamily || "Yu Gothic UI"; font.pixelSize: 12
-                                        wrapMode: TextEdit.Wrap
-                                        selectByMouse: true
-                                        onTextChanged: {
-                                            if (activeFocus && editingSegmentId !== "")
-                                                root.updateSubtitleDraft(captionRow.index, text)
-                                        }
-                                        onActiveFocusChanged: {
-                                            if (activeFocus) {
-                                                root.appBackend.subtitles.selectSegment(captionRow.index)
-                                                editingSegmentId = captionRow.segmentId
-                                                root.beginSubtitleDraft(captionRow.index, text)
-                                            } else {
-                                                commitText()
-                                            }
-                                        }
-                                        background: Rectangle { radius: 6; color: "#101512"; border.color: parent.activeFocus ? root.acid : root.border }
-                                    }
-                                }
-                            }
-                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
-                        }
-                    }
-                }
-            }
-                }
-
-                Rectangle {
-                    objectName: "editorEmptyState"
-                    anchors.centerIn: parent
-                    width: 360
-                    height: 112
-                    visible: root.appBackend.subtitles.segmentCount === 0
-                    z: 10
-                    radius: 10
-                    color: "#17201B"
-                    border.color: root.border
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 8
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "字幕がありません"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 16; font.weight: Font.Bold }
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "上部の「+ 字幕追加」から手動で追加できます"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 11 }
-                    }
-                }
-
-                Connections {
-                    target: root.appBackend.subtitles
-                    function onSegmentsChanged() {
-                        Qt.callLater(function() {
-                            if (captionTable && typeof captionTable.revealSelectedCaption === "function")
-                                captionTable.revealSelectedCaption()
-                        })
-                    }
-                    function onSelectionChanged() {
-                        Qt.callLater(function() {
-                            if (captionTable && typeof captionTable.revealSelectedCaption === "function")
-                                captionTable.revealSelectedCaption()
-                        })
-                    }
-                }
+            SubtitleEditorScreen {
+                onEditRequested: function(action, atSeconds) { root.performSubtitleEdit(action, atSeconds) }
+                onSaveRequested: root.saveProject()
+                appBackend: root.appBackend
+                player: mainPlayer
+                editorState: subtitleEditorState
+                colors: root.subtitleEditorColors
+                formatTimestamp: root.stamp
+                projectSpeakerCache: root.projectSpeakerCache
+                subtitleLayoutMetricsCache: root.subtitleLayoutMetricsCache
+                selectedSubtitleFontSize: root.selectedSubtitleFontSize
+                defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                selectedSubtitleOutlineColor: root.selectedSubtitleOutlineColor
+                selectedSubtitleOutlineThickness: root.selectedSubtitleOutlineThickness
+                statusText: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status)
+                active: root.editorMode
+                codexDrawerHeaderInset: root.codexDrawerHeaderInset
+                onPreviewAttached: function(output) { mainPlayer.videoOutput = output }
+                onPreviewDetached: mainPlayer.videoOutput = mainVideo
+                onPlayheadSyncRequested: function(positionMs) { root.syncEditorPlayhead(positionMs, true) }
+                onSelectionSyncRequested: function(segments) { root.syncEditorSelectionFromActiveSegments(segments) }
+                onSpeakerColorRequested: function(index, color) { root.openSpeakerColorPicker("project", index, color) }
+                onPreviewRequested: root.buildSubtitlePreview()
+                onRenderRequested: root.renderFromEditor()
+                onCloseRequested: root.closeEditorScreen()
             }
         }
     }

@@ -5044,6 +5044,127 @@ Window {
         self.assertEqual(load_project(path)["segments"][0]["text"], "処理中は保存しない字幕")
         self.assertFalse(self.app.projectDirty)
 
+    def test_cut_editing_is_locked_during_processing_and_recovers(self) -> None:
+        path = self._load_project(duration_seconds=30.0)
+        self.assertTrue(self.app.workspace.addCut(5.0, 7.0))
+        self.assertTrue(self.app.workspace.addCut(9.0, 11.0))
+        self.app.subtitles.undoCutEdit()
+        self.assertTrue(self.app.saveProject())
+        cut_id = str(self.app.cutTimeline["cuts"][0]["id"])
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        window.setCutSelection("", 12_000, 13_000)
+        self.gui.wait_until(
+            lambda: self._quick_item(window, "addCutButton").isEnabled(),
+            description="カット範囲の編集準備",
+        )
+        controls = (
+            "addCutButton", "restoreCutRangeButton", "clearCutsButton",
+            "undoCutButton", "redoCutButton",
+        )
+        before = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            deepcopy(self.app._redo_stack), self.app.projectDirty, path.read_bytes(),
+        )
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            self.app.processEvents()
+            for name in controls:
+                self.assertFalse(self._quick_item(window, name).isEnabled(), name)
+            button = self._quick_item(window, "addCutButton")
+            point = button.mapToScene(QPointF(button.width() / 2, button.height() / 2))
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                             pos=QPoint(round(point.x()), round(point.y())))
+            self.assertFalse(self.app.workspace.addCut(12.0, 13.0))
+            self.assertFalse(self.app.workspace.updateCutRange(cut_id, 4.0, 8.0))
+            self.assertFalse(self.app.workspace.restoreCut(cut_id))
+            self.assertFalse(self.app.workspace.restoreRange(5.0, 7.0))
+            self.assertFalse(self.app.workspace.clearCuts())
+            self.app.subtitles.undoCutEdit()
+            self.app.subtitles.redoCutEdit()
+            self.assertEqual(
+                (self.app._project, self.app._undo_stack, self.app._redo_stack,
+                 self.app.projectDirty, path.read_bytes()),
+                before,
+            )
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.app.processEvents()
+        for name in controls:
+            self.assertTrue(self._quick_item(window, name).isEnabled(), name)
+        self._click(window, self._quick_item(window, "addCutButton"))
+        self.assertEqual(
+            [(cut["source_start"], cut["source_end"]) for cut in self.app.cutTimeline["cuts"]],
+            [(5.0, 7.0), (12.0, 13.0)],
+        )
+
+    def test_audio_editing_is_locked_during_processing_and_recovers(self) -> None:
+        path = self._load_project()
+        for index in range(len(self.app.audioMixerChannels)):
+            self.app.audio.updateAudioMixChannel(index, {"enabled": True})
+        self.assertTrue(self.app.saveProject())
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "editorModeButton-audio"))
+        self.assertEqual(self.app.currentEditMode, "audio")
+        self.assertGreater(len(self.app.audioMixerChannels), 0)
+        channel_list = self._quick_item(window, "workspaceAudioChannelList")
+        self.assertGreater(channel_list.property("count"), 0)
+        self.assertGreater(channel_list.height(), 0, (channel_list.width(), channel_list.property("contentHeight")))
+        channel_controls = (
+            "workspaceAudioEnabledCheck", "workspaceAudioVolumeSlider",
+            "workspaceAudioMuteButton", "workspaceAudioSoloButton",
+        )
+        controls = (
+            "workspaceAudioResetButton", "workspaceAudioSaveButton",
+            "workspaceAudioRebuildPreviewButton", *channel_controls,
+        )
+
+        def control(name: str) -> QQuickItem:
+            if name in channel_controls:
+                return self._quick_visual_item(channel_list, name)
+            return self._quick_item(window, name)
+
+        self.gui.wait_until(
+            lambda: all(control(name).isEnabled() for name in controls),
+            description="音量編集の準備",
+        )
+        before = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            self.app.projectDirty, path.read_bytes(),
+        )
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        try:
+            self.app.processEvents()
+            for name in controls:
+                self.assertFalse(control(name).isEnabled(), name)
+            button = self._quick_item(window, "workspaceAudioResetButton")
+            point = button.mapToScene(QPointF(button.width() / 2, button.height() / 2))
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                             pos=QPoint(round(point.x()), round(point.y())))
+            self.app.audio.updateAudioMixChannel(0, {"muted": True})
+            self.app.audio.resetAudioMixer()
+            self.assertEqual(
+                (self.app._project, self.app._undo_stack,
+                 self.app.projectDirty, path.read_bytes()),
+                before,
+            )
+        finally:
+            self.app._running = False
+            self.app.runningChanged.emit()
+
+        self.app.processEvents()
+        for name in controls:
+            self.assertTrue(control(name).isEnabled(), name)
+        self._click(window, control("workspaceAudioMuteButton"))
+        self.assertTrue(self.app.audioMixerChannels[0]["muted"])
+
     def test_workspace_subtitle_text_edit_stays_with_original_selection(self) -> None:
         self._load_project(
             segments=[
@@ -8285,16 +8406,29 @@ Window {
         self.assertTrue(self.app.saveProject())
         self.assertTrue(self.app._load_project_path(Path(self.app.projectPath), update_sources=False))
         self.assertEqual(self.app.sequenceClips[0]["assetId"], asset_id)
+        self.app.selectEditMode("cut")
+        self.assertEqual(self.app.currentEditMode, "cut")
+        window.setProperty("editTool", "sequence")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(window.contentItem(), "sequenceClipStartField").isVisible(),
+            description="再読込後のシーケンス編集欄",
+        )
         self.app._running = True
         self.app.runningChanged.emit()
         self.gui.process_events()
+        self.assertTrue(self._quick_item(window, "workspaceSequenceEditor").isVisible())
+        start_field = self.gui.find_visual_item(window.contentItem(), "sequenceClipStartField")
+        self.assertTrue(start_field.isVisible())
+        self.assertFalse(start_field.isEnabled())
+        checked_controls: set[str] = set()
         for item in self.gui.visual_items(window):
             control_name = item.objectName()
             if item.isVisible() and (
                 control_name in {
                 "addSequenceClipButton", "mediaBinAddButton", "mediaAssetDragArea",
                 "sequenceClipStartField", "sequenceClipEndField", "sequenceAudioLinkedCheck",
-                "sequenceClipMutedCheck", "sequenceTransitionCombo", "sequenceTransitionDuration",
+                "sequenceClipMutedCheck", "sequenceClipVolumeSlider",
+                "sequenceTransitionCombo", "sequenceTransitionDuration",
                 "sequenceAudioOffset", "removeSequenceClipButton", "sequenceTimelineDropArea",
                 }
                 or control_name.startswith(
@@ -8305,7 +8439,11 @@ Window {
                     )
                 )
             ):
+                checked_controls.add(control_name)
                 self.assertFalse(bool(item.property("enabled")), control_name)
+        self.assertIn("sequenceClipStartField", checked_controls)
+        self.assertIn("sequenceClipEndField", checked_controls)
+        self.assertIn("sequenceAudioLinkedCheck", checked_controls)
 
     def test_sequence_timeline_drag_trims_and_reorders_clips(self) -> None:
         _, _, second_video = self._make_sequence_project()

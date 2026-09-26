@@ -4,15 +4,17 @@ import heapq
 import json
 import subprocess
 import unicodedata
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Protocol, SupportsFloat, SupportsIndex, runtime_checkable
 
 import numpy as np
 
 from .audio_mixer import reconcile_audio_mix
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .color_config import normalize_rgb_color
+from .data_boundary import coerce_float, coerce_int, decode_json, is_object_dict, is_object_sequence
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .media_probe import probe_media_duration
@@ -48,21 +50,21 @@ def derive_project_path(video_path: str | Path, output_dir: str | Path) -> Path:
 def derive_ass_path(project_path: str | Path) -> Path:
     path = Path(project_path)
     suffix = ".subtitle-project.json"
-    name = path.name[:-len(suffix)] if path.name.endswith(suffix) else path.stem
+    name = path.name[: -len(suffix)] if path.name.endswith(suffix) else path.stem
     return path.with_name(f"{name}.edited.ass")
 
 
 def derive_render_path(project_path: str | Path) -> Path:
     path = Path(project_path)
     suffix = ".subtitle-project.json"
-    name = path.name[:-len(suffix)] if path.name.endswith(suffix) else path.stem
+    name = path.name[: -len(suffix)] if path.name.endswith(suffix) else path.stem
     return path.with_name(f"{name}.edited.subtitled.mp4")
 
 
 def derive_short_render_path(project_path: str | Path) -> Path:
     path = Path(project_path)
     suffix = ".subtitle-project.json"
-    name = path.name[:-len(suffix)] if path.name.endswith(suffix) else path.stem
+    name = path.name[: -len(suffix)] if path.name.endswith(suffix) else path.stem
     return path.with_name(f"{name}.short.mp4")
 
 
@@ -75,7 +77,7 @@ def project_work_directory(project_path: str | Path) -> Path:
 
 def resolve_render_output_path(
     project_path: str | Path,
-    project: Mapping[str, Any],
+    project: Mapping[str, object] | Mapping[object, object],
     output_path: str | Path | None = None,
     *,
     short: bool = False,
@@ -93,7 +95,7 @@ def _display_width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(char) in {"F", "W", "A"} else 1 for char in text)
 
 
-def _layout_row_span(segment: dict[str, Any]) -> int:
+def _layout_row_span(segment: dict[object, object]) -> int:
     formatted = format_segment_text(segment)
     span = max(1, formatted.count(r"\N") + 1)
     subtitle_line_count = normalize_subtitle_line_count(segment.get("subtitle_line_count", "auto"))
@@ -102,7 +104,36 @@ def _layout_row_span(segment: dict[str, Any]) -> int:
     return span
 
 
-def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+@runtime_checkable
+class _Comparable(Protocol):
+    def __lt__(self, other: object) -> bool: ...
+
+
+def _sort_value(value: object) -> _Comparable:
+    # 公開APIの行割当では、ソート時に元の時刻・IDの比較順を維持する。
+    if not isinstance(value, (str, bytes, bytearray, int, float, SupportsFloat, SupportsIndex)) or not isinstance(
+        value, _Comparable
+    ):
+        raise TypeError(f"'{type(value).__name__}' object is not orderable")
+    return value
+
+
+def _layout_sort_key(segment: dict[object, object]) -> tuple[_Comparable, _Comparable, _Comparable]:
+    return (_sort_value(segment["start"]), _sort_value(segment["end"]), _sort_value(segment["id"]))
+
+
+def _outline_thickness(value: object) -> int:
+    try:
+        return coerce_int(value)
+    except TypeError as error:
+        if str(error) != "value must be convertible to int":
+            raise
+        raise TypeError(
+            f"int() argument must be a string, a bytes-like object or a real number, not '{type(value).__name__}'"
+        ) from error
+
+
+def assign_project_layout_rows(segments: list[dict[object, object]]) -> list[dict[object, object]]:
     """Reflow edited overlaps without dropping captions when more than three rows are needed."""
     row_is_free: list[bool] = []
     release_queue: list[tuple[float, int]] = []
@@ -169,56 +200,52 @@ def assign_project_layout_rows(segments: list[dict[str, Any]]) -> list[dict[str,
         row_is_free.extend([False] * span)
         return base_row
 
-    for segment in sorted(segments, key=lambda item: (item["start"], item["end"], item["id"])):
+    for segment in sorted(segments, key=_layout_sort_key):
         span = _layout_row_span(segment)
-        start = float(segment["start"])
+        start = coerce_float(segment["start"])
         release_finished(start)
         base_row = take_free_span(span)
         segment["layout_row"] = base_row
         segment["layout_row_span"] = span
         for row in range(base_row, base_row + span):
             row_is_free[row] = False
-            heapq.heappush(release_queue, (float(segment["end"]), row))
+            heapq.heappush(release_queue, (coerce_float(segment["end"]), row))
     return segments
 
 
-def validate_project(project: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(project, dict):
+def validate_project(project: object) -> dict[object, object]:
+    if not is_object_dict(project):
         raise SubtitleProjectError("project root must be an object")
     migrated = migrate_project_payload(project)
     model = SubtitleProject.from_json(migrated)
     project = model.to_json()
     if project.get("schema_version") != PROJECT_SCHEMA_VERSION:
-        raise SubtitleProjectError(
-            f"unsupported project schema_version: {project.get('schema_version')!r}"
-        )
+        raise SubtitleProjectError(f"unsupported project schema_version: {project.get('schema_version')!r}")
     if project.get("project_type") != PROJECT_TYPE:
         raise SubtitleProjectError("not a subtitle edit project")
     video = project.get("video")
-    if not isinstance(video, dict) or not str(video.get("path", "")).strip():
+    if not is_object_dict(video) or not str(video.get("path", "")).strip():
         raise SubtitleProjectError("video.path is required")
     segments = project.get("segments")
-    if not isinstance(segments, list):
+    if not isinstance(segments, list) or not is_object_sequence(segments):
         raise SubtitleProjectError("segments must be an array")
     typed_segments = [SubtitleSegment.from_json(segment, index=index) for index, segment in enumerate(segments)]
     normalized = [segment.to_json() for segment in typed_segments]
     ids = [segment["id"] for segment in normalized]
     if len(ids) != len(set(ids)):
         raise SubtitleProjectError("segment ids must be unique")
-    project["segments"] = assign_project_layout_rows(
-        sorted(normalized, key=lambda item: (item["start"], item["end"], item["id"]))
-    )
+    project["segments"] = assign_project_layout_rows(sorted(normalized, key=_layout_sort_key))
     project.setdefault("audio_sources", [])
     project.setdefault("speakers", [])
     project.setdefault("waveforms", [])
     subtitle_settings = project.setdefault("subtitle_settings", {})
-    if not isinstance(subtitle_settings, dict):
+    if not is_object_dict(subtitle_settings):
         raise SubtitleProjectError("subtitle_settings must be an object")
     try:
         subtitle_settings["outline_color"] = normalize_rgb_color(
             subtitle_settings.get("outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)
         )
-        outline_thickness = int(
+        outline_thickness = _outline_thickness(
             subtitle_settings.get("outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)
         )
     except (TypeError, ValueError, OverflowError) as error:
@@ -242,21 +269,21 @@ def create_project(
     *,
     video_path: str | Path,
     output_dir: str | Path = "",
-    segments: Iterable[dict[str, Any]],
-    audio_sources: Iterable[dict[str, Any]] = (),
-    speakers: Iterable[dict[str, Any]] = (),
-    waveforms: Iterable[dict[str, Any]] = (),
-    subtitle_settings: dict[str, Any] | None = None,
-    render_settings: dict[str, Any] | None = None,
-    transcription: dict[str, Any] | None = None,
-    transcription_context: dict[str, Any] | None = None,
-    audio_mix: dict[str, Any] | None = None,
-    timeline: dict[str, Any] | None = None,
-    sequence: dict[str, Any] | None = None,
+    segments: Iterable[object],
+    audio_sources: Iterable[object] = (),
+    speakers: Iterable[object] = (),
+    waveforms: Iterable[object] = (),
+    subtitle_settings: object = None,
+    render_settings: object = None,
+    transcription: object = None,
+    transcription_context: object = None,
+    audio_mix: object = None,
+    timeline: object = None,
+    sequence: object = None,
     duration_seconds: float | None = None,
-) -> dict[str, Any]:
+) -> dict[object, object]:
     now = utc_timestamp()
-    project = {
+    project: dict[object, object] = {
         "schema_version": PROJECT_SCHEMA_VERSION,
         "project_type": PROJECT_TYPE,
         "created_at": now,
@@ -286,23 +313,26 @@ def project_from_transcript(
     *,
     video_path: str | Path,
     output_dir: str | Path | None = None,
-) -> dict[str, Any]:
-    transcript = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
-    if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
+) -> dict[object, object]:
+    transcript = decode_json(Path(transcript_path).read_text(encoding="utf-8"))
+    if not is_object_dict(transcript):
+        raise SubtitleProjectError("transcript JSON must contain a segments array")
+    raw_segments = transcript.get("segments")
+    if not isinstance(raw_segments, list) or not is_object_sequence(raw_segments):
         raise SubtitleProjectError("transcript JSON must contain a segments array")
     return create_project(
         video_path=video_path,
         output_dir=output_dir or Path(transcript_path).parent,
-        segments=transcript["segments"],
+        segments=raw_segments,
         transcription={"imported_transcript": str(Path(transcript_path).resolve())},
     )
 
 
-def load_project(path: str | Path, *, resolve_video_duration: bool = False) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if resolve_video_duration and isinstance(payload, dict):
+def load_project(path: str | Path, *, resolve_video_duration: bool = False) -> dict[object, object]:
+    payload = decode_json(Path(path).read_text(encoding="utf-8"))
+    if resolve_video_duration and is_object_dict(payload):
         video = payload.get("video", {})
-        if isinstance(video, dict) and not video.get("duration_seconds"):
+        if is_object_dict(video) and not video.get("duration_seconds"):
             video_path = str(video.get("path", ""))
             if Path(video_path).is_file():
                 try:
@@ -321,7 +351,7 @@ def load_project_model(path: str | Path) -> SubtitleProject:
 
 def save_project(
     path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     *,
     project_is_validated: bool = False,
     update_project: bool = True,
@@ -349,7 +379,9 @@ def save_project_model(
     return save_project(path, project.to_json())
 
 
-def project_to_view_payload(project: SubtitleProject | dict[str, Any]) -> dict[str, Any]:
+def project_to_view_payload(
+    project: SubtitleProject | dict[str, object] | dict[object, object],
+) -> dict[str, object]:
     """Build a GUI-specific payload without exposing persistence models to QML."""
     model = project if isinstance(project, SubtitleProject) else SubtitleProject.from_json(validate_project(project))
     return {
@@ -386,18 +418,16 @@ def project_to_view_payload(project: SubtitleProject | dict[str, Any]) -> dict[s
 
 
 def project_to_transcript(
-    project: SubtitleProject | dict[str, Any],
+    project: SubtitleProject | dict[str, object] | dict[object, object],
     *,
     project_is_validated: bool = False,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, list[dict[object, object]]]:
     if isinstance(project, SubtitleProject):
         model = project
     else:
         payload = project if project_is_validated else validate_project(deepcopy(project))
         model = SubtitleProject.from_json(payload)
-    return {
-        "segments": [segment.to_json() for segment in model.segments if segment.text]
-    }
+    return {"segments": [segment.to_json() for segment in model.segments if segment.text]}
 
 
 def waveform_peaks_from_samples(samples: np.ndarray, bins: int = DEFAULT_WAVEFORM_BINS) -> list[float]:
@@ -423,7 +453,7 @@ def build_waveform(
     samples: np.ndarray,
     sample_rate: int = DEFAULT_WAVEFORM_SAMPLE_RATE,
     bins: int = DEFAULT_WAVEFORM_BINS,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     return {
         "speaker": speaker,
         "style": style,

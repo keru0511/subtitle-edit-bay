@@ -624,6 +624,80 @@ Window {
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
 
+    def test_advanced_settings_popup_works_without_main_workflow_context(self) -> None:
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentAdvancedSettings.qml"
+        qml.write_text(
+            'import QtQuick\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1220
+    height: 760
+    visible: true
+    property int saveRequests: 0
+    property string requestedOutlineColor: ""
+    property var settingsSnapshot: ({})
+    function openSettings() { settingsPopup.open() }
+    function applySettings() {
+        settingsPopup.applySettings({
+            model: "small", device: "cpu", nvenc_cq: 22,
+            subtitle_font_size: 150, subtitle_outline_color: "#123456",
+            subtitle_outline_thickness: 6, subtitle_volume_scale_percent: 35,
+            subtitle_max_gap_seconds: 0.2, subtitle_end_padding_seconds: 0.12,
+            subtitle_min_duration_seconds: 0.5, audio_normalize: false,
+            audio_target_lufs: -20, cut_no_speech: true,
+            no_speech_min_seconds: 1.7, speech_padding_seconds: 0.25,
+            speech_threshold_db: "-35dB", postprocess_workers: 8
+        })
+    }
+    function captureSettings() { settingsSnapshot = settingsPopup.settingsValues() }
+    AdvancedSettingsPopup {
+        id: settingsPopup
+        appBackend: backend
+        colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+            textPrimary: "#F8FAFC", textMuted: "#94A3B8", acid: "#6366F1"})
+        defaultSubtitleFontSize: 50
+        x: 20
+        y: 20
+        width: 360
+        height: 620
+        onSaveRequested: host.saveRequests += 1
+        onOutlineColorRequested: function(color) { host.requestedOutlineColor = color }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        popup = window.findChild(QObject, "advancedSettingsPopup")
+        self.assertIsNotNone(popup)
+        self.assertTrue(QMetaObject.invokeMethod(window, "openSettings"))
+        self.gui.wait_until(lambda: popup.property("visible"), description="処理設定を開く")
+        self.assertTrue(QMetaObject.invokeMethod(window, "applySettings"))
+        self.assertEqual(popup.property("selectedDevice"), "cpu")
+        self.assertEqual(popup.property("selectedFontSize"), 150)
+        self.assertEqual(popup.property("fontSizePercent"), 300)
+        self.assertEqual(popup.property("outlineColor"), "#123456")
+        self.assertEqual(popup.property("outlineThickness"), 6)
+        self.assertTrue(QMetaObject.invokeMethod(window, "captureSettings"))
+        values = self._qml_value(window, "settingsSnapshot")
+        self.assertEqual(values["model"], "small")
+        self.assertEqual(values["device"], "cpu")
+        self.assertEqual(values["compute_type"], "int8")
+        self.assertEqual(values["subtitle_font_size"], 150)
+        self.assertEqual(values["subtitle_outline_color"], "#123456")
+        self.assertEqual(values["subtitle_outline_thickness"], 6)
+        self.assertEqual(values["subtitle_volume_scale_percent"], 35)
+        self.assertEqual(values["speech_threshold_db"], "-35dB")
+        self.assertFalse(values["audio_normalize"])
+        self.assertTrue(values["cut_no_speech"])
+        self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "outlineColorButton"), "clicked"))
+        self.assertEqual(window.property("requestedOutlineColor"), "#123456")
+        self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "settingsPopupSaveButton"), "clicked"))
+        self.assertEqual(window.property("saveRequests"), 1)
+        self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "settingsPopupCloseButton"), "clicked"))
+        self.gui.wait_until(lambda: not popup.property("visible"), description="処理設定を閉じる")
+
     def test_source_settings_popup_works_without_main_workflow_context(self) -> None:
         path, _, _ = self._make_project()
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]

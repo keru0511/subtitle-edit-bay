@@ -121,6 +121,19 @@ class SubtitleLineCountTests(unittest.TestCase):
         self.assertAlmostEqual(pages[0]["end"], 2.95)
         self.assertEqual(pages[0]["words"], words)
 
+    def test_long_atomic_unit_keeps_late_words_on_later_pages(self) -> None:
+        source = "ABCDEFGHIJKLMNOP"
+        words = [
+            {"word": char, "start": index * 0.4, "end": index * 0.4 + 0.1}
+            for index, char in enumerate(source)
+        ]
+        pages = pack_segment_pages({"text": source, "start": 0, "end": 6.4, "max_width": 16, "words": words})
+        self.assertGreater(len(pages), 1)
+        self.assertEqual("".join(page["text"] for page in pages), source)
+        self.assertEqual("".join(word["word"] for page in pages for word in page["words"]), source)
+        self.assertTrue(all(left["end"] <= right["start"] for left, right in zip(pages, pages[1:])))
+        self.assertTrue(all(word["end"] <= page["end"] for page in pages for word in page["words"]))
+
     def test_split_word_times_stay_inside_segment_bounds(self) -> None:
         source = "字幕確認"
         pages = pack_segment_pages({"text": source, "start": 0.2, "end": 0.8, "max_width": 2,

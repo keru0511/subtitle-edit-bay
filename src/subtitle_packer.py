@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from typing import TypedDict
 from unicodedata import category
@@ -1032,6 +1032,39 @@ def pack_segment_pages(
         return []
 
     timed_units = build_timed_units_from_words(segment, unit_entries, start, end)
+    word_boundaries: list[int] = []
+    if timed_units:
+        words = _entry_mappings(segment["words"])
+        normalized_words = [normalize_alignment_text(word["word"]) for word in words]
+        source_text = normalize_alignment_text("".join(entry["text"] for entry in unit_entries))
+        word_positions = _aligned_word_positions(source_text, "".join(normalized_words))
+        assert word_positions is not None
+        word_cursor = 0
+        for word_text in normalized_words[:-1]:
+            word_cursor += len(word_text)
+            if 0 < word_cursor < len(word_positions):
+                word_boundaries.append(word_positions[word_cursor])
+    while timed_units:
+        expanded_entries: list[AtomicUnitEntry] = []
+        source_cursor = 0
+        for entry, unit in zip(unit_entries, timed_units):
+            parts = [entry["text"]]
+            next_source_cursor = source_cursor + len(normalize_alignment_text(entry["text"]))
+            crosses_words = bisect_right(word_boundaries, source_cursor) < bisect_left(word_boundaries, next_source_cursor)
+            if crosses_words and _number(unit["end"]) - _number(unit["start"]) > ABSOLUTE_MAX_DURATION:
+                narrower_width = max(1, text_width(entry["text"]) // 2)
+                parts = split_by_width_naturally(entry["text"], narrower_width)
+            for index, part in enumerate(parts):
+                expanded_entries.append({
+                    **entry,
+                    "text": part,
+                    "force_break_before": index == 0 and entry.get("force_break_before", False),
+                })
+            source_cursor = next_source_cursor
+        if len(expanded_entries) == len(unit_entries):
+            break
+        unit_entries = expanded_entries
+        timed_units = build_timed_units_from_words(segment, unit_entries, start, end)
     if not timed_units:
         timed_units = build_timed_units_from_width(segment, unit_entries, start, end)
         has_word_timing = False
@@ -1077,11 +1110,14 @@ def pack_segment_pages(
     # 結合後の実際の描画を確認し、認識済みの文字を省略する前に次ページへ送る。
     duration_groups: list[list[dict[object, object]]] = []
     for group in grouped:
-        if _number(group[-1]["end"]) - _number(group[0]["start"]) > ABSOLUTE_MAX_DURATION and len(group) > 1:
-            midpoint = len(group) // 2
-            duration_groups.extend([group[:midpoint], group[midpoint:]])
-        else:
-            duration_groups.append(group)
+        duration_fitting: list[dict[object, object]] = []
+        for unit in group:
+            if duration_fitting and _number(unit["end"]) - _number(duration_fitting[0]["start"]) > ABSOLUTE_MAX_DURATION:
+                duration_groups.append(duration_fitting)
+                duration_fitting = []
+            duration_fitting.append(unit)
+        if duration_fitting:
+            duration_groups.append(duration_fitting)
     fitting_groups: list[list[dict[object, object]]] = []
     for group in duration_groups:
         fitting: list[dict[object, object]] = []

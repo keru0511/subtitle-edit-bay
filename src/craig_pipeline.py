@@ -26,6 +26,7 @@ from .process_utils import hidden_subprocess_kwargs
 from .render_ass import parse_track_color_args
 from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
+from .runtime_settings import DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT as DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT
 from .silence_cut import (
     build_no_speech_plan,
     cut_media_ranges,
@@ -63,7 +64,6 @@ DEFAULT_SPEECH_DETECT_SILENCE_SECONDS = 0.1
 DEFAULT_SUBTITLE_MAX_GAP_SECONDS = 0.32
 DEFAULT_SUBTITLE_END_PADDING_SECONDS = 0.08
 DEFAULT_SUBTITLE_MIN_DURATION_SECONDS = 0.35
-DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT = 20.0
 SUBTITLE_VOLUME_SAMPLE_RATE = 1000
 SUBTITLE_VOLUME_RANGE_DB = 12.0
 DEFAULT_INPUT_ROOT = "video_import"

@@ -43,13 +43,12 @@ class GuiSourceStateTests(TypedTestCase):
             alice.write_bytes(b"")
             ignored.write_text("not audio", encoding="utf-8")
             color_config = root / "speaker_colors.json"
+            color_payload: dict[str, object] = {
+                "speakers": {"alice": "#112233"},
+                "files": {"002-bob.wav": "#445566"},
+            }
             color_config.write_text(
-                json.dumps(
-                    {
-                        "speakers": {"alice": "#112233"},
-                        "files": {"002-bob.wav": "#445566"},
-                    }
-                ),
+                json.dumps(color_payload),
                 encoding="utf-8",
             )
 

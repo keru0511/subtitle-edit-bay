@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import decode_json, is_object_mapping
 from src.gui_settings_controller import SettingsController
 from tests.typed_case import TypedTestCase
 
@@ -12,13 +13,12 @@ from tests.typed_case import TypedTestCase
 class SettingsControllerTests(TypedTestCase):
     def _base_config(self, root: Path) -> Path:
         path = root / "base-runtime.json"
+        payload: dict[str, object] = {
+            "shared": {"model": "base-model", "device": "cpu"},
+            "craig_pipeline": {"video_codec": "libx264"},
+        }
         path.write_text(
-            json.dumps(
-                {
-                    "shared": {"model": "base-model", "device": "cpu"},
-                    "craig_pipeline": {"video_codec": "libx264"},
-                }
-            ),
+            json.dumps(payload),
             encoding="utf-8",
         )
         return path
@@ -63,13 +63,22 @@ class SettingsControllerTests(TypedTestCase):
             self.assertTrue(context_changed)
             self.assertEqual(state.settings["model"], "small")
             self.assertEqual(state.transcription_context["game_title"], "Game")
-            payload = json.loads(controller.gui_config_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["shared"]["model"], "small")
-            self.assertEqual(payload["craig_pipeline"]["track_color"], ["craig:Alice=#ABCDEF"])
-            self.assertNotIn("unknown_setting", payload["shared"])
-            self.assertNotIn("video", payload["craig_pipeline"])
+            payload = decode_json(controller.gui_config_path.read_text(encoding="utf-8"))
+            if not is_object_mapping(payload):
+                self.fail("設定ファイルのルートはオブジェクトである必要がある")
+            shared = payload.get("shared")
+            craig = payload.get("craig_pipeline")
+            if not is_object_mapping(shared) or not is_object_mapping(craig):
+                self.fail("設定ファイルのセクションはオブジェクトである必要がある")
+            self.assertEqual(shared["model"], "small")
+            self.assertEqual(craig["track_color"], ["craig:Alice=#ABCDEF"])
+            self.assertNotIn("unknown_setting", shared)
+            self.assertNotIn("video", craig)
+            context = craig.get("transcription_context")
+            if not is_object_mapping(context):
+                self.fail("文字起こし設定はオブジェクトである必要がある")
             self.assertEqual(
-                payload["craig_pipeline"]["transcription_context"]["creator_terms"],
+                context["creator_terms"],
                 ["alpha", "beta"],
             )
 

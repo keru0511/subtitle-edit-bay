@@ -20,6 +20,11 @@ from tests.typed_case import TypedTestCase
 
 
 class RuntimeSettingsTests(TypedTestCase):
+    def assert_numeric_almost_equal(self, value: object, expected: float) -> None:
+        if not isinstance(value, (int, float)):
+            self.fail("設定値は数値である必要がある")
+        self.assertAlmostEqual(value, expected)
+
     def test_default_craig_runtime_config_maps_to_typed_settings(self) -> None:
         settings = load_runtime_settings("craig_pipeline", DEFAULT_RUNTIME_CONFIG)
 
@@ -27,8 +32,8 @@ class RuntimeSettingsTests(TypedTestCase):
         self.assertEqual(settings.transcription.device, "cuda")
         self.assertEqual(settings.transcription.compute_type, "float16")
         self.assertEqual(settings.transcription.language, "ja")
-        self.assertAlmostEqual(settings.transcription.vad_onset, 0.5)
-        self.assertAlmostEqual(settings.transcription.vad_offset, 0.363)
+        self.assert_numeric_almost_equal(settings.transcription.vad_onset, 0.5)
+        self.assert_numeric_almost_equal(settings.transcription.vad_offset, 0.363)
         self.assertTrue(settings.transcription.skip_existing_transcripts)
         self.assertEqual(settings.subtitle_layout.subtitle_outline_color, "#000000")
         self.assertEqual(settings.subtitle_layout.subtitle_outline_thickness, 3)
@@ -124,7 +129,7 @@ class RuntimeSettingsTests(TypedTestCase):
         self.assertEqual(flat["subtitle_font_size"], 42)
         self.assertEqual(flat["subtitle_outline_color"], "#123456")
         self.assertEqual(flat["subtitle_outline_thickness"], 7)
-        self.assertAlmostEqual(flat["audio_target_lufs"], -18.0)
+        self.assert_numeric_almost_equal(flat["audio_target_lufs"], -18.0)
         self.assertEqual(flat["postprocess_workers"], 2)
         self.assertIn("alignment_sample_rate", flat)
         self.assertIn("speech_threshold_db", flat)
@@ -152,13 +157,13 @@ class RuntimeSettingsTests(TypedTestCase):
         self.assertEqual(options["device"], "cpu")
         self.assertEqual(options["compute_type"], "int8")
         self.assertEqual(options["alignment_sample_rate"], 80)
-        self.assertAlmostEqual(options["alignment_offset_adjustment"], 0.125)
+        self.assert_numeric_almost_equal(options["alignment_offset_adjustment"], 0.125)
         self.assertFalse(options["skip_existing_transcripts"])
         self.assertEqual(options["postprocess_workers"], 2)
         self.assertEqual(options["subtitle_font_size"], 44)
         self.assertEqual(options["subtitle_outline_color"], "#234567")
         self.assertEqual(options["subtitle_outline_thickness"], 6)
-        self.assertAlmostEqual(options["subtitle_max_gap_seconds"], 0.2)
+        self.assert_numeric_almost_equal(options["subtitle_max_gap_seconds"], 0.2)
         self.assertNotIn("video_codec", options)
         self.assertNotIn("audio_normalize", options)
 
@@ -226,9 +231,7 @@ class RuntimeSettingsTests(TypedTestCase):
             settings_from_config({"postprocess_workers": 2.5})
 
     def test_transcription_settings_preserve_supported_null_values(self) -> None:
-        settings = settings_from_config(
-            {"language": None, "vad_onset": None, "vad_offset": None}
-        )
+        settings = settings_from_config({"language": None, "vad_onset": None, "vad_offset": None})
 
         self.assertIsNone(settings.transcription.language)
         self.assertIsNone(settings.transcription.vad_onset)
@@ -275,8 +278,8 @@ class RuntimeSettingsTests(TypedTestCase):
         flat = settings_to_flat_dict(settings)
         self.assertEqual(flat["short_mode_output_width"], 720)
         self.assertEqual(flat["short_mode_global_fit"], "contain")
-        self.assertAlmostEqual(flat["short_mode_bgm_volume"], 0.8)
-        self.assertAlmostEqual(flat["short_mode_subtitle_scale_percent"], 200.0)
+        self.assert_numeric_almost_equal(flat["short_mode_bgm_volume"], 0.8)
+        self.assert_numeric_almost_equal(flat["short_mode_subtitle_scale_percent"], 200.0)
 
     def test_invalid_short_mode_fit_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "short_mode_global_fit"):

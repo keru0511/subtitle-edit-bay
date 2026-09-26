@@ -2024,7 +2024,10 @@ Window {
             description="subtitle proposal card after audio apply",
         )
         self._click(window, discard_button)
-        self.assertIsNone(self.app._codex_proposal)
+        self.gui.wait_until(
+            lambda: self.app._codex_proposal is None,
+            description="subtitle proposal discarded from screen",
+        )
         self.assertEqual(
             (self.app._project, self.app._undo_stack, self.app._project_revision,
              self.app.projectDirty, path.read_bytes()),
@@ -2045,7 +2048,10 @@ Window {
         )
         self.assertTrue(discard_button.property("enabled"))
         self._click(window, discard_button)
-        self.assertIsNone(self.app._audio_mix_proposal)
+        self.gui.wait_until(
+            lambda: self.app._audio_mix_proposal is None,
+            description="audio proposal discarded from screen",
+        )
         self.assertEqual(
             (self.app._project, self.app._undo_stack, self.app._project_revision,
              self.app.projectDirty, path.read_bytes()),

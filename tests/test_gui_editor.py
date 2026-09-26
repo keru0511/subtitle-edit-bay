@@ -858,6 +858,39 @@ Window {
         self.assertEqual(command[command.index("--reference-track") + 1], "0:a:1")
         self.assertEqual(command[command.index("--alignment-offset-adjustment") + 1], "1.25")
 
+    def test_source_alignment_button_uses_selected_track_and_manual_offset(self) -> None:
+        video, audio, _output = self._set_ready_sources()
+        self.app._audio_tracks = [
+            {"selector": "0:a:0", "label": "0:a:0  game"},
+            {"selector": "0:a:1", "label": "0:a:1  microphone"},
+        ]
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True)
+        self.app.audioTracksChanged.emit()
+        self.app.dependenciesChanged.emit()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        self._quick_item(window, "videoAudioTrackCombo").setProperty("currentIndex", 1)
+        self._quick_item(window, "manualAlignmentOffsetField").setProperty("text", "1.250")
+        self.app.processEvents()
+
+        result = {
+            "status": "解析完了",
+            "track": "0:a:1",
+            "detected_offset": 0.5,
+            "adjustment": 1.25,
+            "offset": 1.75,
+            "score": 0.9,
+        }
+        with (
+            patch.object(self.app, "refreshDependencies"),
+            patch.object(self.app, "_calculate_alignment", return_value=result) as calculate,
+        ):
+            self._click(window, self._quick_item(window, "analyzeAlignmentButton"))
+            self.gui.wait_until(lambda: not self.app.alignmentBusy, description="同期解析の完了")
+
+        calculate.assert_called_once_with(str(video.resolve()), str(audio.resolve()), "0:a:1", 1.25)
+        self.assertEqual(self.app.alignmentResult, result)
+
     def test_existing_project_transcription_keeps_newly_selected_audio_source(self) -> None:
         _video, saved_audio, _output = self._set_ready_sources()
         project_path = self._save_default_project_for_selected_sources()

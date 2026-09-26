@@ -106,6 +106,7 @@
         "test_subtitle_layout_scoring",
         "test_subtitle_line_count",
         "test_subtitle_line_count_config",
+        "test_subtitle_packer_contracts",
         "test_subtitle_project",
         "test_subtitle_project_layout",
         "test_subtitle_project_model",

@@ -1174,6 +1174,22 @@ class ReleaseCandidateTests(TypedTestCase):
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
                 verify_preparation_binding(candidate_path, preparation_path)
 
+    def test_saved_candidate_rejects_invalid_field_types(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            candidate_path = Path(temp_dir) / "candidate.json"
+            preparation_path = Path(temp_dir) / "preparation.json"
+            for field_name, invalid_value in (
+                ("schema_version", True),
+                ("workflow_run_id", "200"),
+                ("pull_request_head_sha", None),
+            ):
+                with self.subTest(field_name=field_name):
+                    payload = {**candidate.__dict__, field_name: invalid_value}
+                    candidate_path.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaisesRegex(ReleaseCandidateError, field_name):
+                        verify_preparation_binding(candidate_path, preparation_path)
+
     def test_partial_rerun_reuses_successful_build_artifact_from_prior_attempt(self) -> None:
         prior_attempt_jobs = {
             "Classify merge candidate": 1,

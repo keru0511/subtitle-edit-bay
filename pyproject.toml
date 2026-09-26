@@ -224,6 +224,7 @@ files = [
   "tests/fake_processing_process.py",
   "scripts/check_unittest_discovery.py",
   "tests/test_unittest_discovery.py",
+  "scripts/release_candidate.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -438,6 +439,7 @@ module = [
   "tests.fake_processing_process",
   "scripts.check_unittest_discovery",
   "tests.test_unittest_discovery",
+  "scripts.release_candidate",
 ]
 strict = true
 disallow_any_explicit = true

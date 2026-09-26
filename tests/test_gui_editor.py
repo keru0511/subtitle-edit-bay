@@ -4207,6 +4207,75 @@ Window {
 
         self.gui.assert_no_messages_containing("TypeError", since=message_start)
 
+    def test_audio_mixer_works_without_main_workflow_context(self) -> None:
+        self._load_project()
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentAudioMixer.qml"
+        qml.write_text(
+            'import QtQuick\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 1600
+    height: 1000
+    visible: true
+    property var appBackend: backend
+    property bool mixerOpen: true
+    property bool renderAllowed: false
+    property int renders: 0
+    property int subtitleRequests: 0
+    property real cachedPosition: 1250
+    function stamp(seconds) { return String(seconds) }
+    Loader {
+        anchors.fill: parent
+        active: host.mixerOpen
+        sourceComponent: AudioMixerScreen {
+            appBackend: host.appBackend
+            colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+                textPrimary: "#F8FAFC", textMuted: "#94A3B8", acid: "#6366F1", amber: "#F59E0B", danger: "#EF4444"})
+            formatTimestamp: host.stamp
+            speakers: host.appBackend.subtitles.projectSpeakers
+            entryPosition: host.cachedPosition
+            timelinePixelsPerSecond: 96
+            canRender: host.renderAllowed
+            onPositionUpdated: function(positionMs) { host.cachedPosition = positionMs }
+            onRenderRequested: host.renders += 1
+            onSubtitleEditorRequested: host.subtitleRequests += 1
+            onCloseRequested: host.mixerOpen = false
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml, width=1600, height=1000)
+        self.assertEqual(self._quick_item(window, "mixerSequence").property("pixelsPerSecond"), 96)
+        self.assertEqual(self._quick_item(window, "mixerContent").property("initialPosition"), 1250)
+        channel_list = self._quick_item(window, "mixerChannelList")
+        strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
+        muted_before = self.app.audioMixerChannels[0]["muted"]
+        self._click(window, self._quick_visual_item(strip, "mixerMuteButton"))
+        self.assertEqual(self.app.audioMixerChannels[0]["muted"], not muted_before)
+        strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
+        fader = self._quick_visual_item(strip, "mixerChannelFader")
+        fader.setProperty("value", -6)
+        self.assertTrue(QMetaObject.invokeMethod(fader, "moved"))
+        self.assertAlmostEqual(self.app.audioMixerChannels[0]["volume_percent"], 50.1187, places=2)
+        render_button = self._quick_item(window, "mixerRenderButton")
+        self.assertFalse(render_button.isEnabled())
+        window.setProperty("renderAllowed", True)
+        self._click(window, render_button)
+        self.assertEqual(window.property("renders"), 1)
+        self._click(window, self._quick_item(window, "mixerToEditorButton"))
+        self.assertEqual(window.property("subtitleRequests"), 1)
+        self._click(window, self._quick_item(window, "mixerBackButton"))
+        self.gui.wait_until(lambda: window.findChild(QObject, "mixerContent") is None,
+                            description="独立ミキサーの破棄")
+        window.setProperty("mixerOpen", True)
+        self.gui.wait_until(lambda: window.findChild(QObject, "mixerContent") is not None,
+                            description="独立ミキサーの再生成")
+        self.assertAlmostEqual(self.app.audioMixerChannels[0]["volume_percent"], 50.1187, places=2)
+        self.assertEqual(self._quick_item(window, "mixerSequence").property("pixelsPerSecond"), 96)
+
     def test_qml_mixer_close_does_not_run_callbacks_in_destroyed_context(self) -> None:
         self._load_project()
         message_start = len(self.gui.messages)

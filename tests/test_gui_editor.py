@@ -312,6 +312,41 @@ Window {
     def _click(self, window: QObject, item: QQuickItem) -> None:
         self.gui.click(window, item)
 
+    def _click_short_clip_control(self, window: QObject, clip_list: QQuickItem, name: str) -> QQuickItem:
+        for _ in range(4):
+            control = self._quick_visual_item(clip_list, name)
+            top = control.mapToScene(QPointF(0, 0)).y()
+            bottom = control.mapToScene(QPointF(0, control.height())).y()
+            visible_top = max(0.0, clip_list.mapToScene(QPointF(0, 0)).y())
+            visible_bottom = min(window.height(), clip_list.mapToScene(QPointF(0, clip_list.height())).y())
+            center = (top + bottom) / 2
+            if visible_top + 5 <= center <= visible_bottom - 5:
+                self._assert_quick_item_within(window.contentItem(), control)
+                self._click(window, control)
+                return control
+            delta = bottom - visible_bottom + 8 if bottom > visible_bottom else top - visible_top - 8
+            self.gui.set_property(
+                clip_list,
+                "contentY",
+                min(
+                    max(0.0, float(clip_list.property("contentY")) + delta),
+                    max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+                ),
+            )
+        self.fail(
+            f"{name} を画面内に表示できません: control={top:.1f}-{bottom:.1f}, "
+            f"view={visible_top:.1f}-{visible_bottom:.1f}, "
+            f"contentY={clip_list.property('contentY')}, "
+            f"contentHeight={clip_list.property('contentHeight')}, height={clip_list.height()}"
+        )
+
+    def _replace_focused_time(self, window: QObject, field: QQuickItem, value: str) -> None:
+        self.assertTrue(field.hasActiveFocus(), field.objectName())
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in value:
+            QTest.keyClick(window, Qt.Key.Key_Period if char == "." else Qt.Key(ord(char)))
+        self.assertEqual(field.property("text"), value)
+
     def _assert_quick_item_within(self, container: QQuickItem, item: QQuickItem) -> None:
         self.gui.assert_item_within(container, item)
 
@@ -8679,12 +8714,16 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         source_combo = self._quick_item(window, "shortModeClipSourceCombo")
-        source_combo.setProperty("currentIndex", 1)
+        self._click(window, source_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(source_combo.property("currentValue"), "range")
         start_field = self._quick_item(window, "shortModeRangeStartField")
         end_field = self._quick_item(window, "shortModeRangeEndField")
-        start_field.setProperty("text", "0.250")
-        end_field.setProperty("text", "0.750")
-        self.app.processEvents()
+        self._click(window, start_field)
+        self._replace_focused_time(window, start_field, "0.250")
+        self._click(window, end_field)
+        self._replace_focused_time(window, end_field, "0.750")
 
         add_button = self._quick_item(window, "shortModeAddClipButton")
         self.assertTrue(add_button.property("enabled"))
@@ -8698,10 +8737,18 @@ Window {
         self._load_project(
             segments=[
                 {
-                    "id": "subtitle-segment",
+                    "id": "first-subtitle-segment",
                     "start": 1.0,
                     "end": 3.0,
-                    "text": "字幕の範囲",
+                    "text": "最初の字幕",
+                    "speaker": "Speaker_Alice",
+                    "words": [],
+                },
+                {
+                    "id": "second-subtitle-segment",
+                    "start": 4.0,
+                    "end": 6.0,
+                    "text": "選択する字幕",
                     "speaker": "Speaker_Alice",
                     "words": [],
                 }
@@ -8713,13 +8760,17 @@ Window {
         segment_combo = self._quick_item(window, "shortModeSegmentCombo")
         add_button = self._quick_item(window, "shortModeAddClipButton")
 
-        self.assertEqual(segment_combo.property("currentValue"), "subtitle-segment")
-        self.assertEqual(segment_combo.property("displayText"), "字幕の範囲")
+        self.assertEqual(segment_combo.property("currentValue"), "first-subtitle-segment")
+        self._click(window, segment_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(segment_combo.property("currentValue"), "second-subtitle-segment")
+        self.assertEqual(segment_combo.property("displayText"), "選択する字幕")
         self.assertTrue(add_button.property("enabled"))
         self._click(window, add_button)
 
-        self.assertEqual(len(self.app.shortVideoClips), 2)
-        self.assertEqual(self.app.shortVideoClips[-1]["segment_id"], "subtitle-segment")
+        self.assertEqual(len(self.app.shortVideoClips), 3)
+        self.assertEqual(self.app.shortVideoClips[-1]["segment_id"], "second-subtitle-segment")
 
     def test_short_mode_fit_combo_updates_its_delegate_clip(self) -> None:
         self._load_project(
@@ -8746,10 +8797,9 @@ Window {
             lambda: any(item.objectName() == "shortModeClipItem3" for item in self.gui.visual_items(clip_list)),
             description="fourth short clip delegate",
         )
-        delegate = self.gui.find_visual_item(clip_list, "shortModeClipItem3")
-        fit_combo = self.gui.find_visual_item(delegate, "shortModeFitCombo3")
-        self.gui.set_property(fit_combo, "currentIndex", 1)
-        self.gui.emit_signal(fit_combo, "activated", 1)
+        self._click_short_clip_control(window, clip_list, "shortModeFitCombo3")
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
 
         clips = self.app._project["short_video"]["clips"]
         self.assertNotEqual(clips[1].get("fit"), "contain")
@@ -8780,9 +8830,10 @@ Window {
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         start_field = self._quick_item(window, "shortModeRangeStartField")
         end_field = self._quick_item(window, "shortModeRangeEndField")
-        start_field.setProperty("text", "0.250")
-        end_field.setProperty("text", "1.500")
-        self.app.processEvents()
+        self._click(window, start_field)
+        self._replace_focused_time(window, start_field, "0.250")
+        self._click(window, end_field)
+        self._replace_focused_time(window, end_field, "1.500")
         add_button = self._quick_item(window, "shortModeAddClipButton")
         self.assertTrue(add_button.property("enabled"))
         self._click(window, add_button)
@@ -10659,7 +10710,7 @@ Window {
         self.assertTrue(self.app.projectDirty)
 
     def test_short_mode_clip_mutation_controls_dispatch_runtime_actions(self) -> None:
-        self._load_project(
+        project_path = self._load_project(
             segments=[
                 {
                     "id": f"runtime-clip-{index}",
@@ -10675,37 +10726,6 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         clip_list = self._quick_item(window, "shortModeClipListView")
-
-        def click_visible_clip_button(name: str) -> None:
-            for _ in range(3):
-                button = self._quick_visual_item(clip_list, name)
-                top = button.mapToScene(QPointF(0, 0)).y()
-                bottom = button.mapToScene(QPointF(0, button.height())).y()
-                visible_top = clip_list.mapToScene(QPointF(0, 0)).y()
-                visible_bottom = min(
-                    window.height(),
-                    clip_list.mapToScene(QPointF(0, clip_list.height())).y(),
-                )
-                center = (top + bottom) / 2
-                if visible_top + 5 <= center <= visible_bottom - 5:
-                    self._assert_quick_item_within(window.contentItem(), button)
-                    self._click(window, button)
-                    return
-                delta = bottom - visible_bottom + 8 if bottom > visible_bottom else top - visible_top - 8
-                self.gui.set_property(
-                    clip_list, "contentY",
-                    min(
-                        max(0.0, float(clip_list.property("contentY")) + delta),
-                        max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
-                    ),
-                )
-            self.fail(
-                f"{name} を画面内に表示できません: button={top:.1f}-{bottom:.1f}, "
-                f"view={visible_top:.1f}-{visible_bottom:.1f}, "
-                f"contentY={clip_list.property('contentY')}, "
-                f"contentHeight={clip_list.property('contentHeight')}, height={clip_list.height()}"
-            )
-
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField0") is not None,
             description="short clip delegate creation",
@@ -10758,24 +10778,22 @@ Window {
             description="first short clip delegate visibility",
         )
 
-        start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
-        start_field.forceActiveFocus()
-        start_field.setProperty("text", "0.250")
-        self.gui.emit_signal(start_field, "editingFinished")
+        start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
+        self._replace_focused_time(window, start_field, "0.250")
+        QTest.keyClick(window, Qt.Key.Key_Return)
         self.assertAlmostEqual(self.app.shortVideoClips[0]["start"], 0.25)
 
-        end_field = self._quick_visual_item(clip_list, "shortModeEndTimeField0")
-        end_field.forceActiveFocus()
-        end_field.setProperty("text", "0.750")
-        self.gui.emit_signal(end_field, "editingFinished")
+        end_field = self._click_short_clip_control(window, clip_list, "shortModeEndTimeField0")
+        self._replace_focused_time(window, end_field, "0.750")
+        QTest.keyClick(window, Qt.Key.Key_Return)
         self.assertAlmostEqual(self.app.shortVideoClips[0]["end"], 0.75)
 
-        fit_combo = self._quick_visual_item(clip_list, "shortModeFitCombo0")
-        fit_combo.setProperty("currentIndex", 1)
-        self.gui.emit_signal(fit_combo, "activated", 1)
+        self._click_short_clip_control(window, clip_list, "shortModeFitCombo0")
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
         self.assertEqual(self.app.shortVideoClips[0]["fit"], "contain")
 
-        click_visible_clip_button("shortModeMoveDownButton0")
+        self._click_short_clip_control(window, clip_list, "shortModeMoveDownButton0")
         self.gui.wait_until(
             lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
             == ["runtime-clip-1", "runtime-clip-0", "runtime-clip-2"],
@@ -10787,7 +10805,7 @@ Window {
             lambda: self.gui.find_visual_item(clip_list, "shortModeMoveUpButton1") is not None,
             description="reordered second short clip visibility",
         )
-        click_visible_clip_button("shortModeMoveUpButton1")
+        self._click_short_clip_control(window, clip_list, "shortModeMoveUpButton1")
         self.gui.wait_until(
             lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
             == ["runtime-clip-0", "runtime-clip-1", "runtime-clip-2"],
@@ -10802,12 +10820,17 @@ Window {
             lambda: self.gui.find_visual_item(clip_list, "shortModeDeleteButton2") is not None,
             description="third short clip delegate visibility",
         )
-        click_visible_clip_button("shortModeDeleteButton2")
+        self._click_short_clip_control(window, clip_list, "shortModeDeleteButton2")
         self.gui.wait_until(
             lambda: [clip["segment_id"] for clip in self.app.shortVideoClips]
             == ["runtime-clip-0", "runtime-clip-1"],
             description="short clip delete dispatch",
         )
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved_clips = load_project(project_path)["short_video"]["clips"]
+        self.assertEqual([clip["segment_id"] for clip in saved_clips], ["runtime-clip-0", "runtime-clip-1"])
+        self.assertEqual((saved_clips[0]["start"], saved_clips[0]["end"], saved_clips[0]["fit"]), (0.25, 0.75, "contain"))
 
 
 if __name__ == "__main__":

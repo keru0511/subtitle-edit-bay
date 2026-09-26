@@ -304,6 +304,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_detail_fields_save_pending_input_and_reload
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_shortcuts_preserve_pending_input_during_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_empty_short_mode_gui_adds_range_clip_and_enables_export
           tests.test_gui_editor.GuiEditorRegressionTests.test_error_copy_preserves_failure_after_settings_save_and_drains_output
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_back_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_ime_committed_text_is_saved
@@ -331,6 +332,9 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_clip_initialization_is_locked_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_background_color_dialog_applies_selected_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_clip_mutation_controls_dispatch_runtime_actions
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_fit_combo_updates_its_delegate_clip
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_gui_adds_direct_range_clip_when_segments_exist
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_segment_picker_uses_the_subtitle_model
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_popup_drop_target_imports_video
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_relink_is_locked_during_processing_and_recovers

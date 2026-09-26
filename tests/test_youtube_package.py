@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from src.data_boundary import decode_json, is_object_list, is_object_mapping
 from src.thumbnail_candidates import build_contact_sheet_command, build_thumbnail_command, rank_thumbnail_candidates
 from src.youtube_package import (
     Chapter,
@@ -21,7 +21,7 @@ from src.youtube_package import (
 from tests.typed_case import TypedTestCase
 
 
-def _project():
+def _project() -> dict[str, object]:
     return {
         "revision": 12,
         "title": "default",
@@ -37,8 +37,11 @@ def _project():
 
 
 class YouTubePackageTests(TypedTestCase):
-    def test_package_reuses_text_and_supports_chapter_edits(self):
-        chapters = add_chapter(_project()["chapters"], Chapter("main", 10, "本編"))
+    def test_package_reuses_text_and_supports_chapter_edits(self) -> None:
+        raw_chapters = _project()["chapters"]
+        if not is_object_list(raw_chapters):
+            raise AssertionError("fixture chapters must be a list")
+        chapters = add_chapter(raw_chapters, Chapter("main", 10, "本編"))
         chapters = rename_chapter(chapters, "main", "本編 改訂")
         chapters = adjust_chapter(chapters, "main", 12)
         chapters = delete_chapter(chapters, "intro")
@@ -54,7 +57,9 @@ class YouTubePackageTests(TypedTestCase):
             output = Path(temp_dir) / "投稿用 日本語"
             write_post_package(_project(), output, settings={"style": "default"})
             self.assertTrue((output / "manifest.json").exists())
-            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            manifest = decode_json((output / "manifest.json").read_text(encoding="utf-8"))
+            if not is_object_mapping(manifest):
+                raise AssertionError("manifest must be an object")
             self.assertFalse(manifest["upload_performed"])
             with self.assertRaises(YouTubePackageError):
                 write_post_package(_project(), output, settings={"style": "default"})
@@ -63,7 +68,7 @@ class YouTubePackageTests(TypedTestCase):
             replace_calls = 0
             real_replace = os.replace
 
-            def fail_install(source, destination):
+            def fail_install(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
                 nonlocal replace_calls
                 replace_calls += 1
                 if replace_calls == 2:
@@ -72,10 +77,12 @@ class YouTubePackageTests(TypedTestCase):
 
             with patch("src.youtube_package.os.replace", side_effect=fail_install):
                 with self.assertRaises(OSError):
-                    write_post_package(_project() | {"revision": 13}, output, settings={"style": "default"}, overwrite=True)
+                    write_post_package(
+                        _project() | {"revision": 13}, output, settings={"style": "default"}, overwrite=True
+                    )
             self.assertEqual((output / "package.json").read_text(encoding="utf-8"), original_package)
 
-    def test_chapter_validation_rejects_duplicate_or_invalid_values(self):
+    def test_chapter_validation_rejects_duplicate_or_invalid_values(self) -> None:
         with self.assertRaises(YouTubePackageError):
             build_post_package(
                 _project(),
@@ -87,7 +94,13 @@ class YouTubePackageTests(TypedTestCase):
         with self.assertRaises(YouTubePackageError):
             build_post_package(_project(), chapters=[{"id": "a", "start": 60, "title": "A"}])
 
-    def test_thumbnail_ranking_and_commands_are_local_only(self):
+    def test_package_rejects_malformed_project_collections(self) -> None:
+        with self.assertRaisesRegex(YouTubePackageError, "chapters must be iterable"):
+            build_post_package(_project() | {"chapters": 1})
+        with self.assertRaisesRegex(YouTubePackageError, "keywords must be iterable"):
+            build_post_package(_project() | {"youtube_text": {"keywords": 1}})
+
+    def test_thumbnail_ranking_and_commands_are_local_only(self) -> None:
         ranked = rank_thumbnail_candidates(
             [
                 {"candidate_id": "dark", "highlight_score": 0.9, "brightness": 0.02},

@@ -15,7 +15,7 @@ from .ffmpeg_filter_script import (
     LEGACY_FILTER_SCRIPT_OPTION,
     detect_filter_complex_script_option,
 )
-from .media_probe import probe_media_duration
+from .media_probe import probe_media_duration as probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
 

@@ -15,6 +15,33 @@ from tests.typed_case import TypedTestCase
 
 
 class BatchTests(TypedTestCase):
+    def test_main_preserves_nullable_config_values(self) -> None:
+        import sys
+
+        import src.batch as batch
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir) / "input"
+            input_dir.mkdir()
+            (input_dir / "game.mp4").touch()
+            argv = ["batch", "--input-dir", str(input_dir), "--output-dir", str(Path(temp_dir) / "output"), "--run"]
+            config = {"language": None, "min_speakers": None, "max_speakers": None, "op_file": None, "ed_file": None}
+            captured: dict[str, object] = {}
+
+            def capture_process_video(*args: object, **kwargs: object) -> Path:
+                captured.update(kwargs)
+                return Path(temp_dir) / "result.mp4"
+
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(batch, "load_command_runtime_config", return_value=config),
+                mock.patch.object(batch, "process_video", side_effect=capture_process_video),
+            ):
+                batch.main()
+
+            for key in config:
+                self.assertIsNone(captured[key])
+
     def test_iter_video_files_filters_and_sorts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

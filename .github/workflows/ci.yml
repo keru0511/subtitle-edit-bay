@@ -336,6 +336,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_progress_and_codex_controls_remain_clickable_together
           tests.test_gui_editor.GuiEditorRegressionTests.test_qml_update_dialog_flow
           tests.test_gui_editor.GuiEditorRegressionTests.test_qml_settings_round_trip_and_expanded_popup_fit
+          tests.test_gui_editor.GuiEditorRegressionTests.test_render_quality_normalization_and_lufs_save_from_settings_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_qml_source_popup_and_editor_toolbar_are_clickable_at_minimum_size
           tests.test_gui_editor.GuiEditorRegressionTests.test_project_speaker_color_dialog_applies_and_cancel_preserves_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_sequence_clip_card_drag_cancel_restores_position

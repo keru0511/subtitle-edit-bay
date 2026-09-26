@@ -4077,6 +4077,48 @@ Window {
         self._click(window, self._quick_item(window, "settingsPopupCloseButton"))
         self.assertFalse(window.property("settingsExpanded"))
 
+    def test_render_quality_normalization_and_lufs_save_from_settings_screen(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        self._click(window, self._quick_item(window, "settingsToggleButton"))
+        scroll_view = self._quick_item(window, "advancedSettingsScrollView")
+        flickable = scroll_view.property("contentItem")
+        self.assertIsNotNone(flickable)
+        self.gui.set_property(
+            flickable, "contentY",
+            max(0.0, float(flickable.property("contentHeight")) - float(flickable.property("height"))),
+        )
+        quality = self._quick_item(window, "qualitySpin")
+        self._assert_quick_item_within(scroll_view, quality)
+        initial_quality = int(quality.property("value"))
+        increase = quality.mapToScene(QPointF(quality.width() - 8, quality.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
+        self.assertEqual(quality.property("value"), initial_quality + 1)
+
+        normalize = self._quick_item(window, "normalizeSwitch")
+        self._assert_quick_item_within(scroll_view, normalize)
+        self._click(window, normalize)
+        self.assertFalse(normalize.property("checked"))
+
+        lufs = self._quick_item(window, "lufsField")
+        self._assert_quick_item_within(scroll_view, lufs)
+        self._click(window, lufs)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for key in (Qt.Key.Key_Minus, Qt.Key.Key_1, Qt.Key.Key_8):
+            QTest.keyClick(window, key)
+        self.assertEqual(lufs.property("text"), "-18")
+        self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
+
+        self.assertEqual(self.app.settings["nvenc_cq"], initial_quality + 1)
+        self.assertEqual(self.app.settings["x264_crf"], initial_quality + 1)
+        self.assertFalse(self.app.settings["audio_normalize"])
+        self.assertEqual(self.app.settings["audio_target_lufs"], -18)
+        config = json.loads(Path(self.app.gui_config_path).read_text(encoding="utf-8"))
+        self.assertEqual(config["shared"]["nvenc_cq"], initial_quality + 1)
+        self.assertFalse(config["craig_pipeline"]["audio_normalize"])
+        self.assertEqual(config["craig_pipeline"]["audio_target_lufs"], -18)
+
     def test_settings_reject_blank_numeric_draft_and_allow_retry(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -5821,6 +5863,9 @@ Window {
 
     def test_workspace_subtitle_time_speaker_font_and_size_are_saved(self) -> None:
         path = self._load_project()
+        original_font_choices = self.app._font_choices
+        self.addCleanup(setattr, self.app, "_font_choices", original_font_choices)
+        self.app._font_choices = build_font_choices(["Test Font A", "Test Font B"])
         _, window = self._load_qml()
         self.gui.resize(window, 1520, 940)
         settings = self._quick_item(window, "workspaceSubtitleSettings")
@@ -5840,7 +5885,7 @@ Window {
             )
 
             font = self._quick_visual_item(settings, "workspaceSubtitleFontCombo")
-            self.assertGreater(font.property("count"), 1)
+            self.assertEqual(font.property("count"), 3)
             self._click(window, font)
             QTest.keyClick(window, Qt.Key.Key_Down)
             QTest.keyClick(window, Qt.Key.Key_Return)
@@ -5849,6 +5894,7 @@ Window {
                 description="通常画面のフォント選択",
             )
             expected_font = self.app.segmentAt(0)["subtitle_font_family"]
+            self.assertEqual(expected_font, "Test Font A")
 
             size = self._quick_visual_item(settings, "workspaceSubtitleSizeSpin")
             self.assertEqual(size.property("value"), 100)
@@ -11168,6 +11214,10 @@ Window {
         zoom_slider = self._quick_item(window, "sequenceTimelineZoomSlider")
         zoom_label = self._quick_item(window, "sequenceTimelineZoomLabel")
         self.gui.wait_until(timeline_clip.isVisible, description="zoomable timeline clip")
+        self.gui.wait_until(
+            lambda: playhead_slider.width() >= 950,
+            description="sequence playhead slider layout",
+        )
         self._drag_slider(window, playhead_slider, 0.6)
         self.gui.wait_until(
             lambda: self.app.sequencePlayhead["outputMs"] >= 4_000,

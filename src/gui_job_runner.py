@@ -108,13 +108,11 @@ class GuiJobRunner(QObject):
         expected_job_id = self._active_job_id
         self._cancel_process_id = expected_process_id
         stop_process(self._process, expected_process_id)
-        QTimer.singleShot(
-            5000,
-            lambda process_id=expected_process_id, active_job_id=expected_job_id: self.kill_if_running(
-                process_id,
-                job_id=active_job_id,
-            ),
-        )
+
+        def kill_stale_process() -> bool:
+            return self.kill_if_running(expected_process_id, job_id=expected_job_id)
+
+        QTimer.singleShot(5000, kill_stale_process)
         return True
 
     def kill_if_running(
@@ -134,7 +132,7 @@ class GuiJobRunner(QObject):
         return True
 
     def _read_process_output(self) -> None:
-        data = bytes(self._process.readAllStandardOutput()).decode(
+        data = bytes(self._process.readAllStandardOutput().data()).decode(
             "utf-8",
             errors="replace",
         )
@@ -149,10 +147,7 @@ class GuiJobRunner(QObject):
 
     def _on_error(self, error: QProcess.ProcessError) -> None:
         self.errorOccurred.emit(error)
-        if (
-            self._process.state() == QProcess.ProcessState.NotRunning
-            and not self._cancel_requested
-        ):
+        if self._process.state() == QProcess.ProcessState.NotRunning and not self._cancel_requested:
             job_id = self._active_job_id
             if job_id:
                 self._last_job_id = job_id
@@ -166,13 +161,7 @@ class GuiJobRunner(QObject):
         job_id = self._active_job_id
         if not job_id:
             return
-        outcome = (
-            "canceled"
-            if self._cancel_requested
-            else "completed"
-            if exit_code == 0
-            else "error"
-        )
+        outcome = "canceled" if self._cancel_requested else "completed" if exit_code == 0 else "error"
         self._last_job_id = job_id
         self.finished.emit(exit_code, exit_status)
         self.terminal.emit(outcome, int(exit_code), job_id)

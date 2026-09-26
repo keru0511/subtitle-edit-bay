@@ -25,15 +25,18 @@ class RunnerProbe(QObject):
         self.finished: list[tuple[int, object]] = []
         self.errors: list[object] = []
         self.terminals: list[tuple[str, int, str]] = []
+
+        def on_finished(code: int, status: object) -> None:
+            self.finished.append((code, status))
+
+        def on_terminal(outcome: str, code: int, job_id: str) -> None:
+            self.terminals.append((outcome, code, job_id))
+
         runner.outputReceived.connect(self.outputs.append)
         runner.machineProgress.connect(self.progress.append)
-        runner.finished.connect(lambda code, status: self.finished.append((int(code), status)))
+        runner.finished.connect(on_finished)
         runner.errorOccurred.connect(self.errors.append)
-        runner.terminal.connect(
-            lambda outcome, code, job_id: self.terminals.append(
-                (str(outcome), int(code), str(job_id))
-            )
-        )
+        runner.terminal.connect(on_terminal)
 
 
 def _application() -> QCoreApplication:
@@ -43,11 +46,11 @@ def _application() -> QCoreApplication:
     return application
 
 
-def _wait_for(application: QCoreApplication, predicate: object, timeout: float = 3.0) -> None:
+def _wait_for(application: QCoreApplication, predicate: Callable[[], bool], timeout: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         application.processEvents()
-        if callable(predicate) and predicate():
+        if predicate():
             return
         time.sleep(0.01)
     raise AssertionError("Qt event loop wait timed out")
@@ -122,11 +125,12 @@ class GuiJobRunnerTests(TypedTestCase):
         probe = RunnerProbe(runner)
         scheduled_callbacks: list[tuple[int, Callable[[], bool]]] = []
 
+        def capture_timer(interval: int, callback: Callable[[], bool]) -> None:
+            scheduled_callbacks.append((interval, callback))
+
         with patch(
             "src.gui_job_runner.QTimer.singleShot",
-            side_effect=lambda interval, callback: scheduled_callbacks.append(
-                (int(interval), callback)
-            ),
+            side_effect=capture_timer,
         ):
             self.assertTrue(
                 runner.start(

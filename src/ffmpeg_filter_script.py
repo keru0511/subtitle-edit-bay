@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 from functools import lru_cache
+from typing import Callable, Protocol, cast
 
 
 LEGACY_FILTER_SCRIPT_OPTION = "-filter_complex_script"
@@ -18,6 +19,16 @@ _NIGHTLY_VERSION_RE = re.compile(
 
 class FFmpegFilterScriptCompatibilityError(RuntimeError):
     """Raised when a safe filter script option cannot be selected."""
+
+
+class _CachedDetector(Protocol):
+    def __call__(self) -> str: ...
+
+    def cache_clear(self) -> None: ...
+
+
+def _cache_detector(detector: Callable[[], str]) -> _CachedDetector:
+    return cast(_CachedDetector, lru_cache(maxsize=1)(detector))
 
 
 def _ffmpeg_major_version(version_output: str) -> int | None:
@@ -44,20 +55,18 @@ def filter_complex_script_option(version_output: str) -> str:
     if major_version is None:
         raise _compatibility_error("FFmpeg のバージョンを判定できませんでした。")
     if major_version < MINIMUM_SUPPORTED_FFMPEG_MAJOR:
-        raise _compatibility_error(
-            f"FFmpeg {major_version} はフィルタースクリプトのサポート対象外です。"
-        )
+        raise _compatibility_error(f"FFmpeg {major_version} はフィルタースクリプトのサポート対象外です。")
     if major_version >= 7:
         return MODERN_FILTER_SCRIPT_OPTION
     return LEGACY_FILTER_SCRIPT_OPTION
 
 
-@lru_cache(maxsize=1)
+@_cache_detector
 def detect_filter_complex_script_option() -> str:
     """Detect the local FFmpeg option and provide actionable failures."""
 
     try:
-        process = subprocess.Popen(
+        process: subprocess.Popen[str] = subprocess.Popen(
             ["ffmpeg", "-version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -69,12 +78,10 @@ def detect_filter_complex_script_option() -> str:
     except OSError as error:
         raise _compatibility_error(f"FFmpeg を起動できませんでした: {error}") from error
 
-    if process.returncode != 0:
+    if process.wait() != 0:
         first_line = next(
             (line.strip() for line in version_output.splitlines() if line.strip()),
             "出力なし",
         )
-        raise _compatibility_error(
-            f"FFmpeg のバージョン確認に失敗しました ({first_line})。"
-        )
+        raise _compatibility_error(f"FFmpeg のバージョン確認に失敗しました ({first_line})。")
     return filter_complex_script_option(version_output)

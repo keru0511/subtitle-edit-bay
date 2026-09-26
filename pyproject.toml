@@ -163,6 +163,12 @@ files = [
   "tests/fake_transcription_process.py",
   "tests/test_runtime_activation.py",
   "tests/test_audio_auto_mix.py",
+  "src/ffmpeg_execution.py",
+  "src/ffmpeg_filter_script.py",
+  "src/burn_subs.py",
+  "tests/test_burn_subs.py",
+  "src/runtime_dependencies.py",
+  "tests/test_runtime_dependencies.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -315,6 +321,12 @@ module = [
   "tests.fake_transcription_process",
   "tests.test_runtime_activation",
   "tests.test_audio_auto_mix",
+  "src.ffmpeg_execution",
+  "src.ffmpeg_filter_script",
+  "src.burn_subs",
+  "tests.test_burn_subs",
+  "src.runtime_dependencies",
+  "tests.test_runtime_dependencies",
 ]
 strict = true
 disallow_any_explicit = true

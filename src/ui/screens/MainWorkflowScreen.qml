@@ -1274,95 +1274,19 @@ ApplicationWindow {
         }
 
 
-        Rectangle {
+        WorkspaceInspectorPanel {
             id: modeSettingsSlot
-            objectName: "modeSettingsSlot"
-            visible: root.appBackend.projectLoaded
+            projectLoaded: root.appBackend.projectLoaded
+            selectedTab: root.inspectorTab
+            settingsContent: root.modeSettingsContent
+            colors: root.subtitleEditorColors
             Layout.preferredWidth: root.width >= 1400 ? 300 : 250
             Layout.minimumWidth: 200
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            radius: 12
-            color: root.panel
-            border.color: root.border
-            clip: true
-
-            Rectangle {
-                id: inspectorTabBar
-                objectName: "inspectorTabBar"
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: 44
-                color: root.panel
-                border.color: root.border
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 4
-
-                    Button {
-                        id: inspectorSettingsTabButton
-                        objectName: "inspectorSettingsTabButton"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        text: "編集プロパティ"
-                        onClicked: root.inspectorTab = "settings"
-                        contentItem: Text {
-                            text: inspectorSettingsTabButton.text
-                            color: root.inspectorTab === "settings" ? "#FFFFFF" : root.textMuted
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 7
-                            color: root.inspectorTab === "settings" ? root.raised : "transparent"
-                            border.color: root.inspectorTab === "settings" ? root.border : "transparent"
-                        }
-                    }
-                    Button {
-                        id: inspectorCodexTabButton
-                        objectName: "inspectorCodexTabButton"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        text: "AI Codex"
-                        onClicked: root.inspectorTab = "codex"
-                        contentItem: Text {
-                            text: inspectorCodexTabButton.text
-                            color: root.inspectorTab === "codex" ? "#FFFFFF" : root.textMuted
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 7
-                            color: root.inspectorTab === "codex" ? root.raised : "transparent"
-                            border.color: root.inspectorTab === "codex" ? root.border : "transparent"
-                        }
-                    }
-                }
-            }
-
-            Loader {
-                id: modeSettingsContentLoader
-                objectName: "modeSettingsContentLoader"
-                anchors.top: inspectorTabBar.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                visible: root.inspectorTab === "settings"
-                active: root.appBackend.projectLoaded && root.modeSettingsContent !== null
-                sourceComponent: root.modeSettingsContent
-            }
-
+            onTabRequested: function(tab) { root.inspectorTab = tab }
         }
 
     }
@@ -1578,7 +1502,7 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: root.loginInInspector ? 0 : 10
-        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height : 10
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight : 10
         width: root.loginInInspector ? parent.width : root.codexSidebarWidth
         visible: root.codexAuthenticated
             && (root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen)
@@ -1613,7 +1537,7 @@ ApplicationWindow {
         parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "aiProviderLoginCombo"
         anchors.top: parent.top
-        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight + 12 : 12
         anchors.left: parent.left
         anchors.margins: 12
         width: 108
@@ -1654,7 +1578,7 @@ ApplicationWindow {
         parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "aiProviderAuthHint"
         anchors.top: parent.top
-        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight + 12 : 12
         anchors.left: parent.left
         anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
         width: 240
@@ -1679,7 +1603,7 @@ ApplicationWindow {
         parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "codexLoginRoute"
         anchors.top: parent.top
-        anchors.topMargin: root.loginInInspector ? inspectorTabBar.height + 12 : 12
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight + 12 : 12
         anchors.left: parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92

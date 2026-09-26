@@ -698,6 +698,68 @@ Window {
         self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "settingsPopupCloseButton"), "clicked"))
         self.gui.wait_until(lambda: not popup.property("visible"), description="処理設定を閉じる")
 
+    def test_workspace_inspector_works_without_main_workflow_context(self) -> None:
+        components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
+        qml = self.root / "IndependentWorkspaceInspector.qml"
+        qml.write_text(
+            'import QtQuick\nimport "' + components.as_uri() + '"\n' + """
+Window {
+    id: host
+    width: 400
+    height: 500
+    visible: true
+    property string selectedTab: "settings"
+    property bool projectLoaded: true
+    property int tabRequests: 0
+    Component {
+        id: settingsPane
+        Rectangle { objectName: "independentInspectorSettings"; color: "#1A2332" }
+    }
+    WorkspaceInspectorPanel {
+        id: inspector
+        x: 12
+        y: 12
+        width: 300
+        height: 400
+        colors: ({panel: "#131A26", raised: "#1A2332", border: "#243044",
+            textMuted: "#94A3B8"})
+        projectLoaded: host.projectLoaded
+        selectedTab: host.selectedTab
+        settingsContent: settingsPane
+        onTabRequested: function(tab) { host.selectedTab = tab; host.tabRequests += 1 }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, window = self.gui.load_qml(qml)
+        panel = self._quick_item(window, "modeSettingsSlot")
+        loader = self._quick_item(window, "modeSettingsContentLoader")
+        self.assertTrue(panel.isVisible())
+        self.assertEqual(panel.property("tabBarHeight"), 44)
+        self.assertTrue(loader.property("active"))
+        self.assertTrue(loader.isVisible())
+        self.assertIsNotNone(self._quick_item(window, "independentInspectorSettings"))
+
+        self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "inspectorCodexTabButton"), "clicked"))
+        self.assertEqual(window.property("selectedTab"), "codex")
+        self.assertEqual(window.property("tabRequests"), 1)
+        self.assertFalse(loader.isVisible())
+        self.assertTrue(loader.property("active"))
+        self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "inspectorSettingsTabButton"), "clicked"))
+        self.assertEqual(window.property("selectedTab"), "settings")
+        self.assertTrue(loader.isVisible())
+        self.assertEqual(window.property("tabRequests"), 2)
+
+        window.setProperty("projectLoaded", False)
+        self.app.processEvents()
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(loader.property("active"))
+        window.setProperty("projectLoaded", True)
+        self.app.processEvents()
+        self.assertTrue(panel.isVisible())
+        self.assertTrue(loader.property("active"))
+
     def test_source_settings_popup_works_without_main_workflow_context(self) -> None:
         path, _, _ = self._make_project()
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]

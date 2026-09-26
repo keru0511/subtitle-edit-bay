@@ -372,6 +372,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_settings_controls_save_round_trip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_sliders_follow_full_drag_and_save
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_editors_work_without_main_workflow_context
+          tests.test_gui_editor.GuiEditorRegressionTests.test_failed_source_change_restores_clean_project_state
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_audio_add_remove_clear_buttons_save_selected_sources
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_change_keeps_unsaved_project_when_save_fails

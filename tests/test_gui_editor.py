@@ -1105,6 +1105,43 @@ Window {
                     self.assertEqual(self.app.stage, "ERROR")
                     self.assertIn("保存を拒否", self.app.status)
 
+    def test_failed_source_change_restores_clean_project_state(self) -> None:
+        path, _video, _audio = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        original_project = deepcopy(self.app._project)
+        original_selection = deepcopy(self.app.sourceSelection)
+        saved_bytes = path.read_bytes()
+        self.assertFalse(self.app.projectDirty)
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
+        self._click(window, self._quick_item(window, "sourceAudioClearButton"))
+        alternate_output = self.root / "alternate-output"
+        alternate_output.mkdir()
+        output_button = self._quick_item(window, "videoOutputDirectoryButton")
+        viewport = self._quick_item(window, "sourceSettingsScrollView").property("contentItem")
+        button_top = output_button.mapToItem(viewport, QPointF()).y()
+        viewport.setProperty("contentY", max(0.0, float(viewport.property("contentY")) + button_top - 20.0))
+        self.gui.wait_until(
+            lambda: self.gui.assert_item_within(viewport, output_button) is None,
+            description="保存済みプロジェクトの出力先ボタンの表示範囲",
+        )
+        with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
+            self._click(window, output_button)
+        self.assertTrue(self.app.projectDirty)
+
+        with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
+            self._click(window, self._quick_item(window, "sourceDoneButton"))
+
+        self.assertEqual(self.app._project, original_project)
+        self.assertEqual(self.app.sourceSelection, original_selection)
+        self.assertEqual(path.read_bytes(), saved_bytes)
+        self.assertFalse(self.app.projectDirty)
+        self.assertFalse(self.app.autosave_timer.isActive())
+        self.gui.wait(800)
+        self.assertEqual(path.read_bytes(), saved_bytes)
+        self.assertEqual(self.app.stage, "ERROR")
+
     def test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription(self) -> None:
         video = self.root / "multi-track.mkv"
         video.write_bytes(b"video")

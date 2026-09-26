@@ -53,6 +53,7 @@
         "test_data_boundary",
         "test_dependabot_config",
         "test_editor_workspace",
+        "test_gemini_acp_client",
         "test_gemini_acp_provider",
         "test_gemini_runtime",
         "test_gui_ai_chat_state",

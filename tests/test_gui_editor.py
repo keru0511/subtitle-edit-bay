@@ -2000,6 +2000,33 @@ Window {
         self._click(window, apply_button)
         self.assertEqual(self.app.audioMixerChannels[0]["volume_percent"], 110.0)
 
+        self.app.autosave_timer.stop()
+        after_apply = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            self.app._project_revision, self.app.projectDirty, path.read_bytes(),
+        )
+        discard_button = self._quick_item(window, "codexDiscardButton")
+        self.assertIsNotNone(self.app._codex_proposal)
+        self._click(window, discard_button)
+        self.assertIsNone(self.app._codex_proposal)
+        self.assertEqual(
+            (self.app._project, self.app._undo_stack, self.app._project_revision,
+             self.app.projectDirty, path.read_bytes()),
+            after_apply,
+        )
+
+        self.app._audio_mix_proposal = audio_proposal
+        self.app.audioMixProposalChanged.emit()
+        self.app.processEvents()
+        self.assertTrue(discard_button.property("enabled"))
+        self._click(window, discard_button)
+        self.assertIsNone(self.app._audio_mix_proposal)
+        self.assertEqual(
+            (self.app._project, self.app._undo_stack, self.app._project_revision,
+             self.app.projectDirty, path.read_bytes()),
+            after_apply,
+        )
+
     def test_manual_audio_edits_and_reset_share_undo_redo_and_save(self) -> None:
         path = self._load_project()
         before = deepcopy(self.app._project["audio_mix"])
@@ -3385,7 +3412,7 @@ Window {
     def test_source_relink_is_locked_during_processing_and_recovers(self) -> None:
         path = self._load_project()
         _, window = self._load_qml()
-        self._click(window, self._quick_item(window, "sourceSetupButton"))
+        self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
         popup = window.findChild(QObject, "sourcePopup")
         self.assertTrue(popup.property("visible"))
         button = self._quick_item(window, "sourceRelinkButton")
@@ -6570,6 +6597,24 @@ Window {
             self._click(window, chat_send)
         send.assert_called_once_with("進捗中も送信できる", "auto", 0.0, 0.0)
 
+        scope = self._quick_item(window, "codexChatEditScope")
+        self._click(window, scope)
+        for _ in range(3):
+            QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(scope.property("currentValue"), "time_range")
+        range_start = self._quick_item(window, "codexChatRangeStart")
+        range_end = self._quick_item(window, "codexChatRangeEnd")
+        self.assertTrue(range_start.isVisible())
+        self.assertTrue(range_end.isVisible())
+        range_start.setProperty("text", "2.500")
+        range_end.setProperty("text", "8.000")
+        chat_input.setProperty("text", "この範囲の字幕を編集して")
+        self.app.processEvents()
+        with patch.object(self.app.ai, "sendCodexChatMessage") as send:
+            self._click(window, chat_send)
+        send.assert_called_once_with("この範囲の字幕を編集して", "time_range", 2.5, 8.0)
+
         streaming = CodexChatSnapshot(
             connection_state="ready",
             auth_state="authenticated",
@@ -9204,16 +9249,30 @@ Window {
         panel = self.gui.find_item(window, "workspaceSequenceEditor")
         self.assertEqual(self.app.currentEditMode, "subtitle")
         self.assertFalse(panel.isVisible())
-        self.assertTrue(self.app.selectEditMode("audio"))
+        self._click(window, self._quick_item(window, "editorModeButton-audio"))
         self.gui.wait_until(
             lambda: self.app.currentEditMode == "audio" and not panel.isVisible(),
             description="sequence panel hidden in audio mode",
         )
-        self.assertTrue(self.app.selectEditMode("cut"))
-        window.setProperty("editTool", "sequence")
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "cut" and self._quick_item(window, "sequenceToolButton").isVisible(),
+            description="sequence tool available in cut mode",
+        )
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
         self.gui.wait_until(
             lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
             description="sequence panel visible in cut mode",
+        )
+        self._click(window, self._quick_item(window, "cutToolButton"))
+        self.gui.wait_until(
+            lambda: window.property("editTool") == "cut" and not panel.isVisible(),
+            description="cut panel visible after tool switch",
+        )
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
+        self.gui.wait_until(
+            lambda: window.property("editTool") == "sequence" and panel.isVisible(),
+            description="sequence panel restored after tool switch",
         )
         self.gui.find_item(window, "workspaceMediaBin")
         self.gui.find_item(window, "sequenceClipList")
@@ -9229,13 +9288,17 @@ Window {
         self.assertEqual(Path(assets[-1]["path"]), second_video.resolve())
         second_asset_id = str(assets[-1]["id"])
 
-        self.assertTrue(self.app.selectEditMode("subtitle"))
+        self._click(window, self._quick_item(window, "editorModeButton-subtitle"))
         self.gui.wait_until(
             lambda: self.app.currentEditMode == "subtitle" and not panel.isVisible(),
             description="sequence panel hidden in subtitle mode",
         )
-        self.assertTrue(self.app.selectEditMode("cut"))
-        window.setProperty("editTool", "sequence")
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        self.gui.wait_until(
+            lambda: self.app.currentEditMode == "cut" and self._quick_item(window, "sequenceToolButton").isVisible(),
+            description="sequence tool available after returning to cut mode",
+        )
+        self._click(window, self._quick_item(window, "sequenceToolButton"))
         self.gui.wait_until(
             lambda: self.app.currentEditMode == "cut" and panel.isVisible(),
             description="sequence panel visible after returning to cut mode",

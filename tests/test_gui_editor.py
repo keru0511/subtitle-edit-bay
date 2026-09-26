@@ -6785,25 +6785,47 @@ Window {
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [])
 
         candidate_list = self._quick_item(window, "transcriptionWebDictionaryCandidateList")
+        scroll_content = candidate_list.property("contentItem")
+        self.assertGreater(scroll_content.property("contentHeight"), scroll_content.height())
+        def scroll_to_last_candidate() -> None:
+            def last_row_bottom() -> float:
+                rows = [
+                    item.parentItem() for item in self.gui.visual_items(candidate_list)
+                    if item.objectName() == "transcriptionWebDictionaryCandidateItem"
+                    and item.parentItem().property("term") == "CustomTerm"
+                    and item.parentItem().property("index") >= 0
+                ]
+                return rows[0].y() + rows[0].height() if rows else float("inf")
+
+            self.gui.wait_until(
+                lambda: float(scroll_content.property("contentHeight")) >= last_row_bottom(),
+                description="候補一覧のスクロール範囲",
+            )
+            scroll_content.setProperty(
+                "contentY", scroll_content.property("contentHeight") - scroll_content.height()
+            )
+            self.app.processEvents()
+
+        scroll_to_last_candidate()
         self.app.processEvents()
-        def active_candidate(name: str) -> QQuickItem:
+        def active_candidate(name: str, term: str) -> QQuickItem:
             def matches() -> list[QQuickItem]:
                 return [
                     item for item in self.gui.visual_items(candidate_list)
                     if item.objectName() == name and item.isVisible()
+                    and item.parentItem().property("term") == term
                     and item.parentItem().property("index") >= 0
                     and 0 <= item.mapToItem(candidate_list, QPointF(item.width() / 2, item.height() / 2)).y()
                     <= candidate_list.height()
                 ]
-            self.gui.wait_until(lambda: bool(matches()), description=f"{name} の有効な行")
+            self.gui.wait_until(lambda: bool(matches()), description=f"{term} の{name}")
             return min(matches(), key=lambda item: item.parentItem().property("index"))
 
-        first_candidate = active_candidate("transcriptionWebDictionaryCandidateItem")
-        first_term = first_candidate.property("text")
-        self._click(window, first_candidate)
-        self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [first_term])
-        self._click(window, active_candidate("transcriptionWebDictionaryRemoveButton"))
-        self.assertNotIn(first_term, self.app.transcriptionContext["web_dictionary_candidates"])
+        self._click(window, active_candidate("transcriptionWebDictionaryCandidateItem", "CustomTerm"))
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], ["CustomTerm"])
+        scroll_to_last_candidate()
+        self._click(window, active_candidate("transcriptionWebDictionaryRemoveButton", "CustomTerm"))
+        self.assertNotIn("CustomTerm", self.app.transcriptionContext["web_dictionary_candidates"])
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [])
         self._click(window, self._quick_item(window, "transcriptionWebDictionarySelectAllButton"))
 

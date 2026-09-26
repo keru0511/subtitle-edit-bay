@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TypedDict
 
-from .data_boundary import coerce_float, coerce_int, is_object_mapping, is_object_sequence
+from .data_boundary import coerce_float, coerce_int, is_object_dict, is_object_mapping, is_object_sequence
 from .typed_cache import typed_lru_cache
 
 from .models import SubtitleEvent
@@ -56,6 +56,13 @@ def _mapping(value: object) -> Mapping[object, object]:
     """拡張フィールドを保持したまま、読み取りに必要な辞書構造を検証する。"""
     if not is_object_mapping(value):
         raise TypeError("subtitle payload must be a mapping")
+    return value
+
+
+def _dictionary(value: object) -> dict[object, object]:
+    """更新可能な辞書として返す公開APIでは元の辞書参照を維持する。"""
+    if not is_object_dict(value):
+        raise TypeError("subtitle payload must be a dictionary")
     return value
 
 
@@ -683,8 +690,8 @@ def gap_boundary_indices(words: object, max_gap_seconds: float) -> set[int]:
     return boundaries
 
 
-def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[Mapping[object, object]]]:
-    valid_words: list[Mapping[object, object]] = []
+def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[dict[object, object]]]:
+    valid_words: list[dict[object, object]] = []
     for word in _entry_mappings([] if words is None else words):
         normalized = normalize_alignment_text(word.get("word", ""))
         start = word.get("start")
@@ -693,12 +700,12 @@ def split_words_on_gaps(words: object, max_gap_seconds: float) -> list[list[Mapp
             continue
         if _number(end) <= _number(start):
             continue
-        valid_words.append(word)
+        valid_words.append(_dictionary(word))
 
     if not valid_words:
         return []
 
-    groups: list[list[Mapping[object, object]]] = [[valid_words[0]]]
+    groups: list[list[dict[object, object]]] = [[valid_words[0]]]
     for word in valid_words[1:]:
         previous = groups[-1][-1]
         gap = _number(word["start"]) - _number(previous["end"])
@@ -713,13 +720,13 @@ def build_segment_text_from_words(words: object) -> str:
     return "".join(str(word.get("word", "")) for word in _entry_mappings(words)).strip()
 
 
-def split_segment_by_word_gaps(segment: object, max_gap_seconds: float) -> list[Mapping[object, object]]:
-    segment = _mapping(segment)
+def split_segment_by_word_gaps(segment: object, max_gap_seconds: float) -> list[dict[object, object]]:
+    segment = _dictionary(segment)
     word_groups = split_words_on_gaps(segment.get("words"), max_gap_seconds)
     if len(word_groups) <= 1:
         return [segment]
 
-    split_segments: list[Mapping[object, object]] = []
+    split_segments: list[dict[object, object]] = []
     for group in word_groups:
         split_segments.append(
             {

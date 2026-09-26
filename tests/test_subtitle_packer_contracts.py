@@ -36,6 +36,10 @@ class SubtitlePackerContractTests(unittest.TestCase):
         self.assertEqual(pages[0]["text"], "字幕")
         self.assertEqual(pages[1]["start"], 3.0)
         self.assertIs(pages[0]["extension"], extension)
+        pages[0]["checked"] = True
+        groups[0][0]["checked"] = True
+        self.assertIs(first["checked"], True)
+        self.assertNotIn("checked", segment)
         unchanged = packer.split_segment_by_word_gaps(segment, 2.0)
         self.assertIs(unchanged[0], segment)
         self.assertIs(segment["words"], words)

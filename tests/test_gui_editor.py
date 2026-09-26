@@ -4398,11 +4398,22 @@ Window {
         self.assertTrue(window.close())
         self.assertEqual(load_project(path)["segments"][0]["text"], "未保存の字幕")
 
-    def test_transcription_request_commits_pending_time_before_merge_choice(self) -> None:
+    def test_transcription_merge_append_commits_pending_time_and_preserves_subtitles(self) -> None:
         self._set_ready_sources()
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
         self.app.dependenciesChanged.emit()
-        self._load_project()
+        path = self._load_project()
+        template_path = self.root / "transcription-append-template.json"
+        generated = load_project(path)
+        generated["segments"] = [{
+            "id": "transcribed-new",
+            "start": 5.0,
+            "end": 7.0,
+            "text": "追加された字幕",
+            "speaker": "Speaker_Alice",
+            "words": [],
+        }]
+        save_project(template_path, generated)
         self.app.selectEditMode("subtitle")
         _, window = self._load_qml()
         field = self._quick_visual_item(
@@ -4419,6 +4430,61 @@ Window {
         self.app.processEvents()
         self.assertEqual(self.app.segmentAt(0)["start"], 1.25)
         self.assertTrue(window.findChild(QObject, "transcriptionMergeDialog").property("visible"))
+
+        helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
+        process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
+
+        def build_append_command(_config_path: Path, **kwargs: object) -> list[str]:
+            return [
+                process_python,
+                "-u",
+                str(helper_path),
+                "--mode",
+                "success",
+                "--template",
+                str(template_path),
+                "--project-path",
+                str(kwargs["project_path"]),
+            ]
+
+        with patch("src.gui_workflow_facade.build_gui_transcribe_command", side_effect=build_append_command) as build:
+            finished = QSignalSpy(self.app.process.finished)
+            self._click(window, self._quick_item(window, "transcriptionMergeAppendButton"))
+            self.assertFalse(window.findChild(QObject, "transcriptionMergeDialog").property("visible"))
+            self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(10_000), self.app.process.errorString())
+            self.app.processEvents()
+
+        build.assert_called_once()
+        generated_path = Path(build.call_args.kwargs["project_path"])
+        self.assertNotEqual(generated_path.resolve(), path.resolve())
+        self.assertTrue(build.call_args.kwargs["overwrite_project"])
+        self.assertFalse(generated_path.exists())
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app.stage, "EDIT", self.app.status)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        saved = load_project(path)
+        self.assertEqual([item["id"] for item in saved["segments"]], ["segment-a", "transcribed-new"])
+        self.assertEqual(saved["segments"][0]["start"], 1.25)
+        self.assertEqual(saved["segments"][1]["text"], "追加された字幕")
+
+    def test_transcription_merge_cancel_preserves_existing_project(self) -> None:
+        self._set_ready_sources()
+        path = self._load_project()
+        before = path.read_bytes()
+        _, window = self._load_qml()
+        dialog = window.findChild(QObject, "transcriptionMergeDialog")
+        with patch.object(self.app.workflow, "_start_command") as start:
+            self._click(window, self._quick_item(window, "transcribeButton"))
+            self.assertTrue(dialog.property("visible"))
+            self._click(window, self._quick_item(window, "transcriptionMergeCancelButton"))
+            self.assertFalse(dialog.property("visible"))
+        start.assert_not_called()
+        self.assertFalse(self.app.running)
+        self.assertEqual(self.app._transcription_merge_mode, "")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
 
     def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QObject]:
         path = self._load_project(segments=[
@@ -8982,7 +9048,6 @@ Window {
     def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         _project_path, _first_video, second_video = self._make_sequence_project()
-        second_asset_id = self._add_second_sequence_asset(second_video)
         qml_path = Path(__file__).resolve().parents[1] / "src" / "ui" / "Main.qml"
         _engine, window = self.gui.load_qml(qml_path, width=1_280, height=820)
 
@@ -9003,6 +9068,16 @@ Window {
         self.gui.find_item(window, "workspaceMediaBin")
         self.gui.find_item(window, "sequenceClipList")
         self.gui.find_item(window, "mediaBinDropArea")
+        with (
+            patch("src.gui_sequence_facade.QFileDialog.getOpenFileName", return_value=(str(second_video), "")) as choose,
+            patch("src.gui_sequence_facade.probe_media_duration", return_value=8.0),
+        ):
+            self.gui.click(window, self.gui.find_item(window, "sequenceAddAssetButton"))
+        choose.assert_called_once()
+        assets = self.app.mediaBinAssets
+        self.assertEqual(len(assets), 2)
+        self.assertEqual(Path(assets[-1]["path"]), second_video.resolve())
+        second_asset_id = str(assets[-1]["id"])
 
         self.assertTrue(self.app.selectEditMode("subtitle"))
         self.gui.wait_until(

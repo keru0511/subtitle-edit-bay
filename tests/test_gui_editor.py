@@ -4391,6 +4391,36 @@ Window {
         self.assertEqual(load_project(path)["segments"][0]["end"], 3.5)
         self.assertEqual(self.app.selectedSegmentIndex, 1)
 
+    def test_incomplete_time_input_can_be_finished_after_processing(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionStartTimeField")
+        self._click(window, field)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_1)
+        QTest.keyClick(window, Qt.Key.Key_E)
+        self.app.processEvents()
+        self.assertEqual(field.property("text"), "1e")
+        self.assertFalse(field.property("acceptableInput"))
+
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertEqual(self.app.segmentAt(0)["start"], 0.0)
+
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.app.processEvents()
+        self.assertEqual(field.property("text"), "1e")
+        self._click(window, field)
+        QTest.keyClick(window, Qt.Key.Key_End)
+        QTest.keyClick(window, Qt.Key.Key_0)
+        self.app.processEvents()
+        self.assertEqual(field.property("text"), "1e0")
+        self._click(window, self._quick_item(window, "saveProjectButton"))
+        self.assertEqual(load_project(path)["segments"][0]["start"], 1.0)
+
     def test_pending_start_time_survives_mode_and_selection_changes_during_processing(self) -> None:
         path = self._load_project(segments=[
             {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},

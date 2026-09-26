@@ -7000,6 +7000,52 @@ Window {
             before,
         )
 
+    def test_codex_login_route_dispatches_login_reconnect_and_browser(self) -> None:
+        path = self._load_project()
+        snapshots = (
+            CodexChatSnapshot(connection_state="ready", auth_state="unauthenticated"),
+            CodexChatSnapshot(connection_state="disconnected", auth_state="unknown"),
+            CodexChatSnapshot(
+                connection_state="ready", auth_state="login_pending",
+                login_url="https://example.test/login",
+            ),
+        )
+        self.app._codex_chat._snapshot = snapshots[0]
+        self.app._on_codex_chat_state(snapshots[0])
+        _, window = self._load_qml()
+        self.gui.resize(window, 1220, 760)
+        self._click(window, self._quick_item(window, "inspectorCodexTabButton"))
+        button = self._quick_item(window, "codexLoginRoute")
+        before = (
+            deepcopy(self.app._project), deepcopy(self.app._undo_stack),
+            self.app._project_revision, self.app.projectDirty, path.read_bytes(),
+        )
+        for snapshot, label in zip(snapshots, ("Codexログイン", "再接続", "ブラウザを開く")):
+            self.app._codex_chat._snapshot = snapshot
+            self.app._on_codex_chat_state(snapshot)
+            self.app.processEvents()
+            self.assertTrue(button.isVisible())
+            self.assertEqual(button.property("text"), label)
+            self._assert_quick_item_within(window.contentItem(), button)
+            if label == "Codexログイン":
+                with patch.object(self.app._ai_chat, "login") as login:
+                    self._click(window, button)
+                login.assert_called_once_with()
+            elif label == "再接続":
+                with patch.object(self.app._ai_chat, "reconnect") as reconnect:
+                    self._click(window, button)
+                reconnect.assert_called_once_with()
+            else:
+                with patch("src.gui_ai_facade.QDesktopServices.openUrl", return_value=True) as open_url:
+                    self._click(window, button)
+                open_url.assert_called_once()
+                self.assertEqual(open_url.call_args.args[0].toString(), snapshot.login_url)
+        self.assertEqual(
+            (self.app._project, self.app._undo_stack, self.app._project_revision,
+             self.app.projectDirty, path.read_bytes()),
+            before,
+        )
+
     def test_codex_sidebar_follows_authentication_and_survives_workspace_changes(self) -> None:
         self._load_project()
         _, window = self._load_qml()
@@ -7358,6 +7404,35 @@ Window {
         self.assertEqual(self.app.transcriptionContext["game_title"], "Test Game")
         self.assertTrue(self.app.gui_config_path.is_file())
 
+    def test_dictionary_detail_fields_save_pending_input_and_reload(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        values = (
+            ("transcriptionCreatorTermsField", "AlphaTerm, BetaTerm", "creator_terms_text", "AlphaTerm\nBetaTerm"),
+            ("transcriptionGameNotesField", "Boss appears after stage two", "game_notes", "Boss appears after stage two"),
+        )
+        for name, value, _key, _expected in values:
+            field = self._quick_visual_item(page, name)
+            field.forceActiveFocus()
+            commit = QInputMethodEvent("", [])
+            commit.setCommitString(value)
+            QCoreApplication.sendEvent(field, commit)
+            self.assertEqual(field.property("text"), value)
+
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        saved = config["craig_pipeline"]["transcription_context"]
+        for _name, _value, key, expected in values:
+            self.assertEqual(self.app.transcriptionContext[key], expected)
+        self.assertEqual(saved["creator_terms"], ["AlphaTerm", "BetaTerm"])
+        self.assertEqual(saved["game_notes"], "Boss appears after stage two")
+
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        for name, _value, _key, expected in values:
+            self.assertEqual(self._quick_visual_item(page, name).property("text"), expected)
+
     def test_dictionary_confirmation_switch_saves_and_reopens_from_screen(self) -> None:
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
@@ -7484,6 +7559,28 @@ Window {
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
         self.assertEqual(self.app.transcriptionContext["web_dictionary_candidates"], expected["web_dictionary_candidates"])
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], expected["web_dictionary_terms"])
+
+    def test_web_dictionary_refresh_uses_url_entered_in_field(self) -> None:
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        url = "https://example.test/terms"
+        field = self._quick_visual_item(page, "transcriptionWebDictionaryUrlField")
+        field.forceActiveFocus()
+        commit = QInputMethodEvent("", [])
+        commit.setCommitString(url)
+        QCoreApplication.sendEvent(field, commit)
+        self.assertEqual(field.property("text"), url)
+
+        with patch("src.gui_base.fetch_web_dictionary_source", return_value="Bomba and Ink") as fetch:
+            self._click(window, self._quick_item(window, "transcriptionWebDictionaryRefreshButton"))
+
+        fetch.assert_called_once_with(url)
+        self.assertIn("Bomba", self.app.transcriptionContext["web_dictionary_candidates"])
+        self.assertTrue(any(
+            item["source"] == url
+            for item in self.app.transcriptionContext["web_dictionary_candidate_metadata"]
+        ))
 
     def test_dictionary_shortcuts_preserve_pending_input_during_processing(self) -> None:
         self.app.setTranscriptionContext({

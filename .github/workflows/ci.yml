@@ -296,9 +296,11 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_autosave_waits_until_processing_finishes
           tests.test_gui_editor.GuiEditorRegressionTests.test_closing_dictionary_window_saves_pending_input
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_auth_controls_fit_and_dispatch_from_screen
+          tests.test_gui_editor.GuiEditorRegressionTests.test_codex_login_route_dispatches_login_reconnect_and_browser
           tests.test_gui_editor.GuiEditorRegressionTests.test_codex_model_and_new_chat_controls_preserve_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_cut_editing_is_locked_during_processing_and_recovers
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_confirmation_switch_saves_and_reopens_from_screen
+          tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_detail_fields_save_pending_input_and_reload
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_shortcuts_preserve_pending_input_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_error_copy_preserves_failure_after_settings_save_and_drains_output
@@ -336,6 +338,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_transcription_merge_append_commits_pending_time_and_preserves_subtitles
           tests.test_gui_editor.GuiEditorRegressionTests.test_transcription_merge_cancel_preserves_existing_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_web_dictionary_candidate_actions_save_and_reload_from_screen
+          tests.test_gui_editor.GuiEditorRegressionTests.test_web_dictionary_refresh_uses_url_entered_in_field
           tests.test_gui_editor.GuiEditorRegressionTests.test_window_close_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_header_save_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_ime_committed_text_is_saved

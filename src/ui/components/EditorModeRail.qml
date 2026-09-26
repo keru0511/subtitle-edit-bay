@@ -38,6 +38,7 @@ Rectangle {
 
     component ModeButton: Button {
         id: modeControl
+        focusPolicy: Qt.TabFocus
         required property string mode
         required property string label
         required property string mark

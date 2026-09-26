@@ -96,7 +96,7 @@ ApplicationWindow {
         if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
             root.codexDrawerOpen = true
             if (root.loginInInspector)
-                root.inspectorTab = "codex"
+                root.selectInspectorTab("codex")
         }
         root.previousCodexAuthenticated = root.codexAuthenticated
     }
@@ -137,6 +137,8 @@ ApplicationWindow {
     readonly property color danger: "#EF4444"
 
     function openSpeakerColorPicker(target, index, currentColor) {
+        if (!root.commitPendingEdits())
+            return
         root.colorTarget = target
         root.colorTargetIndex = index
         speakerColorDialog.selectedColor = currentColor || "#FFFFFF"
@@ -254,10 +256,18 @@ ApplicationWindow {
         sourcePopup.manualOffsetText = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function toggleSettingsPopup() {
+        if (!root.commitPendingEdits())
+            return
         if (advancedSettingsPopup.opened)
             advancedSettingsPopup.close()
         else
             advancedSettingsPopup.open()
+    }
+
+    function selectInspectorTab(tab) {
+        if (!root.commitPendingEdits())
+            return
+        root.inspectorTab = tab
     }
 
     function transcriptionBlockReason() {
@@ -283,7 +293,7 @@ ApplicationWindow {
         appBackend: root.appBackend
         workflowCapabilities: root.workflowCapabilities
         settingsProvider: root.currentSettings
-        onSourceSettingsRequested: sourcePopup.open()
+        onSourceSettingsRequested: root.openSourceSettings()
         onOverwriteConfirmationRequested: function(request) {
             root.pendingWelcomeTranscriptionRequest = request
             overwriteProjectDialog.open()
@@ -335,6 +345,8 @@ ApplicationWindow {
     }
 
     function selectWorkspaceMode(mode) {
+        if (!root.commitPendingEdits())
+            return false
         var changed = root.appBackend.workspace.selectEditMode(mode)
         return changed || root.appBackend.workspace.currentEditMode === mode
     }
@@ -428,6 +440,8 @@ ApplicationWindow {
     }
 
     function openEditorScreen() {
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.appBackend.workspace.selectEditMode("subtitle")
         if (!root.mixerMode) {
@@ -449,6 +463,8 @@ ApplicationWindow {
     }
 
     function openMixerScreen() {
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         if (!root.appBackend.workspace.selectEditMode("audio") && root.appBackend.workspace.currentEditMode !== "audio")
             return
@@ -467,6 +483,8 @@ ApplicationWindow {
     function openDictionaryScreen() {
         if (root.appBackend.running)
             return
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
@@ -481,6 +499,8 @@ ApplicationWindow {
 
     function openShortWorkspace() {
         if (root.appBackend.running)
+            return
+        if (!root.commitPendingEdits())
             return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
@@ -584,6 +604,12 @@ ApplicationWindow {
         if (!root.commitPendingEdits())
             return
         root.appBackend.browseProjectFile()
+    }
+
+    function openSourceSettings() {
+        if (!root.commitPendingEdits())
+            return
+        sourcePopup.open()
     }
 
     function browseProjectSaveAs() {
@@ -735,12 +761,12 @@ ApplicationWindow {
         warningColor: root.amber
         onUpdateCheckRequested: root.appBackend.updates.checkForUpdates()
         onProjectOpenRequested: root.browseProjectFile()
-        onSourceSettingsRequested: sourcePopup.open()
+        onSourceSettingsRequested: root.openSourceSettings()
         onSaveRequested: root.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
             if (root.loginInInspector) {
-                root.inspectorTab = root.inspectorTab === "codex" ? "settings" : "codex"
+                root.selectInspectorTab(root.inspectorTab === "codex" ? "settings" : "codex")
             } else if (root.codexAuthenticated) {
                 root.codexDrawerOpen = !root.codexDrawerOpen
             } else if (root.appBackend.ai.codexAuthState === "login_pending") {
@@ -1053,7 +1079,7 @@ ApplicationWindow {
             onNewVideoEditRequested: projectStartFlow.startNewVideoEdit()
             onOpenProjectRequested: root.browseProjectFile()
             onStartTranscriptionRequested: projectStartFlow.startTranscription()
-            onSourceSettingsRequested: sourcePopup.open()
+            onSourceSettingsRequested: root.openSourceSettings()
             onDictionaryRequested: root.openDictionaryScreen()
             onProcessingSettingsRequested: root.toggleSettingsPopup()
         }
@@ -1109,7 +1135,7 @@ ApplicationWindow {
                     accentColor: root.acid
                     warningColor: root.amber
                     dangerColor: root.danger
-                    onSourceSettingsRequested: sourcePopup.open()
+                    onSourceSettingsRequested: root.openSourceSettings()
                 }
 
                 ColumnLayout {
@@ -1295,7 +1321,7 @@ ApplicationWindow {
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            onTabRequested: function(tab) { root.inspectorTab = tab }
+            onTabRequested: function(tab) { root.selectInspectorTab(tab) }
         }
 
     }

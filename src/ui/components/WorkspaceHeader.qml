@@ -158,6 +158,7 @@ Rectangle {
             Button {
                 id: sourceButton
                 objectName: "sourceSetupButton"
+                focusPolicy: Qt.TabFocus
                 Layout.fillWidth: true
                 Layout.minimumWidth: 130
                 Layout.preferredHeight: 38
@@ -279,12 +280,14 @@ Rectangle {
             }
             SmallButton {
                 objectName: "workspaceHeaderAiButton"
+                focusPolicy: Qt.TabFocus
                 text: header.aiActionLabel
                 enabled: !header.running && (header.aiAuthenticated || header.aiLoginAvailable)
                 onClicked: header.aiAssistantRequested()
             }
             SmallButton {
                 objectName: "workspaceHeaderShortButton"
+                focusPolicy: Qt.TabFocus
                 text: "ショート作成"
                 enabled: header.projectLoaded && !header.running
                 onClicked: header.shortWorkspaceRequested()

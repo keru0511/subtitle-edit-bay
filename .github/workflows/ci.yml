@@ -294,6 +294,9 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_ai_proposals_are_locked_during_processing_and_recover
           tests.test_gui_editor.GuiEditorRegressionTests.test_audio_editing_is_locked_during_processing_and_recovers
           tests.test_gui_editor.GuiEditorRegressionTests.test_audio_mixer_gui_settings_are_saved_and_applied_to_rendered_output
+          tests.test_gui_editor.GuiEditorRegressionTests.test_audio_mode_switch_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_auth_completion_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_advanced_settings_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_audio_actions_save_reset_and_rebuild_preview
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_audio_use_volume_and_solo_controls_are_saved
           tests.test_gui_editor.GuiEditorRegressionTests.test_workspace_subtitle_time_speaker_font_and_size_are_saved
@@ -309,12 +312,15 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_cut_restore_and_clear_buttons_update_history_and_saved_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_confirmation_switch_saves_and_reopens_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_detail_fields_save_pending_input_and_reload
+          tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_open_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_shortcuts_preserve_pending_input_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_empty_short_mode_gui_adds_range_clip_and_enables_export
           tests.test_gui_editor.GuiEditorRegressionTests.test_error_copy_preserves_failure_after_settings_save_and_drains_output
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_back_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_ime_committed_text_is_saved
+          tests.test_gui_editor.GuiEditorRegressionTests.test_inspector_tab_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_editor_open_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_preview_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_render_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_save_waits_for_uncommitted_ime_text
@@ -331,6 +337,8 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_inserts_before_clip_and_appends_after_last
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_add_button_imports_asset_and_saves_from_screen
           tests.test_gui_editor.GuiEditorRegressionTests.test_media_bin_drag_onto_clip_card_inserts_before_it
+          tests.test_gui_editor.GuiEditorRegressionTests.test_mixer_open_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_mode_switch_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_pending_start_time_survives_row_recycling_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_pending_text_survives_processing_state_change_in_expanded_editor
           tests.test_gui_editor.GuiEditorRegressionTests.test_processing_does_not_start_when_settings_cannot_be_saved
@@ -371,6 +379,8 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_segment_picker_uses_the_subtitle_model
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_settings_controls_save_round_trip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_sliders_follow_full_drag_and_save
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_workspace_open_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_speaker_color_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_editors_work_without_main_workflow_context
           tests.test_gui_editor.GuiEditorRegressionTests.test_failed_source_change_restores_clean_project_state
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset
@@ -379,6 +389,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_popup_drop_target_imports_video
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_relink_is_locked_during_processing_and_recovers
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure
+          tests.test_gui_editor.GuiEditorRegressionTests.test_source_settings_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_speaker_color_dialog_applies_and_cancel_preserves_color
           tests.test_gui_editor.GuiEditorRegressionTests.test_start_screen_transcription_preserves_unsaved_execution_settings

@@ -271,6 +271,7 @@ Item {
                     }
                     Button {
                         objectName: "workspaceSubtitleSpeakerColorButton"
+                        focusPolicy: Qt.TabFocus
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 30
                         enabled: !root.backend.running && root.speakerIndex(root.selectedSegment.speaker || "") >= 0

@@ -366,6 +366,7 @@ Item {
                         model: root.projectSpeakerCache
                         delegate: Button {
                             id: projectSpeakerColorButton
+                            focusPolicy: Qt.TabFocus
                             required property int index
                             required property var modelData
                             width: 128

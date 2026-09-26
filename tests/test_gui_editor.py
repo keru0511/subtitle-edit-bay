@@ -6849,7 +6849,10 @@ Window {
         self._click(window, toggle)
         self.assertFalse(panel.property("expanded"))
         self._click(window, toggle)
-        self.assertTrue(panel.property("expanded"))
+        self.gui.wait_until(
+            lambda: panel.property("expanded") and panel.height() > 170,
+            description="AIチャットの再展開後にレイアウトが確定",
+        )
 
         relogin = self._quick_item(window, "codexReloginButton")
         logout = self._quick_item(window, "codexLogoutButton")

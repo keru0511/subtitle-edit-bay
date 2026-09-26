@@ -35,6 +35,7 @@ SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
     COMPONENTS_ROOT / "SourceSettingsPopup.qml",
     COMPONENTS_ROOT / "AdvancedSettingsPopup.qml",
+    COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml",
     START_SCREEN_QML,
     START_FLOW_QML,
     COMPONENTS_ROOT / "CutModeSettings.qml",
@@ -254,6 +255,7 @@ class QmlStaticTests(unittest.TestCase):
     def test_common_codex_sidebar_only_reserves_width_when_authenticated(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         sidebar = (COMPONENTS_ROOT / "CodexSidebarContainer.qml").read_text(encoding="utf-8")
+        inspector = (COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml").read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("CodexSidebarContainer {"), 1)
         self.assertIn('objectName: "commonCodexSidebar"', workflow)
@@ -269,10 +271,11 @@ class QmlStaticTests(unittest.TestCase):
             'root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen',
             workflow,
         )
-        self.assertIn('objectName: "inspectorSettingsTabButton"', workflow)
-        self.assertIn('objectName: "inspectorCodexTabButton"', workflow)
-        self.assertIn('text: "編集プロパティ"', workflow)
-        self.assertIn('text: "AI Codex"', workflow)
+        self.assertIn('objectName: "inspectorSettingsTabButton"', inspector)
+        self.assertIn('objectName: "inspectorCodexTabButton"', inspector)
+        self.assertIn('text: "編集プロパティ"', inspector)
+        self.assertIn('text: "AI Codex"', inspector)
+        self.assertIn('modeSettingsSlot.tabBarHeight', workflow)
         self.assertNotIn(
             "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode\n        }",
             workflow,
@@ -299,6 +302,7 @@ class QmlStaticTests(unittest.TestCase):
                 COMPONENTS_ROOT / "AudioMixerScreen.qml",
                 COMPONENTS_ROOT / "SourceSettingsPopup.qml",
                 COMPONENTS_ROOT / "AdvancedSettingsPopup.qml",
+                COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml",
             )),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
@@ -351,6 +355,7 @@ class QmlStaticTests(unittest.TestCase):
         editor_content = workflow.split("id: editorContentComponent", 1)[1].split(
             "id: shortModePage", 1
         )[0]
+        inspector = (COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml").read_text(encoding="utf-8")
 
         self.assertIn('property string activeOverlay: ""', workflow)
         self.assertIn('root.appBackend.workspace.currentWorkspace', workflow)
@@ -363,7 +368,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("\n    property bool mixerMode:", workflow)
         self.assertIn('objectName: "editorModeRail"', main_workspace)
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
-        self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
+        self.assertIn('WorkspaceInspectorPanel {', main_workspace)
+        self.assertIn('objectName: "modeSettingsSlot"', inspector)
         self.assertIn(
             "property Component cutModeEditorContent: cutWorkspaceEditorComponent",
             workflow,
@@ -373,7 +379,8 @@ class QmlStaticTests(unittest.TestCase):
             workflow,
         )
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
-        self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
+        self.assertIn('settingsContent: root.modeSettingsContent', main_workspace)
+        self.assertIn('sourceComponent: root.settingsContent', inspector)
         for stale_marker in (
             "modeEditorFallback",
             "modeSettingsFallback",

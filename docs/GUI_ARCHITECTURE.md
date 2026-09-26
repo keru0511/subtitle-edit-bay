@@ -106,6 +106,19 @@ The first shared controls now exist as standalone QML files and are covered by t
 単独Windowでの設定値の往復・操作通知に加え、通常画面の保存、未保存デバイスでの
 文字起こし判定、字幕プレビュー、最小画面幅でのスクロールと開閉を回帰テストで確認する。
 
+## ワークスペース右側インスペクターの境界
+
+`components/WorkspaceInspectorPanel.qml`は編集プロパティとAIのタブ表示、
+編集モードごとの設定コンポーネントを読み込むLoaderを担当する。
+選択中のタブ、プロジェクトの有無、設定コンポーネント、配色を明示的に受け取り、
+タブ操作をシグナルで親画面へ伝える。親画面のIDや暗黙のコンテキストには依存しない。
+
+`MainWorkflowScreen.qml`はタブ選択状態を保持し、ヘッダー操作とAI認証状態に応じて
+切り替える。AIサイドバーとログイン操作は画面外でも使うため親画面に残し、
+インスペクターが公開するタブの高さに合わせて配置する。
+単独Windowでのタブ切替・Loaderの寿命と、通常画面での認証・画面遷移・
+最小幅と標準幅の配置を回帰テストで確認する。
+
 ## 開始画面の境界
 
 `components/ProjectStartScreen.qml`は、プロジェクト未読み込み時の案内、

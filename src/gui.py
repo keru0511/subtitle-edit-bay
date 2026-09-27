@@ -73,6 +73,7 @@ from .subtitle_project import (
 )
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
+from .transcription_project_integration import ensure_transcription_context_base_dir
 from .video_sequence import VideoSequence, VideoSequenceError
 
 from .gui_workspace_facade import WorkspaceFacade
@@ -1568,11 +1569,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._audio_mix_proposal = None
         if hasattr(self, "audioMixProposalChanged"):
             self.audioMixProposalChanged.emit()
-        transcription = project.setdefault("transcription", {})
-        transcription.setdefault(
-            "context_base_dir",
-            str(Path(transcription.get("work_dir") or project.get("output_dir") or path.parent).resolve()),
-        )
+        ensure_transcription_context_base_dir(project, path)
         self._apply_project_subtitle_settings(project)
         self._audio_preview_controller.set_project(project)
         self._reset_audio_preview_cache()

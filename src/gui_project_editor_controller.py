@@ -11,6 +11,7 @@ remain in the facade.
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,6 +25,7 @@ from .subtitle_project import (
 )
 from .video_timeline import VideoTimeline, timeline_from_project
 from .short_video_schema import ShortVideo
+from .transcription_project_integration import compose_transcription_project, ensure_transcription_context_base_dir
 from .video_sequence import VideoSequence, VideoSequenceError
 
 
@@ -277,6 +279,47 @@ class ProjectEditorController:
         """Persist a newly-created document before it becomes the active one."""
 
         return self._save_project_fn(path, project)
+
+    def integrate_transcription_result(
+        self,
+        generated_path: str | Path,
+        preserved_project: dict[str, Any],
+        preserved_path: str | Path,
+        mode: str,
+    ) -> dict[str, Any]:
+        """生成結果を別に読み、保存できた場合だけ編集の正本を切り替える。"""
+
+        target = Path(preserved_path).resolve()
+        if self._project is None or not self._project_path or Path(self._project_path).resolve() != target:
+            raise SubtitleProjectError("文字起こし開始時の編集プロジェクトが開かれていません")
+        if self._project != preserved_project:
+            raise SubtitleProjectError("文字起こし中に編集プロジェクトが変更されました")
+
+        generated_file = Path(generated_path)
+        generated = self._load_project_fn(generated_file, resolve_video_duration=True)
+        preserved_video = Path(str(preserved_project["video"]["path"])).resolve()
+        generated_video = Path(str(generated["video"]["path"])).resolve()
+        if preserved_video != generated_video:
+            try:
+                same_video = preserved_video.samefile(generated_video)
+            except OSError:
+                same_video = False
+            if not same_video:
+                raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
+        ensure_transcription_context_base_dir(generated, generated_file)
+        integrated = compose_transcription_project(
+            preserved_project,
+            generated,
+            mode,
+            assign_layout_rows=self._assign_project_layout_rows_fn,
+        )
+        self.wait_for_autosave()
+        current_file = json.loads(target.read_text(encoding="utf-8"))
+        if current_file != preserved_project:
+            raise SubtitleProjectError("文字起こし中に編集プロジェクトのファイルが変更されました")
+        self._save_project_fn(target, integrated)
+        self.adopt_loaded_project(integrated, target)
+        return integrated
 
     def mark_dirty(self) -> None:
         if self._project is None:

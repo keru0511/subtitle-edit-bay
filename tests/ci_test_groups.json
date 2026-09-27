@@ -163,6 +163,7 @@
         "test_gui_backend_metaobject",
         "test_gui_editor",
         "test_gui_job_runner",
+        "test_gui_sequence_dependencies",
         "test_gui_test_harness",
         "test_qml_static",
         "test_realtime_audio_mixer"

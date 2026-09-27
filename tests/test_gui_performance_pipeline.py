@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import io
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -214,6 +216,22 @@ class GuiPerformanceAggregationTests(TypedTestCase):
             capture_output=True,
             text=True,
         )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_reference_report_module_imports_without_project_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scripts_dir = Path(directory) / "scripts"
+            scripts_dir.mkdir()
+            (scripts_dir / "__init__.py").touch()
+            shutil.copy2(ROOT / "scripts" / "gui_performance_report.py", scripts_dir)
+            completed = subprocess.run(
+                [sys.executable, "-S", "-c", "from scripts.gui_performance_report import REPORT_SCHEMA_VERSION"],
+                cwd=directory,
+                env={**os.environ, "PYTHONPATH": directory},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def aggregate(self, reports: list[dict[str, object]]):

@@ -4,9 +4,7 @@ import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypedDict
-
-from src.data_boundary import is_object_list, is_string_object_mapping
+from typing import TypeGuard, TypedDict
 
 
 REPORT_SCHEMA_VERSION = 1
@@ -84,14 +82,26 @@ class _RunSample:
     contracts: list[_ContractSample]
 
 
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    return _is_object_mapping(value) and all(isinstance(key, str) for key in value)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def _mapping(value: object, label: str) -> Mapping[str, object]:
-    if not is_string_object_mapping(value):
+    if not _is_string_object_mapping(value):
         raise ValueError(f"{label}が辞書ではありません。")
     return value
 
 
 def _items(value: object, label: str) -> list[object]:
-    if not is_object_list(value):
+    if not _is_object_list(value):
         raise ValueError(f"{label}が配列ではありません。")
     return value
 

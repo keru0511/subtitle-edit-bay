@@ -14,6 +14,7 @@ QtObject {
     }
 
     signal sourceSettingsRequested
+    signal processingSettingsRequested
     signal overwriteConfirmationRequested(var request)
 
     function hasTranscriptionAudio() {
@@ -43,8 +44,10 @@ QtObject {
             root.sourceSettingsRequested();
             return;
         }
-        if (!root.workflowCapabilities.canTranscribe)
+        if (!root.workflowCapabilities.canTranscribe) {
+            root.processingSettingsRequested();
             return;
+        }
         if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
             root.overwriteConfirmationRequested({
                 "settings": executionSettings,

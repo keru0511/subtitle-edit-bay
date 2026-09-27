@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 import wave
+from concurrent.futures import Future
 from copy import deepcopy
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -919,6 +920,7 @@ Window {
         with patch.object(self.app.workflow, "startTranscription") as start:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
+        self.assertTrue(self._quick_item(window, "advancedSettingsPanel").isVisible())
 
     def test_advanced_settings_popup_works_without_main_workflow_context(self) -> None:
         components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
@@ -1236,8 +1238,8 @@ Window {
             [str(added_audio.resolve())],
         )
 
-    def test_source_change_keeps_unsaved_project_when_save_fails(self) -> None:
-        path, _audio, _output = self._make_project()
+    def test_source_popup_close_discards_pending_media_and_preserves_edits(self) -> None:
+        path, _video, _audio = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
         alignment_result = {
             "status": "解析完了", "track": "0:a:0", "detected_offset": 0.3,
@@ -1247,7 +1249,8 @@ Window {
         self.app.autosave_timer.stop()
         saved_bytes = path.read_bytes()
         original_selection = deepcopy(self.app.sourceSelection)
-        self.assertTrue(original_selection["audio_files"])
+        replacement_video = self.root / "replacement-video.mkv"
+        replacement_video.write_bytes(b"video")
         _, window = self._load_qml()
         with patch.object(self.app.autosave_timer, "start"):
             self.app.subtitles.updateSegment(0, {"text": "保存待ちの字幕"})
@@ -1256,25 +1259,15 @@ Window {
             edited_history = deepcopy(self.app._undo_stack)
 
             self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
-            self._click(window, self._quick_item(window, "sourceAudioClearButton"))
-            self.assertEqual(self.app.sourceSelection["audio_files"], [])
+            with (
+                patch("src.gui_base.QFileDialog.getOpenFileName", return_value=(str(replacement_video), "")),
+                patch.object(self.app, "_probe_audio_tracks"),
+            ):
+                self._click(window, self._quick_item(window, "sourceVideoBrowseButton"))
             self.assertTrue(self.app.projectLoaded)
-            alternate_output = self.root / "alternate-output"
-            alternate_output.mkdir()
-            output_button = self._quick_item(window, "videoOutputDirectoryButton")
-            viewport = _qt_item(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
-            button_top = output_button.mapToItem(viewport, QPointF()).y()
-            viewport.setProperty("contentY", max(0.0, coerce_float(qt_property_value(viewport, "contentY")) + button_top - 20.0))
-            self.gui.wait_until(
-                lambda: self._item_is_within(viewport, output_button),
-                description="素材設定の出力先ボタンの表示範囲",
-            )
-            with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
-                self._click(window, output_button)
-            self.assertTrue(Path(_string_at(self.app.sourceSelection, "output_dir")).samefile(alternate_output))
-
-            with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
-                self._click(window, self._quick_item(window, "sourceDoneButton"))
+            self.assertEqual(self.app.sourceSelection["video"], str(replacement_video.resolve()))
+            self._click(window, self._quick_item(window, "sourcePopupCloseButton"))
+            self.assertFalse(_qt_bool(window.findChild(QObject, "sourcePopup"), "visible"))
             self.assertTrue(self.app.projectLoaded)
             self.assertTrue(self.app.projectDirty)
             self.assertEqual(self.app._project, edited_project)
@@ -1282,13 +1275,66 @@ Window {
             self.assertEqual(self.app.sourceSelection, original_selection)
             self.assertEqual(self.app.alignmentResult, alignment_result)
             self.assertEqual(path.read_bytes(), saved_bytes)
-            self.assertEqual(self.app.stage, "ERROR")
-            self.assertIn("保存先を使用できません", self.app.status)
+            self.assertTrue(Path(self.app.projectPath).samefile(path))
 
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
             self.assertFalse(self.app.projectDirty)
-            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "保存待ちの字幕")
-            self.assertEqual(load_project(path)["output_dir"], original_selection["output_dir"])
+            self.assertEqual(_value_at(load_project(path), "segments", 0, "text"), "保存待ちの字幕")
+            self.assertEqual(_value_at(load_project(path), "video", "path"), original_selection["video"])
+
+    def test_source_popup_close_keeps_output_and_discards_pending_audio(self) -> None:
+        path, _video, _audio = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
+        self.app.autosave_timer.stop()
+        saved_bytes = path.read_bytes()
+        original_selection = deepcopy(self.app.sourceSelection)
+        _, window = self._load_qml()
+        with patch.object(self.app.autosave_timer, "start"):
+            self.app.subtitles.updateSegment(0, {"text": "保存待ちの字幕"})
+            edited_project = deepcopy(self.app._project)
+            edited_history = deepcopy(self.app._undo_stack)
+            self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
+            self._click(window, self._quick_item(window, "sourceAudioClearButton"))
+            alternate_output = self.root / "alternate-output"
+            alternate_output.mkdir()
+            output_button = self._quick_item(window, "videoOutputDirectoryButton")
+            viewport = _qt_item(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
+            button_top = output_button.mapToItem(viewport, QPointF()).y()
+            viewport.setProperty(
+                "contentY",
+                max(0.0, _qt_number(viewport, "contentY") + button_top - 20.0),
+            )
+            self.gui.wait_until(
+                lambda: self._item_is_within(viewport, output_button),
+                description="素材設定の出力先ボタンの表示範囲",
+            )
+            with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
+                self._click(window, output_button)
+            self.assertTrue(_path_at(self.app.sourceSelection, "output_dir").samefile(alternate_output))
+
+            self._click(window, self._quick_item(window, "sourcePopupCloseButton"))
+            self.assertTrue(self.app.projectLoaded)
+            self.assertTrue(self.app.projectDirty)
+            self.assertEqual(_value_at(self.app._project, "segments"), _value_at(edited_project, "segments"))
+            self.assertEqual(_value_at(self.app._project, "audio_sources"), _value_at(edited_project, "audio_sources"))
+            self.assertTrue(_path_at(self.app._project, "output_dir").samefile(alternate_output))
+            self.assertEqual(self.app._undo_stack, edited_history)
+            self.assertEqual(
+                _value_at(self.app.sourceSelection, "audio_files"),
+                _value_at(original_selection, "audio_files"),
+            )
+            self.assertTrue(_path_at(self.app.sourceSelection, "output_dir").samefile(alternate_output))
+            self.assertEqual(path.read_bytes(), saved_bytes)
+            self.assertTrue(Path(self.app.projectPath).samefile(path))
+
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+            self.assertFalse(self.app.projectDirty)
+            self.assertEqual(_value_at(load_project(path), "segments", 0, "text"), "保存待ちの字幕")
+            self.assertEqual(
+                _value_at(load_project(path), "audio_sources"),
+                _value_at(edited_project, "audio_sources"),
+            )
+            self.assertTrue(_path_at(load_project(path), "output_dir").samefile(alternate_output))
 
     def test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure(self) -> None:
         path, _audio, _output = self._make_project()
@@ -1326,12 +1372,36 @@ Window {
                     self.assertEqual(self.app.stage, "ERROR")
                     self.assertIn("保存を拒否", self.app.status)
 
-    def test_failed_source_change_restores_clean_project_state(self) -> None:
+    def test_source_popup_done_applies_video_change_without_unloading_project(self) -> None:
         path, _video, _audio = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
-        original_project = deepcopy(self.app._project)
-        original_selection = deepcopy(self.app.sourceSelection)
-        saved_bytes = path.read_bytes()
+        replacement_video = self.root / "replacement-video.mkv"
+        replacement_video.write_bytes(b"video")
+        self.assertFalse(self.app.projectDirty)
+        _, window = self._load_qml()
+
+        self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
+        with (
+            patch("src.gui_base.QFileDialog.getOpenFileName", return_value=(str(replacement_video), "")),
+            patch.object(self.app, "_probe_audio_tracks"),
+        ):
+            self._click(window, self._quick_item(window, "sourceVideoBrowseButton"))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(self.app.sourceSelection["video"], str(replacement_video.resolve()))
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        self.assertNotEqual(_value_at(self.app._project, "video", "path"), str(replacement_video.resolve()))
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+        self.assertFalse(_qt_bool(window.findChild(QObject, "sourcePopup"), "visible"))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertTrue(self.app.projectDirty)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        self.assertEqual(_value_at(self.app._project, "video", "path"), str(replacement_video.resolve()))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(_value_at(load_project(path), "video", "path"), str(replacement_video.resolve()))
+
+    def test_source_popup_done_applies_audio_and_output_without_unloading_project(self) -> None:
+        path, _video, _audio = self._make_project()
+        self.assertTrue(self.app._load_project_path(path, update_sources=True))
         self.assertFalse(self.app.projectDirty)
         _, window = self._load_qml()
 
@@ -1342,26 +1412,47 @@ Window {
         output_button = self._quick_item(window, "videoOutputDirectoryButton")
         viewport = _qt_item(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
         button_top = output_button.mapToItem(viewport, QPointF()).y()
-        viewport.setProperty("contentY", max(0.0, coerce_float(qt_property_value(viewport, "contentY")) + button_top - 20.0))
+        viewport.setProperty(
+            "contentY",
+            max(0.0, _qt_number(viewport, "contentY") + button_top - 20.0),
+        )
         self.gui.wait_until(
             lambda: self._item_is_within(viewport, output_button),
             description="保存済みプロジェクトの出力先ボタンの表示範囲",
         )
         with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
             self._click(window, output_button)
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+
+        self.assertTrue(self.app.projectLoaded)
         self.assertTrue(self.app.projectDirty)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        self.assertEqual(_list_at(self.app._project, "audio_sources"), [])
+        self.assertTrue(_path_at(self.app._project, "output_dir").samefile(alternate_output))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved = load_project(path)
+        self.assertEqual(_list_at(saved, "audio_sources"), [])
+        self.assertTrue(_path_at(saved, "output_dir").samefile(alternate_output))
 
-        with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
-            self._click(window, self._quick_item(window, "sourceDoneButton"))
+    def test_source_popup_done_applies_video_selected_before_project_load(self) -> None:
+        path, _video, audio = self._make_project()
+        replacement_video = self.root / "replacement-video.mkv"
+        replacement_video.write_bytes(b"video")
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(replacement_video))
+        self.app.setAudioFiles([str(audio)], False)
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.app.autosave_timer.stop()
+        self.assertFalse(self.app._project_source_selection_matches(self.app._source_selection))
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
 
-        self.assertEqual(self.app._project, original_project)
-        self.assertEqual(self.app.sourceSelection, original_selection)
-        self.assertEqual(path.read_bytes(), saved_bytes)
-        self.assertFalse(self.app.projectDirty)
-        self.assertFalse(self.app.autosave_timer.isActive())
-        self.gui.wait(800)
-        self.assertEqual(path.read_bytes(), saved_bytes)
-        self.assertEqual(self.app.stage, "ERROR")
+        self.assertFalse(_qt_bool(window.findChild(QObject, "sourcePopup"), "visible"))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        self.assertEqual(_value_at(self.app._project, "video", "path"), str(replacement_video.resolve()))
+        self.assertTrue(self.app.projectDirty)
 
     def test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription(self) -> None:
         video = self.root / "multi-track.mkv"
@@ -1448,6 +1539,33 @@ Window {
 
         calculate.assert_called_once_with(str(video.resolve()), str(alternate_audio.resolve()), "0:a:1", 1.25)
         self.assertEqual(self.app.alignmentResult, result)
+
+    def test_alignment_without_video_audio_track_stays_idle_and_explains_why(self) -> None:
+        _video, audio, _output = self._set_ready_sources()
+        self.app._audio_tracks = self.app._default_audio_tracks()
+        self.app.audioTracksChanged.emit()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
+        button = self._quick_item(window, "analyzeAlignmentButton")
+        self.assertFalse(button.isEnabled())
+        self.assertIn("音声トラックがない", _qt_string(self._quick_item(window, "alignmentStatusText"), "text"))
+
+        with patch.object(self.app, "refreshDependencies"), patch.object(self.app._alignment_executor, "submit") as submit:
+            self.app.analyzeAlignment(str(audio), "", 0.0)
+        submit.assert_not_called()
+        self.assertFalse(self.app.alignmentBusy)
+        self.assertEqual(self.app.stage, "CHECK")
+        self.assertIn("音声トラックがない", self.app.status)
+
+    def test_alignment_worker_exit_clears_busy_state(self) -> None:
+        self.app._alignment_busy = True
+        failed: Future[dict[str, str | float]] = Future()
+        failed.set_exception(SystemExit("音声トラックを検出できません"))
+        self.app._alignment_finished(failed)
+        self.app.processEvents()
+        self.assertFalse(self.app.alignmentBusy)
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("音声トラックを検出できません", self.app.status)
 
     def test_existing_project_transcription_keeps_newly_selected_audio_source(self) -> None:
         _video, saved_audio, _output = self._set_ready_sources()
@@ -1779,7 +1897,8 @@ Window {
         render_button = self._quick_item(window, "workspaceHeaderRenderButton")
         output_button = self._quick_item(window, "workspaceHeaderOutputButton")
         self.assertTrue(render_button.isEnabled())
-        self.assertIn("出力先を選択", _qt_string(render_button, "text"))
+        self.assertEqual("出力先を選んで書き出す", _qt_string(render_button, "text"))
+        self._assert_button_content_fits(render_button)
         self.assertFalse(output_button.isEnabled())
 
         with (
@@ -1825,7 +1944,7 @@ Window {
         self.assertFalse(self.app.actionCapabilities["canRenderNormal"])
         self.assertTrue(self.app.actionCapabilities["normalRenderNeedsOutput"])
         self.assertTrue(self._quick_item(window, "workspaceHeaderRenderButton").isEnabled())
-        self.assertIn("出力先を選択", _qt_string(self._quick_item(window, "workspaceHeaderRenderButton"), "text"))
+        self.assertEqual("出力先を選んで書き出す", _qt_string(self._quick_item(window, "workspaceHeaderRenderButton"), "text"))
 
         for dependencies, warning_visible in (
             (RuntimeDependencyStatus(True, True, False, cuda=False), True),
@@ -3956,6 +4075,27 @@ Window {
         self.assertIn("起動時システムログを表示", _qt_string(text_area, "text"))
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
         self.assertTrue(_qt_bool(self._quick_item(window, "applicationLogPanel"), "expanded"))
+
+    def test_error_log_panel_can_be_collapsed_and_expands_for_next_error(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        panel = self._quick_item(window, "applicationLogPanel")
+        toggle = self._quick_item(window, "applicationLogToggleButton")
+        self.app._set_status("ログを確認するエラー", "ERROR")
+        self.app.processEvents()
+        self.assertTrue(_qt_bool(panel, "expanded"))
+        self.assertEqual(_qt_string(toggle, "text"), "縮小")
+
+        self._click(window, toggle)
+        self.assertFalse(_qt_bool(panel, "expanded"))
+        self.assertEqual(_qt_string(toggle, "text"), "詳細")
+        self._click(window, toggle)
+        self.assertTrue(_qt_bool(panel, "expanded"))
+        self._click(window, toggle)
+        self.app._set_status("処理可能", "READY")
+        self.app._set_status("次のエラー", "ERROR")
+        self.app.processEvents()
+        self.assertTrue(_qt_bool(panel, "expanded"))
 
     def test_log_actions_fit_and_work_at_minimum_window_width(self) -> None:
         self._load_project()
@@ -11959,6 +12099,10 @@ Window {
         )
         self.assertEqual(qt_property_value(progress, "value"), 128)
         self.assertEqual(qt_property_value(progress, "to"), 256)
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        self.app.processEvents()
+        self.assertTrue(_qt_bool(dialog, "visible"))
+        self.assertTrue(cancel.isVisible())
         self._click(window, cancel)
         self.assertTrue(self.app.updates._state.download_cancel.is_set())
 
@@ -12000,6 +12144,9 @@ Window {
             self.app.process.started.emit()
             self.assertEqual(self.app._active_job, "update")
             self.assertTrue(self.app.running)
+            QTest.keyClick(window, Qt.Key.Key_Escape)
+            self.app.processEvents()
+            self.assertTrue(_qt_bool(dialog, "visible"))
 
         self.app.process.finished.emit(0, QProcess.ExitStatus.NormalExit)
         self.app.processEvents()

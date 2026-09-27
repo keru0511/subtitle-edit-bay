@@ -1,14 +1,19 @@
 import copy
 import hashlib
+import http.client
+import io
 import json
 import subprocess
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, TypedDict, cast
 from urllib.error import HTTPError, URLError
-from unittest.mock import MagicMock, patch
+from urllib.request import Request
+from unittest.mock import patch
+
+from src.data_boundary import decode_json, is_string_object_dict, is_string_object_dict_list
 
 from scripts.release_contract import (
     CHECKSUM_NAME,
@@ -24,6 +29,8 @@ from scripts.release_candidate import (
     REQUIRED_CI_JOB_NAMES,
     REQUIRED_JOB_NAMES,
     RELEASE_ARTIFACT_FILES,
+    GitHubApi,
+    ReleaseCandidate,
     ReleaseCandidateError,
     extract_verified_artifact,
     resolve_release_candidate,
@@ -76,6 +83,118 @@ RELEASE_ASSET_NAMES = {
     MANIFEST_NAME,
     PREPARATION_NAME,
 }
+
+
+_WorkflowInput = TypedDict("_WorkflowInput", {"default": object}, total=False)
+_WorkflowTrigger = TypedDict(
+    "_WorkflowTrigger",
+    {"inputs": dict[str, _WorkflowInput], "branches": list[str], "paths": list[str]},
+    total=False,
+)
+_WorkflowStep = TypedDict(
+    "_WorkflowStep",
+    {
+        "id": str,
+        "name": str,
+        "uses": str,
+        "run": str,
+        "shell": str,
+        "if": str,
+        "with": dict[str, str],
+        "env": dict[str, str],
+        "continue-on-error": object,
+    },
+    total=False,
+)
+_WorkflowJob = TypedDict(
+    "_WorkflowJob",
+    {
+        "name": str,
+        "needs": str | list[str],
+        "steps": list[_WorkflowStep],
+        "permissions": dict[str, object],
+        "outputs": dict[str, str],
+        "uses": str,
+        "with": dict[str, object],
+        "if": str,
+        "continue-on-error": object,
+    },
+    total=False,
+)
+_Workflow = TypedDict(
+    "_Workflow",
+    {
+        "on": dict[str, _WorkflowTrigger],
+        "jobs": dict[str, _WorkflowJob],
+        "permissions": dict[str, object],
+        "concurrency": dict[str, str],
+    },
+    total=False,
+)
+
+
+def _load_typed_workflow(path: Path) -> _Workflow:
+    """読み込んだYAMLの、配布テストでたどる構造を検証する。"""
+    workflow = load_workflow(path)
+    jobs = workflow.get("jobs")
+    if not is_string_object_dict(jobs):
+        raise AssertionError(f"workflow jobs must be a mapping: {path}")
+    for job_id, job in jobs.items():
+        if not is_string_object_dict(job):
+            raise AssertionError(f"workflow job must be a mapping: {job_id}")
+        if "steps" in job and not is_string_object_dict_list(job["steps"]):
+            raise AssertionError(f"workflow job steps must be mappings: {job_id}")
+    return cast(_Workflow, workflow)
+
+
+def _typed_step_by_id(workflow: _Workflow, job_id: str, step_id: str) -> _WorkflowStep:
+    step = step_by_id(workflow, job_id, step_id)
+    if not is_string_object_dict(step):
+        raise AssertionError(f"workflow step must be mutable mapping: {job_id}/{step_id}")
+    return cast(_WorkflowStep, step)
+
+
+def _read_json_object(path: Path) -> dict[str, object]:
+    payload = decode_json(path.read_text(encoding="utf-8"))
+    if not is_string_object_dict(payload):
+        raise AssertionError(f"JSON root must be an object: {path}")
+    return payload
+
+
+def _candidate_data(candidate: ReleaseCandidate) -> dict[str, object]:
+    # ReleaseCandidate はフィールドがすべて型付けされた dataclass。
+    return cast(dict[str, object], candidate.__dict__)
+
+
+def _producer_json(producer: dict[str, object]) -> str:
+    payload: dict[str, object] = {"producer": producer}
+    return json.dumps(payload)
+
+
+class _FixtureGitHubApi(GitHubApi):
+    def __init__(
+        self,
+        get_handler: Callable[[str, dict[str, object] | None], object],
+        pages_handler: Callable[[str, str | None, dict[str, object] | None], list[object]],
+        download_handler: Callable[[int, Path, str], None] | None = None,
+    ) -> None:
+        self.repository = "owner/repo"
+        self._get_handler = get_handler
+        self._pages_handler = pages_handler
+        self._download_handler = download_handler
+        self.page_calls: list[tuple[str, dict[str, object] | None]] = []
+
+    def get(self, path: str, query: dict[str, object] | None = None) -> object:
+        return self._get_handler(path, query)
+
+    def pages(self, path: str, key: str | None = None, query: dict[str, object] | None = None) -> list[object]:
+        self.page_calls.append((path, query))
+        return self._pages_handler(path, key, query)
+
+    def download_artifact(self, artifact_id: int, destination: Path, expected_digest: str) -> None:
+        if self._download_handler is None:
+            raise AssertionError("unexpected artifact download")
+        self._download_handler(artifact_id, destination, expected_digest)
 
 
 class ReleaseDistributionTests(TypedTestCase):
@@ -195,9 +314,11 @@ class ReleaseDistributionTests(TypedTestCase):
             (RELEASE_PREPARE_WORKFLOW, "smoke", "release-tools/"),
         ):
             with self.subTest(workflow=path.name):
-                job = load_workflow(path)["jobs"][job_id]
+                job = _load_typed_workflow(path)["jobs"][job_id]
                 steps = job["steps"]
-                python_step = next(step for step in steps if str(step.get("uses", "")).startswith("actions/setup-python@"))
+                python_step = next(
+                    step for step in steps if str(step.get("uses", "")).startswith("actions/setup-python@")
+                )
                 cache_env = next(step for step in steps if step.get("name") == "Configure installer download cache")
                 self.assertEqual(cache_env["shell"], "pwsh")
                 self.assertIn("$env:GITHUB_ENV", cache_env["run"])
@@ -299,7 +420,7 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertEqual((verifier + signer + updater).count("Assert-ExactCertificateSubject"), 3)
 
     def test_release_workflow_has_safe_publish_graph_and_permissions(self) -> None:
-        workflow = load_workflow(RELEASE_WORKFLOW)
+        workflow = _load_typed_workflow(RELEASE_WORKFLOW)
         triggers = workflow["on"]
 
         self.assertEqual(set(triggers), {"workflow_call"})
@@ -324,8 +445,8 @@ class ReleaseDistributionTests(TypedTestCase):
         )
 
     def test_release_entrypoint_passes_exact_source_and_version(self) -> None:
-        release = load_workflow(RELEASE_WORKFLOW)
-        request = load_workflow(RELEASE_REQUEST_WORKFLOW)
+        release = _load_typed_workflow(RELEASE_WORKFLOW)
+        request = _load_typed_workflow(RELEASE_REQUEST_WORKFLOW)
         reusable_release = request["jobs"]["release"]
 
         self.assertEqual(
@@ -347,22 +468,22 @@ class ReleaseDistributionTests(TypedTestCase):
         )
 
     def test_release_workflow_validates_source_and_artifacts_before_publish(self) -> None:
-        workflow = load_workflow(RELEASE_WORKFLOW)
-        preparation = load_workflow(RELEASE_PREPARE_WORKFLOW)
+        workflow = _load_typed_workflow(RELEASE_WORKFLOW)
+        preparation = _load_typed_workflow(RELEASE_PREPARE_WORKFLOW)
 
         validate_step_order(
             preparation,
             "build",
             ("upload",),
         )
-        upload = step_by_id(preparation, "build", "upload")
+        upload = _typed_step_by_id(preparation, "build", "upload")
         self.assertTrue(str(upload["uses"]).startswith("actions/upload-artifact@"))
-        validation_command = str(step_by_id(preparation, "validate", "contract")["run"])
+        validation_command = str(_typed_step_by_id(preparation, "validate", "contract")["run"])
         self.assertNotIn("artifact_name", validation_command)
-        identity_command = str(step_by_id(preparation, "build", "identity")["run"])
+        identity_command = str(_typed_step_by_id(preparation, "build", "identity")["run"])
         self.assertIn("-attempt-$env:GITHUB_RUN_ATTEMPT", identity_command)
         self.assertEqual(upload["with"]["name"], "${{ steps.identity.outputs.artifact_name }}")
-        smoke_download = step_by_id(preparation, "smoke", "download")
+        smoke_download = _typed_step_by_id(preparation, "smoke", "download")
         self.assertEqual(smoke_download["with"]["artifact-ids"], "${{ needs.build.outputs.artifact_id }}")
         self.assertEqual(
             preparation["jobs"]["readiness"]["outputs"]["artifact_name"],
@@ -371,17 +492,17 @@ class ReleaseDistributionTests(TypedTestCase):
         uploaded_paths = str(upload["with"]["path"])
         self.assertTrue(all(asset_name in uploaded_paths for asset_name in RELEASE_ASSET_NAMES))
         self.assertEqual(preparation["on"]["workflow_call"]["inputs"]["require_signature"]["default"], False)
-        binary = step_by_id(preparation, "build", "binary")
+        binary = _typed_step_by_id(preparation, "build", "binary")
         self.assertIn("verify_windows_binary.ps1", str(binary["run"]))
-        signing = step_by_id(preparation, "build", "signing")
+        signing = _typed_step_by_id(preparation, "build", "signing")
         self.assertEqual(signing["if"], "inputs.require_signature")
         self.assertIn("unsigned", str(signing["run"]).lower())
-        readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
+        readiness = _load_typed_workflow(RELEASE_READINESS_WORKFLOW)
         self.assertEqual(
             readiness["jobs"]["prepare"]["with"]["require_signature"],
             False,
         )
-        published_assets = str(step_by_id(workflow, "publish", "release")["run"])
+        published_assets = str(_typed_step_by_id(workflow, "publish", "release")["run"])
         self.assertTrue(all(asset_name in published_assets for asset_name in RELEASE_ASSET_NAMES))
         self.assertIn("release-promotion.json", published_assets)
         self.assertNotIn("--clobber", published_assets)
@@ -389,10 +510,10 @@ class ReleaseDistributionTests(TypedTestCase):
 
         candidate = workflow["jobs"]["candidate"]
         self.assertNotIn("release-prepare.yml", RELEASE_WORKFLOW.read_text(encoding="utf-8"))
-        select_command = str(step_by_id(workflow, "candidate", "select")["run"])
+        select_command = str(_typed_step_by_id(workflow, "candidate", "select")["run"])
         self.assertIn("release_candidate.py resolve", select_command)
         self.assertIn("--decision-artifact-name", select_command)
-        download = step_by_id(workflow, "candidate", "download")
+        download = _typed_step_by_id(workflow, "candidate", "download")
         download_command = str(download["run"])
         self.assertIn("release_candidate.py download-artifact", download_command)
         self.assertIn('--artifact-id "${{ steps.select.outputs.artifact_id }}"', download_command)
@@ -412,7 +533,7 @@ class ReleaseDistributionTests(TypedTestCase):
         )
 
     def test_normal_ci_records_the_exact_validated_merge_identity(self) -> None:
-        workflow = load_workflow(CI_WORKFLOW)
+        workflow = _load_typed_workflow(CI_WORKFLOW)
         result = workflow["jobs"]["validation-result"]
 
         self.assertEqual(result["name"], "CI validation result")
@@ -442,7 +563,7 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertIn("${{ github.sha }}-attempt-${{ github.run_attempt }}", upload["with"]["name"])
 
     def test_release_candidate_validation_has_one_owner_for_duplicate_jobs(self) -> None:
-        workflow = load_workflow(CI_WORKFLOW)
+        workflow = _load_typed_workflow(CI_WORKFLOW)
         classify = workflow["jobs"]["classify-validation"]
         self.assertIn("delegates_to_readiness", classify["outputs"])
         classify_command = str(classify["steps"][-1]["run"])
@@ -463,15 +584,15 @@ class ReleaseDistributionTests(TypedTestCase):
         )
         self.assertIn("assert-ci-validation", str(aggregate["run"]))
         self.assertIn("--delegates-to-readiness", str(aggregate["run"]))
-        readiness = load_workflow(RELEASE_READINESS_WORKFLOW)
+        readiness = _load_typed_workflow(RELEASE_READINESS_WORKFLOW)
         self.assertEqual(readiness["jobs"]["prepare"]["uses"], "./.github/workflows/release-prepare.yml")
 
     def test_existing_release_must_be_published_or_a_verified_draft(self) -> None:
-        workflow = load_workflow(RELEASE_WORKFLOW)
+        workflow = _load_typed_workflow(RELEASE_WORKFLOW)
         publish = workflow["jobs"]["publish"]
-        state = step_by_id(workflow, "publish", "state")
-        release = step_by_id(workflow, "publish", "release")
-        published = step_by_id(workflow, "publish", "published")
+        state = _typed_step_by_id(workflow, "publish", "state")
+        release = _typed_step_by_id(workflow, "publish", "release")
+        published = _typed_step_by_id(workflow, "publish", "published")
         command = str(release["run"])
 
         self.assertIn("release_state.py inspect-release", str(state["run"]))
@@ -479,10 +600,10 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertIn('steps.state.outputs.action }}" == "publish-draft"', command)
         self.assertIn('gh release edit "$RELEASE_VERSION"', command)
         self.assertIn("--draft=false", command)
-        verify = str(step_by_id(workflow, "publish", "verify")["run"])
+        verify = str(_typed_step_by_id(workflow, "publish", "verify")["run"])
         self.assertIn("verify-artifacts", verify)
         self.assertIn("verify-promotion", verify)
-        candidate_download = str(step_by_id(workflow, "publish", "download")["run"])
+        candidate_download = str(_typed_step_by_id(workflow, "publish", "download")["run"])
         self.assertIn("release_candidate.py download-artifact", candidate_download)
         decision_download = next(
             step for step in publish["steps"] if step.get("name") == "Download frozen promotion decision"
@@ -497,9 +618,9 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertEqual(publish["steps"][-1]["id"], "published")
 
     def test_release_request_uses_actual_merge_sha_and_supports_fixed_target_retry(self) -> None:
-        workflow = load_workflow(RELEASE_REQUEST_WORKFLOW)
+        workflow = _load_typed_workflow(RELEASE_REQUEST_WORKFLOW)
         triggers = workflow["on"]["push"]
-        release_step = step_by_id(workflow, "validate", "release")
+        release_step = _typed_step_by_id(workflow, "validate", "release")
         command = str(release_step["run"])
 
         self.assertEqual(triggers["branches"], ["main"])
@@ -521,7 +642,7 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertEqual(command.count('git show "$source_sha:VERSION"'), 0)
 
     def test_release_readiness_is_unskippable_and_fail_closed(self) -> None:
-        workflow = load_workflow(RELEASE_READINESS_WORKFLOW)
+        workflow = _load_typed_workflow(RELEASE_READINESS_WORKFLOW)
         triggers = workflow["on"]
         aggregate = workflow["jobs"]["readiness"]
         command = str(aggregate["steps"][-1]["run"])
@@ -549,7 +670,7 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertNotIn("gh release view", collision)
 
     def test_ci_isolates_push_and_manual_runs_from_other_executions(self) -> None:
-        concurrency = load_workflow(CI_WORKFLOW)["concurrency"]
+        concurrency = _load_typed_workflow(CI_WORKFLOW)["concurrency"]
         # pushは直前のpushとの差分だけを検証するため、後続実行とグループを共有しない。
         # cancel-in-progressだけをfalseにしても、同じグループの待機中実行は置換される。
         self.assertEqual(
@@ -559,7 +680,7 @@ class ReleaseDistributionTests(TypedTestCase):
         )
 
     def test_ci_cancels_only_superseded_pull_request_runs(self) -> None:
-        concurrency = load_workflow(CI_WORKFLOW)["concurrency"]
+        concurrency = _load_typed_workflow(CI_WORKFLOW)["concurrency"]
         self.assertEqual(concurrency["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
 
     def test_local_release_artifacts_are_ignored(self) -> None:
@@ -578,9 +699,9 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertIn("公開済みのタグを削除・付け替えしない", releasing)
 
 
-class TestReleaseWorkflow(TypedDict):
+class TestReleaseWorkflow(TypedDict, total=False):
     on: dict[str, object]
-    permissions: dict[str, str]
+    permissions: dict[str, object]
     jobs: dict[str, dict[str, object]]
 
 
@@ -609,7 +730,7 @@ class WorkflowContractHelperTests(TypedTestCase):
                 encoding="utf-8",
             )
 
-            workflow = load_workflow(workflow_path)
+            workflow = _load_typed_workflow(workflow_path)
 
         self.assertIn("on", workflow)
         self.assertNotIn(True, workflow)
@@ -628,7 +749,7 @@ class WorkflowContractHelperTests(TypedTestCase):
         validate_publish_permissions(workflow, publish_job="publish")
 
     def test_missing_gate_continue_on_error_and_unsafe_conditions_are_rejected(self) -> None:
-        mutations = []
+        mutations: list[tuple[TestReleaseWorkflow, str]] = []
 
         missing_test = self._transitive_release_workflow()
         missing_test["jobs"]["candidate"]["needs"] = ["build"]
@@ -701,7 +822,10 @@ class WorkflowContractHelperTests(TypedTestCase):
             validate_publish_permissions(excessive_permissions, publish_job="publish")
 
         excessive_publish_permissions = self._transitive_release_workflow()
-        excessive_publish_permissions["jobs"]["publish"]["permissions"]["packages"] = "write"
+        publish_permissions = excessive_publish_permissions["jobs"]["publish"]["permissions"]
+        if not is_string_object_dict(publish_permissions):
+            raise AssertionError("publish permissions must be a mapping")
+        publish_permissions["packages"] = "write"
         with self.assertRaisesRegex(WorkflowContractError, "unexpected write"):
             validate_publish_permissions(
                 excessive_publish_permissions,
@@ -729,7 +853,7 @@ class WorkflowContractHelperTests(TypedTestCase):
         with self.assertRaisesRegex(WorkflowContractError, "invalid permission entries"):
             validate_publish_permissions(malformed_permissions, publish_job="publish")
 
-        workflow = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        workflow = copy.deepcopy(_load_typed_workflow(RELEASE_WORKFLOW))
         workflow["jobs"]["publish"]["steps"] = [
             step for step in workflow["jobs"]["publish"]["steps"] if step.get("id") != "verify"
         ]
@@ -739,12 +863,12 @@ class WorkflowContractHelperTests(TypedTestCase):
     def test_skipped_verification_and_failure_publish_are_rejected(self) -> None:
         mutations = []
 
-        skipped_verification = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(skipped_verification, "publish", "verify")["if"] = "${{ false }}"
+        skipped_verification = copy.deepcopy(_load_typed_workflow(RELEASE_WORKFLOW))
+        _typed_step_by_id(skipped_verification, "publish", "verify")["if"] = "${{ false }}"
         mutations.append((skipped_verification, "publish/verify"))
 
-        failure_publish = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
-        step_by_id(failure_publish, "publish", "release")["if"] = "${{ failure() }}"
+        failure_publish = copy.deepcopy(_load_typed_workflow(RELEASE_WORKFLOW))
+        _typed_step_by_id(failure_publish, "publish", "release")["if"] = "${{ failure() }}"
         mutations.append((failure_publish, "publish/release"))
 
         for workflow, location in mutations:
@@ -763,10 +887,12 @@ class WorkflowContractHelperTests(TypedTestCase):
                 )
 
     def test_steps_cannot_mutate_artifacts_after_validation(self) -> None:
-        mutations = []
+        mutations: list[tuple[_Workflow, str, tuple[str, ...], tuple[tuple[str, str], ...]]] = []
 
-        before_upload = copy.deepcopy(load_workflow(RELEASE_PREPARE_WORKFLOW))
-        upload_index = before_upload["jobs"]["build"]["steps"].index(step_by_id(before_upload, "build", "upload"))
+        before_upload = copy.deepcopy(_load_typed_workflow(RELEASE_PREPARE_WORKFLOW))
+        upload_index = before_upload["jobs"]["build"]["steps"].index(
+            _typed_step_by_id(before_upload, "build", "upload")
+        )
         before_upload["jobs"]["build"]["steps"].insert(
             upload_index,
             {"id": "mutate-package", "run": "echo mutate package"},
@@ -780,9 +906,9 @@ class WorkflowContractHelperTests(TypedTestCase):
             )
         )
 
-        before_release = copy.deepcopy(load_workflow(RELEASE_WORKFLOW))
+        before_release = copy.deepcopy(_load_typed_workflow(RELEASE_WORKFLOW))
         release_index = before_release["jobs"]["publish"]["steps"].index(
-            step_by_id(before_release, "publish", "release")
+            _typed_step_by_id(before_release, "publish", "release")
         )
         before_release["jobs"]["publish"]["steps"].insert(
             release_index,
@@ -810,14 +936,14 @@ class WorkflowContractHelperTests(TypedTestCase):
                 )
 
     def test_release_contract_commands_cannot_mask_failures_or_change_inputs(self) -> None:
-        workflow = load_workflow(RELEASE_WORKFLOW)
-        command = str(step_by_id(workflow, "publish", "verify")["run"])
+        workflow = _load_typed_workflow(RELEASE_WORKFLOW)
+        command = str(_typed_step_by_id(workflow, "publish", "verify")["run"])
 
         self.assertIn('--expected-version "${{ inputs.release_version }}"', command)
         self.assertIn('--expected-source-sha "$CANDIDATE_SOURCE_SHA"', command)
         self.assertIn('[[ "$actual_sha256" == "$INSTALLER_SHA256" ]]', command)
         self.assertNotIn("|| true", command)
-        self.assertEqual(step_by_id(workflow, "publish", "verify")["shell"], "bash")
+        self.assertEqual(_typed_step_by_id(workflow, "publish", "verify")["shell"], "bash")
 
 
 class ReleaseCandidateTests(TypedTestCase):
@@ -849,9 +975,7 @@ class ReleaseCandidateTests(TypedTestCase):
         include_failed_test_attempt: bool = False,
         empty_pull_requests: bool = False,
         contradictory_pull_requests: bool = False,
-    ) -> MagicMock:
-        api = MagicMock()
-        api.repository = "owner/repo"
+    ) -> _FixtureGitHubApi:
         pull = {
             "number": 42,
             "merged": True,
@@ -939,7 +1063,7 @@ class ReleaseCandidateTests(TypedTestCase):
                     }
                 )
                 for job in readiness_jobs:
-                    if job["name"].endswith(inherited_name):
+                    if str(job["name"]).endswith(inherited_name):
                         job.setdefault("started_at", "2026-09-07T01:15:00Z")
                         job.setdefault("completed_at", "2026-09-07T01:45:00Z")
         ci_run = dict(
@@ -1027,22 +1151,20 @@ class ReleaseCandidateTests(TypedTestCase):
             if path.endswith("/pulls/42/files"):
                 return [{"filename": "VERSION"}]
             if path.endswith("/release-readiness.yml/runs"):
-                return readiness_runs
+                return list[object](readiness_runs)
             if path.endswith("/ci.yml/runs"):
                 return [ci_run]
             if path.endswith("/runs/200/jobs"):
-                return readiness_jobs
+                return list[object](readiness_jobs)
             if path.endswith("/runs/201/jobs"):
-                return ci_jobs
+                return list[object](ci_jobs)
             if path.endswith("/runs/200/artifacts"):
-                return prepared_artifacts
+                return list[object](prepared_artifacts)
             if path.endswith("/runs/201/artifacts"):
                 return [ci_artifact]
             raise AssertionError(path)
 
-        api.get.side_effect = get
-        api.pages.side_effect = pages
-        return api
+        return _FixtureGitHubApi(get, pages)
 
     def test_selects_exact_successful_candidate_and_records_distinct_release_commit(self) -> None:
         candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
@@ -1090,11 +1212,7 @@ class ReleaseCandidateTests(TypedTestCase):
 
         with self.assertRaisesRegex(ReleaseCandidateError, "in_progress/None"):
             select_release_candidate(api, self.RELEASE_SHA, "v1.2.3")
-        readiness_queries = [
-            call.kwargs["query"]
-            for call in api.pages.call_args_list
-            if call.args and str(call.args[0]).endswith("/release-readiness.yml/runs")
-        ]
+        readiness_queries = [query for path, query in api.page_calls if path.endswith("/release-readiness.yml/runs")]
         self.assertEqual(readiness_queries, [{"event": "pull_request"}])
 
     def test_rejects_failed_required_normal_ci_job(self) -> None:
@@ -1142,13 +1260,13 @@ class ReleaseCandidateTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
             candidate_path = directory / "candidate.json"
-            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            candidate_path.write_text(json.dumps(_candidate_data(candidate)), encoding="utf-8")
             expected = directory / "expected.json"
             actual = directory / "actual.json"
             write_promotion_record(expected, candidate_path, "1" * 64)
             write_promotion_record(actual, candidate_path, "1" * 64)
             verify_promotion_record(actual, expected)
-            payload = json.loads(actual.read_text(encoding="utf-8"))
+            payload = _read_json_object(actual)
             payload["installer_sha256"] = "2" * 64
             actual.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
@@ -1156,7 +1274,7 @@ class ReleaseCandidateTests(TypedTestCase):
 
     def test_generated_preparation_is_bound_to_pr_and_readiness_run(self) -> None:
         candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
-        producer = {
+        producer: dict[str, object] = {
             "repository": candidate.repository,
             "event_name": "pull_request",
             "pull_request_number": candidate.pull_request_number,
@@ -1171,11 +1289,11 @@ class ReleaseCandidateTests(TypedTestCase):
             directory = Path(temp_dir)
             candidate_path = directory / "candidate.json"
             preparation_path = directory / "release-preparation.json"
-            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
-            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+            candidate_path.write_text(json.dumps(_candidate_data(candidate)), encoding="utf-8")
+            preparation_path.write_text(_producer_json(producer), encoding="utf-8")
             verify_preparation_binding(candidate_path, preparation_path)
             producer["workflow_run_id"] = 999
-            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+            preparation_path.write_text(_producer_json(producer), encoding="utf-8")
 
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
                 verify_preparation_binding(candidate_path, preparation_path)
@@ -1191,7 +1309,7 @@ class ReleaseCandidateTests(TypedTestCase):
                 ("pull_request_head_sha", None),
             ):
                 with self.subTest(field_name=field_name):
-                    payload = {**candidate.__dict__, field_name: invalid_value}
+                    payload = {**_candidate_data(candidate), field_name: invalid_value}
                     candidate_path.write_text(json.dumps(payload), encoding="utf-8")
                     with self.assertRaisesRegex(ReleaseCandidateError, field_name):
                         verify_preparation_binding(candidate_path, preparation_path)
@@ -1217,14 +1335,10 @@ class ReleaseCandidateTests(TypedTestCase):
         self.assertEqual(candidate.installer_smoke_workflow_run_attempt, 2)
         self.assertEqual(candidate.artifact_id, 300)
         self.assertTrue(candidate.artifact_name.endswith("-attempt-1"))
-        job_queries = [
-            call.kwargs["query"]
-            for call in api.pages.call_args_list
-            if call.args and str(call.args[0]).endswith("/jobs")
-        ]
+        job_queries = [query for path, query in api.page_calls if path.endswith("/jobs")]
         self.assertEqual(job_queries, [{"filter": "all"}, {"filter": "all"}, {"filter": "all"}])
 
-        producer = {
+        producer: dict[str, object] = {
             "repository": candidate.repository,
             "event_name": "pull_request",
             "pull_request_number": candidate.pull_request_number,
@@ -1239,8 +1353,8 @@ class ReleaseCandidateTests(TypedTestCase):
             directory = Path(temp_dir)
             candidate_path = directory / "candidate.json"
             preparation_path = directory / "release-preparation.json"
-            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
-            preparation_path.write_text(json.dumps({"producer": producer}), encoding="utf-8")
+            candidate_path.write_text(json.dumps(_candidate_data(candidate)), encoding="utf-8")
+            preparation_path.write_text(_producer_json(producer), encoding="utf-8")
 
             verify_preparation_binding(candidate_path, preparation_path)
 
@@ -1269,7 +1383,7 @@ class ReleaseCandidateTests(TypedTestCase):
             directory = Path(temp_dir)
             candidate_path = directory / "candidate.json"
             identity_path = directory / "ci-validation-identity.json"
-            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            candidate_path.write_text(json.dumps(_candidate_data(candidate)), encoding="utf-8")
             write_ci_validation_identity(
                 identity_path,
                 candidate.repository,
@@ -1283,7 +1397,7 @@ class ReleaseCandidateTests(TypedTestCase):
                 candidate.ci_artifact_workflow_run_attempt,
             )
             verify_ci_validation_binding(candidate_path, identity_path)
-            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            identity = _read_json_object(identity_path)
             self.assertEqual(identity["schema_version"], 2)
             self.assertEqual(identity["validation_profile"], "release-candidate-v1")
             self.assertEqual(identity["delegated_workflow"], ".github/workflows/release-readiness.yml")
@@ -1302,11 +1416,12 @@ class ReleaseCandidateTests(TypedTestCase):
     def test_archive_digest_rejects_self_consistent_replacement(self) -> None:
         def write_archive(path: Path, installer: bytes) -> None:
             installer_digest = hashlib.sha256(installer).hexdigest()
+            digest_record: dict[str, object] = {"sha256": installer_digest}
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(INSTALLER_NAME, installer)
                 archive.writestr(CHECKSUM_NAME, f"{installer_digest}  {INSTALLER_NAME}")
-                archive.writestr(MANIFEST_NAME, json.dumps({"sha256": installer_digest}))
-                archive.writestr(PREPARATION_NAME, json.dumps({"sha256": installer_digest}))
+                archive.writestr(MANIFEST_NAME, json.dumps(digest_record))
+                archive.writestr(PREPARATION_NAME, json.dumps(digest_record))
 
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
@@ -1328,7 +1443,7 @@ class ReleaseCandidateTests(TypedTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
             candidate_path = directory / "selected-candidate.json"
-            candidate_path.write_text(json.dumps(candidate.__dict__), encoding="utf-8")
+            candidate_path.write_text(json.dumps(_candidate_data(candidate)), encoding="utf-8")
             promotion_path = directory / "release-promotion.json"
             write_promotion_record(promotion_path, candidate_path, "1" * 64)
             archive_path = directory / "decision.zip"
@@ -1337,21 +1452,24 @@ class ReleaseCandidateTests(TypedTestCase):
                 archive.write(promotion_path, promotion_path.name)
             archive_bytes = archive_path.read_bytes()
             archive_digest = f"sha256:{hashlib.sha256(archive_bytes).hexdigest()}"
-            api = MagicMock()
-            api.repository = "owner/repo"
-            api.pages.return_value = [
-                {
-                    "id": 400,
-                    "name": "release-promotion-decision",
-                    "digest": archive_digest,
-                    "expired": False,
-                }
-            ]
+
+            def unexpected_get(_path: str, _query: dict[str, object] | None) -> object:
+                raise AssertionError("unexpected API lookup")
+
+            def pages(_path: str, _key: str | None, _query: dict[str, object] | None) -> list[object]:
+                return [
+                    {
+                        "id": 400,
+                        "name": "release-promotion-decision",
+                        "digest": archive_digest,
+                        "expired": False,
+                    }
+                ]
 
             def download(_artifact_id: int, destination: Path, _digest: str) -> None:
                 destination.write_bytes(archive_bytes)
 
-            api.download_artifact.side_effect = download
+            api = _FixtureGitHubApi(unexpected_get, pages, download)
             restored, reused = resolve_release_candidate(
                 api,
                 self.RELEASE_SHA,
@@ -1364,7 +1482,7 @@ class ReleaseCandidateTests(TypedTestCase):
 
             self.assertTrue(reused)
             self.assertEqual(restored, candidate)
-            api.pages.assert_called_once()
+            self.assertEqual(len(api.page_calls), 1)
 
 
 class ReleaseArtifactContractTests(TypedTestCase):
@@ -1381,65 +1499,63 @@ class ReleaseArtifactContractTests(TypedTestCase):
             f"{digest}  {INSTALLER_NAME}",
             encoding="ascii",
         )
+        manifest_payload: dict[str, object] = {
+            "schema_version": 1,
+            "package_type": "installer",
+            "app_version": version,
+            "source_sha": source_sha,
+            "asset_name": INSTALLER_NAME,
+            "sha256": digest,
+            "required_files": [
+                "SubtitleEditBayLauncher.exe",
+                "VERSION",
+                "scripts/launch.ps1",
+                "scripts/apply_installer_update.ps1",
+                "scripts/windows_signing_identity.ps1",
+                "scripts/validate_runtime.ps1",
+                "scripts/runtime_activation.ps1",
+                "scripts/setup.ps1",
+                "scripts/setup_state.ps1",
+                "scripts/migration_review.ps1",
+                "scripts/windows_path_identity.ps1",
+                "scripts/runtime_contract.py",
+                "runtime/runtime-contract.json",
+                "runtime/requirements-windows-cpu.lock",
+                "runtime/requirements-windows-cu128.lock",
+            ],
+            "runtime_contract": {
+                "contract_sha256": "1" * 64,
+                "cpu_lock_sha256": "2" * 64,
+                "cu128_lock_sha256": "3" * 64,
+            },
+        }
         (directory / MANIFEST_NAME).write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "package_type": "installer",
-                    "app_version": version,
-                    "source_sha": source_sha,
-                    "asset_name": INSTALLER_NAME,
-                    "sha256": digest,
-                    "required_files": [
-                        "SubtitleEditBayLauncher.exe",
-                        "VERSION",
-                        "scripts/launch.ps1",
-                        "scripts/apply_installer_update.ps1",
-                        "scripts/windows_signing_identity.ps1",
-                        "scripts/validate_runtime.ps1",
-                        "scripts/runtime_activation.ps1",
-                        "scripts/setup.ps1",
-                        "scripts/setup_state.ps1",
-                        "scripts/migration_review.ps1",
-                        "scripts/windows_path_identity.ps1",
-                        "scripts/runtime_contract.py",
-                        "runtime/runtime-contract.json",
-                        "runtime/requirements-windows-cpu.lock",
-                        "runtime/requirements-windows-cu128.lock",
-                    ],
-                    "runtime_contract": {
-                        "contract_sha256": "1" * 64,
-                        "cpu_lock_sha256": "2" * 64,
-                        "cu128_lock_sha256": "3" * 64,
-                    },
-                }
-            ),
+            json.dumps(manifest_payload),
             encoding="utf-8",
         )
+        preparation_payload: dict[str, object] = {
+            "schema_version": 1,
+            "source_sha": source_sha,
+            "release_version": f"v{version}",
+            "artifact_name": f"subtitle-edit-bay-{version}-windows-installer-{source_sha}",
+            "asset_name": INSTALLER_NAME,
+            "sha256": digest,
+        }
         (directory / PREPARATION_NAME).write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "source_sha": source_sha,
-                    "release_version": f"v{version}",
-                    "artifact_name": f"subtitle-edit-bay-{version}-windows-installer-{source_sha}",
-                    "asset_name": INSTALLER_NAME,
-                    "sha256": digest,
-                }
-            ),
+            json.dumps(preparation_payload),
             encoding="utf-8",
         )
         return digest
 
     def _rewrite_manifest(self, directory: Path, **changes: object) -> None:
         manifest_path = directory / MANIFEST_NAME
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = _read_json_object(manifest_path)
         manifest.update(changes)
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     def _rewrite_preparation(self, directory: Path, **changes: object) -> None:
         preparation_path = directory / PREPARATION_NAME
-        preparation = json.loads(preparation_path.read_text(encoding="utf-8"))
+        preparation = _read_json_object(preparation_path)
         preparation.update(changes)
         preparation_path.write_text(json.dumps(preparation), encoding="utf-8")
 
@@ -1481,7 +1597,7 @@ class ReleaseArtifactContractTests(TypedTestCase):
                 verify_release_artifacts(directory, "1.2.3")
 
     def test_every_manifest_contract_field_is_verified(self) -> None:
-        mutations = (
+        mutations: tuple[tuple[dict[str, object], str], ...] = (
             ({"schema_version": 2}, "schema_version mismatch"),
             ({"package_type": "archive"}, "package_type mismatch"),
             ({"asset_name": "other.exe"}, "asset_name mismatch"),
@@ -1656,13 +1772,11 @@ class ReleaseStateTests(TypedTestCase):
         ):
             git_tag_exists("origin", "v1.2.3")
 
-    def _response(self, payload: object):
-        response = MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
-        return response
+    def _response(self, payload: object) -> io.BytesIO:
+        return io.BytesIO(json.dumps(payload).encode())
 
     def _not_found(self) -> HTTPError:
-        return HTTPError("https://api.github.com", 404, "Not Found", {}, None)
+        return HTTPError("https://api.github.com", 404, "Not Found", http.client.HTTPMessage(), None)
 
     def test_release_query_distinguishes_published_draft_and_missing(self) -> None:
         published_payload = {"tag_name": "v1.2.3", "draft": False, "published_at": "2026-09-07T00:00:00Z"}
@@ -1680,10 +1794,10 @@ class ReleaseStateTests(TypedTestCase):
         ):
             absent = github_release_state("owner/repo", "v1.2.3", "token")
 
-        self.assertIsNotNone(published)
+        if published is None or draft is None:
+            raise AssertionError("release state responses must exist")
         self.assertTrue(published.published)
         self.assertFalse(published.draft)
-        self.assertIsNotNone(draft)
         self.assertTrue(draft.draft)
         self.assertFalse(draft.published)
         self.assertIsNone(absent)
@@ -1694,21 +1808,35 @@ class ReleaseStateTests(TypedTestCase):
             for index in range(100)
         ]
         draft_payload = {"tag_name": "v1.2.3", "draft": True, "published_at": None}
+        responses: list[HTTPError | io.BytesIO] = [
+            self._not_found(),
+            self._response(first_page),
+            self._response([draft_payload]),
+        ]
+        seen_urls: list[str] = []
+
+        def respond(request: Request, timeout: int) -> io.BytesIO:
+            seen_urls.append(request.full_url)
+            response = responses.pop(0)
+            if isinstance(response, HTTPError):
+                raise response
+            return response
+
         with patch(
             "scripts.release_state.urllib.request.urlopen",
-            side_effect=(self._not_found(), self._response(first_page), self._response([draft_payload])),
-        ) as urlopen:
+            side_effect=respond,
+        ):
             state = github_release_state("owner/repo", "v1.2.3", "token")
 
         self.assertEqual(publication_action(state), "publish-draft")
-        self.assertEqual(urlopen.call_count, 3)
-        self.assertIn("page=2", urlopen.call_args.args[0].full_url)
+        self.assertEqual(len(seen_urls), 3)
+        self.assertIn("page=2", seen_urls[-1])
 
     def test_release_query_rejects_api_authentication_and_transport_errors(self) -> None:
         failures = (
-            HTTPError("https://api.github.com", 404, "Not Found", {}, None),
-            HTTPError("https://api.github.com", 401, "Unauthorized", {}, None),
-            HTTPError("https://api.github.com", 500, "Server Error", {}, None),
+            HTTPError("https://api.github.com", 404, "Not Found", http.client.HTTPMessage(), None),
+            HTTPError("https://api.github.com", 401, "Unauthorized", http.client.HTTPMessage(), None),
+            HTTPError("https://api.github.com", 500, "Server Error", http.client.HTTPMessage(), None),
             URLError("network unavailable"),
         )
         for failure in failures:

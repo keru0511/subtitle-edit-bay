@@ -11,6 +11,7 @@ import time
 from collections import Counter
 from contextlib import ExitStack
 from copy import deepcopy
+from importlib import import_module
 from pathlib import Path
 from typing import Callable, Protocol, cast
 from unittest.mock import patch
@@ -58,6 +59,16 @@ class _WindowsLibraries(Protocol):
     psapi: _WindowsProcessApi
 
 
+class _ResourceUsage(Protocol):
+    ru_maxrss: int
+
+
+class _ResourceApi(Protocol):
+    RUSAGE_SELF: int
+
+    def getrusage(self, who: int) -> _ResourceUsage: ...
+
+
 def _repository_revision() -> str:
     try:
         return subprocess.run(
@@ -94,9 +105,8 @@ def _comparison_qml_message_allowlist(revision: str) -> tuple[AllowedQmlMessage,
 
 def _peak_resident_set_bytes() -> int:
     if os.name != "nt":
-        import resource
-
-        peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        resource_api = cast(_ResourceApi, import_module("resource"))
+        peak = resource_api.getrusage(resource_api.RUSAGE_SELF).ru_maxrss
         return peak if sys.platform == "darwin" else peak * 1_024
 
     class ProcessMemoryCounters(ctypes.Structure):
@@ -184,22 +194,14 @@ def _short_visual_update_contract_passed(result: dict[str, object]) -> bool:
     )
 
 
-def _preview_cache_missed(
-    cache_owner: object, signature_owner: object, segment: dict[str, object]
-) -> bool:
+def _preview_cache_missed(cache_owner: object, signature_owner: object, segment: dict[str, object]) -> bool:
     cache = cast(object, getattr(cache_owner, "_subtitle_preview_text_cache", None))
     signature_builder = cast(object, getattr(signature_owner, "_subtitle_preview_signature", None))
     signature = (
-        cast(Callable[[dict[str, object]], object], signature_builder)(segment)
-        if callable(signature_builder) else None
+        cast(Callable[[dict[str, object]], object], signature_builder)(segment) if callable(signature_builder) else None
     )
     cached = cache.get(str(segment.get("id", ""))) if is_object_mapping(cache) else None
-    return (
-        signature is None
-        or not is_object_sequence(cached)
-        or not cached
-        or cached[0] != signature
-    )
+    return signature is None or not is_object_sequence(cached) or not cached or cached[0] != signature
 
 
 def _result_mapping(result: dict[str, object], key: str) -> dict[str, object]:
@@ -212,6 +214,11 @@ def _result_mapping(result: dict[str, object], key: str) -> dict[str, object]:
 def _has_emittable_signal(item: QObject, name: str) -> bool:
     signal = cast(object, getattr(item, name, None))
     return callable(cast(object, getattr(signal, "emit", None)))
+
+
+def _qt_class_name(item: QObject) -> str:
+    name = cast(object, item.metaObject().className())
+    return name.decode("utf-8") if isinstance(name, bytes) else str(name)
 
 
 class InstrumentedEditBayBackend(EditBayBackend):
@@ -519,7 +526,8 @@ if hasattr(EditBayBackend, "subtitles"):
             self._backend.gui_boundary_calls["property.shortVideoClips"] += 1
             self._backend.gui_diagnostics["full_clip_materializations"] += 1
             return [
-                self._build_short_video_clip_view(clip, index) for index, clip in enumerate(self._backend._raw_short_video_clips())
+                self._build_short_video_clip_view(clip, index)
+                for index, clip in enumerate(self._backend._raw_short_video_clips())
             ]
 
         def _build_short_video_clip_view(
@@ -593,6 +601,7 @@ if hasattr(EditBayBackend, "subtitles"):
         def setEditorPlayhead(self, position_ms: int, basis: str) -> bool:
             self._backend.gui_boundary_calls["setEditorPlayhead"] += 1
             return super().setEditorPlayhead(position_ms, basis)
+
 
 class GuiPerformanceScenarioRunner:
     def __init__(
@@ -866,18 +875,14 @@ class GuiPerformanceScenarioRunner:
                     caption_delegate.height() / 2,
                 )
                 list_selections.append(
-                    index
-                    if index in self.backend.qml_select_segment_arguments[list_calls_before:]
-                    else -1
+                    index if index in self.backend.qml_select_segment_arguments[list_calls_before:] else -1
                 )
 
                 timeline_delegate = self._timeline_delegate(timeline, index)
                 timeline_calls_before = len(self.backend.qml_select_segment_arguments)
                 self.harness.click(window, timeline_delegate)
                 timeline_selections.append(
-                    index
-                    if index in self.backend.qml_select_segment_arguments[timeline_calls_before:]
-                    else -1
+                    index if index in self.backend.qml_select_segment_arguments[timeline_calls_before:] else -1
                 )
                 caption_delegate_counts.append(
                     len(
@@ -947,18 +952,18 @@ class GuiPerformanceScenarioRunner:
             caption_table = self.harness.find_item(self._window(), "captionTable")
             delegate = self._caption_delegate(caption_table, index)
 
-            field_candidates = self.harness.visual_items_with_properties(
-                delegate, "validator", "background", "text"
-            )
+            field_candidates = self.harness.visual_items_with_properties(delegate, "validator", "background", "text")
             time_fields = [
-                item for item in field_candidates
+                item
+                for item in field_candidates
                 if item.objectName() in {"captionStartTimeField", "captionEndTimeField"}
             ]
             if not time_fields:
                 # 比較対象の旧QMLにはobjectNameがないため、従来の探索を残す。
                 time_fields = [
-                    item for item in field_candidates
-                    if item.metaObject().className() == "TimeField"
+                    item
+                    for item in field_candidates
+                    if _qt_class_name(item) == "TimeField"
                     if _has_emittable_signal(item, "editingFinished")
                 ]
             time_fields.sort(key=lambda item: item.x())
@@ -978,8 +983,7 @@ class GuiPerformanceScenarioRunner:
             combos = [
                 item
                 for item in self.harness.visual_items(delegate)
-                if _has_emittable_signal(item, "activated")
-                and item.metaObject().indexOfProperty("currentValue") >= 0
+                if _has_emittable_signal(item, "activated") and item.metaObject().indexOfProperty("currentValue") >= 0
             ]
             font_combo = next((item for item in combos if item.objectName() == "captionFontCombo"), None)
             speaker_combo = next((item for item in combos if item is not font_combo), None)
@@ -1086,7 +1090,9 @@ class GuiPerformanceScenarioRunner:
                         f"editor playback reached only {player.position()} ms; expected {target_position} ms"
                     )
                 self.harness.wait(25)
-                playhead_lag.append(abs(coerce_float(self.backend.editorPlayhead["sourcePositionMs"]) - player.position()))
+                playhead_lag.append(
+                    abs(coerce_float(self.backend.editorPlayhead["sourcePositionMs"]) - player.position())
+                )
             player.pause()
             timeline = self.harness.find_item(self._window(), "editorTimeline")
             return {
@@ -1170,10 +1176,7 @@ class GuiPerformanceScenarioRunner:
                 text="▼",
             )
             self.harness.emit_signal(move_down_button, "clicked")
-            moved = (
-                self._short_video_clips()[middle + 1]["segment_id"]
-                == original_middle_clip["segment_id"]
-            )
+            moved = self._short_video_clips()[middle + 1]["segment_id"] == original_middle_clip["segment_id"]
 
             last_index = self._short_clip_count() - 1
             removed_segment_id = self._short_video_clips()[last_index]["segment_id"]
@@ -1527,9 +1530,7 @@ class GuiPerformanceScenarioRunner:
     def _short_clip_delegate(self, clip_list_view: QQuickItem, index: int) -> QQuickItem:
         # ListView.Beginning is 0. Let Qt locate the row using the actual
         # delegate height, which differs between current and baseline UIs.
-        if not QMetaObject.invokeMethod(
-            clip_list_view, "positionViewAtIndex", Q_ARG(int, index), Q_ARG(int, 0)
-        ):
+        if not QMetaObject.invokeMethod(clip_list_view, "positionViewAtIndex", Q_ARG(int, index), Q_ARG(int, 0)):
             raise AssertionError(f"Could not position short clip list at index {index}")
         self.harness.process_events()
         self.harness.wait_until(

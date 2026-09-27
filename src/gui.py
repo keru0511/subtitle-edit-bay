@@ -1018,7 +1018,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._workflow_facade.activeJob
 
     @Property("QVariantList", notify=progressDetailsChanged)
-    def progressSteps(self) -> list[dict[str, Any]]:
+    def progressSteps(self) -> list[dict[str, object]]:
         return self._workflow_facade.progressSteps
 
     @Property(int, notify=progressDetailsChanged)
@@ -1697,7 +1697,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._mark_project_dirty()
 
     @Property("QVariantMap", notify=actionCapabilitiesChanged)
-    def actionCapabilities(self) -> dict[str, Any]:
+    def actionCapabilities(self) -> dict[str, object]:
         return self._workflow_facade.actionCapabilities
 
     @staticmethod

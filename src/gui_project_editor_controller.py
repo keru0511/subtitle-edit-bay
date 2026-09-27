@@ -12,7 +12,7 @@ remain in the facade.
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from .audio_mixer import AUDIO_CHANNEL_CHANGE_FIELDS
 from .subtitle_project import (
@@ -28,8 +28,8 @@ from .video_sequence import VideoSequence, VideoSequenceError
 
 
 SaveProject = Callable[..., Path]
-LoadProject = Callable[..., dict[str, Any]]
-LayoutRows = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
+LoadProject = Callable[..., dict[str, object]]
+LayoutRows = Callable[[list[dict[str, object]]], list[dict[str, object]]]
 Callback = Callable[..., None]
 
 
@@ -72,12 +72,12 @@ class ProjectEditorController:
         self._on_dirty = on_dirty
         self._on_autosave_retry = on_autosave_retry
         self._on_history_applied = on_history_applied
-        self._project: dict[str, Any] | None = None
+        self._project: dict[str, object] | None = None
         self._project_path = ""
         self._project_dirty = False
         self._project_revision = 0
-        self._undo_stack: list[dict[str, Any]] = []
-        self._redo_stack: list[dict[str, Any]] = []
+        self._undo_stack: list[dict[str, object]] = []
+        self._redo_stack: list[dict[str, object]] = []
         self._selected_segment_index = -1
 
         self._autosave_future: Future[Path] | None = None
@@ -97,11 +97,11 @@ class ProjectEditorController:
             callback(*args)
 
     @property
-    def project(self) -> dict[str, Any] | None:
+    def project(self) -> dict[str, object] | None:
         return self._project
 
     @project.setter
-    def project(self, value: dict[str, Any] | None) -> None:
+    def project(self, value: dict[str, object] | None) -> None:
         self._project = value
 
     @property
@@ -129,11 +129,11 @@ class ProjectEditorController:
         self._project_revision = int(value)
 
     @property
-    def undo_stack(self) -> list[dict[str, Any]]:
+    def undo_stack(self) -> list[dict[str, object]]:
         return self._undo_stack
 
     @property
-    def redo_stack(self) -> list[dict[str, Any]]:
+    def redo_stack(self) -> list[dict[str, object]]:
         return self._redo_stack
 
     @property
@@ -192,7 +192,7 @@ class ProjectEditorController:
     def autosave_executor(self) -> ThreadPoolExecutor:
         return self._autosave_executor
 
-    def load(self, path: str | Path) -> dict[str, Any]:
+    def load(self, path: str | Path) -> dict[str, object]:
         """Read and adopt a project while leaving source/UI side effects outside."""
 
         project = self._load_project_fn(Path(path), resolve_video_duration=True)
@@ -201,7 +201,7 @@ class ProjectEditorController:
 
     def adopt_loaded_project(
         self,
-        project: dict[str, Any],
+        project: dict[str, object],
         path: str | Path,
         *,
         selected_segment_index: int | None = None,
@@ -272,7 +272,7 @@ class ProjectEditorController:
     def save_new_project(
         self,
         path: str | Path,
-        project: dict[str, Any],
+        project: dict[str, object],
     ) -> Path:
         """Persist a newly-created document before it becomes the active one."""
 
@@ -288,9 +288,9 @@ class ProjectEditorController:
 
     def _commit_edit(
         self,
-        updates: dict[str, Any],
+        updates: dict[str, object],
         *,
-        history: dict[str, Any] | None = None,
+        history: dict[str, object] | None = None,
         selected_index: int | None = None,
         remove_fields: tuple[str, ...] = (),
         history_move: str | None = None,
@@ -329,7 +329,7 @@ class ProjectEditorController:
         self._emit(self._on_dirty)
         return True
 
-    def commit_section_change(self, section: str, payload: dict[str, Any]) -> bool:
+    def commit_section_change(self, section: str, payload: dict[str, object]) -> bool:
         """音量・ショート編集を、呼び出し元の辞書から切り離して確定する。"""
         if self._project is None:
             return False
@@ -348,9 +348,9 @@ class ProjectEditorController:
         )
 
     def _prepare_segments(
-        self, segments: list[dict[str, Any]], selected_id: str | None,
+        self, segments: list[dict[str, object]], selected_id: str | None,
         *, reflow_layout: bool,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[dict[str, object]], int]:
         # レイアウト計算は辞書を更新するため、保存中・編集中の正本に触れない。
         ordered = sorted(
             (dict(item) for item in segments),
@@ -371,7 +371,7 @@ class ProjectEditorController:
         return ordered, selected
 
     def replace_segments(
-        self, segments: list[dict[str, Any]], selected_id: str | None = None,
+        self, segments: list[dict[str, object]], selected_id: str | None = None,
         *, reflow_layout: bool = True,
     ) -> None:
         if self._project is None:
@@ -380,7 +380,7 @@ class ProjectEditorController:
         self._commit_edit({"segments": ordered}, selected_index=selected)
 
     def commit_segment_change(
-        self, before: list[dict[str, Any]], after: list[dict[str, Any]],
+        self, before: list[dict[str, object]], after: list[dict[str, object]],
         selected_id: str | None = None, *, reflow_layout: bool = True,
     ) -> None:
         if self._project is None:
@@ -399,15 +399,15 @@ class ProjectEditorController:
         }
         self._commit_edit({"segments": ordered}, history=history, selected_index=selected)
 
-    def _prepare_timeline(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_timeline(self, payload: dict[str, object]) -> dict[str, object]:
         duration = timeline_from_project(self._project).source_duration
         return VideoTimeline.from_json(payload, source_duration=duration).to_json()
 
-    def replace_timeline(self, payload: dict[str, Any]) -> None:
+    def replace_timeline(self, payload: dict[str, object]) -> None:
         if self._project is not None:
             self._commit_edit({"timeline": self._prepare_timeline(payload)})
 
-    def commit_timeline_change(self, payload: dict[str, Any]) -> bool:
+    def commit_timeline_change(self, payload: dict[str, object]) -> bool:
         if self._project is None:
             return False
         after = self._prepare_timeline(payload)
@@ -432,7 +432,7 @@ class ProjectEditorController:
         except VideoSequenceError as error:
             raise SubtitleProjectError(str(error)) from error
 
-    def replace_sequence(self, payload: dict[str, Any]) -> None:
+    def replace_sequence(self, payload: dict[str, object]) -> None:
         if self._project is None:
             return
         try:
@@ -443,8 +443,8 @@ class ProjectEditorController:
 
     def commit_sequence_change(
         self,
-        before: dict[str, Any],
-        after: dict[str, Any],
+        before: dict[str, object],
+        after: dict[str, object],
     ) -> None:
         if self._project is None:
             return
@@ -476,7 +476,7 @@ class ProjectEditorController:
             self.commit_sequence_change(before_payload, after_payload)
         return after
 
-    def _restore_audio_mix_settings(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+    def _restore_audio_mix_settings(self, snapshot: dict[str, object]) -> dict[str, object]:
         """履歴の操作値だけを戻し、再リンク後の素材参照とチャンネル構成を維持する。"""
         restored = deepcopy(self._project.get("audio_mix", {}))
         historical_channels = {
@@ -493,7 +493,7 @@ class ProjectEditorController:
         return restored
 
     def apply_history_entry(
-        self, entry: dict[str, Any], state: str, *, history_move: str | None = None,
+        self, entry: dict[str, object], state: str, *, history_move: str | None = None,
     ) -> None:
         if self._project is None:
             return

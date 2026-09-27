@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from PySide6.QtCore import QProcess
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
@@ -420,7 +420,7 @@ class LegacyBackendCompatibility:
         return self._audio_facade.resetAudioMixer()
 
     @Slot("QVariantMap", str)
-    def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+    def transcribeProject(self, settings: dict[str, object], mode: str) -> None:
         return self._workflow_facade.transcribeProject(settings, mode)
 
     def _merge_preserved_transcription_segments(self) -> bool:
@@ -556,37 +556,37 @@ class LegacyBackendCompatibility:
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         return self._workflow_facade._start_command(command, job, status)
 
-    def _has_audio_source(self, audio_files: list[str], audio_tracks: list[dict[str, Any]] | None = None) -> bool:
+    def _has_audio_source(self, audio_files: list[str], audio_tracks: Sequence[Mapping[str, object]] | None = None) -> bool:
         return self._workflow_facade._has_audio_source(audio_files, audio_tracks)
 
-    def _default_video_audio_track(self, audio_tracks: list[dict[str, Any]] | None = None) -> str:
+    def _default_video_audio_track(self, audio_tracks: Sequence[Mapping[str, object]] | None = None) -> str:
         return self._workflow_facade._default_video_audio_track(audio_tracks)
 
     def _transcription_capability(self, device: str) -> ActionCapability:
         return self._workflow_facade._transcription_capability(device)
 
     @Slot(str, result="QVariantMap")
-    def actionCapabilitiesForDevice(self, device: str) -> dict[str, Any]:
+    def actionCapabilitiesForDevice(self, device: str) -> dict[str, object]:
         return self._workflow_facade.actionCapabilitiesForDevice(device)
 
     @Slot("QVariantMap", bool)
     def startTranscription(
         self,
-        settings: dict[str, Any],
+        settings: dict[str, object],
         overwrite_project: bool = False,
         project_path: str | None = None,
     ) -> None:
         return self._workflow_facade.startTranscription(settings, overwrite_project, project_path)
 
     @Slot("QVariantMap")
-    def startProcessing(self, settings: dict[str, Any]) -> None:
+    def startProcessing(self, settings: dict[str, object]) -> None:
         return self._workflow_facade.startProcessing(settings)
 
     @Slot("QVariantMap")
-    def renderVideo(self, settings: dict[str, Any]) -> None:
+    def renderVideo(self, settings: dict[str, object]) -> None:
         return self._workflow_facade.renderVideo(settings)
 
-    def _start_render(self, settings: dict[str, Any], *, short: bool) -> None:
+    def _start_render(self, settings: dict[str, object], *, short: bool) -> None:
         return self._workflow_facade._start_render(settings, short=short)
 
     @Slot()

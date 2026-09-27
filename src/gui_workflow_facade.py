@@ -7,7 +7,6 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -15,7 +14,7 @@ from PySide6.QtCore import (
 )
 
 from .qt_decorators import Property, Signal, Slot
-from .data_boundary import coerce_float, is_string_object_mapping
+from .data_boundary import coerce_float, coerce_int, is_string_object_dict_list, is_string_object_mapping
 from .gui_state import build_gui_transcribe_command
 from .workflow_actions import (
     ActionCapability,
@@ -49,7 +48,7 @@ class WorkflowRuntimeState:
     pending_process_error: str = ""
     process_output_tail: str = ""
     transcription_merge_mode: str = ""
-    transcription_preserved_project: dict[str, Any] | None = None
+    transcription_preserved_project: dict[str, object] | None = None
     transcription_preserved_project_path: str = ""
     transcription_generated_project_path: str = ""
 
@@ -145,9 +144,15 @@ class WorkflowFacade(FeatureFacade):
             return False
         generated = deepcopy(self.project_editor.project)
         preserved = deepcopy(self._state.transcription_preserved_project)
-        generated_segments = deepcopy(generated.get("segments", []))
+        generated_segments_value = generated.get("segments")
+        if not is_string_object_dict_list(generated_segments_value):
+            return False
+        generated_segments = deepcopy(generated_segments_value)
         if self._state.transcription_merge_mode == "merge":
-            preserved_segments = deepcopy(preserved.get("segments", []))
+            preserved_segments_value = preserved.get("segments")
+            if not is_string_object_dict_list(preserved_segments_value):
+                return False
+            preserved_segments = deepcopy(preserved_segments_value)
             used_ids = {str(item.get("id", "")) for item in preserved_segments}
             merged = list(preserved_segments)
             for segment in generated_segments:
@@ -162,9 +167,21 @@ class WorkflowFacade(FeatureFacade):
         else:
             return False
 
-        preserved["segments"] = assign_project_layout_rows(
-            sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
+        order = sorted(
+            (
+                coerce_float(segment["start"]),
+                coerce_float(segment["end"]),
+                str(segment["id"]),
+                index)
+            for index, segment in enumerate(segments)
         )
+        sorted_segments: list[dict[object, object]] = []
+        for _start, _end, _id, index in order:
+            segment_payload: dict[object, object] = {}
+            for key, value in segments[index].items():
+                segment_payload[key] = value
+            sorted_segments.append(segment_payload)
+        preserved["segments"] = assign_project_layout_rows(sorted_segments)
         for key in ("transcription", "transcription_context", "waveforms"):
             if key in generated:
                 preserved[key] = deepcopy(generated[key])
@@ -172,7 +189,7 @@ class WorkflowFacade(FeatureFacade):
         preserved_project_path = self._state.transcription_preserved_project_path or self.project_editor.project_path
         backend._project_path = preserved_project_path
         backend._apply_project_subtitle_settings(self.project_editor.project)
-        backend._selected_segment_index = 0 if self.project_editor.project["segments"] else -1
+        backend._selected_segment_index = 0 if sorted_segments else -1
         self.project_editor.save(preserved_project_path, emit=False)
         backend._project_dirty = False
         backend.workspace._sync_project_timeline()
@@ -187,12 +204,13 @@ class WorkflowFacade(FeatureFacade):
         backend = self._backend
         if self._state.transcription_preserved_project is None:
             return
-        backend._project = deepcopy(self._state.transcription_preserved_project)
+        restored = deepcopy(self._state.transcription_preserved_project)
+        backend._project = restored
         backend._project_path = self._state.transcription_preserved_project_path
-        backend._apply_project_subtitle_settings(self.project_editor.project)
+        backend._apply_project_subtitle_settings(restored)
         self.project_editor.save(self.project_editor.project_path, emit=False)
         backend._project_dirty = False
-        backend._selected_segment_index = 0 if self.project_editor.project.get("segments") else -1
+        backend._selected_segment_index = 0 if restored.get("segments") else -1
         backend.subtitles._sync_subtitle_model()
         backend.workspace._sync_project_timeline()
         backend.projectChanged.emit()
@@ -538,7 +556,7 @@ class WorkflowFacade(FeatureFacade):
         backend = self._backend
         for event in parse_progress_events(output):
             try:
-                target_duration = float(event.get("duration", 0.0))
+                target_duration = coerce_float(event.get("duration", 0.0))
             except (TypeError, ValueError):
                 target_duration = 0.0
             if target_duration > 0.0:
@@ -686,8 +704,8 @@ class WorkflowFacade(FeatureFacade):
                 if preserved_workspace is not None:
                     backend.workspace.selectEditMode(preserved_workspace[0])
                     playhead = preserved_workspace[1]
-                    basis = playhead["basis"]
-                    backend.workspace.setEditorPlayhead(playhead[f"{basis}PositionMs"], basis)
+                    basis = str(playhead["basis"])
+                    backend.workspace.setEditorPlayhead(coerce_int(playhead[f"{basis}PositionMs"]), basis)
                 if integration_error:
                     backend._set_status(integration_error, "ERROR")
                 else:

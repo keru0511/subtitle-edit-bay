@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 from PySide6.QtCore import QProcess
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
@@ -550,7 +550,7 @@ class LegacyBackendCompatibility:
         self._set_status("字幕の時刻を入力し終えてから、もう一度操作してください", "CHECK")
 
     @Slot("QVariantMap")
-    def buildSubtitlePreview(self, settings: dict[str, Any]) -> None:
+    def buildSubtitlePreview(self, settings: dict[str, object]) -> None:
         return self._subtitles_facade.buildSubtitlePreview(settings)
 
     def _start_command(self, command: list[str], job: str, status: str) -> None:

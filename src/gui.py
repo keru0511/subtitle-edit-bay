@@ -10,7 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 # PySide6 exposes typing.Self on Python 3.10. Initialize the optional backport
 # first so PyTorch keeps its compatible Self implementation when WhisperX is
@@ -59,7 +59,7 @@ from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color
-from .data_boundary import is_object_list
+from .data_boundary import coerce_float, coerce_int, is_object_list, is_string_object_dict_list, is_string_object_mapping
 from .gui_base import APP_TITLE, AlignmentResult, LegacyEditBayBackend
 from .gui_source_selection_controller import SourceSelectionUpdate
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
@@ -1153,8 +1153,10 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             return
 
         old_project = deepcopy(self._project)
-        previous_sources = [dict(item) for item in self._project.get("audio_sources", [])]
-        previous_speakers = [dict(item) for item in self._project.get("speakers", [])]
+        audio_sources_value = self._project.get("audio_sources")
+        speakers_value = self._project.get("speakers")
+        previous_sources = [dict(item) for item in audio_sources_value] if is_string_object_dict_list(audio_sources_value) else []
+        previous_speakers = [dict(item) for item in speakers_value] if is_string_object_dict_list(speakers_value) else []
 
         source_entries = build_speaker_entries_from_files(
             self._source_selection.audio_files,
@@ -1190,7 +1192,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             )
             return
 
-        def _match(items: list[dict[str, Any]], **conditions: str) -> dict[str, Any] | None:
+        def _match(items: list[dict[str, object]], **conditions: str) -> dict[str, object] | None:
             for index, item in enumerate(items):
                 for key, value in conditions.items():
                     item_value = str(item.get(key, "")).strip().casefold()
@@ -1202,8 +1204,8 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
         unmatched_speakers = previous_speakers.copy()
         unmatched_audio_sources = previous_sources.copy()
-        new_audio_sources: list[dict[str, Any]] = []
-        new_speakers: list[dict[str, Any]] = []
+        new_audio_sources: list[dict[str, object]] = []
+        new_speakers: list[dict[str, object]] = []
 
         for source in source_entries:
             previous_source = (
@@ -1211,7 +1213,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 or _match(unmatched_audio_sources, file_name=source["file_name"])
                 or _match(unmatched_audio_sources, file_name=str(Path(source["path"]).name))
             )
-            source_payload: dict[str, Any] = {**previous_source} if previous_source else {}
+            source_payload: dict[str, object] = {**previous_source} if previous_source else {}
             source_payload["path"] = source["path"]
             source_payload.setdefault("file_name", source["file_name"])
             source_payload.setdefault("track_key", source["track_key"])
@@ -1509,18 +1511,18 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             self.finishSourceRelink()
         return self._project is not None and self._project_source_selection_matches(selected_sources)
 
-    def _apply_project_subtitle_settings(self, project: dict[str, Any]) -> None:
+    def _apply_project_subtitle_settings(self, project: Mapping[str, object]) -> None:
         subtitle = project.get("subtitle_settings", {})
         updates: dict[str, int | float | str] = {}
-        if isinstance(subtitle, dict):
+        if is_string_object_mapping(subtitle):
             for project_key, setting_key, converter in (
-                ("font_size", "subtitle_font_size", int),
+                ("font_size", "subtitle_font_size", coerce_int),
                 ("outline_color", "subtitle_outline_color", normalize_rgb_color),
-                ("outline_thickness", "subtitle_outline_thickness", int),
-                ("volume_scale_percent", "subtitle_volume_scale_percent", float),
-                ("max_gap_seconds", "subtitle_max_gap_seconds", float),
-                ("end_padding_seconds", "subtitle_end_padding_seconds", float),
-                ("min_duration_seconds", "subtitle_min_duration_seconds", float),
+                ("outline_thickness", "subtitle_outline_thickness", coerce_int),
+                ("volume_scale_percent", "subtitle_volume_scale_percent", coerce_float),
+                ("max_gap_seconds", "subtitle_max_gap_seconds", coerce_float),
+                ("end_padding_seconds", "subtitle_end_padding_seconds", coerce_float),
+                ("min_duration_seconds", "subtitle_min_duration_seconds", coerce_float),
             ):
                 if project_key not in subtitle:
                     continue
@@ -1670,27 +1672,28 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             controller.shutdown()
         super()._shutdown_executor()
 
-    def _update_project_settings(self, settings: dict[str, Any]) -> None:
+    def _update_project_settings(self, settings: dict[str, object]) -> None:
         if self._project is None:
             return
-        subtitle = self._project.get("subtitle_settings", {})
+        subtitle_value = self._project.get("subtitle_settings")
+        subtitle = subtitle_value if is_string_object_mapping(subtitle_value) else {}
         self._project["subtitle_settings"] = {
             **subtitle,
-            "font_size": int(settings.get("subtitle_font_size", subtitle.get("font_size", 50))),
+            "font_size": coerce_int(settings.get("subtitle_font_size", subtitle.get("font_size", 50))),
             "outline_color": normalize_rgb_color(
                 settings.get("subtitle_outline_color", subtitle.get("outline_color", "#000000"))
             ),
             "outline_thickness": max(
-                0, min(20, int(settings.get("subtitle_outline_thickness", subtitle.get("outline_thickness", 3))))
+                0, min(20, coerce_int(settings.get("subtitle_outline_thickness", subtitle.get("outline_thickness", 3))))
             ),
-            "volume_scale_percent": float(
+            "volume_scale_percent": coerce_float(
                 settings.get("subtitle_volume_scale_percent", subtitle.get("volume_scale_percent", 20.0))
             ),
-            "max_gap_seconds": float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
-            "end_padding_seconds": float(
+            "max_gap_seconds": coerce_float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
+            "end_padding_seconds": coerce_float(
                 settings.get("subtitle_end_padding_seconds", subtitle.get("end_padding_seconds", 0.08))
             ),
-            "min_duration_seconds": float(
+            "min_duration_seconds": coerce_float(
                 settings.get("subtitle_min_duration_seconds", subtitle.get("min_duration_seconds", 0.35))
             ),
         }

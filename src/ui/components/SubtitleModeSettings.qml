@@ -216,7 +216,9 @@ Item {
                     TimeField {
                         id: startField
                         objectName: "workspaceSubtitleStartField"
-                        enabled: !root.backend.running
+                        enabled: !root.backend.running && (!root.editorState.hasIncompleteTimeEdit
+                            || (root.editorState.timeDraftProperty === "start"
+                                && root.editorState.timeDraftSegmentId === root.segmentIdAt(root.backend.subtitles.selectedSegmentIndex)))
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "開始"
@@ -233,7 +235,9 @@ Item {
                     TimeField {
                         id: endField
                         objectName: "workspaceSubtitleEndField"
-                        enabled: !root.backend.running
+                        enabled: !root.backend.running && (!root.editorState.hasIncompleteTimeEdit
+                            || (root.editorState.timeDraftProperty === "end"
+                                && root.editorState.timeDraftSegmentId === root.segmentIdAt(root.backend.subtitles.selectedSegmentIndex)))
                         property string editingSegmentId: ""
                         Layout.fillWidth: true
                         placeholderText: "終了"

@@ -497,7 +497,9 @@ Item {
                                         }
                                         Component.onDestruction: commitTime()
                                         text: root.editorState.pendingTimeForSegment(captionRow.segmentId, "start", captionRow.start.toFixed(3))
-                                        enabled: !root.appBackend.running
+                                        enabled: !root.appBackend.running && (!root.editorState.hasIncompleteTimeEdit
+                                            || (root.editorState.timeDraftProperty === "start"
+                                                && root.editorState.timeDraftSegmentId === captionRow.segmentId))
                                         onTextChanged: if (activeFocus && editingSegmentId !== "") root.editorState.updateTimeDraft(editingSegmentId, "start", text, acceptableInput)
                                         onActiveFocusChanged: if (activeFocus) {
                                             editingSegmentId = captionRow.segmentId
@@ -523,7 +525,9 @@ Item {
                                         }
                                         Component.onDestruction: commitTime()
                                         text: root.editorState.pendingTimeForSegment(captionRow.segmentId, "end", captionRow.end.toFixed(3))
-                                        enabled: !root.appBackend.running
+                                        enabled: !root.appBackend.running && (!root.editorState.hasIncompleteTimeEdit
+                                            || (root.editorState.timeDraftProperty === "end"
+                                                && root.editorState.timeDraftSegmentId === captionRow.segmentId))
                                         onTextChanged: if (activeFocus && editingSegmentId !== "") root.editorState.updateTimeDraft(editingSegmentId, "end", text, acceptableInput)
                                         onActiveFocusChanged: if (activeFocus) {
                                             editingSegmentId = captionRow.segmentId

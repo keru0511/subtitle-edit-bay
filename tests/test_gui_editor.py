@@ -6102,6 +6102,38 @@ Window {
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(load_project(path)["segments"][0]["start"], 1.0)
 
+    def test_incomplete_subtitle_time_blocks_save_until_completed(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        field = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleStartField"
+        )
+        end_field = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleEndField"
+        )
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, field)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_1)
+            QTest.keyClick(window, Qt.Key.Key_E)
+            self.app.processEvents()
+            self.assertEqual(field.property("text"), "1e")
+            self.assertFalse(field.property("acceptableInput"))
+            self.assertFalse(end_field.property("enabled"))
+
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+            self.assertEqual(field.property("text"), "1e")
+            self.assertEqual(self.app.stage, "CHECK")
+            self.assertEqual(load_project(path)["segments"][0]["start"], 0.0)
+
+            self._click(window, field)
+            QTest.keyClick(window, Qt.Key.Key_End)
+            QTest.keyClick(window, Qt.Key.Key_0)
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        self.assertEqual(load_project(path)["segments"][0]["start"], 1.0)
+        self.assertTrue(end_field.property("enabled"))
+
     def test_pending_start_time_survives_mode_and_selection_changes_during_processing(self) -> None:
         path = self._load_project(segments=[
             {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},

@@ -25,6 +25,9 @@ QtObject {
     property string timeDraftOriginalText: ""
     property bool timeDraftAcceptableInput: false
     readonly property bool hasPendingTimeEdit: timeDraftSegmentId !== "" && timeDraftText !== timeDraftOriginalText
+    readonly property bool hasIncompleteTimeEdit: hasPendingTimeEdit
+        && timeDraftProjectPath === projectPath
+        && (!timeDraftAcceptableInput || !isFinite(Number(timeDraftText)) || Number(timeDraftText) < 0)
 
     function canSplitSelectedSegment(positionMs) {
         var index = state.subtitles.selectedSegmentIndex;
@@ -127,9 +130,10 @@ QtObject {
                     && state.timeDraftProperty === propertyName
                     && state.timeDraftProjectPath === state.projectPath) {
                 state.timeDraftSegmentIndex = segmentIndex
-                return
+                return true
             }
-            state.commitTimeDraft()
+            if (!state.commitTimeDraft())
+                return false
         }
         state.timeDraftSegmentIndex = segmentIndex
         state.timeDraftSegmentId = segmentId
@@ -138,6 +142,7 @@ QtObject {
         state.timeDraftOriginalText = String(text)
         state.timeDraftText = String(text)
         state.timeDraftAcceptableInput = Boolean(acceptableInput)
+        return true
     }
 
     function updateTimeDraft(segmentId, propertyName, text, acceptableInput) {
@@ -168,11 +173,11 @@ QtObject {
 
     function commitTimeDraft(expectedId, expectedProperty) {
         if (expectedId !== undefined && expectedId !== state.timeDraftSegmentId)
-            return
+            return true
         if (expectedProperty !== undefined && expectedProperty !== state.timeDraftProperty)
-            return
+            return true
         if (state.running)
-            return
+            return false
         var id = state.timeDraftSegmentId
         var projectPath = state.timeDraftProjectPath
         var preferredIndex = state.timeDraftSegmentIndex
@@ -180,13 +185,17 @@ QtObject {
         var text = state.timeDraftText
         var changed = state.hasPendingTimeEdit
         var acceptable = state.timeDraftAcceptableInput
-        state.clearTimeDraft()
-        if (!changed || !acceptable || projectPath !== state.projectPath)
-            return
+        if (!changed || projectPath !== state.projectPath) {
+            state.clearTimeDraft()
+            return true
+        }
         var index = state.subtitleIndexForId(id, preferredIndex)
         var value = Number(text)
-        if (index < 0 || !isFinite(value) || value < 0)
-            return
+        if (!acceptable || !isFinite(value) || value < 0)
+            return false
+        state.clearTimeDraft()
+        if (index < 0)
+            return true
         var selectedIndex = state.subtitles.selectedSegmentIndex
         var selectedId = String(state.subtitles.segmentAt(selectedIndex).id || "")
         var changes = ({})
@@ -194,6 +203,7 @@ QtObject {
         state.subtitles.updateSegment(index, changes)
         if (selectedId !== id)
             state.subtitles.selectSegment(state.subtitleIndexForId(selectedId, selectedIndex))
+        return true
     }
 
     function subtitlePreviewText(segmentData) {

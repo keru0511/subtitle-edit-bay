@@ -108,6 +108,15 @@ RUNTIME_CONFIG_SCHEMA: dict[str, dict[str, str]] = {
 }
 
 
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _validate_value(value: object, kind: str, path: str) -> None:
     valid = False
     if kind == STRING:
@@ -121,11 +130,9 @@ def _validate_value(value: object, kind: str, path: str) -> None:
     elif kind == NULLABLE_INTEGER:
         valid = value is None or (isinstance(value, int) and not isinstance(value, bool))
     elif kind == NUMBER:
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        valid = _is_finite_number(value)
     elif kind == NULLABLE_NUMBER:
-        valid = value is None or (
-            isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-        )
+        valid = value is None or _is_finite_number(value)
     elif kind == STRING_ARRAY:
         valid = is_object_sequence(value) and isinstance(value, list) and all(isinstance(item, str) for item in value)
     elif kind == OBJECT:

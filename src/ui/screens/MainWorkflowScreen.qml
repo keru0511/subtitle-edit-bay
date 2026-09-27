@@ -552,9 +552,16 @@ ApplicationWindow {
         // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
         if (!root.commitInputMethod())
             return false
+        if (subtitleEditorState.hasIncompleteTimeEdit) {
+            root.appBackend.reportIncompleteSubtitleTime()
+            return false
+        }
         root.contentItem.forceActiveFocus()
         subtitleEditorState.commitSubtitleDraft()
-        subtitleEditorState.commitTimeDraft()
+        if (!subtitleEditorState.commitTimeDraft()) {
+            root.appBackend.reportIncompleteSubtitleTime()
+            return false
+        }
         return true
     }
 

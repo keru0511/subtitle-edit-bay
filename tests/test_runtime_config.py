@@ -158,6 +158,7 @@ class RuntimeConfigTests(unittest.TestCase):
             {"audio_target_lufs": None},
             {"audio_target_lufs": float("nan")},
             {"audio_target_lufs": float("inf")},
+            {"audio_target_lufs": 10**400},
             {"min_speakers": True},
             {"vad_onset": False},
             {"vad_onset": float("-inf")},

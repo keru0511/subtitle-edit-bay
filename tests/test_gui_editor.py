@@ -1491,9 +1491,11 @@ Window {
     def test_followup_transcription_accepts_null_transcription_metadata(self) -> None:
         self._set_ready_sources()
         project_path = self._load_project()
-        assert self.app._project is not None
-        self.app._project["transcription"] = None
-        self.app._mark_project_dirty()
+        project = load_project(project_path)
+        project["transcription"] = None
+        save_project(project_path, project)
+        self.assertIsNone(load_project(project_path)["transcription"])
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
 
         with patch.object(self.app.workflow, "_start_command") as start:
@@ -1502,7 +1504,7 @@ Window {
         start.assert_called_once()
         command = start.call_args.args[0]
         self.assertEqual(Path(command[command.index("--context-base-dir") + 1]), project_path.parent)
-        self.assertIsNone(load_project(project_path)["transcription"])
+        self.assertEqual(load_project(project_path)["transcription"]["context_base_dir"], str(project_path.parent))
 
     def test_save_as_preserves_export_and_waits_for_pending_autosave(self) -> None:
         path = self._load_project()

@@ -25,7 +25,7 @@ from .subtitle_project import (
 )
 from .video_timeline import VideoTimeline, timeline_from_project
 from .short_video_schema import ShortVideo
-from .transcription_project_integration import compose_transcription_project
+from .transcription_project_integration import compose_transcription_project, ensure_transcription_context_base_dir
 from .video_sequence import VideoSequence, VideoSequenceError
 
 
@@ -306,14 +306,7 @@ class ProjectEditorController:
                 same_video = False
             if not same_video:
                 raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
-        transcription = generated.get("transcription")
-        if transcription is None:
-            transcription = {}
-            generated["transcription"] = transcription
-        transcription.setdefault(
-            "context_base_dir",
-            str(Path(transcription.get("work_dir") or generated.get("output_dir") or generated_file.parent).resolve()),
-        )
+        ensure_transcription_context_base_dir(generated, generated_file)
         integrated = compose_transcription_project(
             preserved_project,
             generated,

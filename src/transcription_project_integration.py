@@ -4,11 +4,27 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
 
 LayoutRows = Callable[[list[dict[str, object]]], list[dict[str, object]]]
+
+
+def ensure_transcription_context_base_dir(project: dict[str, object], project_path: str | Path) -> None:
+    """文字起こし設定が null の旧プロジェクトも含め、辞書の基準位置を補う。"""
+
+    transcription = project.get("transcription")
+    if transcription is None:
+        transcription = {}
+        project["transcription"] = transcription
+    if not isinstance(transcription, dict):
+        raise TypeError("transcription must be an object or null")
+    transcription.setdefault(
+        "context_base_dir",
+        str(Path(transcription.get("work_dir") or project.get("output_dir") or Path(project_path).parent).resolve()),
+    )
 
 
 def _copy_segments(project: Mapping[str, object]) -> list[dict[str, object]]:

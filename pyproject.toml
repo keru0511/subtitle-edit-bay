@@ -295,6 +295,8 @@ files = [
   "tests/test_system_basics.py",
   "src/whisperx_runner.py",
   "tests/test_whisperx_runner.py",
+  "tests/test_asr_ci_runtime.py",
+  "tests/test_transcription_execution.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -575,6 +577,8 @@ module = [
   "tests.test_system_basics",
   "src.whisperx_runner",
   "tests.test_whisperx_runner",
+  "tests.test_asr_ci_runtime",
+  "tests.test_transcription_execution",
 ]
 strict = true
 disallow_any_explicit = true

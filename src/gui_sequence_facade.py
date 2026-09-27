@@ -86,7 +86,7 @@ class SequenceFacade(FeatureFacade):
         facade builds a detached view for presentation.
         """
 
-        if not self._backend.projectLoaded:
+        if self.project_editor.project is None:
             return None
         try:
             return self.project_editor.sequence_model()
@@ -155,7 +155,7 @@ class SequenceFacade(FeatureFacade):
         backend = self._backend
         if backend.running:
             return self._sequence_failure("処理中はsequenceを変更できません")
-        if not self._backend.projectLoaded:
+        if self.project_editor.project is None:
             return self._sequence_failure("先に編集プロジェクトを開いてください")
         self._error = ""
         try:

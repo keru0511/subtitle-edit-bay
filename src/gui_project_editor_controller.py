@@ -12,9 +12,10 @@ remain in the facade.
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol, cast
 
 from .audio_mixer import AUDIO_CHANNEL_CHANGE_FIELDS
+from .data_boundary import coerce_float, is_string_object_dict, is_string_object_dict_list
 from .subtitle_project import (
     SubtitleProjectError,
     assign_project_layout_rows,
@@ -27,10 +28,21 @@ from .short_video_schema import ShortVideo
 from .video_sequence import VideoSequence, VideoSequenceError
 
 
-SaveProject = Callable[..., Path]
-LoadProject = Callable[..., dict[str, object]]
-LayoutRows = Callable[[list[dict[str, object]]], list[dict[str, object]]]
-Callback = Callable[..., None]
+class SaveProject(Protocol):
+    def __call__(
+        self, path: str | Path, project: dict[object, object], *,
+        project_is_validated: bool = False, update_project: bool = True,
+    ) -> Path: ...
+
+
+class LoadProject(Protocol):
+    def __call__(self, path: str | Path, *, resolve_video_duration: bool = False) -> dict[object, object]: ...
+
+
+LayoutRows = Callable[[list[dict[object, object]]], list[dict[object, object]]]
+Callback = Callable[[], None]
+AutosaveCallback = Callable[[int, str, str], None]
+HistoryCallback = Callable[[dict[str, object], str], None]
 
 
 class ProjectEditorController:
@@ -53,10 +65,10 @@ class ProjectEditorController:
         on_segments_changed: Callback | None = None,
         on_history_changed: Callback | None = None,
         on_selection_changed: Callback | None = None,
-        on_autosave_completed: Callback | None = None,
+        on_autosave_completed: AutosaveCallback | None = None,
         on_dirty: Callback | None = None,
         on_autosave_retry: Callback | None = None,
-        on_history_applied: Callback | None = None,
+        on_history_applied: HistoryCallback | None = None,
         autosave_interval_ms: int = 700,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve()
@@ -92,9 +104,9 @@ class ProjectEditorController:
         self.autosave_interval_ms = int(autosave_interval_ms)
 
     @staticmethod
-    def _emit(callback: Callback | None, *args: object) -> None:
+    def _emit(callback: Callback | None) -> None:
         if callback is not None:
-            callback(*args)
+            callback()
 
     @property
     def project(self) -> dict[str, object] | None:
@@ -196,6 +208,8 @@ class ProjectEditorController:
         """Read and adopt a project while leaving source/UI side effects outside."""
 
         project = self._load_project_fn(Path(path), resolve_video_duration=True)
+        if not is_string_object_dict(project):
+            raise SubtitleProjectError("プロジェクトのキーは文字列である必要があります")
         self.adopt_loaded_project(project, path)
         return project
 
@@ -251,7 +265,7 @@ class ProjectEditorController:
         self.wait_for_autosave()
         saved = self._save_project_fn(
             target,
-            self._project,
+            cast(dict[object, object], self._project),
             project_is_validated=True,
         )
         self._project_path = str(target.resolve())
@@ -276,7 +290,7 @@ class ProjectEditorController:
     ) -> Path:
         """Persist a newly-created document before it becomes the active one."""
 
-        return self._save_project_fn(path, project)
+        return self._save_project_fn(path, cast(dict[object, object], project))
 
     def mark_dirty(self) -> None:
         if self._project is None:
@@ -352,15 +366,21 @@ class ProjectEditorController:
         *, reflow_layout: bool,
     ) -> tuple[list[dict[str, object]], int]:
         # レイアウト計算は辞書を更新するため、保存中・編集中の正本に触れない。
+        def sort_key(item: dict[str, object]) -> tuple[float, float, str]:
+            return (coerce_float(item["start"]), coerce_float(item["end"]), str(item["id"]))
+
         ordered = sorted(
             (dict(item) for item in segments),
-            key=lambda item: (item["start"], item["end"], item["id"]),
+            key=sort_key,
         )
         ids = [str(item["id"]) for item in ordered]
         if len(ids) != len(set(ids)):
             raise SubtitleProjectError("segment ids must be unique")
         if reflow_layout:
-            ordered = self._assign_project_layout_rows_fn(ordered)
+            result = self._assign_project_layout_rows_fn(cast(list[dict[object, object]], ordered))
+            if not is_string_object_dict_list(result):
+                raise SubtitleProjectError("字幕行のキーは文字列である必要があります")
+            ordered = result
         originals = {str(item["id"]): item for item in segments}
         ordered = [originals[str(item["id"])] if item == originals[str(item["id"])] else item for item in ordered]
         selected = self._selected_segment_index
@@ -386,8 +406,12 @@ class ProjectEditorController:
         if self._project is None:
             return
         normalized = [normalize_segment(item, index) for index, item in enumerate(after)]
+        if not is_string_object_dict_list(normalized):
+            raise SubtitleProjectError("字幕セグメントのキーは文字列である必要があります")
         affected_ids = {str(item["id"]) for item in [*before, *normalized]}
-        current = self._project["segments"]
+        current = self._project.get("segments")
+        if not is_string_object_dict_list(current):
+            raise SubtitleProjectError("字幕セグメントが不正です")
         segments = [item for item in current if str(item["id"]) not in affected_ids]
         segments.extend(normalized)
         ordered, selected = self._prepare_segments(segments, selected_id, reflow_layout=reflow_layout)
@@ -400,8 +424,13 @@ class ProjectEditorController:
         self._commit_edit({"segments": ordered}, history=history, selected_index=selected)
 
     def _prepare_timeline(self, payload: dict[str, object]) -> dict[str, object]:
+        if self._project is None:
+            raise SubtitleProjectError("編集対象のプロジェクトがありません")
         duration = timeline_from_project(self._project).source_duration
-        return VideoTimeline.from_json(payload, source_duration=duration).to_json()
+        timeline = VideoTimeline.from_json(payload, source_duration=duration).to_json()
+        if not is_string_object_dict(timeline):
+            raise SubtitleProjectError("タイムラインのキーは文字列である必要があります")
+        return timeline
 
     def replace_timeline(self, payload: dict[str, object]) -> None:
         if self._project is not None:
@@ -443,8 +472,8 @@ class ProjectEditorController:
 
     def commit_sequence_change(
         self,
-        before: dict[str, object],
-        after: dict[str, object],
+        before: object,
+        after: object,
     ) -> None:
         if self._project is None:
             return
@@ -478,12 +507,24 @@ class ProjectEditorController:
 
     def _restore_audio_mix_settings(self, snapshot: dict[str, object]) -> dict[str, object]:
         """履歴の操作値だけを戻し、再リンク後の素材参照とチャンネル構成を維持する。"""
+        if self._project is None:
+            raise SubtitleProjectError("編集対象のプロジェクトがありません")
         restored = deepcopy(self._project.get("audio_mix", {}))
+        if not is_string_object_dict(restored):
+            raise SubtitleProjectError("音量設定が不正です")
+        historical_items = snapshot.get("channels", [])
+        restored_items = restored.get("channels", [])
+        if not is_string_object_dict_list(historical_items) or not is_string_object_dict_list(restored_items):
+            raise SubtitleProjectError("音量チャンネルが不正です")
         historical_channels = {
-            channel["id"]: channel for channel in snapshot.get("channels", [])
+            channel_id: channel for channel in historical_items
+            if isinstance(channel_id := channel.get("id"), str)
         }
-        for channel in restored.get("channels", []):
-            historical = historical_channels.get(channel["id"])
+        for channel in restored_items:
+            channel_id = channel.get("id")
+            if not isinstance(channel_id, str):
+                raise SubtitleProjectError("音量チャンネルIDが不正です")
+            historical = historical_channels.get(channel_id)
             if historical is None:
                 continue
             for field in AUDIO_CHANNEL_CHANGE_FIELDS:
@@ -498,27 +539,44 @@ class ProjectEditorController:
         if self._project is None:
             return
         kind = entry.get("kind")
+        if not isinstance(kind, str):
+            raise SubtitleProjectError("編集履歴の種類が不正です")
         selected = None
         remove_fields: tuple[str, ...] = ()
+        updates: dict[str, object]
         if kind in {"audio_mix", "short_video"}:
             if state == "before" and entry.get("before_missing"):
                 updates = {}
                 remove_fields = (kind,)
             elif kind == "audio_mix":
-                updates = {kind: self._restore_audio_mix_settings(entry.get(state, {}))}
+                snapshot = entry.get(state, {})
+                if not is_string_object_dict(snapshot):
+                    raise SubtitleProjectError("音量設定の編集履歴が不正です")
+                updates = {kind: self._restore_audio_mix_settings(snapshot)}
             else:
                 updates = {kind: deepcopy(entry.get(state, {}))}
         elif kind == "timeline":
-            updates = {"timeline": self._prepare_timeline(entry.get(state, {}))}
+            snapshot = entry.get(state, {})
+            if not is_string_object_dict(snapshot):
+                raise SubtitleProjectError("タイムラインの編集履歴が不正です")
+            updates = {"timeline": self._prepare_timeline(snapshot)}
         elif kind == "sequence":
             try:
                 updates = {"sequence": VideoSequence.from_json(entry.get(state, {})).to_json()}
             except VideoSequenceError as error:
                 raise SubtitleProjectError(str(error)) from error
         else:
-            affected_ids = {str(item["id"]) for item in [*entry.get("before", []), *entry.get("after", [])]}
-            segments = [item for item in self._project["segments"] if str(item["id"]) not in affected_ids]
-            segments.extend(deepcopy(entry.get(state, [])))
+            before = entry.get("before", [])
+            after = entry.get("after", [])
+            current = self._project.get("segments")
+            if not is_string_object_dict_list(before) or not is_string_object_dict_list(after) or not is_string_object_dict_list(current):
+                raise SubtitleProjectError("字幕セグメントの編集履歴が不正です")
+            affected_ids = {str(item["id"]) for item in [*before, *after]}
+            segments = [item for item in current if str(item["id"]) not in affected_ids]
+            selected_items = entry.get(state, [])
+            if not is_string_object_dict_list(selected_items):
+                raise SubtitleProjectError("字幕セグメントの編集履歴が不正です")
+            segments.extend(deepcopy(selected_items))
             ordered, selected = self._prepare_segments(
                 segments, None, reflow_layout=bool(entry.get("reflow_layout", True)),
             )
@@ -527,7 +585,8 @@ class ProjectEditorController:
         self._commit_edit(
             updates, selected_index=selected, remove_fields=remove_fields, history_move=history_move,
         )
-        self._emit(self._on_history_applied, entry, state)
+        if self._on_history_applied is not None:
+            self._on_history_applied(entry, state)
 
     def undo(self) -> bool:
         if self._project is None or not self._undo_stack:
@@ -542,7 +601,8 @@ class ProjectEditorController:
         return True
 
     def select_segment(self, index: int) -> None:
-        count = len(self._project.get("segments", [])) if self._project else 0
+        segments = self._project.get("segments") if self._project else None
+        count = len(segments) if is_string_object_dict_list(segments) else 0
         resolved = int(index) if 0 <= int(index) < count else -1
         if resolved != self._selected_segment_index:
             self._selected_segment_index = resolved
@@ -555,10 +615,11 @@ class ProjectEditorController:
             self._autosave_pending = True
             return
 
-        snapshot = {
-            key: (list(value) if key == "segments" else deepcopy(value))
-            for key, value in self._project.items()
-        }
+        segments = self._project.get("segments")
+        if not is_string_object_dict_list(segments):
+            raise SubtitleProjectError("字幕セグメントが不正です")
+        snapshot: dict[str, object] = {key: deepcopy(value) for key, value in self._project.items()}
+        snapshot["segments"] = list(segments)
         revision = self._project_revision
         path = self._project_path
         self._autosave_revision = revision
@@ -567,7 +628,7 @@ class ProjectEditorController:
         future = self._autosave_executor.submit(
             self._save_project_fn,
             path,
-            snapshot,
+            cast(dict[object, object], snapshot),
             project_is_validated=True,
             update_project=False,
         )
@@ -590,7 +651,8 @@ class ProjectEditorController:
                 and revision == self._project_revision
             ):
                 self._project_dirty = False
-            self._emit(self._on_autosave_completed, revision, path, error)
+            if self._on_autosave_completed is not None:
+                self._on_autosave_completed(revision, path, error)
 
         future.add_done_callback(report_completion)
 

@@ -31,6 +31,27 @@ from scripts.gui_performance_report import REPORT_SCHEMA_VERSION, aggregate_runs
 from src.data_boundary import coerce_int, decode_json, is_string_object_dict
 
 
+class RunArgs(argparse.Namespace):
+    worker: bool = False
+    project: Path | None = None
+    worker_output: Path | None = None
+    segment_counts: list[int] | None = None
+    repetitions: int = 3
+    repetition_index: int | None = None
+    total_repetitions: int | None = None
+    playback_seconds: float = 30.0
+    settle_ms: int = 100
+    output: Path = Path("artifacts/gui-performance.json")
+    fixture_dir: Path | None = None
+    media_dir: Path | None = None
+    revision_label: str = "local"
+    harness_revision: str = "local"
+    run_id: str = "local"
+    run_attempt: str = "1"
+    shard_id: str = "local"
+    enforce_contracts: bool = True
+
+
 def _command_version(command: str) -> str | None:
     try:
         completed = subprocess.run(
@@ -74,9 +95,11 @@ def environment_info() -> dict[str, object]:
     }
 
 
-def _run_worker(args: argparse.Namespace) -> int:
+def _run_worker(args: RunArgs) -> int:
     from tests.gui_performance_scenarios import GuiPerformanceScenarioRunner
 
+    if args.project is None or args.worker_output is None:
+        raise ValueError("workerにはprojectとworker-outputが必要です")
     runner = GuiPerformanceScenarioRunner(
         args.project,
         playback_seconds=args.playback_seconds,
@@ -94,7 +117,7 @@ def _run_worker(args: argparse.Namespace) -> int:
 
 
 def _worker_command(
-    args: argparse.Namespace,
+    args: RunArgs,
     *,
     project_path: Path,
     worker_output: Path,
@@ -116,7 +139,9 @@ def _worker_command(
     return command
 
 
-def _run_controller(args: argparse.Namespace) -> int:
+def _run_controller(args: RunArgs) -> int:
+    if args.segment_counts is None:
+        raise ValueError("segment-countsが設定されていません")
     output_path = args.output.resolve()
     fixture_dir = (args.fixture_dir or output_path.parent / "gui-performance-fixtures").resolve()
     fixture_dir.mkdir(parents=True, exist_ok=True)
@@ -210,7 +235,7 @@ def _run_controller(args: argparse.Namespace) -> int:
     return 1 if args.enforce_contracts and contract_failure else 0
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> RunArgs:
     parser = argparse.ArgumentParser(
         description="Run repeatable Qt/QML and Qt Multimedia GUI performance scenarios.",
     )
@@ -250,7 +275,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=RunArgs())
     args.segment_counts = args.segment_counts or list(DEFAULT_SEGMENT_COUNTS)
     args.total_repetitions = args.total_repetitions or args.repetitions
     if args.repetitions <= 0:

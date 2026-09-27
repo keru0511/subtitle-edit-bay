@@ -320,6 +320,8 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_confirmation_requires_a_path_and_clears_with_it
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_web_source_inputs_are_saved_and_reloaded
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_candidate_buttons_require_an_actionable_state
+          tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_manual_candidate_replaces_unselected_auto_at_limit
+          tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_manual_candidate_disables_when_limit_is_protected
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_detail_fields_save_pending_input_and_reload
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_open_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_dictionary_save_failure_keeps_window_open_for_retry

@@ -9150,6 +9150,102 @@ Window {
         self.assertTrue(select_all.isEnabled())
         self.assertFalse(clear_all.isEnabled())
 
+    def test_dictionary_manual_candidate_replaces_unselected_auto_at_limit(self) -> None:
+        """Windows GUI CI必須: 候補上限では未選択の自動候補だけを置換し保存する。"""
+        automatic_terms = [f"Auto{index:03d}" for index in range(253)]
+        candidates = ["Pinned", *automatic_terms, "ManualKeep"]
+        self.app.setTranscriptionContext({
+            **self.app.transcriptionContext,
+            "web_dictionary_enabled": True,
+            "web_dictionary_candidates": candidates,
+            "web_dictionary_terms": ["Pinned"],
+            "web_dictionary_candidate_metadata": [
+                {"term": "Pinned", "source": "title", "score": "1.00"},
+                *({"term": term, "source": "notes", "score": "0.50"} for term in automatic_terms),
+                {"term": "ManualKeep", "source": "manual", "score": "0.00"},
+            ],
+        })
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        manual = self._quick_visual_item(page, "transcriptionWebDictionaryManualTermField")
+        add = self._quick_item(window, "transcriptionWebDictionaryAddButton")
+        hint = self._quick_item(window, "transcriptionWebDictionaryLimitHint")
+        self.assertFalse(hint.isVisible())
+
+        manual.setProperty("text", "ManualAt256")
+        self._click(window, add)
+        self.assertEqual(len(self.app.transcriptionContext["web_dictionary_candidates"]), 256)
+        self.assertTrue(hint.isVisible())
+        self.assertIn("入れ替わります", hint.property("text"))
+
+        manual.setProperty("text", "ManualAtLimit")
+        self.assertTrue(add.isEnabled())
+        self._click(window, add)
+        context = self.app.transcriptionContext
+        self.assertEqual(len(context["web_dictionary_candidates"]), 256)
+        self.assertEqual(context["web_dictionary_terms"], ["Pinned"])
+        for protected in ("Pinned", "ManualKeep", "ManualAt256", "ManualAtLimit"):
+            self.assertIn(protected, context["web_dictionary_candidates"])
+        self.assertNotIn("Auto252", context["web_dictionary_candidates"])
+        self.assertEqual(manual.property("text"), "")
+
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+        saved = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        saved_context = saved["craig_pipeline"]["transcription_context"]
+        self.assertEqual(len(saved_context["web_dictionary_candidates"]), 256)
+        self.assertIn("ManualAtLimit", saved_context["web_dictionary_candidates"])
+        self.assertEqual(saved_context["web_dictionary_terms"], ["Pinned"])
+
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        candidate_list = self._quick_item(window, "transcriptionWebDictionaryCandidateList")
+        scroll_content = candidate_list.property("contentItem")
+        scroll_content.setProperty(
+            "contentY", scroll_content.property("contentHeight") - scroll_content.height()
+        )
+        self.gui.wait_until(
+            lambda: any(
+                item.objectName() == "transcriptionWebDictionaryCandidateItem"
+                and item.isVisible() and item.parentItem().property("term") == "ManualAtLimit"
+                for item in self.gui.visual_items(candidate_list)
+            ),
+            description="保存後に再表示した上限件数の手動候補",
+        )
+        manual.setProperty("text", "BlockedWhenAllSelected")
+        self._click(window, self._quick_item(window, "transcriptionWebDictionarySelectAllButton"))
+        self.assertFalse(add.isEnabled())
+        self.assertIn("削除してください", hint.property("text"))
+        self.assertEqual(manual.property("text"), "BlockedWhenAllSelected")
+        self._click(window, self._quick_item(window, "transcriptionWebDictionaryClearAllButton"))
+        self.assertTrue(add.isEnabled())
+
+    def test_dictionary_manual_candidate_disables_when_limit_is_protected(self) -> None:
+        """Windows GUI CI必須: 256件すべて保護対象なら追加理由を示して無効にする。"""
+        candidates = [f"Manual{index:03d}" for index in range(256)]
+        self.app.setTranscriptionContext({
+            **self.app.transcriptionContext,
+            "web_dictionary_enabled": True,
+            "web_dictionary_candidates": candidates,
+            "web_dictionary_terms": [candidates[0]],
+            "web_dictionary_candidate_metadata": [
+                {"term": term, "source": "manual", "score": "0.00"} for term in candidates
+            ],
+        })
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        manual = self._quick_visual_item(page, "transcriptionWebDictionaryManualTermField")
+        add = self._quick_item(window, "transcriptionWebDictionaryAddButton")
+        hint = self._quick_item(window, "transcriptionWebDictionaryLimitHint")
+        manual.setProperty("text", "ExtraTerm")
+        self.app.processEvents()
+        self.assertFalse(add.isEnabled())
+        self.assertTrue(hint.isVisible())
+        self.assertIn("削除してください", hint.property("text"))
+        self.assertEqual(manual.property("text"), "ExtraTerm")
+        self.assertEqual(self.app.transcriptionContext["web_dictionary_candidates"], candidates)
+
     def test_dictionary_shortcuts_preserve_pending_input_during_processing(self) -> None:
         self.app.setTranscriptionContext({
             **self.app.transcriptionContext,

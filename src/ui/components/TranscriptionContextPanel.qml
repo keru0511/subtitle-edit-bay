@@ -15,7 +15,9 @@ Rectangle {
     property color textPrimaryColor: "#F0F6FC"
     property color textMutedColor: "#8B949E"
     property color accentColor: "#6366F1"
+    readonly property int webDictionaryCandidateLimit: 256
     property int selectedCandidateCount: 0
+    property int replaceableCandidateCount: 0
 
     signal transcriptionContextEdited(var context)
     signal webDictionaryRefreshRequested(string url, string snippet)
@@ -58,16 +60,40 @@ Rectangle {
             if (String(webDictionaryCandidateModel.get(index).term).toLocaleLowerCase() === key)
                 return false
         }
-        return true
+        return webDictionaryCandidateModel.count < webDictionaryCandidateLimit
+            || replaceableCandidateCount > 0
+    }
+
+    function isReplaceableCandidate(candidate) {
+        if (candidate.selected)
+            return false
+        var source = String(candidate.source || "").toLowerCase()
+        return source === "title" || source === "notes"
+            || source.indexOf("snippet:") === 0
+            || source.indexOf("http://") === 0
+            || source.indexOf("https://") === 0
+    }
+
+    function replaceableCandidateIndex() {
+        for (var index = webDictionaryCandidateModel.count - 1; index >= 0; index -= 1) {
+            if (isReplaceableCandidate(webDictionaryCandidateModel.get(index)))
+                return index
+        }
+        return -1
     }
 
     function updateSelectedCandidateCount() {
-        var count = 0
+        var selectedCount = 0
+        var replaceableCount = 0
         for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
-            if (webDictionaryCandidateModel.get(index).selected)
-                count += 1
+            var candidate = webDictionaryCandidateModel.get(index)
+            if (candidate.selected)
+                selectedCount += 1
+            if (isReplaceableCandidate(candidate))
+                replaceableCount += 1
         }
-        selectedCandidateCount = count
+        selectedCandidateCount = selectedCount
+        replaceableCandidateCount = replaceableCount
     }
 
     function applyContext(value) {
@@ -150,7 +176,14 @@ Rectangle {
         var term = webDictionaryManualTermField.text.trim()
         if (!canAddManualCandidate(term))
             return
+        if (webDictionaryCandidateModel.count >= webDictionaryCandidateLimit) {
+            var replaceableIndex = replaceableCandidateIndex()
+            if (replaceableIndex < 0)
+                return
+            webDictionaryCandidateModel.remove(replaceableIndex)
+        }
         webDictionaryCandidateModel.append({"term": term, "source": "manual", "score": "0.00", "selected": false})
+        updateSelectedCandidateCount()
         webDictionaryManualTermField.clear()
         panelRoot.commitContext()
     }
@@ -429,6 +462,19 @@ Rectangle {
                 text: "選択解除"
                 onClicked: panelRoot.setAllCandidates(false)
             }
+        }
+
+        Text {
+            objectName: "transcriptionWebDictionaryLimitHint"
+            Layout.fillWidth: true
+            visible: webDictionaryCandidateModel.count >= panelRoot.webDictionaryCandidateLimit
+            text: panelRoot.replaceableCandidateCount > 0
+                ? "候補は最大256件です。追加すると末尾の未選択の自動候補と入れ替わります。"
+                : "候補は最大256件です。選択済み・手動候補を保持するため、追加するには不要な候補を削除してください。"
+            color: panelRoot.textMutedColor
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 9
+            wrapMode: Text.Wrap
         }
 
         ScrollView {

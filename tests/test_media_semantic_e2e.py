@@ -115,7 +115,7 @@ class MediaSemanticE2ETests(TypedTestCase):
     one_line_output: Path
     two_line_output: Path
     manual_break_output: Path
-    output_probes: dict[str, dict[str, object]]
+    output_probes: dict[Path, dict[str, object]]
 
     @classmethod
     def setUpClass(cls) -> None:

@@ -275,6 +275,18 @@ files = [
   "scripts/release_candidate.py",
   "src/sequence_render.py",
   "tests/media_test_helpers.py",
+  "src/gui_job_runner.py",
+  "src/subtitle_layout/wrapping.py",
+  "tests/qt_signal_spy.py",
+  "tests/test_application_logging.py",
+  "tests/test_gui_job_runner.py",
+  "tests/test_legacy_migration_module_boundaries.py",
+  "tests/test_transcription_context.py",
+  "tests/test_updater.py",
+  "tests/test_runtime_contract.py",
+  "tests/test_gui_state.py",
+  "tests/test_workflow_action_semantic_e2e.py",
+  "tests/test_highlight_visual_signals.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -535,6 +547,18 @@ module = [
   "scripts.release_candidate",
   "src.sequence_render",
   "tests.media_test_helpers",
+  "src.gui_job_runner",
+  "src.subtitle_layout.wrapping",
+  "tests.qt_signal_spy",
+  "tests.test_application_logging",
+  "tests.test_gui_job_runner",
+  "tests.test_legacy_migration_module_boundaries",
+  "tests.test_transcription_context",
+  "tests.test_updater",
+  "tests.test_runtime_contract",
+  "tests.test_gui_state",
+  "tests.test_workflow_action_semantic_e2e",
+  "tests.test_highlight_visual_signals",
 ]
 strict = true
 disallow_any_explicit = true

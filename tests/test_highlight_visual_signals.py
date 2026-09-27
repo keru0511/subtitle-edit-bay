@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import coerce_float
 from src.highlight_visual_signals import (
     VisualSignal,
     VisualSignalSettings,
@@ -18,8 +19,13 @@ from tests.typed_case import TypedTestCase
 
 class HighlightVisualSignalTests(TypedTestCase):
     def test_feature_flag_disabled_keeps_baseline_without_running_ffmpeg(self) -> None:
-        called = []
-        result = extract_visual_signals("video.mkv", [(0, 5)], runner=lambda *args, **kwargs: called.append(True))
+        called: list[bool] = []
+
+        def unused_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            called.append(True)
+            raise AssertionError("無効な視覚信号でFFmpegが起動されました")
+
+        result = extract_visual_signals("video.mkv", [(0, 5)], runner=unused_runner)
         self.assertTrue(result.fallback)
         self.assertFalse(called)
 
@@ -35,9 +41,9 @@ class HighlightVisualSignalTests(TypedTestCase):
         self.assertEqual(command[-1], "-")
 
     def test_extract_parses_timestamp_and_reports_progress(self) -> None:
-        progress = []
+        progress: list[float] = []
 
-        def runner(command, **kwargs):
+        def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             self.assertFalse(kwargs["shell"])
             return subprocess.CompletedProcess(
                 command,
@@ -58,13 +64,14 @@ class HighlightVisualSignalTests(TypedTestCase):
         self.assertEqual(progress, [1.0])
 
     def test_cancel_and_global_budget_fallback_to_empty_signals(self) -> None:
+        def cancelled_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="pts_time:1.0 lavfi.scene_score=0.9")
+
         cancelled = extract_visual_signals(
             "video.mkv",
             [(0, 2)],
             settings=VisualSignalSettings(enabled=True),
-            runner=lambda *args, **kwargs: subprocess.CompletedProcess(
-                args[0], 0, stdout="", stderr="pts_time:1.0 lavfi.scene_score=0.9"
-            ),
+            runner=cancelled_runner,
             cancel_check=lambda: True,
         )
         self.assertTrue(cancelled.fallback)
@@ -74,15 +81,15 @@ class HighlightVisualSignalTests(TypedTestCase):
             "video.mkv",
             [(0, 2)],
             settings=VisualSignalSettings(enabled=True, max_runtime_seconds=0.0),
-            runner=lambda *args, **kwargs: None,
+            runner=cancelled_runner,
         )
         self.assertTrue(exhausted.fallback)
         self.assertEqual(exhausted.signals, ())
 
-        timeouts = []
+        timeouts: list[float] = []
 
-        def budget_runner(command, **kwargs):
-            timeouts.append(kwargs["timeout"])
+        def budget_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            timeouts.append(coerce_float(kwargs["timeout"]))
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         budgeted = extract_visual_signals(
@@ -95,16 +102,21 @@ class HighlightVisualSignalTests(TypedTestCase):
         self.assertFalse(budgeted.fallback)  # both fake windows completed within the budget
 
     def test_failure_cancels_to_baseline_and_visual_weight_is_bounded(self) -> None:
+        def failed_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise RuntimeError("ffmpeg unavailable")
+
         result = extract_visual_signals(
             "video.mkv",
             [(0, 2)],
             settings=VisualSignalSettings(enabled=True),
-            runner=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ffmpeg unavailable")),
+            runner=failed_runner,
         )
         self.assertTrue(result.fallback)
         candidates = [{"id": "h1", "start": 0, "end": 5, "score": 0.2}]
-        blended = blend_visual_scores(candidates, [VisualSignal(2, 1.0)], settings=VisualSignalSettings(enabled=True, weight=2.0))
-        self.assertLessEqual(blended[0]["score"], 1.0)
+        blended = blend_visual_scores(
+            candidates, [VisualSignal(2, 1.0)], settings=VisualSignalSettings(enabled=True, weight=2.0)
+        )
+        self.assertLessEqual(coerce_float(blended[0]["score"]), 1.0)
         self.assertEqual(blended[0]["visual_score"], 1.0)
 
     def test_cache_key_includes_video_fingerprint_and_signal_settings(self) -> None:

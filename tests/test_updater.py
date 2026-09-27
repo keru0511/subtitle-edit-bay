@@ -6,6 +6,7 @@ import unittest
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from urllib.request import Request
 from unittest.mock import patch
 
 from src import updater
@@ -48,7 +49,7 @@ class FetchLatestReleaseTests(TypedTestCase):
             root = Path(temp_dir)
             (root / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
 
-            def fake_urlopen(request, **_kwargs):
+            def fake_urlopen(request: Request, **_kwargs: object) -> BytesIO:
                 self.assertIn("api.github.com", request.full_url)
                 return BytesIO(json.dumps(payload).encode("utf-8"))
 
@@ -187,7 +188,7 @@ class LaunchUpdateScriptTests(TypedTestCase):
 
 
 class UnsupportedUpdateTests(TypedTestCase):
-    def test_zip_apply_rejects_before_touching_files_or_downloading(self):
+    def test_zip_apply_rejects_before_touching_files_or_downloading(self) -> None:
         for platform in ("darwin", "linux"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
@@ -196,7 +197,7 @@ class UnsupportedUpdateTests(TypedTestCase):
                 backup.mkdir(parents=True)
                 (backup / "keep.txt").write_bytes(b"existing backup")
 
-                def snapshot():
+                def snapshot() -> dict[str, bytes | None]:
                     return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
 
                 before = snapshot()
@@ -206,7 +207,7 @@ class UnsupportedUpdateTests(TypedTestCase):
                     urlopen.assert_not_called()
                 self.assertEqual(snapshot(), before)
 
-    def test_launch_rejects_unsupported_os(self):
+    def test_launch_rejects_unsupported_os(self) -> None:
         for platform in ("darwin", "linux"):
             with self.subTest(platform=platform), patch("sys.platform", platform):
                 with self.assertRaisesRegex(updater.UpdaterError, "未対応"):

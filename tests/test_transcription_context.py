@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_string_object_mapping
 from src.subtitle_project import SubtitleProjectError, create_project, load_project, save_project
 from src.transcription_context import (
     normalize_transcription_context,
@@ -38,12 +39,14 @@ class TranscriptionContextTests(TypedTestCase):
 
             loaded = load_project(path)
 
-        self.assertEqual(loaded["transcription_context"]["game_title"], "Splatoon 3")
-        self.assertEqual(loaded["transcription_context"]["creator_terms"], ["ヒーローモード", "クマサン"])
-        self.assertEqual(loaded["transcription_context"]["dictionary_path"], "dict/splatoon.json")
-        self.assertTrue(loaded["transcription_context"]["dictionary_confirmed"])
-        self.assertEqual(loaded["transcription_context"].get("web_dictionary_candidates"), ["Splatfest"])
-        self.assertEqual(loaded["transcription_context"].get("web_dictionary_terms"), ["Splatfest"])
+        context = loaded["transcription_context"]
+        assert is_string_object_mapping(context)
+        self.assertEqual(context["game_title"], "Splatoon 3")
+        self.assertEqual(context["creator_terms"], ["ヒーローモード", "クマサン"])
+        self.assertEqual(context["dictionary_path"], "dict/splatoon.json")
+        self.assertTrue(context["dictionary_confirmed"])
+        self.assertEqual(context.get("web_dictionary_candidates"), ["Splatfest"])
+        self.assertEqual(context.get("web_dictionary_terms"), ["Splatfest"])
 
     def test_missing_project_context_is_backfilled_for_existing_projects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -8168,11 +8168,25 @@ Window {
         card = self._quick_item(window, "codexChatProposalCard")
         apply_button = self._quick_item(window, "codexApplyButton")
         allow_button = self._quick_item(window, "codexAudioAllowSilenceButton")
+
+        def proposal_controls_ready() -> bool:
+            if not (
+                panel.property("expanded") and card.isVisible() and card.width() > 0
+                and card.property("audioProposal") and apply_button.isEnabled()
+                and allow_button.isVisible() and allow_button.isEnabled()
+            ):
+                return False
+            self._assert_quick_item_within(card, apply_button)
+            self._assert_quick_item_within(card, allow_button)
+            self._assert_quick_item_within(panel, apply_button)
+            self._assert_quick_item_within(panel, allow_button)
+            self._assert_quick_item_within(window.contentItem(), card)
+            return True
+
         self.gui.wait_until(
-            lambda: bool(panel.property("expanded")) and card.isVisible()
-            and bool(card.property("audioProposal"))
-            and apply_button.isEnabled() and allow_button.isVisible() and allow_button.isEnabled(),
+            proposal_controls_ready,
             description="全音声ミュート案の操作ボタン",
+            timeout_ms=3_000,
         )
         original_mix = deepcopy(self.app._project["audio_mix"])
         original_bytes = path.read_bytes()

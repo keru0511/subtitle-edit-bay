@@ -427,12 +427,6 @@ class LegacyBackendCompatibility:
     def transcribeProject(self, settings: dict[str, object], mode: str) -> None:
         return self._workflow_facade.transcribeProject(settings, mode)
 
-    def _merge_preserved_transcription_segments(self) -> bool:
-        return self._workflow_facade._merge_preserved_transcription_segments()
-
-    def _restore_preserved_transcription_project(self) -> None:
-        return self._workflow_facade._restore_preserved_transcription_project()
-
     def _cleanup_transcription_project_artifact(self) -> None:
         return self._workflow_facade._cleanup_transcription_project_artifact()
 

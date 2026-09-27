@@ -1700,6 +1700,24 @@ Window {
         self.assertIn("--context-base-dir", command)
         self.assertEqual(Path(command[command.index("--context-base-dir") + 1]), legacy_base)
 
+    def test_followup_transcription_accepts_null_transcription_metadata(self) -> None:
+        self._set_ready_sources()
+        project_path = self._load_project()
+        project = load_project(project_path)
+        project["transcription"] = None
+        save_project(project_path, project)
+        self.assertIsNone(load_project(project_path)["transcription"])
+        self.assertTrue(self.app._load_project_path(project_path, update_sources=False))
+        self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
+
+        with patch.object(self.app.workflow, "_start_command") as start:
+            self.app.transcribeProject(self.app.settings, "merge")
+
+        start.assert_called_once()
+        command = _mock_command(start)
+        self.assertEqual(Path(command[command.index("--context-base-dir") + 1]), project_path.parent)
+        self.assertEqual(_string_at(load_project(project_path), "transcription", "context_base_dir"), str(project_path.parent))
+
     def test_save_as_preserves_export_and_waits_for_pending_autosave(self) -> None:
         path = self._load_project()
         export = self.app.videoOutputDirectory
@@ -1980,8 +1998,8 @@ Window {
             self.assertEqual(self.app.stage, "EDIT")
             self.assertEqual(self.app.currentEditMode, "cut")
             self.assertEqual(self.app.editorPlayhead, before)
-            self.assertEqual(self.app.projectPath, str(project_path))
-            self.assertEqual(len(_list_at(self.app._project, 'timeline', 'cuts')), 1)
+            self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+            self.assertEqual(len(_list_at(self.app._project, "timeline", "cuts")), 1)
             self.assertFalse(generated_path.exists())
 
     def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
@@ -6866,8 +6884,10 @@ Window {
 
     @typed_skip_unless_method(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_expanded_split_control_recovers_after_processing(self) -> None:
+        """Windows GUI CI必須: 拡大画面の分割を保存でき、Undo 後の保存で元に戻せる。"""
         self._set_ready_sources()
-        self._load_project()
+        path = self._load_project()
+        original = deepcopy(self.app.subtitleSegments)
         self._generate_black_test_video_with_audio(self.root / "game.mkv", self.root / "1-alice.flac")
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
@@ -6891,6 +6911,20 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self.assertTrue(split_button.isEnabled())
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, split_button)
+            self.assertEqual(self.app.segmentCount, 2)
+            first, second = self.app.subtitleSegments
+            self.assertEqual((first["start"], first["end"]), (0.0, 0.5))
+            self.assertEqual((second["start"], second["end"]), (0.5, 4.0))
+            self.assertEqual(_string_at(first, "text") + _string_at(second, "text"), _string_at(original, 0, "text"))
+            self._click(window, self._quick_item(window, "saveProjectButton"))
+            self.assertEqual(len(_dict_list_at(load_project(path), "segments")), 2)
+
+            self._click(window, self._quick_item(window, "undoCaptionButton"))
+            self.assertEqual(self.app.subtitleSegments, original)
+            self._click(window, self._quick_item(window, "saveProjectButton"))
+            self.assertEqual(load_project(path)["segments"], original)
 
     def test_subtitle_timeline_drag_is_locked_during_processing_and_recovers(self) -> None:
         self._load_project()
@@ -8336,6 +8370,95 @@ Window {
         self.assertFalse(self.app.applyAudioMixProposal([], False))
         self.assertEqual(_value_at(self.app._project, 'audio_mix'), before)
 
+    def test_audio_proposal_requires_explicit_click_to_mute_every_output(self) -> None:
+        """Windows GUI CI必須: 通常適用は全音声ミュートを拒否し、明示許可なら保存できる。"""
+        path = self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated", auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        _, window = self._load_qml()
+        channels = self.app.audioMixerChannels
+        audible = [
+            channel for channel in channels
+            if channel["enabled"] and not channel["muted"] and coerce_float(channel["volume_percent"]) > 0
+        ]
+        self.assertTrue(audible)
+        revision = self.app._project_revision
+        self.app._audio_mix_proposal = build_audio_mix_proposal(
+            {
+                "schema_version": 1,
+                "summary": "すべての出力をミュート",
+                "warnings": [],
+                "base_revision": revision,
+                "audio_state_revision": audio_mix_state_revision(channels),
+                "operations": [
+                    {
+                        "id": f"mute-{index}",
+                        "type": "update_audio_channel",
+                        "channel_id": str(channel["id"]),
+                        "changes": {"muted": True},
+                        "reason": "明示許可の確認",
+                    }
+                    for index, channel in enumerate(audible)
+                ],
+            },
+            channels,
+            project_revision=revision,
+        )
+        self.app.audioMixProposalChanged.emit()
+        panel = self._quick_item(window, "codexChatPanel")
+        card = self._quick_item(window, "codexChatProposalCard")
+        apply_button = self._quick_item(window, "codexApplyButton")
+        allow_button = self._quick_item(window, "codexAudioAllowSilenceButton")
+
+        def proposal_controls_ready() -> bool:
+            if not (
+                _qt_bool(panel, "expanded") and card.isVisible() and card.width() > 0
+                and bool(qt_property_value(card, "audioProposal")) and apply_button.isEnabled()
+                and allow_button.isVisible() and allow_button.isEnabled()
+            ):
+                return False
+            self._assert_quick_item_within(card, apply_button)
+            self._assert_quick_item_within(card, allow_button)
+            self._assert_quick_item_within(panel, apply_button)
+            self._assert_quick_item_within(panel, allow_button)
+            self._assert_quick_item_within(window.contentItem(), card)
+            return True
+
+        self.gui.wait_until(
+            proposal_controls_ready,
+            description="全音声ミュート案の操作ボタン",
+            timeout_ms=3_000,
+        )
+        original_mix = deepcopy(_value_at(self.app._project, "audio_mix"))
+        original_bytes = path.read_bytes()
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, apply_button)
+            self.assertIsNotNone(self.app._audio_mix_proposal)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertEqual(_value_at(self.app._project, "audio_mix"), original_mix)
+            self.assertEqual(self.app._project_revision, revision)
+            self.assertEqual(path.read_bytes(), original_bytes)
+
+            self._click(window, allow_button)
+            self.assertIsNone(self.app._audio_mix_proposal)
+            self.assertEqual(self.app._project_revision, revision + 1)
+            self.assertTrue(self.app.projectDirty)
+            updated = self.app.audioMixerChannels
+            self.assertFalse(any(
+                channel["enabled"] and not channel["muted"] and coerce_float(channel["volume_percent"]) > 0
+                for channel in updated
+            ))
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+            self.assertFalse(self.app.projectDirty)
+            saved = _dict_list_at(load_project(path), "audio_mix", "channels")
+            self.assertEqual(
+                {channel["id"]: channel["muted"] for channel in saved},
+                {channel["id"]: channel["muted"] for channel in updated},
+            )
+
     def test_audio_chat_natural_language_uses_typed_audio_proposal_path(self) -> None:
         self._load_project()
         authenticated = CodexChatSnapshot(
@@ -9465,6 +9588,75 @@ Window {
         matches = [match.group(1) for match in pattern.finditer(result.stderr)]
         self.assertTrue(matches, result.stderr)
         return float(matches[-1])
+
+    @typed_skip_unless_method(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_new_video_gui_journey_saves_reloads_and_renders_caption(self) -> None:
+        """Windows GUI CI必須: 新規動画の選択から字幕保存・再読込・通常書き出しまで検証する。"""
+        video = self.root / "new-video.mkv"
+        self._generate_black_test_video_with_audio(video, self.root / "unused-audio.flac")
+        project_path = video.with_suffix(".subtitle-project.json")
+        export = self.root / "export"
+        export.mkdir()
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+
+        _, window = self._load_qml()
+        with patch("src.gui_base.QFileDialog.getOpenFileName", return_value=(str(video), "")) as choose:
+            self._click(window, self._quick_item(window, "newVideoEditButton"))
+        choose.assert_called_once()
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+        self.assertEqual(self.app.segmentCount, 0)
+
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self.assertEqual(self.app.segmentCount, 1)
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        self._click(window, caption)
+        self.assertTrue(caption.hasActiveFocus())
+        caption_text = "new video caption"
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in caption_text:
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.assertEqual(_qt_string(caption, "text"), caption_text)
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+
+        saved = load_project(project_path)
+        self.assertEqual([segment["text"] for segment in _dict_list_at(saved, "segments")], [caption_text])
+        self.assertFalse(self.app.projectDirty)
+        loaded_project = self.app._project
+        with patch("src.gui.QFileDialog.getOpenFileName", return_value=(str(project_path), "")) as choose:
+            self._click(window, self._quick_item(window, "projectOpenButton"))
+        choose.assert_called_once()
+        self.assertIsNot(self.app._project, loaded_project)
+        self.assertEqual(self.app.segmentAt(0)["text"], caption_text)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)) as choose:
+            self._click(window, self._quick_item(window, "workspaceHeaderRenderButton"))
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(30_000), self.app.process.errorString())
+            self.app.processEvents()
+        choose.assert_called_once()
+        self.assertEqual(self.app.stage, "COMPLETE", f"{self.app.status}\n{self.app._log}")
+
+        rendered_project = load_project(project_path)
+        self.assertEqual(_value_at(rendered_project, "segments", 0, "text"), caption_text)
+        self.assertEqual(_path_at(rendered_project, "output_dir").resolve(), export.resolve())
+        output = _path_at(rendered_project, "render_settings", "last_output")
+        self.assertTrue(output.is_file())
+        self.assertGreater(output.stat().st_size, 0)
+        duration, pixel_format = self._probe_video_output(output)
+        self.assertAlmostEqual(duration, 1.0, delta=0.25)
+        self.assertEqual(pixel_format, "yuv420p")
+        source_frame = self._extract_gray_frame(video)
+        output_frame = self._extract_gray_frame(output)
+        self.assertEqual(len(output_frame), len(source_frame))
+        self.assertGreater(max(output_frame), max(source_frame) + 80)
 
     @typed_skip_unless_method(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
@@ -11078,7 +11270,7 @@ Window {
         custom_project_path = project_path.with_name("custom-edit.subtitle-project.json")
         save_project(custom_project_path, preserved)
         generated = create_project(
-            video_path=project_path.parent / "game.mkv",
+            video_path=_string_at(preserved, "video", "path"),
             output_dir=project_path.parent / "export",
             segments=[
                 {
@@ -11094,30 +11286,36 @@ Window {
             transcription={"engine": "new-engine"},
         )
 
-        try:
-            for mode in ("merge", "replace"):
-                with self.subTest(mode=mode):
-                    save_project(project_path, preserved)
-                    self.app._project = _string_project(deepcopy(generated))
-                    self.app._project_path = str(project_path)
-                    self.app.workflow._state.transcription_merge_mode = mode
-                    self.app.workflow._state.transcription_preserved_project = _string_project(deepcopy(preserved))
-                    self.app.workflow._state.transcription_preserved_project_path = str(custom_project_path)
+        generated_path = project_path.with_name("generated.subtitle-project.json")
+        for mode in ("merge", "replace"):
+            with self.subTest(mode=mode):
+                save_project(project_path, preserved)
+                save_project(custom_project_path, preserved)
+                save_project(generated_path, generated)
+                self.app._project = _string_project(deepcopy(preserved))
+                self.app._project_path = str(custom_project_path)
+                self.app.workflow._state.transcription_merge_mode = mode
+                self.app.workflow._state.transcription_preserved_project = _string_project(deepcopy(preserved))
+                self.app.workflow._state.transcription_preserved_project_path = str(custom_project_path)
+                self.app.workflow._state.transcription_generated_project_path = str(generated_path)
+                self.app._active_job = "transcribe"
+                self.app._running = True
+                self.app._audio_mix_proposal = {"id": "stale-proposal"}
 
-                    self.assertTrue(self.app._merge_preserved_transcription_segments())
-                    saved = load_project(custom_project_path)
-                    self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
-                    self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
-                    self.assertEqual(saved["timeline"], preserved["timeline"])
-                    self.assertEqual(saved["short_video"], preserved["short_video"])
-                    self.assertEqual(saved["transcription"], {"engine": "new-engine"})
-                    expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
-                    self.assertEqual({item["id"] for item in _dict_list_at(saved, "segments")}, expected_ids)
-                    self.assertEqual(_dict_list_at(load_project(project_path), "segments"), preserved["segments"])
-        finally:
-            self.app.workflow._state.transcription_merge_mode = ""
-            self.app.workflow._state.transcription_preserved_project = None
-            self.app.workflow._state.transcription_preserved_project_path = ""
+                with patch.object(self.app.workflow, "_read_process_output"):
+                    self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+                saved = load_project(custom_project_path)
+                self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
+                self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                self.assertEqual(saved["timeline"], preserved["timeline"])
+                self.assertEqual(saved["short_video"], preserved["short_video"])
+                self.assertEqual(_value_at(saved, "transcription", "engine"), "new-engine")
+                expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
+                self.assertEqual({item["id"] for item in _dict_list_at(saved, "segments")}, expected_ids)
+                self.assertEqual(_dict_list_at(load_project(project_path), "segments"), _dict_list_at(preserved, "segments"))
+                self.assertFalse(generated_path.exists())
+                self.assertIsNone(self.app._audio_mix_proposal)
 
     def test_followup_transcription_uses_private_project_path_without_overwriting_default(self) -> None:
         video, audio, output = self._set_ready_sources()
@@ -11152,33 +11350,108 @@ Window {
         self.assertTrue(generated_path.name.startswith(".custom-edit.subtitle-project."))
         self.assertEqual(_dict_list_at(load_project(default_path), "segments"), sentinel["segments"])
 
-    def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
+    def test_transcription_save_failure_keeps_open_project_and_file(self) -> None:
         project_path = self._load_project()
+        self.assertTrue(self.app.saveProject())
         preserved = deepcopy(self.app._project)
         assert preserved is not None
-        generated = deepcopy(preserved)
+        original_revision = self.app._project_revision
+        original_contents = project_path.read_bytes()
+        generated = _object_project(deepcopy(preserved))
         generated["segments"] = []
-        self.app._project = generated
-        self.app._project_path = str(project_path)
+        generated_path = project_path.with_name("generated.subtitle-project.json")
+        save_project(generated_path, generated)
         self.app._active_job = "transcribe"
         self.app._running = True
         self.app.workflow._state.transcription_merge_mode = "merge"
-        self.app.workflow._state.transcription_preserved_project = preserved
+        self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
         self.app.workflow._state.transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_generated_project_path = str(generated_path)
 
         with (
             patch.object(self.app.workflow, "_read_process_output"),
-            patch.object(self.app, "_try_load_default_project", return_value=True),
-            patch.object(
-                self.app.workflow, "_merge_preserved_transcription_segments",
-                side_effect=ValueError("merge failed"),
-            ),
+            patch.object(self.app._project_editor_controller, "_save_project_fn", side_effect=OSError("disk full")),
         ):
             self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
 
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("統合に失敗しました", self.app.status)
-        self.assertEqual(_dict_list_at(load_project(project_path), "segments"), preserved["segments"])
+        self.assertEqual(self.app.progressState, "error")
+        self.assertLess(self.app.progressPercent, 100)
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertIn("統合に失敗しました", self.app._application_logger.text)
+        self.assertEqual(self.app._project, preserved)
+        self.assertEqual(self.app._project_revision, original_revision)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+        self.assertEqual(project_path.read_bytes(), original_contents)
+        self.assertEqual(_dict_list_at(load_project(project_path), "segments"), _dict_list_at(preserved, "segments"))
+        self.assertTrue(generated_path.exists())
+        self.assertIn(str(generated_path), self.app.status)
+        self.assertEqual(_dict_list_at(load_project(generated_path), "segments"), _dict_list_at(generated, "segments"))
+
+    def test_transcription_publish_failure_finishes_job_after_saving(self) -> None:
+        project_path = self._load_project()
+        self.assertTrue(self.app.saveProject())
+        preserved = deepcopy(self.app._project)
+        assert preserved is not None
+        generated = create_project(
+            video_path=_string_at(preserved, "video", "path"),
+            output_dir=self.root,
+            duration_seconds=30.0,
+            segments=[{"id": "new-caption", "start": 5.0, "end": 6.0, "text": "new"}],
+        )
+        generated_path = self.root / "generated.subtitle-project.json"
+        save_project(generated_path, generated)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+        self.app.workflow._state.transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_generated_project_path = str(generated_path)
+
+        with (
+            patch.object(self.app.workflow, "_read_process_output"),
+            patch.object(
+                self.app.workflow,
+                "_publish_integrated_transcription_project",
+                side_effect=RuntimeError("preview unavailable"),
+            ),
+        ):
+            self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+        self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self.app.progressState, "error")
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("画面の更新に失敗", self.app.status)
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertEqual([segment["id"] for segment in _dict_list_at(load_project(project_path), "segments")], ["segment-a", "new-caption"])
+        self.assertFalse(generated_path.exists())
+
+    def test_missing_transcription_artifact_does_not_load_stale_default_project(self) -> None:
+        project_path = self._load_project()
+        preserved = deepcopy(self.app._project)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+        self.app.workflow._state.transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_generated_project_path = str(
+            project_path.with_name("missing-generated.subtitle-project.json")
+        )
+
+        with (
+            patch.object(self.app.workflow, "_read_process_output"),
+            patch.object(self.app, "_try_load_default_project") as load_default,
+        ):
+            self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
+
+        load_default.assert_not_called()
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("一時プロジェクトを読み込めませんでした", self.app.status)
+        self.assertEqual(self.app.progressState, "error")
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertEqual(self.app._project, preserved)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
 
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()
@@ -11281,7 +11554,6 @@ Window {
 
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
-        project_path = Path(self.app.projectSavePath)
         template_path = self.root / "retry-result-template.json"
         project = create_project(
             video_path=video,
@@ -11330,7 +11602,7 @@ Window {
                         "--template",
                         str(template_path),
                         "--project-path",
-                        str(project_path),
+                        str(_kwargs["project_path"]),
                     ]
                 )
             return command
@@ -11558,6 +11830,7 @@ Window {
             quit.assert_called_once()
 
     def test_qml_update_dialog_flow(self) -> None:
+        """Windows GUI CI必須: 更新完了後の再起動ボタンが新しいプロセスを要求する。"""
         _, window = self._load_qml()
         check_button = self._quick_item(window, "checkForUpdatesButton")
         dialog = window.findChild(QObject, "updateDialog")
@@ -11636,6 +11909,12 @@ Window {
         self.app.processEvents()
         restart_button = self._quick_item(window, "restartApplicationButton")
         self.assertTrue(_qt_bool(restart_button, "visible"))
+        with patch("src.gui_updates_facade.subprocess.Popen") as popen, patch.object(self.app, "quit") as quit:
+            self._click(window, restart_button)
+            popen.assert_called_once()
+            self.assertEqual(_mock_args(popen)[0], [sys.executable, "-m", "src.gui"])
+            self.assertEqual(_mock_kwargs(popen)["cwd"], str(self.root))
+            quit.assert_called_once()
         self._click(window, self._quick_item(window, "dismissUpdateDialogButton"))
         self.assertFalse(_qt_bool(dialog, "visible"))
 

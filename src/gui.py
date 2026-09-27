@@ -82,6 +82,7 @@ from .subtitle_project import (
 )
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
+from .transcription_project_integration import ensure_transcription_context_base_dir
 from .video_sequence import VideoSequence, VideoSequenceError
 from .video_timeline import VideoTimelineView
 
@@ -1658,13 +1659,11 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._audio_mix_proposal = None
         if hasattr(self, "audioMixProposalChanged"):
             self.audioMixProposalChanged.emit()
-        transcription = project.setdefault("transcription", {})
-        if not is_string_object_dict(transcription):
+        try:
+            ensure_transcription_context_base_dir(project, path)
+        except TypeError:
             self._set_status("プロジェクトの文字起こし設定が不正です", "ERROR")
             return False
-        work_dir = transcription.get("work_dir") or project.get("output_dir")
-        base_dir = work_dir if isinstance(work_dir, (str, Path)) else path.parent
-        transcription.setdefault("context_base_dir", str(Path(base_dir).resolve()))
         self._apply_project_subtitle_settings(project)
         self._audio_preview_controller.set_project(project)
         self._reset_audio_preview_cache()

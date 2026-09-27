@@ -12,10 +12,10 @@ remain in the facade.
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
-from typing import Callable, Protocol, cast
+from typing import Callable, Mapping, Protocol, cast
 
 from .audio_mixer import AUDIO_CHANNEL_CHANGE_FIELDS
-from .data_boundary import coerce_float, is_string_object_dict, is_string_object_dict_list
+from .data_boundary import coerce_float, decode_json, is_string_object_dict, is_string_object_dict_list
 from .subtitle_project import (
     SubtitleProjectError,
     assign_project_layout_rows,
@@ -25,6 +25,7 @@ from .subtitle_project import (
 )
 from .video_timeline import VideoTimeline, timeline_from_project
 from .short_video_schema import ShortVideo
+from .transcription_project_integration import compose_transcription_project, ensure_transcription_context_base_dir
 from .video_sequence import VideoSequence, VideoSequenceError
 
 
@@ -43,6 +44,16 @@ LayoutRows = Callable[[list[dict[object, object]]], list[dict[object, object]]]
 Callback = Callable[[], None]
 AutosaveCallback = Callable[[int, str, str], None]
 HistoryCallback = Callable[[dict[str, object], str], None]
+
+
+def _project_video_path(project: Mapping[str, object]) -> Path:
+    video = project.get("video")
+    if not is_string_object_dict(video):
+        raise SubtitleProjectError("プロジェクトの動画パスが不正です")
+    video_path = video.get("path")
+    if not isinstance(video_path, str):
+        raise SubtitleProjectError("プロジェクトの動画パスが不正です")
+    return Path(video_path).resolve()
 
 
 class ProjectEditorController:
@@ -293,6 +304,63 @@ class ProjectEditorController:
         if not is_string_object_dict(project):
             raise SubtitleProjectError("プロジェクトのキーは文字列である必要があります")
         return self._save_project_fn(path, cast(dict[object, object], project))
+
+    def integrate_transcription_result(
+        self,
+        generated_path: str | Path,
+        preserved_project: dict[str, object],
+        preserved_path: str | Path,
+        mode: str,
+    ) -> dict[str, object]:
+        """生成結果を別に読み、保存できた場合だけ編集の正本を切り替える。"""
+
+        target = Path(preserved_path).resolve()
+        if self._project is None or not self._project_path or Path(self._project_path).resolve() != target:
+            raise SubtitleProjectError("文字起こし開始時の編集プロジェクトが開かれていません")
+        if self._project != preserved_project:
+            raise SubtitleProjectError("文字起こし中に編集プロジェクトが変更されました")
+
+        generated_file = Path(generated_path)
+        generated_value = self._load_project_fn(generated_file, resolve_video_duration=True)
+        if not is_string_object_dict(generated_value):
+            raise SubtitleProjectError("文字起こし結果のプロジェクトキーが不正です")
+        generated = generated_value
+        preserved_video = _project_video_path(preserved_project)
+        generated_video = _project_video_path(generated)
+        if preserved_video != generated_video:
+            try:
+                same_video = preserved_video.samefile(generated_video)
+            except OSError:
+                same_video = False
+            if not same_video:
+                raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
+        ensure_transcription_context_base_dir(generated, generated_file)
+
+        def assign_rows(segments: list[dict[str, object]]) -> list[dict[str, object]]:
+            layout_input: list[dict[object, object]] = []
+            for segment in segments:
+                layout_row: dict[object, object] = {}
+                for key, value in segment.items():
+                    layout_row[key] = value
+                layout_input.append(layout_row)
+            layout_result = self._assign_project_layout_rows_fn(layout_input)
+            if not is_string_object_dict_list(layout_result):
+                raise SubtitleProjectError("字幕レイアウトのキーが不正です")
+            return layout_result
+
+        integrated = compose_transcription_project(
+            preserved_project,
+            generated,
+            mode,
+            assign_layout_rows=assign_rows,
+        )
+        self.wait_for_autosave()
+        current_file = decode_json(target.read_text(encoding="utf-8"))
+        if current_file != preserved_project:
+            raise SubtitleProjectError("文字起こし中に編集プロジェクトのファイルが変更されました")
+        self._save_project_fn(target, cast(dict[object, object], integrated))
+        self.adopt_loaded_project(integrated, target)
+        return integrated
 
     def mark_dirty(self) -> None:
         if self._project is None:

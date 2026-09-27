@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from tests.typed_case import typed_skip_unless
 from pathlib import Path
 
+from src.data_boundary import is_string_object_dict, is_string_object_dict_list
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_video
 from tests.media_test_helpers import (
@@ -24,7 +26,7 @@ from tests.media_test_helpers import (
 )
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
@@ -87,9 +89,12 @@ class SilenceCutSemanticE2ETests(unittest.TestCase):
             project_path, captioned = render_case("captioned", [original_caption])
             _, control = render_case("control", [])
             probe = probe_media(captioned)
+            streams = probe.get("streams")
+            if not is_string_object_dict_list(streams):
+                self.fail("media probe streams must be objects")
 
             self.assertAlmostEqual(media_duration_seconds(probe), 2.0, delta=0.12)
-            self.assertTrue(any(stream["codec_type"] == "audio" for stream in probe["streams"]))
+            self.assertTrue(any(stream.get("codec_type") == "audio" for stream in streams))
             self.assertGreater(mean_rgb(extract_rgb_frame(captioned, 0.5, probe=probe))[0], 70)
             self.assertGreater(mean_rgb(extract_rgb_frame(captioned, 1.5, probe=probe))[1], 70)
             difference = compare_rgb_frames(
@@ -100,11 +105,23 @@ class SilenceCutSemanticE2ETests(unittest.TestCase):
             assert_frame_difference_present(difference, context="無音カット後の字幕")
 
             saved = load_project(project_path)
-            self.assertEqual(saved["segments"][0]["start"], original_caption["start"])
-            self.assertEqual(saved["segments"][0]["end"], original_caption["end"])
-            self.assertTrue(saved["render_settings"]["cut_no_speech"])
-            self.assertAlmostEqual(saved["render_settings"]["output_duration_seconds"], 2.0, delta=0.02)
-            self.assertTrue(Path(saved["render_settings"]["last_cut_output"]).is_file())
+            saved_segments = saved.get("segments")
+            if not is_string_object_dict_list(saved_segments):
+                self.fail("saved segments must be objects")
+            render_settings = saved.get("render_settings")
+            if not is_string_object_dict(render_settings):
+                self.fail("saved render settings must be an object")
+            self.assertEqual(saved_segments[0].get("start"), original_caption["start"])
+            self.assertEqual(saved_segments[0].get("end"), original_caption["end"])
+            self.assertTrue(render_settings.get("cut_no_speech"))
+            output_duration = render_settings.get("output_duration_seconds")
+            if not isinstance(output_duration, (int, float)):
+                self.fail("output duration must be numeric")
+            self.assertAlmostEqual(output_duration, 2.0, delta=0.02)
+            last_cut_output = render_settings.get("last_cut_output")
+            if not isinstance(last_cut_output, str):
+                self.fail("last cut output must be a path")
+            self.assertTrue(Path(last_cut_output).is_file())
 
 
 if __name__ == "__main__":

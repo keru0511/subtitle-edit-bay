@@ -1,10 +1,12 @@
 import json
 import io
+import subprocess
 import unittest
+from collections.abc import Callable, Sequence
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from src.craig_pipeline import CraigTranscriptionBatch
 from src.craig_transcription_execution import CraigTranscriptionHint
@@ -20,6 +22,7 @@ from src.subtitle_workflow_transcription import (
 )
 from src.transcription_context import TranscriptionContext
 from tests.typed_case import TypedTestCase
+from tests.typed_data import mock_args, mock_kwargs, section
 
 
 class SubtitleWorkflowTranscriptionTests(TypedTestCase):
@@ -37,7 +40,7 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
                 )
 
         self.assertIs(returned, result)
-        self.assertIsNone(transcribe.call_args.kwargs["default_transcription_hint"])
+        self.assertIsNone(mock_kwargs(transcribe)["default_transcription_hint"])
 
     def test_creator_context_builds_default_hint_and_cache_fingerprint(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -55,23 +58,19 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
         self.assertIn("Splatoon 3", hint.initial_prompt)
         self.assertIn("ナワバリバトル", hint.hotwords)
         self.assertTrue(hint.cache_fingerprint)
-        self.assertEqual(hint.cache_settings["asr"]["device"], "cuda")
-        self.assertEqual(hint.cache_settings["asr"]["compute_type"], "float16")
+        self.assertEqual(section(hint.cache_settings, "asr")["device"], "cuda")
+        self.assertEqual(section(hint.cache_settings, "asr")["compute_type"], "float16")
 
     def test_confirmed_dictionary_is_resolved_relative_to_output_dir(self) -> None:
         with TemporaryDirectory() as temp_dir:
             output = Path(temp_dir)
+            terms: list[dict[str, object]] = [
+                {"term": "スプラッシュボム", "aliases": ["スプボム"], "enabled": True},
+                {"term": "未使用語", "enabled": False},
+            ]
+            payload: dict[str, object] = {"game_title": "Test Game", "terms": terms}
             (output / "dictionary.json").write_text(
-                json.dumps(
-                    {
-                        "game_title": "Test Game",
-                        "terms": [
-                            {"term": "スプラッシュボム", "aliases": ["スプボム"], "enabled": True},
-                            {"term": "未使用語", "enabled": False},
-                        ],
-                    },
-                    ensure_ascii=False,
-                ),
+                json.dumps(payload, ensure_ascii=False),
                 encoding="utf-8",
             )
             hint = build_default_workflow_transcription_hint(
@@ -88,7 +87,7 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
         self.assertIn("スプラッシュボム", hint.hotwords)
         self.assertIn("スプボム", hint.hotwords)
         self.assertNotIn("未使用語", hint.hotwords)
-        self.assertTrue(hint.cache_settings["dictionary_hash"])
+        self.assertTrue(section({"cache": hint.cache_settings}, "cache")["dictionary_hash"])
 
     def test_web_dictionary_terms_enable_hint_generation(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -152,10 +151,10 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
                 )
 
         self.assertIs(returned, result)
-        hint = transcribe.call_args.kwargs["default_transcription_hint"]
+        hint = mock_kwargs(transcribe)["default_transcription_hint"]
         self.assertIsInstance(hint, CraigTranscriptionHint)
-        self.assertEqual(transcribe.call_args.kwargs["device"], "cuda")
-        self.assertEqual(transcribe.call_args.kwargs["compute_type"], "float16")
+        self.assertEqual(mock_kwargs(transcribe)["device"], "cuda")
+        self.assertEqual(mock_kwargs(transcribe)["compute_type"], "float16")
 
     def test_context_project_entrypoint_persists_context_and_passes_it_to_transcription(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -184,10 +183,10 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
             )
             with (
                 patch("src.subtitle_workflow_transcription.resolve_alignment", return_value=("0:a:0", 0.25, 1.0)),
-                patch("src.subtitle_workflow_transcription._build_waveforms", return_value=[]),
+                patch("src.subtitle_workflow_transcription._build_waveforms", return_value=list[object]()),
                 patch("src.subtitle_workflow_transcription.refine_segments", return_value=([segment], [])),
                 patch("src.subtitle_workflow_transcription.probe_media_duration", return_value=10.0),
-                patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=list[object]()),
                 patch(
                     "src.subtitle_workflow_transcription.transcribe_craig_audio_files_for_workflow",
                     return_value=batch,
@@ -211,13 +210,14 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
         self.assertEqual(project_path.resolve(), existing_project_path.resolve())
         self.assertNotIn("sentinel", project)
         self.assertEqual(project["output_dir"], str(existing_project_path.parent.resolve()))
-        self.assertEqual(project["transcription_context"]["game_title"], "Splatoon 3")
-        self.assertEqual(project["transcription_context"]["creator_terms"], ["ナワバリバトル"])
-        self.assertEqual(project["subtitle_settings"]["outline_color"], "#345678")
-        self.assertEqual(project["subtitle_settings"]["outline_thickness"], 8)
-        self.assertEqual(project["transcription"]["transcription_context"]["game_title"], "Splatoon 3")
-        passed_context = transcribe.call_args.kwargs["transcription_context"]
-        self.assertIsInstance(passed_context, TranscriptionContext)
+        self.assertEqual(section(project, "transcription_context")["game_title"], "Splatoon 3")
+        self.assertEqual(section(project, "transcription_context")["creator_terms"], ["ナワバリバトル"])
+        self.assertEqual(section(project, "subtitle_settings")["outline_color"], "#345678")
+        self.assertEqual(section(project, "subtitle_settings")["outline_thickness"], 8)
+        self.assertEqual(section(section(project, "transcription"), "transcription_context")["game_title"], "Splatoon 3")
+        passed_context = mock_kwargs(transcribe)["transcription_context"]
+        if not isinstance(passed_context, TranscriptionContext):
+            raise AssertionError("expected a transcription context")
         self.assertEqual(passed_context.game_title, "Splatoon 3")
 
     def test_transcription_separates_work_project_and_optional_export_locations(self) -> None:
@@ -232,10 +232,10 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
                 with (
                     self.subTest(export=export),
                     patch("src.subtitle_workflow_transcription.resolve_alignment", return_value=("0:a:0", 0, 1)),
-                    patch("src.subtitle_workflow_transcription._build_waveforms", return_value=[]),
+                    patch("src.subtitle_workflow_transcription._build_waveforms", return_value=list[object]()),
                     patch("src.subtitle_workflow_transcription.refine_segments", return_value=([segment], [])),
                     patch("src.subtitle_workflow_transcription.probe_media_duration", return_value=10),
-                    patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=[]),
+                    patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=list[object]()),
                     patch("src.subtitle_workflow_transcription.transcribe_craig_audio_files_for_workflow", return_value=CraigTranscriptionBatch({}, [segment])) as transcribe,
                 ):
                     work = root / "projects" / ".edit.work"
@@ -244,24 +244,26 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
                     dictionary.write_text('{"game_title":"Test","terms":[{"term":"スプラッシュボム"}]}', encoding="utf-8")
                     actual = transcribe_to_project_with_context(
                         video_path=str(video), audio_files=[str(audio)], output_dir=str(work),
-                        project_path=target, render_output_dir=export, overwrite_project=True,
+                        project_path=str(target), render_output_dir=export, overwrite_project=True,
                         context_base_dir=str(root),
                         transcription_context={"dictionary_path": "dictionary.json", "dictionary_confirmed": True},
                     )
                     project = load_project(actual)
                     self.assertEqual(actual, target)
                     self.assertEqual(project["output_dir"], export)
-                    self.assertEqual(project["transcription"]["work_dir"], str(work))
-                    self.assertEqual(project["transcription"]["context_base_dir"], str(root))
+                    self.assertEqual(section(project, "transcription")["work_dir"], str(work))
+                    self.assertEqual(section(project, "transcription")["context_base_dir"], str(root))
                     hint = build_default_workflow_transcription_hint(
-                        transcribe.call_args.kwargs["transcription_context"],
+                        mock_kwargs(transcribe)["transcription_context"],
                         output_dir=work, asr_settings=build_workflow_asr_settings(),
                     )
+                    if hint is None:
+                        raise AssertionError("expected a transcription hint")
                     self.assertIn("スプラッシュボム", hint.hotwords)
-                    self.assertEqual(project["transcription_context"]["dictionary_path"], str(dictionary))
-                    self.assertEqual(transcribe.call_args.args[1], work / "transcripts")
+                    self.assertEqual(section(project, "transcription_context")["dictionary_path"], str(dictionary))
+                    self.assertEqual(mock_args(transcribe)[1], work / "transcripts")
                     for key in ("merged_json", "filtered_json"):
-                        artifact = Path(project["transcription"][key])
+                        artifact = Path(str(section(project, "transcription")[key]))
                         self.assertTrue(artifact.is_file())
                         self.assertTrue(artifact.is_relative_to(work))
                     self.assertFalse((root / "final-videos").exists())
@@ -291,10 +293,10 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
             captured = io.StringIO()
             with (
                 patch("src.subtitle_workflow_transcription.resolve_alignment", return_value=("0:a:0", 0.25, 1.0)),
-                patch("src.subtitle_workflow_transcription._build_waveforms", return_value=[]),
+                patch("src.subtitle_workflow_transcription._build_waveforms", return_value=list[object]()),
                 patch("src.subtitle_workflow_transcription.refine_segments", return_value=([segment], [])),
                 patch("src.subtitle_workflow_transcription.probe_media_duration", return_value=10.0),
-                patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow_transcription.probe_audio_streams", return_value=list[object]()),
                 patch(
                     "src.subtitle_workflow_transcription.transcribe_craig_audio_files_for_workflow",
                     return_value=batch,
@@ -346,12 +348,11 @@ class SubtitleWorkflowTranscriptionTests(TypedTestCase):
         self.assertNotEqual(fp1, fp3, "different path should change fingerprint")
         self.assertNotEqual(fp1, fp4, "different selector should change fingerprint")
 
-    def _make_extract_audio_side_effect(self) -> object:
-        def _side_effect(*args, **kwargs):
-            command = args[0] if args else kwargs.get("args", [])
-            if command:
-                Path(command[-1]).touch()
-            return MagicMock(returncode=0)
+    def _make_extract_audio_side_effect(self) -> Callable[[object], subprocess.CompletedProcess[str]]:
+        def _side_effect(command: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            if isinstance(command, Sequence) and command:
+                Path(str(command[-1])).touch()
+            return subprocess.CompletedProcess([], 0, "", "")
         return _side_effect
 
     def test_extract_video_audio_track_reuses_cache_for_same_input(self) -> None:

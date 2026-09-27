@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from typing import cast
+
+from PySide6.QtCore import QMetaObject
 
 from src.gui import EditBayBackend
 from src.gui_ai_facade import AIChatFacade
@@ -18,7 +21,7 @@ from tests.typed_case import TypedTestCase
 
 class GuiBackendMetaObjectTests(TypedTestCase):
     def test_feature_facades_expose_typed_properties_slots_and_notify_signals(self) -> None:
-        backend_meta = EditBayBackend.staticMetaObject
+        backend_meta = cast(QMetaObject, getattr(EditBayBackend, "staticMetaObject"))
         for name, facade_type in (
             ("subtitles", SubtitleFacade),
             ("audio", AudioFacade),
@@ -33,18 +36,20 @@ class GuiBackendMetaObjectTests(TypedTestCase):
                 index = backend_meta.indexOfProperty(name)
                 self.assertGreaterEqual(index, 0)
                 self.assertTrue(backend_meta.property(index).isConstant())
-                meta = facade_type.staticMetaObject
+                meta = cast(QMetaObject, getattr(facade_type, "staticMetaObject"))
                 self.assertEqual(meta.className(), facade_type.__name__)
                 self.assertIsNot(meta, backend_meta)
                 for index in range(meta.propertyOffset(), meta.propertyCount()):
                     prop = meta.property(index)
-                    old_index = backend_meta.indexOfProperty(prop.name())
-                    self.assertGreaterEqual(old_index, 0, prop.name())
+                    raw_name = prop.name()
+                    property_name = raw_name if isinstance(raw_name, str) else bytes(raw_name).decode()
+                    old_index = backend_meta.indexOfProperty(property_name)
+                    self.assertGreaterEqual(old_index, 0, property_name)
                     old = backend_meta.property(old_index)
-                    self.assertEqual(prop.typeName(), old.typeName(), prop.name())
-                    self.assertEqual(prop.isConstant(), old.isConstant(), prop.name())
+                    self.assertEqual(prop.typeName(), old.typeName(), property_name)
+                    self.assertEqual(prop.isConstant(), old.isConstant(), property_name)
                     if not prop.isConstant():
-                        self.assertTrue(prop.hasNotifySignal(), prop.name())
+                        self.assertTrue(prop.hasNotifySignal(), property_name)
                 for index in range(meta.methodOffset(), meta.methodCount()):
                     method = meta.method(index)
                     signature = bytes(method.methodSignature()).decode()
@@ -54,10 +59,10 @@ class GuiBackendMetaObjectTests(TypedTestCase):
         self.assertIs(LegacyEditBayBackendAlias, LegacyEditBayBackend)
 
     def test_extended_backend_has_a_distinct_qt_metaobject(self) -> None:
-        meta_object = EditBayBackend.staticMetaObject
+        meta_object = cast(QMetaObject, getattr(EditBayBackend, "staticMetaObject"))
 
         self.assertEqual(meta_object.className(), "EditBayBackend")
-        self.assertIsNot(meta_object, LegacyEditBayBackend.staticMetaObject)
+        self.assertIsNot(meta_object, cast(QMetaObject, getattr(LegacyEditBayBackend, "staticMetaObject")))
 
         for signature in (
             "setEditorPlayhead(int,QString)",

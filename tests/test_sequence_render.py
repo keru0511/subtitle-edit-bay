@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
+from src.data_boundary import is_string_object_dict, is_string_object_dict_list
 from src.sequence_render import (
     SequenceRenderError,
     SequenceRenderPlan,
@@ -13,6 +15,15 @@ from src.sequence_render import (
 from src.subtitle_project import create_project, load_project, save_project
 from src.video_sequence import VideoSequence
 from tests.typed_case import TypedTestCase
+
+
+def _section(project: object, name: str) -> dict[str, object]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    section = project.get(name)
+    if not is_string_object_dict(section):
+        raise AssertionError(f"{name} must be an object")
+    return section
 
 
 class SequenceRenderTests(TypedTestCase):
@@ -97,7 +108,7 @@ class SequenceRenderTests(TypedTestCase):
             first.write_bytes(b"a")
             second.write_bytes(b"b")
             sequence = self._sequence(first, second)
-            base = {"sequence": sequence.to_json(), "segments": [], "timeline": {"cuts": []}}
+            base: dict[object, object] = {"sequence": sequence.to_json(), "segments": [], "timeline": {"cuts": []}}
             with self.assertRaisesRegex(SequenceRenderError, "stale"):
                 prepare_sequence_render(
                     base,
@@ -168,16 +179,15 @@ class SequenceRenderTests(TypedTestCase):
                 sequence=sequence.to_json(),
             )
             project_path = save_project(root / "mixed.subtitle-project.json", project)
+            audio_streams: list[dict[str, object]] = [{"codec_name": "aac"}]
+            video_streams: list[dict[str, object]] = [
+                {"width": 1920, "height": 1080, "sample_aspect_ratio": "1:1"},
+                {"width": 1280, "height": 720, "sample_aspect_ratio": "1:1"},
+            ]
             with (
                 patch("src.subtitle_workflow.probe_media_duration", return_value=5.0),
-                patch("src.subtitle_workflow.probe_audio_streams", return_value=[{"codec_name": "aac"}]),
-                patch(
-                    "src.subtitle_workflow.probe_video_stream",
-                    side_effect=[
-                        {"width": 1920, "height": 1080, "sample_aspect_ratio": "1:1"},
-                        {"width": 1280, "height": 720, "sample_aspect_ratio": "1:1"},
-                    ],
-                ),
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=audio_streams),
+                patch("src.subtitle_workflow.probe_video_stream", side_effect=video_streams),
                 patch("src.subtitle_workflow.render_sequence_video") as sequence_render,
                 patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
             ):
@@ -410,8 +420,9 @@ class SequenceRenderTests(TypedTestCase):
             )
             project_path = save_project(root / "full-length.subtitle-project.json", project)
             output_path = root / "full-length.mp4"
+            no_audio_streams: list[dict[str, object]] = []
             with (
-                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=no_audio_streams),
                 patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
                 patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
             ):
@@ -427,8 +438,9 @@ class SequenceRenderTests(TypedTestCase):
             self.assertEqual(output, output_path)
             legacy_render.assert_called_once()
             cut_media.assert_not_called()
-            self.assertFalse(saved["render_settings"]["legacy_singleton_trim"])
-            self.assertEqual(saved["render_settings"]["output_duration_seconds"], 4.0)
+            render_settings = _section(saved, "render_settings")
+            self.assertFalse(render_settings.get("legacy_singleton_trim"))
+            self.assertEqual(render_settings.get("output_duration_seconds"), 4.0)
 
     def test_legacy_trimmed_singleton_uses_compatibility_render_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -461,8 +473,9 @@ class SequenceRenderTests(TypedTestCase):
             )
             project_path = save_project(root / "trimmed.subtitle-project.json", project)
             output_path = root / "trimmed.mp4"
+            no_audio_streams: list[dict[str, object]] = []
             with (
-                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=no_audio_streams),
                 patch("src.subtitle_workflow.cut_media_ranges") as cut_media,
                 patch("src.subtitle_workflow.run_ffmpeg_burn") as legacy_render,
             ):
@@ -477,12 +490,17 @@ class SequenceRenderTests(TypedTestCase):
 
             self.assertEqual(output, output_path)
             cut_media.assert_called_once()
-            self.assertEqual(cut_media.call_args.args[2], [(1.0, 3.0)])
+            call_args = cast(tuple[object, ...], cut_media.call_args.args)
+            self.assertEqual(call_args[2], [(1.0, 3.0)])
             legacy_render.assert_not_called()
 
-        self.assertEqual(saved["sequence"]["clips"][0]["source_start"], 1.0)
-        self.assertEqual(saved["render_settings"]["output_duration_seconds"], 2.0)
-        self.assertTrue(saved["render_settings"]["legacy_singleton_trim"])
+        clips = _section(saved, "sequence").get("clips")
+        if not is_string_object_dict_list(clips):
+            self.fail("saved sequence clips must be objects")
+        self.assertEqual(clips[0].get("source_start"), 1.0)
+        render_settings = _section(saved, "render_settings")
+        self.assertEqual(render_settings.get("output_duration_seconds"), 2.0)
+        self.assertTrue(render_settings.get("legacy_singleton_trim"))
 
 
 if __name__ == "__main__":

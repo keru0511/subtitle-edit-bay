@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from copy import deepcopy
-from typing import Any
 
 
 from .qt_decorators import Property, Signal, Slot
@@ -14,7 +13,7 @@ from .editor_workspace import (
     build_edit_mode_capabilities,
 )
 from .gui_workspace_controller import WorkspaceNavigationController
-from .video_timeline import VideoTimeline, VideoTimelineError, timeline_from_project
+from .video_timeline import VideoTimeline, VideoTimelineError, VideoTimelineView, timeline_from_project
 from .gui_workspace_controller import WorkspacePlayerPayload
 
 from .gui_feature_facade import FeatureFacade
@@ -130,7 +129,7 @@ class WorkspaceFacade(FeatureFacade):
         return timeline_from_project(self.project_editor.project)
 
     @Property("QVariantMap", notify=cutTimelineChanged)
-    def cutTimeline(self) -> dict[str, Any]:
+    def cutTimeline(self) -> VideoTimelineView:
         return self._cut_timeline_model().as_view()
 
     @Property(float, notify=cutTimelineChanged)

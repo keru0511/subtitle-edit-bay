@@ -177,7 +177,7 @@ def _parse_codex_version(value: str) -> tuple[int, int, int] | None:
     match = _CODEX_VERSION_PATTERN.search(value)
     if match is None:
         return None
-    return tuple(int(group or 0) for group in match.groups())  # type: ignore[return-value]
+    return (int(match.group(1) or 0), int(match.group(2) or 0), int(match.group(3) or 0))
 
 
 def _is_supported_codex_version(version: tuple[int, int, int]) -> bool:
@@ -192,4 +192,3 @@ def build_codex_diagnostic(info: CodexRuntimeInfo) -> dict[str, str | bool]:
         "executable": redact_codex_diagnostic(info.executable),
         "error": redact_codex_diagnostic(info.error),
     }
-

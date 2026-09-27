@@ -13,13 +13,15 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.aggregate_gui_performance import ReportValidationError, aggregate_shards
+from scripts.aggregate_gui_performance import MergedGuiReport, ReportValidationError, aggregate_shards
 from scripts.compare_gui_performance import compare_reports, main as compare_main
 from scripts.gui_performance_report import SCENARIO_NAMES
 from scripts.plan_gui_performance import validate_inputs, select_comparison_commit, main as plan_main
 from scripts.run_gui_performance import parse_args, _run_controller
+from src.data_boundary import decode_json
 from tests.workflow_contracts import load_workflow
 from tests.typed_case import TypedTestCase
+from tests.typed_data import entries, is_string_list, object_dict, section
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -234,7 +236,7 @@ class GuiPerformanceAggregationTests(TypedTestCase):
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def aggregate(self, reports: list[dict[str, object]]):
+    def aggregate(self, reports: list[dict[str, object]]) -> tuple[MergedGuiReport, MergedGuiReport]:
         return aggregate_shards(
             self.write_reports(reports),
             repetitions=3,
@@ -269,13 +271,13 @@ class GuiPerformanceAggregationTests(TypedTestCase):
         cases["missing"] = complete[:-1]
         cases["duplicate"] = [*complete, copy.deepcopy(complete[0])]
         mismatch = copy.deepcopy(complete)
-        mismatch[0]["configuration"]["playback_seconds"] = 29.0
+        section(mismatch[0], "configuration")["playback_seconds"] = 29.0
         cases["configuration"] = mismatch
         environment = copy.deepcopy(complete)
         environment[1]["environment"] = {"runner": {"name": "different"}}
         cases["environment"] = environment
         provenance = copy.deepcopy(complete)
-        provenance[0]["provenance"]["run_attempt"] = "1"
+        section(provenance[0], "provenance")["run_attempt"] = "1"
         cases["provenance"] = provenance
 
         for name, reports in cases.items():
@@ -301,7 +303,7 @@ class GuiPerformanceAggregationTests(TypedTestCase):
         reports = self.complete_reports()
         for report in reports:
             if report["revision_label"] == CURRENT_SHA:
-                for run in report["runs"]:
+                for run in entries(report, "runs"):
                     run["scenarios"] = [{"name": name, **scenario(20.0)} for name in SCENARIO_NAMES]
         current, baseline = self.aggregate(reports)
         current_path = self.root / "current.json"
@@ -324,17 +326,17 @@ class GuiPerformanceAggregationTests(TypedTestCase):
             report_only_status = compare_main(arguments)
             failing_status = compare_main([*arguments, "--fail-on-regression"])
         self.assertEqual(report_only_status, 0)
-        self.assertFalse(json.loads(output_path.read_text(encoding="utf-8"))["passed"])
+        self.assertFalse(object_dict(decode_json(output_path.read_text(encoding="utf-8")))["passed"])
         self.assertEqual(failing_status, 1)
 
     def test_rerun_reuses_successful_shards_and_selects_latest_complete_pair(self) -> None:
         reports = self.complete_reports()
         for report in reports:
-            report["provenance"]["run_attempt"] = "1"
+            section(report, "provenance")["run_attempt"] = "1"
         rerun_current = shard_report("current", 2)
         rerun_baseline = shard_report("baseline", 2)
         for report in (rerun_current, rerun_baseline):
-            report["provenance"]["run_attempt"] = "2"
+            section(report, "provenance")["run_attempt"] = "2"
             report["environment"] = {"runner": {"name": "rerun-runner"}, "python": {"version": "3.10"}}
         reports.extend((rerun_current, rerun_baseline))
 
@@ -348,7 +350,7 @@ class GuiPerformanceAggregationTests(TypedTestCase):
     def test_large_only_rerun_keeps_paired_measurements(self) -> None:
         reports = self.complete_reports()
         for report in reports:
-            report["provenance"]["run_attempt"] = "1"
+            section(report, "provenance")["run_attempt"] = "1"
         rerun = shard_report("large", 2)
         reports.append(rerun)
         current, baseline = self.aggregate(reports)
@@ -360,10 +362,10 @@ class GuiPerformanceAggregationTests(TypedTestCase):
     def test_successful_rerun_supersedes_failed_large_measurement(self) -> None:
         reports = self.complete_reports()
         for report in reports:
-            report["provenance"]["run_attempt"] = "1"
-        failed = next(report for report in reports if report["configuration"]["segment_counts"] == [10000])
-        failed["runs"][0]["contracts_passed"] = False
-        failed["runs"][0]["contracts"][0]["passed"] = False
+            section(report, "provenance")["run_attempt"] = "1"
+        failed = next(report for report in reports if section(report, "configuration")["segment_counts"] == [10000])
+        entries(failed, "runs")[0]["contracts_passed"] = False
+        entries(entries(failed, "runs")[0], "contracts")[0]["passed"] = False
         reports.append(shard_report("large", 1))
         current, _ = self.aggregate(reports)
         self.assertTrue(all(run["contracts_passed"] for run in current["runs"]))
@@ -371,11 +373,11 @@ class GuiPerformanceAggregationTests(TypedTestCase):
 
     def test_missing_large_and_incomplete_new_pair_cannot_pass(self) -> None:
         reports = self.complete_reports()
-        missing = [report for report in reports if report["configuration"]["segment_counts"] != [10000]]
+        missing = [report for report in reports if section(report, "configuration")["segment_counts"] != [10000]]
         with self.assertRaisesRegex(ReportValidationError, "missing large"):
             self.aggregate(missing)
         for report in reports:
-            report["provenance"]["run_attempt"] = "1"
+            section(report, "provenance")["run_attempt"] = "1"
         reports.append(shard_report("current", 2))
         with self.assertRaisesRegex(ReportValidationError, "incomplete latest"):
             self.aggregate(reports)
@@ -383,11 +385,11 @@ class GuiPerformanceAggregationTests(TypedTestCase):
     def test_large_contract_failure_or_wrong_suite_is_rejected(self) -> None:
         for failure in ("contract", "suite"):
             reports = self.complete_reports()
-            large = next(report for report in reports if report["configuration"]["segment_counts"] == [10000])
+            large = next(report for report in reports if section(report, "configuration")["segment_counts"] == [10000])
             if failure == "contract":
-                large["runs"][0]["contracts_passed"] = False
+                entries(large, "runs")[0]["contracts_passed"] = False
             else:
-                large["provenance"]["shard_id"] = "paired-1"
+                section(large, "provenance")["shard_id"] = "paired-1"
             with self.subTest(failure=failure), self.assertRaises(ReportValidationError):
                 self.aggregate(reports)
 
@@ -396,10 +398,10 @@ class SharedBenchmarkMediaTests(TypedTestCase):
     def test_pair_reuses_media_but_keeps_project_and_result_files_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            encodes = []
-            workers = []
+            encodes: list[list[str]] = []
+            workers: list[Path] = []
 
-            def run(command, **kwargs):
+            def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 if command[0] == "ffmpeg":
                     encodes.append(command)
                     Path(command[-1]).write_bytes(b"test media")
@@ -413,7 +415,7 @@ class SharedBenchmarkMediaTests(TypedTestCase):
             with (
                 patch("scripts.generate_large_gui_fixture.shutil.which", return_value="ffmpeg"),
                 patch("subprocess.run", side_effect=run),
-                patch("scripts.run_gui_performance.environment_info", return_value={}),
+                patch("scripts.run_gui_performance.environment_info", return_value=dict[str, object]()),
                 redirect_stdout(io.StringIO()),
             ):
                 for kind in ("current", "reference"):
@@ -442,24 +444,25 @@ class SharedBenchmarkMediaTests(TypedTestCase):
 class GuiPerformanceWorkflowContractTests(TypedTestCase):
     def test_workflow_pairs_revisions_in_repetition_matrix_and_has_strict_gate(self) -> None:
         workflow = load_workflow(WORKFLOW)
-        jobs = workflow["jobs"]
-        benchmark = jobs["benchmark"]
-        aggregate = jobs["aggregate"]
+        jobs = section(workflow, "jobs")
+        benchmark = section(jobs, "benchmark")
+        aggregate = section(jobs, "aggregate")
 
-        self.assertEqual(benchmark["strategy"]["fail-fast"], False)
-        self.assertEqual(benchmark["strategy"]["max-parallel"], 6)
+        self.assertEqual(section(benchmark, "strategy")["fail-fast"], False)
+        self.assertEqual(section(benchmark, "strategy")["max-parallel"], 6)
         self.assertEqual(benchmark["needs"], "prepare")
         self.assertNotIn("continue-on-error", str(workflow))
-        benchmark_commands = "\n".join(str(step.get("run", "")) for step in benchmark["steps"])
+        benchmark_steps = entries(benchmark, "steps")
+        benchmark_commands = "\n".join(str(step.get("run", "")) for step in benchmark_steps)
         self.assertIn("--repetitions 1", benchmark_commands)
         self.assertIn("--repetition-index", benchmark_commands)
         self.assertIn("--segment-count ${{ matrix.segment_count }}", benchmark_commands)
-        reference = next(step for step in benchmark["steps"] if step["name"].startswith("Run reference"))
-        self.assertIn("matrix.suite == 'paired'", reference["if"])
-        self.assertIn("--segment-count 3000", reference["run"])
+        reference = next(step for step in benchmark_steps if str(step["name"]).startswith("Run reference"))
+        self.assertIn("matrix.suite == 'paired'", str(reference["if"]))
+        self.assertIn("--segment-count 3000", str(reference["run"]))
         self.assertEqual(benchmark_commands.count('--media-dir "$env:RUNNER_TEMP/gui-performance-media"'), 2)
-        upload = next(step for step in benchmark["steps"] if step["name"] == "Upload shard reports")
-        self.assertIn("${{ matrix.suite }}", upload["with"]["name"])
+        upload = next(step for step in benchmark_steps if step["name"] == "Upload shard reports")
+        self.assertIn("${{ matrix.suite }}", str(section(upload, "with")["name"]))
         self.assertIn("--no-enforce-contracts", benchmark_commands)
         self.assertIn(
             'Copy-Item scripts/gui_performance_report.py "$referenceRoot/scripts/gui_performance_report.py"',
@@ -473,24 +476,30 @@ class GuiPerformanceWorkflowContractTests(TypedTestCase):
             'Copy-Item tests/qt_property_value.py "$referenceRoot/tests/qt_property_value.py"',
             benchmark_commands,
         )
-        self.assertEqual(set(aggregate["needs"]), {"prepare", "benchmark"})
-        self.assertIn("always()", aggregate["if"])
-        aggregate_commands = "\n".join(str(step.get("run", "")) for step in aggregate["steps"])
+        needs = aggregate["needs"]
+        if not is_string_list(needs):
+            raise AssertionError("aggregate needs must be an array of strings")
+        self.assertEqual(set(needs), {"prepare", "benchmark"})
+        self.assertIn("always()", str(aggregate["if"]))
+        aggregate_commands = "\n".join(str(step.get("run", "")) for step in entries(aggregate, "steps"))
         self.assertIn("aggregate_gui_performance.py", aggregate_commands)
         self.assertIn("BENCHMARK_JOB_RESULT", aggregate_commands)
         self.assertIn("compare_gui_performance.py", aggregate_commands)
 
     def test_workflow_passes_frozen_pr_base_and_keeps_manual_reference(self) -> None:
         workflow = load_workflow(WORKFLOW)
-        plan = next(step for step in workflow["jobs"]["prepare"]["steps"] if step.get("id") == "plan")
-        self.assertEqual(plan["env"]["BENCHMARK_EVENT_NAME"], "${{ github.event_name }}")
-        self.assertEqual(plan["env"]["BENCHMARK_BASE_SHA"], "${{ github.event.pull_request.base.sha }}")
-        self.assertIn('--event-name "$BENCHMARK_EVENT_NAME"', plan["run"])
-        self.assertIn('--base-sha "$BENCHMARK_BASE_SHA"', plan["run"])
-        self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["compare_ref"]["default"], "b600e90")
+        plan = next(step for step in entries(section(section(workflow, "jobs"), "prepare"), "steps") if step.get("id") == "plan")
+        self.assertEqual(section(plan, "env")["BENCHMARK_EVENT_NAME"], "${{ github.event_name }}")
+        self.assertEqual(section(plan, "env")["BENCHMARK_BASE_SHA"], "${{ github.event.pull_request.base.sha }}")
+        self.assertIn('--event-name "$BENCHMARK_EVENT_NAME"', str(plan["run"]))
+        self.assertIn('--base-sha "$BENCHMARK_BASE_SHA"', str(plan["run"]))
+        self.assertEqual(section(section(section(section(workflow, "on"), "workflow_dispatch"), "inputs"), "compare_ref")["default"], "b600e90")
 
     def test_workflow_tracks_pipeline_code_and_tests(self) -> None:
-        paths = set(load_workflow(WORKFLOW)["on"]["pull_request"]["paths"])
+        paths_value = section(section(load_workflow(WORKFLOW), "on"), "pull_request")["paths"]
+        if not is_string_list(paths_value):
+            raise AssertionError("pull request paths must be an array of strings")
+        paths = set(paths_value)
         for expected in (
             "scripts/aggregate_gui_performance.py",
             "scripts/gui_performance_report.py",

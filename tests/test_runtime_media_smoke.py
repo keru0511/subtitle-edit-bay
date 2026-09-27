@@ -20,13 +20,14 @@ from tests.media_test_helpers import (
     probe_media,
     video_stream,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _has_tool(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-class RuntimeMediaSmokeTests(unittest.TestCase):
+class RuntimeMediaSmokeTests(TypedTestCase):
     def _require_ffmpeg(self) -> None:
         if not (_has_tool("ffmpeg") and _has_tool("ffprobe")):
             self.skipTest("ffmpeg and ffprobe are required for runtime media smoke tests")

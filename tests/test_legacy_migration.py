@@ -54,9 +54,10 @@ from src.legacy_migration import (
     build_legacy_inventory,
     build_legacy_migration_plan,
 )
+from tests.typed_case import TypedTestCase
 
 
-class LegacyMigrationInventoryTests(unittest.TestCase):
+class LegacyMigrationInventoryTests(TypedTestCase):
     def _fixture(self, root: Path) -> Path:
         legacy = root / "legacy"
         (legacy / ".gui").mkdir(parents=True)
@@ -437,7 +438,7 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             self.assertFalse((permission_target / "new-file").exists())
 
 
-class LegacySettingsMigrationTests(unittest.TestCase):
+class LegacySettingsMigrationTests(TypedTestCase):
     def _workspace(self, root: Path) -> tuple[Path, Path]:
         source = root / "legacy"
         destination = root / "installed"

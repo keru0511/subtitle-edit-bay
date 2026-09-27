@@ -35,9 +35,10 @@ from src.subtitle_workflow import (
     render_project_video,
     transcribe_to_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleProjectTests(unittest.TestCase):
+class SubtitleProjectTests(TypedTestCase):
     def test_schema_exports_keep_existing_import_and_error_identity(self) -> None:
         from src import subtitle_project, subtitle_project_schema, subtitle_line_count, subtitle_line_count_config
 
@@ -274,7 +275,7 @@ class SubtitleProjectTests(unittest.TestCase):
         self.assertEqual(derive_render_path(project).name, "recording.edited.subtitled.mp4")
 
 
-class SubtitleWorkflowTests(unittest.TestCase):
+class SubtitleWorkflowTests(TypedTestCase):
     def test_transcribe_phase_creates_project_without_rendering_video(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

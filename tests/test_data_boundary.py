@@ -10,12 +10,15 @@ from src.data_boundary import (
     decode_json,
     is_object_iterable,
     is_object_dict,
+    is_object_list,
     is_object_mapping,
     is_object_sequence,
+    is_string_object_mapping,
 )
+from tests.typed_case import TypedTestCase
 
 
-class DataBoundaryTests(unittest.TestCase):
+class DataBoundaryTests(TypedTestCase):
     def test_mutable_dict_guard_preserves_identity_and_unknown_values(self) -> None:
         original: dict[str, object] = {"value": [1, None]}
         incoming: object = original
@@ -39,6 +42,14 @@ class DataBoundaryTests(unittest.TestCase):
         self.assertEqual(values[0], "value")
         self.assertFalse(is_object_mapping(values))
 
+    def test_string_mapping_rejects_non_string_keys(self) -> None:
+        payload: object = UserDict({"message": [1, None]})
+        if not is_string_object_mapping(payload):
+            self.fail("文字列キーのマッピングを受け入れる必要があります")
+        self.assertEqual(payload["message"], [1, None])
+        self.assertFalse(is_string_object_mapping(UserDict({1: "value"})))
+        self.assertFalse(is_string_object_mapping([]))
+
     def test_sequence_guard_does_not_assume_string_elements(self) -> None:
         payload: object = (1, None, "value")
         self.assertTrue(is_object_sequence(payload))
@@ -46,6 +57,8 @@ class DataBoundaryTests(unittest.TestCase):
             self.fail("シーケンスとして読み取れる必要があります")
         self.assertEqual(payload[0], 1)
         self.assertIsNone(payload[1])
+        self.assertFalse(is_object_list(payload))
+        self.assertTrue(is_object_list([1, None]))
         self.assertFalse(is_object_sequence(object()))
         self.assertFalse(is_object_mapping(object()))
 
@@ -70,6 +83,8 @@ class DataBoundaryTests(unittest.TestCase):
         self.assertEqual(items[2], "日本語")
         self.assertIsNone(decode_json("null"))
         self.assertTrue(decode_json("true"))
+        self.assertEqual(decode_json(b'\xef\xbb\xbf{"value": 1}'), {"value": 1})
+        self.assertEqual(decode_json('{"value": 1}'.encode("utf-16")), {"value": 1})
         with self.assertRaises(json.JSONDecodeError):
             decode_json("{")
 

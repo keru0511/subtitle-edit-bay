@@ -10,9 +10,10 @@ from src.subtitle_project import SubtitleProject, create_project, load_project, 
 from src.video_sequence import (
     VideoSequence,
 )
+from tests.typed_case import TypedTestCase
 
 
-class VideoSequenceTests(unittest.TestCase):
+class VideoSequenceTests(TypedTestCase):
     def _sequence(self) -> VideoSequence:
         return VideoSequence.from_json(
             {

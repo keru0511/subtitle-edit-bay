@@ -10,12 +10,17 @@ signals.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TypedDict
 
 
 NORMAL_VIDEO_WORKSPACE = "normal-video"
 SHORT_ARTIFACT_WORKSPACE = "short-artifact"
 WORKSPACE_KINDS = (NORMAL_VIDEO_WORKSPACE, SHORT_ARTIFACT_WORKSPACE)
+
+
+class WorkspacePlayerPayload(TypedDict):
+    positionMs: int
+    playing: bool
 
 
 @dataclass(frozen=True)
@@ -25,7 +30,7 @@ class WorkspacePlayerState:
     position_ms: int = 0
     playing: bool = False
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> WorkspacePlayerPayload:
         return {
             "positionMs": self.position_ms,
             "playing": self.playing,
@@ -78,7 +83,7 @@ class WorkspaceNavigationController:
     def player_state(self, workspace: str) -> WorkspacePlayerState | None:
         return self._player_states.get(str(workspace).strip())
 
-    def player_states(self) -> dict[str, dict[str, Any]]:
+    def player_states(self) -> dict[str, WorkspacePlayerPayload]:
         return {
             workspace: state.as_dict()
             for workspace, state in self._player_states.items()

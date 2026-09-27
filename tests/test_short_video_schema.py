@@ -6,9 +6,10 @@ from src.short_video_schema import (
     ShortVideoClip,
     ShortVideoError,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ShortVideoSchemaTests(unittest.TestCase):
+class ShortVideoSchemaTests(TypedTestCase):
     def test_default_short_video_from_empty_json(self) -> None:
         short_video = ShortVideo.from_json({})
         self.assertFalse(short_video.enabled)

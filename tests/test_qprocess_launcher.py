@@ -10,9 +10,10 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication, QProcess
 
 from src.qprocess_launcher import prepare_qprocess_launch
+from tests.typed_case import TypedTestCase
 
 
-class QProcessLauncherTest(unittest.TestCase):
+class QProcessLauncherTest(TypedTestCase):
     def test_non_windows_launch_is_unchanged(self) -> None:
         if os.name == "nt":
             self.skipTest("Non-Windows behavior")
@@ -26,8 +27,10 @@ class QProcessLauncherTest(unittest.TestCase):
         self.assertEqual(launch.arguments, tuple(command[1:]))
         self.assertEqual(launch.working_directory, str(working_directory))
 
-    @unittest.skipUnless(os.name == "nt", "Windows QProcess integration test")
     def test_windows_launches_unicode_venv_workspace_and_media_path(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows QProcess integration test")
+
         application = QCoreApplication.instance() or QCoreApplication([])
         self.assertIsNotNone(application)
         with tempfile.TemporaryDirectory(prefix="edit-bay-qprocess-") as temporary:
@@ -43,10 +46,7 @@ class QProcessLauncherTest(unittest.TestCase):
             command = [
                 str(python),
                 "-c",
-                (
-                    "from pathlib import Path; import sys; "
-                    "print(Path(sys.argv[1]).read_text(encoding='utf-8'))"
-                ),
+                ("from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text(encoding='utf-8'))"),
                 str(media),
             ]
 
@@ -61,8 +61,8 @@ class QProcessLauncherTest(unittest.TestCase):
 
             self.assertTrue(process.waitForStarted(10_000), process.errorString())
             self.assertTrue(process.waitForFinished(30_000), process.errorString())
-            output = bytes(process.readAllStandardOutput()).decode("utf-8").strip()
-            error = bytes(process.readAllStandardError()).decode("utf-8").strip()
+            output = bytes(process.readAllStandardOutput().data()).decode("utf-8").strip()
+            error = bytes(process.readAllStandardError().data()).decode("utf-8").strip()
             self.assertEqual(process.exitCode(), 0, error)
             self.assertEqual(output, "bound")
             self.assertTrue(launch.program.isascii())

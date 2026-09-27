@@ -9,12 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import (
-    Property,
-    Signal,
-    Slot,
-)
 
+from .qt_decorators import Property, Signal, Slot
 from .platform_updates import installer_download_name
 from .process_utils import detached_subprocess_kwargs
 
@@ -41,6 +37,14 @@ class UpdateState:
     download_speed: float = 0.0
     download_active: bool = False
     download_cancel: threading.Event = field(default_factory=threading.Event)
+
+
+def _package_type(info: updater.UpdateInfo) -> str:
+    """旧形式の更新情報にpackage_typeがない場合は従来どおりarchiveとみなす。"""
+    try:
+        return info.package_type
+    except AttributeError:
+        return "archive"
 
 
 class UpdateFacade(FeatureFacade):
@@ -180,7 +184,7 @@ class UpdateFacade(FeatureFacade):
         if not self._state.info or not self._state.info.available:
             backend._set_status("更新可能なバージョンがありません", "CHECK")
             return
-        if getattr(self._state.info, "package_type", "archive") != "installer":
+        if _package_type(self._state.info) != "installer":
             backend._set_status("この配布形態は従来の更新方法を使用します", "UPDATE")
             return
         self._state.busy = True
@@ -284,14 +288,14 @@ class UpdateFacade(FeatureFacade):
                 expected_sha256=expected_sha256,
                 result_path=result_path,
             )
-            popen_kwargs: dict[str, Any] = {
-                "cwd": str(backend.workspace_root),
-                "stdin": subprocess.DEVNULL,
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
+            subprocess.Popen(
+                command,
+                cwd=str(backend.workspace_root),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 **detached_subprocess_kwargs(),
-            }
-            subprocess.Popen(command, **popen_kwargs)
+            )
         except (OSError, update_manager.UpdatePackageError) as error:
             backend._set_status(f"更新helperを起動できませんでした: {error}", "ERROR")
             return
@@ -310,7 +314,7 @@ class UpdateFacade(FeatureFacade):
         if not self._state.info or not self._state.info.available:
             backend._set_status("更新可能なバージョンがありません", "CHECK")
             return
-        if getattr(self._state.info, "package_type", "archive") == "installer":
+        if _package_type(self._state.info) == "installer":
             if self._state.package_ready:
                 self.applyDownloadedUpdate()
             else:

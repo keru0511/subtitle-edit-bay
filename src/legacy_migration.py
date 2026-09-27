@@ -103,7 +103,6 @@ from .legacy_migration_types import (
     PRESET_SCHEMA_VERSION as PRESET_SCHEMA_VERSION,
     TranscriptionDictionaryError as TranscriptionDictionaryError,
     load_transcription_dictionary as load_transcription_dictionary,
-    _installer_migration as _installer_migration,
 )
 
 from .legacy_migration_inventory import (

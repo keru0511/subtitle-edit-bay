@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
-from .transcription_context import TranscriptionContext, normalize_transcription_context, transcription_context_from_mapping
+from .transcription_context import (
+    TranscriptionContext,
+    TranscriptionContextPayload,
+    normalize_transcription_context,
+    transcription_context_from_mapping,
+)
+from .transcription_metadata import WebDictionaryCandidate
 from .transcription_web_dictionary import build_web_dictionary_candidate_metadata, build_web_dictionary_candidates
 
 
@@ -19,10 +25,12 @@ class GuiTranscriptionContextState:
     web_dictionary_enabled: bool = False
     web_dictionary_candidates: tuple[str, ...] = ()
     web_dictionary_terms: tuple[str, ...] = ()
-    web_dictionary_candidate_metadata: tuple[dict[str, str], ...] = ()
+    web_dictionary_candidate_metadata: tuple[WebDictionaryCandidate, ...] = ()
 
     @classmethod
-    def from_context(cls, context: TranscriptionContext | Mapping[str, Any] | None) -> "GuiTranscriptionContextState":
+    def from_context(
+        cls, context: TranscriptionContext | Mapping[str, object] | None
+    ) -> "GuiTranscriptionContextState":
         resolved = context if isinstance(context, TranscriptionContext) else transcription_context_from_mapping(context)
         candidates = resolved.web_dictionary_candidates
         if resolved.web_dictionary_enabled and not candidates:
@@ -48,7 +56,7 @@ class GuiTranscriptionContextState:
             web_dictionary_candidate_metadata=tuple(metadata),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "game_title": self.game_title,
             "game_notes": self.game_notes,
@@ -61,7 +69,7 @@ class GuiTranscriptionContextState:
             "web_dictionary_candidate_metadata": [dict(item) for item in self.web_dictionary_candidate_metadata],
         }
 
-    def to_context_payload(self) -> dict[str, Any]:
+    def to_context_payload(self) -> TranscriptionContextPayload:
         return gui_state_to_transcription_context(self.to_dict())
 
 
@@ -95,19 +103,19 @@ def _normalize_terms_text(value: object, field: str) -> tuple[str, ...]:
 
     if not terms:
         return ()
-    return tuple(dict.fromkeys(terms).keys())
+    return tuple(dict.fromkeys(terms, True))
 
 
 def _normalize_candidate_metadata(
     value: object,
     field: str,
-) -> tuple[dict[str, str], ...]:
+) -> tuple[WebDictionaryCandidate, ...]:
     from .transcription_web_dictionary import normalize_web_dictionary_candidate_metadata
 
     return normalize_web_dictionary_candidate_metadata(value, field, max_items=512)
 
 
-def gui_transcription_context_state_from_config(config: Mapping[str, Any] | None) -> dict[str, Any]:
+def gui_transcription_context_state_from_config(config: Mapping[str, object] | None) -> dict[str, object]:
     if not config:
         return GuiTranscriptionContextState().to_dict()
     craig = config.get("craig_pipeline", {})
@@ -116,7 +124,7 @@ def gui_transcription_context_state_from_config(config: Mapping[str, Any] | None
     return GuiTranscriptionContextState.from_context(craig.get("transcription_context")).to_dict()
 
 
-def gui_state_to_transcription_context(gui_state: Mapping[str, Any] | None) -> dict[str, Any]:
+def gui_state_to_transcription_context(gui_state: Mapping[str, object] | None) -> TranscriptionContextPayload:
     if gui_state is None:
         gui_state = {}
     creator_terms: object
@@ -132,7 +140,9 @@ def gui_state_to_transcription_context(gui_state: Mapping[str, Any] | None) -> d
         "dictionary_path": gui_state.get("dictionary_path") or None,
         "dictionary_confirmed": gui_state.get("dictionary_confirmed", False),
         "web_dictionary_enabled": gui_state.get("web_dictionary_enabled", False),
-        "web_dictionary_candidates": _normalize_terms_text(gui_state.get("web_dictionary_candidates"), "web_dictionary_candidates"),
+        "web_dictionary_candidates": _normalize_terms_text(
+            gui_state.get("web_dictionary_candidates"), "web_dictionary_candidates"
+        ),
         "web_dictionary_terms": _normalize_terms_text(gui_state.get("web_dictionary_terms"), "web_dictionary_terms"),
         "web_dictionary_candidate_metadata": _normalize_candidate_metadata(
             gui_state.get("web_dictionary_candidate_metadata"),

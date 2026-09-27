@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
+from src.data_boundary import is_object_mapping
 from src.short_video_schema import (
     ShortVideo,
     ShortVideoClip,
@@ -33,6 +34,7 @@ from tests.media_test_helpers import (
     require_media_tools,
     video_stream,
 )
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 FIXTURE_FPS = 15
@@ -46,11 +48,11 @@ SUBTITLE_REGION = FrameRegion(10, 190, 160, 125)
 TONE_BY_CLIP = {"A": 440, "B": 880, "C": 1320}
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class ShortVideoSemanticE2ETests(unittest.TestCase):
+class ShortVideoSemanticE2ETests(TypedTestCase):
     """Verify the rendered C -> A short against source-timeline semantics.
 
     Clip ranges are source-video times in the current short-video contract.  The
@@ -222,7 +224,11 @@ class ShortVideoSemanticE2ETests(unittest.TestCase):
 
     def test_subtitles_follow_selected_clips_on_short_output_timeline(self) -> None:
         saved = load_project(self.subtitle_project)
-        ass_path = Path(saved["render_settings"]["short_last_ass"])
+        render_settings = saved["render_settings"]
+        assert is_object_mapping(render_settings)
+        ass_value = render_settings["short_last_ass"]
+        assert isinstance(ass_value, str)
+        ass_path = Path(ass_value)
         dialogue = "\n".join(
             line for line in ass_path.read_text(encoding="utf-8").splitlines() if line.startswith("Dialogue:")
         )
@@ -253,7 +259,9 @@ class ShortVideoSemanticE2ETests(unittest.TestCase):
 
     def test_short_without_subtitles_keeps_final_media_contract(self) -> None:
         saved = load_project(self.plain_project)
-        self.assertNotIn("short_last_ass", saved["render_settings"])
+        render_settings = saved["render_settings"]
+        assert is_object_mapping(render_settings)
+        self.assertNotIn("short_last_ass", render_settings)
         stream = video_stream(self.plain_probe)
         self.assertEqual((stream["width"], stream["height"]), (OUTPUT_WIDTH, OUTPUT_HEIGHT))
         self.assertEqual(stream["r_frame_rate"], f"{FIXTURE_FPS}/1")

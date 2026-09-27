@@ -1,15 +1,17 @@
 import unittest
 
 from src import gui_state_base
+from src.data_boundary import is_object_list
 from src.gui_transcription_context_state import (
     GuiTranscriptionContextState,
     gui_state_to_transcription_context,
     gui_transcription_context_state_from_config,
 )
 from src.transcription_context import TranscriptionContextError
+from tests.typed_case import TypedTestCase
 
 
-class GuiTranscriptionContextStateTests(unittest.TestCase):
+class GuiTranscriptionContextStateTests(TypedTestCase):
     def test_helpers_are_reexported_for_existing_gui_imports(self) -> None:
         self.assertIs(gui_state_base.GuiTranscriptionContextState, GuiTranscriptionContextState)
         self.assertIs(gui_state_base.gui_state_to_transcription_context, gui_state_to_transcription_context)
@@ -50,8 +52,11 @@ class GuiTranscriptionContextStateTests(unittest.TestCase):
         )
 
         self.assertTrue(state["web_dictionary_enabled"])
-        self.assertIn("Splatoon 3", state["web_dictionary_candidates"])
-        self.assertIn("Splatfest", state["web_dictionary_candidates"])
+        candidates = state["web_dictionary_candidates"]
+        if not is_object_list(candidates):
+            self.fail("Web辞書の候補は配列である必要がある")
+        self.assertIn("Splatoon 3", candidates)
+        self.assertIn("Splatfest", candidates)
 
     def test_config_context_is_rendered_as_gui_text_state(self) -> None:
         state = gui_transcription_context_state_from_config(

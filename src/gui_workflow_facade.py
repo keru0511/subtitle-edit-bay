@@ -10,12 +10,10 @@ from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property,
     QProcess,
-    Signal,
-    Slot,
 )
 
+from .qt_decorators import Property, Signal, Slot
 from .gui_state import build_gui_transcribe_command
 from .workflow_actions import (
     ActionCapability,

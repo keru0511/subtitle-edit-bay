@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 from fractions import Fraction
 from pathlib import Path
 
+from .data_boundary import decode_json, is_object_list, is_object_mapping
 from .media_probe import probe_media_duration as probe_media_duration
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 
@@ -65,11 +65,15 @@ def probe_video_frame_rate(input_path: str) -> str:
         input_path,
     ]
     result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-    streams = json.loads(result.stdout or "{}").get("streams", [])
-    if not streams:
+    payload = decode_json(result.stdout or "{}")
+    if not is_object_mapping(payload):
+        raise ValueError(f"Invalid ffprobe result: {input_path}")
+    streams = payload.get("streams", [])
+    if not is_object_list(streams) or not streams or not is_object_mapping(streams[0]):
         raise ValueError(f"No video stream found: {input_path}")
+    stream = streams[0]
     for key in ("avg_frame_rate", "r_frame_rate"):
-        value = str(streams[0].get(key, "")).strip()
+        value = str(stream.get(key, "")).strip()
         try:
             if value and Fraction(value) > 0:
                 return value
@@ -125,47 +129,53 @@ def build_normalize_command(
         input_path,
     ]
     if not has_audio:
-        command.extend([
-            "-f",
-            "lavfi",
-            "-i",
-            f"anullsrc=channel_layout=stereo:sample_rate={AUDIO_RATE}",
-        ])
-    command.extend([
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a:0" if has_audio else "1:a:0",
-        "-vf",
-        video_filter,
-        "-af",
-        audio_filter,
-        "-c:v",
-        video_codec,
-    ])
+        command.extend(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                f"anullsrc=channel_layout=stereo:sample_rate={AUDIO_RATE}",
+            ]
+        )
+    command.extend(
+        [
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0" if has_audio else "1:a:0",
+            "-vf",
+            video_filter,
+            "-af",
+            audio_filter,
+            "-c:v",
+            video_codec,
+        ]
+    )
     command.extend(build_video_encoding_args(video_codec, nvenc_preset, nvenc_cq, x264_crf))
-    command.extend([
-        "-pix_fmt",
-        PIX_FMT,
-        "-c:a",
-        audio_codec,
-        "-b:a",
-        AUDIO_BITRATE,
-        "-ar",
-        AUDIO_RATE,
-        "-ac",
-        AUDIO_CHANNELS,
-        "-r",
-        resolved_frame_rate,
-        "-fps_mode",
-        "cfr",
-        "-video_track_timescale",
-        VIDEO_TRACK_TIMESCALE,
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        output_path,
-    ])
+    command.extend(
+        [
+            "-pix_fmt",
+            PIX_FMT,
+            "-c:a",
+            audio_codec,
+            "-b:a",
+            AUDIO_BITRATE,
+            "-ar",
+            AUDIO_RATE,
+            "-ac",
+            AUDIO_CHANNELS,
+            "-r",
+            resolved_frame_rate,
+            "-fps_mode",
+            "cfr",
+            "-video_track_timescale",
+            VIDEO_TRACK_TIMESCALE,
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+    )
     return command
 
 
@@ -258,6 +268,23 @@ def assemble_video(
     return output
 
 
+class _AssembleVideoArgs(argparse.Namespace):
+    main_video: str
+    output: str
+    width: int
+    height: int
+    op_file: str | None
+    ed_file: str | None
+    video_codec: str
+    audio_codec: str
+    nvenc_preset: str
+    nvenc_cq: int
+    x264_crf: int
+    frame_rate: str | None
+    no_audio_normalize: bool
+    run: bool
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Normalize and concatenate OP/main/ED videos with FFmpeg.")
     parser.add_argument("--main-video", required=True, help="Main subtitled video path.")
@@ -268,20 +295,47 @@ def main() -> None:
     parser.add_argument("--ed-file", help="Optional ED clip path.")
     parser.add_argument("--video-codec", default=VIDEO_CODEC, help="Video codec such as libx264 or h264_nvenc.")
     parser.add_argument("--audio-codec", default=AUDIO_CODEC, help="Audio codec used for normalized clips.")
-    parser.add_argument("--nvenc-preset", default=DEFAULT_NVENC_PRESET, help="NVENC preset used when --video-codec ends with _nvenc.")
-    parser.add_argument("--nvenc-cq", type=int, default=DEFAULT_NVENC_CQ, help="NVENC constant quality target; lower is higher quality.")
-    parser.add_argument("--x264-crf", type=int, default=DEFAULT_X264_CRF, help="libx264 constant quality target; lower is higher quality.")
+    parser.add_argument(
+        "--nvenc-preset", default=DEFAULT_NVENC_PRESET, help="NVENC preset used when --video-codec ends with _nvenc."
+    )
+    parser.add_argument(
+        "--nvenc-cq", type=int, default=DEFAULT_NVENC_CQ, help="NVENC constant quality target; lower is higher quality."
+    )
+    parser.add_argument(
+        "--x264-crf",
+        type=int,
+        default=DEFAULT_X264_CRF,
+        help="libx264 constant quality target; lower is higher quality.",
+    )
     parser.add_argument("--frame-rate", help="Target frame rate. Defaults to the main video's frame rate.")
     parser.add_argument("--no-audio-normalize", action="store_true", help="Disable loudnorm audio normalization.")
     parser.add_argument("--run", action="store_true", help="Execute instead of printing commands.")
-    args = parser.parse_args()
+    args = _AssembleVideoArgs()
+    parser.parse_args(namespace=args)
 
     clips = [clip for clip in [optional_clip(args.op_file), Path(args.main_video), optional_clip(args.ed_file)] if clip]
     frame_rate = args.frame_rate or probe_video_frame_rate(args.main_video)
     if not args.run:
         for index, clip in enumerate(clips):
             normalized_path = Path(args.output).parent / f"{Path(args.output).stem}.{index}.normalized.mp4"
-            print(" ".join(build_normalize_command(str(clip), str(normalized_path), args.width, args.height, not args.no_audio_normalize, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf, frame_rate=frame_rate, has_audio=probe_has_audio(str(clip)))))
+            print(
+                " ".join(
+                    build_normalize_command(
+                        str(clip),
+                        str(normalized_path),
+                        args.width,
+                        args.height,
+                        not args.no_audio_normalize,
+                        video_codec=args.video_codec,
+                        audio_codec=args.audio_codec,
+                        nvenc_preset=args.nvenc_preset,
+                        nvenc_cq=args.nvenc_cq,
+                        x264_crf=args.x264_crf,
+                        frame_rate=frame_rate,
+                        has_audio=probe_has_audio(str(clip)),
+                    )
+                )
+            )
         print(" ".join(build_concat_command(str(Path(args.output).with_suffix(".concat.txt")), args.output)))
         return
 

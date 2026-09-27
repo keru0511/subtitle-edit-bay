@@ -12,12 +12,22 @@ def is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
 
 
+def is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """JSONなどの文字列キーを持つマッピングか確認する。"""
+    return is_object_mapping(value) and all(isinstance(key, str) for key in value)
+
+
 def is_object_sequence(value: object) -> TypeGuard[Sequence[object]]:
     """要素の型を仮定せず、読み取り可能なシーケンスとして扱う。"""
     return isinstance(value, Sequence)
 
 
-def decode_json(text: str) -> object:
+def is_object_list(value: object) -> TypeGuard[list[object]]:
+    """JSON配列などの更新可能なリストを、要素型を仮定せずに扱う。"""
+    return isinstance(value, list)
+
+
+def decode_json(text: str | bytes | bytearray) -> object:
     """JSONを未検証の値として受け渡す。構造・値の検証は呼び出し元が行う。"""
     payload: object = json.loads(text)
     return payload

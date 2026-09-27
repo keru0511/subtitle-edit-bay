@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -9,7 +10,7 @@ UI_ROOT = REPOSITORY_ROOT / "src" / "ui"
 WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 
 
-class WorkspaceContractTests(unittest.TestCase):
+class WorkspaceContractTests(TypedTestCase):
     def test_qml_has_no_local_workspace_compatibility_mirror(self) -> None:
         qml_files = sorted(UI_ROOT.rglob("*.qml"))
         forbidden_markers = (

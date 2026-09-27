@@ -1,5 +1,6 @@
 import unittest
 
+from src.data_boundary import is_object_mapping
 from src.transcription_context import TranscriptionContext
 from src.transcription_dictionary import DictionaryTerm, TranscriptionDictionary
 from src.transcription_hint_plan import (
@@ -7,9 +8,10 @@ from src.transcription_hint_plan import (
     build_craig_transcription_hint_plan,
     confirmed_dictionary_hash,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionHintPlanTests(unittest.TestCase):
+class TranscriptionHintPlanTests(TypedTestCase):
     def test_builds_confirmed_dictionary_hints_and_cache_settings(self) -> None:
         context = TranscriptionContext(
             game_title="Splatoon 3",
@@ -44,7 +46,11 @@ class TranscriptionHintPlanTests(unittest.TestCase):
         self.assertTrue(plan.cache_fingerprint)
         self.assertEqual(plan.hint.cache_fingerprint, plan.cache_fingerprint)
         self.assertEqual(plan.hint.cache_settings, plan.cache_settings)
-        self.assertEqual(plan.cache_settings["asr"]["device"], "cuda")
+        asr_settings = plan.cache_settings["asr"]
+        self.assertTrue(is_object_mapping(asr_settings))
+        if not is_object_mapping(asr_settings):
+            self.fail("ASR cache settings must be an object")
+        self.assertEqual(asr_settings["device"], "cuda")
         self.assertEqual(plan.cache_settings["dictionary_hash"], plan.dictionary_hash)
 
     def test_web_dictionary_terms_are_included_in_plan_prompt_and_cache(self) -> None:
@@ -59,7 +65,11 @@ class TranscriptionHintPlanTests(unittest.TestCase):
         self.assertIn("Ink", plan.hint.hotwords)
         self.assertIn("Bomba", plan.hint.hotwords)
         self.assertEqual(plan.dictionary_hash, "")
-        self.assertEqual(plan.cache_settings["transcription_context"]["web_dictionary_terms"], ["Ink", "Bomba"])
+        saved_context = plan.cache_settings["transcription_context"]
+        self.assertTrue(is_object_mapping(saved_context))
+        if not is_object_mapping(saved_context):
+            self.fail("cached transcription context must be an object")
+        self.assertEqual(saved_context["web_dictionary_terms"], ["Ink", "Bomba"])
 
     def test_web_dictionary_terms_are_ignored_when_disabled(self) -> None:
         context = TranscriptionContext(

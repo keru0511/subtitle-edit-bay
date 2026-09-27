@@ -13,9 +13,10 @@ from src.video_sequence import (
     VideoSequence,
     VideoSequenceError,
 )
+from tests.typed_case import TypedTestCase
 
 
-class VideoSequenceModelTests(unittest.TestCase):
+class VideoSequenceModelTests(TypedTestCase):
     def _sequence(self) -> VideoSequence:
         return VideoSequence.from_json(
             {

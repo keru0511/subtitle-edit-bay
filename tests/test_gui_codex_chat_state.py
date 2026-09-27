@@ -1,28 +1,28 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
 import time
 import unittest
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from src.codex_app_server_client import CodexNotification
 from src.gui_codex_chat_state import CodexChatController
+from tests.typed_case import TypedTestCase
 
 
 CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
 
 
-class FakeNotification:
-    def __init__(self, method: str, params: dict[str, object]) -> None:
-        self.method = method
-        self.params = params
-
-
 class FakeChatClient:
     def __init__(self) -> None:
-        self.notification_callback = None
-        self.disconnect_callback = None
+        self.notification_callback: Callable[[CodexNotification], None] | None = None
+        self.disconnect_callback: Callable[[Exception], None] | None = None
         self.authenticated = False
         self.started = False
+        self.login_kwargs: dict[str, object] = {}
         self.thread_params: dict[str, object] = {}
         self.thread_start_count = 0
         self.resumed_threads: list[tuple[str, dict[str, object]]] = []
@@ -44,8 +44,18 @@ class FakeChatClient:
             }
         return {"account": None, "requiresOpenaiAuth": True}
 
-    def account_login_start(self, **kwargs) -> dict[str, object]:
-        self.login_kwargs = kwargs
+    def account_login_start(
+        self,
+        *,
+        login_type: str = "chatgpt",
+        use_hosted_login_success_page: bool = True,
+        app_brand: str = "chatgpt",
+    ) -> dict[str, object]:
+        self.login_kwargs = {
+            "login_type": login_type,
+            "use_hosted_login_success_page": use_hosted_login_success_page,
+            "app_brand": app_brand,
+        }
         return {
             "type": "chatgpt",
             "loginId": "login-1",
@@ -56,7 +66,7 @@ class FakeChatClient:
         self.authenticated = False
         return {}
 
-    def model_list(self, **kwargs) -> dict[str, object]:
+    def model_list(self, *, limit: int = 100, include_hidden: bool = False) -> dict[str, object]:
         return {
             "data": [
                 {
@@ -75,7 +85,7 @@ class FakeChatClient:
             ]
         }
 
-    def thread_start(self, params=None) -> dict[str, object]:
+    def thread_start(self, params: Mapping[str, object] | None = None) -> dict[str, object]:
         self.thread_start_count += 1
         self.thread_params = dict(params or {})
         return {"thread": {"id": f"thread-{self.thread_start_count}"}}
@@ -89,7 +99,7 @@ class FakeChatClient:
         approval_policy: str | None = None,
         sandbox: str | None = None,
     ) -> dict[str, object]:
-        params = {}
+        params: dict[str, object] = {}
         if model:
             params["model"] = model
         if cwd is not None:
@@ -101,26 +111,36 @@ class FakeChatClient:
         self.resumed_threads.append((thread_id, params))
         return {"thread": {"id": thread_id}}
 
-    def turn_start(self, **kwargs) -> dict[str, object]:
-        self.turn_params = dict(kwargs)
+    def turn_start(
+        self,
+        *,
+        thread_id: str,
+        prompt: str,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox_policy: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        self.turn_params = {
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "model": model,
+            "cwd": cwd,
+            "approval_policy": approval_policy,
+            "sandbox_policy": sandbox_policy,
+        }
         if self.notification_callback:
+            self.notification_callback(CodexNotification("turn/started", {"turn": {"id": "turn-1"}}))
+            self.notification_callback(CodexNotification("item/agentMessage/delta", {"delta": "返"}))
+            self.notification_callback(CodexNotification("item/agentMessage/delta", {"delta": "答"}))
             self.notification_callback(
-                FakeNotification("turn/started", {"turn": {"id": "turn-1"}})
-            )
-            self.notification_callback(
-                FakeNotification("item/agentMessage/delta", {"delta": "返"})
-            )
-            self.notification_callback(
-                FakeNotification("item/agentMessage/delta", {"delta": "答"})
-            )
-            self.notification_callback(
-                FakeNotification(
+                CodexNotification(
                     "item/completed",
                     {"item": {"type": "agentMessage", "id": "item-1", "text": "返答"}},
                 )
             )
             self.notification_callback(
-                FakeNotification(
+                CodexNotification(
                     "turn/completed",
                     {"turn": {"id": "turn-1", "status": "completed"}},
                 )
@@ -135,7 +155,7 @@ class FakeChatClient:
         self.authenticated = True
         if self.notification_callback:
             self.notification_callback(
-                FakeNotification(
+                CodexNotification(
                     "account/login/completed",
                     {"loginId": "login-1", "success": True, "error": None},
                 )
@@ -152,8 +172,24 @@ class BlockingTurnStartClient(FakeChatClient):
         self.turn_entered = threading.Event()
         self.turn_release = threading.Event()
 
-    def turn_start(self, **kwargs) -> dict[str, object]:
-        self.turn_params = dict(kwargs)
+    def turn_start(
+        self,
+        *,
+        thread_id: str,
+        prompt: str,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox_policy: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        self.turn_params = {
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "model": model,
+            "cwd": cwd,
+            "approval_policy": approval_policy,
+            "sandbox_policy": sandbox_policy,
+        }
         self.turn_entered.set()
         self.turn_release.wait(2)
         return {"turn": {"id": "turn-blocked", "status": "inProgress"}}
@@ -164,7 +200,7 @@ class FailingStartClient(FakeChatClient):
         raise OSError("接続に失敗しました")
 
 
-def wait_for(predicate, timeout: float = 2.0) -> None:
+def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
     deadline = time.time() + timeout
     while not predicate() and time.time() < deadline:
         time.sleep(0.01)
@@ -172,7 +208,21 @@ def wait_for(predicate, timeout: float = 2.0) -> None:
         raise AssertionError("condition was not reached")
 
 
-class CodexChatControllerTests(unittest.TestCase):
+class CodexChatControllerTests(TypedTestCase):
+    def test_chat_state_import_does_not_require_typing_extensions(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.modules['typing_extensions'] = None; import src.gui_codex_chat_state",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_connection_error_clears_provider_and_normal_connect_retries(self) -> None:
         first_client = FailingStartClient()
         second_client = FakeChatClient()
@@ -185,8 +235,9 @@ class CodexChatControllerTests(unittest.TestCase):
         try:
             controller.connect()
             wait_for(
-                lambda: controller.snapshot.connection_state == "error"
-                and controller.snapshot.chat_state == "disconnected"
+                lambda: (
+                    controller.snapshot.connection_state == "error" and controller.snapshot.chat_state == "disconnected"
+                )
             )
             self.assertIsNone(controller._provider)
 
@@ -271,11 +322,6 @@ class CodexChatControllerTests(unittest.TestCase):
 
             self.assertEqual(client.thread_params["model"], "gpt-fast")
             self.assertEqual(client.thread_params["approvalPolicy"], "never")
-            self.assertIn(
-                client.thread_params["sandbox"],
-                {"read-only", "workspace-write", "danger-full-access"},
-                CODEX_APP_SERVER_SCHEMA_COMMIT,
-            )
             self.assertEqual(client.thread_params["sandbox"], "read-only")
             self.assertEqual(client.thread_params["cwd"], str(Path.cwd().resolve()))
             self.assertEqual(client.turn_params["model"], "gpt-fast")
@@ -417,8 +463,12 @@ class CodexChatControllerTests(unittest.TestCase):
 
             wait_for(lambda: client.interrupted == ("thread-1", "turn-blocked"))
             self.assertEqual(controller.snapshot.chat_state, "stopping")
-            client.notification_callback(
-                FakeNotification(
+            callback = client.notification_callback
+            self.assertIsNotNone(callback)
+            if callback is None:
+                raise AssertionError("notification callback is not registered")
+            callback(
+                CodexNotification(
                     "turn/completed",
                     {"turn": {"id": "turn-blocked", "status": "interrupted"}},
                 )

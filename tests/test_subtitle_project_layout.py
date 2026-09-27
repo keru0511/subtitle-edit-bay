@@ -3,6 +3,7 @@ import random
 import unittest
 
 from src.subtitle_project import assign_project_layout_rows, create_project
+from tests.typed_case import TypedTestCase
 
 
 def assign_rows_reference(segments: list[dict]) -> list[dict]:
@@ -23,7 +24,7 @@ def assign_rows_reference(segments: list[dict]) -> list[dict]:
     return segments
 
 
-class SubtitleProjectLayoutTests(unittest.TestCase):
+class SubtitleProjectLayoutTests(TypedTestCase):
     def test_edited_overlaps_are_reflowed_without_dropping_captions(self) -> None:
         project = create_project(
             video_path="game.mkv",

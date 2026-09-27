@@ -6,13 +6,14 @@ from unittest import mock
 from src import subtitle_packer as legacy_packer
 from src.subtitle_layout import packer as layout_packer
 from src.subtitle_layout import scoring
+from tests.typed_case import TypedTestCase
 
 
 def jp(value: str) -> str:
     return value.encode("ascii").decode("unicode_escape")
 
 
-class SubtitleLayoutScoringTests(unittest.TestCase):
+class SubtitleLayoutScoringTests(TypedTestCase):
     def setUp(self) -> None:
         legacy_packer.text_width.cache_clear()
         legacy_packer.budoux_boundaries.cache_clear()

@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 
 from src.data_boundary import is_object_mapping, is_object_sequence
 from src.subtitle_text_rules import reattach_leading_punctuation
+from tests.typed_case import TypedTestCase
 
 
 def segment(
@@ -61,7 +62,7 @@ def caption_texts(segments: Sequence[Mapping[object, object]]) -> list[str]:
     return result
 
 
-class SubtitleTextRuleTests(unittest.TestCase):
+class SubtitleTextRuleTests(TypedTestCase):
     def test_preserves_extension_references_without_mutating_input(self) -> None:
         extension = object()
         aligned: dict[str, object] = {"word": "前", "extension": extension}

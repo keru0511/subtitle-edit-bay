@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -90,7 +91,7 @@ class FakeVideoSink(QObject):
     videoFrameChanged = Signal(object)
 
 
-class GuiTestHarnessTests(unittest.TestCase):
+class GuiTestHarnessTests(TypedTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         application = QGuiApplication.instance()
@@ -330,7 +331,7 @@ class GuiTestHarnessTests(unittest.TestCase):
         result["position_after_ms"] = 625
         self.assertTrue(_short_visual_update_contract_passed(result))
 
-class GuiPerformanceInstrumentationTests(unittest.TestCase):
+class GuiPerformanceInstrumentationTests(TypedTestCase):
     def test_qml_facades_count_operations_materialization_and_cache_misses(self) -> None:
         # QApplicationを既存ハーネスと共有しない別プロセスで実際のQML境界を通す。
         script = r'''

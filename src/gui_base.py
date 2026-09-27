@@ -7,12 +7,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
-from PySide6.QtCore import Property, QProcess, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QProcess, QTimer, QUrl
 
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog
 
+from .qt_decorators import Property, Signal, Slot
 from .craig_pipeline import (
     DEFAULT_ALIGNMENT_SAMPLE_RATE,
     resolve_alignment,

@@ -14,6 +14,7 @@ import wave
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
+from tests.typed_case import TypedTestCase
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -24,7 +25,9 @@ from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QInputMethodEvent
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
-from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtTest import QTest
+
+from tests.qt_signal_spy import QSignalSpy
 
 from scripts.generate_large_gui_fixture import generate_segments
 from src.audio_mix_proposal import audio_mix_state_revision, build_audio_mix_proposal
@@ -36,7 +39,7 @@ from src.audio_preview_cache import (
 from src import updater
 from src.codex_actions import ActionResult, ActionStatus
 from src.codex_runtime import CodexRuntimeInfo
-from src.gui import build_font_choices
+from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
@@ -55,7 +58,12 @@ from tests.gui_test_harness import GuiTestHarness, MediaPlayerSignalProbe
 from tests.windows_native_input import WindowsNativeInput
 
 
-class GuiEditorRegressionTests(unittest.TestCase):
+class GuiEditorRegressionTests(TypedTestCase):
+    _session: EditBayGuiTestSession
+    app: EditBayBackend
+    _codex_chat_connect_calls: int
+    _startup_log_text: str
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._session = EditBayGuiTestSession()

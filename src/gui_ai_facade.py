@@ -10,13 +10,11 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property,
     QUrl,
-    Signal,
-    Slot,
 )
 from PySide6.QtGui import QDesktopServices
 
+from .qt_decorators import Property, Signal, Slot
 from .audio_mix_proposal import (
     AudioMixProposalError,
     build_audio_mix_proposal,

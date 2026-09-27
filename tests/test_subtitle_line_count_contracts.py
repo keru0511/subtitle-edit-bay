@@ -10,9 +10,10 @@ from src.subtitle_line_count import (
     pack_segments_with_line_count,
     segment_editor_text,
 )
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLineCountContractTests(unittest.TestCase):
+class SubtitleLineCountContractTests(TypedTestCase):
     def test_numeric_strings_and_optional_fields_are_preserved(self) -> None:
         segment: dict[str, object] = {
             "text": "字幕",

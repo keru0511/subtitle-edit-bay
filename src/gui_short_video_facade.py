@@ -10,13 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import (
-    Property,
     QObject,
-    Signal,
-    Slot,
 )
 from PySide6.QtWidgets import QFileDialog
 
+from .qt_decorators import Property, Signal, Slot
 from .color_config import normalize_rgb_color
 from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 

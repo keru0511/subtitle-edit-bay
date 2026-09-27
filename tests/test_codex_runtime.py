@@ -12,13 +12,14 @@ from src.codex_runtime import (
     detect_codex,
     redact_codex_diagnostic,
 )
+from tests.typed_case import TypedTestCase
 
 
-class CodexRuntimeTests(unittest.TestCase):
+class CodexRuntimeTests(TypedTestCase):
     def test_detection_prefers_explicit_executable_and_uses_no_shell(self) -> None:
         calls: list[tuple[list[str], dict[str, object]]] = []
 
-        def run(command, **kwargs):
+        def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             calls.append((command, kwargs))
             return subprocess.CompletedProcess(command, 0, stdout="codex 0.27.1\n", stderr="")
 
@@ -40,7 +41,7 @@ class CodexRuntimeTests(unittest.TestCase):
     def test_detection_finds_versioned_codex_desktop_without_path(self) -> None:
         calls: list[str] = []
 
-        def run(command, **_kwargs):
+        def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             executable = str(command[0])
             calls.append(executable)
             if "new-build" in executable:
@@ -81,7 +82,7 @@ class CodexRuntimeTests(unittest.TestCase):
         self.assertEqual(calls, [str(newest), str(older)])
 
     def test_detection_finds_version_line_after_stderr_warning(self) -> None:
-        def run(command, **_kwargs):
+        def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(
                 command,
                 0,
@@ -101,7 +102,7 @@ class CodexRuntimeTests(unittest.TestCase):
         self.assertEqual(info.version, "codex-cli 0.150.0-alpha.12.2")
 
     def test_desktop_detection_continues_after_newest_candidate_times_out(self) -> None:
-        def run(command, **_kwargs):
+        def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             if "new-build" in str(command[0]):
                 raise subprocess.TimeoutExpired(command, 5)
             return subprocess.CompletedProcess(
@@ -134,7 +135,7 @@ class CodexRuntimeTests(unittest.TestCase):
         self.assertEqual(info.executable, str(older))
 
     def test_detection_requires_codex_identity_and_supported_version(self) -> None:
-        def run(command, **kwargs):
+        def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(command, 0, stdout="other-tool 1.2.3\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -146,7 +147,7 @@ class CodexRuntimeTests(unittest.TestCase):
             )
         self.assertFalse(unsupported.available)
 
-        def supported_run(command, **kwargs):
+        def supported_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(command, 0, stdout="Codex CLI 0.27.1\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -173,19 +174,21 @@ class CodexRuntimeTests(unittest.TestCase):
             self.assertEqual(classify_distribution(root), "installer")
 
     def test_diagnostic_redacts_secret_and_local_path(self) -> None:
-        redacted = redact_codex_diagnostic(
-            "token=secret C:\\Users\\name\\project.json Bearer private"
-        )
+        redacted = redact_codex_diagnostic("token=secret C:\\Users\\name\\project.json Bearer private")
         self.assertNotIn("secret", redacted)
         self.assertNotIn("private", redacted)
         self.assertIn("<local-path>", redacted)
-        info = detect_codex(".", environment={}, which=lambda _name: None, run=lambda *a, **k: None)
+
+        def unused_probe(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError(f"予期しないバージョン確認: {command}")
+
+        info = detect_codex(".", environment={}, which=lambda _name: None, run=unused_probe)
         self.assertNotIn("C:\\", str(build_codex_diagnostic(info)))
 
     def test_diagnostic_redacts_json_credentials_and_paths_with_spaces(self) -> None:
         value = (
             '{"access_token":"json-secret","authorization":"Bearer json-bearer"} '
-            r'C:\Users\Alice\My Projects\codex.json '
+            r"C:\Users\Alice\My Projects\codex.json "
             "/home/Alice/My Projects/codex.json"
         )
         redacted = redact_codex_diagnostic(value)
@@ -196,9 +199,7 @@ class CodexRuntimeTests(unittest.TestCase):
         self.assertNotIn("/home/Alice", redacted)
 
     def test_diagnostic_redacts_basic_authorization_and_quoted_password(self) -> None:
-        redacted = redact_codex_diagnostic(
-            'Authorization: Basic Zm9vOmJhcg== password="two words"'
-        )
+        redacted = redact_codex_diagnostic('Authorization: Basic Zm9vOmJhcg== password="two words"')
 
         self.assertNotIn("Zm9vOmJhcg==", redacted)
         self.assertNotIn("two words", redacted)

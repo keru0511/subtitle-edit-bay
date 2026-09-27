@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Protocol
 
 from .ai_provider import (
     AIModel,
@@ -15,26 +16,34 @@ from .ai_provider import (
     AIProviderSession,
     AIProviderState,
 )
+from .codex_app_server_client import CodexNotification
 from .codex_runtime import redact_codex_diagnostic
+from .data_boundary import is_object_list, is_string_object_mapping
 
 
 class CodexAppServerClientProtocol(Protocol):
-    notification_callback: Callable[[Any], None] | None
+    notification_callback: Callable[[CodexNotification], None] | None
     disconnect_callback: Callable[[Exception], None] | None
 
-    def start(self) -> Mapping[str, Any]: ...
+    def start(self) -> Mapping[str, object]: ...
 
     def stop(self) -> None: ...
 
-    def account_read(self, *, refresh_token: bool = False) -> Mapping[str, Any]: ...
+    def account_read(self, *, refresh_token: bool = False) -> Mapping[str, object]: ...
 
-    def account_login_start(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def account_login_start(
+        self,
+        *,
+        login_type: str = "chatgpt",
+        use_hosted_login_success_page: bool = True,
+        app_brand: str = "chatgpt",
+    ) -> Mapping[str, object]: ...
 
-    def account_logout(self) -> Mapping[str, Any]: ...
+    def account_logout(self) -> Mapping[str, object]: ...
 
-    def model_list(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def model_list(self, *, limit: int = 100, include_hidden: bool = False) -> Mapping[str, object]: ...
 
-    def thread_start(self, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]: ...
+    def thread_start(self, params: Mapping[str, object] | None = None) -> Mapping[str, object]: ...
 
     def thread_resume(
         self,
@@ -44,11 +53,20 @@ class CodexAppServerClientProtocol(Protocol):
         cwd: str | Path | None = None,
         approval_policy: str | None = None,
         sandbox: str | None = None,
-    ) -> Mapping[str, Any]: ...
+    ) -> Mapping[str, object]: ...
 
-    def turn_start(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def turn_start(
+        self,
+        *,
+        thread_id: str,
+        prompt: str,
+        model: str | None = None,
+        cwd: str | Path | None = None,
+        approval_policy: str | None = None,
+        sandbox_policy: Mapping[str, object] | None = None,
+    ) -> Mapping[str, object]: ...
 
-    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> Mapping[str, Any]: ...
+    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> Mapping[str, object]: ...
 
 
 class CodexAIProvider:
@@ -106,11 +124,11 @@ class CodexAIProvider:
             return self.refresh()
         except Exception as error:
             with self._lock:
-                client = self._client
+                failed_client = self._client
                 self._client = None
-            if client is not None:
+            if failed_client is not None:
                 try:
-                    client.stop()
+                    failed_client.stop()
                 except Exception:
                     pass
             return self._set_state(
@@ -202,9 +220,7 @@ class CodexAIProvider:
         selected = str(model_id).strip()
         available = {item.model_id for item in self.state.models}
         if selected not in available:
-            raise CodexAIProviderError(
-                f"選択したCodexモデルは現在利用できません: {selected or '（未選択）'}"
-            )
+            raise CodexAIProviderError(f"選択したCodexモデルは現在利用できません: {selected or '（未選択）'}")
         self._preferred_model = selected
         return self._set_state(selected_model=selected, error="")
 
@@ -273,11 +289,10 @@ class CodexAIProvider:
                 pass
         self._set_state(availability="disconnected", auth_state="unknown")
 
-    def _on_notification(self, notification: Any) -> None:
-        method = str(getattr(notification, "method", ""))
-        params = getattr(notification, "params", {})
-        if not isinstance(params, Mapping):
-            params = {}
+    def _on_notification(self, notification: CodexNotification) -> None:
+        method = notification.method
+        raw_params: object = notification.params
+        params: Mapping[str, object] = raw_params if is_string_object_mapping(raw_params) else {}
         if method == "account/login/completed":
             if bool(params.get("success", False)):
                 self._emit(AIProviderEvent(kind="auth_changed", refresh_state=True))
@@ -304,7 +319,7 @@ class CodexAIProvider:
             return
         if method == "item/completed":
             item = params.get("item")
-            if isinstance(item, Mapping) and item.get("type") == "agentMessage":
+            if is_string_object_mapping(item) and item.get("type") == "agentMessage":
                 self._emit(
                     AIProviderEvent(
                         kind="message_completed",
@@ -314,7 +329,7 @@ class CodexAIProvider:
             return
         if method == "error":
             payload = params.get("error", params)
-            detail = payload.get("message") if isinstance(payload, Mapping) else payload
+            detail = payload.get("message") if is_string_object_mapping(payload) else payload
             self._emit(
                 AIProviderEvent(
                     kind="error",
@@ -324,11 +339,12 @@ class CodexAIProvider:
             return
         if method == "turn/completed":
             turn = params.get("turn", params)
-            status = str(turn.get("status", "completed") if isinstance(turn, Mapping) else "completed")
+            status = str(turn.get("status", "completed") if is_string_object_mapping(turn) else "completed")
             detail = ""
-            if status == "failed" and isinstance(turn, Mapping):
+            if status == "failed" and is_string_object_mapping(turn):
                 payload = turn.get("error", {})
-                detail = payload.get("message") if isinstance(payload, Mapping) else str(payload)
+                raw_detail = payload.get("message") if is_string_object_mapping(payload) else payload
+                detail = "" if raw_detail is None else str(raw_detail)
             self._emit(
                 AIProviderEvent(
                     kind="turn_completed",
@@ -358,22 +374,37 @@ class CodexAIProvider:
             raise CodexAIProviderError("Codex App Serverへ接続されていません")
         return client
 
-    def _set_state(self, **changes: Any) -> AIProviderState:
+    def _set_state(
+        self,
+        *,
+        availability: str | None = None,
+        auth_state: str | None = None,
+        auth_label: str | None = None,
+        login_url: str | None = None,
+        login_id: str | None = None,
+        models: tuple[AIModel, ...] | None = None,
+        model_selection_supported: bool | None = None,
+        selected_model: str | None = None,
+        error: str | None = None,
+        login_available: bool | None = None,
+    ) -> AIProviderState:
         with self._lock:
             current = self._state
             self._state = AIProviderState(
-                availability=changes.get("availability", current.availability),
-                auth_state=changes.get("auth_state", current.auth_state),
-                auth_label=changes.get("auth_label", current.auth_label),
-                login_url=changes.get("login_url", current.login_url),
-                login_id=changes.get("login_id", current.login_id),
-                models=changes.get("models", current.models),
-                model_selection_supported=changes.get(
-                    "model_selection_supported", current.model_selection_supported
+                availability=current.availability if availability is None else availability,
+                auth_state=current.auth_state if auth_state is None else auth_state,
+                auth_label=current.auth_label if auth_label is None else auth_label,
+                login_url=current.login_url if login_url is None else login_url,
+                login_id=current.login_id if login_id is None else login_id,
+                models=current.models if models is None else models,
+                model_selection_supported=(
+                    current.model_selection_supported
+                    if model_selection_supported is None
+                    else model_selection_supported
                 ),
-                selected_model=changes.get("selected_model", current.selected_model),
-                error=changes.get("error", current.error),
-                login_available=changes.get("login_available", current.login_available),
+                selected_model=current.selected_model if selected_model is None else selected_model,
+                error=current.error if error is None else error,
+                login_available=current.login_available if login_available is None else login_available,
             )
             state = self._state
         self._emit(AIProviderEvent(kind="state_changed"))
@@ -397,11 +428,11 @@ class CodexAIProviderError(RuntimeError):
     pass
 
 
-def _account_status(result: Mapping[str, Any]) -> tuple[bool, str]:
+def _account_status(result: Mapping[str, object]) -> tuple[bool, str]:
     legacy_authenticated = result.get("authenticated", result.get("loggedIn"))
     account = result.get("account")
     authenticated = bool(legacy_authenticated)
-    if isinstance(account, Mapping):
+    if is_string_object_mapping(account):
         authenticated = True
         account_type = str(account.get("type", ""))
         plan_type = str(account.get("planType", "") or "")
@@ -423,10 +454,13 @@ def _account_status(result: Mapping[str, Any]) -> tuple[bool, str]:
     return authenticated, label
 
 
-def _normalize_models(result: Mapping[str, Any]) -> tuple[AIModel, ...]:
+def _normalize_models(result: Mapping[str, object]) -> tuple[AIModel, ...]:
     normalized: list[AIModel] = []
-    for item in result.get("data", []):
-        if not isinstance(item, Mapping) or bool(item.get("hidden", False)):
+    raw_models = result.get("data", [])
+    if not is_object_list(raw_models):
+        return ()
+    for item in raw_models:
+        if not is_string_object_mapping(item) or bool(item.get("hidden", False)):
             continue
         model_id = str(item.get("id") or item.get("model") or "").strip()
         if not model_id:
@@ -441,8 +475,8 @@ def _normalize_models(result: Mapping[str, Any]) -> tuple[AIModel, ...]:
     return tuple(normalized)
 
 
-def _extract_id(result: Mapping[str, Any], key: str) -> str:
+def _extract_id(result: Mapping[str, object], key: str) -> str:
     nested = result.get(key, result)
-    if isinstance(nested, Mapping):
+    if is_string_object_mapping(nested):
         return str(nested.get("id", "")) or str(result.get(f"{key}Id", ""))
     return str(result.get(f"{key}Id", ""))

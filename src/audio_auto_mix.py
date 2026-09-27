@@ -134,7 +134,7 @@ def predict_limiter_reduction(
     for channel_id, peak_db in peak_levels_db.items():
         effective_db = float(peak_db) + float(gains.get(channel_id, 0.0))
         if math.isfinite(effective_db):
-            combined_amplitude += 10.0 ** (effective_db / 20.0)
+            combined_amplitude += math.pow(10.0, effective_db / 20.0)
     combined_peak = 20.0 * math.log10(combined_amplitude) if combined_amplitude > 0.0 else -120.0
     return max(0.0, combined_peak - float(ceiling_db))
 
@@ -145,4 +145,3 @@ def _dedupe_points(points: Iterable[DuckingPoint]) -> list[DuckingPoint]:
         if point.timestamp not in by_time or point.gain_db < by_time[point.timestamp].gain_db:
             by_time[point.timestamp] = point
     return [by_time[key] for key in sorted(by_time)]
-

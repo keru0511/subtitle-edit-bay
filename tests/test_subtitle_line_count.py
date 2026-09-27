@@ -8,9 +8,10 @@ from src.subtitle_line_count import (
 )
 from src.subtitle_packer import pack_segment_pages, pack_segments as legacy_pack_segments
 from src.subtitle_project import SubtitleProjectError, create_project
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLineCountTests(unittest.TestCase):
+class SubtitleLineCountTests(TypedTestCase):
     def test_automatic_pages_preserve_recognized_text_with_uneven_breaks(self) -> None:
         texts = [
             "少し待ってこの問題が解決しなかったら最初から再開しますか",

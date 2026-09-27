@@ -14,9 +14,10 @@ from src.subtitle_project_schema import (
     SubtitleProjectError,
     normalize_segment,
 )
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleProjectSchemaTests(unittest.TestCase):
+class SubtitleProjectSchemaTests(TypedTestCase):
     def test_subtitle_segment_model_round_trip(self) -> None:
         model = SubtitleSegment.from_json(
             {

@@ -4,8 +4,9 @@ import argparse
 import json
 import math
 import os
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence, TypeGuard, TypedDict
 
 
 DEFAULT_MAX_REGRESSION_PERCENT = 20.0
@@ -14,46 +15,115 @@ DEFAULT_MAX_EVENT_LOOP_MS = 3_000.0
 DEFAULT_MAX_PLAYHEAD_LAG_MS = 500.0
 
 
-def _read_report(path: Path) -> dict[str, Any]:
+class PerformanceCheck(TypedDict):
+    fixture: int
+    scenario: str
+    metric: str
+    current: float
+    current_worst: float
+    absolute_statistic: str
+    absolute_limit: float
+    absolute_passed: bool
+    baseline: float | None
+    relative_statistic: str
+    regression_percent: float | None
+    relative_limit_percent: float
+    relative_passed: bool
+    passed: bool
+
+
+class ComparisonLimits(TypedDict):
+    max_regression_percent: float
+    max_action_ms: float
+    max_event_loop_ms: float
+    max_playhead_lag_ms: float
+
+
+class ComparisonReport(TypedDict):
+    schema_version: int
+    current_revision: str
+    baseline_revision: str | None
+    limits: ComparisonLimits
+    compared_fixture_counts: list[int]
+    passed: bool
+    failed_checks: list[PerformanceCheck]
+    checks: list[PerformanceCheck]
+
+
+def _string_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
+
+
+def _mapping(value: object, label: str) -> Mapping[str, object]:
+    if not _string_mapping(value):
+        raise ValueError(f"invalid {label} in GUI performance report")
+    return value
+
+
+def _number(value: object) -> float:
+    if not isinstance(value, (int, float, str, bytes, bytearray)):
+        raise ValueError("invalid numeric GUI performance value")
+    return float(value)
+
+
+def _revision(value: object) -> str:
+    return value if isinstance(value, str) else str(value)
+
+
+def _read_report(path: Path) -> Mapping[str, object]:
     try:
-        report = json.loads(path.read_text(encoding="utf-8"))
+        report: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"could not read GUI performance report {path}: {error}") from error
-    if not isinstance(report, dict) or report.get("schema_version") != 1:
+    if not _string_mapping(report) or report.get("schema_version") != 1:
         raise ValueError(f"unsupported GUI performance report schema: {path}")
     return report
 
 
-def _summary_value(scenario: dict[str, Any], metric: str, statistic: str) -> float:
-    value = float(scenario[metric][statistic])
+def _summary_value(scenario: Mapping[str, object], metric: str, statistic: str) -> float:
+    value = _number(_mapping(scenario[metric], metric)[statistic])
     if not math.isfinite(value):
         raise ValueError(f"non-finite GUI performance value: {metric}.{statistic}")
     return value
 
 
 def compare_reports(
-    current: dict[str, Any],
-    baseline: dict[str, Any] | None,
+    current: object,
+    baseline: object | None,
     *,
     max_regression_percent: float,
     max_action_ms: float,
     max_event_loop_ms: float,
     max_playhead_lag_ms: float,
-) -> dict[str, Any]:
-    current_fixtures = current["summary"]["fixtures"]
-    baseline_fixtures = baseline["summary"]["fixtures"] if baseline is not None else {}
-    checks: list[dict[str, Any]] = []
+) -> ComparisonReport:
+    current_data = _mapping(current, "current report")
+    current_fixtures = _mapping(_mapping(current_data["summary"], "current summary")["fixtures"], "current fixtures")
+    baseline_data = _mapping(baseline, "baseline report") if baseline is not None else None
+    baseline_fixtures: Mapping[str, object] = (
+        _mapping(_mapping(baseline_data["summary"], "baseline summary")["fixtures"], "baseline fixtures")
+        if baseline_data is not None
+        else {}
+    )
+    checks: list[PerformanceCheck] = []
 
     absolute_limits = {
         "action_elapsed_ms": max_action_ms,
         "event_loop_max_ms": max_event_loop_ms,
         "ui_playhead_lag_p95_ms": max_playhead_lag_ms,
     }
-    for fixture_name, fixture in sorted(current_fixtures.items(), key=lambda item: int(item[0])):
+    for fixture_name in sorted(current_fixtures, key=int):
+        raw_fixture = current_fixtures[fixture_name]
+        fixture = _mapping(raw_fixture, "fixture")
         baseline_fixture = baseline_fixtures.get(fixture_name)
-        for scenario_name, scenario in fixture["scenarios"].items():
+        current_scenarios = _mapping(fixture["scenarios"], "current scenarios")
+        for scenario_name, raw_scenario in current_scenarios.items():
+            scenario = _mapping(raw_scenario, "current scenario")
             baseline_scenario = (
-                baseline_fixture["scenarios"].get(scenario_name) if baseline_fixture is not None else None
+                _mapping(_mapping(baseline_fixture, "baseline fixture")["scenarios"], "baseline scenarios").get(
+                    scenario_name
+                )
+                if baseline_fixture is not None
+                else None
             )
             for metric, absolute_limit in absolute_limits.items():
                 # Safety ceilings must catch even one frozen run. Relative
@@ -62,7 +132,9 @@ def compare_reports(
                 current_worst = _summary_value(scenario, metric, "max")
                 absolute_passed = current_worst <= absolute_limit
                 baseline_value = (
-                    _summary_value(baseline_scenario, metric, "p50") if baseline_scenario is not None else None
+                    _summary_value(_mapping(baseline_scenario, "baseline scenario"), metric, "p50")
+                    if baseline_scenario is not None
+                    else None
                 )
                 regression_percent = None
                 relative_passed = True
@@ -93,8 +165,8 @@ def compare_reports(
     failed_checks = [check for check in checks if not check["passed"]]
     return {
         "schema_version": 1,
-        "current_revision": current.get("revision_label", "unknown"),
-        "baseline_revision": baseline.get("revision_label", "none") if baseline else None,
+        "current_revision": _revision(current_data.get("revision_label", "unknown")),
+        "baseline_revision": _revision(baseline_data.get("revision_label", "none")) if baseline_data else None,
         "limits": {
             "max_regression_percent": max_regression_percent,
             "max_action_ms": max_action_ms,
@@ -108,7 +180,7 @@ def compare_reports(
     }
 
 
-def markdown_summary(comparison: dict[str, Any]) -> str:
+def markdown_summary(comparison: ComparisonReport) -> str:
     status = "PASS" if comparison["passed"] else "FAIL"
     lines = [
         "### GUI performance comparison",
@@ -122,8 +194,10 @@ def markdown_summary(comparison: dict[str, Any]) -> str:
         "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for check in comparison["checks"]:
-        baseline = "—" if check["baseline"] is None else f"{check['baseline']:.3f}"
-        change = "—" if check["regression_percent"] is None else f"{check['regression_percent']:+.1f}%"
+        baseline_value = check["baseline"]
+        regression_percent = check["regression_percent"]
+        baseline = "—" if baseline_value is None else f"{baseline_value:.3f}"
+        change = "—" if regression_percent is None else f"{regression_percent:+.1f}%"
         result = "PASS" if check["passed"] else "FAIL"
         lines.append(
             f"| {check['fixture']} | `{check['scenario']}` | `{check['metric']}` | "
@@ -133,7 +207,18 @@ def markdown_summary(comparison: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+class _CompareArgs(argparse.Namespace):
+    current: Path = Path(".")
+    baseline: Path | None = None
+    output: Path = Path(".")
+    max_regression_percent: float = DEFAULT_MAX_REGRESSION_PERCENT
+    max_action_ms: float = DEFAULT_MAX_ACTION_MS
+    max_event_loop_ms: float = DEFAULT_MAX_EVENT_LOOP_MS
+    max_playhead_lag_ms: float = DEFAULT_MAX_PLAYHEAD_LAG_MS
+    fail_on_regression: bool = False
+
+
+def parse_args(argv: Sequence[str] | None = None) -> _CompareArgs:
     parser = argparse.ArgumentParser(
         description="Evaluate absolute GUI latency limits and relative baseline regressions.",
     )
@@ -157,11 +242,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_MAX_PLAYHEAD_LAG_MS,
     )
     parser.add_argument("--fail-on-regression", action="store_true")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=_CompareArgs())
     if not math.isfinite(args.max_regression_percent) or args.max_regression_percent < 0:
         parser.error("--max-regression-percent must be finite and non-negative")
-    for name in ("max_action_ms", "max_event_loop_ms", "max_playhead_lag_ms"):
-        if not math.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
+    for name, value in (
+        ("max_action_ms", args.max_action_ms),
+        ("max_event_loop_ms", args.max_event_loop_ms),
+        ("max_playhead_lag_ms", args.max_playhead_lag_ms),
+    ):
+        if not math.isfinite(value) or value <= 0:
             parser.error(f"--{name.replace('_', '-')} must be finite and positive")
     return args
 

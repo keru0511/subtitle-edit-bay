@@ -9,12 +9,10 @@ from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property,
     QObject,
-    Signal,
-    Slot,
 )
 
+from .qt_decorators import Property, Signal, Slot
 from .color_config import normalize_rgb_color, save_speaker_color
 from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,

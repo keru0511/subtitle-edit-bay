@@ -9,9 +9,10 @@ from src.video_timeline import (
     intersect_ranges,
     timeline_from_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class VideoTimelineModelTests(unittest.TestCase):
+class VideoTimelineModelTests(TypedTestCase):
     def test_add_cut_merges_overlaps_and_preserves_existing_id(self) -> None:
         timeline = VideoTimeline.from_json(None, source_duration=10.0)
         timeline = timeline.add_cut(2.0, 4.0, cut_id="cut-a")

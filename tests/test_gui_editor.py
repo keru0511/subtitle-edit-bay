@@ -9237,6 +9237,75 @@ Window {
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
+    def test_new_video_gui_journey_saves_reloads_and_renders_caption(self) -> None:
+        """Windows GUI CI必須: 新規動画の選択から字幕保存・再読込・通常書き出しまで検証する。"""
+        video = self.root / "new-video.mkv"
+        self._generate_black_test_video_with_audio(video, self.root / "unused-audio.flac")
+        project_path = video.with_suffix(".subtitle-project.json")
+        export = self.root / "export"
+        export.mkdir()
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+
+        _, window = self._load_qml()
+        with patch("src.gui_base.QFileDialog.getOpenFileName", return_value=(str(video), "")) as choose:
+            self._click(window, self._quick_item(window, "newVideoEditButton"))
+        choose.assert_called_once()
+        self.assertTrue(self.app.projectLoaded)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+        self.assertEqual(self.app.segmentCount, 0)
+
+        self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
+        self.assertEqual(self.app.segmentCount, 1)
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        self._click(window, caption)
+        self.assertTrue(caption.hasActiveFocus())
+        caption_text = "new video caption"
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        for char in caption_text:
+            QTest.keyClick(window, Qt.Key(ord(char.upper())))
+        self.assertEqual(caption.property("text"), caption_text)
+        self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
+
+        saved = load_project(project_path)
+        self.assertEqual([segment["text"] for segment in saved["segments"]], [caption_text])
+        self.assertFalse(self.app.projectDirty)
+        loaded_project = self.app._project
+        with patch("src.gui.QFileDialog.getOpenFileName", return_value=(str(project_path), "")) as choose:
+            self._click(window, self._quick_item(window, "projectOpenButton"))
+        choose.assert_called_once()
+        self.assertIsNot(self.app._project, loaded_project)
+        self.assertEqual(self.app.segmentAt(0)["text"], caption_text)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+
+        finished = QSignalSpy(self.app.process.finished)
+        with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)) as choose:
+            self._click(window, self._quick_item(window, "workspaceHeaderRenderButton"))
+            if finished.count() == 0:
+                self.assertTrue(finished.wait(30_000), self.app.process.errorString())
+            self.app.processEvents()
+        choose.assert_called_once()
+        self.assertEqual(self.app.stage, "COMPLETE", f"{self.app.status}\n{self.app._log}")
+
+        rendered_project = load_project(project_path)
+        self.assertEqual(rendered_project["segments"][0]["text"], caption_text)
+        self.assertEqual(Path(rendered_project["output_dir"]).resolve(), export.resolve())
+        output = Path(rendered_project["render_settings"]["last_output"])
+        self.assertTrue(output.is_file())
+        self.assertGreater(output.stat().st_size, 0)
+        duration, pixel_format = self._probe_video_output(output)
+        self.assertAlmostEqual(duration, 1.0, delta=0.25)
+        self.assertEqual(pixel_format, "yuv420p")
+        source_frame = self._extract_gray_frame(video)
+        output_frame = self._extract_gray_frame(output)
+        self.assertEqual(len(output_frame), len(source_frame))
+        self.assertGreater(max(output_frame), max(source_frame) + 80)
+
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
     def test_editor_render_e2e_saves_edits_and_burns_subtitles(self) -> None:
         project_path = self._load_project(
             segments=[

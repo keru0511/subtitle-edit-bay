@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Mapping
+from typing import TextIO, TypeGuard, cast
+
+
+def _is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
 
 
 def _send(payload: dict[str, object], *, partial: bool = False) -> None:
@@ -19,13 +25,19 @@ def _send(payload: dict[str, object], *, partial: bool = False) -> None:
 
 
 def main() -> None:
-    for line in sys.stdin:
+    input_stream = cast(TextIO, sys.stdin)
+    for line in input_stream:
         try:
-            request = json.loads(line)
+            raw_request: object = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not _is_string_object_mapping(raw_request):
+            continue
+        request = raw_request
         method = request.get("method")
         request_id = request.get("id")
+        raw_params = request.get("params")
+        params: Mapping[str, object] = raw_params if _is_string_object_mapping(raw_params) else {}
         if method == "initialize":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": "1"}}, partial=True)
         elif method == "initialized":
@@ -33,23 +45,50 @@ def main() -> None:
         elif method == "account/read":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"authenticated": False}})
         elif method == "account/login/start":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"loginId": "login-1", "url": "https://example.invalid/login", "receivedType": request.get("params", {}).get("type")}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "loginId": "login-1",
+                        "url": "https://example.invalid/login",
+                        "receivedType": params.get("type"),
+                    },
+                }
+            )
         elif method == "account/login/cancel":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"cancelled": True}})
         elif method == "account/logout":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {}})
         elif method == "model/list":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"data": [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}]}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"data": [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}]},
+                }
+            )
         elif method == "thread/start":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": "thread-1"}})
         elif method == "thread/resume":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": request.get("params", {}).get("threadId")}})
+            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": params.get("threadId")}})
         elif method == "turn/start":
             sys.stdout.write("not-json\n")
             sys.stdout.flush()
             _send({"jsonrpc": "2.0", "method": "turn/started", "params": {"turnId": "turn-1"}})
             _send({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"delta": "提案"}})
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"turnId": "turn-1", "status": "completed", "receivedInput": request.get("params", {}).get("input"), "receivedModel": request.get("params", {}).get("model")}})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "turnId": "turn-1",
+                        "status": "completed",
+                        "receivedInput": params.get("input"),
+                        "receivedModel": params.get("model"),
+                    },
+                }
+            )
         elif method == "turn/interrupt":
             _send({"jsonrpc": "2.0", "id": request_id, "result": {"interrupted": True}})
         elif method == "test/timeout":

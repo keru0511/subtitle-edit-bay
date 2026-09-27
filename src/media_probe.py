@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-import json
 import subprocess
-from typing import Any
+from collections.abc import Sequence
 
+from .data_boundary import decode_json, is_object_mapping, is_object_sequence
 from .process_utils import hidden_subprocess_kwargs
+
+
+def _decode_streams(output: str) -> Sequence[object]:
+    payload = decode_json(output or "{}")
+    if not is_object_mapping(payload):
+        raise ValueError("ffprobe result must be an object")
+    streams = payload.get("streams", [])
+    if not is_object_sequence(streams) or isinstance(streams, (str, bytes, bytearray)):
+        raise ValueError("ffprobe streams must be an array")
+    return streams
 
 
 def probe_media_duration(input_path: str) -> float:
@@ -53,13 +63,8 @@ def probe_media_stream_types(input_path: str) -> set[str]:
         **hidden_subprocess_kwargs(),
     )
 
-    payload: dict[str, Any] = json.loads(result.stdout or "{}")
-    streams = payload.get("streams", [])
-    media_types = {
-        str(stream.get("codec_type", "")).lower()
-        for stream in streams
-        if isinstance(stream, dict)
-    }
+    streams = _decode_streams(result.stdout)
+    media_types = {str(stream.get("codec_type", "")).lower() for stream in streams if is_object_mapping(stream)}
     return {value for value in media_types if value in {"audio", "video"}}
 
 
@@ -87,8 +92,7 @@ def probe_video_stream(input_path: str) -> dict[str, object]:
         **hidden_subprocess_kwargs(),
     )
 
-    payload = json.loads(result.stdout or "{}")
-    streams = payload.get("streams", []) if isinstance(payload, dict) else []
-    if not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
+    streams = _decode_streams(result.stdout)
+    if not streams or not is_object_mapping(streams[0]):
         raise ValueError(f"No video stream found: {input_path}")
-    return streams[0]
+    return {key: value for key, value in streams[0].items() if isinstance(key, str)}

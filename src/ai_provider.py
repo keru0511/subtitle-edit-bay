@@ -8,7 +8,7 @@ details, such as JSON-RPC method names, stay in the provider adapter module.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Callable, Mapping, Protocol
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class AIModel:
 
         return self.model_id
 
-    def as_mapping(self) -> dict[str, Any]:
+    def as_mapping(self) -> dict[str, object]:
         """Return the existing GUI-friendly model shape."""
 
         return {
@@ -80,7 +80,7 @@ class AIProviderEvent:
     status: str = ""
     error: str = ""
     refresh_state: bool = False
-    payload: Mapping[str, Any] = field(default_factory=dict)
+    payload: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def type(self) -> str:

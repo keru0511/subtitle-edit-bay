@@ -1,8 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import TypeVar
 
+from .data_boundary import coerce_float, coerce_int, decode_json, is_object_list, is_object_mapping
 from .subtitle_packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
@@ -37,16 +40,54 @@ GAME_TERMS = [
     "兵器",
     "大型",
 ]
-CASUAL_MARKERS = ["www", "やば", "うわ", "まじ", "えっ", "あの", "これ", "それ", "いや", "ねえ", "かな", "だよ", "じゃん"]
+CASUAL_MARKERS = [
+    "www",
+    "やば",
+    "うわ",
+    "まじ",
+    "えっ",
+    "あの",
+    "これ",
+    "それ",
+    "いや",
+    "ねえ",
+    "かな",
+    "だよ",
+    "じゃん",
+]
 SHORT_REACTION_MARKERS = ["!", "！", "?", "？", "w", "W", "笑", "うわ", "えっ", "まじ", "やば"]
 EMPHASIS_MARKERS = ("!", "！", "?", "？")
-TRACK_DEFAULT_MAP = {"0:a:1": {None: "Oz"}, "0:a:3": {None: "Guest"}}
+TRACK_DEFAULT_MAP: dict[str, dict[object, str]] = {"0:a:1": {None: "Oz"}, "0:a:3": {None: "Guest"}}
 DISCORD_TRACK = "0:a:3"
 DISCORD_COLORS = ["A", "B", "C"]
 
+Segment = dict[object, object]
+_T = TypeVar("_T")
 
-def load_transcript(path: str) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+def _unique(values: Iterable[_T]) -> list[_T]:
+    seen: set[_T] = set()
+    result: list[_T] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def _segment_text(segment: Mapping[object, object], key: str = "text") -> str:
+    return str(segment.get(key, ""))
+
+
+def _segment_number(segment: Mapping[object, object], key: str) -> float:
+    return coerce_float(segment[key])
+
+
+def load_transcript(path: str) -> Segment:
+    payload = decode_json(Path(path).read_text(encoding="utf-8"))
+    if not is_object_mapping(payload):
+        raise ValueError("transcript must be an object")
+    return dict(payload)
 
 
 def display_width(char: str) -> int:
@@ -71,11 +112,11 @@ def is_short_reaction(text: str) -> bool:
 
 
 def split_segment(
-    segment: dict,
+    segment: object,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-) -> list[dict]:
+) -> list[Segment]:
     return pack_segment_pages(
         segment,
         subtitle_max_gap_seconds=subtitle_max_gap_seconds,
@@ -84,9 +125,11 @@ def split_segment(
     )
 
 
-def build_discord_speaker_map(segments: list[dict]) -> dict[str | None, str]:
-    mapping: dict[str | None, str] = {}
+def build_discord_speaker_map(segments: Sequence[object]) -> dict[object, str]:
+    mapping: dict[object, str] = {}
     for segment in segments:
+        if not is_object_mapping(segment):
+            raise ValueError("transcript segment must be an object")
         diarized_speaker = segment.get("speaker")
         if diarized_speaker is None or diarized_speaker in mapping:
             continue
@@ -98,7 +141,9 @@ def build_discord_speaker_map(segments: list[dict]) -> dict[str | None, str]:
     return mapping
 
 
-def speaker_for_track(audio_track: str, diarized_speaker: str | None = None, dynamic_map: dict[str | None, str] | None = None) -> str:
+def speaker_for_track(
+    audio_track: str, diarized_speaker: object = None, dynamic_map: Mapping[object, str] | None = None
+) -> str:
     if audio_track == DISCORD_TRACK and dynamic_map is not None:
         if diarized_speaker in dynamic_map:
             return dynamic_map[diarized_speaker]
@@ -109,7 +154,7 @@ def speaker_for_track(audio_track: str, diarized_speaker: str | None = None, dyn
         return mapping[diarized_speaker]
     if None in mapping:
         return mapping[None]
-    return diarized_speaker or audio_track.replace(":", "_")
+    return str(diarized_speaker) if diarized_speaker else audio_track.replace(":", "_")
 
 
 def is_non_speech_candidate(text: str, source_track: str) -> tuple[bool, list[str]]:
@@ -133,36 +178,52 @@ def is_non_speech_candidate(text: str, source_track: str) -> tuple[bool, list[st
     return bool(reasons), reasons
 
 
-def row_span_for_segment(segment: dict) -> int:
-    max_width = int(segment.get("max_width", BOTTOM_MAX_WIDTH))
-    return min(MAX_BOTTOM_ROWS, 2 if text_width(segment.get("text", "")) > max_width else 1)
+def row_span_for_segment(segment: Mapping[object, object]) -> int:
+    max_width = coerce_int(segment.get("max_width", BOTTOM_MAX_WIDTH))
+    return min(MAX_BOTTOM_ROWS, 2 if text_width(_segment_text(segment)) > max_width else 1)
 
 
-def occupied_rows(segment: dict) -> set[int]:
-    start_row = int(segment.get("layout_row", 0))
-    span = int(segment.get("layout_row_span", row_span_for_segment(segment)))
+def occupied_rows(segment: Mapping[object, object]) -> set[int]:
+    start_row = coerce_int(segment.get("layout_row", 0))
+    span = coerce_int(segment.get("layout_row_span", row_span_for_segment(segment)))
     return set(range(start_row, min(MAX_BOTTOM_ROWS, start_row + span)))
 
 
-def available_base_rows(active: list[dict], span: int) -> list[int]:
+def available_base_rows(active: Sequence[Segment], span: int) -> list[int]:
     used_rows: set[int] = set()
     for item in active:
         used_rows.update(occupied_rows(item))
-    return [row for row in range(0, MAX_BOTTOM_ROWS - span + 1) if all(slot not in used_rows for slot in range(row, row + span))]
+    return [
+        row
+        for row in range(0, MAX_BOTTOM_ROWS - span + 1)
+        if all(slot not in used_rows for slot in range(row, row + span))
+    ]
 
 
-def mark_overflow(segment: dict, overflow: list[dict]) -> None:
-    segment["filter_reasons"] = list(dict.fromkeys(segment.get("filter_reasons", []) + ["overflow_dropped"]))
+def mark_overflow(segment: Segment, overflow: list[Segment]) -> None:
+    reasons = segment.get("filter_reasons", [])
+    if not is_object_list(reasons):
+        raise ValueError("filter_reasons must be an array")
+    segment["filter_reasons"] = _unique([*reasons, "overflow_dropped"])
     overflow.append(segment)
 
 
-def assign_bottom_rows(segments: list[dict]) -> tuple[list[dict], list[dict]]:
-    active: list[dict] = []
-    assigned: list[dict] = []
-    overflow: list[dict] = []
+def _segment_order(segment: Segment) -> tuple[float, float, str]:
+    start = _segment_number(segment, "start")
+    return start, -(_segment_number(segment, "end") - start), _segment_text(segment, "speaker")
 
-    for segment in sorted(segments, key=lambda item: (item["start"], -(item["end"] - item["start"]), item["speaker"])):
-        active = [item for item in active if float(item["end"]) > float(segment["start"])]
+
+def _segment_duration_key(segment: Segment) -> tuple[float, int]:
+    return _segment_number(segment, "end") - _segment_number(segment, "start"), text_width(_segment_text(segment))
+
+
+def assign_bottom_rows(segments: Sequence[Segment]) -> tuple[list[Segment], list[Segment]]:
+    active: list[Segment] = []
+    assigned: list[Segment] = []
+    overflow: list[Segment] = []
+
+    for segment in sorted(segments, key=_segment_order):
+        active = [item for item in active if _segment_number(item, "end") > _segment_number(segment, "start")]
         span = row_span_for_segment(segment)
         segment["layout_row_span"] = span
         available_rows = available_base_rows(active, span)
@@ -171,7 +232,7 @@ def assign_bottom_rows(segments: list[dict]) -> tuple[list[dict], list[dict]]:
             candidates = active + [segment]
             if not candidates:
                 break
-            shortest = min(candidates, key=lambda item: (float(item["end"]) - float(item["start"]), text_width(item["text"])))
+            shortest = min(candidates, key=_segment_duration_key)
             if shortest is segment:
                 mark_overflow(segment, overflow)
                 break
@@ -187,24 +248,38 @@ def assign_bottom_rows(segments: list[dict]) -> tuple[list[dict], list[dict]]:
         assigned.append(segment)
         active.append(segment)
 
-    assigned.sort(key=lambda item: (item["start"], item["layout_row"], item["speaker"]))
-    overflow.sort(key=lambda item: (item["start"], item["end"], item["speaker"]))
+    assigned.sort(
+        key=lambda item: (
+            _segment_number(item, "start"),
+            coerce_int(item["layout_row"]),
+            _segment_text(item, "speaker"),
+        )
+    )
+    overflow.sort(
+        key=lambda item: (
+            _segment_number(item, "start"),
+            _segment_number(item, "end"),
+            _segment_text(item, "speaker"),
+        )
+    )
     return assigned, overflow
 
 
 def refine_segments(
-    segments: list[dict],
+    segments: Sequence[object],
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-) -> tuple[list[dict], list[dict]]:
-    refined: list[dict] = []
-    filtered: list[dict] = []
+) -> tuple[list[Segment], list[Segment]]:
+    refined: list[Segment] = []
+    filtered: list[Segment] = []
     for segment in reattach_leading_punctuation(segments):
         text = str(segment.get("text", ""))
         if is_short_reaction(text) and any(marker in text for marker in EMPHASIS_MARKERS):
             segment["emphasis"] = "shout"
-        segment_filtered, segment_reasons = is_non_speech_candidate(segment["text"], segment["source_track"])
+        segment_filtered, segment_reasons = is_non_speech_candidate(
+            _segment_text(segment), _segment_text(segment, "source_track")
+        )
         split_parts = split_segment(
             segment,
             subtitle_max_gap_seconds=subtitle_max_gap_seconds,
@@ -212,8 +287,10 @@ def refine_segments(
             subtitle_min_duration_seconds=subtitle_min_duration_seconds,
         )
         for split in split_parts:
-            split_filtered, split_reasons = is_non_speech_candidate(split["text"], split["source_track"])
-            reasons = list(dict.fromkeys(segment_reasons + split_reasons))
+            split_filtered, split_reasons = is_non_speech_candidate(
+                _segment_text(split), _segment_text(split, "source_track")
+            )
+            reasons = _unique([*segment_reasons, *split_reasons])
             split["filter_reasons"] = reasons
             if segment_filtered or split_filtered:
                 filtered.append(split)
@@ -221,7 +298,13 @@ def refine_segments(
                 refined.append(split)
     refined, overflow = assign_bottom_rows(refined)
     filtered.extend(overflow)
-    filtered.sort(key=lambda item: (item["start"], item["end"], item["speaker"]))
+    filtered.sort(
+        key=lambda item: (
+            _segment_number(item, "start"),
+            _segment_number(item, "end"),
+            _segment_text(item, "speaker"),
+        )
+    )
     return refined, filtered
 
 
@@ -230,33 +313,47 @@ def merge_transcripts(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-) -> tuple[dict, dict]:
-    merged_segments: list[dict] = []
+) -> tuple[dict[str, list[Segment]], dict[str, list[Segment]]]:
+    merged_segments: list[Segment] = []
     for audio_track, transcript_path in track_to_transcript.items():
         data = load_transcript(transcript_path)
-        dynamic_map = build_discord_speaker_map(data.get("segments", [])) if audio_track == DISCORD_TRACK and any(segment.get("speaker") for segment in data.get("segments", [])) else None
-        for segment in data.get("segments", []):
-            text = segment.get("text", "").strip()
+        raw_segments = data.get("segments", [])
+        if not is_object_list(raw_segments):
+            raise ValueError("transcript segments must be an array")
+        segments: list[Mapping[object, object]] = []
+        for item in raw_segments:
+            if not is_object_mapping(item):
+                raise ValueError("transcript segment must be an object")
+            segments.append(item)
+        dynamic_map = (
+            build_discord_speaker_map(segments)
+            if audio_track == DISCORD_TRACK and any(segment.get("speaker") for segment in segments)
+            else None
+        )
+        for segment in segments:
+            raw_text = segment.get("text", "")
+            if not isinstance(raw_text, str):
+                raise ValueError("transcript segment text must be a string")
+            text = raw_text.strip()
             if not text:
                 continue
 
             diarized_speaker = segment.get("speaker")
             speaker = speaker_for_track(audio_track, diarized_speaker, dynamic_map)
-            merged_segments.append(
-                {
-                    "start": float(segment["start"]),
-                    "end": float(segment["end"]),
-                    "speaker": speaker,
-                    "text": text,
-                    "emphasis": segment.get("emphasis", "normal"),
-                    "position": "bottom",
-                    "layout_row": 0,
-                    "max_width": max_width_for_speaker(speaker),
-                    "source_track": audio_track,
-                    "source_speaker": diarized_speaker,
-                    "words": segment.get("words", []),
-                }
-            )
+            merged_segment: Segment = {
+                "start": coerce_float(segment["start"]),
+                "end": coerce_float(segment["end"]),
+                "speaker": speaker,
+                "text": text,
+                "emphasis": segment.get("emphasis", "normal"),
+                "position": "bottom",
+                "layout_row": 0,
+                "max_width": max_width_for_speaker(speaker),
+                "source_track": audio_track,
+                "source_speaker": diarized_speaker,
+                "words": segment.get("words", []),
+            }
+            merged_segments.append(merged_segment)
 
     refined, filtered = refine_segments(
         merged_segments,

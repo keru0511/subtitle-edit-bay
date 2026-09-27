@@ -4,9 +4,10 @@ import sys
 import unittest
 
 from src.transcribe import build_whisperx_command
+from tests.typed_case import TypedTestCase
 
 
-class TranscribeHintCommandTests(unittest.TestCase):
+class TranscribeHintCommandTests(TypedTestCase):
     def test_hints_are_omitted_by_default(self) -> None:
         command = build_whisperx_command("voice.wav", "out")
 

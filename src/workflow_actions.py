@@ -3,13 +3,15 @@
 Dependency probing and processing state belong to the caller. This boundary uses
 one snapshot for capabilities, encoder selection and the command to execute.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
+from .data_boundary import is_object_list, is_object_mapping
 from .gui_state import build_gui_render_command, build_gui_short_video_command
 from .runtime_dependencies import RuntimeDependencyStatus
 from .subtitle_project import resolve_render_output_path
@@ -52,21 +54,36 @@ def transcription_capability(
     if not has_video:
         return ActionCapability("素材設定で動画を指定してください")
     if not has_audio:
-        return ActionCapability("動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。")
+        return ActionCapability(
+            "動画内に音声トラックが見つかりません。外部音声を追加するか、音声付きの動画を選択してください。"
+        )
     if not project_path:
         return ActionCapability("プロジェクト保存先を指定してください")
     return ActionCapability()
 
 
-def render_output_path(project_path: str | Path, project: Mapping[str, Any], *, short: bool) -> Path:
+def render_output_path(project_path: str | Path, project: Mapping[object, object], *, short: bool) -> Path:
     return resolve_render_output_path(project_path, project, short=short)
 
 
-def validate_render_output(output: Path, project: Mapping[str, Any], project_path: str) -> None:
+def _project_section(project: Mapping[object, object], key: str) -> Mapping[object, object]:
+    section = project.get(key, {})
+    if not is_object_mapping(section):
+        raise ValueError(f"{key} must be an object")
+    return section
+
+
+def validate_render_output(output: Path, project: Mapping[object, object], project_path: str) -> None:
     """Validate without creating files, for both capability display and execution."""
     target = output.resolve()
-    sources = [project_path, str(project.get("video", {}).get("path", ""))]
-    sources.extend(str(item.get("path", "")) for item in project.get("audio_sources", []))
+    sources = [project_path, str(_project_section(project, "video").get("path", ""))]
+    audio_sources = project.get("audio_sources", [])
+    if not is_object_list(audio_sources):
+        raise ValueError("audio_sources must be an array")
+    for item in audio_sources:
+        if not is_object_mapping(item):
+            raise ValueError("audio_sources items must be objects")
+        sources.append(str(item.get("path", "")))
     if any(source and target == Path(source).resolve() for source in sources):
         raise ValueError("出力先が入力素材またはプロジェクトと同じです")
     if target.exists() and (not target.is_file() or not os.access(target, os.W_OK)):
@@ -80,7 +97,7 @@ def validate_render_output(output: Path, project: Mapping[str, Any], project_pat
 
 def render_capability(
     dependencies: RuntimeDependencyStatus,
-    project: Mapping[str, Any] | None,
+    project: Mapping[object, object] | None,
     project_path: str,
     *,
     short: bool = False,
@@ -95,16 +112,14 @@ def render_capability(
     if missing:
         return ActionCapability("書き出しに必要なツールがありません: " + ", ".join(missing))
     try:
-        if not Path(str(project.get("video", {}).get("path", ""))).is_file():
+        if not Path(str(_project_section(project, "video").get("path", ""))).is_file():
             return ActionCapability("書き出す動画素材が見つかりません。素材を再指定してください")
         if short:
-            short_video = project.get("short_video", {})
+            short_video = _project_section(project, "short_video")
             if not short_video.get("enabled") or not short_video.get("clips"):
                 return ActionCapability("ショート動画のクリップを追加してください")
             if str(short_video.get("time_basis", "source")) != "source":
-                return ActionCapability(
-                    "ショートの時刻基準が不明です。元ソース動画の時間へ変換してください"
-                )
+                return ActionCapability("ショートの時刻基準が不明です。元ソース動画の時間へ変換してください")
         if require_output:
             validate_render_output(render_output_path(project_path, project, short=short), project, project_path)
     except (OSError, ValueError) as error:
@@ -114,7 +129,7 @@ def render_capability(
 
 def prepare_render_request(
     dependencies: RuntimeDependencyStatus,
-    project: Mapping[str, Any] | None,
+    project: Mapping[object, object] | None,
     project_path: str,
     config_path: str | Path,
     *,

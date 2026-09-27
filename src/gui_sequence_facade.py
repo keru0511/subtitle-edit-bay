@@ -9,13 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import (
-    Property,
-    Signal,
-    Slot,
-)
 from PySide6.QtWidgets import QFileDialog
 
+from .qt_decorators import Property, Signal, Slot
 from .media_probe import probe_media_duration
 from .subtitle_project import (
     SubtitleProjectError,

@@ -7,6 +7,7 @@ from pathlib import Path
 from src.gui_project_editor_controller import ProjectEditorController
 from src.subtitle_project import create_project, load_project
 from src.video_sequence import SequenceTransition, VideoSequence
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +19,7 @@ SEQUENCE_PANEL_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "SequenceEd
 MEDIA_BIN_QML = REPOSITORY_ROOT / "src" / "ui" / "components" / "MediaBinPanel.qml"
 
 
-class ProductionIntegrationContractTests(unittest.TestCase):
+class ProductionIntegrationContractTests(TypedTestCase):
     def test_production_workflow_routes_all_cross_workspace_actions_to_backend(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         short_screen = SHORT_SCREEN_QML.read_text(encoding="utf-8")
@@ -33,12 +34,16 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         # The shared workflow is the only owner of navigation side effects.
         # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
         for route in (
-            "onSourceSettingsRequested: sourcePopup.open()",
+            "onSourceSettingsRequested: root.openSourceSettings()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
         ):
             with self.subTest(route=route):
                 self.assertIn(route, workflow)
+        # 素材設定を開く前の入力確定はGUI操作でも検証する。
+        # test_source_settings_waits_for_uncommitted_ime_text
+        self.assertIn("function openSourceSettings()", workflow)
+        self.assertIn("sourcePopup.open()", workflow)
 
         # Short navigation snapshots the normal player before switching and
         # restores the backend-owned position when the workspace closes.

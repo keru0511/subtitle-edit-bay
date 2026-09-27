@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_string_object_mapping
 from src.gui_state import (
     SourceSelection,
     build_gui_command,
@@ -10,9 +11,10 @@ from src.gui_state import (
     build_speaker_entries_from_files,
     write_gui_runtime_config,
 )
+from tests.typed_case import TypedTestCase
 
 
-class GuiStateTests(unittest.TestCase):
+class GuiStateTests(TypedTestCase):
     def test_source_selection_starts_empty_and_serializes_audio_files_as_list(self) -> None:
         selection = SourceSelection()
 
@@ -27,9 +29,10 @@ class GuiStateTests(unittest.TestCase):
             audio = root / "1-speaker-a.flac"
             audio.write_bytes(b"audio")
             colors = root / "colors.json"
-            colors.write_text(json.dumps({
+            color_payload: dict[str, object] = {
                 "files": {"1-speaker-a.aac": {"color": "#FFD966", "aliases": ["1-speaker-a.flac"]}}
-            }), encoding="utf-8")
+            }
+            colors.write_text(json.dumps(color_payload), encoding="utf-8")
 
             speakers = build_speaker_entries_from_files([audio], colors)
 
@@ -78,19 +81,23 @@ class GuiStateTests(unittest.TestCase):
             },
             [{"track_key": "craig:speaker-a", "color": "#FFD966"}],
         )
+        shared = payload["shared"]
+        pipeline = payload["craig_pipeline"]
+        assert is_string_object_mapping(shared)
+        assert is_string_object_mapping(pipeline)
 
-        self.assertEqual(payload["shared"]["model"], "large-v3")
-        self.assertEqual(payload["shared"]["nvenc_cq"], 17)
-        self.assertEqual(payload["shared"]["x264_crf"], 16)
-        self.assertEqual(payload["shared"]["subtitle_font_size"], 64)
-        self.assertEqual(payload["shared"]["subtitle_outline_color"], "#123456")
-        self.assertEqual(payload["shared"]["subtitle_outline_thickness"], 7)
-        self.assertEqual(payload["craig_pipeline"]["subtitle_volume_scale_percent"], 25)
-        self.assertTrue(payload["craig_pipeline"]["cut_no_speech"])
-        self.assertEqual(payload["craig_pipeline"]["alignment_offset_adjustment"], -0.125)
-        self.assertEqual(payload["craig_pipeline"]["track_color"], ["craig:speaker-a=#FFD966"])
+        self.assertEqual(shared["model"], "large-v3")
+        self.assertEqual(shared["nvenc_cq"], 17)
+        self.assertEqual(shared["x264_crf"], 16)
+        self.assertEqual(shared["subtitle_font_size"], 64)
+        self.assertEqual(shared["subtitle_outline_color"], "#123456")
+        self.assertEqual(shared["subtitle_outline_thickness"], 7)
+        self.assertEqual(pipeline["subtitle_volume_scale_percent"], 25)
+        self.assertTrue(pipeline["cut_no_speech"])
+        self.assertEqual(pipeline["alignment_offset_adjustment"], -0.125)
+        self.assertEqual(pipeline["track_color"], ["craig:speaker-a=#FFD966"])
         for key in ("video", "audio_dir", "audio_file", "output_dir", "reference_audio", "reference_track", "target"):
-            self.assertNotIn(key, payload["craig_pipeline"])
+            self.assertNotIn(key, pipeline)
 
     def test_write_config_and_build_source_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

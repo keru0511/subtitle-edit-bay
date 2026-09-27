@@ -34,6 +34,8 @@ Item {
     }
 
     readonly property bool previewReady: mixerPreviewSession.previewReady
+    readonly property bool transportReady: root.previewReady
+        && mixerPreviewSession.player.seekable && mixerPreviewSession.player.duration > 0
     property alias initialPosition: mixerPreviewSession.initialPosition
     property real channelScrollPosition: 0
     property bool restoringChannelScroll: false
@@ -138,7 +140,7 @@ Item {
                         objectName: "mixerPlayButton"
                         Layout.preferredWidth: 46
                         Layout.preferredHeight: 34
-                        enabled: root.previewReady
+                        enabled: root.transportReady
                         onClicked: mixerPreviewSession.togglePlayback()
                         contentItem: Text {
                             text: mixerPreviewSession.player.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
@@ -149,7 +151,7 @@ Item {
                         }
                         background: Rectangle { radius: 7; color: mixerPlayButton.enabled ? root.colors.acid : "#252C28" }
                     }
-                    MixerButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: root.previewReady; onClicked: mixerPreviewSession.seekBy(-5000) }
+                    MixerButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: root.transportReady; onClicked: mixerPreviewSession.seekBy(-5000) }
                     Slider {
                         id: mixerSeek
                         objectName: "mixerSeek"
@@ -157,10 +159,10 @@ Item {
                         from: 0
                         to: Math.max(1, mixerPreviewSession.player.duration)
                         value: mixerPreviewSession.player.position
-                        enabled: root.previewReady
+                        enabled: root.transportReady
                         onMoved: mixerPreviewSession.seekTo(value)
                     }
-                    MixerButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: root.previewReady; onClicked: mixerPreviewSession.seekBy(5000) }
+                    MixerButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: root.transportReady; onClicked: mixerPreviewSession.seekBy(5000) }
                     Text {
                         objectName: "mixerTimeText"
                         Layout.preferredWidth: 142

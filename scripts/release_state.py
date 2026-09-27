@@ -11,12 +11,13 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, Sequence, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data_boundary import decode_json, is_object_list, is_object_mapping
 from scripts.release_contract import ReleaseContractError, release_version_from_tag
 
 
@@ -33,6 +34,23 @@ class ReleaseStateError(RuntimeError):
 class GitHubReleaseState:
     draft: bool
     published: bool
+
+
+class _BinaryResponse(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
+
+    def __enter__(self) -> _BinaryResponse: ...
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool | None: ...
+
+
+@dataclass
+class ReleaseStateArgs(argparse.Namespace):
+    command: str = ""
+    remote: str = "origin"
+    repository: str = ""
+    release_version: str = ""
+    github_output: Path = Path(".")
 
 
 def publication_action(state: GitHubReleaseState | None) -> str:
@@ -88,10 +106,10 @@ def github_release_state(
         query = urllib.parse.urlencode({"per_page": RELEASES_PER_PAGE, "page": page})
         releases_url = f"{api_root}/repos/{repository}/releases?{query}"
         payload = _request_github_json(releases_url, token, allow_not_found=False)
-        if not isinstance(payload, list):
+        if not is_object_list(payload):
             raise ReleaseStateError("GitHub Releases list response must be an array")
         matches = [
-            release for release in payload if isinstance(release, dict) and release.get("tag_name") == release_version
+            release for release in payload if is_object_mapping(release) and release.get("tag_name") == release_version
         ]
         if len(matches) > 1:
             raise ReleaseStateError(f"multiple GitHub Releases use tag {release_version}")
@@ -113,8 +131,9 @@ def _request_github_json(url: str, token: str, *, allow_not_found: bool) -> obje
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
+        opened = cast(_BinaryResponse, urllib.request.urlopen(request, timeout=30))
+        with opened as response:
+            return decode_json(response.read())
     except urllib.error.HTTPError as exc:
         if exc.code == 404 and allow_not_found:
             return None
@@ -124,7 +143,7 @@ def _request_github_json(url: str, token: str, *, allow_not_found: bool) -> obje
 
 
 def _parse_release(payload: object, release_version: str) -> GitHubReleaseState:
-    if not isinstance(payload, dict):
+    if not is_object_mapping(payload):
         raise ReleaseStateError("GitHub Release response must be an object")
     if payload.get("tag_name") != release_version:
         raise ReleaseStateError("GitHub Release response returned an unexpected tag")
@@ -149,7 +168,7 @@ def write_github_outputs(path: Path, state: GitHubReleaseState | None) -> None:
             output.write(f"{key}={value}\n")
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> ReleaseStateArgs:
     parser = argparse.ArgumentParser(description="Query immutable release state without hiding lookup failures.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -166,7 +185,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     published = subparsers.add_parser("assert-published")
     published.add_argument("--repository", required=True)
     published.add_argument("--release-version", required=True)
-    return parser.parse_args(argv)
+    return parser.parse_args(argv, namespace=ReleaseStateArgs())
 
 
 def main(argv: Sequence[str] | None = None) -> int:

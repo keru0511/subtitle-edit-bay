@@ -8,9 +8,10 @@ import uuid
 from pathlib import Path
 
 from scripts.check_unittest_discovery import ModuleDiscoveryResult, audit_test_modules
+from tests.typed_case import TypedTestCase
 
 
-class UnittestDiscoveryCheckerTests(unittest.TestCase):
+class UnittestDiscoveryCheckerTests(TypedTestCase):
     def _audit_fixture(self, files: dict[str, str]) -> list[ModuleDiscoveryResult]:
         temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)

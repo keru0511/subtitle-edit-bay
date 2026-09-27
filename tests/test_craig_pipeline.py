@@ -27,9 +27,10 @@ from src.craig_pipeline import (
     transcribe_audio_file,
     transcribe_craig_audio_files,
 )
+from tests.typed_case import TypedTestCase
 
 
-class CraigPipelineTests(unittest.TestCase):
+class CraigPipelineTests(TypedTestCase):
     def test_main_reports_missing_dependencies_before_processing_media(self) -> None:
         import sys
         import src.craig_pipeline as craig_pipeline
@@ -40,6 +41,36 @@ class CraigPipelineTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", argv), mock.patch.object(craig_pipeline, "check_runtime_dependencies", return_value=status):
             with self.assertRaisesRegex(SystemExit, "Missing runtime dependencies: ffmpeg, ffprobe, whisperx"):
                 craig_pipeline.main()
+
+    def test_main_preserves_null_language_for_auto_detection(self) -> None:
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        import src.craig_pipeline as craig_pipeline
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio = Path(temp_dir) / "1-speaker.flac"
+            audio.touch()
+            argv = ["craig_pipeline", "--video", "video.mkv", "--audio-file", str(audio), "--run"]
+            result = dict.fromkeys(
+                (
+                    "reference_audio", "matched_track", "offset_seconds", "alignment_score",
+                    "merged_json", "filtered_json", "ass_path", "cut_merged_json",
+                    "cut_ass_path", "final_video", "no_speech_report",
+                )
+            )
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(craig_pipeline, "load_command_runtime_config", return_value={"language": None}),
+                mock.patch.object(craig_pipeline, "format_dependency_error", return_value=None),
+                mock.patch.object(craig_pipeline, "resolve_alignment", return_value=("0:a:0", 0.0, 1.0)),
+                mock.patch.object(craig_pipeline, "run_craig_pipeline", return_value=result) as run_pipeline,
+            ):
+                craig_pipeline.main()
+
+            self.assertIsNone(run_pipeline.call_args.kwargs["language"])
+
     def test_normalize_db_threshold_accepts_number_or_ffmpeg_value(self) -> None:
         self.assertEqual(normalize_db_threshold(-40), "-40dB")
         self.assertEqual(normalize_db_threshold("-35dB"), "-35dB")
@@ -117,6 +148,26 @@ class CraigPipelineTests(unittest.TestCase):
             self.assertEqual(segments[0]["source_file"], "1-speaker-a.flac")
             self.assertTrue(segments[0]["source_stream_id"].startswith("audio-"))
             self.assertAlmostEqual(float(segments[0]["start"]), 1.25)
+
+    def test_build_craig_segments_rejects_invalid_json_shapes(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        invalid_payloads = (
+            ({"segments": {}}, "transcript.segments must be an array"),
+            ({"segments": [{"start": 0, "end": 1, "text": 3}]}, "text must be a string"),
+            ({"segments": [{"start": 0, "end": 1, "text": "hello", "words": [None]}]}, "word must be an object"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            transcript_path = Path(temp_dir) / "transcript.json"
+            for payload, message in invalid_payloads:
+                with self.subTest(message=message):
+                    transcript_path.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, message):
+                        build_craig_segments_for_transcript(
+                            "1-speaker-a.flac", str(transcript_path), {"speaker-a": "Oz"}, 0.0
+                        )
 
     def test_build_craig_segments_uses_unique_source_ids_for_matching_file_names(self) -> None:
         import json

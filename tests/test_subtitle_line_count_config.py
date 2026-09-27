@@ -1,9 +1,10 @@
 import unittest
 
 from src.subtitle_line_count_config import normalize_subtitle_line_count, subtitle_line_count_max_lines
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLineCountConfigTests(unittest.TestCase):
+class SubtitleLineCountConfigTests(TypedTestCase):
     def test_line_count_normalizer_accepts_auto_one_and_two_only(self) -> None:
         self.assertEqual(normalize_subtitle_line_count(None), "auto")
         self.assertEqual(normalize_subtitle_line_count(""), "auto")

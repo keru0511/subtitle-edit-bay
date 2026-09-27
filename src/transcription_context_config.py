@@ -66,7 +66,7 @@ def load_transcription_context_file(
 
 
 def transcription_context_from_runtime_config(
-    config: Mapping[str, object] | None,
+    config: object,
     *,
     cli_context_file: str | None = None,
     base_dir: str | Path | None = None,
@@ -80,7 +80,7 @@ def transcription_context_from_runtime_config(
     """
     if config is None:
         config = {}
-    if not isinstance(config, Mapping):
+    if not is_object_mapping(config):
         raise TranscriptionContextConfigError("runtime config must be an object")
 
     if cli_context_file:

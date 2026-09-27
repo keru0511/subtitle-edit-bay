@@ -12,9 +12,10 @@ from src.sequence_render import (
 )
 from src.subtitle_project import create_project, load_project, save_project
 from src.video_sequence import VideoSequence
+from tests.typed_case import TypedTestCase
 
 
-class SequenceRenderTests(unittest.TestCase):
+class SequenceRenderTests(TypedTestCase):
     def _sequence(self, first: Path, second: Path) -> VideoSequence:
         return VideoSequence.from_json(
             {

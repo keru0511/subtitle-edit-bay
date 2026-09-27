@@ -13,6 +13,7 @@ from src.highlight_candidates import (
     highlight_cache_key,
 )
 from src.highlight_signals import build_speech_signals
+from tests.typed_case import TypedTestCase
 
 
 SEGMENTS = [
@@ -23,7 +24,7 @@ SEGMENTS = [
 ]
 
 
-class HighlightCandidateTests(unittest.TestCase):
+class HighlightCandidateTests(TypedTestCase):
     def test_signals_normalize_audio_and_fallback_to_subtitles(self) -> None:
         signals = build_speech_signals(
             SEGMENTS,
@@ -115,9 +116,7 @@ class HighlightCandidateTests(unittest.TestCase):
             first = generate_highlight_candidates(SEGMENTS, settings=settings, cache_directory=temp_dir)
             cache_path = next(Path(temp_dir).glob("*.json"))
             cache_path.write_text("{broken", encoding="utf-8")
-            regenerated = generate_highlight_candidates(
-                SEGMENTS, settings=settings, cache_directory=temp_dir
-            )
+            regenerated = generate_highlight_candidates(SEGMENTS, settings=settings, cache_directory=temp_dir)
         self.assertEqual([item.to_json() for item in first], [item.to_json() for item in regenerated])
 
     def test_cancellation_is_reported(self) -> None:

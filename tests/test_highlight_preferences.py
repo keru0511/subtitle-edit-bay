@@ -6,9 +6,22 @@ from unittest import mock
 
 from src.highlight_feedback import HighlightFeedbackStore
 from src.highlight_preferences import HighlightPreferenceModel, PreferenceSettings
+from tests.typed_case import TypedTestCase
 
 
-class HighlightPreferenceTests(unittest.TestCase):
+class HighlightPreferenceTests(TypedTestCase):
+    def test_feedback_store_reloads_saved_events(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = f"{temp_dir}/feedback.json"
+            store = HighlightFeedbackStore(path)
+            saved = store.record("h1", "accepted", {"category": "action", "intensity": 0.8})
+
+            reloaded = HighlightFeedbackStore(path)
+
+            self.assertEqual(len(reloaded.events), 1)
+            self.assertEqual(reloaded.events[0].candidate_id, saved.candidate_id)
+            self.assertEqual(reloaded.events[0].features, saved.features)
+
     def test_feedback_store_excludes_text_and_supports_export_reset_delete(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = HighlightFeedbackStore(f"{temp_dir}/feedback.json")
@@ -47,7 +60,10 @@ class HighlightPreferenceTests(unittest.TestCase):
         model = HighlightPreferenceModel([], settings=settings)
         ranked = model.rank([{"id": "h1", "score": 0.4, "intensity": 1.0}])
         self.assertEqual(ranked[0]["score"], 0.4)
-        self.assertIn("baseline", ranked[0]["preference_explanation"])
+        explanation = ranked[0]["preference_explanation"]
+        if not isinstance(explanation, str):
+            self.fail("好みの説明は文字列である必要がある")
+        self.assertIn("baseline", explanation)
 
     def test_synthetic_feedback_is_bounded_explainable_and_toggleable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -58,7 +74,10 @@ class HighlightPreferenceTests(unittest.TestCase):
                 store.record(f"reject-{index}", "rejected", {"intensity": 0.0, "text": 0.0})
             model = HighlightPreferenceModel(store.events, settings=PreferenceSettings(max_weight_delta=0.1))
             ranked = model.rank([{"id": "h1", "score": 0.4, "intensity": 1.0, "text": 0.8}])
-            self.assertLessEqual(abs(ranked[0]["preference_adjustment"]), 0.1)
+            adjustment = ranked[0]["preference_adjustment"]
+            if not isinstance(adjustment, (int, float)):
+                self.fail("好みの補正値は数値である必要がある")
+            self.assertLessEqual(abs(adjustment), 0.1)
             self.assertTrue(ranked[0]["preference_explanation"])
             model.set_enabled(False)
             self.assertEqual(model.rank([{"id": "h1", "score": 0.4, "intensity": 1.0}])[0]["score"], 0.4)

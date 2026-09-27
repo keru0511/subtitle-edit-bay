@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .ai_provider import (
     AIModel,
@@ -20,6 +20,7 @@ from .ai_provider import (
     AIProviderSession,
     AIProviderState,
 )
+from .data_boundary import is_object_sequence, is_string_object_mapping
 from .gemini_acp_client import (
     ACP_PROTOCOL_VERSION as ACP_PROTOCOL_VERSION,
     DEFAULT_GEMINI_CLIENT_NAME as DEFAULT_GEMINI_CLIENT_NAME,
@@ -46,7 +47,7 @@ class GeminiAcpProvider:
         *,
         workspace_root: str | Path = ".",
         client_factory: Callable[[], GeminiAcpClientProtocol] | None = None,
-        runtime_detector: Callable[..., GeminiRuntimeInfo] = detect_gemini,
+        runtime_detector: Callable[[Path], GeminiRuntimeInfo] = detect_gemini,
         preferred_model: str = "",
         request_timeout: float = 30.0,
     ) -> None:
@@ -423,22 +424,37 @@ class GeminiAcpProvider:
             raise GeminiAcpProviderError("Gemini ACPへ接続されていません")
         return client
 
-    def _set_state(self, **changes: Any) -> AIProviderState:
+    def _set_state(
+        self,
+        *,
+        availability: str | None = None,
+        auth_state: str | None = None,
+        auth_label: str | None = None,
+        login_url: str | None = None,
+        login_id: str | None = None,
+        models: tuple[AIModel, ...] | None = None,
+        model_selection_supported: bool | None = None,
+        selected_model: str | None = None,
+        error: str | None = None,
+        login_available: bool | None = None,
+    ) -> AIProviderState:
         with self._lock:
             current = self._state
             self._state = AIProviderState(
-                availability=changes.get("availability", current.availability),
-                auth_state=changes.get("auth_state", current.auth_state),
-                auth_label=changes.get("auth_label", current.auth_label),
-                login_url=changes.get("login_url", current.login_url),
-                login_id=changes.get("login_id", current.login_id),
-                models=changes.get("models", current.models),
-                model_selection_supported=changes.get(
-                    "model_selection_supported", current.model_selection_supported
+                availability=current.availability if availability is None else availability,
+                auth_state=current.auth_state if auth_state is None else auth_state,
+                auth_label=current.auth_label if auth_label is None else auth_label,
+                login_url=current.login_url if login_url is None else login_url,
+                login_id=current.login_id if login_id is None else login_id,
+                models=current.models if models is None else models,
+                model_selection_supported=(
+                    current.model_selection_supported
+                    if model_selection_supported is None
+                    else model_selection_supported
                 ),
-                selected_model=changes.get("selected_model", current.selected_model),
-                error=changes.get("error", current.error),
-                login_available=changes.get("login_available", current.login_available),
+                selected_model=current.selected_model if selected_model is None else selected_model,
+                error=current.error if error is None else error,
+                login_available=current.login_available if login_available is None else login_available,
             )
             state = self._state
         self._emit(AIProviderEvent(kind="state_changed"))
@@ -465,7 +481,7 @@ class GeminiAcpProviderError(GeminiAcpError):
 GeminiACPProviderError = GeminiAcpProviderError
 
 
-def _auth_state_from_initialize(result: Mapping[str, Any]) -> tuple[str, str]:
+def _auth_state_from_initialize(result: Mapping[str, object]) -> tuple[str, str]:
     raw = result.get("authState", result.get("auth_state"))
     if isinstance(raw, str):
         normalized = raw.casefold().replace("-", "_")
@@ -484,13 +500,13 @@ def _auth_state_from_initialize(result: Mapping[str, Any]) -> tuple[str, str]:
     return "unknown", ""
 
 
-def _normalize_auth_methods(result: Mapping[str, Any]) -> tuple[Mapping[str, str], ...]:
+def _normalize_auth_methods(result: Mapping[str, object]) -> tuple[Mapping[str, str], ...]:
     raw = result.get("authMethods")
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+    if not is_object_sequence(raw) or isinstance(raw, (str, bytes)):
         return ()
     methods: list[Mapping[str, str]] = []
     for item in raw:
-        if not isinstance(item, Mapping):
+        if not is_string_object_mapping(item):
             continue
         method_id = str(item.get("id") or "").strip()
         if not method_id:
@@ -504,17 +520,17 @@ def _normalize_auth_methods(result: Mapping[str, Any]) -> tuple[Mapping[str, str
     return tuple(methods)
 
 
-def _normalize_models(result: Mapping[str, Any]) -> tuple[tuple[AIModel, ...], str]:
+def _normalize_models(result: Mapping[str, object]) -> tuple[tuple[AIModel, ...], str]:
     payload = result.get("models")
-    if not isinstance(payload, Mapping):
+    if not is_string_object_mapping(payload):
         return (), ""
     raw = payload.get("availableModels")
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+    if not is_object_sequence(raw) or isinstance(raw, (str, bytes)):
         return (), ""
     current = str(payload.get("currentModelId") or "").strip()
     models: list[AIModel] = []
     for item in raw:
-        if isinstance(item, Mapping):
+        if is_string_object_mapping(item):
             model_id = str(item.get("modelId") or item.get("id") or "").strip()
             label = str(item.get("name") or item.get("displayName") or model_id)
         else:

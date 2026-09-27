@@ -5,9 +5,10 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping, TypedDict
 
 from .audio_mixer import reconcile_audio_mix, video_track_entries
+from .data_boundary import coerce_float
 from .ass_template import (
     DEFAULT_SUBTITLE_OUTLINE_COLOR,
     DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
@@ -55,6 +56,15 @@ from .transcription_hint_workflow import build_craig_hint_plan_from_context, res
 DEFAULT_SPEAKER_COLORS = ["#FFD966", "#F6B26B", "#93C47D", "#6FA8DC", "#E78284", "#81C8BE"]
 
 
+class _WorkflowSpeaker(TypedDict):
+    name: str
+    style: str
+    track_key: str
+    file_name: str
+    path: str
+    color: str
+
+
 def log_progress(message: str) -> None:
     print(f"[subtitle_workflow] {message}", flush=True)
 
@@ -82,8 +92,8 @@ def _project_speakers(
     audio_files: list[Path],
     style_map: dict[str, str],
     track_color_map: dict[str, str],
-) -> list[dict[str, Any]]:
-    speakers: list[dict[str, Any]] = []
+) -> list[_WorkflowSpeaker]:
+    speakers: list[_WorkflowSpeaker] = []
     for index, audio_file in enumerate(audio_files):
         name = parse_craig_speaker_name(str(audio_file))
         track_key = f"craig:{name}"
@@ -94,7 +104,9 @@ def _project_speakers(
                 "track_key": track_key,
                 "file_name": audio_file.name,
                 "path": str(audio_file.resolve()),
-                "color": track_color_map.get(track_key, DEFAULT_SPEAKER_COLORS[index % len(DEFAULT_SPEAKER_COLORS)]).upper(),
+                "color": track_color_map.get(
+                    track_key, DEFAULT_SPEAKER_COLORS[index % len(DEFAULT_SPEAKER_COLORS)]
+                ).upper(),
             }
         )
     return speakers
@@ -102,10 +114,10 @@ def _project_speakers(
 
 def _build_waveforms(
     audio_files: list[Path],
-    speakers: list[dict[str, Any]],
+    speakers: list[_WorkflowSpeaker],
     offset_seconds: float,
-) -> list[dict[str, Any]]:
-    waveforms: list[dict[str, Any]] = []
+) -> list[dict[str, object]]:
+    waveforms: list[dict[str, object]] = []
     speaker_by_path = {str(Path(item["path"]).resolve()): item for item in speakers}
     for audio_file in audio_files:
         speaker = speaker_by_path[str(audio_file.resolve())]
@@ -175,7 +187,7 @@ def build_workflow_asr_settings(
 
 
 def build_default_workflow_transcription_hint(
-    transcription_context: TranscriptionContext | Mapping[str, Any] | None,
+    transcription_context: object,
     *,
     output_dir: str | Path,
     asr_settings: TranscriptionAsrSettings,
@@ -185,7 +197,11 @@ def build_default_workflow_transcription_hint(
     空のコンテキストではヒントを追加しない。実行設定と入力音声のキャッシュ検証は
     ヒントの有無にかかわらず、下位の実行処理で行う。
     """
-    context = transcription_context_from_mapping(transcription_context) if not isinstance(transcription_context, TranscriptionContext) else transcription_context
+    context = (
+        transcription_context_from_mapping(transcription_context)
+        if not isinstance(transcription_context, TranscriptionContext)
+        else transcription_context
+    )
     if not _context_has_active_hint_inputs(context):
         return None
     return build_craig_hint_plan_from_context(
@@ -201,7 +217,7 @@ def transcribe_craig_audio_files_for_workflow(
     style_map: dict[str, str],
     offset_seconds: float,
     *,
-    transcription_context: TranscriptionContext | Mapping[str, Any] | None = None,
+    transcription_context: object = None,
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     compute_type: str = DEFAULT_COMPUTE_TYPE,
@@ -275,9 +291,9 @@ def transcribe_to_project_with_context(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-    render_settings: dict[str, Any] | None = None,
+    render_settings: Mapping[str, object] | None = None,
     overwrite_project: bool = False,
-    transcription_context: TranscriptionContext | Mapping[str, Any] | None = None,
+    transcription_context: object = None,
 ) -> Path:
     """Create an editable project using context-aware Craig transcription.
 
@@ -285,7 +301,11 @@ def transcribe_to_project_with_context(
     context-aware transcription path isolated until the larger workflow module can
     be safely reduced to a thin call-through.
     """
-    context = transcription_context_from_mapping(transcription_context) if not isinstance(transcription_context, TranscriptionContext) else transcription_context
+    context = (
+        transcription_context_from_mapping(transcription_context)
+        if not isinstance(transcription_context, TranscriptionContext)
+        else transcription_context
+    )
     if context_base_dir is not None:
         dictionary_path = resolve_confirmed_dictionary_path(context, base_dir=context_base_dir)
         if dictionary_path is not None:
@@ -308,9 +328,7 @@ def transcribe_to_project_with_context(
         reference_path = resolved_audio[0]
 
     editable_project_path = (
-        Path(project_path).expanduser().resolve()
-        if project_path
-        else derive_project_path(video_path, output)
+        Path(project_path).expanduser().resolve() if project_path else derive_project_path(video_path, output)
     )
     if editable_project_path.exists() and not overwrite_project:
         raise SystemExit(
@@ -381,7 +399,7 @@ def transcribe_to_project_with_context(
     try:
         duration_seconds = probe_media_duration(video_path)
     except (OSError, subprocess.CalledProcessError, ValueError):
-        duration_seconds = max((float(segment["end"]) for segment in refined), default=0.0)
+        duration_seconds = max((coerce_float(segment["end"]) for segment in refined), default=0.0)
 
     project = create_project(
         video_path=video_path,

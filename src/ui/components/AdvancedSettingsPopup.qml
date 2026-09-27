@@ -14,6 +14,13 @@ Popup {
     property alias outlineThickness: outlineThicknessSpin.value
     readonly property string selectedDevice: deviceCombo.currentText
     readonly property int selectedFontSize: Math.max(3, Math.round(root.defaultSubtitleFontSize * root.fontSizePercent / 100))
+    readonly property bool numericInputsValid: root.numericFieldValid(gapField)
+        && root.numericFieldValid(paddingField)
+        && root.numericFieldValid(minDurationField)
+        && root.numericFieldValid(lufsField)
+        && root.numericFieldValid(silenceField)
+        && root.numericFieldValid(speechPaddingField)
+        && root.numericFieldValid(speechThresholdField)
 
     signal saveRequested
     signal outlineColorRequested(string currentColor)
@@ -43,6 +50,15 @@ Popup {
         return value === undefined || value === null ? fallback : value;
     }
 
+    function numericFieldValid(field) {
+        var value = String(field.text).trim()
+        return value.length > 0 && isFinite(Number(value))
+    }
+
+    function requiredNumber(field) {
+        return root.numericFieldValid(field) ? Number(field.text) : NaN
+    }
+
     function settingsValues() {
         return {
             "model": modelCombo.currentText,
@@ -55,15 +71,16 @@ Popup {
             "subtitle_outline_color": root.outlineColor,
             "subtitle_outline_thickness": root.outlineThickness,
             "subtitle_volume_scale_percent": volumeScaleSpin.value,
-            "subtitle_max_gap_seconds": Number(gapField.text),
-            "subtitle_end_padding_seconds": Number(paddingField.text),
-            "subtitle_min_duration_seconds": Number(minDurationField.text),
+            "subtitle_max_gap_seconds": root.requiredNumber(gapField),
+            "subtitle_end_padding_seconds": root.requiredNumber(paddingField),
+            "subtitle_min_duration_seconds": root.requiredNumber(minDurationField),
             "audio_normalize": normalizeSwitch.checked,
-            "audio_target_lufs": Number(lufsField.text),
+            "audio_target_lufs": root.requiredNumber(lufsField),
             "cut_no_speech": silenceSwitch.checked,
-            "no_speech_min_seconds": Number(silenceField.text),
-            "speech_padding_seconds": Number(speechPaddingField.text),
-            "speech_threshold_db": String(Number(speechThresholdField.text)) + "dB",
+            "no_speech_min_seconds": root.requiredNumber(silenceField),
+            "speech_padding_seconds": root.requiredNumber(speechPaddingField),
+            "speech_threshold_db": root.numericFieldValid(speechThresholdField)
+                ? String(Number(speechThresholdField.text)) + "dB" : NaN,
             "postprocess_workers": workersSpin.value
         };
     }
@@ -104,8 +121,16 @@ Popup {
             objectName: "settingsPopupSaveButton"
             Layout.fillWidth: true
             text: "設定を保存"
-            enabled: !root.appBackend.running
+            enabled: !root.appBackend.running && root.numericInputsValid
             onClicked: root.saveRequested()
+        }
+        Text {
+            objectName: "settingsNumericValidationMessage"
+            Layout.fillWidth: true
+            visible: !root.numericInputsValid
+            text: "数値を入力してください"
+            color: "#EF4444"
+            font.pixelSize: 10
         }
         SettingsButton {
             objectName: "settingsPopupCloseButton"

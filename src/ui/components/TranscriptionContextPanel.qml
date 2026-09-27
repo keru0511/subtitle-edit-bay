@@ -309,7 +309,7 @@ Rectangle {
                 objectName: "transcriptionDictionaryConfirmedSwitch"
                 enabled: !panelRoot.running
                 checked: false
-                onToggled: panelRoot.commitContext()
+                onClicked: panelRoot.commitContext()
             }
             Text {
                 Layout.fillWidth: true
@@ -330,7 +330,7 @@ Rectangle {
                 objectName: "transcriptionWebDictionarySwitch"
                 enabled: !panelRoot.running
                 checked: false
-                onToggled: panelRoot.commitContext()
+                onClicked: panelRoot.commitContext()
             }
             Text {
                 Layout.fillWidth: true
@@ -345,7 +345,10 @@ Rectangle {
                 objectName: "transcriptionWebDictionaryRefreshButton"
                 enabled: !panelRoot.running
                 text: "候補を更新"
-                onClicked: panelRoot.webDictionaryRefreshRequested(webDictionaryUrlField.text, webDictionarySnippetField.text)
+                onClicked: {
+                    panelRoot.commitContext()
+                    panelRoot.webDictionaryRefreshRequested(webDictionaryUrlField.text, webDictionarySnippetField.text)
+                }
             }
         }
 
@@ -414,21 +417,29 @@ Rectangle {
                 model: webDictionaryCandidateModel
                 interactive: false
                 delegate: RowLayout {
+                    id: candidateRow
+                    required property string term
+                    required property string source
+                    required property bool selected
+                    required property int index
                     width: ListView.view.width
                     spacing: 8
                     CheckBox {
                         objectName: "transcriptionWebDictionaryCandidateItem"
-                        text: model.term
-                        checked: model.selected
+                        text: candidateRow.term
+                        checked: candidateRow.selected
                         enabled: !panelRoot.running
-                        onToggled: {
-                            webDictionaryCandidateModel.setProperty(index, "selected", checked)
+                        onClicked: {
+                            if (candidateRow.index < 0 || candidateRow.index >= webDictionaryCandidateModel.count
+                                    || webDictionaryCandidateModel.get(candidateRow.index).term !== candidateRow.term)
+                                return
+                            webDictionaryCandidateModel.setProperty(candidateRow.index, "selected", checked)
                             panelRoot.commitContext()
                         }
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: panelRoot.sourceLabel(model.source)
+                        text: panelRoot.sourceLabel(candidateRow.source)
                         color: panelRoot.textMutedColor
                         elide: Text.ElideRight
                     }
@@ -436,7 +447,11 @@ Rectangle {
                         objectName: "transcriptionWebDictionaryRemoveButton"
                         enabled: !panelRoot.running
                         text: "削除"
-                        onClicked: panelRoot.removeCandidate(index)
+                        onClicked: {
+                            if (candidateRow.index >= 0 && candidateRow.index < webDictionaryCandidateModel.count
+                                    && webDictionaryCandidateModel.get(candidateRow.index).term === candidateRow.term)
+                                panelRoot.removeCandidate(candidateRow.index)
+                        }
                     }
                 }
             }

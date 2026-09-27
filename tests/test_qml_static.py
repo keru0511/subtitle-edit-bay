@@ -6,6 +6,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 UI_ROOT = Path(__file__).resolve().parents[1] / "src" / "ui"
@@ -63,7 +64,7 @@ QML_LINT_FILES = (
 )
 
 
-class QmlStaticTests(unittest.TestCase):
+class QmlStaticTests(TypedTestCase):
     def test_sequence_editor_uses_backend_view_and_mutation_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "MediaBinPanel.qml").read_text(encoding="utf-8")
@@ -121,8 +122,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("currentEditMode: root.appBackend.workspace.currentEditMode", workflow)
         # 保存・書き出しの接続はtest_gui_editorの実キー入力・実クリックで検証する。
         # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
+        # 素材設定の接続はtest_source_settings_waits_for_uncommitted_ime_textで検証する。
         for action in (
-            "onSourceSettingsRequested: sourcePopup.open()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
         ):

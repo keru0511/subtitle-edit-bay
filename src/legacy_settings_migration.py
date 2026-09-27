@@ -7,8 +7,10 @@ import os
 import stat
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
+from . import installer_migration as _installer_migration
+from .data_boundary import decode_json, is_object_dict, is_object_list, is_object_mapping
 from .legacy_migration_types import (
     CATEGORY_RUNTIME_CONFIG,
     CATEGORY_SPEAKER_COLORS,
@@ -48,7 +50,6 @@ from .legacy_migration_types import (
     SettingsMigrationOptions,
     SettingsMigrationSkip,
     TranscriptionDictionaryError,
-    _installer_migration,
     load_transcription_dictionary,
 )
 from .legacy_migration_inventory import (
@@ -102,12 +103,12 @@ def _setting_selected(entry: InventoryEntry, kind: str, options: SettingsMigrati
 
 def _json_key_paths(value: object, prefix: str = "") -> tuple[str, ...]:
     paths: list[str] = []
-    if isinstance(value, Mapping):
+    if is_object_mapping(value):
         for key in sorted(value, key=str):
             child = f"{prefix}.{key}" if prefix else str(key)
             paths.append(child)
             paths.extend(_json_key_paths(value[key], child))
-    elif isinstance(value, list):
+    elif is_object_list(value):
         for index, child_value in enumerate(value):
             child = f"{prefix}[{index}]"
             paths.append(child)
@@ -252,15 +253,12 @@ def _prepare_runtime_payload(
     source_root: Path,
     destination_root: Path,
     capabilities: RuntimeCapabilities,
-) -> tuple[dict[str, Any], tuple[str, ...]]:
+) -> tuple[dict[str, object], tuple[str, ...]]:
     payload, adjusted = _installer_migration.validated_runtime_config(source_path, capabilities)
     changes = list(adjusted)
-    context = (
-        payload.get("craig_pipeline", {}).get("transcription_context")
-        if isinstance(payload.get("craig_pipeline"), Mapping)
-        else None
-    )
-    if isinstance(context, Mapping):
+    pipeline = payload.get("craig_pipeline")
+    context = pipeline.get("transcription_context") if is_object_dict(pipeline) else None
+    if is_object_dict(context):
         dictionary_value = context.get("dictionary_path")
         if isinstance(dictionary_value, str) and dictionary_value:
             dictionary_path = Path(dictionary_value)
@@ -294,17 +292,17 @@ def _prepare_setting_file(
             _assert_safe_user_setting_payload(raw_payload)
             payload = _installer_migration.validated_speaker_colors(source_path)
             return _json_bytes(payload), (), _json_key_paths(payload)
-        payload = json.loads(source_path.read_text(encoding="utf-8-sig"))
-        _assert_safe_user_setting_payload(payload)
+        raw_json_payload = decode_json(source_path.read_text(encoding="utf-8-sig"))
+        _assert_safe_user_setting_payload(raw_json_payload)
         if kind == SETTING_DICTIONARY:
             normalized = load_transcription_dictionary(source_path).to_json()
             return _json_bytes(normalized), ("dictionary.normalized",), _json_key_paths(normalized)
         elif kind == SETTING_PRESET:
-            _validate_preset_payload(payload, source_path)
+            _validate_preset_payload(raw_json_payload, source_path)
         elif kind == SETTING_USER_SETTINGS:
-            if not isinstance(payload, Mapping):
+            if not isinstance(raw_json_payload, Mapping):
                 raise MigrationError(f"user settings root must be an object: {source_path}")
-        return source_path.read_bytes(), (), _json_key_paths(payload)
+        return source_path.read_bytes(), (), _json_key_paths(raw_json_payload)
     except (
         OSError,
         UnicodeError,
@@ -464,6 +462,10 @@ def build_settings_migration_plan(
     )
 
 
+def _path_depth(path: Path) -> int:
+    return len(path.parts)
+
+
 def _snapshot_targets(paths: Sequence[Path]) -> tuple[dict[Path, bytes | None], tuple[Path, ...]]:
     snapshots: dict[Path, bytes | None] = {}
     parents: set[Path] = set()
@@ -475,7 +477,7 @@ def _snapshot_targets(paths: Sequence[Path]) -> tuple[dict[Path, bytes | None], 
         while not parent.exists():
             parents.add(parent)
             parent = parent.parent
-    return snapshots, tuple(sorted(parents, key=lambda item: len(item.parts), reverse=True))
+    return snapshots, tuple(sorted(parents, key=_path_depth, reverse=True))
 
 
 def _write_bytes_atomic(path: Path, payload: bytes, *, temporary_suffix: str = ".tmp") -> None:

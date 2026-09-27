@@ -12,9 +12,10 @@ from src.audio_preview_cache import (
     audio_preview_cache_entries,
 )
 from src.gui_audio_preview_controller import AudioPreviewController
+from tests.typed_case import TypedTestCase
 
 
-class AudioPreviewControllerTests(unittest.TestCase):
+class AudioPreviewControllerTests(TypedTestCase):
     def _project(self, root: Path) -> dict[str, Any]:
         video = root / "capture.mkv"
         external = root / "speaker.aac"

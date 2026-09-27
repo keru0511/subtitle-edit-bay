@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 from pathlib import Path
 
+from .data_boundary import decode_json
 from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import (
     DEFAULT_SUBTITLE_FONT_SIZE,
@@ -13,7 +13,17 @@ from .ass_template import (
 )
 from .merge_transcripts import write_merged_transcript
 from .render_ass import parse_track_color_args, render_ass
-from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
+from .runtime_config import (
+    load_command_runtime_config,
+    resolve_bool_option,
+    resolve_integer_option,
+    resolve_list_option,
+    resolve_number_option,
+    resolve_required_integer_option,
+    resolve_required_number_option,
+    resolve_required_string_option,
+    resolve_string_option,
+)
 from .transcribe import (
     build_extract_audio_command,
     build_whisperx_command,
@@ -40,8 +50,34 @@ DEFAULT_MAX_SPEAKERS = 3
 DEFAULT_LANGUAGE = "ja"
 
 
+class PipelineArguments(argparse.Namespace):
+    config: str | None
+    input: str | None
+    audio_track: list[str] | None
+    output_dir: str | None
+    transcript: str | None
+    output: str | None
+    model: str | None
+    device: str | None
+    compute_type: str | None
+    width: int | None
+    height: int | None
+    diarize_track: list[str] | None
+    min_speakers: int | None
+    max_speakers: int | None
+    language: str | None
+    vad_onset: float | None
+    vad_offset: float | None
+    track_color: list[str] | None
+    subtitle_font_size: int | None
+    subtitle_max_gap_seconds: float | None
+    subtitle_end_padding_seconds: float | None
+    subtitle_min_duration_seconds: float | None
+    run: bool | None
+
+
 def build_ass_from_data(
-    data: dict,
+    data: object,
     ass_output: str,
     width: int = 1920,
     height: int = 1080,
@@ -84,7 +120,7 @@ def build_ass_from_transcript(
     subtitle_outline_color: str = DEFAULT_SUBTITLE_OUTLINE_COLOR,
     subtitle_outline_thickness: int = DEFAULT_SUBTITLE_OUTLINE_THICKNESS,
 ) -> Path:
-    data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+    data = decode_json(Path(transcript_path).read_text(encoding="utf-8"))
     return build_ass_from_data(
         data,
         ass_output,
@@ -128,7 +164,7 @@ def run_media_to_ass(
     diarize: bool = False,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
-    language: str = "ja",
+    language: str | None = "ja",
     vad_onset: float | None = DEFAULT_VAD_ONSET,
     vad_offset: float | None = DEFAULT_VAD_OFFSET,
     track_color_map: dict[str, str] | None = None,
@@ -183,7 +219,7 @@ def run_media_to_ass_many(
     diarize_tracks: set[str] | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
-    language: str = "ja",
+    language: str | None = "ja",
     vad_onset: float | None = DEFAULT_VAD_ONSET,
     vad_offset: float | None = DEFAULT_VAD_OFFSET,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
@@ -229,7 +265,7 @@ def run_media_to_merged_ass(
     diarize_tracks: set[str] | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
-    language: str = "ja",
+    language: str | None = "ja",
     vad_onset: float | None = DEFAULT_VAD_ONSET,
     vad_offset: float | None = DEFAULT_VAD_OFFSET,
     track_color_map: dict[str, str] | None = None,
@@ -304,7 +340,7 @@ def print_dry_run(
     diarize_tracks: set[str],
     min_speakers: int | None,
     max_speakers: int | None,
-    language: str,
+    language: str | None,
     vad_onset: float | None,
     vad_offset: float | None,
 ) -> None:
@@ -352,7 +388,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the subtitle pipeline from chosen audio tracks to a merged ASS.")
     parser.add_argument("--config", help="Path to runtime JSON config.")
     parser.add_argument("--input", help="Input media path such as MKV or MP4.")
-    parser.add_argument("--audio-track", nargs="+", default=None, help="One or more track selectors such as 0:a:1 0:a:3.")
+    parser.add_argument(
+        "--audio-track", nargs="+", default=None, help="One or more track selectors such as 0:a:1 0:a:3."
+    )
     parser.add_argument("--output-dir", default=None, help="Working directory for WAV, JSON, and ASS.")
     parser.add_argument("--transcript", help="Existing WhisperX transcript JSON. Skips extraction and WhisperX.")
     parser.add_argument("--output", help="Output ASS path. For media input, this is the merged ASS path.")
@@ -361,42 +399,74 @@ def main() -> None:
     parser.add_argument("--compute-type", default=None, help="WhisperX compute type.")
     parser.add_argument("--width", type=int, default=None, help="Video width.")
     parser.add_argument("--height", type=int, default=None, help="Video height.")
-    parser.add_argument("--diarize-track", nargs="*", default=None, help="Tracks that should run diarization when HF_TOKEN is set.")
+    parser.add_argument(
+        "--diarize-track", nargs="*", default=None, help="Tracks that should run diarization when HF_TOKEN is set."
+    )
     parser.add_argument("--min-speakers", type=int, default=None, help="Minimum speaker count for diarized tracks.")
     parser.add_argument("--max-speakers", type=int, default=None, help="Maximum speaker count for diarized tracks.")
     parser.add_argument("--language", default=None, help="Language code passed to WhisperX.")
     parser.add_argument("--vad-onset", type=float, default=None, help="VAD onset threshold passed to WhisperX.")
     parser.add_argument("--vad-offset", type=float, default=None, help="VAD offset threshold passed to WhisperX.")
-    parser.add_argument("--track-color", action="append", default=None, help="Per-track subtitle color like 0:a:1=#FFFFFF.")
+    parser.add_argument(
+        "--track-color", action="append", default=None, help="Per-track subtitle color like 0:a:1=#FFFFFF."
+    )
     parser.add_argument("--subtitle-font-size", type=int, default=None, help="Base ASS subtitle font size.")
-    parser.add_argument("--subtitle-max-gap-seconds", type=float, default=None, help="Split subtitles when the gap between words reaches this many seconds.")
-    parser.add_argument("--subtitle-end-padding-seconds", type=float, default=None, help="Extra time to keep a subtitle after the last word ends.")
-    parser.add_argument("--subtitle-min-duration-seconds", type=float, default=None, help="Minimum subtitle duration after end trimming.")
-    parser.add_argument("--run", action="store_true", default=None, help="Execute extraction and WhisperX instead of printing commands.")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--subtitle-max-gap-seconds",
+        type=float,
+        default=None,
+        help="Split subtitles when the gap between words reaches this many seconds.",
+    )
+    parser.add_argument(
+        "--subtitle-end-padding-seconds",
+        type=float,
+        default=None,
+        help="Extra time to keep a subtitle after the last word ends.",
+    )
+    parser.add_argument(
+        "--subtitle-min-duration-seconds",
+        type=float,
+        default=None,
+        help="Minimum subtitle duration after end trimming.",
+    )
+    parser.add_argument(
+        "--run", action="store_true", default=None, help="Execute extraction and WhisperX instead of printing commands."
+    )
+    args = parser.parse_args(namespace=PipelineArguments())
 
     config = load_command_runtime_config("pipeline", args.config)
-    input_media = resolve_option(args.input, config, "input")
+    input_media = resolve_string_option(args.input, config, "input")
     audio_tracks = resolve_list_option(args.audio_track, config, "audio_track", DEFAULT_AUDIO_TRACKS)
-    output_dir_value = resolve_option(args.output_dir, config, "output_dir", DEFAULT_OUTPUT_DIR)
-    transcript = resolve_option(args.transcript, config, "transcript")
-    output = resolve_option(args.output, config, "output")
-    model = resolve_option(args.model, config, "model", DEFAULT_MODEL)
-    device = resolve_option(args.device, config, "device", DEFAULT_DEVICE)
-    compute_type = resolve_option(args.compute_type, config, "compute_type", DEFAULT_COMPUTE_TYPE)
-    width = int(resolve_option(args.width, config, "width", DEFAULT_WIDTH))
-    height = int(resolve_option(args.height, config, "height", DEFAULT_HEIGHT))
+    output_dir_value = resolve_required_string_option(args.output_dir, config, "output_dir", DEFAULT_OUTPUT_DIR)
+    transcript = resolve_string_option(args.transcript, config, "transcript")
+    output = resolve_string_option(args.output, config, "output")
+    model = resolve_required_string_option(args.model, config, "model", DEFAULT_MODEL)
+    device = resolve_required_string_option(args.device, config, "device", DEFAULT_DEVICE)
+    compute_type = resolve_required_string_option(args.compute_type, config, "compute_type", DEFAULT_COMPUTE_TYPE)
+    width = resolve_required_integer_option(args.width, config, "width", DEFAULT_WIDTH)
+    height = resolve_required_integer_option(args.height, config, "height", DEFAULT_HEIGHT)
     diarize_tracks = set(resolve_list_option(args.diarize_track, config, "diarize_track", list(DEFAULT_DIARIZE_TRACKS)))
-    min_speakers = resolve_option(args.min_speakers, config, "min_speakers", DEFAULT_MIN_SPEAKERS)
-    max_speakers = resolve_option(args.max_speakers, config, "max_speakers", DEFAULT_MAX_SPEAKERS)
-    language = resolve_option(args.language, config, "language", DEFAULT_LANGUAGE)
-    vad_onset = resolve_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
-    vad_offset = resolve_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
+    min_speakers = resolve_integer_option(args.min_speakers, config, "min_speakers", DEFAULT_MIN_SPEAKERS)
+    max_speakers = resolve_integer_option(args.max_speakers, config, "max_speakers", DEFAULT_MAX_SPEAKERS)
+    language = resolve_string_option(args.language, config, "language", DEFAULT_LANGUAGE)
+    vad_onset = resolve_number_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
+    vad_offset = resolve_number_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
     track_color_map = parse_track_color_args(resolve_list_option(args.track_color, config, "track_color", []))
-    subtitle_font_size = int(resolve_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE))
-    subtitle_max_gap_seconds = float(resolve_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS))
-    subtitle_end_padding_seconds = float(resolve_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS))
-    subtitle_min_duration_seconds = float(resolve_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS))
+    subtitle_font_size = resolve_required_integer_option(
+        args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE
+    )
+    subtitle_max_gap_seconds = resolve_required_number_option(
+        args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS
+    )
+    subtitle_end_padding_seconds = resolve_required_number_option(
+        args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS
+    )
+    subtitle_min_duration_seconds = resolve_required_number_option(
+        args.subtitle_min_duration_seconds,
+        config,
+        "subtitle_min_duration_seconds",
+        DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
+    )
     run = resolve_bool_option(args.run, config, "run", False)
 
     if transcript:

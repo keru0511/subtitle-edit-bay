@@ -167,6 +167,7 @@
         "test_gui_sequence_dependencies",
         "test_gui_test_harness",
         "test_qml_static",
+        "test_qt_decorators",
         "test_realtime_audio_mixer"
       ],
       "selectors": []

@@ -11,12 +11,10 @@ from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property,
     QProcess,
-    Signal,
-    Slot,
 )
 
+from .qt_decorators import Property, Signal, Slot
 from .gui_state import build_gui_transcribe_command
 from .workflow_actions import (
     ActionCapability,
@@ -329,7 +327,10 @@ class WorkflowFacade(FeatureFacade):
             reference_audio = audio_files[0]
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
-        backend.saveSettings(settings)
+        if not backend.saveSettings(settings):
+            if project_path is not None:
+                self._reset_transcription_integration_state()
+            return
         self._state.transcription_generated_project_path = str(Path(project_path).resolve()) if project_path else ""
         command = build_gui_transcribe_command(
             backend.gui_config_path,
@@ -391,7 +392,8 @@ class WorkflowFacade(FeatureFacade):
             return
         effective_settings = dict(settings)
         effective_settings["video_codec"] = request.video_codec
-        backend.saveSettings(effective_settings)
+        if not backend.saveSettings(effective_settings):
+            return
         backend._update_project_settings(effective_settings)
         if not backend.saveProject():
             return

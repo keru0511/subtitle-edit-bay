@@ -11,12 +11,13 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-class WindowsLauncherTests(unittest.TestCase):
+class WindowsLauncherTests(TypedTestCase):
     @unittest.skipUnless(os.name == "nt", "Windows is required")
     def test_native_launcher_build_verifies_x64_gui_and_static_crt(self) -> None:
         powershell = self._require_windows_powershell()

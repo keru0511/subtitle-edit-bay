@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .transcribe import (
@@ -42,7 +42,7 @@ def transcribe_audio_with_cache(
     hotwords: Sequence[str] | str | None = None,
     skip_existing: bool = True,
     cache_fingerprint: str | None = None,
-    cache_settings: Mapping[str, Any] | None = None,
+    cache_settings: Mapping[str, object] | None = None,
 ) -> TranscriptionExecutionResult:
     """実際の認識設定・入力音声に一致する結果だけ再利用する。"""
     output = Path(output_dir)

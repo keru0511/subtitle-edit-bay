@@ -9,7 +9,7 @@ import time
 import unittest
 from collections import Counter
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TypeGuard
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,15 +31,23 @@ class ManifestError(ValueError):
     """Raised when the CI test group manifest is incomplete or invalid."""
 
 
+def _string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def discover_test_modules(tests_dir: Path) -> list[str]:
     return sorted(path.stem for path in tests_dir.glob("test_*.py") if path.is_file())
 
 
 def _validate_string_list(value: object, label: str, errors: list[str]) -> list[str]:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+    if not _object_list(value) or not all(isinstance(item, str) for item in value):
         errors.append(f"{label} must be a list of strings")
         return []
-    items = list(value)
+    items = [item for item in value if isinstance(item, str)]
     if items != sorted(items):
         errors.append(f"{label} must be sorted")
     duplicates = sorted(item for item, count in Counter(items).items() if count > 1)
@@ -53,13 +61,13 @@ def validate_manifest(
     tests_dir: Path = DEFAULT_TESTS_DIR,
 ) -> dict[str, dict[str, list[str]]]:
     errors: list[str] = []
-    if not isinstance(manifest, dict):
+    if not _string_object_dict(manifest):
         raise ManifestError("manifest root must be an object")
     if manifest.get("schema_version") != 1:
         errors.append("schema_version must be 1")
 
     raw_groups = manifest.get("groups")
-    if not isinstance(raw_groups, dict):
+    if not _string_object_dict(raw_groups):
         errors.append("groups must be an object")
         raw_groups = {}
 
@@ -77,7 +85,7 @@ def validate_manifest(
     all_selectors: list[str] = []
     for group_name in sorted(raw_groups):
         raw_group = raw_groups[group_name]
-        if not isinstance(raw_group, dict):
+        if not _string_object_dict(raw_group):
             errors.append(f"groups.{group_name} must be an object")
             continue
         unknown_keys = sorted(set(raw_group) - {"modules", "selectors"})
@@ -143,7 +151,7 @@ def load_manifest(
     tests_dir: Path = DEFAULT_TESTS_DIR,
 ) -> dict[str, dict[str, list[str]]]:
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest: object = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ManifestError(f"could not read {manifest_path}: {exc}") from exc
     return validate_manifest(manifest, tests_dir)
@@ -210,7 +218,14 @@ def write_github_summary(summary: str) -> None:
         print(f"warning: could not write GitHub step summary: {exc}", file=sys.stderr)
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+class _RunnerArgs(argparse.Namespace):
+    manifest: Path = DEFAULT_MANIFEST_PATH
+    tests_dir: Path = DEFAULT_TESTS_DIR
+    groups: list[str] | None = None
+    validate: bool = False
+
+
+def parse_args(argv: Sequence[str] | None = None) -> _RunnerArgs:
     parser = argparse.ArgumentParser(
         description="Validate and run explicitly classified CI test groups.",
     )
@@ -237,7 +252,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Validate classification without importing test modules.",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=_RunnerArgs())
     if args.validate and args.groups:
         parser.error("--validate cannot be combined with --group")
     if not args.validate and not args.groups:
@@ -261,7 +276,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"- {group_name}: {len(group['modules'])} modules, {len(group['selectors'])} selectors")
         return 0
 
-    selected_groups = list(dict.fromkeys(args.groups))
+    selected_groups: list[str] = []
+    for group_name in args.groups or []:
+        if group_name not in selected_groups:
+            selected_groups.append(group_name)
     unknown_groups = sorted(set(selected_groups) - set(groups))
     if unknown_groups:
         print(

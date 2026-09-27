@@ -11,13 +11,18 @@ from src.gemini_runtime import (
     detect_gemini,
     redact_gemini_diagnostic,
 )
+from tests.typed_case import TypedTestCase
 
 
-class GeminiRuntimeTests(unittest.TestCase):
+def _unexpected_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    raise AssertionError(f"予期しないGemini CLI起動: {command}")
+
+
+class GeminiRuntimeTests(TypedTestCase):
     def test_detection_uses_official_acp_command_and_no_shell(self) -> None:
         calls: list[tuple[list[str], dict[str, object]]] = []
 
-        def run(command, **kwargs):
+        def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             calls.append((command, kwargs))
             return subprocess.CompletedProcess(command, 0, stdout="gemini-cli 0.59.0\n", stderr="")
 
@@ -38,7 +43,7 @@ class GeminiRuntimeTests(unittest.TestCase):
         self.assertEqual(calls[0][1]["encoding"], "utf-8")
 
     def test_detection_accepts_plain_version_from_a_gemini_named_binary(self) -> None:
-        def run(command, **kwargs):
+        def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(command, 0, stdout="0.59.0\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -56,11 +61,11 @@ class GeminiRuntimeTests(unittest.TestCase):
                 temp_dir,
                 environment={},
                 which=lambda _name: None,
-                run=lambda *args, **kwargs: None,
+                run=_unexpected_run,
             )
         self.assertFalse(missing.available)
 
-        def run_unrelated(command, **kwargs):
+        def run_unrelated(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(command, 0, stdout="other-tool 9.9.9\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -88,7 +93,7 @@ class GeminiRuntimeTests(unittest.TestCase):
         self.assertNotIn("gemini-secret", redacted)
         self.assertNotIn("C:\\Users\\name", redacted)
         self.assertNotIn("/home/name", redacted)
-        info = detect_gemini(".", environment={}, which=lambda _name: None, run=lambda *a, **k: None)
+        info = detect_gemini(".", environment={}, which=lambda _name: None, run=_unexpected_run)
         self.assertNotIn("C:\\", str(build_gemini_diagnostic(info)))
 
 

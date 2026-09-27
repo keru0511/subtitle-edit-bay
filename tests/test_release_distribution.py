@@ -61,6 +61,7 @@ from tests.workflow_contracts import (
     validate_publish_permissions,
     validate_step_order,
 )
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -77,7 +78,7 @@ RELEASE_ASSET_NAMES = {
 }
 
 
-class ReleaseDistributionTests(unittest.TestCase):
+class ReleaseDistributionTests(TypedTestCase):
     def test_installer_is_per_user_and_omits_local_data(self) -> None:
         definition = (ROOT / "installer" / "SubtitleEditBay.iss").read_text(encoding="utf-8-sig")
 
@@ -577,7 +578,7 @@ class ReleaseDistributionTests(unittest.TestCase):
         self.assertIn("公開済みのタグを削除・付け替えしない", releasing)
 
 
-class WorkflowContractHelperTests(unittest.TestCase):
+class WorkflowContractHelperTests(TypedTestCase):
     def _transitive_release_workflow(self) -> dict[str, Any]:
         return {
             "on": {"push": {"tags": ["v*"]}},
@@ -813,7 +814,7 @@ class WorkflowContractHelperTests(unittest.TestCase):
         self.assertEqual(step_by_id(workflow, "publish", "verify")["shell"], "bash")
 
 
-class ReleaseCandidateTests(unittest.TestCase):
+class ReleaseCandidateTests(TypedTestCase):
     RELEASE_SHA = "d" * 40
     CANDIDATE_SHA = "c" * 40
     HEAD_SHA = "b" * 40
@@ -1173,6 +1174,22 @@ class ReleaseCandidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseCandidateError, "does not match"):
                 verify_preparation_binding(candidate_path, preparation_path)
 
+    def test_saved_candidate_rejects_invalid_field_types(self) -> None:
+        candidate = select_release_candidate(self._api(), self.RELEASE_SHA, "v1.2.3")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            candidate_path = Path(temp_dir) / "candidate.json"
+            preparation_path = Path(temp_dir) / "preparation.json"
+            for field_name, invalid_value in (
+                ("schema_version", True),
+                ("workflow_run_id", "200"),
+                ("pull_request_head_sha", None),
+            ):
+                with self.subTest(field_name=field_name):
+                    payload = {**candidate.__dict__, field_name: invalid_value}
+                    candidate_path.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaisesRegex(ReleaseCandidateError, field_name):
+                        verify_preparation_binding(candidate_path, preparation_path)
+
     def test_partial_rerun_reuses_successful_build_artifact_from_prior_attempt(self) -> None:
         prior_attempt_jobs = {
             "Classify merge candidate": 1,
@@ -1344,7 +1361,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             api.pages.assert_called_once()
 
 
-class ReleaseArtifactContractTests(unittest.TestCase):
+class ReleaseArtifactContractTests(TypedTestCase):
     def _write_release_artifacts(
         self,
         directory: Path,
@@ -1500,7 +1517,7 @@ class ReleaseArtifactContractTests(unittest.TestCase):
                     verify_release_artifacts(directory, "1.2.3")
 
 
-class ReleaseReadinessClassificationTests(unittest.TestCase):
+class ReleaseReadinessClassificationTests(TypedTestCase):
     def test_version_only_increase_is_a_release(self) -> None:
         result = classify_values(("VERSION",), "v1.2.3", "v1.2.4")
 
@@ -1608,7 +1625,7 @@ class ReleaseReadinessClassificationTests(unittest.TestCase):
                 assert_ci_validation_results(*values)
 
 
-class ReleaseStateTests(unittest.TestCase):
+class ReleaseStateTests(TypedTestCase):
     def test_publication_action_separates_new_published_and_draft_releases(self) -> None:
         self.assertEqual(publication_action(None), "create")
         self.assertEqual(publication_action(GitHubReleaseState(draft=False, published=True)), "reuse")

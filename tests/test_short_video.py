@@ -11,9 +11,10 @@ from src.short_video_schema import (
     ShortVideoOutput,
     ShortVideoTransition,
 )
+from tests.typed_case import TypedTestCase
 
 
-class BuildShortVideoFilterComplexTests(unittest.TestCase):
+class BuildShortVideoFilterComplexTests(TypedTestCase):
     def test_empty_clips_raises(self) -> None:
         short = ShortVideo(enabled=True, clips=[])
         with self.assertRaises(ShortVideoError):

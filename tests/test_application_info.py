@@ -9,9 +9,10 @@ from src.application_info import (
     resolve_application_info,
     resolve_application_version,
 )
+from tests.typed_case import TypedTestCase
 
 
-class ApplicationInfoTests(unittest.TestCase):
+class ApplicationInfoTests(TypedTestCase):
     def test_missing_version_file_uses_development_label(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

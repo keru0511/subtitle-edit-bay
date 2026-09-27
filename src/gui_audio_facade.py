@@ -6,13 +6,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
-from PySide6.QtCore import (
-    Property,
-    Signal,
-    Slot,
-)
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 
+from .qt_decorators import Property, Signal, Slot
 from .audio_mixer import (
     DEFAULT_AUDIO_TRACK,
     active_audio_mix_channels,
@@ -370,6 +366,8 @@ class AudioFacade(FeatureFacade):
         allow_silence: bool = False,
     ) -> bool:
         backend = self._backend
+        if backend._running:
+            return False
         if self.project_editor.project is None or not backend._audio_mix_proposal:
             backend._set_status("適用する音量ミキサーの変更案がありません", "CHECK")
             return False

@@ -10,13 +10,11 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property,
     QUrl,
-    Signal,
-    Slot,
 )
 from PySide6.QtGui import QDesktopServices
 
+from .qt_decorators import Property, Signal, Slot
 from .audio_mix_proposal import (
     AudioMixProposalError,
     build_audio_mix_proposal,
@@ -536,6 +534,8 @@ class AIChatFacade(FeatureFacade):
     @Slot("QVariantList")
     def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
         backend = self._backend
+        if backend._running:
+            return
         if self.project_editor.project is None or not backend._codex_proposal:
             backend._set_status("適用するCodex編集案がありません", "CHECK")
             return

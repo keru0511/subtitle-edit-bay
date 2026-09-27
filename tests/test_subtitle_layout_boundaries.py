@@ -4,9 +4,10 @@ import unittest
 from dataclasses import dataclass
 
 from src.subtitle_layout import scoring, tokenize
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLayoutBoundaryTests(unittest.TestCase):
+class SubtitleLayoutBoundaryTests(TypedTestCase):
     def tearDown(self) -> None:
         tokenize.create_budoux_parser.cache_clear()
         tokenize.create_janome_tokenizer.cache_clear()

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Sequence
+from http.client import HTTPResponse
+from typing import Sequence, cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .transcription_metadata import (
+    WebDictionaryCandidate,
     normalize_web_dictionary_term as _normalize_term,
     normalize_web_dictionary_candidate_metadata as normalize_web_dictionary_candidate_metadata,
 )
@@ -53,7 +55,7 @@ def fetch_web_dictionary_source(url: str, *, timeout: float = 10.0) -> str:
         raise ValueError("web dictionary URL must use http:// or https://")
     request = Request(normalized_url, headers={"User-Agent": "SubtitleEditBay/1.0"})
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with cast(HTTPResponse, urlopen(request, timeout=timeout)) as response:
             charset = response.headers.get_content_charset() or "utf-8"
             raw = response.read(512_000)
     except (OSError, URLError) as error:
@@ -78,7 +80,7 @@ def _extract_terms(value: str, *, allow_branded_phrase: bool = False) -> list[st
     result: list[str] = []
     tokens: list[str] = []
 
-    for raw in _SPLIT_RE.split(value):
+    for raw in cast(list[str], _SPLIT_RE.split(value)):
         for token in raw.split():
             normalized_token = _normalize_term(token)
             if normalized_token:
@@ -132,17 +134,16 @@ def _candidate_terms_with_sources(
 ) -> list[tuple[str, str, float]]:
     seen: set[str] = set()
     items: list[tuple[str, str, float]] = []
-    source_order = [
+    source_order: list[tuple[str, str, float]] = [
         (_TITLE_SOURCE, game_title, 1.0),
         (_NOTES_SOURCE, game_notes, 0.7),
-        *_coerce_snippets(snippets),
+        *((label, text, 0.5) for label, text in _coerce_snippets(snippets)),
     ]
 
-    for source_entry in source_order:
-        source_label, raw_text = source_entry[:2]
-        source_score = float(source_entry[2]) if len(source_entry) > 2 else 0.5
-        if not isinstance(raw_text, str):
-            continue
+    def sort_key(item: tuple[str, str, float]) -> tuple[float, str]:
+        return -item[2], item[0].casefold()
+
+    for source_label, raw_text, source_score in source_order:
         normalized_source_text = _strip_html(raw_text)
         if not normalized_source_text.strip():
             continue
@@ -159,8 +160,8 @@ def _candidate_terms_with_sources(
             seen.add(lowered)
             items.append((normalized_term, source_label, source_score))
             if len(items) >= max_terms:
-                return sorted(items, key=lambda item: (-item[2], item[0].casefold()))[:max_terms]
-    return sorted(items, key=lambda item: (-item[2], item[0].casefold()))[:max_terms]
+                return sorted(items, key=sort_key)[:max_terms]
+    return sorted(items, key=sort_key)[:max_terms]
 
 
 def build_web_dictionary_candidate_metadata(
@@ -169,14 +170,14 @@ def build_web_dictionary_candidate_metadata(
     *,
     max_terms: int = _MAX_WEB_DICTIONARY_CANDIDATES,
     snippets: Sequence[str] | None = None,
-) -> tuple[dict[str, str], ...]:
+) -> tuple[WebDictionaryCandidate, ...]:
     return tuple(
         {"term": term, "source": source, "score": f"{score:.2f}"}
         for term, source, score in _candidate_terms_with_sources(
-        game_title,
-        game_notes,
-        max_terms=max_terms,
-        snippets=snippets,
+            game_title,
+            game_notes,
+            max_terms=max_terms,
+            snippets=snippets,
         )
     )
 
@@ -189,9 +190,12 @@ def build_web_dictionary_candidates(
     snippets: Sequence[str] | None = None,
 ) -> tuple[str, ...]:
     """Build a deterministic candidate list from title/notes/snippets without network access."""
-    return tuple(term for term, _, _ in _candidate_terms_with_sources(
-        game_title,
-        game_notes,
-        max_terms=max_terms,
-        snippets=snippets,
-    ))
+    return tuple(
+        term
+        for term, _, _ in _candidate_terms_with_sources(
+            game_title,
+            game_notes,
+            max_terms=max_terms,
+            snippets=snippets,
+        )
+    )

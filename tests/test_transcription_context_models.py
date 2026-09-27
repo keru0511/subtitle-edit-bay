@@ -10,9 +10,10 @@ from src.transcription_context import (
     normalize_transcription_context,
     transcription_context_from_mapping,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionContextModelTests(unittest.TestCase):
+class TranscriptionContextModelTests(TypedTestCase):
     def test_default_context_has_stable_project_shape(self) -> None:
         expected: TranscriptionContextPayload = {
             "game_title": "",

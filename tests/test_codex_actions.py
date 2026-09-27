@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import unittest
 from types import SimpleNamespace
-from typing import Any, Mapping
+from typing import Mapping
 
 from src.codex_actions import (
     ACTION_DEFINITIONS,
@@ -14,20 +14,22 @@ from src.codex_actions import (
     GuiActionBackend,
     HandlerResult,
 )
+from src.data_boundary import is_object_mapping, is_object_sequence
+from tests.typed_case import TypedTestCase
 
 
 class FakeBackend:
     def __init__(self) -> None:
         self.current_revision = 7
         self.active_job = ""
-        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
         self.project = {"segments": [{"id": "s1", "text": "before"}]}
 
-    def inspect(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
+    def inspect(self, action_type: str, args: Mapping[str, object]) -> HandlerResult:
         self.calls.append(("inspect", action_type, dict(args)))
         return HandlerResult("inspected", state=deepcopy(self.project))
 
-    def propose(self, action_type: str, args: Mapping[str, Any], revision: int) -> HandlerResult:
+    def propose(self, action_type: str, args: Mapping[str, object], revision: int) -> HandlerResult:
         self.calls.append(("propose", action_type, dict(args)))
         if args.get("intent") == "invalid operation":
             raise ActionRejected(ActionErrorCode.INVALID_OPERATION, "unknown proposal operation")
@@ -39,7 +41,7 @@ class FakeBackend:
             },
         )
 
-    def execute(self, action_type: str, args: Mapping[str, Any]) -> HandlerResult:
+    def execute(self, action_type: str, args: Mapping[str, object]) -> HandlerResult:
         self.calls.append(("execute", action_type, dict(args)))
         return HandlerResult("started", job={"id": "job-1", "status": "running"})
 
@@ -47,12 +49,12 @@ class FakeBackend:
 def request(
     kind: str,
     action_type: str,
-    args: Mapping[str, Any] | None = None,
+    args: Mapping[str, object] | None = None,
     *,
     revision: int | None = None,
     scope_id: str = "request-1",
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "schema_version": 1,
         "kind": kind,
         "type": action_type,
@@ -64,7 +66,7 @@ def request(
     return payload
 
 
-class CodexActionTests(unittest.TestCase):
+class CodexActionTests(TypedTestCase):
     def setUp(self) -> None:
         self.backend = FakeBackend()
         self.dispatcher = ActionDispatcher(self.backend)
@@ -103,8 +105,14 @@ class CodexActionTests(unittest.TestCase):
         self.assertNotIn("shell", self.dispatcher.allowed_action_types)
 
     def test_schema_rejects_unknown_fields_types_ranges_and_values(self) -> None:
-        cases = [
+        unexpected_key: dict[object, object] = {}
+        unexpected_key.update(request("inspect", "inspect_project_state"))
+        unexpected_key[1] = "unexpected"
+        cases: list[object] = [
             {**request("inspect", "inspect_project_state"), "method": "saveProject"},
+            unexpected_key,
+            {**request("inspect", "inspect_project_state"), "args": {1: "unexpected"}},
+            ["not an action"],
             request("execute", "start_transcription", {"mode": "arbitrary"}),
             request(
                 "propose",
@@ -178,6 +186,7 @@ class CodexActionTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status.value, "success")
+        assert result.proposal is not None
         self.assertEqual(result.proposal["base_revision"], 7)
         self.assertEqual(self.backend.project, before)
 
@@ -233,6 +242,7 @@ class CodexActionTests(unittest.TestCase):
 
         self.assertEqual(unconfirmed.code, "confirmation_required")
         self.assertEqual(confirmed.status.value, "success")
+        assert confirmed.job is not None
         self.assertEqual(confirmed.job["id"], "job-1")
 
     def test_current_action_rejects_unbound_or_reused_confirmation_scope(self) -> None:
@@ -272,11 +282,11 @@ class CodexActionTests(unittest.TestCase):
         self.assertEqual(result.job, {"id": "job-1", "status": "running"})
 
     def test_handler_exception_is_sanitized(self) -> None:
-        def fail(_action_type: str, _args: Mapping[str, Any]) -> HandlerResult:
-            raise RuntimeError("secret at C:/Users/name/project.json")
+        class FailingBackend(FakeBackend):
+            def inspect(self, action_type: str, args: Mapping[str, object]) -> HandlerResult:
+                raise RuntimeError("secret at C:/Users/name/project.json")
 
-        self.backend.inspect = fail  # type: ignore[method-assign]
-        result = self.dispatcher.dispatch(
+        result = ActionDispatcher(FailingBackend()).dispatch(
             request("inspect", "inspect_project_state"),
             trusted_scope=self.scope,
         )
@@ -285,14 +295,14 @@ class CodexActionTests(unittest.TestCase):
         self.assertNotIn("C:/", result.message)
 
 
-class GuiActionBackendTests(unittest.TestCase):
+class GuiActionBackendTests(TypedTestCase):
     def test_processing_state_reads_workflow_progress(self) -> None:
         class Progress:
             value = 0.42
             status = "running"
 
             @staticmethod
-            def as_list() -> list[dict[str, Any]]:
+            def as_list() -> list[dict[str, object]]:
                 return [{"id": "encode", "state": "running"}]
 
         class Workflow:
@@ -306,6 +316,7 @@ class GuiActionBackendTests(unittest.TestCase):
 
         state = GuiActionBackend(GuiStub()).inspect("inspect_processing_state", {}).state
 
+        assert state is not None
         self.assertEqual(state["active_job"], "render")
         self.assertEqual(state["progress"], 0.42)
         self.assertEqual(state["status"], "running")
@@ -325,7 +336,7 @@ class GuiActionBackendTests(unittest.TestCase):
                 self.value = value
 
             @staticmethod
-            def as_list() -> list[dict[str, Any]]:
+            def as_list() -> list[dict[str, object]]:
                 return [{"id": "encode", "status": "completed"}]
 
         class GuiStub:
@@ -342,10 +353,13 @@ class GuiActionBackendTests(unittest.TestCase):
 
         for normal_status, normal_progress in (("idle", 0.0), ("completed", 1.0)):
             with self.subTest(normal_status=normal_status):
-                state = GuiActionBackend(GuiStub(normal_status, normal_progress)).inspect(
-                    "inspect_processing_state", {}
-                ).state
+                state = (
+                    GuiActionBackend(GuiStub(normal_status, normal_progress))
+                    .inspect("inspect_processing_state", {})
+                    .state
+                )
 
+                assert state is not None
                 self.assertEqual(state["active_job"], "subtitle_proposal")
                 self.assertTrue(state["running"])
                 self.assertEqual(state["status"], "running")
@@ -363,9 +377,9 @@ class GuiActionBackendTests(unittest.TestCase):
             settings = {"device": "cpu"}
 
             def __init__(self) -> None:
-                self.calls: list[tuple[dict[str, Any], str]] = []
+                self.calls: list[tuple[dict[str, object], str]] = []
 
-            def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+            def transcribeProject(self, settings: dict[str, object], mode: str) -> None:
                 self.calls.append((settings, mode))
                 self._running = True
                 self._active_job = "transcribe"
@@ -427,24 +441,26 @@ class GuiActionBackendTests(unittest.TestCase):
             _running = False
             _active_job = ""
             highlightAnalysisState = "idle"
-            audioMixerChannels = [{
-                "id": "audio:" + "1" * 32,
-                "kind": "external",
-                "label": "声",
-                "enabled": True,
-                "muted": False,
-                "solo": False,
-                "volume_percent": 100.0,
-            }]
+            audioMixerChannels = [
+                {
+                    "id": "audio:" + "1" * 32,
+                    "kind": "external",
+                    "label": "声",
+                    "enabled": True,
+                    "muted": False,
+                    "solo": False,
+                    "volume_percent": 100.0,
+                }
+            ]
             audioPreviewLevels = {"audio:" + "1" * 32: 0.5}
             audioMasterLevel = 0.8
             audioLimiterReductionDb = 1.0
             editorPlayhead = {"sourcePositionMs": 1250}
 
             def __init__(self) -> None:
-                self.start_args: dict[str, Any] | None = None
+                self.start_args: dict[str, object] | None = None
 
-            def start_codex_audio_mix_proposal(self, **kwargs: Any) -> bool:
+            def start_codex_audio_mix_proposal(self, **kwargs: object) -> bool:
                 self.start_args = kwargs
                 return True
 
@@ -471,8 +487,14 @@ class GuiActionBackendTests(unittest.TestCase):
         self.assertIsNotNone(gui.start_args)
         assert gui.start_args is not None
         self.assertEqual(gui.start_args["revision"], 4)
-        self.assertEqual(gui.start_args["context"]["channels"][0]["preview_level"], 0.5)
-        self.assertNotIn("path", gui.start_args["context"]["channels"][0])
+        context = gui.start_args["context"]
+        assert is_object_mapping(context)
+        channels = context["channels"]
+        assert is_object_sequence(channels)
+        channel = channels[0]
+        assert is_object_mapping(channel)
+        self.assertEqual(channel["preview_level"], 0.5)
+        self.assertNotIn("path", channel)
 
     def test_inspect_filters_local_paths_and_unknown_dispatch_is_rejected(self) -> None:
         class GuiStub:
@@ -493,8 +515,13 @@ class GuiActionBackendTests(unittest.TestCase):
         subtitle = backend.inspect("inspect_subtitle_state", {}).state
         audio = backend.inspect("inspect_audio_mix_state", {}).state
 
-        self.assertNotIn("path", subtitle["segments"][0])
-        self.assertNotIn("path", audio["channels"][0])
+        for state, field in ((subtitle, "segments"), (audio, "channels")):
+            assert state is not None
+            entries = state[field]
+            assert is_object_sequence(entries)
+            first = entries[0]
+            assert is_object_mapping(first)
+            self.assertNotIn("path", first)
         with self.assertRaisesRegex(ActionRejected, "no backend handler"):
             backend.inspect("save_project", {})
 

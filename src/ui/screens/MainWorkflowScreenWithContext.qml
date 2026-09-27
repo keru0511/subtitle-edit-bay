@@ -20,12 +20,16 @@ MainWorkflowScreen {
         onVisibleChanged: if (visible) forceActiveFocus()
 
         function saveContext() {
-            contextPanel.commitContext()
-            screenRoot.appBackend.saveSettings(screenRoot.currentSettings())
+            if (screenRoot.appBackend.running)
+                return false
+            var settings = screenRoot.currentSettings()
+            settings.transcription_context = contextPanel.contextPayload()
+            return screenRoot.appBackend.saveSettings(settings)
         }
 
         function saveAndClose() {
-            saveContext()
+            if (!saveContext())
+                return
             screenRoot.closeDictionaryScreen()
         }
 
@@ -78,9 +82,19 @@ MainWorkflowScreen {
         }
     }
 
+    Connections {
+        target: screenRoot
+        function onClosing(close) {
+            if (screenRoot.dictionaryMode && !screenRoot.appBackend.running
+                    && !dictionaryPage.saveContext())
+                close.accepted = false
+        }
+    }
+
     Shortcut {
+        objectName: "transcriptionDictionarySaveShortcut"
         sequences: [StandardKey.Save]
-        enabled: screenRoot.dictionaryMode
+        enabled: screenRoot.dictionaryMode && !screenRoot.appBackend.running
         onActivated: dictionaryPage.saveContext()
     }
 }

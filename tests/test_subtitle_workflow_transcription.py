@@ -19,9 +19,10 @@ from src.subtitle_workflow_transcription import (
     transcribe_to_project_with_context,
 )
 from src.transcription_context import TranscriptionContext
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleWorkflowTranscriptionTests(unittest.TestCase):
+class SubtitleWorkflowTranscriptionTests(TypedTestCase):
     def test_empty_context_preserves_legacy_cache_behavior(self) -> None:
         with TemporaryDirectory() as temp_dir:
             transcript_dir = Path(temp_dir) / "transcripts"

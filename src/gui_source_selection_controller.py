@@ -3,9 +3,10 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 from .color_config import normalize_rgb_color, save_speaker_color
+from .data_boundary import is_object_mapping
 from .gui_source_state import (
     AUDIO_EXTENSIONS,
     VIDEO_EXTENSIONS,
@@ -67,7 +68,7 @@ class SourceSelectionController:
         *,
         color_config_path: str | Path | None = None,
         media_stream_probe: Callable[[str], set[str]] = probe_media_stream_types,
-        audio_stream_probe: Callable[[str], Iterable[dict[str, Any]]] = probe_audio_streams,
+        audio_stream_probe: Callable[[str], Iterable[dict[str, object]]] = probe_audio_streams,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve()
         self.color_config_path = (
@@ -217,10 +218,11 @@ class SourceSelectionController:
             return self._failure("対応する話者音声ファイルを指定してください")
 
         existing = list(self._source_selection.audio_files) if append else []
-        combined = sorted(
-            dict.fromkeys([*existing, *valid_files]),
-            key=lambda path: (Path(path).name.casefold(), path.casefold()),
-        )
+
+        def sort_key(path: str) -> tuple[str, str]:
+            return Path(path).name.casefold(), path.casefold()
+
+        combined = sorted(dict.fromkeys([*existing, *valid_files], True), key=sort_key)
         return self.set_selection(replace(self._source_selection, audio_files=tuple(combined)))
 
     def set_output_directory(self, path: str | Path) -> SourceSelectionUpdate:
@@ -282,9 +284,7 @@ class SourceSelectionController:
 
         updates: list[SourceSelectionUpdate] = []
         if video_files:
-            updates.append(
-                self.set_selection(replace(self._source_selection, video=video_files[0]))
-            )
+            updates.append(self.set_selection(replace(self._source_selection, video=video_files[0])))
         if audio_files:
             update = self.set_audio_files(
                 audio_files,
@@ -324,7 +324,8 @@ class SourceSelectionController:
             try:
                 for audio_index, stream in enumerate(self._audio_stream_probe(video_path)):
                     selector = f"0:a:{audio_index}"
-                    tags = stream.get("tags") if isinstance(stream.get("tags"), dict) else {}
+                    raw_tags = stream.get("tags")
+                    tags: Mapping[object, object] = raw_tags if is_object_mapping(raw_tags) else {}
                     title = str(tags.get("title", "")).strip()
                     codec = str(stream.get("codec_name", "audio"))
                     channels = stream.get("channels", "?")

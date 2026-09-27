@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable, Mapping, Sequence
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, Qt
+from PySide6.QtCore import QAbstractListModel, QByteArray, QModelIndex, QObject, QPersistentModelIndex, Qt
 
+from .data_boundary import coerce_float, coerce_int
 from .subtitle_line_count import segment_editor_text
 
 
@@ -20,38 +21,38 @@ class SubtitleListModel(QAbstractListModel):
     FontFamilyRole = SegmentIdRole + 7
     EditorTextRole = SegmentIdRole + 8
 
-    _ROLE_NAMES = {
-        SegmentIdRole: b"segmentId",
-        StartRole: b"start",
-        EndRole: b"end",
-        TextRole: b"text",
-        SpeakerRole: b"speaker",
-        LayoutRowRole: b"layoutRow",
-        FontFamilyRole: b"subtitleFontFamily",
-        FontScaleRole: b"subtitleFontScale",
-        EditorTextRole: b"editorText",
+    _ROLE_NAMES: dict[int, QByteArray] = {
+        SegmentIdRole: QByteArray(b"segmentId"),
+        StartRole: QByteArray(b"start"),
+        EndRole: QByteArray(b"end"),
+        TextRole: QByteArray(b"text"),
+        SpeakerRole: QByteArray(b"speaker"),
+        LayoutRowRole: QByteArray(b"layoutRow"),
+        FontFamilyRole: QByteArray(b"subtitleFontFamily"),
+        FontScaleRole: QByteArray(b"subtitleFontScale"),
+        EditorTextRole: QByteArray(b"editorText"),
     }
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._segments: list[dict[str, Any]] = []
+        self._segments: list[Mapping[str, object]] = []
 
-    def roleNames(self) -> dict[int, bytes]:
+    def roleNames(self) -> dict[int, QByteArray]:
         return self._ROLE_NAMES
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._segments)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if not index.isValid() or not 0 <= index.row() < len(self._segments):
             return None
         segment = self._segments[index.row()]
         if role == self.SegmentIdRole:
             return str(segment["id"])
         if role == self.StartRole:
-            return float(segment["start"])
+            return coerce_float(segment["start"])
         if role == self.EndRole:
-            return float(segment["end"])
+            return coerce_float(segment["end"])
         if role == self.TextRole:
             return str(segment.get("text", ""))
         if role == self.EditorTextRole:
@@ -59,15 +60,16 @@ class SubtitleListModel(QAbstractListModel):
         if role == self.SpeakerRole:
             return str(segment.get("speaker", ""))
         if role == self.LayoutRowRole:
-            return int(segment.get("layout_row", 0))
+            return coerce_int(segment.get("layout_row", 0))
         if role == self.FontScaleRole:
-            return float(segment.get("subtitle_font_scale", 1.0))
+            return coerce_float(segment.get("subtitle_font_scale", 1.0))
         if role == self.FontFamilyRole:
             return str(segment.get("subtitle_font_family", ""))
         return None
 
-    def set_segments(self, segments: list[dict[str, Any]]) -> None:
+    def set_segments(self, segments: Sequence[Mapping[str, object]]) -> None:
         incoming = list(segments)
+        roles: list[int] = list(self._ROLE_NAMES)
         old_ids = [str(item["id"]) for item in self._segments]
         new_ids = [str(item["id"]) for item in incoming]
 
@@ -83,13 +85,13 @@ class SubtitleListModel(QAbstractListModel):
                     self.dataChanged.emit(
                         self.index(range_start, 0),
                         self.index(range_end, 0),
-                        list(self._ROLE_NAMES),
+                        roles,
                     )
                     range_start = range_end = index
                 self.dataChanged.emit(
                     self.index(range_start, 0),
                     self.index(range_end, 0),
-                    list(self._ROLE_NAMES),
+                    roles,
                 )
             return
 
@@ -105,7 +107,7 @@ class SubtitleListModel(QAbstractListModel):
                 self.dataChanged.emit(
                     self.index(0, 0),
                     self.index(len(incoming) - 1, 0),
-                    list(self._ROLE_NAMES),
+                    roles,
                 )
                 return
 
@@ -122,7 +124,7 @@ class SubtitleListModel(QAbstractListModel):
                     self.dataChanged.emit(
                         self.index(0, 0),
                         self.index(len(incoming) - 1, 0),
-                        list(self._ROLE_NAMES),
+                        roles,
                     )
                 return
 
@@ -152,7 +154,7 @@ class SubtitleListModel(QAbstractListModel):
                     self.dataChanged.emit(
                         self.index(0, 0),
                         self.index(len(incoming) - 1, 0),
-                        list(self._ROLE_NAMES),
+                        roles,
                     )
                 return
 
@@ -162,16 +164,16 @@ class SubtitleListModel(QAbstractListModel):
 
 
 class ShortVideoClipListModel(QAbstractListModel):
-    ClipDataRole = Qt.ItemDataRole.UserRole + 1
+    ClipDataRole: int = Qt.ItemDataRole.UserRole + 1
 
-    _ROLE_NAMES = {
-        ClipDataRole: b"clipData",
+    _ROLE_NAMES: dict[int, QByteArray] = {
+        ClipDataRole: QByteArray(b"clipData"),
     }
 
     def __init__(
         self,
         count_resolver: Callable[[], int],
-        data_resolver: Callable[[int], dict[str, Any]],
+        data_resolver: Callable[[int], Mapping[str, object]],
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -179,13 +181,13 @@ class ShortVideoClipListModel(QAbstractListModel):
         self._data_resolver = data_resolver
         self._count = 0
 
-    def roleNames(self) -> dict[int, bytes]:
+    def roleNames(self) -> dict[int, QByteArray]:
         return self._ROLE_NAMES
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else self._count
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if role != self.ClipDataRole or not index.isValid() or not 0 <= index.row() < self._count:
             return None
         return self._data_resolver(index.row())
@@ -198,8 +200,9 @@ class ShortVideoClipListModel(QAbstractListModel):
             self.endResetModel()
             return
         if self._count:
+            roles: list[int] = [self.ClipDataRole]
             self.dataChanged.emit(
                 self.index(0, 0),
                 self.index(self._count - 1, 0),
-                [self.ClipDataRole],
+                roles,
             )

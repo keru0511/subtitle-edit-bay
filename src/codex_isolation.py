@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Iterator, Mapping, Protocol, Sequence
+from typing import Iterator, Mapping, Protocol, Sequence, TypedDict
 
 
 MAX_MCP_STATUS_PAGE_SIZE = 100
@@ -39,7 +39,29 @@ class CodexIsolationError(ValueError):
 
 
 class McpStatusClient(Protocol):
-    def mcp_server_status_list(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def mcp_server_status_list(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int = 100,
+        detail: str = "toolsAndAuthOnly",
+        thread_id: str | None = None,
+    ) -> Mapping[str, object]: ...
+
+
+class _McpListParams(TypedDict, total=False):
+    limit: int
+    detail: str
+    cursor: str
+    thread_id: str
+
+
+class IsolatedTurnKwargs(TypedDict):
+    cwd: str
+    environments: list[Mapping[str, object]]
+    approval_policy: str
+    runtime_workspace_roots: list[str | Path]
+    sandbox_policy: Mapping[str, object]
 
 
 def validate_isolated_cwd(value: str | Path | None) -> str:
@@ -81,7 +103,7 @@ def collect_mcp_server_names(
     cursor = ""
     seen_cursors: set[str] = set()
     for _page_index in range(MAX_MCP_STATUS_PAGES):
-        params: dict[str, Any] = {
+        params: _McpListParams = {
             "limit": MAX_MCP_STATUS_PAGE_SIZE,
             "detail": "toolsAndAuthOnly",
         }
@@ -99,14 +121,12 @@ def collect_mcp_server_names(
             name = item.get("name")
             if not isinstance(name, str) or not name.strip() or len(name) > MAX_ISOLATED_ID_CHARS:
                 raise CodexIsolationError("Codex MCP inventory contains an invalid server name")
-            if config_only and (
-                item.get("pluginId") is not None or name == CODEX_APPS_MCP_SERVER_NAME
-            ):
+            if config_only and (item.get("pluginId") is not None or name == CODEX_APPS_MCP_SERVER_NAME):
                 continue
             names.append(name)
         next_cursor = payload.get("nextCursor")
         if next_cursor is None:
-            return tuple(dict.fromkeys(names))
+            return tuple(dict.fromkeys(names, True))
         if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
             raise CodexIsolationError("Codex MCP inventory pagination is invalid")
         seen_cursors.add(next_cursor)
@@ -114,7 +134,7 @@ def collect_mcp_server_names(
     raise CodexIsolationError("Codex MCP inventory exceeds the page limit")
 
 
-def build_isolated_thread_config(mcp_server_names: Sequence[str]) -> dict[str, Any]:
+def build_isolated_thread_config(mcp_server_names: Sequence[str]) -> dict[str, object]:
     """Build the shared fail-closed thread config for review/proposal turns."""
 
     return {
@@ -138,7 +158,7 @@ def build_isolated_thread_params(
     cwd: str | Path,
     *,
     mcp_server_names: Sequence[str],
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Build the shared camelCase app-server ``thread/start`` payload."""
 
     isolated_cwd = validate_isolated_cwd(cwd)
@@ -154,7 +174,7 @@ def build_isolated_thread_params(
     }
 
 
-def build_isolated_turn_kwargs(cwd: str | Path) -> dict[str, Any]:
+def build_isolated_turn_kwargs(cwd: str | Path) -> IsolatedTurnKwargs:
     """Build the shared snake_case ``run_structured_turn`` payload."""
 
     return {

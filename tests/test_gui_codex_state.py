@@ -3,13 +3,16 @@ from __future__ import annotations
 import time
 import threading
 import unittest
+from typing import Callable, Mapping
 
+from src.data_boundary import is_object_mapping
 from src.gui_codex_state import (
     CODEX_SCOPES,
     CodexSessionController,
     CodexSessionSnapshot,
     build_codex_context,
 )
+from tests.typed_case import TypedTestCase
 
 
 class FakeNotification:
@@ -20,11 +23,11 @@ class FakeNotification:
 
 class FakeClient:
     def __init__(self) -> None:
-        self.notification_callback = None
+        self.notification_callback: Callable[[FakeNotification], None] | None = None
         self.started = False
-        self.interrupted = None
-        self.thread_params = None
-        self.turn_params = None
+        self.interrupted: tuple[str, str] | None = None
+        self.thread_params: dict[str, object] | None = None
+        self.turn_params: dict[str, object] | None = None
 
     def start(self) -> dict[str, object]:
         self.started = True
@@ -36,14 +39,14 @@ class FakeClient:
     def account_read(self) -> dict[str, object]:
         return {"authenticated": True}
 
-    def thread_start(self, params=None) -> dict[str, object]:
+    def thread_start(self, params: Mapping[str, object] | None = None) -> dict[str, object]:
         self.thread_params = dict(params or {})
         return {"threadId": "thread-1"}
 
-    def thread_resume(self, thread_id, params=None) -> dict[str, object]:
+    def thread_resume(self, thread_id: str, params: Mapping[str, object] | None = None) -> dict[str, object]:
         return {"threadId": thread_id}
 
-    def turn_start(self, **kwargs) -> dict[str, object]:
+    def turn_start(self, **kwargs: object) -> dict[str, object]:
         self.turn_params = dict(kwargs)
         if self.notification_callback:
             self.notification_callback(FakeNotification("turn/started", {"turnId": "turn-1"}))
@@ -51,9 +54,7 @@ class FakeClient:
         return {
             "summary": "修正",
             "warnings": [],
-            "operations": [
-                {"type": "update_segment", "segment_id": "s1", "changes": {"text": "修正"}}
-            ],
+            "operations": [{"type": "update_segment", "segment_id": "s1", "changes": {"text": "修正"}}],
         }
 
     def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, object]:
@@ -73,7 +74,22 @@ class BlockingAccountClient(FakeClient):
         return {"authenticated": True}
 
 
-class GuiCodexStateTests(unittest.TestCase):
+class IsolatedClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mcp_calls: list[dict[str, object]] = []
+        self.structured_kwargs: dict[str, object] | None = None
+
+    def mcp_server_status_list(self, **kwargs: object) -> dict[str, object]:
+        self.mcp_calls.append(dict(kwargs))
+        return {"data": []}
+
+    def run_structured_turn(self, **kwargs: object) -> dict[str, object]:
+        self.structured_kwargs = dict(kwargs)
+        return {"summary": "修正", "warnings": [], "operations": []}
+
+
+class GuiCodexStateTests(TypedTestCase):
     def test_context_supports_all_scopes_without_media_paths(self) -> None:
         project = {
             "video": {"path": "C:/secret/video.mkv"},
@@ -95,12 +111,14 @@ class GuiCodexStateTests(unittest.TestCase):
             self.assertNotIn("video", context)
             self.assertNotIn("audio_sources", context)
             self.assertNotIn("end_secret", str(context))
-            self.assertGreaterEqual(context["segment_count"], 1)
+            segment_count = context["segment_count"]
+            assert isinstance(segment_count, int)
+            self.assertGreaterEqual(segment_count, 1)
 
     def test_fake_client_streams_proposal_and_preserves_revision(self) -> None:
         client = FakeClient()
-        snapshots = []
-        messages = []
+        snapshots: list[CodexSessionSnapshot] = []
+        messages: list[str] = []
         controller = CodexSessionController(
             client_factory=lambda: client,
             proposal_parser=lambda payload: payload,
@@ -125,6 +143,7 @@ class GuiCodexStateTests(unittest.TestCase):
                 "sandbox": "read-only",
             },
         )
+        assert client.turn_params is not None
         self.assertEqual(client.turn_params["approval_policy"], "never")
         self.assertEqual(
             client.turn_params["sandbox_policy"],
@@ -134,10 +153,39 @@ class GuiCodexStateTests(unittest.TestCase):
             },
         )
 
+    def test_isolated_turn_disables_tools_and_uses_structured_client(self) -> None:
+        client = IsolatedClient()
+
+        def create_client(*, cwd: str) -> IsolatedClient:
+            return client
+
+        controller = CodexSessionController(
+            client_factory=create_client,
+            proposal_parser=lambda payload: payload,
+            isolated_turn=True,
+        )
+        controller.start(prompt="字幕を整える", context={"segments": []}, revision=8)
+        worker = controller._thread
+        assert worker is not None
+        worker.join(2)
+
+        self.assertEqual(controller.snapshot.state, "proposal_ready")
+        self.assertEqual(len(client.mcp_calls), 2)
+        thread_params = client.thread_params
+        assert thread_params is not None
+        self.assertEqual(thread_params["approvalPolicy"], "never")
+        config = thread_params["config"]
+        assert is_object_mapping(config)
+        self.assertEqual(config["web_search"], "disabled")
+        structured = client.structured_kwargs
+        assert structured is not None
+        self.assertEqual(structured["approval_policy"], "never")
+        self.assertEqual(structured["sandbox_policy"], {"type": "readOnly", "networkAccess": False})
+
     def test_stop_during_blocking_account_read_discards_late_worker_result(self) -> None:
         client = BlockingAccountClient()
-        snapshots = []
-        proposals = []
+        snapshots: list[CodexSessionSnapshot] = []
+        proposals: list[Mapping[str, object]] = []
         controller = CodexSessionController(
             client_factory=lambda: client,
             proposal_parser=lambda payload: payload,
@@ -173,8 +221,8 @@ class GuiCodexStateTests(unittest.TestCase):
         self.assertEqual(controller.snapshot.state, "stopped")
 
     def test_stop_discards_queued_proposal_callback(self) -> None:
-        callbacks = []
-        proposals = []
+        callbacks: list[Callable[[], None]] = []
+        proposals: list[Mapping[str, object]] = []
         controller = CodexSessionController(
             client_factory=FakeClient,
             proposal_parser=lambda payload: payload,
@@ -183,7 +231,9 @@ class GuiCodexStateTests(unittest.TestCase):
         )
         controller.start(prompt="停止する", context={})
         self.assertIsNotNone(controller._thread)
-        controller._thread.join(2)
+        worker = controller._thread
+        assert worker is not None
+        worker.join(2)
 
         self.assertEqual(controller.snapshot.state, "proposal_ready")
         self.assertTrue(callbacks)

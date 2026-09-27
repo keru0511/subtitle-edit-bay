@@ -5,9 +5,10 @@ from unittest import mock
 
 from src import subtitle_packer
 from src.subtitle_layout import wrapping
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleLayoutWrappingTests(unittest.TestCase):
+class SubtitleLayoutWrappingTests(TypedTestCase):
     def test_width_fallback_keeps_existing_public_default(self) -> None:
         self.assertEqual(subtitle_packer.split_by_width("字幕ABC", max_width=4), ["字幕", "ABC"])
         self.assertEqual(subtitle_packer.split_by_width("字幕ABC"), ["字幕ABC"])

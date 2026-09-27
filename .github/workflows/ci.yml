@@ -422,12 +422,7 @@ jobs:
           Write-Host "Session ID: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
           $capabilityName = 'Language.Basic~~~ja-JP~0.0.1.0'
           $capability = Get-WindowsCapability -Online -Name $capabilityName
-          Write-Host "Japanese typing capability before: $($capability.State)"
-          if ($capability.State -ne 'Installed') {
-            $installed = Add-WindowsCapability -Online -Name $capabilityName
-            Write-Host "Japanese typing capability after: $($installed.State)"
-            Write-Host "Restart needed: $($installed.RestartNeeded)"
-          }
+          Write-Host "Japanese typing capability: $($capability.State)"
           $languages = Get-WinUserLanguageList
           if ($languages.LanguageTag -notcontains 'ja-JP') {
             $languages.Add('ja-JP')
@@ -436,6 +431,7 @@ jobs:
           foreach ($language in (Get-WinUserLanguageList)) {
             Write-Host "Language: $($language.LanguageTag); input methods: $($language.InputMethodTips -join ', ')"
           }
+          python -c "import ctypes; user32 = ctypes.windll.user32; print(f'Desktop: {user32.GetSystemMetrics(0)}x{user32.GetSystemMetrics(1)}')"
 
       - name: Run Windows native Japanese IME regression
         shell: pwsh

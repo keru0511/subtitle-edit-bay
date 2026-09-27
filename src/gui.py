@@ -1101,7 +1101,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         if self._running:
             return False
         previous = self._relink_source_selection
-        if previous is not None and (
+        if not self._source_selection.video and previous is not None and (
             previous.video == self._source_selection.video
             and previous.audio_files == self._source_selection.audio_files
         ):

@@ -1133,6 +1133,26 @@ Window {
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
         self.assertEqual(load_project(path)["video"]["path"], str(replacement_video.resolve()))
 
+    def test_source_popup_done_applies_video_selected_before_project_load(self) -> None:
+        path, _video, audio = self._make_project()
+        replacement_video = self.root / "replacement-video.mkv"
+        replacement_video.write_bytes(b"video")
+        with patch.object(self.app, "_probe_audio_tracks"):
+            self.app.setVideoFile(str(replacement_video))
+        self.app.setAudioFiles([str(audio)], False)
+        self.assertTrue(self.app._load_project_path(path, update_sources=False))
+        self.app.autosave_timer.stop()
+        self.assertFalse(self.app._project_source_selection_matches(self.app._source_selection))
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
+        self._click(window, self._quick_item(window, "sourceDoneButton"))
+
+        self.assertFalse(window.findChild(QObject, "sourcePopup").property("visible"))
+        self.assertTrue(self.app.projectLoaded)
+        self.assertTrue(Path(self.app.projectPath).samefile(path))
+        self.assertEqual(self.app._project["video"]["path"], str(replacement_video.resolve()))
+        self.assertTrue(self.app.projectDirty)
+
     def test_source_setup_passes_selected_video_track_and_manual_offset_to_transcription(self) -> None:
         video = self.root / "multi-track.mkv"
         video.write_bytes(b"video")

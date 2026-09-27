@@ -596,7 +596,7 @@ class LegacyBackendCompatibility:
     def _check_for_updates_worker(self) -> None:
         return self._updates_facade._check_for_updates_worker()
 
-    def _on_update_check_finished(self, info: Any, error: str) -> None:
+    def _on_update_check_finished(self, info: object, error: str) -> None:
         return self._updates_facade._on_update_check_finished(info, error)
 
     @Slot()

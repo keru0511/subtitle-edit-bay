@@ -293,6 +293,8 @@ files = [
   "tests/test_installer_migration_entrypoint.py",
   "scripts/runtime_contract.py",
   "tests/test_system_basics.py",
+  "src/whisperx_runner.py",
+  "tests/test_whisperx_runner.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -571,6 +573,8 @@ module = [
   "tests.test_installer_migration_entrypoint",
   "scripts.runtime_contract",
   "tests.test_system_basics",
+  "src.whisperx_runner",
+  "tests.test_whisperx_runner",
 ]
 strict = true
 disallow_any_explicit = true

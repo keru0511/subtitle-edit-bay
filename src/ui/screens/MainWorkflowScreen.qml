@@ -294,6 +294,7 @@ ApplicationWindow {
         workflowCapabilities: root.workflowCapabilities
         settingsProvider: root.currentSettings
         onSourceSettingsRequested: root.openSourceSettings()
+        onProcessingSettingsRequested: root.toggleSettingsPopup()
         onOverwriteConfirmationRequested: function(request) {
             root.pendingWelcomeTranscriptionRequest = request
             overwriteProjectDialog.open()
@@ -793,6 +794,9 @@ ApplicationWindow {
         objectName: "updateDialog"
         anchors.centerIn: parent
         modal: true
+        closePolicy: root.appBackend.updates.updateDownloadActive
+            || (root.appBackend.running && root.appBackend.workflow.activeJob === "update")
+            ? Popup.NoAutoClose : Popup.CloseOnEscape
         title: "更新の確認"
         visible: root.appBackend.updates.updateAvailable && (!root.appBackend.updates.updateBusy || root.appBackend.updates.updateDownloadActive)
         standardButtons: Dialog.NoButton

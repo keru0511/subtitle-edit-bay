@@ -296,12 +296,12 @@ Rectangle {
                 id: renderButton
                 objectName: "workspaceHeaderRenderButton"
                 focusPolicy: Qt.TabFocus
-                Layout.preferredWidth: 106
+                Layout.preferredWidth: 142
                 Layout.preferredHeight: 32
                 enabled: header.projectLoaded && !header.running && header.canRender
                 ToolTip.visible: hovered && header.renderBlockReason.length > 0
                 ToolTip.text: header.renderBlockReason
-                text: header.renderNeedsOutput ? "出力先を選択" : "動画を書き出す"
+                text: header.renderNeedsOutput ? "出力先を選んで書き出す" : "動画を書き出す"
                 onClicked: header.renderRequested()
                 contentItem: Text {
                     text: renderButton.text

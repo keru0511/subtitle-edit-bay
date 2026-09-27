@@ -10,6 +10,14 @@ Popup {
     required property var colors
     readonly property var referenceAudioValue: referenceCombo.currentValue
     readonly property var referenceTrackValue: trackCombo.currentValue
+    readonly property bool hasVideoAudioTrack: {
+        var tracks = root.appBackend.audioTracks;
+        for (var index = 0; index < tracks.length; ++index) {
+            if (String(tracks[index].selector || "").trim().length > 0)
+                return true;
+        }
+        return false;
+    }
     property alias manualOffsetText: manualOffsetField.text
     signal sourceDropped(var drop)
     signal speakerColorRequested(int index, string color)
@@ -80,6 +88,7 @@ Popup {
                 Layout.fillWidth: true
             }
             ToolButton {
+                objectName: "sourcePopupCloseButton"
                 text: "×"
                 enabled: !root.appBackend.running
                 onClicked: root.close()
@@ -181,6 +190,7 @@ Popup {
                         elide: Text.ElideMiddle
                     }
                     SourceButton {
+                        objectName: "sourceVideoBrowseButton"
                         text: "選択"
                         enabled: !root.appBackend.running
                         onClicked: root.appBackend.browseVideoFile()
@@ -321,13 +331,16 @@ Popup {
                     SourceButton {
                         objectName: "analyzeAlignmentButton"
                         text: root.appBackend.alignmentBusy ? "調整中" : "音声のずれを自動調整"
-                        enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
+                        enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video && root.hasVideoAudioTrack
                         onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
                     }
                 }
                 Text {
+                    objectName: "alignmentStatusText"
                     Layout.fillWidth: true
-                    text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status) + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒" : "")
+                    text: !root.hasVideoAudioTrack && root.appBackend.sourceSelection.video
+                        ? "動画に音声トラックがないため自動調整できません"
+                        : root.alignmentStatusLabel(root.appBackend.alignmentResult.status) + (root.appBackend.alignmentResult.offset !== undefined ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒" : "")
                     color: root.colors.textMuted
                     font.pixelSize: 9
                     font.family: "Yu Gothic UI"
@@ -392,7 +405,10 @@ Popup {
                 objectName: "sourceDoneButton"
                 text: "完了"
                 enabled: !root.appBackend.running
-                onClicked: root.close()
+                onClicked: {
+                    if (root.appBackend.completeSourceRelink())
+                        root.close()
+                }
             }
         }
     }

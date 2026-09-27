@@ -523,6 +523,9 @@ class LegacyEditBayBackend(QApplication):
         if not Path(video).is_file() or not Path(reference_audio).is_file():
             self._set_status("同期解析には動画と基準音声が必要です", "CHECK")
             return
+        if not any(str(track.get("selector", "")).strip() for track in self._audio_tracks):
+            self._set_status("動画に音声トラックがないため同期解析できません", "CHECK")
+            return
 
         self._alignment_busy = True
         self._alignment_result = self._empty_alignment_result("解析中")
@@ -563,7 +566,7 @@ class LegacyEditBayBackend(QApplication):
     def _alignment_finished(self, future: Future[AlignmentResult]) -> None:
         try:
             self.alignmentComputed.emit(future.result())
-        except Exception as error:
+        except (Exception, SystemExit) as error:
             self.alignmentFailed.emit(str(error))
 
     @Slot(object)

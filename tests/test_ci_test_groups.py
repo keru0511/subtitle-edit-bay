@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
+
 from tests.typed_case import TypedTestCase
 
 
@@ -160,6 +164,91 @@ class CiTestGroupManifestTests(TypedTestCase):
                 "invalid unittest selector: tests.test_shared",
             ):
                 CI_TESTS.validate_manifest(manifest, tests_dir)
+
+
+class WindowsGuiSelectionTests(TypedTestCase):
+    REQUIRED = "tests.test_gui_editor.GuiEditorRegressionTests.test_required"
+    OPTIONAL = "tests.test_gui_editor.GuiEditorRegressionTests.test_optional"
+
+    def setUp(self) -> None:
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        fixture_dir = Path(temporary_directory.name)
+        self.workflow_path = fixture_dir / "ci.yml"
+        self.gui_test_path = fixture_dir / "test_gui_editor.py"
+        self.gui_test_path.write_text(
+            "from tests.typed_case import TypedTestCase\n"
+            "class GuiEditorRegressionTests(TypedTestCase):\n"
+            "    def test_required(self):\n"
+            '        """Windows GUI CI必須: 編集結果を確認する。"""\n'
+            "        pass\n"
+            "    def test_optional(self):\n"
+            "        # Windows GUI CI必須 is a comment, not a docstring.\n"
+            "        pass\n",
+            encoding="utf-8",
+        )
+
+    def _write_workflow(self, *selectors: str) -> None:
+        lines = [
+            "jobs:",
+            "  windows-tests:",
+            "    steps:",
+            "      - name: Run Windows GUI regression tests",
+            "        shell: pwsh",
+            "        run: >-",
+            "          python -m unittest -v",
+            *(f"          {selector}" for selector in selectors),
+            "      - name: Next step",
+            "        run: echo done",
+        ]
+        self.workflow_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _validate(self) -> tuple[int, int]:
+        return CI_TESTS.validate_windows_gui_selection(self.workflow_path, self.gui_test_path)
+
+    def test_repository_windows_gui_selectors_are_valid(self) -> None:
+        CI_TESTS.validate_windows_gui_selection()
+
+    def test_required_docstring_is_selected_and_optional_method_can_be_omitted(self) -> None:
+        self._write_workflow(self.REQUIRED)
+
+        self.assertEqual(self._validate(), (1, 1))
+
+    def test_required_docstring_missing_from_workflow_is_rejected(self) -> None:
+        self._write_workflow(self.OPTIONAL)
+
+        with self.assertRaisesRegex(CI_TESTS.ManifestError, "Windows GUI CI必須 tests missing from workflow"):
+            self._validate()
+
+    def test_stale_windows_gui_selector_is_rejected(self) -> None:
+        self._write_workflow(self.REQUIRED, self.REQUIRED + "_removed")
+
+        with self.assertRaisesRegex(CI_TESTS.ManifestError, "Windows GUI selectors not found"):
+            self._validate()
+
+    def test_duplicate_windows_gui_selector_is_rejected(self) -> None:
+        self._write_workflow(self.REQUIRED, self.REQUIRED)
+
+        with self.assertRaisesRegex(CI_TESTS.ManifestError, "duplicate Windows GUI selectors"):
+            self._validate()
+
+    def test_missing_windows_gui_step_is_rejected(self) -> None:
+        self.workflow_path.write_text("jobs: {}\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(CI_TESTS.ManifestError, "step must appear exactly once"):
+            self._validate()
+
+    def test_validate_command_fails_when_windows_gui_selection_is_invalid(self) -> None:
+        with patch.object(
+            CI_TESTS,
+            "validate_windows_gui_selection",
+            side_effect=CI_TESTS.ManifestError("Windows GUI selection is invalid"),
+        ):
+            with redirect_stderr(io.StringIO()) as error_output:
+                result = CI_TESTS.main(["--validate"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("Windows GUI selection is invalid", error_output.getvalue())
 
 
 class CiTestRunnerTests(TypedTestCase):

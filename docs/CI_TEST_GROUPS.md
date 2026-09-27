@@ -36,6 +36,24 @@ media semantic E2EをLinuxの `ffmpeg-runtime` で所有しつつ、字幕描画
 selectorは `tests.test_module.TestCaseClass.test_method` 形式の標準unittest名にします。
 モジュール直下の `test_*` 関数は標準discoveryで収集されないため許可しません。
 
+## Windows GUI回帰テストの選定
+
+`tests/test_gui_editor.py` はLinuxの `qt-gui` で全件実行します。Windowsでは
+`.github/workflows/ci.yml` の `Run Windows GUI regression tests` に列挙したケースを実行します。
+Windowsでの確認が必須のケースには、テストメソッドのdocstringへ正確に
+`Windows GUI CI必須` と書き、同じテストの完全名をWindowsの実行リストへ追加してください。
+
+```python
+def test_example(self) -> None:
+    """Windows GUI CI必須: Windows上の編集操作を確認する。"""
+    # テスト本体
+```
+
+`python scripts/run_ci_tests.py --validate` はQtを読み込まずにdocstringとワークフローを
+静的検査し、必須ケースの登録漏れ、存在しないテスト名、重複したテスト名を検出します。
+この検査はCIのPython品質チェックでも実行されます。印のないケースはLinuxでの全件実行を維持し、
+Windowsへの追加は必要性に応じて判断します。
+
 ## ローカル実行
 
 分類だけを検証する場合:
@@ -70,7 +88,8 @@ GitHub Actionsでは同じ情報とスキップ理由ごとの件数をStep Summ
 1. `unittest.TestCase` を持つ `tests/test_*.py` を追加する。
 2. 主な実行環境に対応する1グループの `modules` に、拡張子なしのモジュール名を辞書順で追加する。
 3. 別環境で必要なケースだけを再実行する場合は、その環境の `selectors` に完全名を辞書順で追加する。
-4. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
+4. Windows GUIでの確認が必須なら、テストメソッドのdocstringとCIのWindows GUI実行リストを更新する。
+5. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
 
 モジュール単位の所有先を決められない場合は、テスト責務を分けてから登録してください。
 

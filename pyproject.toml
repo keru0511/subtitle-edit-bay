@@ -287,6 +287,10 @@ files = [
   "tests/test_gui_state.py",
   "tests/test_workflow_action_semantic_e2e.py",
   "tests/test_highlight_visual_signals.py",
+  "tests/test_craig_transcription_execution.py",
+  "tests/test_process_utils.py",
+  "src/installer_migration_entrypoint.py",
+  "tests/test_installer_migration_entrypoint.py",
 ]
 explicit_package_bases = true
 # 実際に使用する外部組版APIの型を、依存未導入の品質ジョブでも解決する。
@@ -559,6 +563,10 @@ module = [
   "tests.test_gui_state",
   "tests.test_workflow_action_semantic_e2e",
   "tests.test_highlight_visual_signals",
+  "tests.test_craig_transcription_execution",
+  "tests.test_process_utils",
+  "src.installer_migration_entrypoint",
+  "tests.test_installer_migration_entrypoint",
 ]
 strict = true
 disallow_any_explicit = true

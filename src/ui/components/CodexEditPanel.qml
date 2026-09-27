@@ -18,6 +18,9 @@ Rectangle {
     property var operations: proposalData && proposalData.operations
         ? proposalData.operations : []
     property var selectedOperationState: ({})
+    property string selectionProposalKey: operations.length > 0
+        ? (audioProposal ? "audio:" : "subtitle:") + JSON.stringify(proposalData) : ""
+    onSelectionProposalKeyChanged: selectedOperationState = ({})
     visible: Boolean(backend) && (backend.ai.codexState === "running"
         || backend.ai.codexState === "starting" || backend.ai.codexState === "authenticating"
         || audioBusy || operations.length > 0)

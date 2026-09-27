@@ -8855,6 +8855,182 @@ Window {
             before,
         )
 
+    def test_ai_send_keeps_draft_until_a_model_is_selected(self) -> None:
+        self._load_project()
+        missing_model = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated",
+            models=({"id": "model-a", "label": "Model A"},),
+            selected_model="",
+        )
+        self.app._codex_chat._snapshot = missing_model
+        self.app._on_codex_chat_state(missing_model)
+        _, window = self._load_qml()
+        chat_input = self._quick_item(window, "codexChatInput")
+        send_button = self._quick_item(window, "codexChatSendButton")
+        chat_input.setProperty("text", "保存したい下書き")
+        self.app.processEvents()
+
+        self.assertTrue(send_button.isEnabled())
+        self._click(window, send_button)
+        self.assertEqual(_qt_string(chat_input, "text"), "保存したい下書き")
+        self.assertFalse(self.app.codexChatMessages)
+        self.assertIn("モデルを選択", self.app.codexChatError)
+
+        selected = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated",
+            models=missing_model.models, selected_model="model-a",
+        )
+        self.app._codex_chat._snapshot = selected
+        self.app._on_codex_chat_state(selected)
+        self.gui.wait_until(lambda: send_button.isEnabled(), description="モデル選択後に送信できる")
+        with patch.object(self.app.ai, "sendCodexChatMessage", return_value=True) as send:
+            self._click(window, send_button)
+        send.assert_called_once_with("保存したい下書き", "auto", 0.0, 0.0)
+        self.assertEqual(_qt_string(chat_input, "text"), "")
+
+    def test_gemini_new_chat_preserves_codex_proposal(self) -> None:
+        self._load_project()
+        codex = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated",
+            models=({"id": "model-a", "label": "Model A"},),
+            selected_model="model-a",
+        )
+        self.app._codex_chat._snapshot = codex
+        self.app._on_codex_chat_state(codex)
+        original_gemini = self.app._gemini_chat.snapshot
+        self.addCleanup(self.app._ai_chat.select_provider, "codex")
+        def restore_gemini_snapshot() -> None:
+            self.app._gemini_chat._snapshot = original_gemini
+
+        self.addCleanup(restore_gemini_snapshot)
+        self.app._gemini_chat._snapshot = CodexChatSnapshot(
+            provider_id="gemini", provider_name="Gemini",
+            connection_state="ready", auth_state="authenticated",
+            thread_id="gemini-thread",
+            messages=({"role": "user", "text": "前の会話"},),
+            model_selection_supported=False, login_available=False,
+        )
+        proposal: dict[str, object] = {
+            "summary": "未適用の字幕案", "operations": [{
+                "id": "edit-segment", "type": "update_segment", "segment_id": "segment-a",
+                "changes": {"text": "提案された本文"},
+            }],
+        }
+        self.app._codex_proposal = proposal
+        self.app.codexProposalChanged.emit()
+        _, window = self._load_qml()
+        provider_combo = self._quick_item(window, "aiProviderHeaderCombo")
+        self._click(window, provider_combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.wait_until(lambda: self.app.aiChatProviderId == "gemini", description="Gemini へ切替")
+
+        self._click(window, self._quick_item(window, "codexNewChatButton"))
+        self.gui.wait_until(
+            lambda: not self.app._gemini_chat.snapshot.thread_id
+            and not self.app._gemini_chat.snapshot.messages,
+            description="Gemini の新規会話",
+        )
+        self.assertEqual(self.app._codex_proposal, proposal)
+
+    def test_ai_typed_audio_proposal_works_without_chat_model(self) -> None:
+        self._load_project()
+        missing_model = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated",
+            models=({"id": "model-a", "label": "Model A"},),
+            selected_model="",
+        )
+        self.app._codex_chat._snapshot = missing_model
+        self.app._on_codex_chat_state(missing_model)
+        _, window = self._load_qml()
+        chat_input = self._quick_item(window, "codexChatInput")
+        chat_input.setProperty("text", "声を聞きやすくして")
+        self.app.processEvents()
+        with patch.object(
+            self.app.ai, "dispatch_codex_action",
+            return_value=ActionResult(status=ActionStatus.SUCCESS),
+        ) as dispatch:
+            self._click(window, self._quick_item(window, "codexChatSendButton"))
+        dispatch.assert_called_once()
+        self.assertEqual(_qt_string(chat_input, "text"), "")
+        self.assertEqual(
+            self.app._codex_chat.snapshot.messages[-1]["content_type"],
+            "audio_mix_proposal",
+        )
+
+    def test_ai_rejected_typed_actions_keep_draft(self) -> None:
+        self._load_project()
+        authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        _, window = self._load_qml()
+        chat_input = self._quick_item(window, "codexChatInput")
+        send_button = self._quick_item(window, "codexChatSendButton")
+        for message in ("声を聞きやすくして", "字幕を編集して"):
+            with self.subTest(message=message):
+                chat_input.setProperty("text", message)
+                self.app.processEvents()
+                with patch.object(
+                    self.app.ai, "dispatch_codex_action",
+                    return_value=ActionResult(
+                        status=ActionStatus.REJECTED,
+                        message="提案を開始できませんでした",
+                    ),
+                ) as dispatch:
+                    self._click(window, send_button)
+                dispatch.assert_called_once()
+                self.assertEqual(_qt_string(chat_input, "text"), message)
+                self.assertIn("提案を開始できませんでした", self.app.codexChatError)
+
+    def test_ai_subtitle_request_without_project_is_not_accepted(self) -> None:
+        authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self.assertFalse(self.app.ai.sendCodexChatMessage("字幕を編集して", "auto", 0.0, 0.0))
+        self.assertIn("編集プロジェクトを開いて", self.app.codexChatError)
+
+    def test_new_codex_proposal_reselects_reused_operation_id(self) -> None:
+        self._load_project()
+        authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self.app._codex_proposal = {
+            "summary": "最初の提案", "operations": [{
+                "id": "reused-id", "type": "update_segment", "segment_id": "segment-a",
+                "changes": {"text": "最初"},
+            }],
+        }
+        self.app.codexProposalChanged.emit()
+        _, window = self._load_qml()
+        proposal_list = self._quick_item(window, "codexProposalList")
+        apply_button = self._quick_item(window, "codexApplyButton")
+        self.gui.wait_until(lambda: _qt_number(proposal_list, "count") == 1, description="最初の提案")
+        operation_check = self._quick_visual_item(proposal_list, "codexOperationCheck")
+        self._click(window, operation_check)
+        self.gui.wait_until(
+            lambda: not _qt_bool(self._quick_visual_item(proposal_list, "codexOperationCheck"), "checked")
+            and not apply_button.isEnabled(),
+            description="最初の提案を選択解除",
+        )
+        self.app.codexProposalChanged.emit()
+        self.app.processEvents()
+        self.assertFalse(_qt_bool(self._quick_visual_item(proposal_list, "codexOperationCheck"), "checked"))
+        self.assertFalse(apply_button.isEnabled())
+        self._click(window, self._quick_item(window, "codexDiscardButton"))
+        self.gui.wait_until(lambda: _qt_number(proposal_list, "count") == 0, description="提案の破棄")
+
+        self.app._codex_proposal = {
+            "summary": "次の提案", "operations": [{
+                "id": "reused-id", "type": "update_segment", "segment_id": "segment-a",
+                "changes": {"text": "次"},
+            }],
+        }
+        self.app.codexProposalChanged.emit()
+        self.gui.wait_until(lambda: _qt_number(proposal_list, "count") == 1, description="次の提案")
+        operation_check = self._quick_visual_item(proposal_list, "codexOperationCheck")
+        self.assertTrue(_qt_bool(operation_check, "checked"))
+        self.assertTrue(apply_button.isEnabled())
+
     def test_codex_auth_controls_fit_and_dispatch_from_screen(self) -> None:
         path = self._load_project()
         authenticated = CodexChatSnapshot(
@@ -9091,6 +9267,8 @@ Window {
             connection_state="ready",
             auth_state="authenticated",
             auth_label="ChatGPT",
+            models=({"id": "model-a", "label": "Model A"},),
+            selected_model="model-a",
         )
         self.app._codex_chat._snapshot = authenticated
         self.app._on_codex_chat_state(authenticated)
@@ -9115,7 +9293,7 @@ Window {
         chat_send = self._quick_item(window, "codexChatSendButton")
         chat_input.setProperty("text", "進捗中も送信できる")
         self.app.processEvents()
-        with patch.object(self.app.ai, "sendCodexChatMessage") as send:
+        with patch.object(self.app.ai, "sendCodexChatMessage", return_value=True) as send:
             self._click(window, chat_send)
         send.assert_called_once_with("進捗中も送信できる", "auto", 0.0, 0.0)
 
@@ -9133,7 +9311,7 @@ Window {
         range_end.setProperty("text", "8.000")
         chat_input.setProperty("text", "この範囲の字幕を編集して")
         self.app.processEvents()
-        with patch.object(self.app.ai, "sendCodexChatMessage") as send:
+        with patch.object(self.app.ai, "sendCodexChatMessage", return_value=True) as send:
             self._click(window, chat_send)
         send.assert_called_once_with("この範囲の字幕を編集して", "time_range", 2.5, 8.0)
 

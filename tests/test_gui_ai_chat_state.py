@@ -57,8 +57,9 @@ class StubChatController:
     def select_model(self, model_id: str) -> None:
         self._snapshot = replace(self._snapshot, selected_model=model_id)
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str) -> bool:
         self._snapshot = replace(self._snapshot, messages=self._snapshot.messages + ({"text": text},))
+        return True
 
     def begin_proposal(self, text: str, **kwargs: object) -> bool:
         del kwargs

@@ -206,7 +206,7 @@ class QmlStaticTests(TypedTestCase):
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         self.assertIn('objectName: "aiProviderHeaderCombo"', panel)
         self.assertIn("backend.ai.aiChatModelSelectionSupported", panel)
-        self.assertIn("backend.ai.aiChatLoginAvailable", panel)
+        self.assertNotIn('objectName: "codexConnectButton"', panel)
         self.assertIn("backend.ai.aiChatAuthHint", panel)
         self.assertIn('objectName: "aiProviderLoginCombo"', workflow)
         self.assertIn('objectName: "aiProviderAuthHint"', workflow)
@@ -220,9 +220,6 @@ class QmlStaticTests(TypedTestCase):
         self.assertIn('root.appBackend.ai.openAIProviderLoginPage()', workflow)
         for method in (
             "backend.ai.selectAIProvider(currentValue)",
-            "backend.ai.startAIProviderLogin()",
-            "backend.ai.reconnectAIChat()",
-            "backend.ai.openAIProviderLoginPage()",
             "backend.ai.reloginAIProvider()",
             "backend.ai.logoutAIProvider()",
         ):

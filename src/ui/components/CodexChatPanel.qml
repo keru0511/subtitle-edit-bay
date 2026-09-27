@@ -159,31 +159,6 @@ Rectangle {
                     horizontalAlignment: Text.AlignRight
                     elide: Text.ElideRight
                 }
-                SmallButton {
-                    id: connectionButton
-                    objectName: "codexConnectButton"
-                    Layout.preferredWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                    Layout.minimumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                    Layout.maximumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                    Layout.preferredHeight: 30
-                    Layout.maximumHeight: 30
-                    visible: !panel.authenticated()
-                        && (!backend || backend.ai.aiChatLoginAvailable)
-                    text: backend && backend.ai.codexAuthState === "login_pending"
-                        ? "ブラウザを開く"
-                        : (backend && ["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0
-                            ? "再接続" : "ログイン")
-                    enabled: backend && backend.ai.codexConnectionState !== "connecting"
-                        && backend.ai.codexAuthState !== "logging_in"
-                    onClicked: {
-                        if (backend.ai.codexAuthState === "login_pending")
-                            backend.ai.openAIProviderLoginPage()
-                        else if (["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0)
-                            backend.ai.reconnectAIChat()
-                        else
-                            backend.ai.startAIProviderLogin()
-                    }
-                }
             }
         }
 
@@ -397,13 +372,14 @@ Rectangle {
                         enabled: panel.authenticated() && !panel.busy() && chatInput.text.trim().length > 0
                         onClicked: {
                             var message = chatInput.text
-                            chatInput.clear()
-                            backend.ai.sendCodexChatMessage(
+                            var accepted = backend.ai.sendCodexChatMessage(
                                 message,
                                 editScope.currentValue,
                                 Number(rangeStart.text || 0),
                                 Number(rangeEnd.text || 0)
                             )
+                            if (accepted)
+                                chatInput.clear()
                         }
                     }
                     SmallButton {

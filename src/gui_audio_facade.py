@@ -6,9 +6,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Mapping
 
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
+from PySide6.QtMultimedia import QAudioBuffer
 
 from .qt_decorators import Property, Signal, Slot
+from .qt_audio_buffer_output import QAudioBufferOutput
+from .data_boundary import is_string_object_dict, is_string_object_dict_list
 from .audio_mixer import (
     DEFAULT_AUDIO_TRACK,
     active_audio_mix_channels,
@@ -297,9 +299,12 @@ class AudioFacade(FeatureFacade):
         except AudioMixError:
             backend._set_status("音量ミキサーの変更内容を確認してください", "CHECK")
             return
+        updated_channels = updated_audio_mix.get("channels")
+        if not is_string_object_dict_list(updated_channels):
+            raise AudioMixError("音量チャンネルの構造が不正です")
         self.project_editor.commit_section_change("audio_mix", updated_audio_mix)
         self._notify_audio_mixer_preview(
-            structure_changed=enabled_before != bool(updated_audio_mix["channels"][index].get("enabled"))
+            structure_changed=enabled_before != bool(updated_channels[index].get("enabled"))
         )
         backend._set_status("音量ミキサー設定を更新しました", "EDIT")
 
@@ -380,6 +385,9 @@ class AudioFacade(FeatureFacade):
             backend._set_status("音量ミキサーの変更案を生成中です", "BUSY")
             return False
         before = deepcopy(self.project_editor.project.get("audio_mix", {}))
+        if not is_string_object_dict(before):
+            backend._set_status("音量ミキサーの形式が不正です", "ERROR")
+            return False
         try:
             updated, _changed_ids = apply_audio_mix_proposal(
                 before,

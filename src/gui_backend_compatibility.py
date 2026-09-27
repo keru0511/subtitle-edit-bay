@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 from PySide6.QtCore import QProcess
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
+from PySide6.QtMultimedia import QAudioBuffer
 
 from .qt_decorators import Slot
+from .qt_audio_buffer_output import QAudioBufferOutput
 from .audio_preview_cache import AudioPreviewCacheResult
 from .codex_actions import ActionResult, ActionScope
 from .codex_app_server_client import CodexAppServerClient
@@ -33,6 +34,9 @@ if TYPE_CHECKING:
 
 class LegacyBackendCompatibility:
     """旧APIの利用者を保ち、処理と状態の所有権は各機能窓口に置く。"""
+
+    if TYPE_CHECKING:
+        def _set_status(self, status: str, stage: str) -> None: ...
 
     _workspace_facade: WorkspaceFacade
     _subtitles_facade: SubtitleFacade

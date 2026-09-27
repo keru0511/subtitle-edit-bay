@@ -5,12 +5,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Mapping, Protocol
 
 from PySide6.QtCore import QObject, QTimer, QUrl
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
+from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
 
 from .qt_decorators import Signal, Slot
+from .qt_audio_buffer_output import AudioBufferSignal, QAudioBufferOutput
 from .audio_mixer import (
     AUDIO_MIX_MASTER_GAIN,
     MAX_VOLUME_PERCENT,
@@ -42,11 +43,6 @@ class CachePreparation(Protocol):
 
 CacheClear = Callable[[str | Path], object]
 MixerFactory = Callable[[QObject], RealtimeAudioMixer]
-
-
-@runtime_checkable
-class AudioBufferSignal(Protocol):
-    def connect(self, callback: Callable[[QAudioBuffer], None]) -> object: ...
 
 
 class AudioPreviewController(QObject):

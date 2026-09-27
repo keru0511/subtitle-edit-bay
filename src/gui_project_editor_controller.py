@@ -343,12 +343,14 @@ class ProjectEditorController:
         self._emit(self._on_dirty)
         return True
 
-    def commit_section_change(self, section: str, payload: dict[str, object]) -> bool:
+    def commit_section_change(self, section: str, payload: object) -> bool:
         """音量・ショート編集を、呼び出し元の辞書から切り離して確定する。"""
         if self._project is None:
             return False
         if section not in {"audio_mix", "short_video"}:
             raise SubtitleProjectError(f"未対応の編集対象です: {section}")
+        if not is_string_object_dict(payload):
+            raise SubtitleProjectError("編集対象のキーは文字列である必要があります")
         after = deepcopy(payload)
         if section == "short_video":
             ShortVideo.from_json(after)

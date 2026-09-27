@@ -425,7 +425,7 @@ class ProjectEditorController:
         }
         self._commit_edit({"segments": ordered}, history=history, selected_index=selected)
 
-    def _prepare_timeline(self, payload: dict[str, object]) -> dict[str, object]:
+    def _prepare_timeline(self, payload: object) -> dict[str, object]:
         if self._project is None:
             raise SubtitleProjectError("編集対象のプロジェクトがありません")
         duration = timeline_from_project(self._project).source_duration
@@ -434,11 +434,11 @@ class ProjectEditorController:
             raise SubtitleProjectError("タイムラインのキーは文字列である必要があります")
         return timeline
 
-    def replace_timeline(self, payload: dict[str, object]) -> None:
+    def replace_timeline(self, payload: object) -> None:
         if self._project is not None:
             self._commit_edit({"timeline": self._prepare_timeline(payload)})
 
-    def commit_timeline_change(self, payload: dict[str, object]) -> bool:
+    def commit_timeline_change(self, payload: object) -> bool:
         if self._project is None:
             return False
         after = self._prepare_timeline(payload)

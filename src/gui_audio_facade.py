@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
 
@@ -27,6 +27,7 @@ from .audio_mix_proposal import (
 from .audio_preview_cache import (
     AudioPreviewCacheResult,
 )
+from .data_boundary import coerce_float
 from .gui_codex_state import (
     CodexSessionError,
 )
@@ -75,7 +76,7 @@ class AudioFacade(FeatureFacade):
         return controller
 
     @Property("QVariantMap", notify=audioMixProposalChanged)
-    def audioMixProposal(self) -> dict[str, Any]:
+    def audioMixProposal(self) -> dict[str, object]:
         backend = self._backend
         return deepcopy(backend._audio_mix_proposal or {})
 
@@ -128,7 +129,7 @@ class AudioFacade(FeatureFacade):
         self.audio_preview.clear_cache()
 
     @Property("QVariantList", notify=projectDataChanged)
-    def audioMixerChannels(self) -> list[dict[str, Any]]:
+    def audioMixerChannels(self) -> list[dict[str, object]]:
         return self.audio_preview.mixer_channels
 
     @Property(bool, notify=projectDataChanged)
@@ -147,7 +148,7 @@ class AudioFacade(FeatureFacade):
         return self.audio_preview.intentional_silence
 
     @Property("QVariantList", notify=projectDataChanged)
-    def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
+    def audioMixerSequenceChannels(self) -> list[dict[str, object]]:
         if self.project_editor.project is None:
             return []
 
@@ -165,7 +166,7 @@ class AudioFacade(FeatureFacade):
             float(self.project_editor.project.get("video", {}).get("duration_seconds", 0.0)),
         )
         colors = ("#6FA8DC", "#93C47D", "#F6B26B", "#E78284", "#81C8BE")
-        sequence: list[dict[str, Any]] = []
+        sequence: list[dict[str, object]] = []
         for index, channel in enumerate(self.project_editor.project.get("audio_mix", {}).get("channels", [])):
             if not isinstance(channel, dict) or not bool(channel.get("enabled")):
                 continue
@@ -173,7 +174,7 @@ class AudioFacade(FeatureFacade):
             waveform = None
             if view.get("kind") == "external" and view.get("path"):
                 waveform = waveforms_by_path.get(str(Path(str(view["path"])).resolve()).casefold())
-            offset = float(view.get("preview_offset_seconds", 0.0))
+            offset = coerce_float(view.get("preview_offset_seconds", 0.0))
             view.update(
                 {
                     "lane_id": str(view.get("id", "")),
@@ -193,19 +194,19 @@ class AudioFacade(FeatureFacade):
             sequence.append(view)
         return sequence
 
-    def _audio_mixer_channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
+    def _audio_mixer_channel_view(self, channel: dict[str, object]) -> dict[str, object]:
         return self.audio_preview.channel_view(channel)
 
     def _audio_mixer_preview_state(
         self,
-    ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, float]]:
+    ) -> tuple[list[tuple[dict[str, object], dict[str, object]]], dict[str, float]]:
         return self.audio_preview.preview_state()
 
     def _notify_audio_mixer_preview(self, *, structure_changed: bool) -> None:
         self.audio_preview.notify_preview(structure_changed=structure_changed)
 
     @Property("QVariantList", notify=audioMixerPreviewChannelsChanged)
-    def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
+    def audioMixerPreviewChannels(self) -> list[dict[str, object]]:
         return self.audio_preview.preview_channels
 
     @Property("QVariantMap", notify=audioMixerPreviewGainsChanged)
@@ -271,7 +272,7 @@ class AudioFacade(FeatureFacade):
         return [{"selector": DEFAULT_AUDIO_TRACK, "label": "既定の動画音声"}]
 
     @Slot(int, "QVariantMap")
-    def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
+    def updateAudioMixChannel(self, index: int, changes: dict[str, object]) -> None:
         backend = self._backend
         if self.project_editor.project is None or backend._running:
             return
@@ -303,7 +304,7 @@ class AudioFacade(FeatureFacade):
         *,
         intent: str,
         revision: int,
-        context: Mapping[str, Any] | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> bool:
         backend = self._backend
         if self.project_editor.project is None or backend._running:
@@ -325,7 +326,7 @@ class AudioFacade(FeatureFacade):
                     preview_levels=self.audioPreviewLevels,
                     master_level=self.audioMasterLevel,
                     limiter_reduction_db=self.audioLimiterReductionDb,
-                    playhead_seconds=float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+                    playhead_seconds=coerce_float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
                     project_revision=revision,
                 )
             )
@@ -362,7 +363,7 @@ class AudioFacade(FeatureFacade):
     @Slot("QVariantList", bool, result=bool)
     def applyAudioMixProposal(
         self,
-        selected_operation_ids: list[Any] | None = None,
+        selected_operation_ids: list[object] | None = None,
         allow_silence: bool = False,
     ) -> bool:
         backend = self._backend

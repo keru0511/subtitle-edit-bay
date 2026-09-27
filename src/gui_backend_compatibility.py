@@ -23,7 +23,7 @@ from .workflow_actions import ActionCapability
 if TYPE_CHECKING:
     from .gui_ai_facade import AIChatFacade
     from .gui_audio_facade import AudioFacade
-    from .gui_sequence_facade import SequenceFacade
+    from .gui_sequence_facade import SequenceFacade, SequenceViewPayload
     from .gui_short_video_facade import ShortVideoFacade
     from .gui_subtitles_facade import SubtitleFacade
     from .gui_updates_facade import UpdateFacade
@@ -298,7 +298,7 @@ class LegacyBackendCompatibility:
     def _sequence_model_for_facade(self) -> VideoSequence | None:
         return self._sequence_facade._sequence_model_for_facade()
 
-    def _sequence_view_payload(self) -> dict[str, Any]:
+    def _sequence_view_payload(self) -> SequenceViewPayload:
         return self._sequence_facade._sequence_view_payload()
 
     def _sequence_failure(self, message: str) -> bool:
@@ -316,7 +316,7 @@ class LegacyBackendCompatibility:
         return self._sequence_facade.addSequenceAsset(path)
 
     @Slot("QVariantList", result=int)
-    def addSequenceAssets(self, paths: list[Any]) -> int:
+    def addSequenceAssets(self, paths: list[object]) -> int:
         return self._sequence_facade.addSequenceAssets(paths)
 
     @Slot(result=str)
@@ -738,7 +738,7 @@ class LegacyBackendCompatibility:
         return self._ai_facade.stopCodexEdit()
 
     @Slot("QVariantList")
-    def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
+    def applyCodexProposal(self, selected_operation_ids: list[object] | None = None) -> None:
         return self._ai_facade.applyCodexProposal(selected_operation_ids)
 
     @Slot()
@@ -747,7 +747,7 @@ class LegacyBackendCompatibility:
 
     def dispatch_codex_action(
         self,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, object],
         *,
         trusted_scope: ActionScope,
     ) -> ActionResult:
@@ -762,13 +762,13 @@ class LegacyBackendCompatibility:
     def _on_codex_message(self, _message: str) -> None:
         return self._ai_facade._on_codex_message(_message)
 
-    def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
+    def _on_codex_proposal(self, proposal: Mapping[str, object]) -> None:
         return self._ai_facade._on_codex_proposal(proposal)
 
     def _on_codex_audio_mix_state(self, _snapshot: CodexSessionSnapshot) -> None:
         return self._ai_facade._on_codex_audio_mix_state(_snapshot)
 
-    def _on_codex_audio_mix_proposal(self, proposal: Mapping[str, Any]) -> None:
+    def _on_codex_audio_mix_proposal(self, proposal: Mapping[str, object]) -> None:
         return self._ai_facade._on_codex_audio_mix_proposal(proposal)
 
     def _on_codex_provider_state(self, snapshot: CodexChatSnapshot) -> None:

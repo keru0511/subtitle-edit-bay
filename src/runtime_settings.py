@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping, Sequence, cast
+from typing import Mapping, Sequence, TypedDict, cast
 
 from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
@@ -109,6 +109,44 @@ class RuntimeSettings:
     alignment: AlignmentSettings
     pipeline: PipelineSettings
     short_video: ShortModeSettings
+
+
+class TranscribeRuntimeOptions(TypedDict):
+    alignment_sample_rate: int
+    alignment_offset_adjustment: float
+    model: str
+    device: str
+    compute_type: str
+    language: str | None
+    vad_onset: float | None
+    vad_offset: float | None
+    skip_existing_transcripts: bool
+    postprocess_workers: int
+    subtitle_font_size: int
+    subtitle_outline_color: str
+    subtitle_outline_thickness: int
+    subtitle_volume_scale_percent: float
+    subtitle_max_gap_seconds: float
+    subtitle_end_padding_seconds: float
+    subtitle_min_duration_seconds: float
+
+
+class RenderRuntimeOptions(TypedDict):
+    video_codec: str
+    audio_codec: str
+    output_audio_track: str
+    nvenc_preset: str
+    nvenc_cq: int
+    x264_crf: int
+    audio_normalize: bool
+    audio_target_lufs: float
+    audio_loudness_range: float
+    audio_true_peak_db: float
+    cut_no_speech: bool
+    no_speech_min_seconds: float
+    speech_padding_seconds: float
+    speech_threshold_db: str
+    speech_min_clip_seconds: float
 
 
 TRANSCRIBE_OPTION_KEYS = (
@@ -409,12 +447,52 @@ def select_runtime_options(settings: RuntimeSettings, keys: Sequence[str]) -> di
     return {key: flattened[key] for key in keys}
 
 
-def transcribe_runtime_options(settings: RuntimeSettings) -> dict[str, object]:
-    return select_runtime_options(settings, TRANSCRIBE_OPTION_KEYS)
+def transcribe_runtime_options(settings: RuntimeSettings) -> TranscribeRuntimeOptions:
+    transcription = settings.transcription
+    alignment = settings.alignment
+    layout = settings.subtitle_layout
+    return {
+        "alignment_sample_rate": alignment.alignment_sample_rate,
+        "alignment_offset_adjustment": alignment.alignment_offset_adjustment,
+        "model": transcription.model,
+        "device": transcription.device,
+        "compute_type": transcription.compute_type,
+        "language": transcription.language,
+        "vad_onset": transcription.vad_onset,
+        "vad_offset": transcription.vad_offset,
+        "skip_existing_transcripts": transcription.skip_existing_transcripts,
+        "postprocess_workers": settings.pipeline.postprocess_workers,
+        "subtitle_font_size": layout.subtitle_font_size,
+        "subtitle_outline_color": layout.subtitle_outline_color,
+        "subtitle_outline_thickness": layout.subtitle_outline_thickness,
+        "subtitle_volume_scale_percent": layout.subtitle_volume_scale_percent,
+        "subtitle_max_gap_seconds": layout.subtitle_max_gap_seconds,
+        "subtitle_end_padding_seconds": layout.subtitle_end_padding_seconds,
+        "subtitle_min_duration_seconds": layout.subtitle_min_duration_seconds,
+    }
 
 
-def render_runtime_options(settings: RuntimeSettings) -> dict[str, object]:
-    return select_runtime_options(settings, RENDER_OPTION_KEYS)
+def render_runtime_options(settings: RuntimeSettings) -> RenderRuntimeOptions:
+    video = settings.video_export
+    audio = settings.audio_normalize
+    silence = settings.silence_cut
+    return {
+        "video_codec": video.video_codec,
+        "audio_codec": video.audio_codec,
+        "output_audio_track": video.output_audio_track,
+        "nvenc_preset": video.nvenc_preset,
+        "nvenc_cq": video.nvenc_cq,
+        "x264_crf": video.x264_crf,
+        "audio_normalize": audio.audio_normalize,
+        "audio_target_lufs": audio.audio_target_lufs,
+        "audio_loudness_range": audio.audio_loudness_range,
+        "audio_true_peak_db": audio.audio_true_peak_db,
+        "cut_no_speech": silence.cut_no_speech,
+        "no_speech_min_seconds": silence.no_speech_min_seconds,
+        "speech_padding_seconds": silence.speech_padding_seconds,
+        "speech_threshold_db": silence.speech_threshold_db,
+        "speech_min_clip_seconds": silence.speech_min_clip_seconds,
+    }
 
 
 def configured_render_settings(settings: RuntimeSettings, config: RuntimeConfig) -> dict[str, object]:

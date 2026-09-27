@@ -52,12 +52,16 @@ Rectangle {
         return terms
     }
 
+    function candidateKey(value) {
+        return String(value || "").trim().toLowerCase()
+    }
+
     function canAddManualCandidate(term) {
-        var key = String(term || "").trim().toLocaleLowerCase()
+        var key = candidateKey(term)
         if (!key)
             return false
         for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
-            if (String(webDictionaryCandidateModel.get(index).term).toLocaleLowerCase() === key)
+            if (candidateKey(webDictionaryCandidateModel.get(index).term) === key)
                 return false
         }
         return webDictionaryCandidateModel.count < webDictionaryCandidateLimit
@@ -112,24 +116,26 @@ Rectangle {
         var candidates = _toStringList(current.web_dictionary_candidates)
         var selected = _toStringList(current.web_dictionary_terms)
         var metadata = current.web_dictionary_candidate_metadata instanceof Array ? current.web_dictionary_candidate_metadata : []
-        var metadataLookup = {}
+        var metadataLookup = Object.create(null)
         for (var metadataIndex = 0; metadataIndex < metadata.length; metadataIndex += 1) {
             var metadataItem = metadata[metadataIndex]
             if (metadataItem && typeof metadataItem.term === "string") {
-                metadataLookup[metadataItem.term] = metadataItem
+                metadataLookup[candidateKey(metadataItem.term)] = metadataItem
             }
         }
-        var selectedLookup = {}
+        var selectedLookup = Object.create(null)
         for (var selectedIndex = 0; selectedIndex < selected.length; selectedIndex += 1) {
-            selectedLookup[selected[selectedIndex]] = true
+            selectedLookup[candidateKey(selected[selectedIndex])] = true
         }
         for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
             var candidate = candidates[candidateIndex]
+            var key = candidateKey(candidate)
+            var candidateMetadata = metadataLookup[key]
             webDictionaryCandidateModel.append({
                 "term": candidate,
-                "source": metadataLookup[candidate] ? valueOrEmpty(metadataLookup[candidate].source) : "manual",
-                "score": metadataLookup[candidate] ? valueOrEmpty(metadataLookup[candidate].score) : "0.00",
-                "selected": Boolean(selectedLookup[candidate]),
+                "source": candidateMetadata ? valueOrEmpty(candidateMetadata.source) : "manual",
+                "score": candidateMetadata ? valueOrEmpty(candidateMetadata.score) : "0.00",
+                "selected": Boolean(selectedLookup[key]),
             })
         }
         updateSelectedCandidateCount()

@@ -16,7 +16,7 @@ class TranscriptionAsrSettings:
     model: str = "large-v3"
     device: str = "cpu"
     compute_type: str = "int8"
-    language: str = "ja"
+    language: str | None = "ja"
     vad_onset: float | None = DEFAULT_VAD_ONSET
     vad_offset: float | None = DEFAULT_VAD_OFFSET
     whisperx_version: str = ""

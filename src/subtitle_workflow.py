@@ -6,7 +6,7 @@ import subprocess
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable, Mapping, TypedDict
 from dataclasses import dataclass
 
 from .audio_mixer import active_audio_mix_channels, reconcile_audio_mix, video_track_entries
@@ -50,6 +50,10 @@ from .craig_pipeline import (
     transcribe_craig_audio_files,
     write_json,
 )
+from .data_boundary import (
+    coerce_float, coerce_int, is_object_dict, is_object_iterable, is_object_mapping,
+    is_string_object_dict, is_string_object_dict_list,
+)
 from .merge_transcripts import refine_segments
 from .media_probe import probe_video_stream
 from .pipeline import build_ass_from_data
@@ -59,6 +63,7 @@ from .runtime_config import load_command_runtime_config, resolve_list_option
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
 from .runtime_settings import (
     RuntimeSettings,
+    TranscribeRuntimeOptions,
     configured_render_settings,
     render_runtime_options,
     settings_from_config,
@@ -108,7 +113,7 @@ class SubtitlePipelineInputs:
     reference_path: Path
     audio_files: list[Path]
     style_map: dict[str, str]
-    speakers: list[dict[str, Any]]
+    speakers: list[dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -121,14 +126,14 @@ class SubtitleAlignmentResult:
 
 @dataclass(frozen=True)
 class SubtitleRefineResult:
-    merged_segments: list[dict]
-    filtered_segments: list[dict]
+    merged_segments: list[dict[object, object]]
+    filtered_segments: list[dict[object, object]]
 
 
 @dataclass(frozen=True)
 class SubtitleTranscriptionResult:
     transcript_map: dict[str, str]
-    segments: list[dict]
+    segments: list[dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -136,12 +141,12 @@ class SubtitleProjectResult:
     project_path: Path
     merged_path: Path
     filtered_path: Path
-    project: dict[str, Any]
+    project: dict[object, object]
 
 
 @dataclass(frozen=True)
 class _RenderAudioPlan:
-    audio_mix: dict[str, Any]
+    audio_mix: dict[object, object]
     use_audio_mix: bool
     has_audio_stream: bool
     offset_seconds: float
@@ -161,6 +166,32 @@ class _RenderEncoding:
 class _SilenceCutPlan:
     no_speech_ranges: list[tuple[float, float]]
     keep_ranges: list[tuple[float, float]]
+
+
+class AssBuildOptions(TypedDict):
+    track_color_map: dict[str, str]
+    subtitle_font_size: int
+    subtitle_outline_color: str
+    subtitle_outline_thickness: int
+    subtitle_max_gap_seconds: float
+    subtitle_end_padding_seconds: float
+    subtitle_min_duration_seconds: float
+
+
+def _project_section(project: Mapping[str, object] | Mapping[object, object], key: str) -> dict[str, object]:
+    """検証済みプロジェクトの辞書セクションを文字列キーで扱う。"""
+    value = project.get(key, {})
+    if not is_string_object_dict(value):
+        raise ValueError(f"project.{key} must be an object with string keys")
+    return value
+
+
+def _project_segments(project: Mapping[str, object] | Mapping[object, object]) -> list[dict[str, object]]:
+    """検証済みプロジェクトの字幕セグメントを型付きで扱う。"""
+    value = project.get("segments", [])
+    if not is_string_object_dict_list(value):
+        raise ValueError("project.segments must be an array of objects")
+    return value
 
 
 def resolve_subtitle_inputs(
@@ -254,7 +285,7 @@ def run_subtitle_transcription_stage(
 
 
 def run_subtitle_refine_stage(
-    merged_segments: list[dict],
+    merged_segments: list[dict[str, object]],
     *,
     subtitle_max_gap_seconds: float,
     subtitle_end_padding_seconds: float,
@@ -277,7 +308,7 @@ def build_project_stage(
     alignment: SubtitleAlignmentResult,
     transcript_map: dict[str, str],
     refine_result: SubtitleRefineResult,
-    waveforms: list[dict[str, Any]],
+    waveforms: list[dict[str, object]],
     *,
     model: str,
     device: str,
@@ -291,7 +322,7 @@ def build_project_stage(
     subtitle_min_duration_seconds: float,
     volume_scale_percent: float,
     duration_seconds: float,
-    render_settings: dict[str, Any] | None = None,
+    render_settings: dict[str, object] | None = None,
 ) -> SubtitleProjectResult:
     merged_path = write_json(
         str(inputs.output_dir / f"{Path(inputs.video_path).stem}.craig.merged.json"),
@@ -371,8 +402,8 @@ def _project_speakers(
     audio_files: list[Path],
     style_map: dict[str, str],
     track_color_map: dict[str, str],
-) -> list[dict[str, Any]]:
-    speakers: list[dict[str, Any]] = []
+) -> list[dict[str, str]]:
+    speakers: list[dict[str, str]] = []
     for index, audio_file in enumerate(audio_files):
         name = parse_craig_speaker_name(str(audio_file))
         track_key = f"craig:{name}"
@@ -393,10 +424,10 @@ def _project_speakers(
 
 def _build_waveforms(
     audio_files: list[Path],
-    speakers: list[dict[str, Any]],
+    speakers: list[dict[str, str]],
     offset_seconds: float,
-) -> list[dict[str, Any]]:
-    waveforms: list[dict[str, Any]] = []
+) -> list[dict[str, object]]:
+    waveforms: list[dict[str, object]] = []
     speaker_by_path = {str(Path(item["path"]).resolve()): item for item in speakers}
     for audio_file in audio_files:
         speaker = speaker_by_path[str(audio_file.resolve())]
@@ -443,7 +474,7 @@ def transcribe_to_project(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-    render_settings: dict[str, Any] | None = None,
+    render_settings: dict[str, object] | None = None,
     overwrite_project: bool = False,
 ) -> Path:
     inputs = resolve_subtitle_inputs(
@@ -531,7 +562,7 @@ def transcribe_to_project(
     try:
         duration_seconds = probe_media_duration(video_path)
     except (OSError, subprocess.CalledProcessError, ValueError):
-        duration_seconds = max((float(segment["end"]) for segment in refine_result.merged_segments), default=0.0)
+        duration_seconds = max((coerce_float(segment["end"]) for segment in refine_result.merged_segments), default=0.0)
 
     project_result = build_project_stage(
         inputs=inputs,
@@ -558,25 +589,28 @@ def transcribe_to_project(
 
 
 def _ass_build_options(
-    project: dict[str, Any],
+    project: dict[object, object],
     subtitle_font_size: int | None = None,
-) -> dict[str, Any]:
-    settings = project.get("subtitle_settings", {})
+) -> AssBuildOptions:
+    settings_value = project.get("subtitle_settings")
+    settings = settings_value if is_object_mapping(settings_value) else {}
+    speakers_value = project.get("speakers")
+    speakers = speakers_value if is_object_iterable(speakers_value) else ()
     colors = {
         str(item.get("track_key", "")): str(item.get("color", ""))
-        for item in project.get("speakers", [])
-        if item.get("track_key") and item.get("color")
+        for item in speakers
+        if is_object_mapping(item) and item.get("track_key") and item.get("color")
     }
     return {
         "track_color_map": colors,
-        "subtitle_font_size": int(subtitle_font_size or settings.get("font_size", 50)),
+        "subtitle_font_size": coerce_int(subtitle_font_size or settings.get("font_size", 50)),
         "subtitle_outline_color": str(settings.get("outline_color", DEFAULT_SUBTITLE_OUTLINE_COLOR)),
-        "subtitle_outline_thickness": int(settings.get("outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
-        "subtitle_max_gap_seconds": float(settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
-        "subtitle_end_padding_seconds": float(
+        "subtitle_outline_thickness": coerce_int(settings.get("outline_thickness", DEFAULT_SUBTITLE_OUTLINE_THICKNESS)),
+        "subtitle_max_gap_seconds": coerce_float(settings.get("max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)),
+        "subtitle_end_padding_seconds": coerce_float(
             settings.get("end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)
         ),
-        "subtitle_min_duration_seconds": float(
+        "subtitle_min_duration_seconds": coerce_float(
             settings.get("min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)
         ),
     }
@@ -587,7 +621,7 @@ def _is_mp4_output(output_path: str | Path) -> bool:
 
 
 def _legacy_singleton_sequence_keep_ranges(
-    project: dict[str, Any],
+    project: dict[object, object],
     sequence: VideoSequence,
 ) -> list[tuple[float, float]] | None:
     """Return the source range for a safely compatible legacy singleton edit.
@@ -631,7 +665,7 @@ def _legacy_singleton_sequence_keep_ranges(
 
 
 def _is_safe_legacy_singleton_compatibility(
-    project: dict[str, Any],
+    project: dict[object, object],
     sequence: VideoSequence,
 ) -> bool:
     """Keep an unchanged legacy singleton on the direct renderer path."""
@@ -650,7 +684,7 @@ def build_project_ass(
     output_path: str | Path | None = None,
     *,
     subtitle_font_size: int | None = None,
-    _project: dict[str, Any] | None = None,
+    _project: dict[object, object] | None = None,
     _keep_ranges: list[tuple[float, float]] | None = None,
 ) -> Path:
     project = _project if _project is not None else load_project(project_path, resolve_video_duration=True)
@@ -681,12 +715,20 @@ def build_project_ass(
     return output
 
 
-def _resolve_render_audio(project: dict[str, Any], video_path: str) -> _RenderAudioPlan:
+def _resolve_render_audio(project: dict[object, object], video_path: str) -> _RenderAudioPlan:
     """書き出しに使う音声経路を、保存済み設定を変更せず決定する。"""
 
-    audio_mix = deepcopy(project.get("audio_mix", {}))
+    audio_mix_value = project.get("audio_mix", {})
+    if not is_object_dict(audio_mix_value):
+        raise ValueError("音量ミキサー設定が不正です")
+    audio_mix = deepcopy(audio_mix_value)
     use_audio_mix = bool(audio_mix.get("customized", False))
-    offset_seconds = float(project.get("transcription", {}).get("offset_seconds", 0.0))
+    transcription = project.get("transcription")
+    offset_seconds = (
+        coerce_float(transcription.get("offset_seconds", 0.0))
+        if is_object_mapping(transcription)
+        else 0.0
+    )
     if use_audio_mix:
         for channel in active_audio_mix_channels(audio_mix):
             if channel.get("kind") == "external" and not Path(str(channel.get("path", ""))).is_file():
@@ -702,27 +744,29 @@ def _resolve_render_audio(project: dict[str, Any], video_path: str) -> _RenderAu
             has_known_video_tracks = False
             actual_video_track_selectors = set()
             has_audio_stream = True
+        raw_channels = audio_mix.get("channels")
+        channels = raw_channels if is_object_iterable(raw_channels) else ()
         has_real_video_track = any(
-            isinstance(channel, dict)
+            is_object_mapping(channel)
             and channel.get("kind") == "video"
             and str(channel.get("selector", "")).strip()
             and (has_known_video_tracks and str(channel.get("selector", "")) in actual_video_track_selectors)
-            for channel in (audio_mix.get("channels") if isinstance(audio_mix.get("channels"), list) else [])
+            for channel in channels
         )
         has_enabled_external = any(
-            isinstance(channel, dict) and channel.get("kind") == "external" and bool(channel.get("enabled"))
-            for channel in audio_mix.get("channels", [])
+            is_object_mapping(channel) and channel.get("kind") == "external" and bool(channel.get("enabled"))
+            for channel in channels
         )
         if has_enabled_external:
             use_audio_mix = True
         elif not has_real_video_track:
-            for channel in audio_mix.get("channels", []):
+            for candidate_channel in channels:
                 if (
-                    isinstance(channel, dict)
-                    and channel.get("kind") == "external"
-                    and Path(str(channel.get("path", ""))).is_file()
+                    is_object_dict(candidate_channel)
+                    and candidate_channel.get("kind") == "external"
+                    and Path(str(candidate_channel.get("path", ""))).is_file()
                 ):
-                    channel["enabled"] = True
+                    candidate_channel["enabled"] = True
                     use_audio_mix = True
                     break
     return _RenderAudioPlan(audio_mix, use_audio_mix, has_audio_stream, offset_seconds)
@@ -771,7 +815,7 @@ def _begin_render_encoding(keep_ranges: list[tuple[float, float]]) -> None:
 
 
 def _plan_silence_cut(
-    project: dict[str, Any],
+    project: dict[object, object],
     video_path: str,
     timeline: VideoTimeline,
     manual_keep_ranges: list[tuple[float, float]],
@@ -786,9 +830,12 @@ def _plan_silence_cut(
 ) -> _SilenceCutPlan | None:
     """音声を調べて無音カット範囲を決める。書き出し用ファイルは作らない。"""
 
+    audio_sources = project.get("audio_sources")
+    if not is_string_object_dict_list(audio_sources):
+        raise ValueError("project.audio_sources must be an array of objects")
     source_paths = [
         str(source.get("path", ""))
-        for source in project.get("audio_sources", [])
+        for source in audio_sources
         if Path(str(source.get("path", ""))).is_file()
     ]
     detection_sources: list[tuple[str, str | None]] = [(path, None) for path in source_paths]
@@ -823,19 +870,18 @@ def _plan_silence_cut(
 
     def detect_source(source: tuple[str, str | None]) -> list[tuple[float, float]]:
         source_path, audio_track = source
-        options: dict[str, Any] = {
-            "noise": normalize_db_threshold(speech_threshold_db),
-            "duration": DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
-        }
-        if audio_track:
-            options["audio_track"] = audio_track
-        return detect_speech_ranges(source_path, **options)
+        return detect_speech_ranges(
+            source_path,
+            noise=normalize_db_threshold(speech_threshold_db),
+            duration=DEFAULT_SPEECH_DETECT_SILENCE_SECONDS,
+            audio_track=audio_track,
+        )
 
     speech_ranges: list[tuple[float, float]] = []
     with ThreadPoolExecutor(max_workers=max(1, min(4, len(detection_sources)))) as executor:
         for source_ranges in executor.map(detect_source, detection_sources):
             speech_ranges.extend(source_ranges)
-    duration = float(project.get("video", {}).get("duration_seconds", 0.0)) or probe_media_duration(video_path)
+    duration = coerce_float(_project_section(project, "video").get("duration_seconds", 0.0)) or probe_media_duration(video_path)
     no_speech_ranges, keep_ranges = build_no_speech_plan(
         duration,
         speech_ranges,
@@ -853,7 +899,7 @@ def _plan_silence_cut(
 
 def _render_sequence_project(
     project_path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     output: Path,
     *,
     encoding: _RenderEncoding,
@@ -901,8 +947,8 @@ def _render_sequence_project(
     )
     emit_progress_event("render", "encode", phase="complete", progress=1.0)
     emit_progress_event("render", "finalize", phase="start")
-    project["render_settings"] = {
-        **project.get("render_settings", {}),
+    render_settings: dict[str, object] = {
+        **_project_section(project, "render_settings"),
         "video_codec": encoding.video_codec,
         "audio_codec": encoding.audio_codec,
         "output_audio_track": encoding.output_audio_track,
@@ -913,7 +959,8 @@ def _render_sequence_project(
         "output_duration_seconds": sequence_plan.output_duration,
         "last_output": str(output.resolve()),
     }
-    project["render_settings"].pop("last_cut_output", None)
+    render_settings.pop("last_cut_output", None)
+    project["render_settings"] = render_settings
     save_project(project_path, project)
     emit_progress_event("render", "finalize", phase="complete", progress=1.0)
     log_progress(f"Render complete: {output}")
@@ -1008,7 +1055,7 @@ class _SingleSourceRenderResult:
 
 def _prepare_single_source_render(
     project_path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     *,
     encoding: _RenderEncoding,
     legacy_singleton_keep_ranges: list[tuple[float, float]] | None,
@@ -1024,7 +1071,7 @@ def _prepare_single_source_render(
 ) -> _SingleSourceRenderPlan:
     """単一動画の入力と字幕・音声・カット範囲を確定する。"""
 
-    video_path = str(project["video"]["path"])
+    video_path = str(_project_section(project, "video")["path"])
     if not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
     timeline = timeline_from_project(project)
@@ -1039,9 +1086,7 @@ def _prepare_single_source_render(
     has_render_ranges = timeline.has_cuts or has_legacy_singleton_trim
     emit_progress_event("render", "prepare", phase="complete", progress=1.0)
     emit_progress_event("render", "subtitle", phase="start")
-    has_subtitles = any(
-        isinstance(segment, dict) and str(segment.get("text", "")).strip() for segment in project.get("segments", [])
-    )
+    has_subtitles = any(str(segment.get("text", "")).strip() for segment in _project_segments(project))
     ass_path = (
         build_project_ass(
             project_path,
@@ -1127,7 +1172,7 @@ def _render_cut_with_subtitles(
 
 def _render_cut_source(
     project_path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     plan: _SingleSourceRenderPlan,
     output: Path,
     encoding: _RenderEncoding,
@@ -1171,7 +1216,7 @@ def _render_cut_source(
 
 
 def _render_uncut_source(
-    project: dict[str, Any],
+    project: dict[object, object],
     plan: _SingleSourceRenderPlan,
     output: Path,
     encoding: _RenderEncoding,
@@ -1179,7 +1224,7 @@ def _render_uncut_source(
     """カット不要の動画を字幕・音声設定に従って書き出す。"""
 
     emit_progress_event("render", "audio", phase="complete", progress=1.0)
-    output_duration = float(project.get("video", {}).get("duration_seconds", 0.0))
+    output_duration = coerce_float(_project_section(project, "video").get("duration_seconds", 0.0))
     if output_duration > 0.0:
         emit_progress_event("render", "encode", phase="metadata", duration=output_duration)
     emit_progress_event("render", "encode", phase="start")
@@ -1210,7 +1255,7 @@ def _render_uncut_source(
 
 def _execute_single_source_render(
     project_path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     plan: _SingleSourceRenderPlan,
     output: Path,
     encoding: _RenderEncoding,
@@ -1226,7 +1271,7 @@ def _execute_single_source_render(
 
 def _finalize_single_source_render(
     project_path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     plan: _SingleSourceRenderPlan,
     result: _SingleSourceRenderResult,
     output: Path,
@@ -1242,8 +1287,8 @@ def _finalize_single_source_render(
     """書き出し結果のみをプロジェクト設定に記録する。"""
 
     emit_progress_event("render", "finalize", phase="start")
-    project["render_settings"] = {
-        **project.get("render_settings", {}),
+    render_settings: dict[str, object] = {
+        **_project_section(project, "render_settings"),
         "video_codec": encoding.video_codec,
         "audio_codec": encoding.audio_codec,
         "output_audio_track": encoding.output_audio_track,
@@ -1265,9 +1310,10 @@ def _finalize_single_source_render(
         "last_output": str(output.resolve()),
     }
     if result.cut_output is not None:
-        project["render_settings"]["last_cut_output"] = str(result.cut_output.resolve())
+        render_settings["last_cut_output"] = str(result.cut_output.resolve())
     else:
-        project["render_settings"].pop("last_cut_output", None)
+        render_settings.pop("last_cut_output", None)
+    project["render_settings"] = render_settings
     save_project(project_path, project)
     emit_progress_event("render", "finalize", phase="complete", progress=1.0)
     log_progress(f"Render complete: {output}")
@@ -1276,7 +1322,7 @@ def _finalize_single_source_render(
 
 def _render_single_source_project(
     project_path: str | Path,
-    project: dict[str, Any],
+    project: dict[object, object],
     output: Path,
     *,
     encoding: _RenderEncoding,
@@ -1335,24 +1381,22 @@ def render_project_short_video(
     nvenc_cq: int = DEFAULT_NVENC_CQ,
     x264_crf: int = DEFAULT_X264_CRF,
     progress_callback: Callable[[str], None] | None = None,
-    **_kwargs: Any,
+    **_kwargs: object,
 ) -> Path:
     emit_progress_event("render_short", "prepare", phase="complete", progress=1.0)
     project = load_project(project_path)
-    short_video = project.get("short_video", {})
+    short_video = _project_section(project, "short_video")
     if not short_video.get("enabled") or not short_video.get("clips"):
         raise SystemExit("short_video is not enabled or has no clips")
 
-    video_path = str(project.get("video", {}).get("path", ""))
+    video_path = str(_project_section(project, "video").get("path", ""))
     if not video_path or not Path(video_path).is_file():
         raise SystemExit(f"Project video was not found: {video_path}")
 
     output = resolve_render_output_path(project_path, project, output_path, short=True)
     if audio_codec == "copy":
         audio_codec = "aac"
-    has_subtitles = any(
-        isinstance(segment, dict) and str(segment.get("text", "")).strip() for segment in project.get("segments", [])
-    )
+    has_subtitles = any(str(segment.get("text", "")).strip() for segment in _project_segments(project))
     ass_path = build_short_video_ass(project_path, _project=project) if has_subtitles else None
     result = render_short_video(
         project_path,
@@ -1369,7 +1413,7 @@ def render_project_short_video(
     emit_progress_event("render_short", "encode", phase="complete", progress=1.0)
     emit_progress_event("render_short", "finalize", phase="start")
     render_settings = {
-        **project.get("render_settings", {}),
+        **_project_section(project, "render_settings"),
         "short_video_codec": video_codec,
         "short_audio_codec": audio_codec,
         "short_last_output": str(result.resolve()),
@@ -1394,13 +1438,35 @@ def _transcribe_options_with_cli_overrides(
     *,
     alignment_offset_adjustment: float | None,
     skip_existing_transcripts: bool | None,
-) -> dict[str, Any]:
+) -> TranscribeRuntimeOptions:
     options = transcribe_runtime_options(settings)
     if alignment_offset_adjustment is not None:
         options["alignment_offset_adjustment"] = alignment_offset_adjustment
     if skip_existing_transcripts is not None:
         options["skip_existing_transcripts"] = skip_existing_transcripts
     return options
+
+
+class WorkflowArgs(argparse.Namespace):
+    phase: str = ""
+    config: str | None = None
+    video: str | None = None
+    audio_file: list[str] | None = None
+    video_audio_track: str | None = None
+    output_dir: str | None = None
+    render_output_dir: str | None = None
+    context_base_dir: str | None = None
+    project_path: str | None = None
+    reference_audio: str | None = None
+    reference_track: str | None = None
+    alignment_offset_adjustment: float | None = None
+    skip_existing_transcripts: bool | None = None
+    transcription_context_file: str | None = None
+    overwrite_project: bool = False
+    run: bool = False
+    project: str | None = None
+    output: str | None = None
+    subtitle_font_size: int | None = None
 
 
 def main() -> None:
@@ -1450,10 +1516,12 @@ def main() -> None:
     render_short.add_argument("--output")
     render_short.add_argument("--run", action="store_true")
 
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=WorkflowArgs())
     config = load_command_runtime_config("craig_pipeline", args.config)
 
     if args.phase == "transcribe":
+        if args.video is None or args.output_dir is None:
+            parser.error("transcribe requires --video and --output-dir")
         if not args.run:
             print(Path(args.project_path) if args.project_path else derive_project_path(args.video, args.output_dir))
             return
@@ -1478,13 +1546,8 @@ def main() -> None:
             cli_context_file=args.transcription_context_file,
             base_dir=context_base_dir,
         )
-        transcribe_options.update(
-            {
-                "postprocess_workers": int(config.get("postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)),
-                "track_color_map": track_colors,
-                "render_settings": configured_render_settings(settings, config),
-                "overwrite_project": args.overwrite_project,
-            }
+        transcribe_options["postprocess_workers"] = coerce_int(
+            config.get("postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)
         )
         result = transcribe_to_project_with_context(
             video_path=args.video,
@@ -1497,10 +1560,16 @@ def main() -> None:
             reference_track=args.reference_track,
             video_audio_track=args.video_audio_track,
             transcription_context=transcription_context,
+            track_color_map=track_colors,
+            render_settings=configured_render_settings(settings, config),
+            overwrite_project=args.overwrite_project,
             **transcribe_options,
         )
         print(f"project_path: {result}")
         return
+
+    if args.project is None:
+        parser.error("project is required")
 
     if args.phase == "ass":
         result = build_project_ass(args.project, args.output, subtitle_font_size=args.subtitle_font_size)

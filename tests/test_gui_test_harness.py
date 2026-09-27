@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Callable, cast
 from tests.typed_case import TypedTestCase
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -14,7 +15,7 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, Signal
 from PySide6.QtGui import QGuiApplication
-from shiboken6 import delete
+import shiboken6
 
 from tests.gui_test_harness import (
     AllowedQmlMessage,
@@ -31,6 +32,7 @@ from tests.gui_performance_scenarios import (
     _short_workspace_active,
     _short_visual_update_contract_passed,
 )
+from tests.qt_property_value import qt_property_value
 
 
 FIXTURE_QML = """\
@@ -92,18 +94,22 @@ class FakeVideoSink(QObject):
 
 
 class GuiTestHarnessTests(TypedTestCase):
+    _owns_application: bool
+    application: QGuiApplication
+
     @classmethod
     def setUpClass(cls) -> None:
         application = QGuiApplication.instance()
         cls._owns_application = application is None
-        cls.application = application or QGuiApplication([])
+        cls.application = application if isinstance(application, QGuiApplication) else QGuiApplication([])
 
     @classmethod
     def tearDownClass(cls) -> None:
         if cls._owns_application:
             cls.application.quit()
+            delete = cast(Callable[[QObject], None], getattr(shiboken6, "delete"))
             delete(cls.application)
-            cls.application = None
+            del cls.application
 
     def setUp(self) -> None:
         self.workspace = tempfile.TemporaryDirectory()
@@ -125,14 +131,14 @@ class GuiTestHarnessTests(TypedTestCase):
     def test_load_find_click_resize_bounds_and_cleanup(self) -> None:
         _engine, window = self.harness.load_qml(self.qml_path)
         self.harness.wait_until(
-            lambda: bool(window.property("ready")),
+            lambda: bool(qt_property_value(window, "ready")),
             description="fixture completion",
         )
         target = self.harness.find_item(window, "targetButton")
 
         self.harness.click(window, target)
         self.harness.wait_until(
-            lambda: int(window.property("clickCount")) == 1,
+            lambda: qt_property_value(window, "clickCount") == 1,
             description="fixture click",
         )
         self.harness.resize(window, 480, 300)
@@ -154,7 +160,7 @@ class GuiTestHarnessTests(TypedTestCase):
             [target],
         )
         self.harness.emit_signal(window, "submitted", 2)
-        self.assertEqual(window.property("clickCount"), 3)
+        self.assertEqual(qt_property_value(window, "clickCount"), 3)
 
         self.harness.cleanup()
         self.harness.cleanup()
@@ -279,18 +285,19 @@ class GuiTestHarnessTests(TypedTestCase):
         self.assertIsNotNone(snapshot["first_video_frame_ms"])
 
     def test_main_playback_contract_requires_decoded_frames(self) -> None:
-        result = {
+        media: dict[str, object] = {
+            "play_starts": 1,
+            "video_frames": 0,
+            "first_video_frame_ms": None,
+        }
+        result: dict[str, object] = {
             "advanced_playback_ms": 30_000,
             "requested_playback_ms": 30_000,
-            "media": {
-                "play_starts": 1,
-                "video_frames": 0,
-                "first_video_frame_ms": None,
-            },
+            "media": media,
         }
 
         self.assertFalse(_main_preview_contract_passed(result))
-        result["media"].update({"video_frames": 450, "first_video_frame_ms": 125.0})
+        media.update({"video_frames": 450, "first_video_frame_ms": 125.0})
         self.assertTrue(_main_preview_contract_passed(result))
 
     def test_playback_follow_contract_rejects_seek_only_selection(self) -> None:

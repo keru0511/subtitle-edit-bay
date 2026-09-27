@@ -5,12 +5,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping, Protocol
 
 from PySide6.QtCore import QObject, QTimer, QUrl
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat
+from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat
 
 from .qt_decorators import Signal, Slot
+from .qt_audio_buffer_output import AudioBufferSignal, QAudioBufferOutput
 from .audio_mixer import (
     AUDIO_MIX_MASTER_GAIN,
     MAX_VOLUME_PERCENT,
@@ -25,11 +26,22 @@ from .audio_preview_cache import (
     clear_audio_preview_cache,
     prepare_audio_preview_cache,
 )
+from .data_boundary import coerce_float, is_string_object_mapping, is_object_iterable
 from .realtime_audio_mixer import RealtimeAudioMixer
 
 
-CachePreparation = Callable[..., AudioPreviewCacheResult]
-CacheClear = Callable[..., object]
+class CachePreparation(Protocol):
+    def __call__(
+        self,
+        project: Mapping[str, object],
+        cache_root: Path,
+        /,
+        *,
+        protected_paths: list[Path],
+    ) -> AudioPreviewCacheResult: ...
+
+
+CacheClear = Callable[[str | Path], object]
 MixerFactory = Callable[[QObject], RealtimeAudioMixer]
 
 
@@ -66,7 +78,7 @@ class AudioPreviewController(QObject):
     ) -> None:
         super().__init__(parent)
         self.cache_root = Path(cache_root)
-        self._project: dict[str, Any] | None = None
+        self._project: dict[str, object] | None = None
         self._prepare_cache = prepare_cache
         self._clear_cache = clear_cache
         self._cache_paths: dict[str, str] = {}
@@ -92,10 +104,10 @@ class AudioPreviewController(QObject):
         self.cacheCompleted.connect(self._apply_audio_preview_cache)
 
     @property
-    def project(self) -> dict[str, Any] | None:
+    def project(self) -> dict[str, object] | None:
         return self._project
 
-    def set_project(self, project: dict[str, Any] | None) -> None:
+    def set_project(self, project: dict[str, object] | None) -> None:
         """Update the project mapping used by preview derivation.
 
         The mapping is intentionally not copied: the backend mutates its
@@ -104,6 +116,16 @@ class AudioPreviewController(QObject):
         """
 
         self._project = project
+
+    def _audio_mix(self) -> Mapping[str, object]:
+        section = self._project.get("audio_mix") if self._project is not None else None
+        return section if is_string_object_mapping(section) else {}
+
+    def _channels(self) -> list[dict[str, object]]:
+        value = self._audio_mix().get("channels")
+        if not is_object_iterable(value):
+            return []
+        return [dict(channel) for channel in value if is_string_object_mapping(channel)]
 
     @property
     def cache_paths(self) -> dict[str, str]:
@@ -190,11 +212,9 @@ class AudioPreviewController(QObject):
     def audio_preview_clock_url(self) -> str:
         if self._project is None:
             return ""
-        channels = self._project.get("audio_mix", {}).get("channels", [])
-        ordered = sorted(
-            (channel for channel in channels if isinstance(channel, dict)),
-            key=lambda channel: channel.get("kind") == "external",
-        )
+        channels = self._channels()
+        ordered = [channel for channel in channels if channel.get("kind") != "external"]
+        ordered.extend(channel for channel in channels if channel.get("kind") == "external")
         for channel in ordered:
             cache_path = self._cache_paths.get(str(channel.get("id", "")), "")
             if cache_path and Path(cache_path).is_file():
@@ -316,17 +336,17 @@ class AudioPreviewController(QObject):
         self.statusChanged.emit("音声プレビューキャッシュをクリアしました", "CHECK")
 
     @property
-    def mixer_channels(self) -> list[dict[str, Any]]:
+    def mixer_channels(self) -> list[dict[str, object]]:
         if self._project is None:
             return []
-        return [self.channel_view(channel) for channel in self._project.get("audio_mix", {}).get("channels", [])]
+        return [self.channel_view(channel) for channel in self._channels()]
 
     def enabled_channel_ids(self) -> set[str]:
         if self._project is None:
             return set()
         return {
             str(channel.get("id", ""))
-            for channel in self._project.get("audio_mix", {}).get("channels", [])
+            for channel in self._channels()
             if isinstance(channel, dict) and bool(channel.get("enabled")) and str(channel.get("id", "")).strip()
         }
 
@@ -343,9 +363,9 @@ class AudioPreviewController(QObject):
     def intentional_silence(self) -> bool:
         return bool(self.mixer_channels) and not self.enabled_channel_ids()
 
-    def channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
+    def channel_view(self, channel: Mapping[str, object]) -> dict[str, object]:
         project = self._project or {}
-        view = deepcopy(channel)
+        view = deepcopy(dict(channel))
         is_external = view.get("kind") == "external"
         if is_external:
             view["preview_object_id"] = str(view.get("id", ""))
@@ -356,22 +376,25 @@ class AudioPreviewController(QObject):
             QUrl.fromLocalFile(cache_path).toString() if cache_path and Path(cache_path).is_file() else ""
         )
         view["preview_audio_track_index"] = 0
+        transcription = project.get("transcription")
         view["preview_offset_seconds"] = (
-            float(project.get("transcription", {}).get("offset_seconds", 0.0)) if is_external else 0.0
+            coerce_float(transcription.get("offset_seconds", 0.0))
+            if is_external and is_string_object_mapping(transcription)
+            else 0.0
         )
         return view
 
     def preview_state(
         self,
-    ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, float]]:
+    ) -> tuple[list[tuple[dict[str, object], dict[str, object]]], dict[str, float]]:
         if self._project is None:
             self._gains.clear()
             return [], {}
-        audio_mix = self._project.get("audio_mix", {})
+        audio_mix = self._audio_mix()
         available = [
             (channel, self.channel_view(channel))
-            for channel in audio_mix.get("channels", [])
-            if isinstance(channel, dict) and bool(channel.get("enabled"))
+            for channel in self._channels()
+            if bool(channel.get("enabled"))
         ]
         available = [item for item in available if item[1]["preview_url"]]
         active_ids = {str(channel.get("id", "")) for channel in active_audio_mix_channels(audio_mix)}
@@ -379,7 +402,7 @@ class AudioPreviewController(QObject):
             str(view.get("id", "")): (
                 min(
                     MAX_VOLUME_PERCENT / 100.0,
-                    max(0.0, float(channel.get("volume_percent", 100.0))) / 100.0 * AUDIO_MIX_MASTER_GAIN,
+                    max(0.0, coerce_float(channel.get("volume_percent", 100.0))) / 100.0 * AUDIO_MIX_MASTER_GAIN,
                 )
                 if str(view.get("id", "")) in active_ids
                 else 0.0
@@ -390,7 +413,7 @@ class AudioPreviewController(QObject):
         self._gains.update(gains)
         self._mixer.set_channels(
             gains,
-            {str(view.get("id", "")): float(view.get("preview_offset_seconds", 0.0)) for _channel, view in available},
+            {str(view.get("id", "")): coerce_float(view.get("preview_offset_seconds", 0.0)) for _channel, view in available},
         )
         if any(channel_id not in gains or gains.get(channel_id, 0.0) <= 0.0 for channel_id in self._levels):
             self._level_timer.start()
@@ -403,9 +426,9 @@ class AudioPreviewController(QObject):
         self.previewGainsChanged.emit()
 
     @property
-    def preview_channels(self) -> list[dict[str, Any]]:
+    def preview_channels(self) -> list[dict[str, object]]:
         available, gains = self.preview_state()
-        channels: list[dict[str, Any]] = []
+        channels: list[dict[str, object]] = []
         for _channel, view in available:
             channel_id = str(view.get("id", ""))
             view["preview_volume"] = gains.get(channel_id, 0.0)
@@ -422,12 +445,10 @@ class AudioPreviewController(QObject):
         output = self._outputs.get(channel_id)
         if output is None:
             output = QAudioBufferOutput(self._mixer.audio_format, self)
-            output.audioBufferReceived.connect(
-                lambda buffer, current_id=channel_id: self.receive_preview_buffer(
-                    current_id,
-                    buffer,
-                )
-            )
+            buffer_signal: object = output.audioBufferReceived
+            if not isinstance(buffer_signal, AudioBufferSignal):
+                raise RuntimeError("音声バッファの通知を接続できません")
+            buffer_signal.connect(lambda buffer: self.receive_preview_buffer(channel_id, buffer))
             self._outputs[channel_id] = output
         return output
 
@@ -437,23 +458,23 @@ class AudioPreviewController(QObject):
             return 0.0
         raw = bytes(buffer.constData())
         sample_format = buffer.format().sampleFormat()
-        if sample_format == QAudioFormat.UInt8:
+        if sample_format == QAudioFormat.SampleFormat.UInt8:
             values = (abs(value - 128) / 128.0 for value in raw)
-        elif sample_format == QAudioFormat.Int16:
+        elif sample_format == QAudioFormat.SampleFormat.Int16:
             samples = array("h")
             samples.frombytes(raw[: len(raw) - len(raw) % 2])
             stride = max(1, len(samples) // 4096)
             values = (abs(value) / 32768.0 for value in samples[::stride])
-        elif sample_format == QAudioFormat.Int32:
+        elif sample_format == QAudioFormat.SampleFormat.Int32:
             samples = array("i")
             samples.frombytes(raw[: len(raw) - len(raw) % 4])
             stride = max(1, len(samples) // 4096)
             values = (abs(value) / 2147483648.0 for value in samples[::stride])
-        elif sample_format == QAudioFormat.Float:
-            samples = array("f")
-            samples.frombytes(raw[: len(raw) - len(raw) % 4])
-            stride = max(1, len(samples) // 4096)
-            values = (abs(float(value)) for value in samples[::stride] if math.isfinite(float(value)))
+        elif sample_format == QAudioFormat.SampleFormat.Float:
+            float_samples = array("f")
+            float_samples.frombytes(raw[: len(raw) - len(raw) % 4])
+            stride = max(1, len(float_samples) // 4096)
+            values = (abs(float(value)) for value in float_samples[::stride] if math.isfinite(float(value)))
         else:
             return 0.0
         return min(1.0, max(values, default=0.0))

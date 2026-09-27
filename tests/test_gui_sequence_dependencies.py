@@ -5,13 +5,16 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 from PySide6.QtCore import QObject, Signal
 
 from src.gui_project_editor_controller import ProjectEditorController
+from src.gui import EditBayBackend
 from src.gui_sequence_facade import SequenceDependencies, SequenceFacade
 from src.video_sequence import VideoSequence
+from tests.typed_case import TypedTestCase
 
 
 class SequenceBackendStub(QObject):
@@ -23,7 +26,7 @@ class SequenceBackendStub(QObject):
         self.workspace_root = root
 
 
-class SequenceDependenciesTests(unittest.TestCase):
+class SequenceDependenciesTests(TypedTestCase):
     def test_asset_validation_uses_explicit_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -39,7 +42,7 @@ class SequenceDependenciesTests(unittest.TestCase):
                 return False, "動画素材として利用できません"
 
             facade = SequenceFacade(
-                backend,
+                cast(EditBayBackend, backend),
                 SequenceDependencies(
                     local_path=lambda value: Path(str(value)),
                     validate_media_file=validate,
@@ -76,7 +79,7 @@ class SequenceDependenciesTests(unittest.TestCase):
                 return value.casefold()
 
             facade = SequenceFacade(
-                backend,
+                cast(EditBayBackend, backend),
                 SequenceDependencies(
                     local_path=lambda value: Path(str(value)),
                     validate_media_file=lambda source, streams, label: (True, ""),

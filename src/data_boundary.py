@@ -61,3 +61,13 @@ def is_object_iterable(value: object) -> TypeGuard[Iterable[object]]:
 def is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
     """キー・値を検証する前の辞書を、同じ参照のまま更新可能として扱う。"""
     return isinstance(value, dict)
+
+
+def is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    """文字列キーの辞書であることを確認し、同じ参照のまま編集可能にする。"""
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def is_string_object_dict_list(value: object) -> TypeGuard[list[dict[str, object]]]:
+    """文字列キーの辞書だけを含む配列を、同じ参照のまま扱う。"""
+    return isinstance(value, list) and all(is_string_object_dict(item) for item in value)

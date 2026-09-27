@@ -14,7 +14,9 @@ import numpy as np
 from .audio_mixer import reconcile_audio_mix
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .color_config import normalize_rgb_color
-from .data_boundary import coerce_float, coerce_int, decode_json, is_object_dict, is_object_sequence
+from .data_boundary import (
+    coerce_float, coerce_int, decode_json, is_object_dict, is_object_sequence, is_string_object_dict_list,
+)
 from .subtitle_line_count import format_segment_text, normalize_subtitle_line_count
 from .transcription_context import TranscriptionContextError, normalize_transcription_context
 from .media_probe import probe_media_duration
@@ -421,13 +423,16 @@ def project_to_transcript(
     project: SubtitleProject | dict[str, object] | dict[object, object],
     *,
     project_is_validated: bool = False,
-) -> dict[str, list[dict[object, object]]]:
+) -> dict[str, list[dict[str, object]]]:
     if isinstance(project, SubtitleProject):
         model = project
     else:
         payload = project if project_is_validated else validate_project(deepcopy(project))
         model = SubtitleProject.from_json(payload)
-    return {"segments": [segment.to_json() for segment in model.segments if segment.text]}
+    segments = [segment.to_json() for segment in model.segments if segment.text]
+    if not is_string_object_dict_list(segments):
+        raise SubtitleProjectError("字幕セグメントのキーは文字列である必要があります")
+    return {"segments": segments}
 
 
 def waveform_peaks_from_samples(samples: np.ndarray, bins: int = DEFAULT_WAVEFORM_BINS) -> list[float]:

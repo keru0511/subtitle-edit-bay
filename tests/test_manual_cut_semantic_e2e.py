@@ -5,7 +5,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Mapping
 
+from src.data_boundary import coerce_float, is_string_object_dict, is_string_object_dict_list
 from src.subtitle_project import create_project, derive_ass_path, load_project, save_project
 from src.subtitle_workflow import render_project_video
 from tests.media_test_helpers import (
@@ -23,7 +25,7 @@ from tests.media_test_helpers import (
     probe_media,
     require_media_tools,
 )
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 FIXTURE_FPS = 30
@@ -44,7 +46,25 @@ EXPECTED_KEEP_SEQUENCE = (
 ALL_FIXTURE_FREQUENCIES = (440, 660, 880, 1100)
 
 
-@unittest.skipUnless(
+def _project_section(project: object, name: str) -> dict[str, object]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    section = project.get(name)
+    if not is_string_object_dict(section):
+        raise AssertionError(f"{name} must be an object")
+    return section
+
+
+def _project_segments(project: object) -> list[dict[str, object]]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    segments = project.get("segments")
+    if not is_string_object_dict_list(segments):
+        raise AssertionError("segments must be an array of objects")
+    return segments
+
+
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
@@ -107,7 +127,7 @@ class ManualCutSemanticE2ETests(TypedTestCase):
         cls,
         name: str,
         segments: list[dict[str, object]],
-        timeline: dict[str, object],
+        timeline: Mapping[str, object],
     ) -> Path:
         project = create_project(
             video_path=cls.fixture.path,
@@ -119,10 +139,11 @@ class ManualCutSemanticE2ETests(TypedTestCase):
         )
         project_path = save_project(cls.root / f"{name}.subtitle-project.json", project)
         persisted = load_project(project_path)
-        if persisted["timeline"]["cuts"] != timeline["cuts"]:
+        persisted_cuts = _project_section(persisted, "timeline").get("cuts")
+        if persisted_cuts != timeline["cuts"]:
             raise AssertionError(
                 "Persisted manual cuts changed before production render: "
-                f"expected={timeline['cuts']!r}, actual={persisted['timeline']['cuts']!r}"
+                f"expected={timeline['cuts']!r}, actual={persisted_cuts!r}"
             )
         output = cls.root / f"{name}.mp4"
         # render_project_video reloads project_path, so all semantic assertions
@@ -184,8 +205,11 @@ class ManualCutSemanticE2ETests(TypedTestCase):
             with self.subTest(output=result.name):
                 probe = probe_media(result)
                 self.assertAlmostEqual(media_duration_seconds(probe), 3.25, delta=DURATION_TOLERANCE_SECONDS)
-                for stream in probe["streams"]:
-                    self.assertAlmostEqual(float(stream["duration"]), 3.25, delta=DURATION_TOLERANCE_SECONDS)
+                streams = probe.get("streams")
+                if not is_string_object_dict_list(streams):
+                    self.fail("media probe streams must be objects")
+                for stream in streams:
+                    self.assertAlmostEqual(coerce_float(stream.get("duration")), 3.25, delta=DURATION_TOLERANCE_SECONDS)
                 # Source green starts at 3s, mapped to 2.25s, not the old 2.5s.
                 red, green, blue = mean_rgb(extract_rgb_frame(result, 2.35, probe=probe))
                 self.assertGreater(green, red + 30)
@@ -199,9 +223,8 @@ class ManualCutSemanticE2ETests(TypedTestCase):
             region=SUBTITLE_REGION,
         )
         assert_frame_difference_present(difference, context="caption after fifteen fractional cuts")
-        self.assertEqual(
-            load_project(self.root / "fractional-subtitle.subtitle-project.json")["segments"][0]["start"], 3.2
-        )
+        saved = load_project(self.root / "fractional-subtitle.subtitle-project.json")
+        self.assertEqual(_project_segments(saved)[0].get("start"), 3.2)
 
     def test_missing_duration_is_probed_and_preserves_the_uncaptioned_tail(self) -> None:
         project = create_project(
@@ -212,7 +235,7 @@ class ManualCutSemanticE2ETests(TypedTestCase):
             timeline={"cuts": [{"id": "cut", "source_start": 0.5, "source_end": 1.0}]},
         )
         # Simulate a legacy import, including cuts saved by the old fallback.
-        project["video"]["duration_seconds"] = 0.0
+        _project_section(project, "video")["duration_seconds"] = 0.0
         project_path = save_project(
             self.root / "legacy-missing-duration.json",
             project,
@@ -228,7 +251,8 @@ class ManualCutSemanticE2ETests(TypedTestCase):
         red, green, blue = mean_rgb(extract_rgb_frame(output, 3.2, probe=probe))
         self.assertGreater(green, red + 30)
         self.assertGreater(green, blue + 30)
-        self.assertAlmostEqual(load_project(project_path)["video"]["duration_seconds"], 4.0, delta=0.03)
+        saved_video = _project_section(load_project(project_path), "video")
+        self.assertAlmostEqual(coerce_float(saved_video.get("duration_seconds")), 4.0, delta=0.03)
 
     def test_output_frames_follow_the_independent_source_keep_sequence(self) -> None:
         for label, output_time, source_time, dominant_channel, _frequency in EXPECTED_KEEP_SEQUENCE:

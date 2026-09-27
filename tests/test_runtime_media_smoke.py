@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Callable, TypedDict, cast
 
 from src.burn_subs import run_ffmpeg_burn
 from src.silence_cut import cut_media_ranges
@@ -25,6 +26,12 @@ from tests.typed_case import TypedTestCase
 
 def _has_tool(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+class _PlaybackState(TypedDict):
+    advanced: bool
+    frame: bool
+    errors: list[str]
 
 
 class RuntimeMediaSmokeTests(TypedTestCase):
@@ -54,7 +61,7 @@ class RuntimeMediaSmokeTests(TypedTestCase):
         )
         return path
 
-    def _probe_video_stream(self, path: Path) -> dict:
+    def _probe_video_stream(self, path: Path) -> dict[str, object]:
         self._require_ffmpeg()
         return video_stream(probe_media(path))
 
@@ -164,7 +171,7 @@ class RuntimeMediaSmokeTests(TypedTestCase):
             video = self._make_video(Path(temp_dir) / "playback.mp4", duration=1.2)
 
             from PySide6.QtCore import QTimer, QUrl
-            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
+            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoFrame, QVideoSink
             from PySide6.QtWidgets import QApplication
 
             app = QApplication.instance() or QApplication(["subtitle-edit-bay-media-smoke"])
@@ -172,27 +179,43 @@ class RuntimeMediaSmokeTests(TypedTestCase):
             audio = QAudioOutput()
             audio.setMuted(True)
             sink = QVideoSink()
-            state = {"advanced": False, "frame": False, "errors": []}
+            state: _PlaybackState = {"advanced": False, "frame": False, "errors": []}
+
+            def on_position(position: int) -> None:
+                state["advanced"] = state["advanced"] or position > 0
+
+            def on_frame(_frame: QVideoFrame) -> None:
+                state["frame"] = True
+
+            def on_error(_error: QMediaPlayer.Error, message: str) -> None:
+                state["errors"].append(message or "media playback error")
+
+            def quit_on_position(position: int) -> None:
+                if position > 0:
+                    app.quit()
+
+            def quit_on_frame(_frame: QVideoFrame) -> None:
+                app.quit()
 
             player.setAudioOutput(audio)
             player.setVideoSink(sink)
-            player.positionChanged.connect(lambda position: state.__setitem__("advanced", state["advanced"] or position > 0))
-            sink.videoFrameChanged.connect(lambda _frame: state.__setitem__("frame", True))
-            player.errorOccurred.connect(lambda _error, message: state["errors"].append(message or "media playback error"))
+            player.positionChanged.connect(on_position)
+            sink.videoFrameChanged.connect(on_frame)
+            player.errorOccurred.connect(on_error)
             # Qt Multimedia may need several seconds to initialize its bundled
             # FFmpeg backend on a newly provisioned Windows hosted runner.
             # Exit as soon as playback is proven, while retaining a bounded
             # timeout that still catches a decoder which never starts.
-            player.positionChanged.connect(lambda position: app.quit() if position > 0 else None)
-            sink.videoFrameChanged.connect(lambda _frame: app.quit())
+            player.positionChanged.connect(quit_on_position)
+            sink.videoFrameChanged.connect(quit_on_frame)
             QTimer.singleShot(10000, app.quit)
             player.setSource(QUrl.fromLocalFile(str(video)))
             player.play()
             app.exec()
             player.stop()
             player.setSource(QUrl())
-            player.setVideoSink(None)
-            player.setAudioOutput(None)
+            cast(Callable[[QVideoSink | None], None], player.setVideoSink)(None)
+            cast(Callable[[QAudioOutput | None], None], player.setAudioOutput)(None)
             app.processEvents()
 
             self.assertEqual(state["errors"], [])

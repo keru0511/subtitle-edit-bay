@@ -1,12 +1,15 @@
 import json
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
-from unittest.mock import patch
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
 from src.craig_pipeline import CraigTranscriptionBatch
+from src.data_boundary import coerce_float, is_string_object_dict, is_string_object_dict_list
 from src.gui_state import build_gui_render_command, build_gui_transcribe_command
 from src.subtitle_project import (
     SubtitleProjectError,
@@ -38,6 +41,45 @@ from src.subtitle_workflow import (
 from tests.typed_case import TypedTestCase
 
 
+def _project_section(project: object, name: str) -> dict[str, object]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    section = project.get(name)
+    if not is_string_object_dict(section):
+        raise AssertionError(f"{name} must be an object")
+    return section
+
+
+def _project_entries(project: object, name: str) -> list[dict[str, object]]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    entries = project.get(name)
+    if not is_string_object_dict_list(entries):
+        raise AssertionError(f"{name} must be an array of objects")
+    return entries
+
+
+def _path_value(section: dict[str, object], name: str) -> Path:
+    value = section.get(name)
+    if not isinstance(value, (str, Path)):
+        raise AssertionError(f"{name} must be a path")
+    return Path(value)
+
+
+def _mock_call_kwargs(target: MagicMock) -> Mapping[str, object]:
+    call = target.call_args
+    if call is None:
+        raise AssertionError("expected a mock call")
+    return cast(Mapping[str, object], call.kwargs)
+
+
+def _mock_call_args(target: MagicMock) -> tuple[object, ...]:
+    call = target.call_args
+    if call is None:
+        raise AssertionError("expected a mock call")
+    return cast(tuple[object, ...], call.args)
+
+
 class SubtitleProjectTests(TypedTestCase):
     def test_schema_exports_keep_existing_import_and_error_identity(self) -> None:
         from src import subtitle_project, subtitle_project_schema, subtitle_line_count, subtitle_line_count_config
@@ -46,12 +88,12 @@ class SubtitleProjectTests(TypedTestCase):
             "SubtitleSegment", "SpeakerInfo", "WaveformInfo", "AudioMixChannel", "AudioMix",
             "SubtitleProjectError", "normalize_segment", "_finite_number", "_subtitle_line_count",
         ):
-            self.assertIs(getattr(subtitle_project, name), getattr(subtitle_project_schema, name))
+            self.assertIs(cast(object, getattr(subtitle_project, name)), cast(object, getattr(subtitle_project_schema, name)))
         self.assertIs(subtitle_line_count.normalize_subtitle_line_count, subtitle_line_count_config.normalize_subtitle_line_count)
         from src import subtitle_project_model
 
         for name in ("SubtitleProject", "migrate_project_payload", "utc_timestamp"):
-            self.assertIs(getattr(subtitle_project, name), getattr(subtitle_project_model, name))
+            self.assertIs(cast(object, getattr(subtitle_project, name)), cast(object, getattr(subtitle_project_model, name)))
         with self.assertRaises(SubtitleProjectError):
             create_project(video_path="video.mkv", segments=[{"words": [None]}])
 
@@ -71,7 +113,7 @@ class SubtitleProjectTests(TypedTestCase):
         self.assertIsInstance(model, SubtitleProject)
         self.assertEqual(model.segments[0].extras["view_only"], "kept")
         self.assertNotIn("updated_at", view)
-        self.assertEqual(view["segments"][0]["text"], "hello")
+        self.assertEqual(_project_entries(view, "segments")[0]["text"], "hello")
 
     def test_create_project_normalizes_editable_segments(self) -> None:
         project = create_project(
@@ -83,15 +125,18 @@ class SubtitleProjectTests(TypedTestCase):
             ],
         )
 
-        self.assertEqual([item["id"] for item in project["segments"]], ["kept", "subtitle-000001"])
-        self.assertEqual(project["segments"][1]["text"], "hello")
-        self.assertEqual(project["segments"][1]["subtitle_font_family"], "Yu Mincho")
-        self.assertGreater(project["segments"][1]["end"], project["segments"][1]["start"])
-        self.assertTrue(all(item["layout_packed"] for item in project["segments"]))
-        self.assertEqual(project["subtitle_settings"]["outline_color"], "#000000")
-        self.assertEqual(project["subtitle_settings"]["outline_thickness"], 3)
-        self.assertFalse(project["audio_mix"]["customized"])
-        self.assertEqual(project["audio_mix"]["channels"][0]["selector"], "0:a:0")
+        self.assertEqual([item["id"] for item in _project_entries(project, "segments")], ["kept", "subtitle-000001"])
+        self.assertEqual(_project_entries(project, "segments")[1]["text"], "hello")
+        self.assertEqual(_project_entries(project, "segments")[1]["subtitle_font_family"], "Yu Mincho")
+        self.assertGreater(
+            coerce_float(_project_entries(project, "segments")[1]["end"]),
+            coerce_float(_project_entries(project, "segments")[1]["start"]),
+        )
+        self.assertTrue(all(item["layout_packed"] for item in _project_entries(project, "segments")))
+        self.assertEqual(_project_section(project, "subtitle_settings")["outline_color"], "#000000")
+        self.assertEqual(_project_section(project, "subtitle_settings")["outline_thickness"], 3)
+        self.assertFalse(_project_section(project, "audio_mix")["customized"])
+        self.assertEqual(_project_entries(_project_section(project, "audio_mix"), "channels")[0]["selector"], "0:a:0")
 
     def test_create_project_preserves_literal_backslash_n(self) -> None:
         project = create_project(
@@ -108,7 +153,7 @@ class SubtitleProjectTests(TypedTestCase):
             ],
         )
 
-        segment = project["segments"][0]
+        segment = _project_entries(project, "segments")[0]
         self.assertEqual(segment["text"], "first\\nsecond")
         self.assertEqual(segment["layout_row_span"], 1)
 
@@ -127,7 +172,7 @@ class SubtitleProjectTests(TypedTestCase):
             loaded = load_project(path)
 
             self.assertEqual(loaded["project_type"], "subtitle-edit-project")
-            self.assertEqual(project_to_transcript(loaded)["segments"][0]["text"], "字幕")
+            self.assertEqual(_project_entries(project_to_transcript(loaded), "segments")[0]["text"], "字幕")
             self.assertFalse((root / ".game.subtitle-project.json.tmp").exists())
 
     def test_save_load_preserves_subtitle_line_count(self) -> None:
@@ -148,9 +193,9 @@ class SubtitleProjectTests(TypedTestCase):
             save_project(path, project)
             loaded = load_project(path)
 
-        one_line = loaded["segments"][0]
-        two_line = loaded["segments"][1]
-        auto_line = loaded["segments"][2]
+        one_line = _project_entries(loaded, "segments")[0]
+        two_line = _project_entries(loaded, "segments")[1]
+        auto_line = _project_entries(loaded, "segments")[2]
         self.assertEqual(one_line["subtitle_line_count"], "1")
         self.assertEqual(one_line["layout_row_span"], 1)
         self.assertTrue(one_line["manual_line_count"])
@@ -174,7 +219,7 @@ class SubtitleProjectTests(TypedTestCase):
             save_project(path, project)
             loaded = load_project(path)
 
-        segment = loaded["segments"][0]
+        segment = _project_entries(loaded, "segments")[0]
         self.assertEqual(segment["text"], "first\\nsecond")
         self.assertEqual(segment["layout_row_span"], 1)
 
@@ -192,7 +237,7 @@ class SubtitleProjectTests(TypedTestCase):
             save_project(path, project)
             loaded = load_project(path)
 
-        segment = loaded["segments"][0]
+        segment = _project_entries(loaded, "segments")[0]
         self.assertEqual(segment["subtitle_line_count"], "1")
         self.assertTrue(segment["manual_line_count"])
         self.assertEqual(segment["layout_row_span"], 1)
@@ -239,8 +284,8 @@ class SubtitleProjectTests(TypedTestCase):
             dialogue_lines = [line for line in ass_text.splitlines() if line.startswith("Dialogue:")]
 
         self.assertEqual(len(dialogue_lines), 3)
-        self.assertEqual(project["segments"][1]["layout_row_span"], 2)
-        self.assertEqual(project["segments"][2]["layout_row_span"], 1)
+        self.assertEqual(_project_entries(project, "segments")[1]["layout_row_span"], 2)
+        self.assertEqual(_project_entries(project, "segments")[2]["layout_row_span"], 1)
 
         literal_line = next(line for line in dialogue_lines if "first" in line)
         self.assertIn(r"first\\nsecond", literal_line)
@@ -303,7 +348,7 @@ class SubtitleWorkflowTests(TypedTestCase):
                 patch("src.subtitle_workflow.resolve_alignment", return_value=("0:a:0", 0.25, 0.9)),
                 patch("src.subtitle_workflow.transcribe_craig_audio_files", return_value=transcription),
                 patch("src.subtitle_workflow.refine_segments", return_value=([fake_segment], [])),
-                patch("src.subtitle_workflow._build_waveforms", return_value=[]),
+                patch("src.subtitle_workflow._build_waveforms", return_value=list[object]()),
                 patch("src.subtitle_workflow.probe_media_duration", return_value=30.0),
                 patch("src.subtitle_workflow.run_ffmpeg_burn") as burn,
             ):
@@ -315,8 +360,8 @@ class SubtitleWorkflowTests(TypedTestCase):
                 )
 
             project = load_project(project_path)
-            self.assertEqual(project["transcription"]["offset_seconds"], 0.25)
-            self.assertEqual(project["segments"][0]["text"], "hi")
+            self.assertEqual(_project_section(project, "transcription")["offset_seconds"], 0.25)
+            self.assertEqual(_project_entries(project, "segments")[0]["text"], "hi")
             self.assertFalse(burn.called)
 
     def test_resolve_subtitle_inputs_sets_reference_default(self) -> None:
@@ -352,8 +397,8 @@ class SubtitleWorkflowTests(TypedTestCase):
         self.assertEqual(alignment, SubtitleAlignmentResult("0:a:1", 0.5, 0.91, "1-alice.flac"))
 
     def test_refine_stage_isolated(self) -> None:
-        merged = [{"start": 0.0, "end": 1.0, "text": "a", "speaker": "Oz", "layout_row": 0}]
-        filtered = [{"start": 1.0, "end": 1.2, "text": "x", "speaker": "Oz", "layout_row": 0}]
+        merged: list[dict[object, object]] = [{"start": 0.0, "end": 1.0, "text": "a", "speaker": "Oz", "layout_row": 0}]
+        filtered: list[dict[object, object]] = [{"start": 1.0, "end": 1.2, "text": "x", "speaker": "Oz", "layout_row": 0}]
         with patch("src.subtitle_workflow.refine_segments", return_value=(merged, filtered)) as refine_segments:
             result = run_subtitle_refine_stage(
                 [{"start": 0.0, "end": 1.0}],
@@ -398,8 +443,8 @@ class SubtitleWorkflowTests(TypedTestCase):
                 filtered_segments=[],
             )
             with (
-                patch("src.subtitle_workflow.probe_audio_streams", return_value=[]),
-                patch("src.subtitle_workflow.video_track_entries", return_value=[]),
+                patch("src.subtitle_workflow.probe_audio_streams", return_value=list[object]()),
+                patch("src.subtitle_workflow.video_track_entries", return_value=list[object]()),
             ):
                 project_result = build_project_stage(
                     inputs=project_inputs,
@@ -425,8 +470,9 @@ class SubtitleWorkflowTests(TypedTestCase):
             project = load_project(project_path)
 
             self.assertEqual(project_path, inputs.project_path)
-            self.assertTrue(Path(project["transcription"]["merged_json"]).exists())
-            self.assertTrue(Path(project["transcription"]["filtered_json"]).exists())
+            transcription = _project_section(project, "transcription")
+            self.assertTrue(_path_value(transcription, "merged_json").exists())
+            self.assertTrue(_path_value(transcription, "filtered_json").exists())
             self.assertTrue(project_path.exists())
             self.assertEqual(project_result.merged_path.name, "game.craig.merged.json")
             self.assertEqual(project_result.filtered_path.name, "game.craig.filtered.json")
@@ -449,8 +495,8 @@ class SubtitleWorkflowTests(TypedTestCase):
             project_path = root / "game.subtitle-project.json"
             save_project(project_path, project)
 
-            def fake_build(payload, ass_path, **kwargs):
-                self.assertEqual(payload["segments"][0]["text"], "edited")
+            def fake_build(payload: object, ass_path: str | Path, **kwargs: object) -> Path:
+                self.assertEqual(_project_entries(payload, "segments")[0]["text"], "edited")
                 self.assertEqual(kwargs["subtitle_font_size"], 64)
                 self.assertEqual(kwargs["subtitle_outline_color"], "#123456")
                 self.assertEqual(kwargs["subtitle_outline_thickness"], 6)
@@ -488,7 +534,7 @@ class SubtitleWorkflowTests(TypedTestCase):
             self.assertEqual(output.name, "game.edited.subtitled.mp4")
             burn.assert_called_once()
             self.assertFalse(transcribe.called)
-            self.assertEqual(load_project(project_path)["render_settings"]["last_output"], str(output.resolve()))
+            self.assertEqual(_project_section(load_project(project_path), "render_settings")["last_output"], str(output.resolve()))
 
     def test_render_phase_defaults_to_external_audio_when_video_track_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -514,13 +560,12 @@ class SubtitleWorkflowTests(TypedTestCase):
             ):
                 render_project_video(project_path, audio_normalize=False)
 
-            args = burn.call_args.kwargs
-            audio_mix = args["audio_mix"]
-            self.assertIsNotNone(audio_mix)
+            args = _mock_call_kwargs(burn)
+            audio_mix = _project_section(args, "audio_mix")
             self.assertTrue(
                 any(
                     channel.get("kind") == "external" and channel.get("enabled")
-                    for channel in audio_mix.get("channels", [])
+                    for channel in _project_entries(audio_mix, "channels")
                 )
             )
             self.assertEqual(args["audio_codec"], "aac")
@@ -560,9 +605,10 @@ class SubtitleWorkflowTests(TypedTestCase):
             ):
                 render_project_video(project_path, audio_normalize=False)
 
-            kwargs = burn.call_args.kwargs
-            self.assertTrue(kwargs["audio_mix"]["customized"])
-            self.assertEqual(kwargs["audio_mix"]["channels"][0]["selector"], "0:a:1")
+            kwargs = _mock_call_kwargs(burn)
+            audio_mix = _project_section(kwargs, "audio_mix")
+            self.assertTrue(audio_mix["customized"])
+            self.assertEqual(_project_entries(audio_mix, "channels")[0]["selector"], "0:a:1")
             self.assertEqual(kwargs["audio_offset_seconds"], 0.25)
             self.assertEqual(kwargs["audio_codec"], "aac")
 
@@ -587,8 +633,8 @@ class SubtitleWorkflowTests(TypedTestCase):
             ):
                 render_project_video(project_path, audio_normalize=False, audio_codec="copy")
 
-            self.assertEqual(burn.call_args.kwargs["audio_codec"], "aac")
-            self.assertTrue(str(burn.call_args.args[2]).endswith(".mp4"))
+            self.assertEqual(_mock_call_kwargs(burn)["audio_codec"], "aac")
+            self.assertTrue(str(_mock_call_args(burn)[2]).endswith(".mp4"))
 
     def test_render_phase_keeps_copy_audio_codec_for_non_mp4_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -612,8 +658,8 @@ class SubtitleWorkflowTests(TypedTestCase):
             ):
                 render_project_video(project_path, output_path=output_path, audio_normalize=False, audio_codec="copy")
 
-            self.assertEqual(burn.call_args.kwargs["audio_codec"], "copy")
-            self.assertTrue(str(burn.call_args.args[2]).endswith(".mkv"))
+            self.assertEqual(_mock_call_kwargs(burn)["audio_codec"], "copy")
+            self.assertTrue(str(_mock_call_args(burn)[2]).endswith(".mkv"))
 
     def test_render_reuses_loaded_project_for_ass_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -628,7 +674,7 @@ class SubtitleWorkflowTests(TypedTestCase):
             project_path = root / "game.subtitle-project.json"
             save_project(project_path, project)
 
-            def fake_build(_transcript, ass_path, **_kwargs):
+            def fake_build(_transcript: object, ass_path: str | Path, **_kwargs: object) -> Path:
                 Path(ass_path).write_text("ASS", encoding="utf-8")
                 return Path(ass_path)
 
@@ -687,8 +733,9 @@ class SubtitleWorkflowTests(TypedTestCase):
         self.assertEqual(model.short_video.clips[0].fit, "blur")
 
         round_trip = model.to_json()
-        self.assertEqual(round_trip["short_video"]["output"]["width"], 720)
-        self.assertEqual(round_trip["short_video"]["clips"][0]["fit"], "blur")
+        short_video = _project_section(round_trip, "short_video")
+        self.assertEqual(_project_section(short_video, "output")["width"], 720)
+        self.assertEqual(_project_entries(short_video, "clips")[0]["fit"], "blur")
         self.assertTrue(SubtitleProject.from_json(round_trip).short_video.enabled)
 
     def test_legacy_project_gets_default_short_video(self) -> None:
@@ -711,7 +758,7 @@ class SubtitleWorkflowTests(TypedTestCase):
         model = SubtitleProject.from_json(payload)
         self.assertFalse(model.short_video.enabled)
         self.assertEqual(model.short_video.output.height, 1920)
-        self.assertEqual(model.to_json()["short_video"]["enabled"], False)
+        self.assertEqual(_project_section(model.to_json(), "short_video")["enabled"], False)
 
 
 if __name__ == "__main__":

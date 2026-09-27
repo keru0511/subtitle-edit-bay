@@ -1,35 +1,35 @@
 from __future__ import annotations
 
-import importlib.util
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
+from typing import TypedDict, cast
+
+from scripts import run_ci_tests as CI_TESTS
 from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CI_TEST_SCRIPT = REPO_ROOT / "scripts" / "run_ci_tests.py"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 CI_GROUPS_DOC = REPO_ROOT / "docs" / "CI_TEST_GROUPS.md"
 
 
-def load_ci_test_module():
-    spec = importlib.util.spec_from_file_location("run_ci_tests_under_test", CI_TEST_SCRIPT)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"Could not load {CI_TEST_SCRIPT}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+class _Group(TypedDict):
+    modules: list[str]
+    selectors: list[str]
 
 
-CI_TESTS = load_ci_test_module()
+class _Manifest(TypedDict):
+    schema_version: int
+    groups: dict[str, _Group]
 
 
-def create_manifest(modules: list[str] | None = None) -> dict[str, object]:
-    groups = {group_name: {"modules": [], "selectors": []} for group_name in CI_TESTS.REQUIRED_GROUPS}
+def create_manifest(modules: list[str] | None = None) -> _Manifest:
+    groups: dict[str, _Group] = {
+        group_name: {"modules": [], "selectors": []} for group_name in CI_TESTS.REQUIRED_GROUPS
+    }
     groups["portable-unit"]["modules"] = list(modules or [])
     return {"schema_version": 1, "groups": groups}
 
@@ -181,7 +181,7 @@ class CiTestRunnerTests(TypedTestCase):
             "    def test_discovered(self):\n"
             "        global executed\n"
             "        executed = True\n",
-            module.__dict__,
+            cast(dict[str, object], module.__dict__),
         )
         self._install_synthetic_module(module_name, module)
 
@@ -191,7 +191,7 @@ class CiTestRunnerTests(TypedTestCase):
 
         self.assertTrue(result.wasSuccessful())
         self.assertEqual(result.testsRun, 1)
-        self.assertTrue(module.executed)
+        self.assertIs(cast(object, getattr(module, "executed")), True)
 
     def test_test_case_method_selector_is_executed(self) -> None:
         module_name = "tests.test_synthetic_ci_selector"
@@ -203,7 +203,7 @@ class CiTestRunnerTests(TypedTestCase):
             "    def test_selected(self):\n"
             "        global executed\n"
             "        executed = True\n",
-            module.__dict__,
+            cast(dict[str, object], module.__dict__),
         )
         self._install_synthetic_module(module_name, module)
 
@@ -216,7 +216,7 @@ class CiTestRunnerTests(TypedTestCase):
 
         self.assertTrue(result.wasSuccessful())
         self.assertEqual(result.testsRun, 1)
-        self.assertTrue(module.executed)
+        self.assertIs(cast(object, getattr(module, "executed")), True)
 
     def test_summary_reports_skip_count_and_reason(self) -> None:
         test = unittest.FunctionTestCase(lambda: None)

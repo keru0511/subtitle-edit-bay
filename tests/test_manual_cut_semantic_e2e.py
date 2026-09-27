@@ -23,7 +23,7 @@ from tests.media_test_helpers import (
     probe_media,
     require_media_tools,
 )
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 FIXTURE_FPS = 30
@@ -44,7 +44,7 @@ EXPECTED_KEEP_SEQUENCE = (
 ALL_FIXTURE_FREQUENCIES = (440, 660, 880, 1100)
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )

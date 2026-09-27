@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.metadata
 import os
 import platform
 import subprocess
@@ -11,14 +12,15 @@ from collections import Counter
 from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol, cast
 from unittest.mock import patch
 
-from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import Property, Q_ARG, QMetaObject, QObject, QUrl, Slot
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QUrl
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtQuick import QQuickItem
 
+from src.qt_decorators import Property, Slot
+from src.data_boundary import coerce_float, coerce_int, is_object_list, is_string_object_dict
 from src.gui import EditBayBackend
 from tests.gui_test_harness import (
     AllowedQmlMessage,
@@ -32,6 +34,20 @@ from tests.gui_test_harness import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 QML_PATH = REPO_ROOT / "src" / "ui" / "Main.qml"
 PRE_302_REFERENCE_REVISION = "b600e909ea7d891a827f9dc5031a6697eb2e7a64"
+pyside_version = importlib.metadata.version("PySide6")
+
+
+class _WindowsKernel(Protocol):
+    def GetCurrentProcess(self) -> int: ...
+
+
+class _WindowsProcessApi(Protocol):
+    def GetProcessMemoryInfo(self, handle: int, counters: object, size: int) -> int: ...
+
+
+class _WindowsLibraries(Protocol):
+    kernel32: _WindowsKernel
+    psapi: _WindowsProcessApi
 
 
 def _repository_revision() -> str:
@@ -90,64 +106,73 @@ def _peak_resident_set_bytes() -> int:
         ]
 
     counters = ProcessMemoryCounters()
-    counters.cb = ctypes.sizeof(counters)
-    handle = ctypes.windll.kernel32.GetCurrentProcess()
-    succeeded = ctypes.windll.psapi.GetProcessMemoryInfo(
+    counter_size = ctypes.sizeof(counters)
+    counters.cb = counter_size
+    libraries = cast(_WindowsLibraries, getattr(ctypes, "windll"))
+    handle = libraries.kernel32.GetCurrentProcess()
+    succeeded = libraries.psapi.GetProcessMemoryInfo(
         handle,
         ctypes.byref(counters),
-        counters.cb,
+        counter_size,
     )
-    return int(counters.PeakWorkingSetSize) if succeeded else 0
+    return coerce_int(cast(object, counters.PeakWorkingSetSize)) if succeeded else 0
 
 
 def _short_workspace_active(window: QObject) -> bool:
     """Read both the current workspace contract and the pre-#302 overlay contract."""
 
-    workspace = window.property("currentWorkspace")
+    workspace = cast(object, window.property("currentWorkspace"))
     if workspace is not None:
         return workspace == "short-artifact"
-    return window.property("activeOverlay") == "short"
+    return cast(object, window.property("activeOverlay")) == "short"
 
 
 def _variant(value: object) -> object:
-    to_variant = getattr(value, "toVariant", None)
-    return to_variant() if callable(to_variant) else value
+    to_variant = cast(object, getattr(value, "toVariant", None))
+    return cast(Callable[[], object], to_variant)() if callable(to_variant) else value
 
 
 def _state_name(value: object) -> str:
-    name = getattr(value, "name", None)
+    name = cast(object, getattr(value, "name", None))
     return str(name if name is not None else value).rsplit(".", 1)[-1]
 
 
 def _main_preview_contract_passed(result: dict[str, object]) -> bool:
-    media = result.get("media", {})
+    media = result.get("media")
+    if not is_string_object_dict(media):
+        return False
     return (
-        int(result["advanced_playback_ms"]) >= int(result["requested_playback_ms"])
-        and int(media.get("play_starts", 0)) > 0
-        and int(media.get("video_frames", 0)) > 0
+        coerce_int(result["advanced_playback_ms"]) >= coerce_int(result["requested_playback_ms"])
+        and coerce_int(media.get("play_starts", 0)) > 0
+        and coerce_int(media.get("video_frames", 0)) > 0
         and media.get("first_video_frame_ms") is not None
     )
 
 
 def _playback_follow_contract_passed(result: dict[str, object]) -> bool:
-    selected_indices = [int(index) for index in result.get("selected_indices", [])]
+    indices = result.get("selected_indices")
+    if not is_object_list(indices):
+        return False
+    selected_indices = [coerce_int(index) for index in indices]
     return (
-        int(result["advanced_playback_ms"]) >= int(result["requested_playback_ms"])
+        coerce_int(result["advanced_playback_ms"]) >= coerce_int(result["requested_playback_ms"])
         and len(set(selected_indices)) >= 2
-        and int(result["final_selected_index"]) > int(result["initial_selected_index"])
-        and float(result["timeline_viewport_after_x"]) > float(result["timeline_viewport_before_x"]) + 0.5
+        and coerce_int(result["final_selected_index"]) > coerce_int(result["initial_selected_index"])
+        and coerce_float(result["timeline_viewport_after_x"]) > coerce_float(result["timeline_viewport_before_x"]) + 0.5
     )
 
 
 def _short_visual_update_contract_passed(result: dict[str, object]) -> bool:
-    media = result.get("media", {})
+    media = result.get("media")
+    if not is_string_object_dict(media):
+        return False
     return (
         media.get("source_changes", 0) == 0
         and media.get("loading_transitions", 0) == 0
         and media.get("stops", 0) == 0
         and media.get("play_starts", 0) == 0
         and result["playback_state_after"] == "PlayingState"
-        and int(result["position_after_ms"]) >= int(result["position_before_ms"])
+        and coerce_int(result["position_after_ms"]) >= coerce_int(result["position_before_ms"])
     )
 
 

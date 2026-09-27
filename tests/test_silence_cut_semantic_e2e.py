@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from tests.typed_case import typed_skip_unless
 from pathlib import Path
 
 from src.subtitle_project import create_project, load_project, save_project
@@ -24,7 +25,7 @@ from tests.media_test_helpers import (
 )
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )

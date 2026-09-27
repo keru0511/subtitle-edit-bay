@@ -34,7 +34,7 @@ from tests.media_test_helpers import (
     probe_media,
     video_stream,
 )
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 class ShortVideoTimelineTests(TypedTestCase):
@@ -211,7 +211,7 @@ class ShortVideoTimelineTests(TypedTestCase):
 
 
 class ShortVideoRenderE2ETests(TypedTestCase):
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -277,7 +277,7 @@ class ShortVideoRenderE2ETests(TypedTestCase):
                 self.assertTrue(frame.pixels)
                 self.assertGreater(max(frame.pixels), 100)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -320,7 +320,7 @@ class ShortVideoRenderE2ETests(TypedTestCase):
             self.assertEqual(output_video["pix_fmt"], "yuv420p")
             self.assertTrue(audio_streams(media))
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         os.name == "nt"
         and os.environ.get("RUN_FFMPEG_SMOKE") == "1"
         and shutil.which("ffmpeg")

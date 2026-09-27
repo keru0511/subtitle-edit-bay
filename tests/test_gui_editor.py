@@ -14,7 +14,7 @@ import wave
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -5166,14 +5166,14 @@ Window {
 
         self.assertEqual(load_project(path)["segments"][0]["text"], committed_text)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
         "Windowsの対話デスクトップで実IMEを使う専用テスト",
     )
     def test_windows_native_ime_workspace_save_preserves_composition(self) -> None:
         self._assert_windows_native_ime_save_preserves_composition(expanded=False)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
         "Windowsの対話デスクトップで実IMEを使う専用テスト",
     )
@@ -6640,7 +6640,7 @@ Window {
         self._click(window, self._quick_item(window, "addCaptionButton"))
         self.assertEqual(self.app.segmentCount, 2)
 
-    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    @typed_skip_unless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_expanded_split_control_recovers_after_processing(self) -> None:
         self._set_ready_sources()
         self._load_project()
@@ -6996,7 +6996,7 @@ Window {
         self.assertTrue(saved_channel["solo"])
         self.assertFalse(self.app.projectDirty)
 
-    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    @typed_skip_unless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_workspace_audio_actions_save_reset_and_rebuild_preview(self) -> None:
         path = self._load_project(duration_seconds=8.0)
         self._generate_black_test_video_with_audio(
@@ -7731,7 +7731,7 @@ Window {
         self.assertEqual(load_project(path)["audio_mix"], expected)
         self.assertFalse(self.app.projectDirty)
 
-    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    @typed_skip_unless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_mixer_preview_rebuild_and_transport_controls_use_rebuilt_audio(self) -> None:
         path = self._load_project(duration_seconds=8.0)
         self._generate_black_test_video_with_audio(
@@ -9040,7 +9040,7 @@ Window {
         self.assertEqual(media["loading_transitions"], 0)
         self.assertEqual(len(window.findChildren(QMediaPlayer)), initial_player_count)
 
-    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    @typed_skip_unless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_main_preview_play_button_starts_and_pauses_shared_player(self) -> None:
         self._set_ready_sources()
         self._load_project()
@@ -9233,7 +9233,7 @@ Window {
         self.assertTrue(matches, result.stderr)
         return float(matches[-1])
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -9329,7 +9329,7 @@ Window {
         self.assertEqual(len(output_frame), len(source_frame))
         self.assertGreater(max(output_frame), max(source_frame) + 80)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -9413,7 +9413,7 @@ Window {
         self.assertEqual(len(output_frame), len(cut_frame))
         self.assertGreater(max(output_frame), max(cut_frame) + 80)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -9511,7 +9511,7 @@ Window {
         external_band_volume = self._measure_audio_mean_volume(output, "bandpass=f=880:w=80")
         self.assertGreater(external_band_volume, video_band_volume + 15.0)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -9536,7 +9536,7 @@ Window {
         self.assertEqual(self.app.stage, "INPUT")
         self.assertIn("話者音声", self.app.status)
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -10620,7 +10620,7 @@ Window {
         start.assert_not_called()
         self.assertTrue(self._quick_item(window, "shortModeInputValidationMessage").isVisible())
 
-    @unittest.skipUnless(
+    @typed_skip_unless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )

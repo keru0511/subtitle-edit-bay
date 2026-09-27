@@ -49,7 +49,7 @@ from src.transcribe import (
     validate_hf_token,
 )
 from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 def _fake_process(
@@ -612,7 +612,7 @@ class RenderAssTests(TypedTestCase):
         self.assertIn(r"regex: \\n", dialogue_lines[0])
         self.assertIn(r'printf("\\\\n")', dialogue_lines[0])
 
-    @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
+    @typed_skip_unless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
     def test_ffmpeg_libass_renders_reserved_characters(self) -> None:
         if shutil.which("ffmpeg") is None:
             self.skipTest("ffmpeg is required for ASS rendering smoke tests")

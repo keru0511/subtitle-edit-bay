@@ -10,11 +10,13 @@ from unittest.mock import patch
 
 from scripts.benchmark_transcription import (
     align_characters,
+    main,
     merge_reports,
     normalize_text,
     prepare_audio,
     quality_failures,
     score_transcript,
+    write_report,
 )
 
 
@@ -77,6 +79,12 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, key):
                     merge_reports(baseline, candidate)
 
+        baseline, candidate = self.paired_reports()
+        baseline["asr_runtime"] = {"model": "large-v3", "device": "cpu", "compute_type": "int8"}
+        candidate["asr_runtime"] = {"model": "large-v3", "device": "cuda", "compute_type": "float16"}
+        with self.assertRaisesRegex(ValueError, "asr_runtime"):
+            merge_reports(baseline, candidate)
+
     def test_parallel_results_require_both_successful_recognitions(self):
         for name in ["baseline", "candidate"]:
             for failure in [False, True]:
@@ -128,6 +136,37 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["insertions"], 6)
         self.assertEqual(result["outside_speech_characters"], 6)
         self.assertTrue(quality_failures(baseline, result, self.manifest["limits"]))
+
+    def test_gameplay_speech_windows_leave_game_audio_as_negative_example(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["clips"] = [{"start": 0, "duration": 20, "audio": "gameplay.wav"}]
+        manifest["speech_windows"] = [
+            {"text": "はいはい", "start": 2, "end": 4},
+            {"text": "進みます", "start": 12, "end": 15},
+        ]
+        baseline = score_transcript(self.payload, manifest)
+        self.assertEqual(baseline["cer"], 0)
+        changed = copy.deepcopy(self.payload)
+        changed["segments"].insert(
+            1,
+            {"text": "いいいい", "start": 8, "end": 9, "words": [{"word": "いいいい", "start": 8, "end": 9}]},
+        )
+        result = score_transcript(changed, manifest)
+        self.assertEqual(result["insertions"], 4)
+        self.assertEqual(result["outside_speech_characters"], 4)
+        self.assertTrue(quality_failures(baseline, result, manifest["limits"]))
+
+    def test_gameplay_speech_windows_reject_overlap_and_out_of_range(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["speech_windows"] = [
+            {"text": "はいはい", "start": 2, "end": 4},
+            {"text": "進みます", "start": 3, "end": 5},
+        ]
+        with self.assertRaisesRegex(ValueError, "正解発話"):
+            score_transcript(self.payload, manifest)
+        manifest["speech_windows"][1].update(start=12, end=21)
+        with self.assertRaisesRegex(ValueError, "正解発話"):
+            score_transcript(self.payload, manifest)
 
     def test_correct_text_shifted_to_other_speech_window_fails(self) -> None:
         baseline = score_transcript(self.payload, self.manifest)
@@ -207,3 +246,76 @@ class TranscriptionBenchmarkTests(unittest.TestCase):
             ):
                 prepare_audio(root / "manifest.json", root / "out.wav")
             decode.assert_not_called()
+
+    def test_local_recording_can_select_track_and_extract_a_scene(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "gameplay.mp4"
+            source.write_bytes(b"source")
+            manifest = {
+                "sample_rate": 16000,
+                "duration": 1,
+                "clips": [
+                    {
+                        "id": "scene",
+                        "audio": source.name,
+                        "sha256": hashlib.sha256(b"source").hexdigest(),
+                        "start": 0,
+                        "duration": 1,
+                        "source_start_seconds": 30,
+                        "audio_stream": "0:a:1",
+                    }
+                ],
+            }
+            path = root / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with patch(
+                "scripts.benchmark_transcription.subprocess.check_output", return_value=b"\x00\x00" * 16000
+            ) as decode:
+                prepare_audio(path, root / "scene.wav")
+            command = decode.call_args.args[0]
+            self.assertLess(command.index("-ss"), command.index("-i"))
+            self.assertEqual(command[command.index("-map") + 1], "0:a:1")
+            self.assertEqual(command[command.index("-ss") + 1], "30.0")
+            self.assertEqual(command[command.index("-t") + 1], "1")
+            self.assertTrue((root / "scene.wav").exists())
+
+    def test_existing_json_can_be_scored_without_loading_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = copy.deepcopy(self.manifest)
+            manifest_path = root / "manifest.json"
+            transcript_path = root / "transcript.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            transcript_path.write_text(json.dumps(self.payload), encoding="utf-8")
+            argv = [
+                "benchmark_transcription.py",
+                "--manifest",
+                str(manifest_path),
+                "--score-json",
+                str(transcript_path),
+                "--output",
+                str(root / "report"),
+            ]
+            with patch("sys.argv", argv), patch("scripts.benchmark_transcription.prepare_audio") as prepare:
+                self.assertEqual(main(), 0)
+            prepare.assert_not_called()
+            report = json.loads((root / "report" / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["candidate"]["cer"], 0)
+            self.assertTrue(report["scored_existing_json"])
+            markdown = (root / "report" / "report.md").read_text(encoding="utf-8")
+            self.assertIn("| insertions | 0.0000 |", markdown)
+            self.assertIn("実行条件は未検証", markdown)
+
+    def test_gameplay_comparison_report_describes_its_actual_scope(self) -> None:
+        baseline, candidate = self.paired_reports()
+        baseline["manifest"]["speech_windows"] = copy.deepcopy(self.manifest["clips"])
+        candidate["manifest"]["speech_windows"] = copy.deepcopy(self.manifest["clips"])
+        baseline["baseline"].update(commit="base", elapsed_seconds=1)
+        candidate["candidate"].update(commit="candidate", elapsed_seconds=1)
+        report = merge_reports(baseline, candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            write_report(Path(temporary), report)
+            markdown = (Path(temporary) / "report.md").read_text(encoding="utf-8")
+        self.assertIn("この実況素材の定義した基準で回帰なし", markdown)
+        self.assertNotIn("実際のゲーム実況における改善を証明するものではありません", markdown)

@@ -597,7 +597,6 @@ class WorkflowFacade(FeatureFacade):
             self._finish_processing_progress("cancelled")
             backend._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
-            self._finish_processing_progress("completed")
             if completed_job == "transcribe":
                 preserved_workspace = (
                     (backend.workspace.currentEditMode, backend.workspace.editorPlayhead)
@@ -644,8 +643,18 @@ class WorkflowFacade(FeatureFacade):
                     basis = playhead["basis"]
                     backend.workspace.setEditorPlayhead(playhead[f"{basis}PositionMs"], basis)
                 if integration_error:
+                    self._finish_processing_progress("error")
                     backend._set_status(integration_error, "ERROR")
+                    backend._record_log(
+                        integration_error,
+                        severity="ERROR",
+                        component="transcribe",
+                        job="transcribe",
+                        stage="INTEGRATION",
+                    )
+                    backend._capture_process_diagnostic(job="transcribe", outcome="failed", exit_code=0)
                 else:
+                    self._finish_processing_progress("completed")
                     backend._set_status(
                         "文字起こし結果を既存字幕へ追加しました。内容を確認してください"
                         if merged
@@ -655,10 +664,13 @@ class WorkflowFacade(FeatureFacade):
                         "EDIT" if loaded else "CHECK",
                     )
             elif completed_job == "update":
+                self._finish_processing_progress("completed")
                 backend._set_status("更新が完了しました。アプリを再起動してください", "UPDATE")
             elif completed_job == "render_short":
+                self._finish_processing_progress("completed")
                 backend._set_status("ショート動画の書き出しが完了しました", "COMPLETE")
             else:
+                self._finish_processing_progress("completed")
                 backend._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
             if completed_job == "transcribe":

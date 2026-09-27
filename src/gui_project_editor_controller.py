@@ -296,6 +296,10 @@ class ProjectEditorController:
 
         generated_file = Path(generated_path)
         generated = self._load_project_fn(generated_file, resolve_video_duration=True)
+        preserved_video = Path(str(preserved_project["video"]["path"])).resolve()
+        generated_video = Path(str(generated["video"]["path"])).resolve()
+        if preserved_video != generated_video:
+            raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
         transcription = generated.setdefault("transcription", {})
         transcription.setdefault(
             "context_base_dir",
@@ -308,7 +312,7 @@ class ProjectEditorController:
             assign_layout_rows=self._assign_project_layout_rows_fn,
         )
         self.wait_for_autosave()
-        self._save_project_fn(target, integrated, project_is_validated=True)
+        self._save_project_fn(target, integrated)
         self.adopt_loaded_project(integrated, target)
         return integrated
 

@@ -128,6 +128,38 @@ class IntegrateTranscriptionResultTests(unittest.TestCase):
         self.assertEqual(controller.project_path, str(self.project_path.resolve()))
         self.assertEqual(self.project_path.read_bytes(), original_contents)
 
+    def test_generated_result_for_other_video_is_rejected(self) -> None:
+        controller = self._controller()
+        unrelated = deepcopy(self.generated)
+        unrelated["video"]["path"] = str(self.root / "other-video.mkv")
+        save_project(self.generated_path, unrelated)
+        original_project = controller.project
+        original_contents = self.project_path.read_bytes()
+
+        with self.assertRaisesRegex(SubtitleProjectError, "動画が編集プロジェクトと一致しません"):
+            controller.integrate_transcription_result(
+                self.generated_path, deepcopy(original_project), self.project_path, "merge"
+            )
+
+        self.assertIs(controller.project, original_project)
+        self.assertEqual(self.project_path.read_bytes(), original_contents)
+
+    def test_invalid_integrated_project_is_not_saved(self) -> None:
+        controller = self._controller()
+        original_project = controller.project
+        original_contents = self.project_path.read_bytes()
+        invalid = deepcopy(original_project)
+        invalid["segments"].append(deepcopy(invalid["segments"][0]))
+
+        with patch("src.gui_project_editor_controller.compose_transcription_project", return_value=invalid):
+            with self.assertRaisesRegex(SubtitleProjectError, "segment ids must be unique"):
+                controller.integrate_transcription_result(
+                    self.generated_path, deepcopy(original_project), self.project_path, "merge"
+                )
+
+        self.assertIs(controller.project, original_project)
+        self.assertEqual(self.project_path.read_bytes(), original_contents)
+
     def test_changed_open_project_cannot_be_overwritten_by_old_result(self) -> None:
         controller = self._controller()
         preserved = deepcopy(controller.project)

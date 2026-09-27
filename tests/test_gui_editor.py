@@ -7019,6 +7019,10 @@ Window {
 
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("統合に失敗しました", self.app.status)
+        self.assertEqual(self.app.progressState, "error")
+        self.assertLess(self.app.progressPercent, 100)
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertIn("統合に失敗しました", self.app._application_logger.text)
         self.assertEqual(self.app._project, preserved)
         self.assertEqual(self.app._project_revision, original_revision)
         self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
@@ -7046,6 +7050,8 @@ Window {
         load_default.assert_not_called()
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("一時プロジェクトを読み込めませんでした", self.app.status)
+        self.assertEqual(self.app.progressState, "error")
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
         self.assertEqual(self.app._project, preserved)
         self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
 

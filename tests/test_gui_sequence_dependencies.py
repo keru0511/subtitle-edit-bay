@@ -5,10 +5,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PySide6.QtCore import QObject, Signal
 
+from src.gui_project_editor_controller import ProjectEditorController
 from src.gui_sequence_facade import SequenceDependencies, SequenceFacade
+from src.video_sequence import VideoSequence
 
 
 class SequenceBackendStub(QObject):
@@ -55,6 +58,43 @@ class SequenceDependenciesTests(unittest.TestCase):
             self.assertEqual(validated, [(video, {"video"}, "sequence動画素材")])
             self.assertEqual(statuses[-1], ("動画素材として利用できません", "CHECK"))
             self.assertEqual(changes[-1], facade.sequenceError)
+
+    def test_asset_addition_and_duplicate_check_use_explicit_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video = root / "sample.mp4"
+            video.write_bytes(b"sample")
+            backend = SequenceBackendStub(root)
+            controller = ProjectEditorController(root)
+            self.addCleanup(controller.shutdown)
+            controller.project = {"sequence": VideoSequence().to_json()}
+            normalized: list[str] = []
+            statuses: list[tuple[str, str]] = []
+
+            def normalize(value: str) -> str:
+                normalized.append(value)
+                return value.casefold()
+
+            facade = SequenceFacade(
+                backend,
+                SequenceDependencies(
+                    local_path=lambda value: Path(str(value)),
+                    validate_media_file=lambda source, streams, label: (True, ""),
+                    normalize_source_path=normalize,
+                    set_status=lambda message, stage: statuses.append((message, stage)),
+                ),
+            )
+            facade.bind_project_editor(controller)
+
+            with patch("src.gui_sequence_facade.probe_media_duration", return_value=3.0):
+                self.assertTrue(facade.addSequenceAsset(str(video)))
+                self.assertFalse(facade.addSequenceAsset(str(video)))
+
+            self.assertEqual(len(controller.sequence_model().assets), 1)
+            self.assertTrue(controller.project_dirty)
+            self.assertEqual(normalized, [str(video), str(video), str(video)])
+            self.assertEqual([stage for _, stage in statuses], ["EDIT", "CHECK"])
+            self.assertEqual(facade.sequenceError, "同じ動画素材は既にmedia binにあります")
 
 
 if __name__ == "__main__":

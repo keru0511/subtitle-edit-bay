@@ -33,7 +33,8 @@ class CachePreparation(Protocol):
     def __call__(
         self,
         project: Mapping[str, object],
-        cache_root: str | Path,
+        cache_root: Path,
+        /,
         *,
         protected_paths: list[Path],
     ) -> AudioPreviewCacheResult: ...

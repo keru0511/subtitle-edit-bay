@@ -11,7 +11,7 @@ from collections import Counter
 from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 from unittest.mock import patch
 
 from PySide6 import __version__ as pyside_version
@@ -119,7 +119,7 @@ def _state_name(value: object) -> str:
     return str(name if name is not None else value).rsplit(".", 1)[-1]
 
 
-def _main_preview_contract_passed(result: dict[str, Any]) -> bool:
+def _main_preview_contract_passed(result: dict[str, object]) -> bool:
     media = result.get("media", {})
     return (
         int(result["advanced_playback_ms"]) >= int(result["requested_playback_ms"])
@@ -129,7 +129,7 @@ def _main_preview_contract_passed(result: dict[str, Any]) -> bool:
     )
 
 
-def _playback_follow_contract_passed(result: dict[str, Any]) -> bool:
+def _playback_follow_contract_passed(result: dict[str, object]) -> bool:
     selected_indices = [int(index) for index in result.get("selected_indices", [])]
     return (
         int(result["advanced_playback_ms"]) >= int(result["requested_playback_ms"])
@@ -139,7 +139,7 @@ def _playback_follow_contract_passed(result: dict[str, Any]) -> bool:
     )
 
 
-def _short_visual_update_contract_passed(result: dict[str, Any]) -> bool:
+def _short_visual_update_contract_passed(result: dict[str, object]) -> bool:
     media = result.get("media", {})
     return (
         media.get("source_changes", 0) == 0
@@ -173,7 +173,7 @@ class InstrumentedEditBayBackend(EditBayBackend):
         self.qml_select_segment_arguments.clear()
 
     @Property("QVariantList", notify=EditBayBackend.segmentsChanged)
-    def subtitleSegments(self) -> list[dict[str, Any]]:
+    def subtitleSegments(self) -> list[dict[str, object]]:
         self.gui_boundary_calls["property.subtitleSegments"] += 1
         self.gui_diagnostics["full_segment_materializations"] += 1
         if self._project is None:
@@ -181,14 +181,14 @@ class InstrumentedEditBayBackend(EditBayBackend):
         return deepcopy(self._project.get("segments", []))
 
     @Property("QVariantList", notify=EditBayBackend.shortVideoChanged)
-    def shortVideoClips(self) -> list[dict[str, Any]]:
+    def shortVideoClips(self) -> list[dict[str, object]]:
         self.gui_boundary_calls["property.shortVideoClips"] += 1
         self.gui_diagnostics["full_clip_materializations"] += 1
         return [
             self._build_short_video_clip_view(clip, index) for index, clip in enumerate(self._raw_short_video_clips())
         ]
 
-    def _raw_short_video_clips(self) -> list[dict[str, Any]]:
+    def _raw_short_video_clips(self) -> list[dict[str, object]]:
         if self._project is None:
             return []
         section = self._project.get("short_video", {})
@@ -197,15 +197,15 @@ class InstrumentedEditBayBackend(EditBayBackend):
 
     def _segment_view(
         self,
-        segment: dict[str, Any],
+        segment: dict[str, object],
         source_index: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         if self._uses_feature_facades:
             return super()._segment_view(segment, source_index)
         self.gui_diagnostics["segment_views"] += 1
         return super()._segment_view(segment, source_index)
 
-    def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
+    def _preview_text_for_segment(self, segment: dict[str, object]) -> str:
         if self._uses_feature_facades:
             return super()._preview_text_for_segment(segment)
         self.gui_diagnostics["preview_format_requests"] += 1
@@ -225,9 +225,9 @@ class InstrumentedEditBayBackend(EditBayBackend):
 
     def _build_short_video_clip_view(
         self,
-        clip: dict[str, Any],
+        clip: dict[str, object],
         index: int,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         if self._uses_feature_facades:
             return super()._build_short_video_clip_view(clip, index)
         self.gui_diagnostics["short_clip_materializations"] += 1
@@ -248,7 +248,7 @@ class InstrumentedEditBayBackend(EditBayBackend):
         return super().setEditorPlayhead(position_ms, basis)
 
     @Slot(int, result="QVariantMap")
-    def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+    def shortVideoClipAt(self, index: int) -> dict[str, object]:
         if self._uses_feature_facades:
             return super().shortVideoClipAt(index)
         self.gui_boundary_calls["shortVideoClipAt"] += 1
@@ -261,7 +261,7 @@ class InstrumentedEditBayBackend(EditBayBackend):
         return self._build_short_video_clip_view(clips[index], index)
 
     @Slot(int, result="QVariantMap")
-    def segmentAt(self, index: int) -> dict[str, Any]:
+    def segmentAt(self, index: int) -> dict[str, object]:
         if self._uses_feature_facades:
             return super().segmentAt(index)
         self.gui_boundary_calls["segmentAt"] += 1
@@ -275,14 +275,14 @@ class InstrumentedEditBayBackend(EditBayBackend):
         return super().formatSubtitlePreview(index, text)
 
     @Slot(float, result="QVariantList")
-    def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
+    def activeSubtitleSegments(self, seconds: float) -> list[dict[str, object]]:
         if self._uses_feature_facades:
             return super().activeSubtitleSegments(seconds)
         self.gui_boundary_calls["activeSubtitleSegments"] += 1
         return super().activeSubtitleSegments(seconds)
 
     @Slot(float, float, result="QVariantList")
-    def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
+    def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, object]]:
         if self._uses_feature_facades:
             return super().visibleSubtitleSegments(start, end)
         self.gui_boundary_calls["visibleSubtitleSegments"] += 1
@@ -304,14 +304,14 @@ class InstrumentedEditBayBackend(EditBayBackend):
         super().selectSegmentAtTime(seconds)
 
     @Slot(int, "QVariantMap")
-    def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+    def updateSegment(self, index: int, changes: dict[str, object]) -> None:
         if self._uses_feature_facades:
             return super().updateSegment(index, changes)
         self.gui_boundary_calls["updateSegment"] += 1
         super().updateSegment(index, changes)
 
     @Slot(int, "QVariantMap", result=bool)
-    def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+    def updateShortVideoClip(self, index: int, fields: dict[str, object]) -> bool:
         if self._uses_feature_facades:
             return super().updateShortVideoClip(index, fields)
         self.gui_boundary_calls["updateShortVideoClip"] += 1
@@ -370,7 +370,7 @@ if hasattr(EditBayBackend, "subtitles"):
         """機能別窓口を通る操作とデータ生成を計測する。"""
 
         @Property("QVariantList", notify=SubtitleFacade.segmentsChanged)
-        def subtitleSegments(self) -> list[dict[str, Any]]:
+        def subtitleSegments(self) -> list[dict[str, object]]:
             self._backend.gui_boundary_calls["property.subtitleSegments"] += 1
             self._backend.gui_diagnostics["full_segment_materializations"] += 1
             if self._backend._project is None:
@@ -379,13 +379,13 @@ if hasattr(EditBayBackend, "subtitles"):
 
         def _segment_view(
             self,
-            segment: dict[str, Any],
+            segment: dict[str, object],
             source_index: int | None = None,
-        ) -> dict[str, Any]:
+        ) -> dict[str, object]:
             self._backend.gui_diagnostics["segment_views"] += 1
             return super()._segment_view(segment, source_index)
 
-        def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
+        def _preview_text_for_segment(self, segment: dict[str, object]) -> str:
             self._backend.gui_diagnostics["preview_format_requests"] += 1
             # 所有先を移す前の比較対象も同じハーネスで計測する。
             cache_owner = self if hasattr(self, "_subtitle_preview_text_cache") else self._backend
@@ -404,7 +404,7 @@ if hasattr(EditBayBackend, "subtitles"):
             return segment_preview_text(segment)
 
         @Slot(int, result="QVariantMap")
-        def segmentAt(self, index: int) -> dict[str, Any]:
+        def segmentAt(self, index: int) -> dict[str, object]:
             self._backend.gui_boundary_calls["segmentAt"] += 1
             return super().segmentAt(index)
 
@@ -414,12 +414,12 @@ if hasattr(EditBayBackend, "subtitles"):
             return super().formatSubtitlePreview(index, text)
 
         @Slot(float, result="QVariantList")
-        def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
+        def activeSubtitleSegments(self, seconds: float) -> list[dict[str, object]]:
             self._backend.gui_boundary_calls["activeSubtitleSegments"] += 1
             return super().activeSubtitleSegments(seconds)
 
         @Slot(float, float, result="QVariantList")
-        def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
+        def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, object]]:
             self._backend.gui_boundary_calls["visibleSubtitleSegments"] += 1
             return super().visibleSubtitleSegments(start, end)
 
@@ -435,7 +435,7 @@ if hasattr(EditBayBackend, "subtitles"):
             super().selectSegmentAtTime(seconds)
 
         @Slot(int, "QVariantMap")
-        def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+        def updateSegment(self, index: int, changes: dict[str, object]) -> None:
             self._backend.gui_boundary_calls["updateSegment"] += 1
             super().updateSegment(index, changes)
 
@@ -443,7 +443,7 @@ if hasattr(EditBayBackend, "subtitles"):
         """機能別窓口を通る操作とデータ生成を計測する。"""
 
         @Property("QVariantList", notify=ShortVideoFacade.shortVideoChanged)
-        def shortVideoClips(self) -> list[dict[str, Any]]:
+        def shortVideoClips(self) -> list[dict[str, object]]:
             self._backend.gui_boundary_calls["property.shortVideoClips"] += 1
             self._backend.gui_diagnostics["full_clip_materializations"] += 1
             return [
@@ -452,14 +452,14 @@ if hasattr(EditBayBackend, "subtitles"):
 
         def _build_short_video_clip_view(
             self,
-            clip: dict[str, Any],
+            clip: dict[str, object],
             index: int,
-        ) -> dict[str, Any]:
+        ) -> dict[str, object]:
             self._backend.gui_diagnostics["short_clip_materializations"] += 1
             return super()._build_short_video_clip_view(clip, index)
 
         @Slot(int, result="QVariantMap")
-        def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+        def shortVideoClipAt(self, index: int) -> dict[str, object]:
             self._backend.gui_boundary_calls["shortVideoClipAt"] += 1
             resolver = getattr(super(), "shortVideoClipAt", None)
             if callable(resolver):
@@ -470,7 +470,7 @@ if hasattr(EditBayBackend, "subtitles"):
             return self._build_short_video_clip_view(clips[index], index)
 
         @Slot(int, "QVariantMap", result=bool)
-        def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+        def updateShortVideoClip(self, index: int, fields: dict[str, object]) -> bool:
             self._backend.gui_boundary_calls["updateShortVideoClip"] += 1
             return super().updateShortVideoClip(index, fields)
 
@@ -544,10 +544,10 @@ class GuiPerformanceScenarioRunner:
         self.window: QObject | None = None
         self.main_player: QMediaPlayer | None = None
         self.main_media_probe: MediaPlayerSignalProbe | None = None
-        self.scenarios: list[dict[str, Any]] = []
-        self.contracts: list[dict[str, Any]] = []
+        self.scenarios: list[dict[str, object]] = []
+        self.contracts: list[dict[str, object]] = []
 
-    def run(self) -> dict[str, Any]:
+    def run(self) -> dict[str, object]:
         try:
             self._run_project_open()
             self._run_continuous_playback()
@@ -586,10 +586,10 @@ class GuiPerformanceScenarioRunner:
     def _measure(
         self,
         name: str,
-        action: Callable[[], dict[str, Any] | None],
+        action: Callable[[], dict[str, object] | None],
         *,
         media_probes: tuple[MediaPlayerSignalProbe, ...] = (),
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         self.backend.reset_gui_diagnostics()
         for probe in media_probes:
             probe.reset()
@@ -645,7 +645,7 @@ class GuiPerformanceScenarioRunner:
         }
 
     def _run_project_open(self) -> None:
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             if not self.backend._load_project_path(self.project_path, update_sources=True):
                 raise AssertionError(self.backend.status)
             self.backend.autosave_timer.stop()
@@ -669,7 +669,7 @@ class GuiPerformanceScenarioRunner:
     def _run_continuous_playback(self) -> None:
         player, media_probe = self._main_player_and_probe()
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             player.setPosition(0)
             player.play()
             target_position = round(self.playback_seconds * 1_000)
@@ -713,7 +713,7 @@ class GuiPerformanceScenarioRunner:
         _player, media_probe = self._main_player_and_probe()
         before_players = len(self._media_players())
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             self._open_editor()
             open_player_count = len(self._media_players())
             self._close_editor()
@@ -750,7 +750,7 @@ class GuiPerformanceScenarioRunner:
         segment_count = self.backend.segmentCount
         indices = [0, segment_count // 2, segment_count - 1]
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             caption_delegate_counts: list[int] = []
             timeline_delegate_counts: list[int] = []
             list_selections: list[int] = []
@@ -842,7 +842,7 @@ class GuiPerformanceScenarioRunner:
             str(font_choices[0]["family"]),
         )
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             caption_table = self.harness.find_item(self._window(), "captionTable")
             delegate = self._caption_delegate(caption_table, index)
 
@@ -972,7 +972,7 @@ class GuiPerformanceScenarioRunner:
 
         self.backend.selectionChanged.connect(selection_changed)
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             player.play()
             target_position = start_position_ms + round(follow_seconds * 1_000)
             deadline = time.monotonic() + follow_seconds + 10.0
@@ -1021,7 +1021,7 @@ class GuiPerformanceScenarioRunner:
     def _run_short_mode_operations(self) -> None:
         window = self._window()
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             self._open_short_mode()
             screen = self.harness.find_item(window, "shortModeScreen")
             clip_list = self.harness.find_item(window, "shortModeClipList")
@@ -1157,7 +1157,7 @@ class GuiPerformanceScenarioRunner:
         probe = MediaPlayerSignalProbe(player)
         before_position = player.position()
 
-        def action() -> dict[str, Any]:
+        def action() -> dict[str, object]:
             window = self._window()
             clip_list_view = self.harness.find_item(window, "shortModeClipListView")
             first_delegate = self._short_clip_delegate(clip_list_view, 0)

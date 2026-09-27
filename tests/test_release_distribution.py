@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 from urllib.error import HTTPError, URLError
 from unittest.mock import MagicMock, patch
 
@@ -578,8 +578,14 @@ class ReleaseDistributionTests(TypedTestCase):
         self.assertIn("公開済みのタグを削除・付け替えしない", releasing)
 
 
+class TestReleaseWorkflow(TypedDict):
+    on: dict[str, object]
+    permissions: dict[str, str]
+    jobs: dict[str, dict[str, object]]
+
+
 class WorkflowContractHelperTests(TypedTestCase):
-    def _transitive_release_workflow(self) -> dict[str, Any]:
+    def _transitive_release_workflow(self) -> TestReleaseWorkflow:
         return {
             "on": {"push": {"tags": ["v*"]}},
             "permissions": {"contents": "read"},

@@ -9,7 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,6 +28,7 @@ from scripts.generate_large_gui_fixture import (
     write_fixture_project,
 )
 from scripts.gui_performance_report import REPORT_SCHEMA_VERSION, aggregate_runs
+from src.data_boundary import coerce_int, decode_json, is_string_object_dict
 
 
 def _command_version(command: str) -> str | None:
@@ -46,7 +47,7 @@ def _command_version(command: str) -> str | None:
     return output.splitlines()[0].strip() if output else None
 
 
-def environment_info() -> dict[str, Any]:
+def environment_info() -> dict[str, object]:
     packages: dict[str, str | None] = {}
     for name in ("PySide6", "shiboken6"):
         try:
@@ -140,7 +141,7 @@ def _run_controller(args: argparse.Namespace) -> int:
 
     worker_dir = fixture_dir / "worker-results"
     worker_dir.mkdir(parents=True, exist_ok=True)
-    runs: list[dict[str, Any]] = []
+    runs: list[dict[str, object]] = []
     contract_failure = False
     for segment_count, project_path in project_paths.items():
         for local_repetition in range(1, args.repetitions + 1):
@@ -163,11 +164,14 @@ def _run_controller(args: argparse.Namespace) -> int:
                     f"GUI performance worker failed for {segment_count} subtitles "
                     f"(repetition {repetition}) with exit code {completed.returncode}."
                 )
-            run = json.loads(worker_output.read_text(encoding="utf-8"))
+            run = decode_json(worker_output.read_text(encoding="utf-8"))
+            if not is_string_object_dict(run):
+                raise ValueError("GUIパフォーマンス計測結果の形式が不正です")
             run["repetition"] = repetition
             runs.append(run)
             contract_failure = contract_failure or not bool(run["contracts_passed"])
 
+    summary = aggregate_runs(runs)
     report = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -183,14 +187,14 @@ def _run_controller(args: argparse.Namespace) -> int:
             "segment_counts": args.segment_counts,
             "repetitions": args.repetitions,
             "total_repetitions": args.total_repetitions,
-            "repetition_indices": sorted({int(run["repetition"]) for run in runs}),
+            "repetition_indices": sorted({coerce_int(run["repetition"]) for run in runs}),
             "playback_seconds": args.playback_seconds,
             "settle_ms": args.settle_ms,
             "contracts_enforced": args.enforce_contracts,
             "media_generated_at_runtime": True,
         },
         "runs": runs,
-        "summary": aggregate_runs(runs),
+        "summary": summary,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -199,7 +203,7 @@ def _run_controller(args: argparse.Namespace) -> int:
     )
     print(f"GUI performance report: {output_path}")
     for segment_count in args.segment_counts:
-        fixture = report["summary"]["fixtures"][str(segment_count)]
+        fixture = summary["fixtures"][str(segment_count)]
         failed = [name for name, value in fixture["contracts"].items() if not value["passed"]]
         status = "PASS" if not failed else f"FAIL ({', '.join(failed)})"
         print(f"- {segment_count} subtitles: {status}")

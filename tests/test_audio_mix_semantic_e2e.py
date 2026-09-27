@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 
 from src.audio_mixer import reconcile_audio_mix
 from src.subtitle_project import create_project, load_project, save_project
@@ -110,7 +109,7 @@ class AudioMixSemanticE2ETests(TypedTestCase):
         )
 
     @classmethod
-    def _channel_key(cls, channel: dict[str, Any]) -> str:
+    def _channel_key(cls, channel: dict[object, object]) -> str:
         if channel.get("kind") == "video":
             return "video"
         channel_path = Path(str(channel.get("path", "")))
@@ -128,7 +127,7 @@ class AudioMixSemanticE2ETests(TypedTestCase):
         *,
         audio_normalize: bool = False,
         audio_target_lufs: float = NORMALIZE_TARGET_LUFS,
-    ) -> tuple[Path, dict[str, Any]]:
+    ) -> tuple[Path, dict[object, object]]:
         project = create_project(
             video_path=cls.video.path,
             output_dir=cls.root,
@@ -220,7 +219,7 @@ class AudioMixSemanticE2ETests(TypedTestCase):
     @classmethod
     def _assert_saved_state(
         cls,
-        project: dict[str, Any],
+        project: dict[object, object],
         expected_states: dict[str, dict[str, bool | float]],
         *,
         audio_normalize: bool,

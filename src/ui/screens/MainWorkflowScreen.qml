@@ -96,7 +96,7 @@ ApplicationWindow {
         if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
             root.codexDrawerOpen = true
             if (root.loginInInspector)
-                root.inspectorTab = "codex"
+                root.selectInspectorTab("codex")
         }
         root.previousCodexAuthenticated = root.codexAuthenticated
     }
@@ -137,6 +137,8 @@ ApplicationWindow {
     readonly property color danger: "#EF4444"
 
     function openSpeakerColorPicker(target, index, currentColor) {
+        if (!root.commitPendingEdits())
+            return
         root.colorTarget = target
         root.colorTargetIndex = index
         speakerColorDialog.selectedColor = currentColor || "#FFFFFF"
@@ -254,10 +256,18 @@ ApplicationWindow {
         sourcePopup.manualOffsetText = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function toggleSettingsPopup() {
+        if (!root.commitPendingEdits())
+            return
         if (advancedSettingsPopup.opened)
             advancedSettingsPopup.close()
         else
             advancedSettingsPopup.open()
+    }
+
+    function selectInspectorTab(tab) {
+        if (!root.commitPendingEdits())
+            return
+        root.inspectorTab = tab
     }
 
     function transcriptionBlockReason() {
@@ -267,6 +277,8 @@ ApplicationWindow {
     // Shared entry for the workspace transcription tool.
     function requestTranscription() {
         if (!root.workflowCapabilities.canTranscribe)
+            return
+        if (!root.commitPendingEdits())
             return
         if (root.appBackend.projectLoaded)
             transcriptionMergeDialog.open()
@@ -281,7 +293,7 @@ ApplicationWindow {
         appBackend: root.appBackend
         workflowCapabilities: root.workflowCapabilities
         settingsProvider: root.currentSettings
-        onSourceSettingsRequested: sourcePopup.open()
+        onSourceSettingsRequested: root.openSourceSettings()
         onOverwriteConfirmationRequested: function(request) {
             root.pendingWelcomeTranscriptionRequest = request
             overwriteProjectDialog.open()
@@ -291,7 +303,8 @@ ApplicationWindow {
     function performSubtitleEdit(action, atSeconds) {
         if (root.appBackend.running)
             return
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         switch (action) {
         case "add": root.appBackend.subtitles.addSegment(atSeconds); break
         case "delete": root.appBackend.subtitles.deleteSelectedSegment(); break
@@ -304,6 +317,7 @@ ApplicationWindow {
     SubtitleEditorState {
         id: subtitleEditorState
         subtitles: root.appBackend.subtitles
+        running: root.appBackend.running
         projectPath: root.appBackend.projectPath
         previewEnabled: root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle"
     }
@@ -331,6 +345,8 @@ ApplicationWindow {
     }
 
     function selectWorkspaceMode(mode) {
+        if (!root.commitPendingEdits())
+            return false
         var changed = root.appBackend.workspace.selectEditMode(mode)
         return changed || root.appBackend.workspace.currentEditMode === mode
     }
@@ -424,6 +440,8 @@ ApplicationWindow {
     }
 
     function openEditorScreen() {
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.appBackend.workspace.selectEditMode("subtitle")
         if (!root.mixerMode) {
@@ -435,14 +453,18 @@ ApplicationWindow {
     }
 
     function closeEditorScreen() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return false
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
         mainPlayer.videoOutput = mainPreview.videoOutputItem
         root.activeOverlay = ""
+        return true
     }
 
     function openMixerScreen() {
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         if (!root.appBackend.workspace.selectEditMode("audio") && root.appBackend.workspace.currentEditMode !== "audio")
             return
@@ -461,6 +483,8 @@ ApplicationWindow {
     function openDictionaryScreen() {
         if (root.appBackend.running)
             return
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
@@ -476,6 +500,8 @@ ApplicationWindow {
     function openShortWorkspace() {
         if (root.appBackend.running)
             return
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
@@ -485,6 +511,11 @@ ApplicationWindow {
     }
 
     function closeShortWorkspace() {
+        // Loader.item の型は QObject だが、読み込み先は ShortModeScreen。
+        // qmllint disable missing-property
+        if (shortModeLoader.item && !shortModeLoader.item.commitPendingEdits())
+            return
+        // qmllint enable missing-property
         if (!root.appBackend.workspace.switchWorkspace("normal-video"))
             return
         var playerState = root.appBackend.workspace.workspacePlayerState
@@ -494,18 +525,44 @@ ApplicationWindow {
     }
 
     function commitInputMethod() {
-        // フォーカスを移す前にIMEの未確定文字を確定する。
+        // 変換中に保存するとOSごとの確定結果が異なるため、先に利用者の確定を待つ。
+        var focusedInput = root.activeFocusItem
+        // qmllint disable missing-property
+        var composing = focusedInput && focusedInput.inputMethodComposing === true
+        // qmllint enable missing-property
+        if (composing) {
+            root.appBackend.reportPendingInputMethod()
+            return false
+        }
         // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
         // qmllint disable missing-property
         Qt.inputMethod.commit()
+        composing = focusedInput && focusedInput.inputMethodComposing === true
         // qmllint enable missing-property
+        if (composing) {
+            root.appBackend.reportPendingInputMethod()
+            return false
+        }
+        return true
     }
 
     function commitPendingEdits() {
+        if (root.appBackend.running)
+            return true
         // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
-        root.commitInputMethod()
+        if (!root.commitInputMethod())
+            return false
+        if (subtitleEditorState.hasIncompleteTimeEdit) {
+            root.appBackend.reportIncompleteSubtitleTime()
+            return false
+        }
         root.contentItem.forceActiveFocus()
         subtitleEditorState.commitSubtitleDraft()
+        if (!subtitleEditorState.commitTimeDraft()) {
+            root.appBackend.reportIncompleteSubtitleTime()
+            return false
+        }
+        return true
     }
 
     // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
@@ -527,7 +584,8 @@ ApplicationWindow {
     }
 
     function saveProjectFromShortcut() {
-        root.commitInputMethod()
+        if (!root.commitInputMethod())
+            return false
         root.saveShortcutFocusTarget = root.activeFocusItem
         var selection = root.textSelection(root.saveShortcutFocusTarget)
         var saved = root.saveProject()
@@ -542,32 +600,46 @@ ApplicationWindow {
     }
 
     function saveProject() {
-        root.commitPendingEdits()
+        if (root.appBackend.running)
+            return false
+        if (!root.commitPendingEdits())
+            return false
         return root.appBackend.saveProject()
     }
 
     function browseProjectFile() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.browseProjectFile()
     }
 
+    function openSourceSettings() {
+        if (!root.commitPendingEdits())
+            return
+        sourcePopup.open()
+    }
+
     function browseProjectSaveAs() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.browseProjectSaveAs()
     }
 
     function renderVideo() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.workflow.renderVideo(root.currentSettings())
     }
 
     function buildSubtitlePreview() {
-        root.commitPendingEdits()
+        if (!root.commitPendingEdits())
+            return
         root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
     }
 
     function renderFromEditor() {
-        root.closeEditorScreen()
+        if (!root.closeEditorScreen())
+            return
         root.renderVideo()
     }
 
@@ -696,12 +768,12 @@ ApplicationWindow {
         warningColor: root.amber
         onUpdateCheckRequested: root.appBackend.updates.checkForUpdates()
         onProjectOpenRequested: root.browseProjectFile()
-        onSourceSettingsRequested: sourcePopup.open()
+        onSourceSettingsRequested: root.openSourceSettings()
         onSaveRequested: root.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
             if (root.loginInInspector) {
-                root.inspectorTab = root.inspectorTab === "codex" ? "settings" : "codex"
+                root.selectInspectorTab(root.inspectorTab === "codex" ? "settings" : "codex")
             } else if (root.codexAuthenticated) {
                 root.codexDrawerOpen = !root.codexDrawerOpen
             } else if (root.appBackend.ai.codexAuthState === "login_pending") {
@@ -823,6 +895,10 @@ ApplicationWindow {
         SubtitleModeSettings {
             objectName: "workspaceSubtitleSettings"
             backend: root.appBackend
+            editorState: subtitleEditorState
+            // qmllint disable missing-property
+            imeComposing: root.activeFocusItem && root.activeFocusItem.inputMethodComposing === true
+            // qmllint enable missing-property
             speakers: root.projectSpeakerCache
             fontChoices: root.appBackend.subtitles.fontChoices
             panelColor: root.panel
@@ -835,6 +911,7 @@ ApplicationWindow {
             beginDraft: subtitleEditorState.beginSubtitleDraft
             updateDraft: subtitleEditorState.updateSubtitleDraft
             commitDraft: subtitleEditorState.commitSubtitleDraft
+            pendingDraftTextForSegment: subtitleEditorState.pendingTextForSegment
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }
@@ -1012,7 +1089,7 @@ ApplicationWindow {
             onNewVideoEditRequested: projectStartFlow.startNewVideoEdit()
             onOpenProjectRequested: root.browseProjectFile()
             onStartTranscriptionRequested: projectStartFlow.startTranscription()
-            onSourceSettingsRequested: sourcePopup.open()
+            onSourceSettingsRequested: root.openSourceSettings()
             onDictionaryRequested: root.openDictionaryScreen()
             onProcessingSettingsRequested: root.toggleSettingsPopup()
         }
@@ -1068,7 +1145,7 @@ ApplicationWindow {
                     accentColor: root.acid
                     warningColor: root.amber
                     dangerColor: root.danger
-                    onSourceSettingsRequested: sourcePopup.open()
+                    onSourceSettingsRequested: root.openSourceSettings()
                 }
 
                 ColumnLayout {
@@ -1254,7 +1331,7 @@ ApplicationWindow {
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            onTabRequested: function(tab) { root.inspectorTab = tab }
+            onTabRequested: function(tab) { root.selectInspectorTab(tab) }
         }
 
     }
@@ -1665,7 +1742,7 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("undo") }
     Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("redo") }
-    Shortcut { sequences: [StandardKey.Save]; enabled: root.editorMode || root.mixerMode; onActivated: root.saveProjectFromShortcut() }
+    Shortcut { sequences: [StandardKey.Save]; enabled: (root.editorMode || root.mixerMode) && !root.appBackend.running; onActivated: root.saveProjectFromShortcut() }
     Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.subtitles.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
 
     Connections {
@@ -1678,8 +1755,16 @@ ApplicationWindow {
         root.syncSettings()
     }
     onClosing: function(close) {
-        if (root.appBackend.running && root.appBackend.workflow.activeJob === "update") {
-            close.accepted = false
+        if (root.appBackend.running) {
+            if (root.appBackend.workflow.activeJob === "update"
+                    || root.appBackend.projectDirty
+                    || root.dictionaryMode
+                    || subtitleEditorState.hasPendingSubtitleText
+                    || subtitleEditorState.hasPendingTimeEdit) {
+                close.accepted = false
+                return
+            }
+            mainPlayer.stop()
             return
         }
         if (root.appBackend.projectLoaded && !root.saveProject()) {

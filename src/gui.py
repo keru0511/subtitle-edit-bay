@@ -441,6 +441,10 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._loading_project_sources = False
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
+        self._relink_alignment_result: dict[str, Any] | None = None
+        self._relink_project_was_dirty: bool | None = None
+        self._relink_project_revision = 0
+        self._relink_output_changes = 0
         super().__init__(argv, workspace_root=resolved_workspace_root)
         self._workspace_facade = WorkspaceFacade(self)
         self._subtitles_facade = SubtitleFacade(self)
@@ -495,6 +499,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self.autosave_timer.setSingleShot(True)
         self.autosave_timer.setInterval(700)
         self.autosave_timer.timeout.connect(self._autosave_project)
+        self.runningChanged.connect(self._sync_autosave_with_processing)
         self._project_editor_controller = ProjectEditorController(
             resolved_workspace_root,
             # Resolve these names at call time so existing tests can patch
@@ -1031,7 +1036,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def assPath(self) -> str:
         return self._workflow_facade.assPath
 
-    def _source_selection_updated(self, update: Any) -> None:
+    def _source_selection_updated(self, update: Any, previous_alignment: dict[str, Any]) -> None:
         previous = update.previous
         selection = update.current
         if previous is None or selection is None:
@@ -1044,11 +1049,31 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             and media_changed
             and not self._project_source_selection_matches(selection)
         ):
-            self._clear_project()
+            if not self._clear_project():
+                self._restore_source_selection_after_failed_save(previous, previous_alignment)
         elif previous.output_dir != selection.output_dir:
             self._project["output_dir"] = selection.output_dir
             self._mark_project_dirty()
+            if self._relinking_project_sources:
+                self._relink_output_changes += 1
             self.projectDataChanged.emit()
+
+    def _restore_source_selection_after_failed_save(
+        self, selection: SourceSelection, alignment_result: dict[str, Any]
+    ) -> None:
+        error_status = self.status
+        was_loading_project_sources = self._loading_project_sources
+        self._loading_project_sources = True
+        try:
+            self._set_source_selection(selection)
+        finally:
+            self._loading_project_sources = was_loading_project_sources
+        self._alignment_result = dict(alignment_result)
+        self.alignmentChanged.emit()
+        if self._project is not None and self._project.get("output_dir") != selection.output_dir:
+            self._project["output_dir"] = selection.output_dir
+            self.projectDataChanged.emit()
+        self._set_status(error_status, "ERROR")
 
     def _normalized_source_path(self, value: str) -> str:
         if not value:
@@ -1070,12 +1095,18 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @Slot()
     def beginSourceRelink(self) -> None:
+        if self._running:
+            return
         self._relink_source_selection = self._source_selection
+        self._relink_alignment_result = dict(self._alignment_result)
+        self._relink_project_was_dirty = self._project_dirty
+        self._relink_project_revision = self._project_revision
+        self._relink_output_changes = 0
         self._relinking_project_sources = True
 
     @Slot()
     def finishSourceRelink(self) -> None:
-        if not self._relinking_project_sources:
+        if self._running or not self._relinking_project_sources:
             return
         try:
             previous = self._relink_source_selection
@@ -1088,14 +1119,28 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 )
                 and not self._project_source_selection_matches(self._source_selection)
             ):
-                self._clear_project()
+                if not self._clear_project():
+                    only_output_changed = (
+                        self._relink_project_was_dirty is False
+                        and self._project_revision == self._relink_project_revision + self._relink_output_changes
+                    )
+                    self._restore_source_selection_after_failed_save(
+                        previous, self._relink_alignment_result or self._empty_alignment_result()
+                    )
+                    if only_output_changed:
+                        self._project_dirty = False
+                        self.autosave_timer.stop()
+                        self.projectChanged.emit()
         finally:
             self._relinking_project_sources = False
             self._relink_source_selection = None
+            self._relink_alignment_result = None
+            self._relink_project_was_dirty = None
+            self._relink_output_changes = 0
 
     @Slot()
     def relinkProjectSources(self) -> None:
-        if self._project is None:
+        if self._running or self._project is None:
             return
 
         old_project = deepcopy(self._project)
@@ -1291,10 +1336,10 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             self._set_status("空の編集プロジェクトを作成しました。字幕を手動追加できます", "EDIT")
         return loaded
 
-    def _clear_project(self) -> None:
+    def _clear_project(self) -> bool:
+        if self._project_dirty and not self.saveProject():
+            return False
         self.autosave_timer.stop()
-        if self._project_dirty:
-            self.saveProject()
         if hasattr(self, "_codex_audio_mix_session"):
             was_audio_proposal_running = self._codex_audio_mix_session.running
             self._codex_audio_mix_session.stop()
@@ -1322,6 +1367,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self.segmentsChanged.emit()
         self.historyChanged.emit()
         self.selectionChanged.emit()
+        return True
 
     def _try_load_default_project(self) -> bool:
         if self._loading_project_sources or self._relinking_project_sources:
@@ -1337,9 +1383,9 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def resetSources(self) -> None:
         if self._running:
             return
+        if not self._loading_project_sources and self._project is not None and not self._clear_project():
+            return
         super().resetSources()
-        if not self._loading_project_sources and self._project is not None:
-            self._clear_project()
 
     @Slot(str)
     def setVideoFile(self, path: str) -> None:
@@ -1561,6 +1607,9 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @Slot(result=bool)
     def saveProject(self) -> bool:
+        if self._running:
+            self._set_status("処理中は編集プロジェクトを保存できません", "BUSY")
+            return False
         if self._project is None or not self._project_path:
             self._set_status("保存する字幕編集プロジェクトがありません", "CHECK")
             return False
@@ -1575,7 +1624,15 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._set_status("字幕編集を保存しました", "SAVED")
         return True
 
+    def _sync_autosave_with_processing(self) -> None:
+        if self._running:
+            self.autosave_timer.stop()
+        elif self.projectDirty:
+            self.autosave_timer.start()
+
     def _autosave_project(self) -> None:
+        if self._running:
+            return
         self._project_editor_controller.autosave()
 
     @Slot(int, str, str)

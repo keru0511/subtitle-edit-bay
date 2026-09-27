@@ -270,6 +270,7 @@ Rectangle {
 
                     Rectangle {
                         id: leftHandle
+                        objectName: "timelineCaptionStartHandle"
                         z: 3
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
@@ -281,6 +282,7 @@ Rectangle {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.SizeHorCursor
+                            preventStealing: true
                             onPressed: function (mouse) {
                                 captionClip.originalX = captionClip.x;
                                 captionClip.originalWidth = captionClip.width;
@@ -300,6 +302,7 @@ Rectangle {
 
                     Rectangle {
                         id: rightHandle
+                        objectName: "timelineCaptionEndHandle"
                         z: 3
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
@@ -311,6 +314,7 @@ Rectangle {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.SizeHorCursor
+                            preventStealing: true
                             onPressed: function (mouse) {
                                 captionClip.originalWidth = captionClip.width;
                                 captionClip.pointerStart = mapToItem(timelineCanvas, mouse.x, mouse.y).x;

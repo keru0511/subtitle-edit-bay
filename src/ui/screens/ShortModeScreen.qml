@@ -13,6 +13,13 @@ Item {
     property var appBackend: backend
     // qmllint enable unqualified
     property int currentClipIndex: 0
+    property string inputValidationMessage: ""
+    readonly property bool hasIncompleteInput: settingsPanel.hasIncompleteInput()
+        || clipList.activeTimeInputIncomplete
+    onHasIncompleteInputChanged: {
+        if (!hasIncompleteInput)
+            inputValidationMessage = ""
+    }
 
     function clampCurrentClipIndex() {
         if (!shortRoot.appBackend) return
@@ -33,6 +40,32 @@ Item {
 
     function initializeIfNeeded() {
         if (shortRoot.appBackend) shortRoot.appBackend.shortVideo.initializeShortVideoClips()
+    }
+
+    function commitPendingEdits() {
+        if (shortRoot.mainRoot && !shortRoot.mainRoot.commitInputMethod())
+            return false
+        // qmllint disable missing-property
+        var focusedInput = shortRoot.mainRoot ? shortRoot.mainRoot.activeFocusItem : null
+        // 入力途中の値を失って古い設定で書き出さない。
+        if (settingsPanel.hasIncompleteInput()
+                || (focusedInput && focusedInput.acceptableInput === false)) {
+            shortRoot.inputValidationMessage = "入力途中の値を完了してください"
+            return false
+        }
+        // qmllint enable missing-property
+        if (!clipList.commitPendingEdits()) {
+            shortRoot.inputValidationMessage = "クリップの時刻を保存できませんでした"
+            return false
+        }
+        if (!settingsPanel.commitPendingEdits()) {
+            shortRoot.inputValidationMessage = "ショート設定を保存できませんでした"
+            return false
+        }
+        shortRoot.inputValidationMessage = ""
+        // 範囲指定などの入力欄の onEditingFinished を、画面遷移より先に実行する。
+        shortRoot.forceActiveFocus()
+        return true
     }
 
     Component.onCompleted: {
@@ -77,12 +110,17 @@ Item {
                 implicitHeight: 32
                 enabled: shortRoot.appBackend && !shortRoot.appBackend.running
                     && (shortRoot.appBackend.workflow.actionCapabilities.canRenderShort || shortRoot.appBackend.workflow.actionCapabilities.shortRenderNeedsOutput)
+                    && !shortRoot.hasIncompleteInput
                 ToolTip.visible: hovered && !enabled
-                ToolTip.text: shortRoot.appBackend ? shortRoot.appBackend.workflow.actionCapabilities.shortRenderReason : ""
+                ToolTip.text: shortRoot.hasIncompleteInput
+                    ? "入力途中の値を完了してください"
+                    : (shortRoot.appBackend ? shortRoot.appBackend.workflow.actionCapabilities.shortRenderReason : "")
                 text: shortRoot.appBackend && shortRoot.appBackend.workflow.actionCapabilities.shortRenderNeedsOutput
                     ? "出力先を選んでショート動画を書き出す"
                     : "ショート動画を書き出す"
                 onClicked: {
+                    if (!shortRoot.commitPendingEdits())
+                        return
                     shortRoot.appBackend.workflow.renderShortVideo()
                 }
                 contentItem: Text {
@@ -104,6 +142,7 @@ Item {
                 objectName: "shortModeBackButton"
                 implicitHeight: 32
                 enabled: shortRoot.mainRoot !== null && !shortRoot.appBackend.running
+                    && !shortRoot.hasIncompleteInput
                 text: "通常動画編集へ戻る"
                 onClicked: shortRoot.mainRoot.closeShortWorkspace()
                 contentItem: Text {
@@ -124,6 +163,19 @@ Item {
         }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#2A3530" }
+
+        Text {
+            objectName: "shortModeInputValidationMessage"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: shortRoot.hasIncompleteInput
+                ? "入力途中の値を完了してください"
+                : shortRoot.inputValidationMessage
+            color: "#F59E0B"
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            wrapMode: Text.Wrap
+        }
 
         RowLayout {
             Layout.fillWidth: true

@@ -293,6 +293,7 @@ class LegacyEditBayBackend(QApplication):
 
         if not update.accepted or update.current is None:
             return
+        previous_alignment = dict(self._alignment_result)
         if update.video_changed:
             self._probe_audio_tracks(update.current.video)
         if update.media_changed:
@@ -302,9 +303,9 @@ class LegacyEditBayBackend(QApplication):
         self.sourceSelectionChanged.emit()
         self.speakersChanged.emit()
         self._update_source_status()
-        self._source_selection_updated(update)
+        self._source_selection_updated(update, previous_alignment)
 
-    def _source_selection_updated(self, update: Any) -> None:
+    def _source_selection_updated(self, update: Any, previous_alignment: dict[str, Any]) -> None:
         """Hook for project-aware backends after source state is published."""
 
     def _update_source_status(self) -> None:
@@ -631,24 +632,28 @@ class LegacyEditBayBackend(QApplication):
         except (TypeError, ValueError) as error:
             self._set_status(f"Web辞書候補を取得できません: {error}", "ERROR")
 
-    @Slot("QVariantMap")
-    def saveSettings(self, settings: dict[str, Any]) -> None:
-        self._save_settings(settings, announce=True)
+    @Slot("QVariantMap", result=bool)
+    def saveSettings(self, settings: dict[str, Any]) -> bool:
+        if self._running:
+            self._set_status("処理中はGUI設定を保存できません", "BUSY")
+            return False
+        return self._save_settings(settings, announce=True)
 
-    def _save_settings(self, settings: dict[str, Any], *, announce: bool) -> None:
+    def _save_settings(self, settings: dict[str, Any], *, announce: bool) -> bool:
         try:
             _snapshot, context_changed = self._settings_controller.save_settings(
                 settings,
                 self._speakers,
             )
-        except (TypeError, ValueError) as error:
-            self._set_status(f"文字起こし辞書設定を保存できません: {error}", "ERROR")
-            return
+        except (OSError, TypeError, ValueError) as error:
+            self._set_status(f"GUI設定を保存できません: {error}", "ERROR")
+            return False
         if context_changed:
             self.transcriptionContextChanged.emit()
         self.settingsChanged.emit()
         if announce:
             self._set_status("GUI設定を保存しました", "SAVED")
+        return True
 
     @Slot("QVariantMap")
     def startProcessing(self, settings: dict[str, Any]) -> None:
@@ -673,7 +678,8 @@ class LegacyEditBayBackend(QApplication):
         reference_audio = str(settings.get("reference_audio") or audio_files[0])
         reference_track = str(settings.get("reference_track") or "")
         adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
-        self.saveSettings(settings)
+        if not self.saveSettings(settings):
+            return
         command = build_gui_command(
             self.gui_config_path,
             video=selection.video,

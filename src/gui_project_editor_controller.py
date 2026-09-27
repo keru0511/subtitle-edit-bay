@@ -24,6 +24,7 @@ from .subtitle_project import (
 )
 from .video_timeline import VideoTimeline, timeline_from_project
 from .short_video_schema import ShortVideo
+from .transcription_project_integration import compose_transcription_project
 from .video_sequence import VideoSequence, VideoSequenceError
 
 
@@ -277,6 +278,39 @@ class ProjectEditorController:
         """Persist a newly-created document before it becomes the active one."""
 
         return self._save_project_fn(path, project)
+
+    def integrate_transcription_result(
+        self,
+        generated_path: str | Path,
+        preserved_project: dict[str, Any],
+        preserved_path: str | Path,
+        mode: str,
+    ) -> dict[str, Any]:
+        """生成結果を別に読み、保存できた場合だけ編集の正本を切り替える。"""
+
+        target = Path(preserved_path).resolve()
+        if self._project is None or not self._project_path or Path(self._project_path).resolve() != target:
+            raise SubtitleProjectError("文字起こし開始時の編集プロジェクトが開かれていません")
+        if self._project != preserved_project:
+            raise SubtitleProjectError("文字起こし中に編集プロジェクトが変更されました")
+
+        generated_file = Path(generated_path)
+        generated = self._load_project_fn(generated_file, resolve_video_duration=True)
+        transcription = generated.setdefault("transcription", {})
+        transcription.setdefault(
+            "context_base_dir",
+            str(Path(transcription.get("work_dir") or generated.get("output_dir") or generated_file.parent).resolve()),
+        )
+        integrated = compose_transcription_project(
+            preserved_project,
+            generated,
+            mode,
+            assign_layout_rows=self._assign_project_layout_rows_fn,
+        )
+        self.wait_for_autosave()
+        self._save_project_fn(target, integrated, project_is_validated=True)
+        self.adopt_loaded_project(integrated, target)
+        return integrated
 
     def mark_dirty(self) -> None:
         if self._project is None:

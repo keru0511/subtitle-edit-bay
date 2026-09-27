@@ -1395,7 +1395,7 @@ Window {
             self.assertEqual(self.app.stage, "EDIT")
             self.assertEqual(self.app.currentEditMode, "cut")
             self.assertEqual(self.app.editorPlayhead, before)
-            self.assertEqual(self.app.projectPath, str(project_path))
+            self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
             self.assertEqual(len(self.app._project["timeline"]["cuts"]), 1)
             self.assertFalse(generated_path.exists())
 
@@ -6930,30 +6930,36 @@ Window {
             transcription={"engine": "new-engine"},
         )
 
-        try:
-            for mode in ("merge", "replace"):
-                with self.subTest(mode=mode):
-                    save_project(project_path, preserved)
-                    self.app._project = deepcopy(generated)
-                    self.app._project_path = str(project_path)
-                    self.app.workflow._state.transcription_merge_mode = mode
-                    self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
-                    self.app.workflow._state.transcription_preserved_project_path = str(custom_project_path)
+        generated_path = project_path.with_name("generated.subtitle-project.json")
+        for mode in ("merge", "replace"):
+            with self.subTest(mode=mode):
+                save_project(project_path, preserved)
+                save_project(custom_project_path, preserved)
+                save_project(generated_path, generated)
+                self.app._project = deepcopy(preserved)
+                self.app._project_path = str(custom_project_path)
+                self.app.workflow._state.transcription_merge_mode = mode
+                self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+                self.app.workflow._state.transcription_preserved_project_path = str(custom_project_path)
+                self.app.workflow._state.transcription_generated_project_path = str(generated_path)
+                self.app._active_job = "transcribe"
+                self.app._running = True
+                self.app._audio_mix_proposal = {"id": "stale-proposal"}
 
-                    self.assertTrue(self.app._merge_preserved_transcription_segments())
-                    saved = load_project(custom_project_path)
-                    self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
-                    self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
-                    self.assertEqual(saved["timeline"], preserved["timeline"])
-                    self.assertEqual(saved["short_video"], preserved["short_video"])
-                    self.assertEqual(saved["transcription"], {"engine": "new-engine"})
-                    expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
-                    self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
-                    self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
-        finally:
-            self.app.workflow._state.transcription_merge_mode = ""
-            self.app.workflow._state.transcription_preserved_project = None
-            self.app.workflow._state.transcription_preserved_project_path = ""
+                with patch.object(self.app.workflow, "_read_process_output"):
+                    self.app._process_finished(0, None)
+
+                saved = load_project(custom_project_path)
+                self.assertTrue(Path(self.app.projectPath).samefile(custom_project_path))
+                self.assertEqual(saved["audio_mix"], preserved["audio_mix"])
+                self.assertEqual(saved["timeline"], preserved["timeline"])
+                self.assertEqual(saved["short_video"], preserved["short_video"])
+                self.assertEqual(saved["transcription"]["engine"], "new-engine")
+                expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
+                self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
+                self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
+                self.assertFalse(generated_path.exists())
+                self.assertIsNone(self.app._audio_mix_proposal)
 
     def test_followup_transcription_uses_private_project_path_without_overwriting_default(self) -> None:
         video, audio, output = self._set_ready_sources()
@@ -6988,33 +6994,60 @@ Window {
         self.assertTrue(generated_path.name.startswith(".custom-edit.subtitle-project."))
         self.assertEqual(load_project(default_path)["segments"], sentinel["segments"])
 
-    def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
+    def test_transcription_save_failure_keeps_open_project_and_file(self) -> None:
         project_path = self._load_project()
         preserved = deepcopy(self.app._project)
         assert preserved is not None
+        original_revision = self.app._project_revision
+        original_contents = project_path.read_bytes()
         generated = deepcopy(preserved)
         generated["segments"] = []
-        self.app._project = generated
-        self.app._project_path = str(project_path)
+        generated_path = project_path.with_name("generated.subtitle-project.json")
+        save_project(generated_path, generated)
         self.app._active_job = "transcribe"
         self.app._running = True
         self.app.workflow._state.transcription_merge_mode = "merge"
-        self.app.workflow._state.transcription_preserved_project = preserved
+        self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
         self.app.workflow._state.transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_generated_project_path = str(generated_path)
 
         with (
             patch.object(self.app.workflow, "_read_process_output"),
-            patch.object(self.app, "_try_load_default_project", return_value=True),
-            patch.object(
-                self.app.workflow, "_merge_preserved_transcription_segments",
-                side_effect=ValueError("merge failed"),
-            ),
+            patch.object(self.app._project_editor_controller, "_save_project_fn", side_effect=OSError("disk full")),
         ):
             self.app._process_finished(0, None)
 
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("統合に失敗しました", self.app.status)
-        self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
+        self.assertEqual(self.app._project, preserved)
+        self.assertEqual(self.app._project_revision, original_revision)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
+        self.assertEqual(project_path.read_bytes(), original_contents)
+        self.assertFalse(generated_path.exists())
+
+    def test_missing_transcription_artifact_does_not_load_stale_default_project(self) -> None:
+        project_path = self._load_project()
+        preserved = deepcopy(self.app._project)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+        self.app.workflow._state.transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_generated_project_path = str(
+            project_path.with_name("missing-generated.subtitle-project.json")
+        )
+
+        with (
+            patch.object(self.app.workflow, "_read_process_output"),
+            patch.object(self.app, "_try_load_default_project") as load_default,
+        ):
+            self.app._process_finished(0, None)
+
+        load_default.assert_not_called()
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("一時プロジェクトを読み込めませんでした", self.app.status)
+        self.assertEqual(self.app._project, preserved)
+        self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
 
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()
@@ -7117,7 +7150,6 @@ Window {
 
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
-        project_path = Path(self.app.projectSavePath)
         template_path = self.root / "retry-result-template.json"
         project = create_project(
             video_path=video,
@@ -7166,7 +7198,7 @@ Window {
                         "--template",
                         str(template_path),
                         "--project-path",
-                        str(project_path),
+                        str(_kwargs["project_path"]),
                     ]
                 )
             return command

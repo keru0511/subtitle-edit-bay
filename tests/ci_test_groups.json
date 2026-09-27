@@ -140,6 +140,7 @@
         "test_transcription_hint_plan",
         "test_transcription_hint_workflow",
         "test_transcription_hints",
+        "test_transcription_project_integration",
         "test_transcription_web_dictionary",
         "test_typed_cache",
         "test_unittest_discovery",

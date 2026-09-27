@@ -25,7 +25,6 @@ from .workflow_actions import (
 )
 from .subtitle_project import (
     SubtitleProjectError,
-    assign_project_layout_rows,
     project_work_directory,
 )
 from .application_logging import ProcessDiagnosticSnapshot
@@ -139,66 +138,21 @@ class WorkflowFacade(FeatureFacade):
         )
         self.startTranscription(settings, True, str(generated_project_path))
 
-    def _merge_preserved_transcription_segments(self) -> bool:
-        backend = self._backend
-        if self.project_editor.project is None or self._state.transcription_preserved_project is None:
-            return False
-        generated = deepcopy(self.project_editor.project)
-        preserved = deepcopy(self._state.transcription_preserved_project)
-        generated_segments = deepcopy(generated.get("segments", []))
-        if self._state.transcription_merge_mode == "merge":
-            preserved_segments = deepcopy(preserved.get("segments", []))
-            used_ids = {str(item.get("id", "")) for item in preserved_segments}
-            merged = list(preserved_segments)
-            for segment in generated_segments:
-                segment_id = str(segment.get("id", ""))
-                if not segment_id or segment_id in used_ids:
-                    segment["id"] = f"transcribed-{uuid4().hex[:12]}"
-                used_ids.add(str(segment["id"]))
-                merged.append(segment)
-            segments = merged
-        elif self._state.transcription_merge_mode == "replace":
-            segments = generated_segments
-        else:
-            return False
+    def _publish_integrated_transcription_project(self, project: dict[str, Any]) -> None:
+        """正本確定後に、プロジェクト依存の画面状態を更新する。"""
 
-        preserved["segments"] = assign_project_layout_rows(
-            sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
-        )
-        for key in ("transcription", "transcription_context", "waveforms"):
-            if key in generated:
-                preserved[key] = deepcopy(generated[key])
-        backend._project = preserved
-        preserved_project_path = self._state.transcription_preserved_project_path or self.project_editor.project_path
-        backend._project_path = preserved_project_path
-        backend._apply_project_subtitle_settings(self.project_editor.project)
-        backend._selected_segment_index = 0 if self.project_editor.project["segments"] else -1
-        self.project_editor.save(preserved_project_path, emit=False)
-        backend._project_dirty = False
-        backend.workspace._sync_project_timeline()
-        backend.subtitles._sync_subtitle_model()
-        backend.projectChanged.emit()
-        backend.projectDataChanged.emit()
-        backend.segmentsChanged.emit()
-        backend.selectionChanged.emit()
-        return True
-
-    def _restore_preserved_transcription_project(self) -> None:
         backend = self._backend
-        if self._state.transcription_preserved_project is None:
-            return
-        backend._project = deepcopy(self._state.transcription_preserved_project)
-        backend._project_path = self._state.transcription_preserved_project_path
-        backend._apply_project_subtitle_settings(self.project_editor.project)
-        self.project_editor.save(self.project_editor.project_path, emit=False)
-        backend._project_dirty = False
-        backend._selected_segment_index = 0 if self.project_editor.project.get("segments") else -1
-        backend.subtitles._sync_subtitle_model()
+        was_audio_proposal_running = backend._codex_audio_mix_session.running
+        backend._codex_audio_mix_session.stop()
+        if was_audio_proposal_running:
+            backend._codex_chat.fail_proposal("", cancelled=True)
+        backend._audio_mix_proposal = None
+        backend.audioMixProposalChanged.emit()
+        backend._apply_project_subtitle_settings(project)
+        backend._audio_preview_controller.set_project(project)
+        backend._reset_audio_preview_cache()
         backend.workspace._sync_project_timeline()
-        backend.projectChanged.emit()
-        backend.projectDataChanged.emit()
-        backend.segmentsChanged.emit()
-        backend.selectionChanged.emit()
+        self.project_editor.publish_loaded()
 
     def _cleanup_transcription_project_artifact(self) -> None:
         backend = self._backend
@@ -655,25 +609,34 @@ class WorkflowFacade(FeatureFacade):
                     if self._state.transcription_generated_project_path
                     else None
                 )
-                loaded = (
-                    backend._load_project_path(generated_project_path, update_sources=False)
-                    if generated_project_path is not None and generated_project_path.is_file()
-                    else backend._try_load_default_project()
-                )
+                loaded = False
                 merged = False
                 integration_error = ""
-                if loaded and self._state.transcription_merge_mode in {"merge", "replace"}:
-                    try:
-                        applied = self._merge_preserved_transcription_segments()
-                        merged = applied and self._state.transcription_merge_mode == "merge"
-                    except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
-                        integration_error = f"文字起こし結果の統合に失敗しました: {error}"
+                if self._state.transcription_preserved_project is not None:
+                    if generated_project_path is None or not generated_project_path.is_file():
+                        integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
+                    else:
                         try:
-                            self._restore_preserved_transcription_project()
-                        except (OSError, SubtitleProjectError, TypeError, ValueError) as restore_error:
-                            integration_error += f"（元プロジェクトの復元にも失敗しました: {restore_error}）"
-                if self._state.transcription_generated_project_path and not loaded:
-                    integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
+                            integrated = self.project_editor.integrate_transcription_result(
+                                generated_project_path,
+                                self._state.transcription_preserved_project,
+                                self._state.transcription_preserved_project_path,
+                                self._state.transcription_merge_mode,
+                            )
+                        except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+                            integration_error = f"文字起こし結果の統合に失敗しました: {error}"
+                        else:
+                            self._publish_integrated_transcription_project(integrated)
+                            loaded = True
+                            merged = self._state.transcription_merge_mode == "merge"
+                else:
+                    loaded = (
+                        backend._load_project_path(generated_project_path, update_sources=False)
+                        if generated_project_path is not None and generated_project_path.is_file()
+                        else backend._try_load_default_project()
+                    )
+                    if generated_project_path is not None and not loaded:
+                        integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
                 self._reset_transcription_integration_state()
                 if preserved_workspace is not None:
                     backend.workspace.selectEditMode(preserved_workspace[0])

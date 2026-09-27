@@ -21,10 +21,10 @@ def ensure_transcription_context_base_dir(project: dict[str, object], project_pa
         project["transcription"] = transcription
     if not isinstance(transcription, dict):
         raise TypeError("transcription must be an object or null")
-    transcription.setdefault(
-        "context_base_dir",
-        str(Path(transcription.get("work_dir") or project.get("output_dir") or Path(project_path).parent).resolve()),
-    )
+    base_dir = transcription.get("work_dir") or project.get("output_dir")
+    if not isinstance(base_dir, (str, Path)):
+        base_dir = Path(project_path).parent
+    transcription.setdefault("context_base_dir", str(Path(base_dir).resolve()))
 
 
 def _copy_segments(project: Mapping[str, object]) -> list[dict[str, object]]:
@@ -32,6 +32,10 @@ def _copy_segments(project: Mapping[str, object]) -> list[dict[str, object]]:
     if not isinstance(segments, list) or any(not isinstance(segment, dict) for segment in segments):
         raise TypeError("segments must be a list of objects")
     return deepcopy(cast(list[dict[str, object]], segments))
+
+
+def _segment_sort_key(segment: dict[str, object]) -> tuple[float, float, str]:
+    return cast(float, segment["start"]), cast(float, segment["end"]), cast(str, segment["id"])
 
 
 def compose_transcription_project(
@@ -63,16 +67,7 @@ def compose_transcription_project(
     else:
         segments = generated_segments
 
-    integrated["segments"] = assign_layout_rows(
-        sorted(
-            segments,
-            key=lambda segment: (
-                cast(float, segment["start"]),
-                cast(float, segment["end"]),
-                cast(str, segment["id"]),
-            ),
-        )
-    )
+    integrated["segments"] = assign_layout_rows(sorted(segments, key=_segment_sort_key))
     for key in ("transcription", "transcription_context", "waveforms"):
         if key in generated:
             integrated[key] = deepcopy(generated[key])

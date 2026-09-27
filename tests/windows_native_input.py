@@ -47,9 +47,8 @@ class WindowsNativeInput:
     KEY_UP = 0x0002
     MOUSE_LEFT_DOWN = 0x0002
     MOUSE_LEFT_UP = 0x0004
-    VK_ALT = 0x12
     VK_CTRL = 0x11
-    VK_OEM_3 = 0xC0
+    VK_CAPITAL = 0x14
     VK_RETURN = 0x0D
     VK_SPACE = 0x20
 
@@ -127,5 +126,6 @@ class WindowsNativeInput:
         active_layout = self.user32.GetKeyboardLayout(thread_id)
         if not active_layout or active_layout & 0xFFFF != 0x0411:
             raise AssertionError(f"日本語入力方式に切り替わっていません: {active_layout!r}")
-        # Microsoft日本語IMEの英数字モードから、ひらがな入力へ切り替える。
-        self.chord(self.VK_ALT, self.VK_OEM_3)
+        # Alt+` はトグルなので連続テストで逆方向に切り替わる。
+        # Ctrl+CapsLock はMicrosoft日本語IMEをひらがなモードへ設定する。
+        self.chord(self.VK_CTRL, self.VK_CAPITAL)

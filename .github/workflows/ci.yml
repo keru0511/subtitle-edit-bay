@@ -255,6 +255,18 @@ jobs:
           python -c "from src.runtime_dependencies import check_runtime_dependencies; print(check_runtime_dependencies().to_dict())"
           python -c "import src.gui_state; import src.gui_state_base; import src.subtitle_project; import src.subtitle_packer"
 
+      - name: Inspect native Japanese IME test environment
+        shell: pwsh
+        run: |
+          Write-Host "Session ID: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
+          Get-WinUserLanguageList | Select-Object LanguageTag, InputMethodTips | Format-List | Out-String | Write-Host
+          @'
+          import ctypes
+          user32 = ctypes.windll.user32
+          print(f"Foreground window: {user32.GetForegroundWindow()}")
+          print(f"Input desktop: {user32.OpenInputDesktop(0, False, 1)}")
+          '@ | python -
+
       - name: Start GUI on Windows
         shell: pwsh
         run: |

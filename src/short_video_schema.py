@@ -42,6 +42,7 @@ class ShortVideoClipPayload(_ShortVideoClipRequired, total=False):
     fit: str
     background_color: str
     highlight_candidate_id: str
+    auto_generated: bool
 
 
 class ShortVideoPayload(TypedDict):
@@ -162,6 +163,8 @@ class ShortVideoClip:
     fit: str | None = None
     background_color: str | None = None
     highlight_candidate_id: str | None = None
+    # 初回表示だけで作られた未編集クリップ。出自不明の旧クリップは False として保護する。
+    auto_generated: bool = False
 
     @classmethod
     def from_json(cls, payload: object) -> "ShortVideoClip":
@@ -182,6 +185,9 @@ class ShortVideoClip:
         highlight_candidate_id = (
             str(raw_highlight_candidate_id) if raw_highlight_candidate_id not in (None, "") else None
         )
+        auto_generated = payload.get("auto_generated", False)
+        if not isinstance(auto_generated, bool):
+            raise ShortVideoError("clip.auto_generated must be a boolean")
         if start < 0.0:
             start = 0.0
         if end < start:
@@ -193,6 +199,7 @@ class ShortVideoClip:
             fit=fit,
             background_color=background_color,
             highlight_candidate_id=highlight_candidate_id,
+            auto_generated=auto_generated,
         )
 
     def to_json(self) -> ShortVideoClipPayload:
@@ -207,6 +214,8 @@ class ShortVideoClip:
             payload["background_color"] = self.background_color
         if self.highlight_candidate_id:
             payload["highlight_candidate_id"] = self.highlight_candidate_id
+        if self.auto_generated:
+            payload["auto_generated"] = True
         return payload
 
 

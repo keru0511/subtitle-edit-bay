@@ -217,6 +217,7 @@ class ShortVideoFacade(FeatureFacade):
                     "segment_id": str(segment.get("id", "")),
                     "start": float(segment.get("start", 0.0)),
                     "end": float(segment.get("end", 0.0)),
+                    "auto_generated": True,
                 }
             )
         section["enabled"] = True
@@ -293,7 +294,8 @@ class ShortVideoFacade(FeatureFacade):
             to_index = len(clips)
         if from_index == to_index:
             return True
-        clip = clips.pop(from_index)
+        clip = dict(clips.pop(from_index))
+        clip.pop("auto_generated", None)
         if to_index > from_index:
             to_index -= 1
         clips.insert(to_index, clip)
@@ -353,6 +355,7 @@ class ShortVideoFacade(FeatureFacade):
                 clip["background_color"] = normalize_rgb_color(fields["background_color"])
             except (TypeError, ValueError, OverflowError):
                 return False
+        clip.pop("auto_generated", None)
         clips[index] = clip
         section["clips"] = clips
         return self._commit_short_video(section)
@@ -535,15 +538,31 @@ class ShortVideoFacade(FeatureFacade):
             backend._set_status("この見どころ候補は追加済みです", "CHECK")
             return False
         section["enabled"] = True
-        clips.append(
-            {
-                "segment_id": source_ids[0],
-                "start": candidate_start,
-                "end": candidate_end,
-                "highlight_candidate_id": candidate_id,
-            }
-        )
-        section["clips"] = clips
+        candidate_clip = {
+            "segment_id": source_ids[0],
+            "start": candidate_start,
+            "end": candidate_end,
+            "highlight_candidate_id": candidate_id,
+        }
+        # 候補と重なる未編集の自動区間だけを差し引く。手編集済み・旧形式のクリップは保持する。
+        adjusted_clips: list[dict[str, Any]] = []
+        inserted = False
+        for clip in clips:
+            clip_start = float(clip.get("start", 0.0))
+            clip_end = float(clip.get("end", clip_start))
+            if not clip.get("auto_generated") or clip_end <= candidate_start or clip_start >= candidate_end:
+                adjusted_clips.append(clip)
+                continue
+            if clip_start < candidate_start:
+                adjusted_clips.append({**clip, "end": candidate_start})
+            if not inserted:
+                adjusted_clips.append(candidate_clip)
+                inserted = True
+            if clip_end > candidate_end:
+                adjusted_clips.append({**clip, "start": candidate_end})
+        if not inserted:
+            adjusted_clips.append(candidate_clip)
+        section["clips"] = adjusted_clips
         return self._commit_short_video(section)
 
     @Slot(int, result=bool)

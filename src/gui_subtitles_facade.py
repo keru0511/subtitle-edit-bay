@@ -328,6 +328,9 @@ class SubtitleFacade(FeatureFacade):
         *,
         reflow_layout: bool = True,
     ) -> None:
+        backend = self._backend
+        if backend._running:
+            return
         self.project_editor.commit_segment_change(
             before,
             after,
@@ -373,7 +376,8 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(int, "QVariantMap")
     def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
-        if self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
+        backend = self._backend
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
         current = self.project_editor.project["segments"][index]
         updated = deepcopy(current)
@@ -448,7 +452,8 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(int, float, float, float)
     def moveSegment(self, index: int, start: float, end: float, snap_seconds: float) -> None:
-        if self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
+        backend = self._backend
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
         duration = max(MIN_SEGMENT_DURATION_SECONDS, end - start)
         snapped_start = self._snap_time(start, index, max(0.0, snap_seconds))
@@ -457,7 +462,8 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(int, float, float)
     def resizeSegmentStart(self, index: int, start: float, snap_seconds: float) -> None:
-        if self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
+        backend = self._backend
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
         segment = self.project_editor.project["segments"][index]
         snapped = self._snap_time(start, index, max(0.0, snap_seconds))
@@ -465,7 +471,8 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(int, float, float)
     def resizeSegmentEnd(self, index: int, end: float, snap_seconds: float) -> None:
-        if self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
+        backend = self._backend
+        if backend._running or self.project_editor.project is None or not 0 <= index < len(self.project_editor.project["segments"]):
             return
         segment = self.project_editor.project["segments"][index]
         snapped = self._snap_time(end, index, max(0.0, snap_seconds))
@@ -473,7 +480,8 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot(float)
     def addSegment(self, at_seconds: float) -> None:
-        if self.project_editor.project is None:
+        backend = self._backend
+        if backend._running or self.project_editor.project is None:
             return
         speakers = self.project_editor.project.get("speakers", [])
         speaker = speakers[0] if speakers else {"style": "Oz", "name": "", "track_key": "", "file_name": ""}
@@ -497,7 +505,8 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot()
     def deleteSelectedSegment(self) -> None:
-        if self.project_editor.project is None or not 0 <= self.project_editor.selected_segment_index < len(
+        backend = self._backend
+        if backend._running or self.project_editor.project is None or not 0 <= self.project_editor.selected_segment_index < len(
             self.project_editor.project["segments"]
         ):
             return
@@ -508,7 +517,7 @@ class SubtitleFacade(FeatureFacade):
     @Slot(float)
     def splitSelectedSegment(self, at_seconds: float) -> None:
         backend = self._backend
-        if self.project_editor.project is None or not 0 <= self.project_editor.selected_segment_index < len(
+        if backend._running or self.project_editor.project is None or not 0 <= self.project_editor.selected_segment_index < len(
             self.project_editor.project["segments"]
         ):
             return
@@ -567,6 +576,9 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot()
     def undoEdit(self) -> None:
+        backend = self._backend
+        if backend._running:
+            return
         self.project_editor.undo()
 
     @Slot()
@@ -579,12 +591,15 @@ class SubtitleFacade(FeatureFacade):
 
     @Slot()
     def redoEdit(self) -> None:
+        backend = self._backend
+        if backend._running:
+            return
         self.project_editor.redo()
 
     @Slot("QVariantMap")
     def buildSubtitlePreview(self, settings: dict[str, Any]) -> None:
         backend = self._backend
-        if self.project_editor.project is None:
+        if backend._running or self.project_editor.project is None:
             return
         backend._update_project_settings(settings)
         if not backend.saveProject():

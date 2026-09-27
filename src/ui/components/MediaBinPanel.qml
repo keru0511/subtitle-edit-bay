@@ -55,6 +55,7 @@ Rectangle {
 
         SmallButton {
             objectName: "mediaBinSourceSettingsButton"
+            focusPolicy: Qt.TabFocus
             Layout.fillWidth: true
             text: "動画・話者音声の設定"
             enabled: root.backend && !root.backend.running

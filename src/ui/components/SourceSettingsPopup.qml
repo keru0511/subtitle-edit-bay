@@ -57,7 +57,7 @@ Popup {
     height: Math.min(680, Overlay.overlay.height - 32)
     modal: true
     focus: true
-    closePolicy: Popup.CloseOnEscape
+    closePolicy: root.appBackend.running ? Popup.NoAutoClose : Popup.CloseOnEscape
     onOpened: root.appBackend.beginSourceRelink()
     onClosed: root.appBackend.finishSourceRelink()
     background: Rectangle {
@@ -81,6 +81,7 @@ Popup {
             }
             ToolButton {
                 text: "×"
+                enabled: !root.appBackend.running
                 onClicked: root.close()
             }
         }
@@ -156,6 +157,7 @@ Popup {
                     }
                     DropArea {
                         id: sourcePopupDropArea
+                        objectName: "sourcePopupDropArea"
                         anchors.fill: parent
                         enabled: !root.appBackend.running
                         onEntered: function (drag) {
@@ -232,7 +234,10 @@ Popup {
                                 elide: Text.ElideMiddle
                             }
                             ToolButton {
+                                objectName: "sourceAudioRemoveButton-" + sourceAudioDelegate.index
                                 text: "×"
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
                                 enabled: !root.appBackend.running
                                 onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index)
                             }
@@ -242,11 +247,13 @@ Popup {
                 RowLayout {
                     Layout.fillWidth: true
                     SourceButton {
+                        objectName: "sourceAudioAddButton"
                         text: "音声を追加"
                         enabled: !root.appBackend.running
                         onClicked: root.appBackend.browseAudioFiles()
                     }
                     SourceButton {
+                        objectName: "sourceAudioClearButton"
                         text: "クリア"
                         enabled: !root.appBackend.running
                         onClicked: root.appBackend.clearAudioFiles()
@@ -384,6 +391,7 @@ Popup {
             Button {
                 objectName: "sourceDoneButton"
                 text: "完了"
+                enabled: !root.appBackend.running
                 onClicked: root.close()
             }
         }

@@ -18,6 +18,7 @@ from .gui_transcription_context_state import (
     gui_transcription_context_state_from_config,
 )
 from .runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
+from .runtime_config_schema import validate_runtime_config_payload
 from .runtime_settings import DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT
 
 
@@ -163,6 +164,7 @@ class SettingsController:
             speakers,
             transcription_context=transcription_context,
         )
+        validate_runtime_config_payload(payload, discard_unknown=False)
         write_gui_runtime_config(self.gui_config_path, payload)
 
         self.settings = next_settings

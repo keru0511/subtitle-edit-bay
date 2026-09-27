@@ -5,7 +5,7 @@ import subprocess
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping, Sequence
 
 from PySide6.QtCore import QProcess, QTimer, QUrl
 
@@ -24,7 +24,7 @@ from .gui_state import (
     build_gui_command,
 )
 from .gui_settings_controller import SettingsController
-from .gui_source_selection_controller import SourceSelectionController
+from .gui_source_selection_controller import SourceSelectionController, SourceSelectionUpdate
 from .runtime_dependencies import check_runtime_dependencies
 from .transcription_web_dictionary import (
     build_web_dictionary_candidate_metadata,
@@ -34,8 +34,10 @@ from .application_info import (
     build_application_info_payload,
     resolve_application_info,
 )
+from .data_boundary import coerce_float, is_object_dict
 
 APP_TITLE = "Subtitle Edit Bay"
+AlignmentResult = dict[str, str | float]
 
 
 class LegacyEditBayBackend(QApplication):
@@ -86,6 +88,7 @@ class LegacyEditBayBackend(QApplication):
         self._log = ""
         self._elapsed_seconds = 0
         self._cancel_requested = False
+        self._active_job = ""
         self._alignment_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="alignment")
 
         self.alignmentComputed.connect(self._apply_alignment_result)
@@ -114,9 +117,8 @@ class LegacyEditBayBackend(QApplication):
     @color_config_path.setter
     def color_config_path(self, value: str | Path) -> None:
         self._color_config_path = Path(value)
-        controller = getattr(self, "_source_selection_controller", None)
-        if controller is not None:
-            controller.color_config_path = self._color_config_path
+        if hasattr(self, "_source_selection_controller"):
+            self._source_selection_controller.color_config_path = self._color_config_path
 
     @property
     def _source_selection(self) -> SourceSelection:
@@ -151,35 +153,35 @@ class LegacyEditBayBackend(QApplication):
         self._settings_controller.gui_config_path = Path(value)
 
     @property
-    def _base_config(self) -> dict[str, Any]:
+    def _base_config(self) -> dict[str, object]:
         return self._settings_controller.base_config
 
     @_base_config.setter
-    def _base_config(self, value: dict[str, Any]) -> None:
+    def _base_config(self, value: dict[str, object]) -> None:
         self._settings_controller.base_config = value
 
     @property
-    def _config(self) -> dict[str, Any]:
+    def _config(self) -> dict[str, object]:
         return self._settings_controller.config
 
     @_config.setter
-    def _config(self, value: dict[str, Any]) -> None:
+    def _config(self, value: dict[str, object]) -> None:
         self._settings_controller.config = value
 
     @property
-    def _settings(self) -> dict[str, Any]:
+    def _settings(self) -> dict[str, object]:
         return self._settings_controller.settings
 
     @_settings.setter
-    def _settings(self, value: dict[str, Any]) -> None:
+    def _settings(self, value: dict[str, object]) -> None:
         self._settings_controller.settings = value
 
     @property
-    def _transcription_context(self) -> dict[str, Any]:
+    def _transcription_context(self) -> dict[str, object]:
         return self._settings_controller.transcription_context
 
     @_transcription_context.setter
-    def _transcription_context(self, value: dict[str, Any]) -> None:
+    def _transcription_context(self, value: dict[str, object]) -> None:
         self._settings_controller.transcription_context = value
 
     @staticmethod
@@ -187,7 +189,7 @@ class LegacyEditBayBackend(QApplication):
         return SourceSelectionController.default_audio_tracks()
 
     @staticmethod
-    def _empty_alignment_result(status: str = "未解析") -> dict[str, Any]:
+    def _empty_alignment_result(status: str = "未解析") -> AlignmentResult:
         return {
             "status": status,
             "track": "",
@@ -205,19 +207,19 @@ class LegacyEditBayBackend(QApplication):
 
     @staticmethod
     def _normalized_gui_transcription_context(
-        context: Mapping[str, Any] | None,
-    ) -> dict[str, Any]:
+        context: Mapping[str, object] | None,
+    ) -> dict[str, object]:
         return SettingsController.normalize_transcription_context(context)
 
-    def _settings_from_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _settings_from_config(self, payload: dict[str, object]) -> dict[str, object]:
         return self._settings_controller.settings_from_config(payload)
 
     @Property("QVariantMap", notify=sourceSelectionChanged)
-    def sourceSelection(self) -> dict[str, Any]:
+    def sourceSelection(self) -> dict[str, object]:
         return self._source_selection_controller.source_selection.to_dict()
 
     @Property("QVariantMap", notify=dependenciesChanged)
-    def dependencyStatus(self) -> dict[str, Any]:
+    def dependencyStatus(self) -> dict[str, object]:
         return self._dependencies.to_dict()
 
     @Property("QVariantList", notify=speakersChanged)
@@ -229,7 +231,7 @@ class LegacyEditBayBackend(QApplication):
         return self._source_selection_controller.audio_tracks
 
     @Property("QVariantMap", notify=alignmentChanged)
-    def alignmentResult(self) -> dict[str, Any]:
+    def alignmentResult(self) -> AlignmentResult:
         return dict(self._alignment_result)
 
     @Property(bool, notify=alignmentChanged)
@@ -237,11 +239,11 @@ class LegacyEditBayBackend(QApplication):
         return self._alignment_busy
 
     @Property("QVariantMap", notify=settingsChanged)
-    def settings(self) -> dict[str, Any]:
+    def settings(self) -> dict[str, object]:
         return dict(self._settings)
 
     @Property("QVariantMap", notify=transcriptionContextChanged)
-    def transcriptionContext(self) -> dict[str, Any]:
+    def transcriptionContext(self) -> dict[str, object]:
         return dict(self._transcription_context)
 
     @Property(bool, notify=runningChanged)
@@ -289,7 +291,7 @@ class LegacyEditBayBackend(QApplication):
         update = self._source_selection_controller.set_selection(selection)
         self._publish_source_selection_update(update)
 
-    def _publish_source_selection_update(self, update: Any) -> None:
+    def _publish_source_selection_update(self, update: SourceSelectionUpdate) -> None:
         """Publish a controller update through the legacy Qt contract."""
 
         if not update.accepted or update.current is None:
@@ -306,7 +308,7 @@ class LegacyEditBayBackend(QApplication):
         self._update_source_status()
         self._source_selection_updated(update, previous_alignment)
 
-    def _source_selection_updated(self, update: Any, previous_alignment: dict[str, Any]) -> None:
+    def _source_selection_updated(self, update: SourceSelectionUpdate, previous_alignment: AlignmentResult) -> None:
         """Hook for project-aware backends after source state is published."""
 
     def _update_source_status(self) -> None:
@@ -400,7 +402,7 @@ class LegacyEditBayBackend(QApplication):
             self.setAudioFiles(paths, True)
 
     @Slot("QVariantList", bool)
-    def setAudioFiles(self, paths: list[Any], append: bool) -> None:
+    def setAudioFiles(self, paths: Sequence[object], append: bool) -> None:
         if self._running:
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
@@ -416,7 +418,7 @@ class LegacyEditBayBackend(QApplication):
         self._publish_source_selection_update(update)
 
     @Slot("QVariantList")
-    def importDroppedSourceFiles(self, values: list[Any]) -> None:
+    def importDroppedSourceFiles(self, values: Sequence[object]) -> None:
         if self._running:
             self._set_status("処理中は入力ソースを変更できません", "BUSY")
             return
@@ -542,7 +544,7 @@ class LegacyEditBayBackend(QApplication):
         reference_audio: str,
         reference_track: str,
         adjustment: float,
-    ) -> dict[str, Any]:
+    ) -> AlignmentResult:
         matched_track, detected_offset, score = resolve_alignment(
             video,
             reference_audio,
@@ -558,21 +560,33 @@ class LegacyEditBayBackend(QApplication):
             "score": score,
         }
 
-    def _alignment_finished(self, future: Future[dict[str, Any]]) -> None:
+    def _alignment_finished(self, future: Future[AlignmentResult]) -> None:
         try:
             self.alignmentComputed.emit(future.result())
         except Exception as error:
             self.alignmentFailed.emit(str(error))
 
     @Slot(object)
-    def _apply_alignment_result(self, result: dict[str, Any]) -> None:
+    def _apply_alignment_result(self, result: object) -> None:
+        if not is_object_dict(result):
+            self._apply_alignment_error("同期解析結果の形式が不正です")
+            return
+        normalized: AlignmentResult = {}
+        for key, value in result.items():
+            if not isinstance(key, str) or not isinstance(value, (str, int, float)):
+                self._apply_alignment_error("同期解析結果の形式が不正です")
+                return
+            normalized[key] = value
+        if "track" not in normalized or "offset" not in normalized:
+            self._apply_alignment_error("同期解析結果に必要な項目がありません")
+            return
         self._alignment_busy = False
-        self._alignment_result = dict(result)
+        self._alignment_result = normalized
         self.alignmentChanged.emit()
         if self._running or self._stage == "ERROR":
             return
         self._set_status(
-            f"同期完了: {result['track']} / offset {float(result['offset']):+.3f}s",
+            f"同期完了: {normalized['track']} / offset {coerce_float(normalized['offset']):+.3f}s",
             "READY",
         )
 
@@ -587,7 +601,7 @@ class LegacyEditBayBackend(QApplication):
         self._set_status(f"同期解析に失敗しました: {message}", "ERROR")
 
     @Slot("QVariantMap")
-    def setTranscriptionContext(self, context: dict[str, Any]) -> None:
+    def setTranscriptionContext(self, context: dict[str, object]) -> None:
         if self._running:
             self._set_status("処理中は文字起こし辞書設定を変更できません", "BUSY")
             return
@@ -612,8 +626,8 @@ class LegacyEditBayBackend(QApplication):
                 source_text = "\n".join(part for part in (source_text, fetched) if part)
             metadata = list(
                 build_web_dictionary_candidate_metadata(
-                    self._transcription_context.get("game_title", ""),
-                    self._transcription_context.get("game_notes", ""),
+                    str(self._transcription_context.get("game_title", "")),
+                    str(self._transcription_context.get("game_notes", "")),
                     snippets=[source_text] if source_text else None,
                 )
             )
@@ -634,13 +648,13 @@ class LegacyEditBayBackend(QApplication):
             self._set_status(f"Web辞書候補を取得できません: {error}", "ERROR")
 
     @Slot("QVariantMap", result=bool)
-    def saveSettings(self, settings: dict[str, Any]) -> bool:
+    def saveSettings(self, settings: dict[str, object]) -> bool:
         if self._running:
             self._set_status("処理中はGUI設定を保存できません", "BUSY")
             return False
         return self._save_settings(settings, announce=True)
 
-    def _save_settings(self, settings: dict[str, Any], *, announce: bool) -> bool:
+    def _save_settings(self, settings: dict[str, object], *, announce: bool) -> bool:
         try:
             _snapshot, context_changed = self._settings_controller.save_settings(
                 settings,
@@ -657,7 +671,7 @@ class LegacyEditBayBackend(QApplication):
         return True
 
     @Slot("QVariantMap")
-    def startProcessing(self, settings: dict[str, Any]) -> None:
+    def startProcessing(self, settings: dict[str, object]) -> None:
         if self._running:
             return
 
@@ -678,7 +692,7 @@ class LegacyEditBayBackend(QApplication):
 
         reference_audio = str(settings.get("reference_audio") or audio_files[0])
         reference_track = str(settings.get("reference_track") or "")
-        adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
+        adjustment = coerce_float(settings.get("alignment_offset_adjustment") or 0.0)
         if not self.saveSettings(settings):
             return
         command = build_gui_command(
@@ -703,21 +717,29 @@ class LegacyEditBayBackend(QApplication):
 
     def _start_process(self, command: list[str]) -> None:
         self._job_runner.workspace_root = Path(self.workspace_root).resolve()
-        self._job_runner.start(command, job_id=getattr(self, "_active_job", "") or "legacy")
+        self._job_runner.start(command, job_id=self._active_job or "legacy")
+
+    def _record_log(
+        self,
+        message: object,
+        *,
+        severity: str = "INFO",
+        component: str = "gui",
+        job: str = "",
+        stage: str = "",
+    ) -> None:
+        self._log += str(message) + "\n"
+        self.logChanged.emit()
 
     def _process_launch_preparation_failed(self, message: str) -> None:
         detail = f"QProcess launch preparation failed: {message}"
-        if hasattr(self, "_record_log"):
-            self._record_log(
-                detail,
-                severity="WARNING",
-                component=getattr(self, "_active_job", "") or "process",
-                job=getattr(self, "_active_job", ""),
-                stage="STARTING",
-            )
-        else:
-            self._log += detail + "\n"
-            self.logChanged.emit()
+        self._record_log(
+            detail,
+            severity="WARNING",
+            component=self._active_job or "process",
+            job=self._active_job,
+            stage="STARTING",
+        )
 
     @Slot()
     def cancelProcessing(self) -> None:
@@ -729,7 +751,7 @@ class LegacyEditBayBackend(QApplication):
             return
         self._cancel_requested = True
         self._set_status("停止を要求しています", "STOPPING")
-        self._job_runner.cancel(job_id=getattr(self, "_active_job", "") or "legacy")
+        self._job_runner.cancel(job_id=self._active_job or "legacy")
 
     def _kill_if_running(self, expected_process_id: int = 0) -> None:
         self._job_runner.kill_if_running(expected_process_id)

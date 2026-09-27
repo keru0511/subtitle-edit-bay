@@ -30,7 +30,7 @@ from tests.media_test_helpers import (
     run_media_command,
     video_stream,
 )
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +98,7 @@ class MediaCommandDiagnosticTests(TypedTestCase):
             self.assertFalse(marker.exists(), "Timed-out command left a descendant process running.")
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
@@ -115,7 +115,7 @@ class MediaSemanticE2ETests(TypedTestCase):
     one_line_output: Path
     two_line_output: Path
     manual_break_output: Path
-    output_probes: dict[str, dict[str, object]]
+    output_probes: dict[Path, dict[str, object]]
 
     @classmethod
     def setUpClass(cls) -> None:

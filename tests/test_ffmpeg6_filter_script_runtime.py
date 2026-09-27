@@ -150,7 +150,7 @@ class FFmpeg6FilterScriptRuntimeTests(TypedTestCase):
     @staticmethod
     def _pixel(frame: bytes, *, width: int, x: int, y: int) -> tuple[int, int, int]:
         offset = (y * width + x) * 3
-        return tuple(frame[offset : offset + 3])  # type: ignore[return-value]
+        return (frame[offset], frame[offset + 1], frame[offset + 2])
 
     @staticmethod
     def _mean_abs_difference(left: bytes, right: bytes) -> float:

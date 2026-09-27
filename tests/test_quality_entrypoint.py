@@ -1,13 +1,66 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from scripts import check_quality as quality
+from scripts.check_no_any import run_full_mypy, source_findings, tracked_python_files
 from tests.typed_case import TypedTestCase
 
 
 class QualityEntrypointTests(TypedTestCase):
+    def test_no_any_gate_covers_tracked_sources_and_stubs(self) -> None:
+        paths = tracked_python_files()
+        names = {path.as_posix() for path in paths}
+        self.assertTrue("scripts/check_quality.py" in names)
+        self.assertTrue("typings/numpy/__init__.pyi" in names)
+
+    def test_no_any_gate_rejects_explicit_any_and_type_check_suppression(self) -> None:
+        source = (
+            "from typing import Any as Unknown\n"
+            "value: Unknown = 1  # type: ignore[assignment]\n"
+            "qualified = typing.Any\n"
+            "# mypy: ignore-errors\n"
+        )
+        findings = source_findings(source, "sample.py")
+        self.assertEqual(len(findings), 4)
+        self.assertTrue(any("sample.py:1: Any" in finding for finding in findings))
+        self.assertTrue(any("sample.py:2: 型チェック" in finding for finding in findings))
+        self.assertTrue(any("sample.py:3: Any" in finding for finding in findings))
+        self.assertTrue(any("sample.py:4: 型チェック" in finding for finding in findings))
+
+    def test_no_any_gate_ignores_text_without_type_use(self) -> None:
+        self.assertEqual(source_findings('message = "Any is a word"\n', "sample.py"), [])
+
+    def test_no_any_gate_uses_empty_config_and_strict_flags_for_all_files(self) -> None:
+        captured_command: list[str] = []
+        captured_config: list[str] = []
+        paths = [Path("scripts/check_no_any.py"), Path("typings/numpy/__init__.pyi")]
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            captured_command.extend(command)
+            config_path = Path(command[command.index("--config-file") + 1])
+            captured_config.append(config_path.read_text(encoding="utf-8"))
+            return subprocess.CompletedProcess(command, 0, stdout="Success: no issues found\n")
+
+        with patch("scripts.check_no_any.subprocess.run", side_effect=fake_run):
+            self.assertEqual(run_full_mypy(paths, "win32"), 0)
+
+        self.assertEqual(captured_config, ["[mypy]\n"])
+        for flag in (
+            "--strict",
+            "--disallow-any-explicit",
+            "--disallow-any-expr",
+            "--disallow-any-unimported",
+            "--disallow-any-decorated",
+        ):
+            self.assertIn(flag, captured_command)
+        self.assertEqual(captured_command[captured_command.index("--platform") + 1], "win32")
+        self.assertEqual(captured_command[-2:], [path.as_posix() for path in paths])
+
     def test_lint_only_runs_only_ruff(self) -> None:
         args = quality.parse_args(["--lint-only"])
         steps = quality.build_steps(args)

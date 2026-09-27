@@ -62,18 +62,20 @@ def transcription_capability(
     return ActionCapability()
 
 
-def render_output_path(project_path: str | Path, project: Mapping[object, object], *, short: bool) -> Path:
+def render_output_path(
+    project_path: str | Path, project: Mapping[str, object] | Mapping[object, object], *, short: bool
+) -> Path:
     return resolve_render_output_path(project_path, project, short=short)
 
 
-def _project_section(project: Mapping[object, object], key: str) -> Mapping[object, object]:
+def _project_section(project: Mapping[str, object] | Mapping[object, object], key: str) -> Mapping[object, object]:
     section = project.get(key, {})
     if not is_object_mapping(section):
         raise ValueError(f"{key} must be an object")
     return section
 
 
-def validate_render_output(output: Path, project: Mapping[object, object], project_path: str) -> None:
+def validate_render_output(output: Path, project: Mapping[str, object] | Mapping[object, object], project_path: str) -> None:
     """Validate without creating files, for both capability display and execution."""
     target = output.resolve()
     sources = [project_path, str(_project_section(project, "video").get("path", ""))]
@@ -97,7 +99,7 @@ def validate_render_output(output: Path, project: Mapping[object, object], proje
 
 def render_capability(
     dependencies: RuntimeDependencyStatus,
-    project: Mapping[object, object] | None,
+    project: Mapping[str, object] | Mapping[object, object] | None,
     project_path: str,
     *,
     short: bool = False,
@@ -129,7 +131,7 @@ def render_capability(
 
 def prepare_render_request(
     dependencies: RuntimeDependencyStatus,
-    project: Mapping[object, object] | None,
+    project: Mapping[str, object] | Mapping[object, object] | None,
     project_path: str,
     config_path: str | Path,
     *,

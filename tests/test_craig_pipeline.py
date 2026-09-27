@@ -1,8 +1,11 @@
+import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import numpy as np
 
+from src.data_boundary import coerce_float
 from src.craig_pipeline import (
     AlignmentResult,
     SegmentRefinementResult,
@@ -28,6 +31,18 @@ from src.craig_pipeline import (
     transcribe_craig_audio_files,
 )
 from tests.typed_case import TypedTestCase
+from tests.typed_data import entries, mock_kwargs
+
+
+def _write_transcript(path: Path, segments: list[dict[str, object]]) -> None:
+    payload: dict[str, object] = {"segments": segments}
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _required_path(value: str | None) -> Path:
+    if value is None:
+        raise AssertionError("expected a resolved path")
+    return Path(value)
 
 
 class CraigPipelineTests(TypedTestCase):
@@ -53,23 +68,23 @@ class CraigPipelineTests(TypedTestCase):
             audio = Path(temp_dir) / "1-speaker.flac"
             audio.touch()
             argv = ["craig_pipeline", "--video", "video.mkv", "--audio-file", str(audio), "--run"]
-            result = dict.fromkeys(
-                (
+            result: dict[str, Path | str | float | None] = {
+                key: None for key in (
                     "reference_audio", "matched_track", "offset_seconds", "alignment_score",
                     "merged_json", "filtered_json", "ass_path", "cut_merged_json",
                     "cut_ass_path", "final_video", "no_speech_report",
                 )
-            )
+            }
             with (
                 mock.patch.object(sys, "argv", argv),
-                mock.patch.object(craig_pipeline, "load_command_runtime_config", return_value={"language": None}),
+                mock.patch.object(craig_pipeline, "load_command_runtime_config", return_value=dict[str, object]({"language": None})),
                 mock.patch.object(craig_pipeline, "format_dependency_error", return_value=None),
                 mock.patch.object(craig_pipeline, "resolve_alignment", return_value=("0:a:0", 0.0, 1.0)),
                 mock.patch.object(craig_pipeline, "run_craig_pipeline", return_value=result) as run_pipeline,
             ):
                 craig_pipeline.main()
 
-            self.assertIsNone(run_pipeline.call_args.kwargs["language"])
+            self.assertIsNone(mock_kwargs(run_pipeline)["language"])
 
     def test_normalize_db_threshold_accepts_number_or_ffmpeg_value(self) -> None:
         self.assertEqual(normalize_db_threshold(-40), "-40dB")
@@ -80,7 +95,7 @@ class CraigPipelineTests(TypedTestCase):
             np.full(10, 0.1, dtype=np.float32),
             np.full(10, 0.8, dtype=np.float32),
         ])
-        segments = [{"start": 0.0, "end": 1.0}, {"start": 1.0, "end": 2.0}]
+        segments: list[dict[str, object]] = [{"start": 0.0, "end": 1.0}, {"start": 1.0, "end": 2.0}]
 
         with mock.patch("src.craig_pipeline.decode_audio_samples", return_value=samples):
             levels = calculate_segment_volume_levels("speaker.flac", segments, sample_rate=10)
@@ -90,17 +105,16 @@ class CraigPipelineTests(TypedTestCase):
         self.assertTrue(all(-1.0 <= level <= 1.0 for level in levels))
 
     def test_build_craig_segments_applies_volume_font_scale(self) -> None:
-        import json
         import tempfile
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as temp_dir:
             transcript_path = Path(temp_dir) / "1-speaker-a.json"
-            transcript_path.write_text(json.dumps({"segments": [{"start": 0.0, "end": 1.0, "text": "loud"}]}), encoding="utf-8")
-            with mock.patch("src.craig_pipeline.calculate_segment_volume_levels", return_value=[1.0]):
+            _write_transcript(transcript_path, [{"start": 0.0, "end": 1.0, "text": "loud"}])
+            with mock.patch("src.craig_pipeline.calculate_segment_volume_levels", return_value=list[float]([1.0])):
                 segments = build_craig_segments_for_transcript("1-speaker-a.flac", str(transcript_path), {"speaker-a": "Oz"}, 0.0, 50, 20.0)
 
-        self.assertAlmostEqual(segments[0]["subtitle_font_scale"], 1.2)
+        self.assertAlmostEqual(coerce_float(segments[0]["subtitle_font_scale"]), 1.2)
         self.assertEqual(segments[0]["max_width"], 23)
 
     def test_normalize_db_threshold_rejects_invalid_value(self) -> None:
@@ -110,12 +124,11 @@ class CraigPipelineTests(TypedTestCase):
     def test_merge_craig_transcripts_uses_segment_builder(self) -> None:
         import src.craig_pipeline as craig_pipeline
 
-        original_builder = craig_pipeline.build_craig_segments_for_transcript
-        try:
-            craig_pipeline.build_craig_segments_for_transcript = lambda audio_path, transcript_path, style_map, offset_seconds: [{"start": 0.0, "end": 1.0, "speaker": "Oz", "text": audio_path, "layout_row": 0, "filter_reasons": [], "source_track": "craig:test", "max_width": 24}]
+        def fake_builder(audio_path: str, _transcript_path: str, _styles: dict[str, str], _offset: float) -> list[dict[str, object]]:
+            return [{"start": 0.0, "end": 1.0, "speaker": "Oz", "text": audio_path, "layout_row": 0, "filter_reasons": list[object](), "source_track": "craig:test", "max_width": 24}]
+
+        with mock.patch.object(craig_pipeline, "build_craig_segments_for_transcript", side_effect=fake_builder):
             merged, filtered = craig_pipeline.merge_craig_transcripts({"a.aac": "a.json", "b.aac": "b.json"}, {"a": "Oz", "b": "A"}, 0.0)
-        finally:
-            craig_pipeline.build_craig_segments_for_transcript = original_builder
 
         self.assertEqual(len(merged["segments"]), 2)
         self.assertEqual(len(filtered["segments"]), 0)
@@ -135,26 +148,25 @@ class CraigPipelineTests(TypedTestCase):
             self.assertEqual(cached, transcript)
 
     def test_build_craig_segments_for_transcript_builds_shifted_segments(self) -> None:
-        import json
         import tempfile
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as temp_dir:
             transcript_path = Path(temp_dir) / "1-speaker-a.json"
-            transcript_path.write_text(json.dumps({"segments": [{"start": 0.0, "end": 1.0, "text": "??!"}]}, ensure_ascii=False), encoding="utf-8")
+            _write_transcript(transcript_path, [{"start": 0.0, "end": 1.0, "text": "??!"}])
             segments = build_craig_segments_for_transcript(str(Path(temp_dir) / "1-speaker-a.flac"), str(transcript_path), {"speaker-a": "Oz"}, 1.25)
             self.assertEqual(len(segments), 1)
             self.assertEqual(segments[0]["speaker"], "Oz")
             self.assertEqual(segments[0]["source_file"], "1-speaker-a.flac")
-            self.assertTrue(segments[0]["source_stream_id"].startswith("audio-"))
-            self.assertAlmostEqual(float(segments[0]["start"]), 1.25)
+            self.assertTrue(str(segments[0]["source_stream_id"]).startswith("audio-"))
+            self.assertAlmostEqual(coerce_float(segments[0]["start"]), 1.25)
 
     def test_build_craig_segments_rejects_invalid_json_shapes(self) -> None:
         import json
         import tempfile
         from pathlib import Path
 
-        invalid_payloads = (
+        invalid_payloads: tuple[tuple[dict[str, object], str], ...] = (
             ({"segments": {}}, "transcript.segments must be an array"),
             ({"segments": [{"start": 0, "end": 1, "text": 3}]}, "text must be a string"),
             ({"segments": [{"start": 0, "end": 1, "text": "hello", "words": [None]}]}, "word must be an object"),
@@ -170,17 +182,13 @@ class CraigPipelineTests(TypedTestCase):
                         )
 
     def test_build_craig_segments_uses_unique_source_ids_for_matching_file_names(self) -> None:
-        import json
         import tempfile
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             transcript_path = root / "transcript.json"
-            transcript_path.write_text(
-                json.dumps({"segments": [{"start": 0.0, "end": 1.0, "text": "字幕"}]}, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _write_transcript(transcript_path, [{"start": 0.0, "end": 1.0, "text": "字幕"}])
             first = build_craig_segments_for_transcript(
                 str(root / "a" / "1-speaker-a.flac"),
                 str(transcript_path),
@@ -203,7 +211,7 @@ class CraigPipelineTests(TypedTestCase):
 
         original_decode = craig_pipeline.decode_audio_samples
         try:
-            def fake_decode(path: str, sample_rate: int = 120, stream_selector: str | None = None):
+            def fake_decode(input_path: str, sample_rate: int = 120, stream_selector: str | None = None) -> np.ndarray:
                 if stream_selector:
                     return np.array([0.0, 0.0, 1.0, 0.2, 0.0], dtype=np.float32)
                 return np.array([1.0, 0.2, 0.0], dtype=np.float32)
@@ -374,11 +382,11 @@ class CraigPipelineTests(TypedTestCase):
         reference = np.array([1.0, 0.2, 0.0], dtype=np.float32)
         candidate = np.array([0.0, 1.0, 0.2, 0.0], dtype=np.float32)
 
-        def fake_decode(_path, sample_rate=120, stream_selector=None):
+        def fake_decode(_path: str, sample_rate: int = 120, stream_selector: str | None = None) -> np.ndarray:
             return candidate if stream_selector else reference
 
         with (
-            mock.patch("src.craig_pipeline.probe_audio_streams", return_value=[{}, {}]),
+            mock.patch("src.craig_pipeline.probe_audio_streams", return_value=list[dict[str, object]]([{}, {}])),
             mock.patch("src.craig_pipeline.decode_audio_samples", side_effect=fake_decode),
             mock.patch("src.craig_pipeline.np.fft.rfft", wraps=np.fft.rfft) as rfft,
         ):
@@ -397,13 +405,13 @@ class CraigPipelineTests(TypedTestCase):
             for audio in audio_files:
                 audio.write_bytes(b"audio")
 
-            def fake_transcribe(audio_path, output_dir, **_kwargs):
+            def fake_transcribe(audio_path: str | Path, output_dir: str | Path, **_kwargs: object) -> Path:
                 path = Path(output_dir) / f"{Path(audio_path).stem}.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("{}", encoding="utf-8")
                 return path
 
-            def fake_build(audio_path, _transcript, _styles, _offset, *_args):
+            def fake_build(audio_path: str | Path, _transcript: object, _styles: object, _offset: object, *_args: object) -> list[dict[str, object]]:
                 return [{"id": Path(audio_path).stem, "text": Path(audio_path).name}]
 
             with (
@@ -430,30 +438,23 @@ class CraigPipelineTests(TypedTestCase):
             },
             0.5,
         )
-        self.assertIsNotNone(shifted)
-        self.assertAlmostEqual(float(shifted["start"]), 1.5)
-        self.assertAlmostEqual(float(shifted["words"][0]["start"]), 1.6)
+        if shifted is None:
+            raise AssertionError("expected a shifted segment")
+        self.assertAlmostEqual(coerce_float(shifted["start"]), 1.5)
+        self.assertAlmostEqual(coerce_float(entries(shifted, "words")[0]["start"]), 1.6)
 
     def test_merge_craig_transcripts_applies_style_map_and_offset(self) -> None:
-        import json
         import tempfile
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as temp_dir:
             transcript_path = Path(temp_dir) / "1-speaker-a.json"
-            transcript_path.write_text(
-                json.dumps({
-                    "segments": [
-                        {
-                            "start": 0.0,
-                            "end": 1.0,
-                            "text": "こんにちは!",
-                            "words": [{"word": "こんにちは!", "start": 0.0, "end": 1.0}],
-                        }
-                    ]
-                }, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _write_transcript(transcript_path, [{
+                "start": 0.0,
+                "end": 1.0,
+                "text": "こんにちは!",
+                "words": [{"word": "こんにちは!", "start": 0.0, "end": 1.0}],
+            }])
             merged, filtered = merge_craig_transcripts(
                 {str(Path(temp_dir) / "1-speaker-a.aac"): str(transcript_path)},
                 {"speaker-a": "Oz"},
@@ -461,7 +462,7 @@ class CraigPipelineTests(TypedTestCase):
             )
             self.assertEqual(len(filtered["segments"]), 0)
             self.assertEqual(merged["segments"][0]["speaker"], "Oz")
-            self.assertAlmostEqual(float(merged["segments"][0]["start"]), 0.75)
+            self.assertAlmostEqual(coerce_float(merged["segments"][0]["start"]), 0.75)
 
     def test_resolve_craig_target_paths_finds_target_layout(self) -> None:
         import tempfile
@@ -485,9 +486,9 @@ class CraigPipelineTests(TypedTestCase):
                 export_root=str(root / "video_export"),
             )
 
-            self.assertEqual(Path(resolved_video), video)
-            self.assertEqual(Path(resolved_audio_dir), audio_dir)
-            self.assertEqual(Path(resolved_output_dir), root / "video_export" / "game_session_01")
+            self.assertEqual(_required_path(resolved_video), video)
+            self.assertEqual(_required_path(resolved_audio_dir), audio_dir)
+            self.assertEqual(_required_path(resolved_output_dir), root / "video_export" / "game_session_01")
 
     def test_resolve_craig_target_paths_respects_explicit_output_dir(self) -> None:
         import tempfile
@@ -511,7 +512,7 @@ class CraigPipelineTests(TypedTestCase):
                 export_root=str(root / "video_export"),
             )
 
-            self.assertEqual(Path(resolved_output_dir), explicit_output)
+            self.assertEqual(_required_path(resolved_output_dir), explicit_output)
 
     def test_resolve_craig_target_paths_rejects_multiple_videos(self) -> None:
         import tempfile

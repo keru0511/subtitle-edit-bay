@@ -60,7 +60,7 @@ jobs:
           --github-output "$GITHUB_OUTPUT"
 
   python-quality:
-    name: Python quality checks
+    name: Python quality and No Any
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

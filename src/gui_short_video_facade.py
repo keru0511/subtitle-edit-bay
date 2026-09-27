@@ -62,6 +62,14 @@ class ShortVideoFacade(FeatureFacade):
 
         return [self._short_video_clip_view_at(index) for index in range(self._short_video_clip_count())]
 
+    @Property("QVariantList", notify=shortVideoChanged)
+    def addedHighlightCandidateIds(self) -> list[str]:
+        return [
+            str(clip["highlight_candidate_id"])
+            for clip in self._short_video_section().get("clips", [])
+            if isinstance(clip, dict) and clip.get("highlight_candidate_id")
+        ]
+
     @Property("QVariantMap", notify=shortVideoChanged)
     def shortVideoSettings(self) -> dict[str, Any]:
         if self.project_editor.project is None:
@@ -197,7 +205,7 @@ class ShortVideoFacade(FeatureFacade):
         if self.project_editor.project is None:
             return
         section = self._short_video_section(for_edit=True)
-        if section.get("clips"):
+        if section.get("clips") or section.get("enabled"):
             return
         clips: list[dict[str, Any]] = []
         for segment in sorted(
@@ -310,11 +318,11 @@ class ShortVideoFacade(FeatureFacade):
 
         if trim_requested:
             segment = backend.subtitles._find_segment_by_id(str(clip.get("segment_id", "")))
-            range_clip = not str(clip.get("segment_id", "")).strip()
+            range_clip = not str(clip.get("segment_id", "")).strip() or bool(clip.get("highlight_candidate_id"))
             if segment is None and not range_clip:
                 return False
             try:
-                if segment is None:
+                if range_clip:
                     segment_start = 0.0
                     segment_end = float(backend.projectDuration)
                     if segment_end <= 0.0:
@@ -513,6 +521,7 @@ class ShortVideoFacade(FeatureFacade):
         ):
             return False
         candidate = self._highlight_state.candidates[index]
+        candidate_id = str(candidate.get("id", ""))
         source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
         if not source_ids:
             return False
@@ -520,12 +529,10 @@ class ShortVideoFacade(FeatureFacade):
         clips = list(section.get("clips", []))
         candidate_start = float(candidate.get("start", 0.0))
         candidate_end = float(candidate.get("end", candidate_start))
-        if any(
-            str(clip.get("segment_id", "")) in source_ids
-            and min(float(clip.get("end", 0.0)), candidate_end) > max(float(clip.get("start", 0.0)), candidate_start)
-            for clip in clips
+        if candidate_id and any(
+            str(clip.get("highlight_candidate_id", "")) == candidate_id for clip in clips
         ):
-            backend._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
+            backend._set_status("この見どころ候補は追加済みです", "CHECK")
             return False
         section["enabled"] = True
         clips.append(
@@ -533,7 +540,7 @@ class ShortVideoFacade(FeatureFacade):
                 "segment_id": source_ids[0],
                 "start": candidate_start,
                 "end": candidate_end,
-                "highlight_candidate_id": str(candidate.get("id", "")),
+                "highlight_candidate_id": candidate_id,
             }
         )
         section["clips"] = clips

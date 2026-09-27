@@ -41,6 +41,7 @@ class _ShortVideoClipRequired(TypedDict):
 class ShortVideoClipPayload(_ShortVideoClipRequired, total=False):
     fit: str
     background_color: str
+    highlight_candidate_id: str
 
 
 class ShortVideoPayload(TypedDict):
@@ -160,6 +161,7 @@ class ShortVideoClip:
     end: float = 0.0
     fit: str | None = None
     background_color: str | None = None
+    highlight_candidate_id: str | None = None
 
     @classmethod
     def from_json(cls, payload: object) -> "ShortVideoClip":
@@ -176,6 +178,10 @@ class ShortVideoClip:
             raise ShortVideoError(f"clip.fit must be one of {VALID_FIT_MODES}")
         raw_background_color = payload.get("background_color")
         background_color = str(raw_background_color) if raw_background_color not in (None, "") else None
+        raw_highlight_candidate_id = payload.get("highlight_candidate_id")
+        highlight_candidate_id = (
+            str(raw_highlight_candidate_id) if raw_highlight_candidate_id not in (None, "") else None
+        )
         if start < 0.0:
             start = 0.0
         if end < start:
@@ -186,6 +192,7 @@ class ShortVideoClip:
             end=round(end, 3),
             fit=fit,
             background_color=background_color,
+            highlight_candidate_id=highlight_candidate_id,
         )
 
     def to_json(self) -> ShortVideoClipPayload:
@@ -198,6 +205,8 @@ class ShortVideoClip:
             payload["fit"] = self.fit
         if self.background_color:
             payload["background_color"] = self.background_color
+        if self.highlight_candidate_id:
+            payload["highlight_candidate_id"] = self.highlight_candidate_id
         return payload
 
 

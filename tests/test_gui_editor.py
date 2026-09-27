@@ -12796,6 +12796,79 @@ Window {
         self.assertEqual(len(saved), 1)
         self.assertEqual((saved[0]["segment_id"], saved[0]["start"], saved[0]["end"]),
                          ("segment-a", 0.5, 1.0))
+        self.assertEqual(saved[0]["highlight_candidate_id"], "candidate-earlier")
+
+    def test_highlight_candidate_adds_after_initial_clips_and_can_trim_across_segments(self) -> None:
+        project_path = self._load_project(
+            segments=[
+                {"id": "first", "start": 0.0, "end": 1.0, "text": "前半", "speaker": "Speaker_Alice"},
+                {"id": "second", "start": 1.0, "end": 3.0, "text": "後半", "speaker": "Speaker_Alice"},
+            ]
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(len(self.app.shortVideoClips), 2)
+
+        self.app.shortVideo._highlight_state.status = "completed"
+        self.app.shortVideo._highlight_state.candidates = [
+            {
+                "id": "both-segments",
+                "start": 0.0,
+                "end": 3.0,
+                "score": 0.9,
+                "category": "emphasis",
+                "source_segment_ids": ["first", "second"],
+            }
+        ]
+        self.app.highlightAnalysisChanged.emit()
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+        add_button = self._quick_visual_item(candidate_list, "highlightAddButton")
+        self.assertTrue(add_button.property("enabled"))
+        self._click(window, add_button)
+        self.assertEqual(len(self.app.shortVideoClips), 3)
+        self.assertEqual(self.app.shortVideo.addedHighlightCandidateIds, ["both-segments"])
+        self.gui.wait_until(lambda: not add_button.property("enabled"), description="追加済み候補のボタン無効化")
+        self.assertFalse(self.app.shortVideo.addHighlightCandidate(0))
+
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.set_property(
+            clip_list,
+            "contentY",
+            max(0.0, float(clip_list.property("contentHeight")) - clip_list.height()),
+        )
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeEndTimeField2") is not None,
+            description="見どころクリップの時間欄",
+        )
+        end_field = self._click_short_clip_control(window, clip_list, "shortModeEndTimeField2")
+        self._replace_focused_time(window, end_field, "2.500")
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(self.app.shortVideoClips[2]["end"], 2.5)
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved = load_project(project_path)["short_video"]["clips"]
+        self.assertEqual((saved[2]["highlight_candidate_id"], saved[2]["end"]), ("both-segments", 2.5))
+
+    def test_short_mode_keeps_intentionally_empty_clip_list_on_reopen(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self._click_short_clip_control(window, clip_list, "shortModeDeleteButton0")
+        self.assertEqual(self.app.shortVideoClips, [])
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(self.app.shortVideoClips, [])
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(load_project(project_path)["short_video"]["clips"], [])
 
     def test_highlight_analysis_can_start_and_cancel_from_screen(self) -> None:
         project_path = self._load_project()

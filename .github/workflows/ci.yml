@@ -333,6 +333,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_expanded_split_control_recovers_after_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_header_render_selects_missing_output_and_keeps_project_location
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_analysis_can_start_and_cancel_from_screen
+          tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_candidate_adds_after_initial_clips_and_can_trim_across_segments
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_candidates_are_preserved_during_processing
           tests.test_gui_editor.GuiEditorRegressionTests.test_highlight_filtered_candidate_actions_use_original_index_and_save
           tests.test_gui_editor.GuiEditorRegressionTests.test_incomplete_time_input_can_be_finished_after_processing
@@ -383,6 +384,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_clip_mutation_controls_dispatch_runtime_actions
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_fit_combo_updates_its_delegate_clip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_gui_adds_direct_range_clip_when_segments_exist
+          tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_keeps_intentionally_empty_clip_list_on_reopen
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_segment_picker_uses_the_subtitle_model
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_settings_controls_save_round_trip
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_sliders_follow_full_drag_and_save

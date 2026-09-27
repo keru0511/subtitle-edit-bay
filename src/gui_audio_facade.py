@@ -27,7 +27,7 @@ from .audio_mix_proposal import (
 from .audio_preview_cache import (
     AudioPreviewCacheResult,
 )
-from .data_boundary import coerce_float
+from .data_boundary import coerce_float, is_object_iterable, is_string_object_mapping
 from .gui_codex_state import (
     CodexSessionError,
 )
@@ -149,45 +149,49 @@ class AudioFacade(FeatureFacade):
 
     @Property("QVariantList", notify=projectDataChanged)
     def audioMixerSequenceChannels(self) -> list[dict[str, object]]:
-        if self.project_editor.project is None:
+        project = self.project_editor.project
+        if project is None:
             return []
 
         active_ids = {
             str(channel.get("id", ""))
-            for channel in active_audio_mix_channels(self.project_editor.project.get("audio_mix", {}))
+            for channel in active_audio_mix_channels(project.get("audio_mix", {}))
         }
+        waveforms_value = project.get("waveforms")
+        waveforms = waveforms_value if is_object_iterable(waveforms_value) else ()
         waveforms_by_path = {
             str(Path(str(waveform.get("source_path", ""))).resolve()).casefold(): waveform
-            for waveform in self.project_editor.project.get("waveforms", [])
-            if isinstance(waveform, dict) and waveform.get("source_path")
+            for waveform in waveforms
+            if is_string_object_mapping(waveform) and waveform.get("source_path")
         }
+        video = project.get("video")
         duration = max(
             0.0,
-            float(self.project_editor.project.get("video", {}).get("duration_seconds", 0.0)),
+            coerce_float(video.get("duration_seconds", 0.0)) if is_string_object_mapping(video) else 0.0,
         )
         colors = ("#6FA8DC", "#93C47D", "#F6B26B", "#E78284", "#81C8BE")
         sequence: list[dict[str, object]] = []
-        for index, channel in enumerate(self.project_editor.project.get("audio_mix", {}).get("channels", [])):
-            if not isinstance(channel, dict) or not bool(channel.get("enabled")):
+        for index, view in enumerate(self.audio_preview.mixer_channels):
+            if not bool(view.get("enabled")):
                 continue
-            view = self._audio_mixer_channel_view(channel)
             waveform = None
             if view.get("kind") == "external" and view.get("path"):
                 waveform = waveforms_by_path.get(str(Path(str(view["path"])).resolve()).casefold())
             offset = coerce_float(view.get("preview_offset_seconds", 0.0))
+            peaks = waveform.get("peaks") if waveform is not None else None
             view.update(
                 {
                     "lane_id": str(view.get("id", "")),
                     "name": str(view.get("label", "入力")),
                     "color": str((waveform or {}).get("color") or colors[index % len(colors)]),
-                    "offset_seconds": float((waveform or {}).get("offset_seconds", offset)),
-                    "duration_seconds": float(
+                    "offset_seconds": coerce_float((waveform or {}).get("offset_seconds", offset)),
+                    "duration_seconds": coerce_float(
                         (waveform or {}).get(
                             "duration_seconds",
                             max(0.0, duration - max(0.0, offset)),
                         )
                     ),
-                    "peaks": list((waveform or {}).get("peaks", [])),
+                    "peaks": list(peaks) if is_object_iterable(peaks) else [],
                     "audible": str(view.get("id", "")) in active_ids,
                 }
             )

@@ -343,7 +343,8 @@ class CodexAIProvider:
             detail = ""
             if status == "failed" and is_string_object_mapping(turn):
                 payload = turn.get("error", {})
-                detail = str(payload.get("message")) if is_string_object_mapping(payload) else str(payload)
+                raw_detail = payload.get("message") if is_string_object_mapping(payload) else payload
+                detail = "" if raw_detail is None else str(raw_detail)
             self._emit(
                 AIProviderEvent(
                     kind="turn_completed",

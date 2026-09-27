@@ -180,6 +180,24 @@ class CodexAIProviderTests(TypedTestCase):
         self.assertEqual(state.auth_state, "error")
         self.assertIn("接続できません", state.error)
 
+    def test_failed_turn_without_error_message_uses_fallback(self) -> None:
+        client = FakeCodexClient()
+        provider = CodexAIProvider(client_factory=lambda: client)
+        events: list[AIProviderEvent] = []
+        provider.subscribe(events.append)
+        provider.connect()
+        callback = client.notification_callback
+        assert callback is not None
+
+        for turn in (
+            {"status": "failed"},
+            {"status": "failed", "error": {}},
+            {"status": "failed", "error": {"message": None}},
+        ):
+            with self.subTest(turn=turn):
+                callback(CodexNotification("turn/completed", {"turn": turn}))
+                self.assertEqual(events[-1].error, "原因を確認できません")
+
 
 if __name__ == "__main__":
     unittest.main()

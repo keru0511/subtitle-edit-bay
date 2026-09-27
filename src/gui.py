@@ -844,6 +844,10 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def shortVideoClips(self) -> list[dict[str, Any]]:
         return self._short_video_facade.shortVideoClips
 
+    @Property("QVariantList", notify=shortVideoChanged)
+    def addedHighlightCandidateIds(self) -> list[str]:
+        return self._short_video_facade.addedHighlightCandidateIds
+
     @Property("QVariantMap", notify=shortVideoChanged)
     def shortVideoSettings(self) -> dict[str, Any]:
         return self._short_video_facade.shortVideoSettings

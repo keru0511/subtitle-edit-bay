@@ -37,26 +37,15 @@ class SequenceDependencies:
     normalize_source_path: Callable[[str], str]
     set_status: Callable[[str, str], None]
 
-    @classmethod
-    def from_backend(cls, backend: EditBayBackend) -> SequenceDependencies:
-        """旧バックエンドの操作を窓口の依存へ接続する。"""
-
-        return cls(
-            local_path=lambda value: backend._local_path(value),
-            validate_media_file=lambda source, streams, label: backend._is_supported_media_file(source, streams, label),
-            normalize_source_path=lambda value: backend._normalized_source_path(value),
-            set_status=lambda message, stage: backend._set_status(message, stage),
-        )
-
 
 class SequenceFacade(FeatureFacade):
     """素材とシーケンス編集の画面窓口。"""
 
     sequenceChanged = Signal()
 
-    def __init__(self, backend: "EditBayBackend", dependencies: SequenceDependencies | None = None) -> None:
+    def __init__(self, backend: "EditBayBackend", dependencies: SequenceDependencies) -> None:
         super().__init__(backend)
-        self._dependencies = dependencies if dependencies is not None else SequenceDependencies.from_backend(backend)
+        self._dependencies = dependencies
         self._playhead_seconds = 0.0
         self._error = ""
         backend.sequenceChanged.connect(self.sequenceChanged.emit)

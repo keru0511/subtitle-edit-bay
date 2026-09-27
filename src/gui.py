@@ -81,7 +81,7 @@ from .gui_workspace_facade import WorkspaceFacade
 from .gui_subtitles_facade import SubtitleFacade
 from .gui_short_video_facade import ShortVideoFacade
 from .gui_audio_facade import AudioFacade
-from .gui_sequence_facade import SequenceFacade
+from .gui_sequence_facade import SequenceDependencies, SequenceFacade
 from .gui_workflow_facade import WorkflowFacade
 from .gui_ai_facade import AIChatFacade, AIServices
 from .gui_updates_facade import UpdateFacade
@@ -446,7 +446,17 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._subtitles_facade = SubtitleFacade(self)
         self._short_video_facade = ShortVideoFacade(self)
         self._audio_facade = AudioFacade(self)
-        self._sequence_facade = SequenceFacade(self)
+        self._sequence_facade = SequenceFacade(
+            self,
+            SequenceDependencies(
+                local_path=lambda value: self._local_path(value),
+                validate_media_file=lambda source, streams, label: self._is_supported_media_file(
+                    source, streams, label
+                ),
+                normalize_source_path=lambda value: self._normalized_source_path(value),
+                set_status=lambda message, stage: self._set_status(message, stage),
+            ),
+        )
         self._workflow_facade = WorkflowFacade(self)
         self._ai_facade = AIChatFacade(self)
         self._updates_facade = UpdateFacade(self)

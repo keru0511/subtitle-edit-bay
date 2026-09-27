@@ -17,10 +17,18 @@ from unittest.mock import patch
 
 from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QUrl
 from PySide6.QtMultimedia import QMediaPlayer
-from PySide6.QtQuick import QQuickItem
+from PySide6.QtQuick import QQuickItem, QQuickWindow
 
 from src.qt_decorators import Property, Slot
-from src.data_boundary import coerce_float, coerce_int, is_object_list, is_string_object_dict
+from src.data_boundary import (
+    coerce_float,
+    coerce_int,
+    is_object_list,
+    is_object_mapping,
+    is_object_sequence,
+    is_string_object_dict,
+    is_string_object_dict_list,
+)
 from src.gui import EditBayBackend
 from tests.gui_test_harness import (
     AllowedQmlMessage,
@@ -176,6 +184,36 @@ def _short_visual_update_contract_passed(result: dict[str, object]) -> bool:
     )
 
 
+def _preview_cache_missed(
+    cache_owner: object, signature_owner: object, segment: dict[str, object]
+) -> bool:
+    cache = cast(object, getattr(cache_owner, "_subtitle_preview_text_cache", None))
+    signature_builder = cast(object, getattr(signature_owner, "_subtitle_preview_signature", None))
+    signature = (
+        cast(Callable[[dict[str, object]], object], signature_builder)(segment)
+        if callable(signature_builder) else None
+    )
+    cached = cache.get(str(segment.get("id", ""))) if is_object_mapping(cache) else None
+    return (
+        signature is None
+        or not is_object_sequence(cached)
+        or not cached
+        or cached[0] != signature
+    )
+
+
+def _result_mapping(result: dict[str, object], key: str) -> dict[str, object]:
+    value = result.get(key)
+    if not is_string_object_dict(value):
+        raise AssertionError(f"scenario result {key} must be an object")
+    return value
+
+
+def _has_emittable_signal(item: QObject, name: str) -> bool:
+    signal = cast(object, getattr(item, name, None))
+    return callable(cast(object, getattr(signal, "emit", None)))
+
+
 class InstrumentedEditBayBackend(EditBayBackend):
     """Test-only backend that counts calls crossing the QML/Python boundary."""
 
@@ -203,7 +241,10 @@ class InstrumentedEditBayBackend(EditBayBackend):
         self.gui_diagnostics["full_segment_materializations"] += 1
         if self._project is None:
             return []
-        return deepcopy(self._project.get("segments", []))
+        segments = self._project.get("segments", [])
+        if not is_string_object_dict_list(segments):
+            raise AssertionError("project segments must be a list of objects")
+        return deepcopy(segments)
 
     @Property("QVariantList", notify=EditBayBackend.shortVideoChanged)
     def shortVideoClips(self) -> list[dict[str, object]]:
@@ -217,8 +258,8 @@ class InstrumentedEditBayBackend(EditBayBackend):
         if self._project is None:
             return []
         section = self._project.get("short_video", {})
-        clips = section.get("clips", []) if isinstance(section, dict) else []
-        return clips if isinstance(clips, list) else []
+        clips = section.get("clips", []) if is_string_object_dict(section) else []
+        return clips if is_string_object_dict_list(clips) else []
 
     def _segment_view(
         self,
@@ -234,16 +275,14 @@ class InstrumentedEditBayBackend(EditBayBackend):
         if self._uses_feature_facades:
             return super()._preview_text_for_segment(segment)
         self.gui_diagnostics["preview_format_requests"] += 1
-        cache = getattr(self, "_subtitle_preview_text_cache", {})
-        segment_id = str(segment.get("id", ""))
-        signature_builder = getattr(self, "_subtitle_preview_signature", None)
-        signature = signature_builder(segment) if callable(signature_builder) else None
-        cached = cache.get(segment_id) if isinstance(cache, dict) else None
-        if cached is None or signature is None or cached[0] != signature:
+        if _preview_cache_missed(self, self, segment):
             self.gui_diagnostics["preview_format_cache_misses"] += 1
-        resolver = getattr(super(), "_preview_text_for_segment", None)
+        resolver = cast(object, getattr(super(), "_preview_text_for_segment", None))
         if callable(resolver):
-            return resolver(segment)
+            resolved = cast(Callable[[dict[str, object]], object], resolver)(segment)
+            if not isinstance(resolved, str):
+                raise AssertionError("subtitle preview resolver must return text")
+            return resolved
         from src.subtitle_line_count import segment_preview_text
 
         return segment_preview_text(segment)
@@ -277,9 +316,12 @@ class InstrumentedEditBayBackend(EditBayBackend):
         if self._uses_feature_facades:
             return super().shortVideoClipAt(index)
         self.gui_boundary_calls["shortVideoClipAt"] += 1
-        resolver = getattr(super(), "shortVideoClipAt", None)
+        resolver = cast(object, getattr(super(), "shortVideoClipAt", None))
         if callable(resolver):
-            return resolver(index)
+            resolved = cast(Callable[[int], object], resolver)(index)
+            if not is_string_object_dict(resolved):
+                raise AssertionError("short clip resolver must return an object")
+            return resolved
         clips = self._raw_short_video_clips()
         if not 0 <= index < len(clips):
             return {}
@@ -394,13 +436,18 @@ if hasattr(EditBayBackend, "subtitles"):
     class InstrumentedSubtitleFacade(SubtitleFacade):
         """機能別窓口を通る操作とデータ生成を計測する。"""
 
+        _backend: InstrumentedEditBayBackend
+
         @Property("QVariantList", notify=SubtitleFacade.segmentsChanged)
         def subtitleSegments(self) -> list[dict[str, object]]:
             self._backend.gui_boundary_calls["property.subtitleSegments"] += 1
             self._backend.gui_diagnostics["full_segment_materializations"] += 1
             if self._backend._project is None:
                 return []
-            return deepcopy(self._backend._project.get("segments", []))
+            segments = self._backend._project.get("segments", [])
+            if not is_string_object_dict_list(segments):
+                raise AssertionError("project segments must be a list of objects")
+            return deepcopy(segments)
 
         def _segment_view(
             self,
@@ -414,16 +461,14 @@ if hasattr(EditBayBackend, "subtitles"):
             self._backend.gui_diagnostics["preview_format_requests"] += 1
             # 所有先を移す前の比較対象も同じハーネスで計測する。
             cache_owner = self if hasattr(self, "_subtitle_preview_text_cache") else self._backend
-            cache = getattr(cache_owner, "_subtitle_preview_text_cache", {})
-            segment_id = str(segment.get("id", ""))
-            signature_builder = getattr(self, "_subtitle_preview_signature", None)
-            signature = signature_builder(segment) if callable(signature_builder) else None
-            cached = cache.get(segment_id) if isinstance(cache, dict) else None
-            if cached is None or signature is None or cached[0] != signature:
+            if _preview_cache_missed(cache_owner, self, segment):
                 self._backend.gui_diagnostics["preview_format_cache_misses"] += 1
-            resolver = getattr(super(), "_preview_text_for_segment", None)
+            resolver = cast(object, getattr(super(), "_preview_text_for_segment", None))
             if callable(resolver):
-                return resolver(segment)
+                resolved = cast(Callable[[dict[str, object]], object], resolver)(segment)
+                if not isinstance(resolved, str):
+                    raise AssertionError("subtitle preview resolver must return text")
+                return resolved
             from src.subtitle_line_count import segment_preview_text
 
             return segment_preview_text(segment)
@@ -467,6 +512,8 @@ if hasattr(EditBayBackend, "subtitles"):
     class InstrumentedShortVideoFacade(ShortVideoFacade):
         """機能別窓口を通る操作とデータ生成を計測する。"""
 
+        _backend: InstrumentedEditBayBackend
+
         @Property("QVariantList", notify=ShortVideoFacade.shortVideoChanged)
         def shortVideoClips(self) -> list[dict[str, object]]:
             self._backend.gui_boundary_calls["property.shortVideoClips"] += 1
@@ -486,9 +533,12 @@ if hasattr(EditBayBackend, "subtitles"):
         @Slot(int, result="QVariantMap")
         def shortVideoClipAt(self, index: int) -> dict[str, object]:
             self._backend.gui_boundary_calls["shortVideoClipAt"] += 1
-            resolver = getattr(super(), "shortVideoClipAt", None)
+            resolver = cast(object, getattr(super(), "shortVideoClipAt", None))
             if callable(resolver):
-                return resolver(index)
+                resolved = cast(Callable[[int], object], resolver)(index)
+                if not is_string_object_dict(resolved):
+                    raise AssertionError("short clip resolver must return an object")
+                return resolved
             clips = self._backend._raw_short_video_clips()
             if not 0 <= index < len(clips):
                 return {}
@@ -532,6 +582,8 @@ if hasattr(EditBayBackend, "subtitles"):
     class InstrumentedWorkspaceFacade(WorkspaceFacade):
         """機能別窓口を通る操作とデータ生成を計測する。"""
 
+        _backend: InstrumentedEditBayBackend
+
         @Slot(str, result=bool)
         def selectEditMode(self, mode: str) -> bool:
             self._backend.gui_boundary_calls["selectEditMode"] += 1
@@ -566,7 +618,7 @@ class GuiPerformanceScenarioRunner:
             qml_roots=(QML_PATH.parent,),
             qml_message_allowlist=_comparison_qml_message_allowlist(self.revision),
         )
-        self.window: QObject | None = None
+        self.window: QQuickWindow | None = None
         self.main_player: QMediaPlayer | None = None
         self.main_media_probe: MediaPlayerSignalProbe | None = None
         self.scenarios: list[dict[str, object]] = []
@@ -607,6 +659,30 @@ class GuiPerformanceScenarioRunner:
             "qt_platform": os.environ.get("QT_QPA_PLATFORM", ""),
             "quick_backend": os.environ.get("QT_QUICK_BACKEND", ""),
         }
+
+    def _project_segments(self) -> list[dict[str, object]]:
+        project = self.backend._project
+        if project is None:
+            raise RuntimeError("project is not loaded")
+        segments = project.get("segments")
+        if not is_string_object_dict_list(segments):
+            raise AssertionError("project segments must be a list of objects")
+        return segments
+
+    def _short_video_settings(self) -> dict[str, object]:
+        project = self.backend._project
+        if project is None:
+            raise RuntimeError("project is not loaded")
+        settings = project.get("short_video")
+        if not is_string_object_dict(settings):
+            raise AssertionError("short video settings must be an object")
+        return settings
+
+    def _short_video_clips(self) -> list[dict[str, object]]:
+        clips = self._short_video_settings().get("clips")
+        if not is_string_object_dict_list(clips):
+            raise AssertionError("short video clips must be a list of objects")
+        return clips
 
     def _measure(
         self,
@@ -709,7 +785,7 @@ class GuiPerformanceScenarioRunner:
                     )
                 self.harness.wait(25)
                 editor_playhead = self.backend.editorPlayhead
-                playhead_lag.append(abs(float(editor_playhead["sourcePositionMs"]) - player.position()))
+                playhead_lag.append(abs(coerce_float(editor_playhead["sourcePositionMs"]) - player.position()))
             player.pause()
             return {
                 "requested_playback_ms": target_position,
@@ -728,9 +804,9 @@ class GuiPerformanceScenarioRunner:
             (
                 f"advanced={result['advanced_playback_ms']} ms, "
                 f"requested={result['requested_playback_ms']} ms, "
-                f"play_starts={result['media'].get('play_starts', 0)}, "
-                f"video_frames={result['media'].get('video_frames', 0)}, "
-                f"first_frame_ms={result['media'].get('first_video_frame_ms')}"
+                f"play_starts={_result_mapping(result, 'media').get('play_starts', 0)}, "
+                f"video_frames={_result_mapping(result, 'media').get('video_frames', 0)}, "
+                f"first_frame_ms={_result_mapping(result, 'media').get('first_video_frame_ms')}"
             ),
         )
 
@@ -753,7 +829,7 @@ class GuiPerformanceScenarioRunner:
             action,
             media_probes=(media_probe,),
         )
-        media = result["media"]
+        media = _result_mapping(result, "media")
         self._contract(
             "editor_keeps_media_source",
             media.get("source_changes", 0) == 0
@@ -834,8 +910,8 @@ class GuiPerformanceScenarioRunner:
 
         result = self._measure("list_and_timeline_selection", action)
         delegate_max = max(
-            int(result["caption_delegate_count_max"]),
-            int(result["timeline_delegate_count_max"]),
+            coerce_int(result["caption_delegate_count_max"]),
+            coerce_int(result["timeline_delegate_count_max"]),
         )
         self._contract(
             "subtitle_views_are_virtualized",
@@ -853,10 +929,10 @@ class GuiPerformanceScenarioRunner:
 
     def _run_subtitle_edit(self) -> None:
         index = self.backend.segmentCount // 2
-        current = dict(self.backend._project["segments"][index])
+        current = dict(self._project_segments()[index])
         expected_text = f"{current['text']} performance-edit"
-        expected_start = float(current["start"]) + 0.01
-        expected_end = float(current["end"]) + 0.02
+        expected_start = coerce_float(current["start"]) + 0.01
+        expected_end = coerce_float(current["end"]) + 0.02
         font_choices = self.backend.fontChoices
         expected_font = next(
             (
@@ -883,7 +959,7 @@ class GuiPerformanceScenarioRunner:
                 time_fields = [
                     item for item in field_candidates
                     if item.metaObject().className() == "TimeField"
-                    if callable(getattr(getattr(item, "editingFinished", None), "emit", None))
+                    if _has_emittable_signal(item, "editingFinished")
                 ]
             time_fields.sort(key=lambda item: item.x())
             if len(time_fields) != 2:
@@ -902,7 +978,7 @@ class GuiPerformanceScenarioRunner:
             combos = [
                 item
                 for item in self.harness.visual_items(delegate)
-                if callable(getattr(getattr(item, "activated", None), "emit", None))
+                if _has_emittable_signal(item, "activated")
                 and item.metaObject().indexOfProperty("currentValue") >= 0
             ]
             font_combo = next((item for item in combos if item.objectName() == "captionFontCombo"), None)
@@ -929,16 +1005,16 @@ class GuiPerformanceScenarioRunner:
             self.harness.emit_signal(size_spin, "valueModified")
 
             self.backend.autosave_timer.stop()
-            updated = self.backend._project["segments"][index]
+            updated = self._project_segments()[index]
             return {
                 "edited_index": index,
                 "selected_index_after": self.backend.selectedSegmentIndex,
                 "updated_text": str(updated["text"]),
-                "updated_start": float(updated["start"]),
-                "updated_end": float(updated["end"]),
+                "updated_start": coerce_float(updated["start"]),
+                "updated_end": coerce_float(updated["end"]),
                 "updated_speaker": str(updated["speaker"]),
                 "updated_font": str(updated["subtitle_font_family"]),
-                "updated_scale": float(updated["subtitle_font_scale"]),
+                "updated_scale": coerce_float(updated["subtitle_font_scale"]),
             }
 
         result = self._measure("subtitle_text_time_speaker_font_edit", action)
@@ -947,16 +1023,16 @@ class GuiPerformanceScenarioRunner:
             result["edited_index"] == index
             and result["selected_index_after"] == index
             and result["updated_text"] == expected_text
-            and abs(float(result["updated_start"]) - expected_start) < 0.001
-            and abs(float(result["updated_end"]) - expected_end) < 0.001
+            and abs(coerce_float(result["updated_start"]) - expected_start) < 0.001
+            and abs(coerce_float(result["updated_end"]) - expected_end) < 0.001
             and result["updated_speaker"] == "Speaker_Carol"
             and result["updated_font"] == expected_font
             and result["updated_scale"] == 1.25
-            and int(result["python_qml_calls"].get("updateSegment", 0)) >= 6,
+            and coerce_int(_result_mapping(result, "python_qml_calls").get("updateSegment", 0)) >= 6,
             (
                 f"edited_index={result['edited_index']}, expected={index}, "
-                f"time={result['updated_start']:.3f}-{result['updated_end']:.3f}, "
-                f"update_calls={result['python_qml_calls'].get('updateSegment', 0)}"
+                f"time={coerce_float(result['updated_start']):.3f}-{coerce_float(result['updated_end']):.3f}, "
+                f"update_calls={_result_mapping(result, 'python_qml_calls').get('updateSegment', 0)}"
             ),
         )
 
@@ -978,8 +1054,8 @@ class GuiPerformanceScenarioRunner:
         start_seconds = start_position_ms / 1_000
         active_indices = [
             index
-            for index, segment in enumerate(self.backend._project["segments"])
-            if float(segment["start"]) <= start_seconds <= float(segment["end"])
+            for index, segment in enumerate(self._project_segments())
+            if coerce_float(segment["start"]) <= start_seconds <= coerce_float(segment["end"])
         ]
         expected_initial_index = active_indices[-1]
         self.harness.wait_until(
@@ -989,7 +1065,7 @@ class GuiPerformanceScenarioRunner:
         )
         self.harness.set_property(timeline, "viewportX", 0.0)
         initial_selected_index = self.backend.selectedSegmentIndex
-        timeline_before_x = float(timeline.property("viewportX"))
+        timeline_before_x = coerce_float(cast(object, timeline.property("viewportX")))
         selected_indices = [initial_selected_index]
 
         def selection_changed() -> None:
@@ -1010,7 +1086,7 @@ class GuiPerformanceScenarioRunner:
                         f"editor playback reached only {player.position()} ms; expected {target_position} ms"
                     )
                 self.harness.wait(25)
-                playhead_lag.append(abs(float(self.backend.editorPlayhead["sourcePositionMs"]) - player.position()))
+                playhead_lag.append(abs(coerce_float(self.backend.editorPlayhead["sourcePositionMs"]) - player.position()))
             player.pause()
             timeline = self.harness.find_item(self._window(), "editorTimeline")
             return {
@@ -1020,7 +1096,7 @@ class GuiPerformanceScenarioRunner:
                 "final_selected_index": self.backend.selectedSegmentIndex,
                 "selected_indices": list(selected_indices),
                 "timeline_viewport_before_x": timeline_before_x,
-                "timeline_viewport_after_x": float(timeline.property("viewportX")),
+                "timeline_viewport_after_x": coerce_float(cast(object, timeline.property("viewportX"))),
                 "ui_playhead_lag_ms": summarize_durations_ms(playhead_lag).as_dict(),
             }
 
@@ -1031,15 +1107,17 @@ class GuiPerformanceScenarioRunner:
                 media_probes=(media_probe,),
             )
         finally:
-            self.backend.selectionChanged.disconnect(selection_changed)
+            disconnect = cast(object, getattr(self.backend.selectionChanged, "disconnect", None))
+            if callable(disconnect):
+                cast(Callable[[Callable[[], None]], object], disconnect)(selection_changed)
         self._contract(
             "editor_playback_follow_advances",
             _playback_follow_contract_passed(result),
             (
                 f"advanced={result['advanced_playback_ms']} ms, "
                 f"selected={result['selected_indices']}, "
-                f"timeline={result['timeline_viewport_before_x']:.1f}"
-                f"->{result['timeline_viewport_after_x']:.1f}"
+                f"timeline={coerce_float(result['timeline_viewport_before_x']):.1f}"
+                f"->{coerce_float(result['timeline_viewport_after_x']):.1f}"
             ),
         )
 
@@ -1059,17 +1137,17 @@ class GuiPerformanceScenarioRunner:
                     raise AssertionError(f"Short clip delegate {index} is not instantiated")
                 self.harness.emit_signal(clip_list, "selected", index)
                 self.harness.wait_until(
-                    lambda index=index: int(screen.property("currentClipIndex")) == index,
+                    lambda: coerce_int(cast(object, screen.property("currentClipIndex"))) == index,
                     description=f"short clip selection {index}",
                     timeout_ms=5_000,
                 )
-                selected_indices.append(int(screen.property("currentClipIndex")))
+                selected_indices.append(coerce_int(cast(object, screen.property("currentClipIndex"))))
 
             middle = clip_count // 2
             middle_delegate = self._short_clip_delegate(clip_list_view, middle)
-            original_middle_clip = dict(self.backend._project["short_video"]["clips"][middle])
-            expected_start = float(original_middle_clip["start"]) + 0.01
-            expected_end = float(original_middle_clip["end"]) - 0.01
+            original_middle_clip = dict(self._short_video_clips()[middle])
+            expected_start = coerce_float(original_middle_clip["start"]) + 0.01
+            expected_end = coerce_float(original_middle_clip["end"]) - 0.01
             start_field = self.harness.find_visual_item(
                 middle_delegate,
                 f"shortModeStartTimeField{middle}",
@@ -1080,10 +1158,10 @@ class GuiPerformanceScenarioRunner:
             )
             self._commit_text_field(start_field, f"{expected_start:.3f}")
             self._commit_text_field(end_field, f"{expected_end:.3f}")
-            trimmed_clip = self.backend._project["short_video"]["clips"][middle]
+            trimmed_clip = self._short_video_clips()[middle]
             trimmed = (
-                abs(float(trimmed_clip["start"]) - expected_start) < 0.001
-                and abs(float(trimmed_clip["end"]) - expected_end) < 0.001
+                abs(coerce_float(trimmed_clip["start"]) - expected_start) < 0.001
+                and abs(coerce_float(trimmed_clip["end"]) - expected_end) < 0.001
             )
 
             move_down_button = self._find_control_with_signal(
@@ -1093,12 +1171,12 @@ class GuiPerformanceScenarioRunner:
             )
             self.harness.emit_signal(move_down_button, "clicked")
             moved = (
-                self.backend._project["short_video"]["clips"][middle + 1]["segment_id"]
+                self._short_video_clips()[middle + 1]["segment_id"]
                 == original_middle_clip["segment_id"]
             )
 
             last_index = self._short_clip_count() - 1
-            removed_segment_id = self.backend._project["short_video"]["clips"][last_index]["segment_id"]
+            removed_segment_id = self._short_video_clips()[last_index]["segment_id"]
             last_delegate = self._short_clip_delegate(clip_list_view, last_index)
             remove_button = self._find_control_with_signal(
                 last_delegate,
@@ -1108,15 +1186,17 @@ class GuiPerformanceScenarioRunner:
             count_before_remove = self._short_clip_count()
             self.harness.emit_signal(remove_button, "clicked")
             removed = self._short_clip_count() == count_before_remove - 1 and all(
-                clip["segment_id"] != removed_segment_id for clip in self.backend._project["short_video"]["clips"]
+                clip["segment_id"] != removed_segment_id for clip in self._short_video_clips()
             )
 
             transition_slider = self.harness.find_item(window, "shortModeTransitionDurationSlider")
             self.harness.set_property(transition_slider, "value", 0.3)
             transition_combo = self.harness.find_item(window, "shortModeTransitionCombo")
             self._activate_combo(transition_combo, 1)
-            transition = self.backend._project["short_video"]["transition"]
-            settings_changed = transition["type"] == "fade" and abs(float(transition["duration"]) - 0.3) < 0.001
+            transition = self._short_video_settings()["transition"]
+            if not is_string_object_dict(transition):
+                raise AssertionError("short video transition must be an object")
+            settings_changed = transition["type"] == "fade" and abs(coerce_float(transition["duration"]) - 0.3) < 0.001
 
             self.backend.autosave_timer.stop()
             first_delegate = self._short_clip_delegate(clip_list_view, 0)
@@ -1124,7 +1204,7 @@ class GuiPerformanceScenarioRunner:
                 raise AssertionError("First short clip delegate is not instantiated")
             self.harness.emit_signal(clip_list, "selected", 0)
             self.harness.wait_until(
-                lambda: int(screen.property("currentClipIndex")) == 0,
+                lambda: coerce_int(cast(object, screen.property("currentClipIndex"))) == 0,
                 description="first short clip selection",
                 timeout_ms=5_000,
             )
@@ -1146,7 +1226,7 @@ class GuiPerformanceScenarioRunner:
         result = self._measure("short_mode_selection_reorder_delete_settings", action)
         self._contract(
             "short_clip_view_is_virtualized",
-            0 < int(result["short_delegate_count"]) < min(int(result["clip_rows"]), 100),
+            0 < coerce_int(result["short_delegate_count"]) < min(coerce_int(result["clip_rows"]), 100),
             f"delegates={result['short_delegate_count']}, rows={result['clip_rows']}",
         )
         self._contract(
@@ -1194,8 +1274,8 @@ class GuiPerformanceScenarioRunner:
             self.harness.set_property(scale_spin, "value", 165)
             self.harness.emit_signal(scale_spin, "valueModified")
             self.backend.autosave_timer.stop()
-            clip = self.backend._project["short_video"]["clips"][0]
-            settings = self.backend._project["short_video"]
+            clip = self._short_video_clips()[0]
+            settings = self._short_video_settings()
             return {
                 "clip_changed": clip.get("fit") == "contain",
                 "background_changed": settings["global_background_color"] == "#102030",
@@ -1210,7 +1290,7 @@ class GuiPerformanceScenarioRunner:
             action,
             media_probes=(probe,),
         )
-        media = result["media"]
+        media = _result_mapping(result, "media")
         self._contract(
             "short_visual_update_keeps_player",
             _short_visual_update_contract_passed(result)
@@ -1229,10 +1309,12 @@ class GuiPerformanceScenarioRunner:
 
     def _check_materialization_contract(self) -> None:
         full_segments = sum(
-            int(scenario["diagnostic_counts"].get("full_segment_materializations", 0)) for scenario in self.scenarios
+            coerce_int(_result_mapping(scenario, "diagnostic_counts").get("full_segment_materializations", 0))
+            for scenario in self.scenarios
         )
         full_clips = sum(
-            int(scenario["diagnostic_counts"].get("full_clip_materializations", 0)) for scenario in self.scenarios
+            coerce_int(_result_mapping(scenario, "diagnostic_counts").get("full_clip_materializations", 0))
+            for scenario in self.scenarios
         )
         self._contract(
             "qml_avoids_full_array_materialization",
@@ -1249,7 +1331,7 @@ class GuiPerformanceScenarioRunner:
             }
         )
 
-    def _window(self) -> QObject:
+    def _window(self) -> QQuickWindow:
         if self.window is None:
             raise RuntimeError("QML window is not loaded")
         return self.window
@@ -1310,17 +1392,14 @@ class GuiPerformanceScenarioRunner:
             raise AssertionError(f"media failed to load: {player.errorString()}")
 
     def _open_editor(self) -> None:
-        if self._window().property("activeOverlay") == "editor":
+        if cast(object, self._window().property("activeOverlay")) == "editor":
             return
         self.harness.click(
             self._window(),
             self.harness.find_item(self._window(), "editSubtitlesButton"),
         )
         self.harness.wait_until(
-            lambda: (
-                self._window().findChild(QQuickItem, "captionTable") is not None
-                and self._window().findChild(QQuickItem, "captionTable").isVisible()
-            ),
+            lambda: self._visible_item("captionTable"),
             description="subtitle editor to open",
             timeout_ms=15_000,
         )
@@ -1331,7 +1410,7 @@ class GuiPerformanceScenarioRunner:
             return
         self.harness.click(self._window(), back)
         self.harness.wait_until(
-            lambda: self._window().property("activeOverlay") != "editor",
+            lambda: cast(object, self._window().property("activeOverlay")) != "editor",
             description="subtitle editor to close",
             timeout_ms=5_000,
         )
@@ -1349,10 +1428,7 @@ class GuiPerformanceScenarioRunner:
             button,
         )
         self.harness.wait_until(
-            lambda: (
-                self._window().findChild(QQuickItem, "shortModeScreen") is not None
-                and self._window().findChild(QQuickItem, "shortModeScreen").isVisible()
-            ),
+            lambda: self._visible_item("shortModeScreen"),
             description="short mode to open",
             timeout_ms=15_000,
         )
@@ -1376,8 +1452,12 @@ class GuiPerformanceScenarioRunner:
         )
 
     def _short_clip_count(self) -> int:
-        counter = getattr(self.backend, "shortVideoClipCount", None)
-        return int(counter) if counter is not None else len(self.backend._raw_short_video_clips())
+        counter = cast(object, getattr(self.backend, "shortVideoClipCount", None))
+        return coerce_int(counter) if counter is not None else len(self.backend._raw_short_video_clips())
+
+    def _visible_item(self, name: str) -> bool:
+        item = self._window().findChild(QQuickItem, name)
+        return item is not None and item.isVisible()
 
     def _find_semantic_item(
         self,
@@ -1391,7 +1471,7 @@ class GuiPerformanceScenarioRunner:
 
         def find() -> QQuickItem | None:
             for item in self.harness.visual_items_with_properties(root, *property_names):
-                if all(item.property(name) == value for name, value in expected.items()):
+                if all(cast(object, item.property(name)) == value for name, value in expected.items()):
                     return item
             return None
 
@@ -1408,7 +1488,7 @@ class GuiPerformanceScenarioRunner:
 
     def _caption_delegate(self, caption_table: QQuickItem, index: int) -> QQuickItem:
         target_y = min(
-            max(0.0, float(caption_table.property("contentHeight")) - caption_table.height()),
+            max(0.0, coerce_float(cast(object, caption_table.property("contentHeight"))) - caption_table.height()),
             index * 127.0,
         )
         self.harness.set_property(caption_table, "contentY", target_y)
@@ -1420,8 +1500,8 @@ class GuiPerformanceScenarioRunner:
         )
 
     def _timeline_delegate(self, timeline: QQuickItem, index: int) -> QQuickItem:
-        start = float(self.backend._project["segments"][index]["start"])
-        viewport_x = max(0.0, start * float(timeline.property("pixelsPerSecond")) - 120.0)
+        start = coerce_float(self._project_segments()[index]["start"])
+        viewport_x = max(0.0, start * coerce_float(cast(object, timeline.property("pixelsPerSecond"))) - 120.0)
         self.harness.set_property(timeline, "viewportX", viewport_x)
         delegate = self._find_semantic_item(
             timeline,
@@ -1429,12 +1509,12 @@ class GuiPerformanceScenarioRunner:
             required_properties=("modelData", "segment", "originalX", "originalWidth"),
             description=f"timeline delegate {index}",
         )
-        segment = _variant(delegate.property("segment"))
+        segment = _variant(cast(object, delegate.property("segment")))
         if not isinstance(segment, dict) or not segment:
             # b600e90 expects an obsolete nested shape. Normalize only the
             # instantiated reference delegate so both revisions can execute
             # the same click path without changing product-side timings.
-            model_data = _variant(delegate.property("modelData"))
+            model_data = _variant(cast(object, delegate.property("modelData")))
             if isinstance(model_data, dict) and model_data:
                 self.harness.set_property(delegate, "segment", model_data)
         self.harness.wait_until(
@@ -1473,11 +1553,11 @@ class GuiPerformanceScenarioRunner:
         for item in self.harness.visual_items(root):
             if object_name is not None and item.objectName() != object_name:
                 continue
-            if text is not None and str(item.property("text")) != text:
+            if text is not None and str(cast(object, item.property("text"))) != text:
                 continue
             if not all(item.metaObject().indexOfProperty(name) >= 0 for name in required_properties):
                 continue
-            if callable(getattr(getattr(item, signal_name, None), "emit", None)):
+            if _has_emittable_signal(item, signal_name):
                 return item
         raise AssertionError(
             f"Could not find QML control signal={signal_name!r}, objectName={object_name!r}, text={text!r}"

@@ -306,7 +306,10 @@ class ProjectEditorController:
                 same_video = False
             if not same_video:
                 raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
-        transcription = generated.setdefault("transcription", {})
+        transcription = generated.get("transcription")
+        if transcription is None:
+            transcription = {}
+            generated["transcription"] = transcription
         transcription.setdefault(
             "context_base_dir",
             str(Path(transcription.get("work_dir") or generated.get("output_dir") or generated_file.parent).resolve()),

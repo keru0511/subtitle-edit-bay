@@ -332,6 +332,7 @@ class WorkflowFacade(FeatureFacade):
                 self._reset_transcription_integration_state()
             return
         self._state.transcription_generated_project_path = str(Path(project_path).resolve()) if project_path else ""
+        project_transcription = (self.project_editor.project or {}).get("transcription") or {}
         command = build_gui_transcribe_command(
             backend.gui_config_path,
             video=selection.video,
@@ -339,8 +340,7 @@ class WorkflowFacade(FeatureFacade):
             output_dir=str(project_work_directory(backend.projectSavePath)),
             render_output_dir=backend.videoOutputDirectory,
             context_base_dir=str(
-                (self.project_editor.project or {}).get("transcription", {}).get("context_base_dir")
-                or Path(backend.projectSavePath).parent
+                project_transcription.get("context_base_dir") or Path(backend.projectSavePath).parent
             ),
             reference_audio=reference_audio,
             reference_track=reference_track,

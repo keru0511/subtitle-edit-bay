@@ -144,6 +144,19 @@ class IntegrateTranscriptionResultTests(unittest.TestCase):
 
         self.assertEqual([segment["id"] for segment in integrated["segments"]], ["old", "new"])
 
+    def test_null_generated_transcription_is_normalized(self) -> None:
+        controller = self._controller()
+        generated = deepcopy(self.generated)
+        generated["transcription"] = None
+        save_project(self.generated_path, generated)
+
+        integrated = controller.integrate_transcription_result(
+            self.generated_path, deepcopy(controller.project), self.project_path, "merge"
+        )
+
+        self.assertEqual(integrated["transcription"]["context_base_dir"], str(self.root.resolve()))
+        self.assertEqual(load_project(self.project_path)["transcription"], integrated["transcription"])
+
     def test_generated_result_for_other_video_is_rejected(self) -> None:
         controller = self._controller()
         unrelated = deepcopy(self.generated)

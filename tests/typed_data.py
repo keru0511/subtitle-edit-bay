@@ -32,6 +32,18 @@ def is_string_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
+def object_list(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise AssertionError("expected an array")
+    return cast(list[object], value)
+
+
+def required_string(value: object) -> str:
+    if not isinstance(value, str):
+        raise AssertionError("expected a string")
+    return value
+
+
 def mock_kwargs(target: MagicMock) -> Mapping[str, object]:
     call = target.call_args
     if call is None:

@@ -32,6 +32,8 @@ def _layout_rows(raw_segments: object) -> dict[str, tuple[int, int]]:
         span = segment.get("layout_row_span")
         if not isinstance(identifier, str) or not isinstance(row, int) or not isinstance(span, int):
             raise AssertionError(f"字幕レイアウトの値が不正です: {segment!r}")
+        if identifier in rows:
+            raise AssertionError(f"字幕IDが重複しています: {identifier}")
         rows[identifier] = (row, span)
     return rows
 

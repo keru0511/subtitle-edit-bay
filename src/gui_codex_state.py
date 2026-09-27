@@ -5,7 +5,7 @@ import inspect
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Protocol, cast
+from typing import TYPE_CHECKING, Callable, Mapping, Protocol, cast
 
 from .codex_isolation import (
     CodexIsolationError,
@@ -16,6 +16,9 @@ from .codex_isolation import (
     isolated_codex_cwd,
 )
 from .data_boundary import coerce_float, decode_json, is_object_list, is_object_mapping
+
+if TYPE_CHECKING:
+    from .codex_edit_proposal import EditProposalApplyResult
 
 
 CODEX_SCOPES = ("selected", "current", "time_range", "all")
@@ -271,7 +274,7 @@ class CodexSessionController:
         *,
         selected_operation_ids: set[str] | None = None,
         current_revision: int | None = None,
-    ) -> object:
+    ) -> EditProposalApplyResult:
         from .codex_edit_proposal import apply_edit_proposal
 
         return apply_edit_proposal(

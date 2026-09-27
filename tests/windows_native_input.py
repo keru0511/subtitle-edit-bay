@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from collections.abc import Callable
+from typing import Protocol, cast
 
 from PySide6.QtCore import QPointF, QRect
 from PySide6.QtQuick import QQuickItem, QQuickWindow
@@ -34,11 +36,39 @@ class _HardwareInput(ctypes.Structure):
 
 
 class _InputData(ctypes.Union):
-    _fields_ = (("keyboard", _KeyboardInput), ("mouse", _MouseInput), ("hardware", _HardwareInput))
+    _fields_ = (
+        ("keyboard", cast(type[ctypes.Structure], _KeyboardInput)),
+        ("mouse", cast(type[ctypes.Structure], _MouseInput)),
+        ("hardware", cast(type[ctypes.Structure], _HardwareInput)),
+    )
 
 
 class _Input(ctypes.Structure):
-    _fields_ = (("kind", ctypes.c_uint32), ("data", _InputData))
+    _fields_ = (("kind", ctypes.c_uint32), ("data", cast(type[ctypes.Union], _InputData)))
+
+
+class _WinFunction(Protocol):
+    argtypes: tuple[object, ...]
+    restype: object
+
+    def __call__(self, *args: object) -> int | None: ...
+
+
+class _User32(Protocol):
+    SendInput: _WinFunction
+    SetCursorPos: _WinFunction
+    GetForegroundWindow: _WinFunction
+    LoadKeyboardLayoutW: _WinFunction
+    GetWindowThreadProcessId: _WinFunction
+    GetKeyboardLayout: _WinFunction
+
+
+class _WinDLLFactory(Protocol):
+    def __call__(self, name: str, *, use_last_error: bool) -> object: ...
+
+
+def _last_error() -> int:
+    return cast(Callable[[], int], getattr(ctypes, "get_last_error"))()
 
 
 class WindowsNativeInput:
@@ -55,10 +85,15 @@ class WindowsNativeInput:
     def __init__(self, window: QQuickWindow) -> None:
         if sys.platform != "win32":
             raise RuntimeError("Windowsの実入力はWindowsでのみ利用できます")
-        self.window = window
-        self.handle = int(window.winId())
-        self.user32 = ctypes.WinDLL("user32", use_last_error=True)
-        self.user32.SendInput.argtypes = (ctypes.c_uint, ctypes.POINTER(_Input), ctypes.c_int)
+        self.window: QQuickWindow = window
+        self.handle: int = int(window.winId())
+        win_dll = cast(_WinDLLFactory, getattr(ctypes, "WinDLL"))
+        self.user32: _User32 = cast(_User32, win_dll("user32", use_last_error=True))
+        self.user32.SendInput.argtypes = (
+            ctypes.c_uint,
+            ctypes.POINTER(cast(type[ctypes.Structure], _Input)),
+            ctypes.c_int,
+        )
         self.user32.SendInput.restype = ctypes.c_uint
         self.user32.SetCursorPos.argtypes = (ctypes.c_int, ctypes.c_int)
         self.user32.SetCursorPos.restype = ctypes.c_int
@@ -71,10 +106,11 @@ class WindowsNativeInput:
         self.user32.GetKeyboardLayout.restype = ctypes.c_void_p
 
     def _send(self, events: list[_Input]) -> None:
-        payload = (_Input * len(events))(*events)
-        sent = self.user32.SendInput(len(payload), payload, ctypes.sizeof(_Input))
-        if sent != len(payload):
-            raise OSError(ctypes.get_last_error(), f"Windowsの入力イベントを送信できません: {sent}/{len(payload)}")
+        array_type = cast(type[ctypes.Structure], _Input) * len(events)
+        payload = array_type(*events)
+        sent = self.user32.SendInput(len(events), payload, ctypes.sizeof(cast(type[ctypes.Structure], _Input)))
+        if sent != len(events):
+            raise OSError(_last_error(), f"Windowsの入力イベントを送信できません: {sent}/{len(events)}")
         QTest.qWait(50)
 
     @staticmethod
@@ -90,12 +126,14 @@ class WindowsNativeInput:
         self._send([self._keyboard(virtual_key), self._keyboard(virtual_key, released=True)])
 
     def chord(self, modifier: int, virtual_key: int) -> None:
-        self._send([
-            self._keyboard(modifier),
-            self._keyboard(virtual_key),
-            self._keyboard(virtual_key, released=True),
-            self._keyboard(modifier, released=True),
-        ])
+        self._send(
+            [
+                self._keyboard(modifier),
+                self._keyboard(virtual_key),
+                self._keyboard(virtual_key, released=True),
+                self._keyboard(modifier, released=True),
+            ]
+        )
 
     def type_roman(self, value: str) -> None:
         for character in value.upper():
@@ -112,7 +150,7 @@ class WindowsNativeInput:
             raise AssertionError(f"クリック対象が画面外です: {item.objectName()} ({item_bounds})")
         screen_point = visible_bounds.center()
         if not self.user32.SetCursorPos(screen_point.x(), screen_point.y()):
-            raise OSError(ctypes.get_last_error(), "Windowsのマウス位置を設定できません")
+            raise OSError(_last_error(), "Windowsのマウス位置を設定できません")
         self._send([self._mouse(self.MOUSE_LEFT_DOWN), self._mouse(self.MOUSE_LEFT_UP)])
 
     def activate_japanese_ime(self) -> None:
@@ -120,7 +158,7 @@ class WindowsNativeInput:
             raise AssertionError("検証対象のウィンドウが前面にありません")
         layout = self.user32.LoadKeyboardLayoutW("00000411", 1)
         if not layout:
-            raise OSError(ctypes.get_last_error(), "日本語入力方式を読み込めません")
+            raise OSError(_last_error(), "日本語入力方式を読み込めません")
         QTest.qWait(200)
         thread_id = self.user32.GetWindowThreadProcessId(self.handle, None)
         active_layout = self.user32.GetKeyboardLayout(thread_id)

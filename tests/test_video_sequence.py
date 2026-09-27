@@ -5,12 +5,29 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from src.data_boundary import is_string_object_dict, is_string_object_dict_list
 from src.gui_project_editor_controller import ProjectEditorController
 from src.subtitle_project import SubtitleProject, create_project, load_project, save_project
 from src.video_sequence import (
     VideoSequence,
 )
 from tests.typed_case import TypedTestCase
+
+
+def _section(project: object, name: str) -> dict[str, object]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    section = project.get(name)
+    if not is_string_object_dict(section):
+        raise AssertionError(f"{name} must be an object")
+    return section
+
+
+def _sequence_entries(project: object, name: str) -> list[dict[str, object]]:
+    entries = _section(project, "sequence").get(name)
+    if not is_string_object_dict_list(entries):
+        raise AssertionError(f"sequence {name} must be an array of objects")
+    return entries
 
 
 class VideoSequenceTests(TypedTestCase):
@@ -60,10 +77,10 @@ class VideoSequenceTests(TypedTestCase):
             loaded = load_project(path)
 
         self.assertEqual(
-            [clip["id"] for clip in loaded["sequence"]["clips"]],
+            [clip.get("id") for clip in _sequence_entries(loaded, "clips")],
             ["clip-a"],
         )
-        self.assertEqual(loaded["sequence"]["assets"][1]["id"], "asset-b")
+        self.assertEqual(_sequence_entries(loaded, "assets")[1].get("id"), "asset-b")
 
     def test_reloading_zero_duration_updates_legacy_sequence_from_probe(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -81,10 +98,10 @@ class VideoSequenceTests(TypedTestCase):
             with patch("src.subtitle_project.probe_media_duration", return_value=30.0):
                 loaded = load_project(path, resolve_video_duration=True)
 
-        self.assertEqual(loaded["video"]["duration_seconds"], 30.0)
-        self.assertEqual(loaded["sequence"]["assets"][0]["path"], str(video.resolve()))
-        self.assertEqual(loaded["sequence"]["assets"][0]["duration_seconds"], 30.0)
-        self.assertEqual(loaded["sequence"]["clips"][0]["source_end"], 30.0)
+        self.assertEqual(_section(loaded, "video").get("duration_seconds"), 30.0)
+        self.assertEqual(_sequence_entries(loaded, "assets")[0].get("path"), str(video.resolve()))
+        self.assertEqual(_sequence_entries(loaded, "assets")[0].get("duration_seconds"), 30.0)
+        self.assertEqual(_sequence_entries(loaded, "clips")[0].get("source_end"), 30.0)
 
     def test_controller_sequence_mutation_is_one_undoable_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -104,35 +121,39 @@ class VideoSequenceTests(TypedTestCase):
                 )
             )
 
-            self.assertIsNotNone(updated)
+            if updated is None:
+                self.fail("sequence mutation should succeed")
             self.assertEqual([clip.id for clip in updated.clips], ["clip-a", "clip-b"])
             self.assertTrue(controller.project_dirty)
             self.assertEqual(
-                [clip["id"] for clip in controller.project["sequence"]["clips"]],
+                [clip.get("id") for clip in _sequence_entries(controller.project, "clips")],
                 ["clip-a", "clip-b"],
             )
             controller.autosave()
             revision = controller.autosave_revision
             autosave_path = controller.autosave_path
-            controller.autosave_future.result()
+            future = controller.autosave_future
+            if future is None:
+                self.fail("autosave should be running")
+            future.result()
             controller.finish_autosave(revision, autosave_path, "")
             self.assertFalse(controller.project_dirty)
             self.assertEqual(
-                [clip["id"] for clip in load_project(path)["sequence"]["clips"]],
+                [clip.get("id") for clip in _sequence_entries(load_project(path), "clips")],
                 ["clip-a", "clip-b"],
             )
             self.assertTrue(controller.undo())
             self.assertEqual(
-                [clip["id"] for clip in controller.project["sequence"]["clips"]],
+                [clip.get("id") for clip in _sequence_entries(controller.project, "clips")],
                 ["clip-a"],
             )
             self.assertTrue(controller.redo())
             self.assertEqual(
-                [clip["id"] for clip in controller.project["sequence"]["clips"]],
+                [clip.get("id") for clip in _sequence_entries(controller.project, "clips")],
                 ["clip-a", "clip-b"],
             )
 
-    def _project(self, root: Path) -> dict[str, object]:
+    def _project(self, root: Path) -> dict[object, object]:
         project = create_project(
             video_path=root / "capture.mp4",
             output_dir=root / "out",

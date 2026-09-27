@@ -34,7 +34,7 @@ from .application_info import (
     build_application_info_payload,
     resolve_application_info,
 )
-from .data_boundary import coerce_float, is_object_dict
+from .data_boundary import coerce_float, is_object_dict, is_object_list, is_string_object_dict_list
 
 APP_TITLE = "Subtitle Edit Bay"
 AlignmentResult = dict[str, str | float]
@@ -523,6 +523,9 @@ class LegacyEditBayBackend(QApplication):
         if not Path(video).is_file() or not Path(reference_audio).is_file():
             self._set_status("同期解析には動画と基準音声が必要です", "CHECK")
             return
+        if not any(str(track.get("selector", "")).strip() for track in self._audio_tracks):
+            self._set_status("動画に音声トラックがないため同期解析できません", "CHECK")
+            return
 
         self._alignment_busy = True
         self._alignment_result = self._empty_alignment_result("解析中")
@@ -563,7 +566,7 @@ class LegacyEditBayBackend(QApplication):
     def _alignment_finished(self, future: Future[AlignmentResult]) -> None:
         try:
             self.alignmentComputed.emit(future.result())
-        except Exception as error:
+        except (Exception, SystemExit) as error:
             self.alignmentFailed.emit(str(error))
 
     @Slot(object)
@@ -635,13 +638,69 @@ class LegacyEditBayBackend(QApplication):
                 for item in metadata:
                     if item.get("source", "").startswith("snippet:"):
                         item["source"] = source_url
-            candidates = [str(item["term"]) for item in metadata]
+            previous_metadata_value = self._transcription_context.get("web_dictionary_candidate_metadata", [])
+            previous_items = (
+                previous_metadata_value if is_string_object_dict_list(previous_metadata_value) else []
+            )
+            selected_terms_value = self._transcription_context.get("web_dictionary_terms", [])
+            selected_terms = (
+                [str(term) for term in selected_terms_value]
+                if is_object_list(selected_terms_value)
+                else []
+            )
+            candidate_terms_value = self._transcription_context.get("web_dictionary_candidates", [])
+            candidate_terms = (
+                [str(term) for term in candidate_terms_value]
+                if is_object_list(candidate_terms_value)
+                else []
+            )
+            previous_metadata = {
+                str(item.get("term", "")).casefold(): item
+                for item in previous_items
+            }
+            selected_keys = {term.casefold() for term in selected_terms}
+            generated_metadata: dict[str, dict[str, object]] = {
+                str(item["term"]).casefold(): {key: value for key, value in item.items()}
+                for item in metadata
+            }
+            refreshed_metadata: list[dict[str, object]] = []
+            seen_keys: set[str] = set()
+            previous_candidates = [*candidate_terms, *selected_terms]
+            for term in previous_candidates:
+                key = str(term).casefold()
+                previous_item = previous_metadata.get(key, {})
+                is_manual = str(previous_item.get("source", "")).casefold() == "manual"
+                if key in seen_keys or not (
+                    key in selected_keys or is_manual
+                ):
+                    continue
+                refreshed_metadata.append(
+                    (previous_item if is_manual else generated_metadata.get(key))
+                    or {
+                        "term": str(term),
+                        "source": str(previous_item.get("source") or "saved"),
+                        "score": str(previous_item.get("score") or "0.00"),
+                    }
+                )
+                seen_keys.add(key)
+            for item in metadata:
+                key = str(item["term"]).casefold()
+                if key not in seen_keys:
+                    refreshed_metadata.append({field: value for field, value in item.items()})
+                    seen_keys.add(key)
+            # 保存形式の候補上限に合わせ、選択済み・手動追加を先に残す。
+            refreshed_metadata = refreshed_metadata[:256]
+            candidates = [str(item["term"]) for item in refreshed_metadata]
             self.setTranscriptionContext(
                 {
                     **self._transcription_context,
                     "web_dictionary_candidates": candidates,
-                    "web_dictionary_terms": [],
-                    "web_dictionary_candidate_metadata": metadata,
+                    "web_dictionary_terms": [
+                        term for term in candidates if term.casefold() in selected_keys
+                    ],
+                    "web_dictionary_candidate_metadata": refreshed_metadata,
+                    "web_dictionary_url": source_url,
+                    "web_dictionary_snippet": str(snippet or "").strip(),
                 }
             )
         except (TypeError, ValueError) as error:

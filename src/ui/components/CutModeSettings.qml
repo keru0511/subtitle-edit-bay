@@ -38,6 +38,31 @@ Item {
         return Math.abs(end - start) >= 50
     }
 
+    function canRestoreSelection() {
+        if (!root.timeline.hasCuts)
+            return false
+        var cuts = root.timeline.cuts || []
+        if (root.selectedCutId) {
+            for (var selectedIndex = 0; selectedIndex < cuts.length; ++selectedIndex) {
+                if (String(cuts[selectedIndex].id) === root.selectedCutId)
+                    return true
+            }
+            return false
+        }
+        if (!cutStartField.acceptableInput || !cutEndField.acceptableInput)
+            return false
+        var start = Math.min(Number(cutStartField.text), Number(cutEndField.text))
+        var end = Math.max(Number(cutStartField.text), Number(cutEndField.text))
+        if (end - start < 0.05)
+            return false
+        for (var index = 0; index < cuts.length; ++index) {
+            if (start < Number(cuts[index].source_end)
+                    && end > Number(cuts[index].source_start))
+                return true
+        }
+        return false
+    }
+
     onSelectionStartMsChanged: syncTimer.restart()
     onSelectionEndMsChanged: syncTimer.restart()
     Component.onCompleted: timelineSyncTimer.restart()
@@ -191,7 +216,7 @@ Item {
                 objectName: "restoreCutRangeButton"
                 Layout.fillWidth: true
                 text: root.selectedCutId ? "このカットを復元" : "選択範囲を復元"
-                enabled: !root.backend.running && Boolean(root.timeline.hasCuts)
+                enabled: !root.backend.running && root.canRestoreSelection()
                 onClicked: {
                     if (root.selectedCutId)
                         root.backend.workspace.restoreCut(root.selectedCutId)

@@ -910,6 +910,10 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def shortVideoClips(self) -> list[dict[str, object]]:
         return self._short_video_facade.shortVideoClips
 
+    @Property("QVariantList", notify=shortVideoChanged)
+    def addedHighlightCandidateIds(self) -> list[str]:
+        return self._short_video_facade.addedHighlightCandidateIds
+
     @Property("QVariantMap", notify=shortVideoChanged)
     def shortVideoSettings(self) -> dict[str, object]:
         return self._short_video_facade.shortVideoSettings
@@ -1128,8 +1132,6 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         elif previous.output_dir != selection.output_dir:
             self._project["output_dir"] = selection.output_dir
             self._mark_project_dirty()
-            if self._relinking_project_sources:
-                self._relink_output_changes += 1
             self.projectDataChanged.emit()
 
     def _restore_source_selection_after_failed_save(
@@ -1175,10 +1177,23 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             return
         self._relink_source_selection = self._source_selection
         self._relink_alignment_result = dict(self._alignment_result)
-        self._relink_project_was_dirty = self._project_dirty
-        self._relink_project_revision = self._project_revision
-        self._relink_output_changes = 0
         self._relinking_project_sources = True
+
+    @Slot(result=bool)
+    def completeSourceRelink(self) -> bool:
+        """素材設定の完了時に選択済み素材を現在のプロジェクトへ反映する。"""
+        if self._running:
+            return False
+        previous = self._relink_source_selection
+        if not self._source_selection.video and previous is not None and (
+            previous.video == self._source_selection.video
+            and previous.audio_files == self._source_selection.audio_files
+        ):
+            return True
+        if self._project is None or self._project_source_selection_matches(self._source_selection):
+            return True
+        self.relinkProjectSources()
+        return self._project is not None and self._project_source_selection_matches(self._source_selection)
 
     @Slot()
     def finishSourceRelink(self) -> None:
@@ -1195,24 +1210,20 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 )
                 and not self._project_source_selection_matches(self._source_selection)
             ):
-                if not self._clear_project():
-                    only_output_changed = (
-                        self._relink_project_was_dirty is False
-                        and self._project_revision == self._relink_project_revision + self._relink_output_changes
-                    )
-                    self._restore_source_selection_after_failed_save(
-                        previous, self._relink_alignment_result or self._empty_alignment_result()
-                    )
-                    if only_output_changed:
-                        self._project_dirty = False
-                        self.autosave_timer.stop()
-                        self.projectChanged.emit()
+                # × / Escape は未適用の動画・音声変更だけを取り消す。
+                # 出力先の変更は独立したプロジェクト設定として保持する。
+                self._set_source_selection(
+                    replace(previous, output_dir=self._source_selection.output_dir)
+                )
+                self._alignment_result = dict(
+                    self._relink_alignment_result or self._empty_alignment_result()
+                )
+                self.alignmentChanged.emit()
+                self._set_status("未適用の動画・音声の変更を取り消しました", "READY")
         finally:
             self._relinking_project_sources = False
             self._relink_source_selection = None
             self._relink_alignment_result = None
-            self._relink_project_was_dirty = None
-            self._relink_output_changes = 0
 
     @Slot()
     def relinkProjectSources(self) -> None:

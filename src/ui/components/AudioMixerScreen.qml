@@ -86,7 +86,12 @@ Item {
             Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.colors.amber : root.colors.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
             Text {
                 objectName: "mixerAudioPreviewCacheSummary"
-                text: root.appBackend.audio.audioPreviewPreparing ? "プレビューを準備中" : "プレビュー準備済み"
+                text: root.appBackend.audio.audioPreviewPreparing
+                    ? "プレビューを準備中"
+                    : (root.appBackend.audio.audioMixerIntentionalSilence
+                        ? "すべての音声トラックが無効"
+                        : (root.appBackend.audio.audioMixerPreviewComplete
+                            ? "プレビュー準備済み" : "プレビューを準備できません"))
                 color: root.colors.textMuted
                 font.family: "Cascadia Mono"
                 font.pixelSize: 9
@@ -94,7 +99,7 @@ Item {
             MixerButton {
                 objectName: "mixerClearAudioPreviewCacheButton"
                 text: "プレビューを作り直す"
-                enabled: !root.appBackend.running
+                enabled: !root.appBackend.running && !root.appBackend.audio.audioPreviewPreparing
                 onClicked: {
                     root.appBackend.audio.clearAudioPreviewCache()
                     root.appBackend.audio.prepareAudioMixerPreview()
@@ -176,7 +181,17 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     PanelTitle { titleColor: root.colors.textMuted; text: "プレビュー" }
-                    Text { text: root.appBackend.audio.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audio.audioPreviewPreparing ? root.colors.amber : root.colors.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+                    Text {
+                        text: root.appBackend.audio.audioPreviewPreparing
+                            ? "プレビュー音声を準備中…"
+                            : (root.appBackend.audio.audioMixerIntentionalSilence
+                                ? "出力は無音です"
+                                : (root.previewReady ? "出力音ライブプレビュー" : "音声プレビューを準備できません"))
+                        color: root.appBackend.audio.audioPreviewPreparing || !root.previewReady
+                            ? root.colors.amber : root.colors.acid
+                        font.family: "Yu Gothic UI"
+                        font.pixelSize: 9
+                    }
                     Item { Layout.fillWidth: true }
                     Text { text: "クリックで再生位置を移動"; color: root.colors.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
                 }

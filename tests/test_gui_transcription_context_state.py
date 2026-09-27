@@ -32,6 +32,8 @@ class GuiTranscriptionContextStateTests(TypedTestCase):
                 "dictionary_path": "",
                 "dictionary_confirmed": False,
                 "web_dictionary_enabled": False,
+                "web_dictionary_url": "",
+                "web_dictionary_snippet": "",
                 "web_dictionary_candidates": [],
                 "web_dictionary_terms": [],
                 "web_dictionary_candidate_metadata": [],
@@ -69,6 +71,8 @@ class GuiTranscriptionContextStateTests(TypedTestCase):
                         "dictionary_path": "dictionary.json",
                         "dictionary_confirmed": True,
                         "web_dictionary_enabled": False,
+                        "web_dictionary_url": "https://example.test/terms",
+                        "web_dictionary_snippet": "ページの固有名詞",
                     }
                 }
             }
@@ -78,6 +82,8 @@ class GuiTranscriptionContextStateTests(TypedTestCase):
         self.assertEqual(state["creator_terms_text"], "ナワバリバトル\nスプラッシュボム")
         self.assertEqual(state["dictionary_path"], "dictionary.json")
         self.assertTrue(state["dictionary_confirmed"])
+        self.assertEqual(state["web_dictionary_url"], "https://example.test/terms")
+        self.assertEqual(state["web_dictionary_snippet"], "ページの固有名詞")
         self.assertEqual(state["web_dictionary_candidates"], [])
 
     def test_web_dictionary_enabled_and_candidates_are_rendered_when_present(self) -> None:
@@ -106,6 +112,8 @@ class GuiTranscriptionContextStateTests(TypedTestCase):
                 "dictionary_path": " dictionary.json ",
                 "dictionary_confirmed": True,
                 "web_dictionary_enabled": False,
+                "web_dictionary_url": " https://example.test/terms ",
+                "web_dictionary_snippet": " ページの固有名詞 ",
                 "web_dictionary_candidates": ["候補A", "候補B"],
                 "web_dictionary_terms": ["候補A", "候補A"],
             }
@@ -115,6 +123,8 @@ class GuiTranscriptionContextStateTests(TypedTestCase):
         self.assertEqual(payload["creator_terms"], ["ナワバリバトル", "スプラッシュボム", "イカ"])
         self.assertEqual(payload["dictionary_path"], "dictionary.json")
         self.assertTrue(payload["dictionary_confirmed"])
+        self.assertEqual(payload["web_dictionary_url"], "https://example.test/terms")
+        self.assertEqual(payload["web_dictionary_snippet"], "ページの固有名詞")
         self.assertEqual(payload["web_dictionary_candidates"], ["候補A", "候補B"])
         self.assertEqual(payload["web_dictionary_terms"], ["候補A"])
 

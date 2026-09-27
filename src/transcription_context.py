@@ -16,6 +16,8 @@ class TranscriptionContextPayload(TypedDict):
     dictionary_path: str | None
     dictionary_confirmed: bool
     web_dictionary_enabled: bool
+    web_dictionary_url: str
+    web_dictionary_snippet: str
     web_dictionary_candidates: list[str]
     web_dictionary_terms: list[str]
     web_dictionary_candidate_metadata: list[WebDictionaryCandidate]
@@ -33,6 +35,8 @@ class TranscriptionContext:
     dictionary_path: str | None = None
     dictionary_confirmed: bool = False
     web_dictionary_enabled: bool = False
+    web_dictionary_url: str = ""
+    web_dictionary_snippet: str = ""
     web_dictionary_candidates: tuple[str, ...] = ()
     web_dictionary_terms: tuple[str, ...] = ()
     web_dictionary_candidate_metadata: tuple[WebDictionaryCandidate, ...] = ()
@@ -45,6 +49,8 @@ class TranscriptionContext:
             "dictionary_path": self.dictionary_path,
             "dictionary_confirmed": self.dictionary_confirmed,
             "web_dictionary_enabled": self.web_dictionary_enabled,
+            "web_dictionary_url": self.web_dictionary_url,
+            "web_dictionary_snippet": self.web_dictionary_snippet,
             "web_dictionary_candidates": list(self.web_dictionary_candidates),
             "web_dictionary_terms": list(self.web_dictionary_terms),
             "web_dictionary_candidate_metadata": [item.copy() for item in self.web_dictionary_candidate_metadata],
@@ -134,6 +140,8 @@ def transcription_context_from_mapping(payload: object = None) -> TranscriptionC
         dictionary_path=_clean_optional_path(payload.get("dictionary_path"), "dictionary_path"),
         dictionary_confirmed=_bool(payload.get("dictionary_confirmed", False), "dictionary_confirmed"),
         web_dictionary_enabled=_bool(payload.get("web_dictionary_enabled", False), "web_dictionary_enabled"),
+        web_dictionary_url=_clean_text(payload.get("web_dictionary_url", ""), "web_dictionary_url"),
+        web_dictionary_snippet=_clean_text(payload.get("web_dictionary_snippet", ""), "web_dictionary_snippet"),
         web_dictionary_candidates=_normalize_term_sequence(
             payload.get("web_dictionary_candidates", ()), "web_dictionary_candidates"
         ),

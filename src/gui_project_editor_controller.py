@@ -286,10 +286,12 @@ class ProjectEditorController:
     def save_new_project(
         self,
         path: str | Path,
-        project: dict[str, object],
+        project: object,
     ) -> Path:
         """Persist a newly-created document before it becomes the active one."""
 
+        if not is_string_object_dict(project):
+            raise SubtitleProjectError("プロジェクトのキーは文字列である必要があります")
         return self._save_project_fn(path, cast(dict[object, object], project))
 
     def mark_dirty(self) -> None:

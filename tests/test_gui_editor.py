@@ -6914,7 +6914,7 @@ Window {
         custom_project_path = project_path.with_name("custom-edit.subtitle-project.json")
         save_project(custom_project_path, preserved)
         generated = create_project(
-            video_path=project_path.parent / "game.mkv",
+            video_path=preserved["video"]["path"],
             output_dir=project_path.parent / "export",
             segments=[
                 {

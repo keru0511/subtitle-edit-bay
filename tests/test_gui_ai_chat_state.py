@@ -50,13 +50,14 @@ class StubChatController:
             **{**self._snapshot.__dict__, "selected_model": model_id}
         )
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str) -> bool:
         self._snapshot = CodexChatSnapshot(
             **{
                 **self._snapshot.__dict__,
                 "messages": self._snapshot.messages + (("text", text),),
             }
         )
+        return True
 
     def begin_proposal(self, text: str, **kwargs: object) -> bool:
         del kwargs

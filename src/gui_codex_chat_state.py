@@ -169,18 +169,18 @@ class CodexChatController:
         if selected_model_callback is not None:
             self._dispatch(lambda: selected_model_callback(selected))
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str) -> bool:
         prompt = str(text).strip()
         if not prompt:
             self._update(error="メッセージを入力してください")
-            return
+            return False
         snapshot = self.snapshot
         if snapshot.auth_state != "authenticated":
             self._update(error=f"{self.provider_name}へログインしてからメッセージを送信してください")
-            return
+            return False
         if snapshot.chat_state in {"sending", "streaming", "stopping"}:
             self._update(error=f"{self.provider_name}の応答が完了してから次のメッセージを送信してください")
-            return
+            return False
         available = {str(item["id"]) for item in snapshot.models}
         if snapshot.model_selection_supported and (
             not snapshot.selected_model or snapshot.selected_model not in available
@@ -189,7 +189,7 @@ class CodexChatController:
                 model_error=f"利用可能な{self.provider_name}モデルを選択してください",
                 error=f"利用可能な{self.provider_name}モデルを選択してください",
             )
-            return
+            return False
         with self._lock:
             self._stop_requested = False
         self._message_sequence += 1
@@ -206,6 +206,7 @@ class CodexChatController:
         )
         self._update(messages=tuple(messages), chat_state="sending", error="")
         self._submit(self._send_worker, prompt, snapshot.selected_model)
+        return True
 
     def begin_proposal(
         self,

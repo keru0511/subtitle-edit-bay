@@ -238,19 +238,18 @@ class AIChatFacade(FeatureFacade):
     def openAIProviderLoginPage(self) -> None:
         self.openCodexLoginPage()
 
-    @Slot(str)
-    @Slot(str, str, float, float)
+    @Slot(str, result=bool)
+    @Slot(str, str, float, float, result=bool)
     def sendCodexChatMessage(
         self,
         message: str,
         requested_scope: str = "auto",
         range_start: float = 0.0,
         range_end: float = 0.0,
-    ) -> None:
+    ) -> bool:
         backend = self._backend
         if self._is_audio_mix_chat_request(message):
-            self._start_audio_mix_chat_proposal(message)
-            return
+            return self._start_audio_mix_chat_proposal(message)
         route = route_subtitle_chat_request(
             message,
             requested_scope,
@@ -261,19 +260,17 @@ class AIChatFacade(FeatureFacade):
             range_end=range_end,
         )
         if route is None:
-            self.services.chat_router.send_message(message)
-            return
+            return self.services.chat_router.send_message(message)
         # Typed edit proposals are a Codex action contract.  Gemini remains a
         # normal chat provider until a provider-neutral proposal protocol is
         # introduced; never route the same prompt to both providers.
         if self.services.chat_router.active_provider_id != "codex":
-            self.services.chat_router.send_message(message)
-            return
+            return self.services.chat_router.send_message(message)
         if not self.services.chat_router.begin_proposal(message):
-            return
+            return False
         if route.scope == "unavailable":
             self.services.codex_chat.fail_proposal("字幕を編集するには、先に編集プロジェクトを開いてください。")
-            return
+            return True
         if route.scope == "current":
             backend._codex_current_time = float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0
         scope_id = f"chat-subtitle-{uuid4().hex}"
@@ -300,6 +297,7 @@ class AIChatFacade(FeatureFacade):
         )
         if result.status.value != "success":
             self.services.chat_router.fail_proposal(result.message or "字幕の変更案を開始できませんでした。")
+        return True
 
     @staticmethod
     def _is_audio_mix_chat_request(message: str) -> bool:
@@ -362,16 +360,15 @@ class AIChatFacade(FeatureFacade):
         )
         return any(term in prompt for term in audio_targets) and any(term in prompt for term in adjustment_intents)
 
-    def _start_audio_mix_chat_proposal(self, message: str) -> None:
+    def _start_audio_mix_chat_proposal(self, message: str) -> bool:
         if self.services.chat_router.active_provider_id != "codex":
-            self.services.chat_router.send_message(message)
-            return
+            return self.services.chat_router.send_message(message)
         if not self.services.chat_router.begin_proposal(
             message,
             content_type="audio_mix_proposal",
             pending_text="音量ミキサーの変更案を作成しています…",
         ):
-            return
+            return False
         scope_id = f"chat-audio-{uuid4().hex}"
         payload: dict[str, Any] = {
             "schema_version": 1,
@@ -391,6 +388,7 @@ class AIChatFacade(FeatureFacade):
         )
         if result.status.value != "success":
             self.services.chat_router.fail_proposal(result.message or "音量ミキサーの変更案を開始できませんでした。")
+        return True
 
     @Slot()
     def stopCodexChat(self) -> None:
@@ -408,6 +406,9 @@ class AIChatFacade(FeatureFacade):
 
     @Slot()
     def startNewCodexChat(self) -> None:
+        if self.services.chat_router.active_provider_id != "codex":
+            self.services.chat_router.new_chat()
+            return
         backend = self._backend
         if self.services.codex_session.running:
             self.services.codex_session.stop()

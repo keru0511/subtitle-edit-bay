@@ -682,18 +682,18 @@ class LegacyBackendCompatibility:
     def openAIProviderLoginPage(self) -> None:
         return self._ai_facade.openAIProviderLoginPage()
 
-    @Slot(str)
-    @Slot(str, str, float, float)
+    @Slot(str, result=bool)
+    @Slot(str, str, float, float, result=bool)
     def sendCodexChatMessage(
         self,
         message: str,
         requested_scope: str = "auto",
         range_start: float = 0.0,
         range_end: float = 0.0,
-    ) -> None:
+    ) -> bool:
         return self._ai_facade.sendCodexChatMessage(message, requested_scope, range_start, range_end)
 
-    def _start_audio_mix_chat_proposal(self, message: str) -> None:
+    def _start_audio_mix_chat_proposal(self, message: str) -> bool:
         return self._ai_facade._start_audio_mix_chat_proposal(message)
 
     @Slot()

@@ -29,7 +29,7 @@ class ChatController(Protocol):
     def login(self, *, relogin: bool = False) -> None: ...
     def logout(self) -> None: ...
     def select_model(self, model: str) -> None: ...
-    def send_message(self, text: str) -> None: ...
+    def send_message(self, text: str) -> bool: ...
     def begin_proposal(
         self,
         text: str,
@@ -131,8 +131,8 @@ class AIProviderChatRouter:
     def select_model(self, model_id: str) -> None:
         self.active_controller.select_model(model_id)
 
-    def send_message(self, text: str) -> None:
-        self.active_controller.send_message(text)
+    def send_message(self, text: str) -> bool:
+        return self.active_controller.send_message(text)
 
     def begin_proposal(
         self,

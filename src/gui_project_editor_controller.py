@@ -11,6 +11,7 @@ remain in the facade.
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -299,7 +300,12 @@ class ProjectEditorController:
         preserved_video = Path(str(preserved_project["video"]["path"])).resolve()
         generated_video = Path(str(generated["video"]["path"])).resolve()
         if preserved_video != generated_video:
-            raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
+            try:
+                same_video = preserved_video.samefile(generated_video)
+            except OSError:
+                same_video = False
+            if not same_video:
+                raise SubtitleProjectError("文字起こし結果の動画が編集プロジェクトと一致しません")
         transcription = generated.setdefault("transcription", {})
         transcription.setdefault(
             "context_base_dir",
@@ -312,6 +318,9 @@ class ProjectEditorController:
             assign_layout_rows=self._assign_project_layout_rows_fn,
         )
         self.wait_for_autosave()
+        current_file = json.loads(target.read_text(encoding="utf-8"))
+        if current_file != preserved_project:
+            raise SubtitleProjectError("文字起こし中に編集プロジェクトのファイルが変更されました")
         self._save_project_fn(target, integrated)
         self.adopt_loaded_project(integrated, target)
         return integrated

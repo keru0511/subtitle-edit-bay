@@ -128,6 +128,22 @@ class IntegrateTranscriptionResultTests(unittest.TestCase):
         self.assertEqual(controller.project_path, str(self.project_path.resolve()))
         self.assertEqual(self.project_path.read_bytes(), original_contents)
 
+    def test_same_video_under_another_path_is_accepted(self) -> None:
+        controller = self._controller()
+        original_video = Path(self.preserved["video"]["path"])
+        original_video.write_bytes(b"video")
+        linked_video = self.root / "linked-video.mkv"
+        linked_video.hardlink_to(original_video)
+        generated = deepcopy(self.generated)
+        generated["video"]["path"] = str(linked_video)
+        save_project(self.generated_path, generated)
+
+        integrated = controller.integrate_transcription_result(
+            self.generated_path, deepcopy(controller.project), self.project_path, "merge"
+        )
+
+        self.assertEqual([segment["id"] for segment in integrated["segments"]], ["old", "new"])
+
     def test_generated_result_for_other_video_is_rejected(self) -> None:
         controller = self._controller()
         unrelated = deepcopy(self.generated)
@@ -159,6 +175,34 @@ class IntegrateTranscriptionResultTests(unittest.TestCase):
 
         self.assertIs(controller.project, original_project)
         self.assertEqual(self.project_path.read_bytes(), original_contents)
+
+    def test_saved_noncanonical_settings_do_not_look_like_external_edits(self) -> None:
+        controller = self._controller()
+        controller.project["subtitle_settings"]["outline_color"] = "#abcdef"
+        controller.save()
+        preserved = deepcopy(controller.project)
+
+        integrated = controller.integrate_transcription_result(
+            self.generated_path, preserved, self.project_path, "merge"
+        )
+
+        self.assertEqual([segment["id"] for segment in integrated["segments"]], ["old", "new"])
+        self.assertEqual(load_project(self.project_path)["subtitle_settings"]["outline_color"], "#ABCDEF")
+
+    def test_externally_changed_project_file_cannot_be_overwritten(self) -> None:
+        controller = self._controller()
+        preserved = deepcopy(controller.project)
+        external = deepcopy(preserved)
+        external["segments"][0]["text"] = "edited outside the app"
+        save_project(self.project_path, external)
+        external_contents = self.project_path.read_bytes()
+
+        with self.assertRaisesRegex(SubtitleProjectError, "ファイルが変更されました"):
+            controller.integrate_transcription_result(self.generated_path, preserved, self.project_path, "merge")
+
+        self.assertIsNotNone(controller.project)
+        self.assertEqual(controller.project["segments"][0]["text"], "old")
+        self.assertEqual(self.project_path.read_bytes(), external_contents)
 
     def test_changed_open_project_cannot_be_overwritten_by_old_result(self) -> None:
         controller = self._controller()

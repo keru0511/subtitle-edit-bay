@@ -6996,6 +6996,7 @@ Window {
 
     def test_transcription_save_failure_keeps_open_project_and_file(self) -> None:
         project_path = self._load_project()
+        self.assertTrue(self.app.saveProject())
         preserved = deepcopy(self.app._project)
         assert preserved is not None
         original_revision = self.app._project_revision
@@ -7027,6 +7028,46 @@ Window {
         self.assertEqual(self.app._project_revision, original_revision)
         self.assertEqual(Path(self.app.projectPath).resolve(), project_path.resolve())
         self.assertEqual(project_path.read_bytes(), original_contents)
+        self.assertTrue(generated_path.exists())
+        self.assertIn(str(generated_path), self.app.status)
+        self.assertEqual(load_project(generated_path)["segments"], generated["segments"])
+
+    def test_transcription_publish_failure_finishes_job_after_saving(self) -> None:
+        project_path = self._load_project()
+        self.assertTrue(self.app.saveProject())
+        preserved = deepcopy(self.app._project)
+        assert preserved is not None
+        generated = create_project(
+            video_path=preserved["video"]["path"],
+            output_dir=self.root,
+            duration_seconds=30.0,
+            segments=[{"id": "new-caption", "start": 5.0, "end": 6.0, "text": "new"}],
+        )
+        generated_path = self.root / "generated.subtitle-project.json"
+        save_project(generated_path, generated)
+        self.app._active_job = "transcribe"
+        self.app._running = True
+        self.app.workflow._state.transcription_merge_mode = "merge"
+        self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+        self.app.workflow._state.transcription_preserved_project_path = str(project_path)
+        self.app.workflow._state.transcription_generated_project_path = str(generated_path)
+
+        with (
+            patch.object(self.app.workflow, "_read_process_output"),
+            patch.object(
+                self.app.workflow,
+                "_publish_integrated_transcription_project",
+                side_effect=RuntimeError("preview unavailable"),
+            ),
+        ):
+            self.app._process_finished(0, None)
+
+        self.assertEqual(self.app.activeJob, "")
+        self.assertEqual(self.app.progressState, "error")
+        self.assertEqual(self.app.stage, "ERROR")
+        self.assertIn("画面の更新に失敗", self.app.status)
+        self.assertTrue(self.app.hasLastProcessDiagnostic)
+        self.assertEqual([segment["id"] for segment in load_project(project_path)["segments"]], ["segment-a", "new-caption"])
         self.assertFalse(generated_path.exists())
 
     def test_missing_transcription_artifact_does_not_load_stale_default_project(self) -> None:

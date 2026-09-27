@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import subprocess
+import traceback
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,8 +172,11 @@ class WorkflowFacade(FeatureFacade):
         finally:
             self._state.transcription_generated_project_path = ""
 
-    def _reset_transcription_integration_state(self) -> None:
-        self._cleanup_transcription_project_artifact()
+    def _reset_transcription_integration_state(self, *, preserve_generated_artifact: bool = False) -> None:
+        if preserve_generated_artifact:
+            self._state.transcription_generated_project_path = ""
+        else:
+            self._cleanup_transcription_project_artifact()
         self._state.transcription_merge_mode = ""
         self._state.transcription_preserved_project = None
         self._state.transcription_preserved_project_path = ""
@@ -610,6 +614,7 @@ class WorkflowFacade(FeatureFacade):
                 )
                 loaded = False
                 merged = False
+                integration_saved = False
                 integration_error = ""
                 if self._state.transcription_preserved_project is not None:
                     if generated_project_path is None or not generated_project_path.is_file():
@@ -625,9 +630,24 @@ class WorkflowFacade(FeatureFacade):
                         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
                             integration_error = f"文字起こし結果の統合に失敗しました: {error}"
                         else:
-                            self._publish_integrated_transcription_project(integrated)
-                            loaded = True
-                            merged = self._state.transcription_merge_mode == "merge"
+                            integration_saved = True
+                            try:
+                                self._publish_integrated_transcription_project(integrated)
+                            except Exception as error:
+                                integration_error = (
+                                    "文字起こし結果は保存しましたが画面の更新に失敗しました。"
+                                    f"プロジェクトを開き直してください: {error}"
+                                )
+                                backend._record_log(
+                                    traceback.format_exc(),
+                                    severity="ERROR",
+                                    component="transcribe",
+                                    job="transcribe",
+                                    stage="PUBLISH",
+                                )
+                            else:
+                                loaded = True
+                                merged = self._state.transcription_merge_mode == "merge"
                 else:
                     loaded = (
                         backend._load_project_path(generated_project_path, update_sources=False)
@@ -636,7 +656,18 @@ class WorkflowFacade(FeatureFacade):
                     )
                     if generated_project_path is not None and not loaded:
                         integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
-                self._reset_transcription_integration_state()
+                preserve_generated_artifact = bool(
+                    integration_error
+                    and not integration_saved
+                    and self._state.transcription_preserved_project is not None
+                    and generated_project_path is not None
+                    and generated_project_path.is_file()
+                )
+                if preserve_generated_artifact:
+                    integration_error += f"。生成結果は {generated_project_path} に残しました"
+                self._reset_transcription_integration_state(
+                    preserve_generated_artifact=preserve_generated_artifact
+                )
                 if preserved_workspace is not None:
                     backend.workspace.selectEditMode(preserved_workspace[0])
                     playhead = preserved_workspace[1]

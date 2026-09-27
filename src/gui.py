@@ -191,14 +191,14 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._updates_facade
 
     @property
-    def _project(self) -> dict[str, Any] | None:
+    def _project(self) -> dict[str, object] | None:
         controller = getattr(self, "_project_editor_controller", None)
         if controller is not None:
             return controller.project
         return getattr(self, "_project_value", None)
 
     @_project.setter
-    def _project(self, value: dict[str, Any] | None) -> None:
+    def _project(self, value: dict[str, object] | None) -> None:
         controller = getattr(self, "_project_editor_controller", None)
         if controller is None:
             self._project_value = value
@@ -254,12 +254,12 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             controller.project_revision = value
 
     @property
-    def _undo_stack(self) -> list[dict[str, Any]]:
+    def _undo_stack(self) -> list[dict[str, object]]:
         controller = getattr(self, "_project_editor_controller", None)
         return controller.undo_stack if controller is not None else getattr(self, "_undo_stack_value", [])
 
     @_undo_stack.setter
-    def _undo_stack(self, value: list[dict[str, Any]]) -> None:
+    def _undo_stack(self, value: list[dict[str, object]]) -> None:
         controller = getattr(self, "_project_editor_controller", None)
         if controller is None:
             self._undo_stack_value = value
@@ -268,12 +268,12 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             controller.undo_stack.extend(value)
 
     @property
-    def _redo_stack(self) -> list[dict[str, Any]]:
+    def _redo_stack(self) -> list[dict[str, object]]:
         controller = getattr(self, "_project_editor_controller", None)
         return controller.redo_stack if controller is not None else getattr(self, "_redo_stack_value", [])
 
     @_redo_stack.setter
-    def _redo_stack(self, value: list[dict[str, Any]]) -> None:
+    def _redo_stack(self, value: list[dict[str, object]]) -> None:
         controller = getattr(self, "_project_editor_controller", None)
         if controller is None:
             self._redo_stack_value = value
@@ -843,7 +843,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._updates_facade.updatePackageSize
 
     @Property("QVariantList", notify=segmentsChanged)
-    def subtitleSegments(self) -> list[dict[str, Any]]:
+    def subtitleSegments(self) -> list[dict[str, object]]:
         return self._subtitles_facade.subtitleSegments
 
     @Property("QVariantMap", notify=segmentsChanged)
@@ -851,15 +851,15 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._subtitles_facade.subtitleLayoutMetrics
 
     @Property("QVariantList", notify=shortVideoChanged)
-    def shortVideoClips(self) -> list[dict[str, Any]]:
+    def shortVideoClips(self) -> list[dict[str, object]]:
         return self._short_video_facade.shortVideoClips
 
     @Property("QVariantMap", notify=shortVideoChanged)
-    def shortVideoSettings(self) -> dict[str, Any]:
+    def shortVideoSettings(self) -> dict[str, object]:
         return self._short_video_facade.shortVideoSettings
 
     @Property("QVariantList", notify=highlightCandidatesChanged)
-    def highlightCandidates(self) -> list[dict[str, Any]]:
+    def highlightCandidates(self) -> list[dict[str, object]]:
         return self._short_video_facade.highlightCandidates
 
     @Property(bool, notify=highlightCandidatesChanged)
@@ -895,18 +895,18 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._subtitles_facade.segmentCount
 
     @staticmethod
-    def _subtitle_preview_signature(segment: dict[str, Any]) -> tuple[object, ...]:
+    def _subtitle_preview_signature(segment: dict[str, object]) -> tuple[object, ...]:
         return SubtitleFacade._subtitle_preview_signature(segment)
 
-    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, Any]:
+    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, object]:
         return self.shortVideo._short_video_section(for_edit=for_edit)
 
     @Property("QVariantList", notify=projectDataChanged)
-    def projectSpeakers(self) -> list[dict[str, Any]]:
+    def projectSpeakers(self) -> list[dict[str, object]]:
         return self._subtitles_facade.projectSpeakers
 
     @Property("QVariantList", notify=projectDataChanged)
-    def subtitleWaveforms(self) -> list[dict[str, Any]]:
+    def subtitleWaveforms(self) -> list[dict[str, object]]:
         return self._subtitles_facade.subtitleWaveforms
 
     @Property(bool, notify=audioPreviewCacheChanged)

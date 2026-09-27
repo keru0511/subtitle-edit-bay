@@ -102,7 +102,7 @@ class LegacyBackendCompatibility:
         return self._workspace_facade._reset_editor_timing()
 
     @Slot(int, result="QVariantMap")
-    def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+    def shortVideoClipAt(self, index: int) -> dict[str, object]:
         return self._short_video_facade.shortVideoClipAt(index)
 
     def _sync_subtitle_model(self) -> None:
@@ -113,30 +113,30 @@ class LegacyBackendCompatibility:
 
     def _on_project_history_applied(
         self,
-        entry: dict[str, Any],
+        entry: dict[str, object],
         _state: str,
     ) -> None:
         return self._subtitles_facade._on_project_history_applied(entry, _state)
 
-    def _preview_text_for_segment(self, segment: dict[str, Any]) -> str:
+    def _preview_text_for_segment(self, segment: dict[str, object]) -> str:
         return self._subtitles_facade._preview_text_for_segment(segment)
 
-    def _segment_view(self, segment: dict[str, Any], source_index: int | None = None) -> dict[str, Any]:
+    def _segment_view(self, segment: dict[str, object], source_index: int | None = None) -> dict[str, object]:
         return self._subtitles_facade._segment_view(segment, source_index)
 
-    def _find_segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
+    def _find_segment_by_id(self, segment_id: str) -> dict[str, object] | None:
         return self._subtitles_facade._find_segment_by_id(segment_id)
 
     def _short_video_clip_count(self) -> int:
         return self._short_video_facade._short_video_clip_count()
 
-    def _short_video_clip_view_at(self, index: int) -> dict[str, Any]:
+    def _short_video_clip_view_at(self, index: int) -> dict[str, object]:
         return self._short_video_facade._short_video_clip_view_at(index)
 
     def _refresh_short_video_clip_data(self) -> None:
         return self._short_video_facade._refresh_short_video_clip_data()
 
-    def _build_short_video_clip_view(self, clip: dict[str, Any], index: int) -> dict[str, Any]:
+    def _build_short_video_clip_view(self, clip: dict[str, object], index: int) -> dict[str, object]:
         return self._short_video_facade._build_short_video_clip_view(clip, index)
 
     @Slot()
@@ -160,7 +160,7 @@ class LegacyBackendCompatibility:
         return self._short_video_facade.moveShortVideoClip(from_index, to_index)
 
     @Slot(int, "QVariantMap", result=bool)
-    def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+    def updateShortVideoClip(self, index: int, fields: dict[str, object]) -> bool:
         return self._short_video_facade.updateShortVideoClip(index, fields)
 
     @Slot(str, result=bool)
@@ -176,7 +176,7 @@ class LegacyBackendCompatibility:
         return self._short_video_facade.setShortVideoTransition(transition_type, duration)
 
     @Slot("QVariantMap", result=bool)
-    def setShortVideoBgm(self, fields: dict[str, Any]) -> bool:
+    def setShortVideoBgm(self, fields: dict[str, object]) -> bool:
         return self._short_video_facade.setShortVideoBgm(fields)
 
     @Slot(int, int, int, result=bool)
@@ -218,7 +218,7 @@ class LegacyBackendCompatibility:
         return self._short_video_facade._update_highlight_progress(generation, value)
 
     @Slot(int, result="QVariantMap")
-    def segmentAt(self, index: int) -> dict[str, Any]:
+    def segmentAt(self, index: int) -> dict[str, object]:
         return self._subtitles_facade.segmentAt(index)
 
     @Slot(int, str, result=str)
@@ -226,11 +226,11 @@ class LegacyBackendCompatibility:
         return self._subtitles_facade.formatSubtitlePreview(index, text)
 
     @Slot(float, result="QVariantList")
-    def activeSubtitleSegments(self, seconds: float) -> list[dict[str, Any]]:
+    def activeSubtitleSegments(self, seconds: float) -> list[dict[str, object]]:
         return self._subtitles_facade.activeSubtitleSegments(seconds)
 
     @Slot(float, float, result="QVariantList")
-    def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, Any]]:
+    def visibleSubtitleSegments(self, start: float, end: float) -> list[dict[str, object]]:
         return self._subtitles_facade.visibleSubtitleSegments(start, end)
 
     def _reset_audio_preview_cache(self) -> None:
@@ -255,12 +255,12 @@ class LegacyBackendCompatibility:
     def _enabled_audio_mixer_channel_ids(self) -> set[str]:
         return self._audio_facade._enabled_audio_mixer_channel_ids()
 
-    def _audio_mixer_channel_view(self, channel: dict[str, Any]) -> dict[str, Any]:
+    def _audio_mixer_channel_view(self, channel: dict[str, object]) -> dict[str, object]:
         return self._audio_facade._audio_mixer_channel_view(channel)
 
     def _audio_mixer_preview_state(
         self,
-    ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, float]]:
+    ) -> tuple[list[tuple[dict[str, object], dict[str, object]]], dict[str, float]]:
         return self._audio_facade._audio_mixer_preview_state()
 
     def _notify_audio_mixer_preview(self, *, structure_changed: bool) -> None:
@@ -383,7 +383,7 @@ class LegacyBackendCompatibility:
         return self._audio_facade._fallback_video_tracks()
 
     @Slot(int, "QVariantMap")
-    def updateAudioMixChannel(self, index: int, changes: dict[str, Any]) -> None:
+    def updateAudioMixChannel(self, index: int, changes: dict[str, object]) -> None:
         return self._audio_facade.updateAudioMixChannel(index, changes)
 
     def start_codex_audio_mix_proposal(
@@ -391,7 +391,7 @@ class LegacyBackendCompatibility:
         *,
         intent: str,
         revision: int,
-        context: Mapping[str, Any] | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> bool:
         return self._audio_facade.start_codex_audio_mix_proposal(intent=intent, revision=revision, context=context)
 
@@ -406,7 +406,7 @@ class LegacyBackendCompatibility:
     @Slot("QVariantList", bool, result=bool)
     def applyAudioMixProposal(
         self,
-        selected_operation_ids: list[Any] | None = None,
+        selected_operation_ids: list[object] | None = None,
         allow_silence: bool = False,
     ) -> bool:
         return self._audio_facade.applyAudioMixProposal(selected_operation_ids, allow_silence)
@@ -440,8 +440,8 @@ class LegacyBackendCompatibility:
 
     def _commit_segment_change(
         self,
-        before: list[dict[str, Any]],
-        after: list[dict[str, Any]],
+        before: list[dict[str, object]],
+        after: list[dict[str, object]],
         selected_id: str | None = None,
         *,
         reflow_layout: bool = True,
@@ -483,11 +483,11 @@ class LegacyBackendCompatibility:
     def selectSegmentAtTime(self, seconds: float) -> None:
         return self._subtitles_facade.selectSegmentAtTime(seconds)
 
-    def _edit_number(self, value: Any, label: str) -> float | None:
+    def _edit_number(self, value: object, label: str) -> float | None:
         return self._subtitles_facade._edit_number(value, label)
 
     @Slot(int, "QVariantMap")
-    def updateSegment(self, index: int, changes: dict[str, Any]) -> None:
+    def updateSegment(self, index: int, changes: dict[str, object]) -> None:
         return self._subtitles_facade.updateSegment(index, changes)
 
     def _snap_time(self, value: float, moving_index: int, grid_seconds: float) -> float:

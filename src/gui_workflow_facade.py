@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import subprocess
+from collections.abc import Mapping, Sequence
 import traceback
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -15,6 +15,7 @@ from PySide6.QtCore import (
 )
 
 from .qt_decorators import Property, Signal, Slot
+from .data_boundary import coerce_float, coerce_int, is_string_object_mapping
 from .gui_state import build_gui_transcribe_command
 from .workflow_actions import (
     ActionCapability,
@@ -47,7 +48,7 @@ class WorkflowRuntimeState:
     pending_process_error: str = ""
     process_output_tail: str = ""
     transcription_merge_mode: str = ""
-    transcription_preserved_project: dict[str, Any] | None = None
+    transcription_preserved_project: dict[str, object] | None = None
     transcription_preserved_project_path: str = ""
     transcription_generated_project_path: str = ""
 
@@ -78,7 +79,7 @@ class WorkflowFacade(FeatureFacade):
         return backend._active_job
 
     @Property("QVariantList", notify=progressDetailsChanged)
-    def progressSteps(self) -> list[dict[str, Any]]:
+    def progressSteps(self) -> list[dict[str, object]]:
         return self._state.processing_progress.as_list()
 
     @Property(int, notify=progressDetailsChanged)
@@ -110,7 +111,7 @@ class WorkflowFacade(FeatureFacade):
         return backend._ass_path
 
     @Slot("QVariantMap", str)
-    def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+    def transcribeProject(self, settings: dict[str, object], mode: str) -> None:
         backend = self._backend
         if backend._running:
             return
@@ -137,7 +138,7 @@ class WorkflowFacade(FeatureFacade):
         )
         self.startTranscription(settings, True, str(generated_project_path))
 
-    def _publish_integrated_transcription_project(self, project: dict[str, Any]) -> None:
+    def _publish_integrated_transcription_project(self, project: dict[str, object]) -> None:
         """正本確定後に、プロジェクト依存の画面状態を更新する。"""
 
         backend = self._backend
@@ -212,7 +213,7 @@ class WorkflowFacade(FeatureFacade):
         backend._set_status(status, "STARTING")
         backend._start_process(command)
 
-    def _has_audio_source(self, audio_files: list[str], audio_tracks: list[dict[str, Any]] | None = None) -> bool:
+    def _has_audio_source(self, audio_files: list[str], audio_tracks: Sequence[Mapping[str, object]] | None = None) -> bool:
         backend = self._backend
         if audio_files:
             return True
@@ -222,7 +223,7 @@ class WorkflowFacade(FeatureFacade):
                 return True
         return False
 
-    def _default_video_audio_track(self, audio_tracks: list[dict[str, Any]] | None = None) -> str:
+    def _default_video_audio_track(self, audio_tracks: Sequence[Mapping[str, object]] | None = None) -> str:
         backend = self._backend
         tracks = audio_tracks if audio_tracks is not None else backend._audio_tracks
         for track in tracks:
@@ -243,12 +244,12 @@ class WorkflowFacade(FeatureFacade):
         )
 
     @Property("QVariantMap", notify=actionCapabilitiesChanged)
-    def actionCapabilities(self) -> dict[str, Any]:
+    def actionCapabilities(self) -> dict[str, object]:
         backend = self._backend
         return self.actionCapabilitiesForDevice(str(backend._settings.get("device", "cuda")))
 
     @Slot(str, result="QVariantMap")
-    def actionCapabilitiesForDevice(self, device: str) -> dict[str, Any]:
+    def actionCapabilitiesForDevice(self, device: str) -> dict[str, object]:
         backend = self._backend
         transcribe = self._transcription_capability(device)
         normal = render_capability(
@@ -293,7 +294,7 @@ class WorkflowFacade(FeatureFacade):
     @Slot("QVariantMap", bool)
     def startTranscription(
         self,
-        settings: dict[str, Any],
+        settings: dict[str, object],
         overwrite_project: bool = False,
         project_path: str | None = None,
     ) -> None:
@@ -322,26 +323,30 @@ class WorkflowFacade(FeatureFacade):
         video_audio_track = ""
         if not audio_files:
             video_audio_track = str(settings.get("reference_track") or self._default_video_audio_track(audio_tracks))
-        reference_audio = settings.get("reference_audio")
-        if not reference_audio and audio_files:
+        reference_audio_value = settings.get("reference_audio")
+        reference_audio = str(reference_audio_value) if reference_audio_value else None
+        if reference_audio is None and audio_files:
             reference_audio = audio_files[0]
         reference_track = str(settings.get("reference_track") or "")
-        adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
+        adjustment = coerce_float(settings.get("alignment_offset_adjustment") or 0.0)
         if not backend.saveSettings(settings):
             if project_path is not None:
                 self._reset_transcription_integration_state()
             return
         self._state.transcription_generated_project_path = str(Path(project_path).resolve()) if project_path else ""
-        project_transcription = (self.project_editor.project or {}).get("transcription") or {}
+        project_transcription = (self.project_editor.project or {}).get("transcription")
+        context_base_dir = (
+            project_transcription.get("context_base_dir")
+            if is_string_object_mapping(project_transcription)
+            else None
+        )
         command = build_gui_transcribe_command(
             backend.gui_config_path,
             video=selection.video,
             audio_files=audio_files,
             output_dir=str(project_work_directory(backend.projectSavePath)),
             render_output_dir=backend.videoOutputDirectory,
-            context_base_dir=str(
-                project_transcription.get("context_base_dir") or Path(backend.projectSavePath).parent
-            ),
+            context_base_dir=str(context_base_dir or Path(backend.projectSavePath).parent),
             reference_audio=reference_audio,
             reference_track=reference_track,
             video_audio_track=video_audio_track,
@@ -352,14 +357,14 @@ class WorkflowFacade(FeatureFacade):
         self._start_command(command, "transcribe", "文字起こしを開始しています")
 
     @Slot("QVariantMap")
-    def startProcessing(self, settings: dict[str, Any]) -> None:
+    def startProcessing(self, settings: dict[str, object]) -> None:
         self.startTranscription(settings)
 
     @Slot("QVariantMap")
-    def renderVideo(self, settings: dict[str, Any]) -> None:
+    def renderVideo(self, settings: dict[str, object]) -> None:
         self._start_render(settings, short=False)
 
-    def _start_render(self, settings: dict[str, Any], *, short: bool) -> None:
+    def _start_render(self, settings: dict[str, object], *, short: bool) -> None:
         backend = self._backend
         if backend._running or self.project_editor.project is None:
             return
@@ -490,7 +495,7 @@ class WorkflowFacade(FeatureFacade):
         backend = self._backend
         for event in parse_progress_events(output):
             try:
-                target_duration = float(event.get("duration", 0.0))
+                target_duration = coerce_float(event.get("duration", 0.0))
             except (TypeError, ValueError):
                 target_duration = 0.0
             if target_duration > 0.0:
@@ -673,8 +678,8 @@ class WorkflowFacade(FeatureFacade):
                 if preserved_workspace is not None:
                     backend.workspace.selectEditMode(preserved_workspace[0])
                     playhead = preserved_workspace[1]
-                    basis = playhead["basis"]
-                    backend.workspace.setEditorPlayhead(playhead[f"{basis}PositionMs"], basis)
+                    basis = str(playhead["basis"])
+                    backend.workspace.setEditorPlayhead(coerce_int(playhead[f"{basis}PositionMs"]), basis)
                 if integration_error:
                     self._finish_processing_progress("error")
                     backend._set_status(integration_error, "ERROR")

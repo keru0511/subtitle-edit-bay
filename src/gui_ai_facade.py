@@ -6,7 +6,7 @@ import math
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping
 from uuid import uuid4
 
 from PySide6.QtCore import (
@@ -31,6 +31,7 @@ from .codex_app_server_client import CodexAppServerClient
 from .codex_actions import ActionDispatcher, ActionResult, ActionScope
 from .codex_chat_routing import route_subtitle_chat_request
 from .codex_runtime import detect_codex
+from .data_boundary import coerce_float, is_string_object_dict_list
 from .gui_codex_chat_state import (
     CodexChatController,
     CodexChatError,
@@ -104,7 +105,7 @@ class AIChatFacade(FeatureFacade):
         return self.services.codex_session.snapshot.error
 
     @Property("QVariantMap", notify=codexProposalChanged)
-    def codexProposal(self) -> dict[str, Any]:
+    def codexProposal(self) -> dict[str, object]:
         backend = self._backend
         return dict(backend._codex_proposal or {})
 
@@ -137,7 +138,7 @@ class AIChatFacade(FeatureFacade):
         return self.services.chat_router.snapshot.error
 
     @Property("QVariantList", notify=codexChatChanged)
-    def codexModels(self) -> list[dict[str, Any]]:
+    def codexModels(self) -> list[dict[str, object]]:
         return [dict(item) for item in self.services.chat_router.snapshot.models]
 
     @Property(str, notify=codexChatChanged)
@@ -149,7 +150,7 @@ class AIChatFacade(FeatureFacade):
         return self.services.chat_router.snapshot.model_error
 
     @Property("QVariantList", notify=codexChatChanged)
-    def codexChatMessages(self) -> list[dict[str, Any]]:
+    def codexChatMessages(self) -> list[dict[str, object]]:
         return [dict(item) for item in self.services.chat_router.snapshot.messages]
 
     @Property(str, notify=aiChatChanged)
@@ -161,7 +162,7 @@ class AIChatFacade(FeatureFacade):
         return self.services.chat_router.active_provider_name
 
     @Property("QVariantList", notify=aiChatChanged)
-    def aiChatProviders(self) -> list[dict[str, Any]]:
+    def aiChatProviders(self) -> list[dict[str, object]]:
         return self.services.chat_router.available_providers()
 
     @Property(bool, notify=aiChatChanged)
@@ -253,9 +254,9 @@ class AIChatFacade(FeatureFacade):
         route = route_subtitle_chat_request(
             message,
             requested_scope,
-            project_loaded=self.project_editor.project is not None,
+            project_loaded=backend.projectLoaded,
             has_selection=self.project_editor.selected_segment_index >= 0,
-            current_time=float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
+            current_time=coerce_float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0,
             range_start=range_start,
             range_end=range_end,
         )
@@ -272,21 +273,22 @@ class AIChatFacade(FeatureFacade):
             self.services.codex_chat.fail_proposal("字幕を編集するには、先に編集プロジェクトを開いてください。")
             return False
         if route.scope == "current":
-            backend._codex_current_time = float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0
+            backend._codex_current_time = coerce_float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0
         scope_id = f"chat-subtitle-{uuid4().hex}"
-        payload: dict[str, Any] = {
+        args: dict[str, object] = {
+            "intent": str(message).strip(),
+            "selection_scope": route.scope,
+        }
+        payload: dict[str, object] = {
             "schema_version": 1,
             "kind": "propose",
             "type": "propose_subtitle_edit",
-            "args": {
-                "intent": str(message).strip(),
-                "selection_scope": route.scope,
-            },
+            "args": args,
             "scope_id": scope_id,
             "project_revision": self.project_editor.project_revision,
         }
         if route.scope == "time_range":
-            payload["args"].update({"range_start": route.range_start, "range_end": route.range_end})
+            args.update({"range_start": route.range_start, "range_end": route.range_end})
         result = self.dispatch_codex_action(
             payload,
             trusted_scope=ActionScope(
@@ -371,7 +373,7 @@ class AIChatFacade(FeatureFacade):
         ):
             return False
         scope_id = f"chat-audio-{uuid4().hex}"
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "schema_version": 1,
             "kind": "propose",
             "type": "propose_audio_mix",
@@ -482,21 +484,16 @@ class AIChatFacade(FeatureFacade):
             return
         if self.services.codex_session.running or self.services.audio_mix_session.running:
             return
-        selected_ids = (
-            {str(self.project_editor.project.get("segments", [])[self.project_editor.selected_segment_index].get("id"))}
-            if 0 <= self.project_editor.selected_segment_index < len(self.project_editor.project.get("segments", []))
-            else set()
-        )
+        segments = self.project_editor.project.get("segments")
+        if not is_string_object_dict_list(segments):
+            backend._set_status("字幕セグメントの形式が不正です", "ERROR")
+            return
+        selected_index = self.project_editor.selected_segment_index
+        selected = segments[selected_index] if 0 <= selected_index < len(segments) else None
+        selected_ids = {str(selected.get("id"))} if selected is not None else set()
         current_time = backend._codex_current_time
         if current_time is None:
-            if 0 <= self.project_editor.selected_segment_index < len(self.project_editor.project.get("segments", [])):
-                current_time = float(
-                    self.project_editor.project["segments"][self.project_editor.selected_segment_index].get(
-                        "start", range_start
-                    )
-                )
-            else:
-                current_time = range_start
+            current_time = coerce_float(selected.get("start", range_start)) if selected is not None else range_start
         try:
             context = build_codex_context(
                 self.project_editor.project,
@@ -535,7 +532,7 @@ class AIChatFacade(FeatureFacade):
         backend._set_status("Codex編集を停止しました", "CODEX")
 
     @Slot("QVariantList")
-    def applyCodexProposal(self, selected_operation_ids: list[Any] | None = None) -> None:
+    def applyCodexProposal(self, selected_operation_ids: list[object] | None = None) -> None:
         backend = self._backend
         if backend._running:
             return
@@ -543,6 +540,9 @@ class AIChatFacade(FeatureFacade):
             backend._set_status("適用するCodex編集案がありません", "CHECK")
             return
         before = deepcopy(self.project_editor.project.get("segments", []))
+        if not is_string_object_dict_list(before):
+            backend._set_status("字幕セグメントの形式が不正です", "ERROR")
+            return
         try:
             result = self.services.codex_session.apply_to_project(
                 self.project_editor.project,
@@ -551,8 +551,16 @@ class AIChatFacade(FeatureFacade):
                 current_revision=self.project_editor.project_revision,
             )
             after = result.project.get("segments", [])
-            before_by_id = {item["id"]: item for item in before}
-            after_by_id = {item["id"]: item for item in after}
+            if not is_string_object_dict_list(after):
+                raise ValueError("字幕セグメントの形式が不正です")
+            before_by_id: dict[str, dict[str, object]] = {}
+            after_by_id: dict[str, dict[str, object]] = {}
+            for target, items in ((before_by_id, before), (after_by_id, after)):
+                for item in items:
+                    segment_id = item.get("id")
+                    if not isinstance(segment_id, str):
+                        raise ValueError("字幕セグメントIDが不正です")
+                    target[segment_id] = item
             changed_ids = {
                 segment_id
                 for segment_id in before_by_id.keys() | after_by_id.keys()
@@ -579,7 +587,7 @@ class AIChatFacade(FeatureFacade):
 
     def dispatch_codex_action(
         self,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, object],
         *,
         trusted_scope: ActionScope,
     ) -> ActionResult:
@@ -611,7 +619,7 @@ class AIChatFacade(FeatureFacade):
         backend = self._backend
         backend.codexMessageChanged.emit()
 
-    def _on_codex_proposal(self, proposal: Mapping[str, Any]) -> None:
+    def _on_codex_proposal(self, proposal: Mapping[str, object]) -> None:
         backend = self._backend
         backend._codex_proposal = dict(proposal)
         backend.codexProposalChanged.emit()
@@ -629,7 +637,7 @@ class AIChatFacade(FeatureFacade):
             self.services.codex_chat.fail_proposal("Codexへログインしてください。")
             backend._set_status("Codexへログインしてください", "CHECK")
 
-    def _on_codex_audio_mix_proposal(self, proposal: Mapping[str, Any]) -> None:
+    def _on_codex_audio_mix_proposal(self, proposal: Mapping[str, object]) -> None:
         backend = self._backend
         if self.project_editor.project is None:
             self.services.codex_chat.fail_proposal("編集プロジェクトが閉じられました。", cancelled=False)

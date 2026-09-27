@@ -40,7 +40,7 @@ CI_RELEASE_CANDIDATE_PROFILE = "release-candidate-v1"
 CI_STANDARD_PROFILE = "standard-v1"
 CI_ALWAYS_REQUIRED_JOB_NAMES = (
     "Classify validation ownership",
-    "Python quality checks",
+    "Python quality and No Any",
     "Windows runtime tests",
     "Windows launcher tests",
     "FFmpeg 6 compatibility",

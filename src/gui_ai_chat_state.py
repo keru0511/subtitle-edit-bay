@@ -10,12 +10,38 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from typing import Callable, Mapping, cast
+from typing import Callable, Mapping, Protocol
 
-from .gui_codex_chat_state import CodexChatController, CodexChatSnapshot
+from .gui_codex_chat_state import CodexChatSnapshot
 
 
 ProviderStateCallback = Callable[[CodexChatSnapshot], None]
+
+
+class ChatController(Protocol):
+    """Provider router が使うチャット制御の最小契約。"""
+
+    @property
+    def snapshot(self) -> CodexChatSnapshot: ...
+
+    def connect(self) -> None: ...
+    def reconnect(self) -> None: ...
+    def login(self, *, relogin: bool = False) -> None: ...
+    def logout(self) -> None: ...
+    def select_model(self, model: str) -> None: ...
+    def send_message(self, text: str) -> None: ...
+    def begin_proposal(
+        self,
+        text: str,
+        *,
+        content_type: str = "subtitle_proposal",
+        pending_text: str = "",
+    ) -> bool: ...
+    def complete_proposal(self, summary: str) -> None: ...
+    def fail_proposal(self, message: str, *, cancelled: bool = False) -> None: ...
+    def interrupt(self) -> None: ...
+    def new_chat(self) -> None: ...
+    def shutdown(self) -> None: ...
 
 
 class AIProviderChatRouter:
@@ -23,7 +49,7 @@ class AIProviderChatRouter:
 
     def __init__(
         self,
-        controllers: Mapping[str, CodexChatController],
+        controllers: Mapping[str, ChatController],
         *,
         preferred_provider: str = "codex",
         on_state: ProviderStateCallback | None = None,
@@ -56,7 +82,7 @@ class AIProviderChatRouter:
         return self.snapshot.provider_name
 
     @property
-    def active_controller(self) -> CodexChatController:
+    def active_controller(self) -> ChatController:
         with self._lock:
             return self._controllers[self._active_provider_id]
 
@@ -71,10 +97,10 @@ class AIProviderChatRouter:
         return snapshot
 
     @property
-    def controllers(self) -> Mapping[str, CodexChatController]:
+    def controllers(self) -> Mapping[str, ChatController]:
         return dict(self._controllers)
 
-    def controller(self, provider_id: str) -> CodexChatController | None:
+    def controller(self, provider_id: str) -> ChatController | None:
         return self._controllers.get(str(provider_id).strip())
 
     def connect(self) -> None:
@@ -232,7 +258,6 @@ def _provider_mapping(
     snapshot: CodexChatSnapshot,
     selected: bool,
 ) -> dict[str, object]:
-    models = cast(tuple[Mapping[str, object], ...], snapshot.models)
     return {
         "id": provider_id,
         "label": snapshot.provider_name,
@@ -243,7 +268,7 @@ def _provider_mapping(
         "auth_label": snapshot.auth_label,
         "login_url": snapshot.login_url,
         "login_available": snapshot.login_available,
-        "models": [dict(model) for model in models],
+        "models": [dict(model) for model in snapshot.models],
         "model_selection_supported": snapshot.model_selection_supported,
         "selected_model": snapshot.selected_model,
         "error": snapshot.error,

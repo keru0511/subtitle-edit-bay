@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
 from src.ai_provider import (
     AIModel,
     AIProviderEvent,
+    AIProviderListener,
     AIProviderPrompt,
     AIProviderPromptResult,
     AIProviderSession,
@@ -16,7 +18,7 @@ from src.gui_codex_chat_state import CodexChatController
 from tests.typed_case import TypedTestCase
 
 
-def wait_for(predicate, timeout: float = 2.0) -> None:
+def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
     deadline = time.time() + timeout
     while not predicate() and time.time() < deadline:
         time.sleep(0.01)
@@ -35,7 +37,7 @@ class FakeProvider:
         )
         self._authenticated = authenticated
         self._fail_send = fail_send
-        self._listeners = []
+        self._listeners: list[AIProviderListener] = []
         self.sessions: list[AIProviderSession] = []
         self.prompts: list[AIProviderPrompt] = []
         self.cancelled: tuple[str, str] | None = None
@@ -44,10 +46,10 @@ class FakeProvider:
     def state(self) -> AIProviderState:
         return self._state
 
-    def subscribe(self, listener) -> None:
+    def subscribe(self, listener: AIProviderListener) -> None:
         self._listeners.append(listener)
 
-    def unsubscribe(self, listener) -> None:
+    def unsubscribe(self, listener: AIProviderListener) -> None:
         if listener in self._listeners:
             self._listeners.remove(listener)
 
@@ -59,9 +61,7 @@ class FakeProvider:
 
     def connect(self, *, force: bool = False) -> AIProviderState:
         if not self._authenticated:
-            return self._publish(
-                AIProviderState(availability="available", auth_state="unauthenticated")
-            )
+            return self._publish(AIProviderState(availability="available", auth_state="unauthenticated"))
         return self._publish(
             AIProviderState(
                 availability="available",
@@ -76,15 +76,11 @@ class FakeProvider:
         return self._state
 
     def login(self, *, relogin: bool = False) -> AIProviderState:
-        return self._publish(
-            AIProviderState(availability="available", auth_state="login_pending")
-        )
+        return self._publish(AIProviderState(availability="available", auth_state="login_pending"))
 
     def logout(self) -> AIProviderState:
         self._authenticated = False
-        return self._publish(
-            AIProviderState(availability="available", auth_state="unauthenticated")
-        )
+        return self._publish(AIProviderState(availability="available", auth_state="unauthenticated"))
 
     def select_model(self, model_id: str) -> AIProviderState:
         return self._publish(
@@ -125,6 +121,9 @@ class FakeProvider:
 
     def cancel_active_turn(self, *, session_id: str, turn_id: str) -> None:
         self.cancelled = (session_id, turn_id)
+
+    def cancel(self, *, session_id: str, turn_id: str) -> None:
+        self.cancel_active_turn(session_id=session_id, turn_id=turn_id)
 
     def close(self) -> None:
         self._state = AIProviderState(availability="disconnected")
@@ -182,4 +181,3 @@ class AIProviderControllerTests(TypedTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

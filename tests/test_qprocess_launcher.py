@@ -46,10 +46,7 @@ class QProcessLauncherTest(TypedTestCase):
             command = [
                 str(python),
                 "-c",
-                (
-                    "from pathlib import Path; import sys; "
-                    "print(Path(sys.argv[1]).read_text(encoding='utf-8'))"
-                ),
+                ("from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text(encoding='utf-8'))"),
                 str(media),
             ]
 
@@ -64,8 +61,8 @@ class QProcessLauncherTest(TypedTestCase):
 
             self.assertTrue(process.waitForStarted(10_000), process.errorString())
             self.assertTrue(process.waitForFinished(30_000), process.errorString())
-            output = bytes(process.readAllStandardOutput()).decode("utf-8").strip()
-            error = bytes(process.readAllStandardError()).decode("utf-8").strip()
+            output = bytes(process.readAllStandardOutput().data()).decode("utf-8").strip()
+            error = bytes(process.readAllStandardError().data()).decode("utf-8").strip()
             self.assertEqual(process.exitCode(), 0, error)
             self.assertEqual(output, "bound")
             self.assertTrue(launch.program.isascii())

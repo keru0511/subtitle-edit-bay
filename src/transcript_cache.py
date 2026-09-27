@@ -32,7 +32,7 @@ def build_transcript_cache_fingerprint(
     model: str,
     device: str,
     compute_type: str,
-    language: str,
+    language: str | None,
     vad_onset: float | None,
     vad_offset: float | None,
     initial_prompt: str = "",

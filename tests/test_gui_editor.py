@@ -2599,7 +2599,7 @@ Window {
                 time.sleep(0.01)
 
         self.assertFalse(self.app.audioPreviewPreparing)
-        self.assertTrue(self.app.audioPreviewClockUrl.endswith(".mka"))
+        self.assertTrue(self.app.audioPreviewClockUrl.endswith(".mkv"))
         self.assertEqual(set(self.app._audio_preview_cache_paths), {entry.channel_id for entry in entries})
         self.assertTrue(all(
             _string_at(channel, "preview_url").endswith(".mka")
@@ -8071,6 +8071,100 @@ Window {
             lambda: player.playbackState() == QMediaPlayer.PlaybackState.PausedState,
             description="ミキサーの一時停止",
         )
+
+    @typed_skip_unless_method(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    def test_mixer_rejects_incomplete_preview_without_playing_partial_mix(self) -> None:
+        self._load_project(duration_seconds=8.0)
+        self._generate_black_test_video_with_audio(
+            self.root / "game.mkv", self.root / "1-alice.flac", duration_seconds=8,
+        )
+        self.app.audio.clearAudioPreviewCache()
+        self.app.audio.prepareAudioMixerPreview()
+        self.gui.wait_until(
+            lambda: not self.app.audioPreviewPreparing and len(self.app._audio_preview_cache_paths) == 2,
+            description="実音声のプレビュー準備",
+            timeout_ms=15_000,
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        player = self.gui.find_object(window, "mixerPlayer", QMediaPlayer)
+        self.gui.wait_until(
+            lambda: player.duration() >= 7_500,
+            description="ミキサーの再生可能状態",
+            timeout_ms=15_000,
+        )
+        self.app.updateAudioMixChannel(1, {"enabled": True})
+        missing_id = str(self.app.audioMixerChannels[1]["id"])
+        self.app._audio_preview_cache_paths.pop(missing_id)
+        self.app._notify_audio_mixer_preview(structure_changed=True)
+        self.app.projectDataChanged.emit()
+        self.app.processEvents()
+
+        self.assertFalse(self.app.audioMixerPreviewComplete)
+        self.assertEqual([item["kind"] for item in self.app.audioMixerPreviewChannels], ["video"])
+        self.assertFalse(self._quick_item(window, "mixerPlayButton").isEnabled())
+        self.assertIn("準備できません", _qt_string(self._quick_item(window, "mixerAudioPreviewCacheSummary"), "text"))
+
+    @typed_skip_unless_method(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
+    def test_mixer_transport_uses_video_duration_after_short_internal_audio_is_disabled(self) -> None:
+        self._load_project(duration_seconds=8.0)
+        subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                "color=c=black:s=160x90:r=24:d=8", "-f", "lavfi", "-i",
+                "sine=frequency=440:sample_rate=48000:duration=2", "-map", "0:v",
+                "-map", "1:a", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", str(self.root / "game.mkv"),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                "sine=frequency=880:sample_rate=48000:duration=8", "-c:a", "flac",
+                str(self.root / "1-alice.flac"),
+            ],
+            check=True,
+        )
+        self.app.audio.clearAudioPreviewCache()
+        self.app.audio.prepareAudioMixerPreview()
+        self.gui.wait_until(
+            lambda: not self.app.audioPreviewPreparing and len(self.app._audio_preview_cache_paths) == 2,
+            description="長さの異なる音声の準備",
+            timeout_ms=15_000,
+        )
+        self.app.updateAudioMixChannel(0, {"enabled": False})
+        self.app.updateAudioMixChannel(1, {"enabled": True})
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        player = self.gui.find_object(window, "mixerPlayer", QMediaPlayer)
+        self.gui.wait_until(
+            lambda: player.duration() >= 7_500,
+            description="動画尺まで移動できるミキサー",
+            timeout_ms=15_000,
+        )
+        self.assertTrue(self.app.audioMixerPreviewComplete)
+        self.assertLess(player.duration(), 8_500)
+        self._click(window, self._quick_item(window, "mixerForwardButton"))
+        self.gui.wait_until(
+            lambda: 4_800 <= player.position() <= 5_200,
+            description="短い内蔵音声より後へのシーク",
+        )
+
+    def test_mixer_rebuild_button_is_disabled_during_preview_generation(self) -> None:
+        self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "audioMixerOpenButton"))
+        button = self._quick_item(window, "mixerClearAudioPreviewCacheButton")
+        controller = self.app._audio_preview_controller
+        controller.preparing = True
+        self.app.audioPreviewCacheChanged.emit()
+        try:
+            self.app.processEvents()
+            self.assertFalse(button.isEnabled())
+        finally:
+            controller.preparing = False
+            self.app.audioPreviewCacheChanged.emit()
 
     def test_audio_mixer_works_without_main_workflow_context(self) -> None:
         self._load_project()

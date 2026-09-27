@@ -86,6 +86,7 @@ class AudioPreviewController(QObject):
         self._cache_request = 0
         self._generation = 0
         self._preparing = False
+        self._force_cache_rebuild = False
         self._cache_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="audio-preview",
@@ -212,14 +213,14 @@ class AudioPreviewController(QObject):
     def audio_preview_clock_url(self) -> str:
         if self._project is None:
             return ""
-        channels = self._channels()
-        ordered = [channel for channel in channels if channel.get("kind") != "external"]
-        ordered.extend(channel for channel in channels if channel.get("kind") == "external")
-        for channel in ordered:
-            cache_path = self._cache_paths.get(str(channel.get("id", "")), "")
-            if cache_path and Path(cache_path).is_file():
-                return QUrl.fromLocalFile(cache_path).toString()
-        return ""
+        video = self._project.get("video")
+        if not is_string_object_mapping(video):
+            return ""
+        raw_path = video.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return ""
+        video_path = Path(raw_path)
+        return QUrl.fromLocalFile(video_path).toString() if video_path.is_file() else ""
 
     def reset_cache(self) -> None:
         self.stop_preview()
@@ -227,6 +228,7 @@ class AudioPreviewController(QObject):
         self._generation += 1
         self._cache_paths.clear()
         self._preparing = False
+        self._force_cache_rebuild = False
         future = self._cache_future
         if future is not None and not future.done():
             future.cancel()
@@ -238,8 +240,12 @@ class AudioPreviewController(QObject):
         project = self._project
         if project is None:
             return
+        future = self._cache_future
+        if future is not None and not future.done():
+            return
+        force_rebuild = self._force_cache_rebuild
         entries = audio_preview_cache_entries(project, self.cache_root)
-        cached_paths = cached_audio_preview_paths(entries)
+        cached_paths = {} if force_rebuild else cached_audio_preview_paths(entries)
         protected_paths = [Path(path) for path in cached_paths.values()]
         required_ids = {entry.channel_id for entry in entries}
         if cached_paths != self._cache_paths:
@@ -247,7 +253,7 @@ class AudioPreviewController(QObject):
             self._cache_paths.update(cached_paths)
             self.notify_preview(structure_changed=True)
             self.projectDataChanged.emit()
-        if required_ids.issubset(self._cache_paths):
+        if not force_rebuild and required_ids.issubset(self._cache_paths):
             if self._preparing:
                 self._preparing = False
                 self.cacheChanged.emit()
@@ -257,10 +263,6 @@ class AudioPreviewController(QObject):
             self.cacheChanged.emit()
             self.statusChanged.emit("音声プレビューの準備にはFFmpegが必要です", "SETUP")
             return
-        future = self._cache_future
-        if future is not None and not future.done():
-            return
-
         self._cache_request += 1
         request_id = self._cache_request
         project_snapshot = deepcopy(project)
@@ -269,12 +271,13 @@ class AudioPreviewController(QObject):
         self.cacheChanged.emit()
         self.projectDataChanged.emit()
         future = self._cache_executor.submit(
-            self._prepare_cache,
+            self._prepare_cache_after_clear if force_rebuild else self._prepare_cache,
             project_snapshot,
             cache_root,
             protected_paths=protected_paths,
         )
         self._cache_future = future
+        self._force_cache_rebuild = False
 
         def report_completion(done: Future[AudioPreviewCacheResult]) -> None:
             try:
@@ -284,6 +287,17 @@ class AudioPreviewController(QObject):
             self.cacheCompleted.emit(request_id, result)
 
         future.add_done_callback(report_completion)
+
+    def _prepare_cache_after_clear(
+        self,
+        project: Mapping[str, object],
+        cache_root: Path,
+        *,
+        protected_paths: list[Path],
+    ) -> AudioPreviewCacheResult:
+        # 旧FFmpeg処理がクリア後に出力しても、次の処理の開始直前に取り除く。
+        self._clear_cache(cache_root)
+        return self._prepare_cache(project, cache_root, protected_paths=protected_paths)
 
     @Slot(int, object)
     def _apply_audio_preview_cache(
@@ -325,6 +339,7 @@ class AudioPreviewController(QObject):
         self._generation += 1
         self._cache_paths.clear()
         self._preparing = False
+        self._force_cache_rebuild = True
         future = self._cache_future
         if future is not None and not future.done():
             future.cancel()

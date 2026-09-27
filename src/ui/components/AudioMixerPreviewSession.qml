@@ -14,6 +14,7 @@ Item {
     signal positionUpdated(real positionMs)
 
     readonly property bool previewReady: !root.audioBackend.audioPreviewPreparing
+        && root.audioBackend.audioMixerPreviewComplete
         && root.audioBackend.audioMixerPreviewChannels.length > 0
     property real initialPosition: -1
     property int initialPositionStableTicks: 0

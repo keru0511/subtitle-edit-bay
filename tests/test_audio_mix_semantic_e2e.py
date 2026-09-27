@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from src.audio_mixer import reconcile_audio_mix
+from src.data_boundary import coerce_float, is_string_object_dict, is_string_object_dict_list
 from src.subtitle_project import create_project, load_project, save_project
 from tests.media_test_helpers import (
     AudioFixture,
@@ -57,6 +58,15 @@ def _channel_state(
         "solo": solo,
         "volume_percent": volume_percent,
     }
+
+
+def _project_section(project: object, name: str) -> dict[str, object]:
+    if not is_string_object_dict(project):
+        raise AssertionError("project must be an object")
+    section = project.get(name)
+    if not is_string_object_dict(section):
+        raise AssertionError(f"{name} must be an object")
+    return section
 
 
 @typed_skip_unless(
@@ -109,7 +119,9 @@ class AudioMixSemanticE2ETests(TypedTestCase):
         )
 
     @classmethod
-    def _channel_key(cls, channel: dict[object, object]) -> str:
+    def _channel_key(cls, channel: object) -> str:
+        if not is_string_object_dict(channel):
+            raise AssertionError("audio channel must be an object")
         if channel.get("kind") == "video":
             return "video"
         channel_path = Path(str(channel.get("path", "")))
@@ -161,19 +173,17 @@ class AudioMixSemanticE2ETests(TypedTestCase):
         output_path = cls.root / f"{name}.mp4"
         runtime_config_path = cls.root / f"{name}.runtime.json"
         save_project(project_path, project)
+        runtime_config: dict[str, object] = {
+            "craig_pipeline": {
+                "video_codec": "libx264",
+                "audio_codec": "aac",
+                "x264_crf": 32,
+                "audio_normalize": audio_normalize,
+                "audio_target_lufs": audio_target_lufs,
+            }
+        }
         runtime_config_path.write_text(
-            json.dumps(
-                {
-                    "craig_pipeline": {
-                        "video_codec": "libx264",
-                        "audio_codec": "aac",
-                        "x264_crf": 32,
-                        "audio_normalize": audio_normalize,
-                        "audio_target_lufs": audio_target_lufs,
-                    }
-                },
-                indent=2,
-            )
+            json.dumps(runtime_config, indent=2)
             + "\n",
             encoding="utf-8",
         )
@@ -209,7 +219,7 @@ class AudioMixSemanticE2ETests(TypedTestCase):
             audio_normalize=audio_normalize,
             audio_target_lufs=audio_target_lufs,
         )
-        saved_output = Path(str(saved_project["render_settings"].get("last_output", "")))
+        saved_output = Path(str(_project_section(saved_project, "render_settings").get("last_output", "")))
         if saved_output != output_path.resolve():
             raise AssertionError(
                 f"Rendered project points to a different final output: saved={saved_output}, expected={output_path.resolve()}"
@@ -225,27 +235,30 @@ class AudioMixSemanticE2ETests(TypedTestCase):
         audio_normalize: bool,
         audio_target_lufs: float,
     ) -> None:
-        audio_mix = project["audio_mix"]
+        audio_mix = _project_section(project, "audio_mix")
         if not audio_mix.get("customized"):
             raise AssertionError(f"Rendered project lost customized audio mix state: {audio_mix!r}")
+        channels = audio_mix.get("channels")
+        if not is_string_object_dict_list(channels):
+            raise AssertionError("audio mix channels must be objects")
         actual_states = {
             cls._channel_key(channel): {
-                field: channel[field] for field in ("enabled", "muted", "solo", "volume_percent")
+                field: channel.get(field) for field in ("enabled", "muted", "solo", "volume_percent")
             }
-            for channel in audio_mix["channels"]
+            for channel in channels
         }
         if actual_states != expected_states:
             raise AssertionError(
                 "Rendered project audio state differs from the requested mix.\n"
                 f"expected={expected_states!r}\nactual={actual_states!r}"
             )
-        render_settings = project["render_settings"]
+        render_settings = _project_section(project, "render_settings")
         if render_settings.get("audio_normalize") is not audio_normalize:
             raise AssertionError(
                 f"Saved audio_normalize differs: expected={audio_normalize}, settings={render_settings!r}"
             )
         if not math.isclose(
-            float(render_settings.get("audio_target_lufs")),
+            coerce_float(render_settings.get("audio_target_lufs")),
             audio_target_lufs,
             abs_tol=0.001,
         ):

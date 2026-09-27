@@ -469,6 +469,10 @@ class GuiPerformanceWorkflowContractTests(TypedTestCase):
             'Copy-Item src/data_boundary.py "$referenceRoot/src/data_boundary.py"',
             benchmark_commands,
         )
+        self.assertIn(
+            'Copy-Item tests/qt_property_value.py "$referenceRoot/tests/qt_property_value.py"',
+            benchmark_commands,
+        )
         self.assertEqual(set(aggregate["needs"]), {"prepare", "benchmark"})
         self.assertIn("always()", aggregate["if"])
         aggregate_commands = "\n".join(str(step.get("run", "")) for step in aggregate["steps"])

@@ -206,6 +206,7 @@ jobs:
           Copy-Item src/data_boundary.py "$referenceRoot/src/data_boundary.py"
           Copy-Item tests/gui_performance_scenarios.py "$referenceRoot/tests/gui_performance_scenarios.py"
           Copy-Item tests/gui_test_harness.py "$referenceRoot/tests/gui_test_harness.py"
+          Copy-Item tests/qt_property_value.py "$referenceRoot/tests/qt_property_value.py"
           Push-Location $referenceRoot
           try {
               python scripts/run_gui_performance.py `

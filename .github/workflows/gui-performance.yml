@@ -203,6 +203,7 @@ jobs:
           Copy-Item scripts/generate_large_gui_fixture.py "$referenceRoot/scripts/generate_large_gui_fixture.py"
           Copy-Item scripts/gui_performance_report.py "$referenceRoot/scripts/gui_performance_report.py"
           Copy-Item scripts/run_gui_performance.py "$referenceRoot/scripts/run_gui_performance.py"
+          Copy-Item src/data_boundary.py "$referenceRoot/src/data_boundary.py"
           Copy-Item tests/gui_performance_scenarios.py "$referenceRoot/tests/gui_performance_scenarios.py"
           Copy-Item tests/gui_test_harness.py "$referenceRoot/tests/gui_test_harness.py"
           Push-Location $referenceRoot

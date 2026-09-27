@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -207,6 +209,20 @@ def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
 
 
 class CodexChatControllerTests(TypedTestCase):
+    def test_chat_state_import_does_not_require_typing_extensions(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.modules['typing_extensions'] = None; import src.gui_codex_chat_state",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_connection_error_clears_provider_and_normal_connect_retries(self) -> None:
         first_client = FailingStartClient()
         second_client = FakeChatClient()

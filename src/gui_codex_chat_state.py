@@ -5,9 +5,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import ParamSpec, TypedDict
-
-from typing_extensions import Unpack
+from typing import TYPE_CHECKING, ParamSpec, TypedDict
 
 from .ai_provider import (
     AIProvider,
@@ -18,6 +16,9 @@ from .ai_provider import (
 )
 from .codex_ai_provider import CodexAIProvider, CodexAppServerClientProtocol
 from .codex_runtime import redact_codex_diagnostic
+
+if TYPE_CHECKING:
+    from typing_extensions import Unpack
 
 
 class CodexChatError(RuntimeError):

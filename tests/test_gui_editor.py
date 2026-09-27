@@ -5097,17 +5097,18 @@ Window {
     def test_workspace_ime_committed_text_is_saved(self) -> None:
         self._assert_committed_ime_text_is_saved(expanded=False)
 
-    @unittest.skipUnless(
-        sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
-        "Windowsの対話デスクトップで実IMEを使う専用テスト",
-    )
-    def test_windows_native_ime_save_preserves_composition(self) -> None:
+    def _assert_windows_native_ime_save_preserves_composition(self, *, expanded: bool) -> None:
         path = self._load_project()
         _, window = self._load_qml()
-        caption = self._quick_visual_item(
-            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
-        )
-        save_button = self._quick_item(window, "workspaceHeaderSaveButton")
+        if expanded:
+            self._click(window, self._quick_item(window, "editSubtitlesButton"))
+            caption = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
+            save_button = self._quick_item(window, "saveProjectButton")
+        else:
+            caption = self._quick_visual_item(
+                self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+            )
+            save_button = self._quick_item(window, "workspaceHeaderSaveButton")
         window.setPosition(0, 0)
         window.raise_()
         window.requestActivate()
@@ -5133,6 +5134,7 @@ Window {
             # その場合も変換結果を失わず保存できることを確認する。
             native.click(save_button)
             if caption.property("inputMethodComposing"):
+                print("実IMEの保存クリック後も変換中: 保存を保留", flush=True)
                 self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
                 self.assertIn("確定してから", self.app.status)
                 self.assertTrue(caption.hasActiveFocus())
@@ -5142,6 +5144,8 @@ Window {
                     description="実IMEの変換確定",
                     timeout_ms=5_000,
                 )
+            else:
+                print("実IMEの保存クリック時にOSが変換を確定", flush=True)
 
             committed_text = str(caption.property("text"))
             self.assertRegex(committed_text, r"[\u3040-\u30ff\u4e00-\u9fff]")
@@ -5153,6 +5157,20 @@ Window {
             )
 
         self.assertEqual(load_project(path)["segments"][0]["text"], committed_text)
+
+    @unittest.skipUnless(
+        sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
+        "Windowsの対話デスクトップで実IMEを使う専用テスト",
+    )
+    def test_windows_native_ime_workspace_save_preserves_composition(self) -> None:
+        self._assert_windows_native_ime_save_preserves_composition(expanded=False)
+
+    @unittest.skipUnless(
+        sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
+        "Windowsの対話デスクトップで実IMEを使う専用テスト",
+    )
+    def test_windows_native_ime_expanded_save_preserves_composition(self) -> None:
+        self._assert_windows_native_ime_save_preserves_composition(expanded=True)
 
     def test_expanded_ime_committed_text_is_saved(self) -> None:
         self._assert_committed_ime_text_is_saved(expanded=True)

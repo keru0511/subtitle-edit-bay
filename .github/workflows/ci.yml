@@ -420,25 +420,24 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host "Session ID: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
-          $capabilityName = 'Language.Basic~~~ja-JP~0.0.1.0'
-          $capability = Get-WindowsCapability -Online -Name $capabilityName
-          Write-Host "Japanese typing capability: $($capability.State)"
           $languages = Get-WinUserLanguageList
-          if ($languages.LanguageTag -notcontains 'ja-JP') {
+          if ($languages.LanguageTag -notcontains 'ja-JP' -and $languages.LanguageTag -notcontains 'ja') {
             $languages.Add('ja-JP')
             Set-WinUserLanguageList -LanguageList $languages -Force
           }
           foreach ($language in (Get-WinUserLanguageList)) {
             Write-Host "Language: $($language.LanguageTag); input methods: $($language.InputMethodTips -join ', ')"
           }
-          python -c "import ctypes; user32 = ctypes.windll.user32; print(f'Desktop: {user32.GetSystemMetrics(0)}x{user32.GetSystemMetrics(1)}')"
 
       - name: Run Windows native Japanese IME regression
         shell: pwsh
         env:
           QT_QPA_PLATFORM: windows
           RUN_NATIVE_IME_SMOKE: "1"
-        run: python -m unittest -v tests.test_gui_editor.GuiEditorRegressionTests.test_windows_native_ime_save_preserves_composition
+        run: >-
+          python -m unittest -v
+          tests.test_gui_editor.GuiEditorRegressionTests.test_windows_native_ime_workspace_save_preserves_composition
+          tests.test_gui_editor.GuiEditorRegressionTests.test_windows_native_ime_expanded_save_preserves_composition
 
   windows-launcher-tests:
     name: Windows launcher tests

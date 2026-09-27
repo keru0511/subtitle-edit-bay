@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPointF, QRect
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 
@@ -105,8 +105,13 @@ class WindowsNativeInput:
             self.key(ord(character))
 
     def click(self, item: QQuickItem) -> None:
-        point = item.mapToScene(QPointF(item.width() / 2, item.height() / 2)).toPoint()
-        screen_point = self.window.mapToGlobal(point)
+        top_left = self.window.mapToGlobal(item.mapToScene(QPointF(0, 0)).toPoint())
+        bottom_right = self.window.mapToGlobal(item.mapToScene(QPointF(item.width(), item.height())).toPoint())
+        item_bounds = QRect(top_left, bottom_right).normalized()
+        visible_bounds = item_bounds.intersected(self.window.screen().geometry())
+        if visible_bounds.isEmpty():
+            raise AssertionError(f"クリック対象が画面外です: {item.objectName()} ({item_bounds})")
+        screen_point = visible_bounds.center()
         if not self.user32.SetCursorPos(screen_point.x(), screen_point.y()):
             raise OSError(ctypes.get_last_error(), "Windowsのマウス位置を設定できません")
         self._send([self._mouse(self.MOUSE_LEFT_DOWN), self._mouse(self.MOUSE_LEFT_UP)])

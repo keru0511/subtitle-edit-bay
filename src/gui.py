@@ -18,7 +18,7 @@ from typing import Any, Mapping
 try:
     from typing_extensions import Self as _TypingSelf  # noqa: F401
 except ImportError:  # pragma: no cover - release runtimes always lock it
-    _TypingSelf = None  # type: ignore[assignment]
+    pass
 
 from PySide6.QtCore import (
     QObject,

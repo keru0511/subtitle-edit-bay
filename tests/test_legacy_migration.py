@@ -7,6 +7,7 @@ import unittest
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import MutableSequence, cast
 from unittest.mock import patch
 
 from src.legacy_migration import (
@@ -128,9 +129,9 @@ class LegacyMigrationInventoryTests(TypedTestCase):
             legacy = self._fixture(Path(temporary))
             inventory = build_legacy_inventory(legacy)
             with self.assertRaises(FrozenInstanceError):
-                inventory.legacy_root = "changed"  # type: ignore[misc]
+                setattr(inventory, "legacy_root", "changed")
             with self.assertRaises(TypeError):
-                inventory.entries[0] = inventory.entries[0]  # type: ignore[index]
+                cast(MutableSequence[object], inventory.entries)[0] = inventory.entries[0]
 
             plan = build_legacy_migration_plan(legacy)
             self.assertEqual(len(plan.actions), len(inventory.entries))

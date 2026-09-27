@@ -10,7 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, cast
 
 # PySide6 exposes typing.Self on Python 3.10. Initialize the optional backport
 # first so PyTorch keeps its compatible Self implementation when WhisperX is
@@ -27,7 +27,7 @@ from PySide6.QtCore import (
     QUrl,
 )
 from PySide6.QtGui import QDesktopServices, QFontDatabase
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput
+from PySide6.QtMultimedia import QAudioBuffer
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QFileDialog
 
@@ -59,7 +59,14 @@ from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color
-from .data_boundary import coerce_float, coerce_int, is_object_list, is_string_object_dict_list, is_string_object_mapping
+from .data_boundary import (
+    coerce_float,
+    coerce_int,
+    is_object_list,
+    is_string_object_dict,
+    is_string_object_dict_list,
+    is_string_object_mapping,
+)
 from .gui_base import APP_TITLE, AlignmentResult, LegacyEditBayBackend
 from .gui_source_selection_controller import SourceSelectionUpdate
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
@@ -158,6 +165,53 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     workspacePlayerStateChanged = Signal()
     sequenceChanged = Signal()
 
+    def _initial_value(self, name: str) -> object:
+        """初期化途中の互換属性を、未検証の値として受け取る。"""
+        return cast(object, getattr(self, name, None))
+
+    def _existing_project_editor(self) -> ProjectEditorController | None:
+        value = self._initial_value("_project_editor_controller")
+        return value if isinstance(value, ProjectEditorController) else None
+
+    def _require_project_editor(self) -> ProjectEditorController:
+        controller = self._existing_project_editor()
+        if controller is None:
+            raise RuntimeError("プロジェクト編集機能が初期化されていません")
+        return controller
+
+    def _existing_audio_preview(self) -> AudioPreviewController | None:
+        value = self._initial_value("_audio_preview_controller")
+        return value if isinstance(value, AudioPreviewController) else None
+
+    @staticmethod
+    def _load_project_compat(path: str | Path, *, resolve_video_duration: bool = False) -> dict[object, object]:
+        return load_project(path, resolve_video_duration=resolve_video_duration)
+
+    @staticmethod
+    def _save_project_compat(
+        path: str | Path,
+        project: dict[object, object],
+        *,
+        project_is_validated: bool = False,
+        update_project: bool = True,
+    ) -> Path:
+        return save_project(
+            path,
+            project,
+            project_is_validated=project_is_validated,
+            update_project=update_project,
+        )
+
+    @staticmethod
+    def _prepare_cache_compat(
+        project: Mapping[str, object],
+        root: Path,
+        /,
+        *,
+        protected_paths: list[Path],
+    ) -> AudioPreviewCacheResult:
+        return prepare_audio_preview_cache(project, root, protected_paths=protected_paths)
+
     @Property(QObject, constant=True)
     def workspace(self) -> WorkspaceFacade:
         return self._workspace_facade
@@ -192,32 +246,36 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _project(self) -> dict[str, object] | None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is not None:
             return controller.project
-        return getattr(self, "_project_value", None)
+        value = self._initial_value("_project_value")
+        return value if is_string_object_dict(value) else None
 
     @_project.setter
     def _project(self, value: dict[str, object] | None) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._project_value = value
         else:
             controller.project = value
         if hasattr(self, "_codex_audio_mix_session"):
             self._codex_audio_mix_session.stop()
-        controller = getattr(self, "_audio_preview_controller", None)
-        if controller is not None:
-            controller.set_project(value)
+        audio_controller = self._existing_audio_preview()
+        if audio_controller is not None:
+            audio_controller.set_project(value)
 
     @property
     def _project_path(self) -> str:
-        controller = getattr(self, "_project_editor_controller", None)
-        return controller.project_path if controller is not None else getattr(self, "_project_path_value", "")
+        controller = self._existing_project_editor()
+        if controller is not None:
+            return controller.project_path
+        value = self._initial_value("_project_path_value")
+        return value if isinstance(value, str) else ""
 
     @_project_path.setter
     def _project_path(self, value: str | Path) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._project_path_value = str(value)
         else:
@@ -225,14 +283,12 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _project_dirty(self) -> bool:
-        controller = getattr(self, "_project_editor_controller", None)
-        return (
-            controller.project_dirty if controller is not None else bool(getattr(self, "_project_dirty_value", False))
-        )
+        controller = self._existing_project_editor()
+        return controller.project_dirty if controller is not None else bool(self._initial_value("_project_dirty_value"))
 
     @_project_dirty.setter
     def _project_dirty(self, value: bool) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._project_dirty_value = bool(value)
         else:
@@ -240,14 +296,13 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _project_revision(self) -> int:
-        controller = getattr(self, "_project_editor_controller", None)
-        return (
-            controller.project_revision if controller is not None else int(getattr(self, "_project_revision_value", 0))
-        )
+        controller = self._existing_project_editor()
+        value = self._initial_value("_project_revision_value")
+        return controller.project_revision if controller is not None else coerce_int(value if value is not None else 0)
 
     @_project_revision.setter
     def _project_revision(self, value: int) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._project_revision_value = int(value)
         else:
@@ -255,12 +310,15 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _undo_stack(self) -> list[dict[str, object]]:
-        controller = getattr(self, "_project_editor_controller", None)
-        return controller.undo_stack if controller is not None else getattr(self, "_undo_stack_value", [])
+        controller = self._existing_project_editor()
+        if controller is not None:
+            return controller.undo_stack
+        value = self._initial_value("_undo_stack_value")
+        return value if is_string_object_dict_list(value) else []
 
     @_undo_stack.setter
     def _undo_stack(self, value: list[dict[str, object]]) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._undo_stack_value = value
         else:
@@ -269,12 +327,15 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _redo_stack(self) -> list[dict[str, object]]:
-        controller = getattr(self, "_project_editor_controller", None)
-        return controller.redo_stack if controller is not None else getattr(self, "_redo_stack_value", [])
+        controller = self._existing_project_editor()
+        if controller is not None:
+            return controller.redo_stack
+        value = self._initial_value("_redo_stack_value")
+        return value if is_string_object_dict_list(value) else []
 
     @_redo_stack.setter
     def _redo_stack(self, value: list[dict[str, object]]) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._redo_stack_value = value
         else:
@@ -283,16 +344,17 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _selected_segment_index(self) -> int:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
+        value = self._initial_value("_selected_segment_index_value")
         return (
             controller.selected_segment_index
             if controller is not None
-            else int(getattr(self, "_selected_segment_index_value", -1))
+            else coerce_int(value if value is not None else -1)
         )
 
     @_selected_segment_index.setter
     def _selected_segment_index(self, value: int) -> None:
-        controller = getattr(self, "_project_editor_controller", None)
+        controller = self._existing_project_editor()
         if controller is None:
             self._selected_segment_index_value = int(value)
         else:
@@ -300,56 +362,57 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
     @property
     def _autosave_future(self) -> Future[Path] | None:
-        return self._project_editor_controller.autosave_future
+        return self._require_project_editor().autosave_future
 
     @_autosave_future.setter
     def _autosave_future(self, value: Future[Path] | None) -> None:
-        self._project_editor_controller.autosave_future = value
+        self._require_project_editor().autosave_future = value
 
     @property
     def _autosave_revision(self) -> int:
-        return self._project_editor_controller.autosave_revision
+        return self._require_project_editor().autosave_revision
 
     @_autosave_revision.setter
     def _autosave_revision(self, value: int) -> None:
-        self._project_editor_controller.autosave_revision = value
+        self._require_project_editor().autosave_revision = value
 
     @property
     def _autosave_path(self) -> str:
-        return self._project_editor_controller.autosave_path
+        return self._require_project_editor().autosave_path
 
     @_autosave_path.setter
     def _autosave_path(self, value: str | Path) -> None:
-        self._project_editor_controller.autosave_path = value
+        self._require_project_editor().autosave_path = value
 
     @property
     def _autosave_pending(self) -> bool:
-        return self._project_editor_controller.autosave_pending
+        return self._require_project_editor().autosave_pending
 
     @_autosave_pending.setter
     def _autosave_pending(self, value: bool) -> None:
-        self._project_editor_controller.autosave_pending = value
+        self._require_project_editor().autosave_pending = value
 
     @property
     def _ignored_autosaves(self) -> set[tuple[int, str]]:
-        return self._project_editor_controller.ignored_autosaves
+        return self._require_project_editor().ignored_autosaves
 
     @property
     def _autosave_executor(self) -> ThreadPoolExecutor:
-        return self._project_editor_controller.autosave_executor
+        return self._require_project_editor().autosave_executor
 
     @property
     def audio_preview_cache_root(self) -> Path:
-        controller = getattr(self, "_audio_preview_controller", None)
+        controller = self._existing_audio_preview()
         if controller is not None:
             return controller.cache_root
-        return getattr(self, "_audio_preview_cache_root", Path())
+        value = self._initial_value("_audio_preview_cache_root")
+        return value if isinstance(value, Path) else Path()
 
     @audio_preview_cache_root.setter
     def audio_preview_cache_root(self, value: str | Path) -> None:
         root = Path(value)
         self._audio_preview_cache_root = root
-        controller = getattr(self, "_audio_preview_controller", None)
+        controller = self._existing_audio_preview()
         if controller is not None:
             controller.cache_root = root
 
@@ -390,8 +453,8 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._audio_preview_controller.preparing = value
 
     @property
-    def _audio_preview_outputs(self) -> dict[str, QAudioBufferOutput]:
-        return self._audio_preview_controller.outputs
+    def _audio_preview_outputs(self) -> dict[str, QObject]:
+        return cast(dict[str, QObject], self._audio_preview_controller.outputs)
 
     @property
     def _audio_master_mixer(self) -> RealtimeAudioMixer:
@@ -513,12 +576,8 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             resolved_workspace_root,
             # Resolve these names at call time so existing tests can patch
             # src.gui.save_project without changing the controller boundary.
-            load_project_fn=lambda path, **kwargs: load_project(path, **kwargs),
-            save_project_fn=lambda path, project, **kwargs: save_project(
-                path,
-                project,
-                **kwargs,
-            ),
+            load_project_fn=self._load_project_compat,
+            save_project_fn=self._save_project_compat,
             # Keep the existing module-level patch/extension point used by
             # the facade and GUI regression tests while the controller owns
             # the project edit operation.
@@ -550,11 +609,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             parent=self,
             # Keep the existing module-level call surface available to tests
             # and callers while the controller owns the operation itself.
-            prepare_cache=lambda project, root, protected_paths=None: prepare_audio_preview_cache(
-                project,
-                root,
-                protected_paths=protected_paths,
-            ),
+            prepare_cache=self._prepare_cache_compat,
             clear_cache=lambda root: clear_audio_preview_cache(root),
         )
         self._audio_facade.bind_audio_preview(self._audio_preview_controller)
@@ -973,8 +1028,17 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def projectDuration(self) -> float:
         if self._project is None:
             return 0.0
-        video_duration = float(self._project.get("video", {}).get("duration_seconds", 0.0))
-        segment_duration = max((float(item["end"]) for item in self._project.get("segments", [])), default=0.0)
+        video = self._project.get("video")
+        segments = self._project.get("segments")
+        video_duration = coerce_float(video.get("duration_seconds", 0.0)) if is_string_object_dict(video) else 0.0
+        segment_duration = (
+            max(
+                (coerce_float(item["end"]) for item in segments),
+                default=0.0,
+            )
+            if is_string_object_dict_list(segments)
+            else 0.0
+        )
         return max(video_duration, segment_duration)
 
     @Property("QVariantMap", notify=sequenceChanged)
@@ -1092,12 +1156,14 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def _project_source_selection_matches(self, selection: SourceSelection) -> bool:
         if self._project is None:
             return False
-        project_video = self._normalized_source_path(str(self._project.get("video", {}).get("path", "")))
+        video = self._project.get("video")
+        audio_sources = self._project.get("audio_sources")
+        if not is_string_object_dict(video) or not is_string_object_dict_list(audio_sources):
+            return False
+        project_video = self._normalized_source_path(str(video.get("path", "")))
         selected_video = self._normalized_source_path(selection.video)
         project_audio = {
-            self._normalized_source_path(str(item.get("path", "")))
-            for item in self._project.get("audio_sources", [])
-            if item.get("path")
+            self._normalized_source_path(str(item.get("path", ""))) for item in audio_sources if item.get("path")
         }
         selected_audio = {self._normalized_source_path(path) for path in selection.audio_files}
         return selected_video == project_video and selected_audio == project_audio
@@ -1155,8 +1221,12 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         old_project = deepcopy(self._project)
         audio_sources_value = self._project.get("audio_sources")
         speakers_value = self._project.get("speakers")
-        previous_sources = [dict(item) for item in audio_sources_value] if is_string_object_dict_list(audio_sources_value) else []
-        previous_speakers = [dict(item) for item in speakers_value] if is_string_object_dict_list(speakers_value) else []
+        previous_sources = (
+            [dict(item) for item in audio_sources_value] if is_string_object_dict_list(audio_sources_value) else []
+        )
+        previous_speakers = (
+            [dict(item) for item in speakers_value] if is_string_object_dict_list(speakers_value) else []
+        )
 
         source_entries = build_speaker_entries_from_files(
             self._source_selection.audio_files,
@@ -1224,6 +1294,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 or _match(unmatched_speakers, file_name=source["file_name"])
                 or _match(unmatched_speakers, name=source["name"])
             )
+            speaker_payload: dict[str, object]
             if previous_speaker is None:
                 speaker_payload = {
                     "name": source["name"],
@@ -1245,7 +1316,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             new_speakers.append(speaker_payload)
 
         self._project["video"] = {
-            **(project_video if isinstance(project_video, dict) else {}),
+            **(project_video if is_string_object_dict(project_video) else {}),
             "path": selected_video,
         }
         self._project["output_dir"] = selected_output
@@ -1338,7 +1409,9 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             self._mixer_video_tracks(),
         )
         try:
-            self._project_editor_controller.save_new_project(project_path, project)
+            if not is_string_object_dict(project):
+                raise SubtitleProjectError("プロジェクトのキーが不正です")
+            self._require_project_editor().save_new_project(project_path, project)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"空の編集プロジェクトを保存できません: {error}", "ERROR")
             return False
@@ -1360,7 +1433,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         if hasattr(self, "audioMixProposalChanged"):
             self.audioMixProposalChanged.emit()
         self._reset_transcription_integration_state()
-        self._project_editor_controller.clear(emit=False)
+        self._require_project_editor().clear(emit=False)
         if hasattr(self, "_audio_preview_controller"):
             self._audio_preview_controller.set_project(None)
         self._reset_editor_timing()
@@ -1458,7 +1531,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         if self._project is None:
             return self._create_empty_project(target)
         try:
-            self._project_editor_controller.save_as(target, emit=False)
+            self._require_project_editor().save_as(target, emit=False)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
             return False
@@ -1536,31 +1609,31 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
 
         render_settings = project.get("render_settings", {})
         if isinstance(render_settings, dict):
-            for project_key, setting_key, converter in (
+            for project_key, setting_key, render_converter in (
                 ("video_codec", "video_codec", str),
                 ("audio_normalize", "audio_normalize", bool),
-                ("audio_target_lufs", "audio_target_lufs", float),
+                ("audio_target_lufs", "audio_target_lufs", coerce_float),
                 ("cut_no_speech", "cut_no_speech", bool),
-                ("no_speech_min_seconds", "no_speech_min_seconds", float),
-                ("speech_padding_seconds", "speech_padding_seconds", float),
+                ("no_speech_min_seconds", "no_speech_min_seconds", coerce_float),
+                ("speech_padding_seconds", "speech_padding_seconds", coerce_float),
                 ("speech_threshold_db", "speech_threshold_db", str),
-                ("speech_min_clip_seconds", "speech_min_clip_seconds", float),
-                ("nvenc_cq", "nvenc_cq", int),
-                ("x264_crf", "x264_crf", int),
+                ("speech_min_clip_seconds", "speech_min_clip_seconds", coerce_float),
+                ("nvenc_cq", "nvenc_cq", coerce_int),
+                ("x264_crf", "x264_crf", coerce_int),
             ):
                 if project_key not in render_settings:
                     continue
                 value = render_settings[project_key]
-                if converter is bool:
+                if render_converter is bool:
                     if not isinstance(value, bool):
                         continue
-                elif converter is str:
+                elif render_converter is str:
                     if not isinstance(value, str):
                         continue
                     value = value
                 else:
                     try:
-                        value = converter(value)
+                        value = render_converter(value)
                     except (TypeError, ValueError, OverflowError):
                         continue
                     if isinstance(value, float) and not math.isfinite(value):
@@ -1573,7 +1646,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def _load_project_path(self, path: Path, *, update_sources: bool) -> bool:
         self.autosave_timer.stop()
         try:
-            project = self._project_editor_controller.load(path)
+            project = self._require_project_editor().load(path)
         except (OSError, json.JSONDecodeError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを開けません: {error}", "ERROR")
             return False
@@ -1586,10 +1659,12 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         if hasattr(self, "audioMixProposalChanged"):
             self.audioMixProposalChanged.emit()
         transcription = project.setdefault("transcription", {})
-        transcription.setdefault(
-            "context_base_dir",
-            str(Path(transcription.get("work_dir") or project.get("output_dir") or path.parent).resolve()),
-        )
+        if not is_string_object_dict(transcription):
+            self._set_status("プロジェクトの文字起こし設定が不正です", "ERROR")
+            return False
+        work_dir = transcription.get("work_dir") or project.get("output_dir")
+        base_dir = work_dir if isinstance(work_dir, (str, Path)) else path.parent
+        transcription.setdefault("context_base_dir", str(Path(base_dir).resolve()))
         self._apply_project_subtitle_settings(project)
         self._audio_preview_controller.set_project(project)
         self._reset_audio_preview_cache()
@@ -1599,8 +1674,13 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         try:
             selection = replace(self._source_selection, output_dir=str(project.get("output_dir", "")))
             if update_sources:
-                video = Path(str(project.get("video", {}).get("path", "")))
-                audio_files = [str(item.get("path", "")) for item in project.get("audio_sources", [])]
+                video_data = project.get("video")
+                audio_data = project.get("audio_sources")
+                if not is_string_object_dict(video_data) or not is_string_object_dict_list(audio_data):
+                    self._set_status("プロジェクトの素材設定が不正です", "ERROR")
+                    return False
+                video = Path(str(video_data.get("path", "")))
+                audio_files = [str(item.get("path", "")) for item in audio_data]
                 resolved_audio_files = [str(Path(item).resolve()) for item in audio_files if Path(item).is_file()]
                 selection = replace(
                     selection,
@@ -1617,7 +1697,11 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self.segmentsChanged.emit()
         self.historyChanged.emit()
         self.selectionChanged.emit()
-        self._set_status(f"編集プロジェクトを開きました（字幕 {len(project['segments'])} 件）", "EDIT")
+        segments = project.get("segments")
+        if not is_string_object_dict_list(segments):
+            self._set_status("プロジェクトの字幕セグメントが不正です", "ERROR")
+            return False
+        self._set_status(f"編集プロジェクトを開きました（字幕 {len(segments)} 件）", "EDIT")
         return True
 
     @Slot(result=bool)
@@ -1630,7 +1714,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             return False
         self.autosave_timer.stop()
         try:
-            self._project_editor_controller.save(emit=False)
+            self._require_project_editor().save(emit=False)
         except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
             self._set_status(f"プロジェクトを保存できません: {error}", "ERROR")
             return False
@@ -1648,26 +1732,27 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def _autosave_project(self) -> None:
         if self._running:
             return
-        self._project_editor_controller.autosave()
+        self._require_project_editor().autosave()
 
     @Slot(int, str, str)
     def _finish_autosave(self, revision: int, path: str, error: str) -> None:
         ignored = (revision, path) in self._ignored_autosaves
-        self._project_editor_controller.finish_autosave(revision, path, error)
+        self._require_project_editor().finish_autosave(revision, path, error)
         if error and not ignored:
             self._set_status(f"保存に失敗しました: {error}", "ERROR")
 
     def _wait_for_autosave(self) -> None:
-        self._project_editor_controller.wait_for_autosave()
+        self._require_project_editor().wait_for_autosave()
 
     def _shutdown_executor(self) -> None:
         if hasattr(self, "autosave_timer"):
             self.autosave_timer.stop()
-        if getattr(self, "_project_dirty", False) and getattr(self, "_project_path", ""):
+        if self._project_dirty and self._project_path:
             self.saveProject()
-        if hasattr(self, "_project_editor_controller"):
-            self._project_editor_controller.shutdown()
-        controller = getattr(self, "_audio_preview_controller", None)
+        project_editor = self._existing_project_editor()
+        if project_editor is not None:
+            project_editor.shutdown()
+        controller = self._existing_audio_preview()
         if controller is not None:
             controller.shutdown()
         super()._shutdown_executor()
@@ -1689,7 +1774,9 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             "volume_scale_percent": coerce_float(
                 settings.get("subtitle_volume_scale_percent", subtitle.get("volume_scale_percent", 20.0))
             ),
-            "max_gap_seconds": coerce_float(settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))),
+            "max_gap_seconds": coerce_float(
+                settings.get("subtitle_max_gap_seconds", subtitle.get("max_gap_seconds", 0.32))
+            ),
             "end_padding_seconds": coerce_float(
                 settings.get("subtitle_end_padding_seconds", subtitle.get("end_padding_seconds", 0.08))
             ),
@@ -1714,7 +1801,9 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             f"{key}={str(status[key]).lower() if isinstance(status[key], bool) else status[key]}"
             for key in ("ffmpeg", "ffprobe", "whisperx", "cuda", "nvenc", "ready")
         )
-        missing = ",".join(str(item) for item in status.get("missing", ())) or "none"
+        missing_value = status.get("missing")
+        missing = ",".join(str(item) for item in missing_value) if is_object_list(missing_value) else ""
+        missing = missing or "none"
         self._record_log(
             f"依存関係: {fields}, missing={missing}",
             severity="INFO" if bool(status.get("ready")) else "WARNING",
@@ -1773,7 +1862,12 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._record_dependency_snapshot(stage="DEPENDENCY_CHECK")
 
     def _set_status(self, status: str, stage: str) -> None:
-        previous = (getattr(self, "_status", ""), getattr(self, "_stage", ""))
+        previous_status = self._initial_value("_status")
+        previous_stage = self._initial_value("_stage")
+        previous = (
+            previous_status if isinstance(previous_status, str) else "",
+            previous_stage if isinstance(previous_stage, str) else "",
+        )
         super()._set_status(status, stage)
         if not hasattr(self, "_application_logger") or previous == (status, stage):
             return
@@ -1832,17 +1926,22 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         if self._active_job == "transcribe" and self.projectSavePath:
             output_directory = str(project_work_directory(self.projectSavePath))
         else:
-            transcription = (self._project or {}).get("transcription", {})
-            output_directory = str(transcription.get("work_dir") or self.videoOutputDirectory).strip()
+            transcription = (self._project or {}).get("transcription")
+            work_dir = transcription.get("work_dir") if is_string_object_dict(transcription) else None
+            output_directory = str(work_dir or self.videoOutputDirectory).strip()
         if not output_directory:
             return ""
         transcript_directory = Path(output_directory) / "transcripts"
         if not transcript_directory.is_dir():
             return ""
         try:
+
+            def log_mtime(path: Path) -> int:
+                return path.stat().st_mtime_ns
+
             candidates = sorted(
                 transcript_directory.glob("*.whisperx.log"),
-                key=lambda path: path.stat().st_mtime_ns,
+                key=log_mtime,
                 reverse=True,
             )[:3]
         except OSError:

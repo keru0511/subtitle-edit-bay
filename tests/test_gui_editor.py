@@ -6642,8 +6642,10 @@ Window {
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
     def test_expanded_split_control_recovers_after_processing(self) -> None:
+        """Windows GUI CI必須: 拡大画面の分割を保存でき、Undo 後の保存で元に戻せる。"""
         self._set_ready_sources()
-        self._load_project()
+        path = self._load_project()
+        original = deepcopy(self.app.subtitleSegments)
         self._generate_black_test_video_with_audio(self.root / "game.mkv", self.root / "1-alice.flac")
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
@@ -6667,6 +6669,20 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self.assertTrue(split_button.isEnabled())
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, split_button)
+            self.assertEqual(self.app.segmentCount, 2)
+            first, second = self.app.subtitleSegments
+            self.assertEqual((first["start"], first["end"]), (0.0, 0.5))
+            self.assertEqual((second["start"], second["end"]), (0.5, 4.0))
+            self.assertEqual(first["text"] + second["text"], original[0]["text"])
+            self._click(window, self._quick_item(window, "saveProjectButton"))
+            self.assertEqual(len(load_project(path)["segments"]), 2)
+
+            self._click(window, self._quick_item(window, "undoCaptionButton"))
+            self.assertEqual(self.app.subtitleSegments, original)
+            self._click(window, self._quick_item(window, "saveProjectButton"))
+            self.assertEqual(load_project(path)["segments"], original)
 
     def test_subtitle_timeline_drag_is_locked_during_processing_and_recovers(self) -> None:
         self._load_project()
@@ -8109,6 +8125,81 @@ Window {
         before = deepcopy(self.app._project["audio_mix"])
         self.assertFalse(self.app.applyAudioMixProposal([], False))
         self.assertEqual(self.app._project["audio_mix"], before)
+
+    def test_audio_proposal_requires_explicit_click_to_mute_every_output(self) -> None:
+        """Windows GUI CI必須: 通常適用は全音声ミュートを拒否し、明示許可なら保存できる。"""
+        path = self._load_project()
+        authenticated = CodexChatSnapshot(
+            connection_state="ready", auth_state="authenticated", auth_label="ChatGPT",
+        )
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        _, window = self._load_qml()
+        channels = self.app.audioMixerChannels
+        audible = [
+            channel for channel in channels
+            if channel["enabled"] and not channel["muted"] and channel["volume_percent"] > 0
+        ]
+        self.assertTrue(audible)
+        revision = self.app._project_revision
+        self.app._audio_mix_proposal = build_audio_mix_proposal(
+            {
+                "schema_version": 1,
+                "summary": "すべての出力をミュート",
+                "warnings": [],
+                "base_revision": revision,
+                "audio_state_revision": audio_mix_state_revision(channels),
+                "operations": [
+                    {
+                        "id": f"mute-{index}",
+                        "type": "update_audio_channel",
+                        "channel_id": str(channel["id"]),
+                        "changes": {"muted": True},
+                        "reason": "明示許可の確認",
+                    }
+                    for index, channel in enumerate(audible)
+                ],
+            },
+            channels,
+            project_revision=revision,
+        )
+        self.app.audioMixProposalChanged.emit()
+        panel = self._quick_item(window, "codexChatPanel")
+        card = self._quick_item(window, "codexChatProposalCard")
+        apply_button = self._quick_item(window, "codexApplyButton")
+        allow_button = self._quick_item(window, "codexAudioAllowSilenceButton")
+        self.gui.wait_until(
+            lambda: bool(panel.property("expanded")) and card.isVisible()
+            and bool(card.property("audioProposal"))
+            and apply_button.isEnabled() and allow_button.isVisible() and allow_button.isEnabled(),
+            description="全音声ミュート案の操作ボタン",
+        )
+        original_mix = deepcopy(self.app._project["audio_mix"])
+        original_bytes = path.read_bytes()
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, apply_button)
+            self.assertIsNotNone(self.app._audio_mix_proposal)
+            self.assertEqual(self.app.stage, "ERROR")
+            self.assertEqual(self.app._project["audio_mix"], original_mix)
+            self.assertEqual(self.app._project_revision, revision)
+            self.assertEqual(path.read_bytes(), original_bytes)
+
+            self._click(window, allow_button)
+            self.assertIsNone(self.app._audio_mix_proposal)
+            self.assertEqual(self.app._project_revision, revision + 1)
+            self.assertTrue(self.app.projectDirty)
+            updated = self.app.audioMixerChannels
+            self.assertFalse(any(
+                channel["enabled"] and not channel["muted"] and channel["volume_percent"] > 0
+                for channel in updated
+            ))
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+            self.assertFalse(self.app.projectDirty)
+            saved = load_project(path)["audio_mix"]["channels"]
+            self.assertEqual(
+                {channel["id"]: channel["muted"] for channel in saved},
+                {channel["id"]: channel["muted"] for channel in updated},
+            )
 
     def test_audio_chat_natural_language_uses_typed_audio_proposal_path(self) -> None:
         self._load_project()
@@ -11324,6 +11415,7 @@ Window {
             quit.assert_called_once()
 
     def test_qml_update_dialog_flow(self) -> None:
+        """Windows GUI CI必須: 更新完了後の再起動ボタンが新しいプロセスを要求する。"""
         _, window = self._load_qml()
         check_button = self._quick_item(window, "checkForUpdatesButton")
         dialog = window.findChild(QObject, "updateDialog")
@@ -11401,6 +11493,12 @@ Window {
         self.app.processEvents()
         restart_button = self._quick_item(window, "restartApplicationButton")
         self.assertTrue(restart_button.property("visible"))
+        with patch("src.gui_updates_facade.subprocess.Popen") as popen, patch.object(self.app, "quit") as quit:
+            self._click(window, restart_button)
+            popen.assert_called_once()
+            self.assertEqual(popen.call_args.args[0], [sys.executable, "-m", "src.gui"])
+            self.assertEqual(popen.call_args.kwargs["cwd"], str(self.root))
+            quit.assert_called_once()
         self._click(window, self._quick_item(window, "dismissUpdateDialogButton"))
         self.assertFalse(dialog.property("visible"))
 

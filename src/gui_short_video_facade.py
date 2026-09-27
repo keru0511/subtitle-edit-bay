@@ -63,6 +63,17 @@ class ShortVideoFacade(FeatureFacade):
 
         return [self._short_video_clip_view_at(index) for index in range(self._short_video_clip_count())]
 
+    @Property("QVariantList", notify=shortVideoChanged)
+    def addedHighlightCandidateIds(self) -> list[str]:
+        clips = self._short_video_section().get("clips")
+        if not is_object_list(clips):
+            return []
+        return [
+            str(clip["highlight_candidate_id"])
+            for clip in clips
+            if is_string_object_mapping(clip) and clip.get("highlight_candidate_id")
+        ]
+
     @Property("QVariantMap", notify=shortVideoChanged)
     def shortVideoSettings(self) -> dict[str, object]:
         if self.project_editor.project is None:
@@ -216,7 +227,7 @@ class ShortVideoFacade(FeatureFacade):
         if self.project_editor.project is None:
             return
         section = self._short_video_section(for_edit=True)
-        if section.get("clips"):
+        if section.get("clips") or section.get("enabled"):
             return
         clips: list[dict[str, object]] = []
         segments = self._project_segments()
@@ -236,6 +247,7 @@ class ShortVideoFacade(FeatureFacade):
                     "segment_id": str(segment.get("id", "")),
                     "start": coerce_float(segment.get("start", 0.0)),
                     "end": coerce_float(segment.get("end", 0.0)),
+                    "auto_generated": True,
                 }
             )
         section["enabled"] = True
@@ -312,7 +324,8 @@ class ShortVideoFacade(FeatureFacade):
             to_index = len(clips)
         if from_index == to_index:
             return True
-        clip = clips.pop(from_index)
+        clip = dict(clips.pop(from_index))
+        clip.pop("auto_generated", None)
         if to_index > from_index:
             to_index -= 1
         clips.insert(to_index, clip)
@@ -337,18 +350,20 @@ class ShortVideoFacade(FeatureFacade):
 
         if trim_requested:
             segment = backend.subtitles._find_segment_by_id(str(clip.get("segment_id", "")))
-            range_clip = not str(clip.get("segment_id", "")).strip()
+            range_clip = not str(clip.get("segment_id", "")).strip() or bool(clip.get("highlight_candidate_id"))
             if segment is None and not range_clip:
                 return False
             try:
-                if segment is None:
+                if range_clip:
                     segment_start = 0.0
                     segment_end = float(backend.projectDuration)
                     if segment_end <= 0.0:
                         segment_end = max(coerce_float(clip.get("end", 0.0)), 0.0)
-                else:
+                elif segment is not None:
                     segment_start = coerce_float(segment.get("start", 0.0))
                     segment_end = coerce_float(segment.get("end", segment_start))
+                else:
+                    return False
                 start = coerce_float(fields.get("start", clip.get("start", segment_start)))
                 end = coerce_float(fields.get("end", clip.get("end", segment_end)))
                 if not all(math.isfinite(value) for value in (segment_start, segment_end, start, end)):
@@ -372,6 +387,7 @@ class ShortVideoFacade(FeatureFacade):
                 clip["background_color"] = normalize_rgb_color(fields["background_color"])
             except (TypeError, ValueError, OverflowError):
                 return False
+        clip.pop("auto_generated", None)
         clips[index] = clip
         section["clips"] = clips
         return self._commit_short_video(section)
@@ -541,6 +557,7 @@ class ShortVideoFacade(FeatureFacade):
         ):
             return False
         candidate = self._highlight_state.candidates[index]
+        candidate_id = str(candidate.get("id", ""))
         source_ids_value = candidate.get("source_segment_ids")
         source_ids = [str(item) for item in source_ids_value] if is_object_list(source_ids_value) else []
         if not source_ids:
@@ -549,24 +566,35 @@ class ShortVideoFacade(FeatureFacade):
         clips = self._clip_items(section)
         candidate_start = coerce_float(candidate.get("start", 0.0))
         candidate_end = coerce_float(candidate.get("end", candidate_start))
-        if any(
-            str(clip.get("segment_id", "")) in source_ids
-            and min(coerce_float(clip.get("end", 0.0)), candidate_end)
-            > max(coerce_float(clip.get("start", 0.0)), candidate_start)
-            for clip in clips
-        ):
-            backend._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
+        if candidate_id and any(str(clip.get("highlight_candidate_id", "")) == candidate_id for clip in clips):
+            backend._set_status("この見どころ候補は追加済みです", "CHECK")
             return False
         section["enabled"] = True
-        clips.append(
-            {
-                "segment_id": source_ids[0],
-                "start": candidate_start,
-                "end": candidate_end,
-                "highlight_candidate_id": str(candidate.get("id", "")),
-            }
-        )
-        section["clips"] = clips
+        candidate_clip: dict[str, object] = {
+            "segment_id": source_ids[0],
+            "start": candidate_start,
+            "end": candidate_end,
+            "highlight_candidate_id": candidate_id,
+        }
+        # 候補と重なる未編集の自動区間だけを差し引く。手編集済み・旧形式のクリップは保持する。
+        adjusted_clips: list[dict[str, object]] = []
+        inserted = False
+        for clip in clips:
+            clip_start = coerce_float(clip.get("start", 0.0))
+            clip_end = coerce_float(clip.get("end", clip_start))
+            if not clip.get("auto_generated") or clip_end <= candidate_start or clip_start >= candidate_end:
+                adjusted_clips.append(clip)
+                continue
+            if clip_start < candidate_start:
+                adjusted_clips.append({**clip, "end": candidate_start})
+            if not inserted:
+                adjusted_clips.append(candidate_clip)
+                inserted = True
+            if clip_end > candidate_end:
+                adjusted_clips.append({**clip, "start": candidate_end})
+        if not inserted:
+            adjusted_clips.append(candidate_clip)
+        section["clips"] = adjusted_clips
         return self._commit_short_video(section)
 
     @Slot(int, result=bool)

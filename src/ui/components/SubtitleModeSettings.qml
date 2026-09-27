@@ -10,6 +10,7 @@ Item {
     required property var editorState
     property var speakers: []
     property var fontChoices: []
+    property bool imeComposing: false
     property color panelColor: "#161B22"
     property color raisedColor: "#21262D"
     property color borderColor: "#30363D"
@@ -250,7 +251,7 @@ Item {
                 ComboBox {
                     id: speakerCombo
                     objectName: "workspaceSubtitleSpeakerCombo"
-                    enabled: !root.backend.running
+                    enabled: !root.backend.running && !root.imeComposing
                     Layout.fillWidth: true
                     model: root.speakers
                     textRole: "name"
@@ -262,7 +263,7 @@ Item {
                     ComboBox {
                         id: fontCombo
                         objectName: "workspaceSubtitleFontCombo"
-                        enabled: !root.backend.running
+                        enabled: !root.backend.running && !root.imeComposing
                         Layout.fillWidth: true
                         model: root.fontChoices
                         textRole: "label"

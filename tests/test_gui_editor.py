@@ -5407,6 +5407,47 @@ Window {
 
         self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
 
+    def test_speaker_selection_keeps_uncommitted_ime_text(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        self.gui.resize(window, 1520, 940)
+        settings = self._quick_item(window, "workspaceSubtitleSettings")
+        self.gui.wait_until(settings.isVisible, description="通常画面の字幕設定")
+        caption = self._quick_visual_item(settings, "workspaceSubtitleTextArea")
+        speaker = self._quick_visual_item(settings, "workspaceSubtitleSpeakerCombo")
+        font = self._quick_visual_item(settings, "workspaceSubtitleFontCombo")
+
+        with patch.object(self.app.autosave_timer, "start"):
+            self._click(window, caption)
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            QTest.keyClick(window, Qt.Key.Key_A)
+            QCoreApplication.sendEvent(caption, QInputMethodEvent("日本", []))
+            self.app.processEvents()
+
+            self.assertFalse(speaker.isEnabled())
+            self.assertFalse(font.isEnabled())
+            self._click_disabled(window, speaker)
+            self._click_disabled(window, font)
+            self.assertTrue(caption.hasActiveFocus())
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(self.app.segmentAt(0)["text"], "abcdefgh")
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+
+            commit = QInputMethodEvent("", [])
+            commit.setCommitString("日本語")
+            QCoreApplication.sendEvent(caption, commit)
+            self.app.processEvents()
+            self.assertTrue(speaker.isEnabled())
+            self.assertTrue(font.isEnabled())
+            self._click(window, speaker)
+            QTest.keyClick(window, Qt.Key.Key_Down)
+            QTest.keyClick(window, Qt.Key.Key_Return)
+            self.assertEqual(self.app.segmentAt(0)["speaker"], "Speaker_Bob")
+            self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+
+        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(load_project(path)["segments"][0]["speaker"], "Speaker_Bob")
+
     def _assert_workspace_navigation_waits_for_ime(self, button_name: str, destination: str) -> None:
         path = self._load_project()
         _, window = self._load_qml()

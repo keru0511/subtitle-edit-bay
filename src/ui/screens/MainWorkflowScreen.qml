@@ -889,6 +889,9 @@ ApplicationWindow {
             objectName: "workspaceSubtitleSettings"
             backend: root.appBackend
             editorState: subtitleEditorState
+            // qmllint disable missing-property
+            imeComposing: root.activeFocusItem && root.activeFocusItem.inputMethodComposing === true
+            // qmllint enable missing-property
             speakers: root.projectSpeakerCache
             fontChoices: root.appBackend.subtitles.fontChoices
             panelColor: root.panel

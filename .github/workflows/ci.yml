@@ -381,6 +381,7 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_mode_sliders_follow_full_drag_and_save
           tests.test_gui_editor.GuiEditorRegressionTests.test_short_workspace_open_waits_for_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_speaker_color_waits_for_uncommitted_ime_text
+          tests.test_gui_editor.GuiEditorRegressionTests.test_speaker_selection_keeps_uncommitted_ime_text
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_editors_work_without_main_workflow_context
           tests.test_gui_editor.GuiEditorRegressionTests.test_failed_source_change_restores_clean_project_state
           tests.test_gui_editor.GuiEditorRegressionTests.test_source_alignment_button_uses_selected_track_and_manual_offset

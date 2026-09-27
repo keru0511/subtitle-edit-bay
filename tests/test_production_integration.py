@@ -33,12 +33,16 @@ class ProductionIntegrationContractTests(unittest.TestCase):
         # The shared workflow is the only owner of navigation side effects.
         # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
         for route in (
-            "onSourceSettingsRequested: sourcePopup.open()",
+            "onSourceSettingsRequested: root.openSourceSettings()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
         ):
             with self.subTest(route=route):
                 self.assertIn(route, workflow)
+        # 素材設定を開く前の入力確定はGUI操作でも検証する。
+        # test_source_settings_waits_for_uncommitted_ime_text
+        self.assertIn("function openSourceSettings()", workflow)
+        self.assertIn("sourcePopup.open()", workflow)
 
         # Short navigation snapshots the normal player before switching and
         # restores the backend-owned position when the workspace closes.

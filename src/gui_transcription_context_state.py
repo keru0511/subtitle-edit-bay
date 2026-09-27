@@ -23,6 +23,8 @@ class GuiTranscriptionContextState:
     dictionary_path: str = ""
     dictionary_confirmed: bool = False
     web_dictionary_enabled: bool = False
+    web_dictionary_url: str = ""
+    web_dictionary_snippet: str = ""
     web_dictionary_candidates: tuple[str, ...] = ()
     web_dictionary_terms: tuple[str, ...] = ()
     web_dictionary_candidate_metadata: tuple[WebDictionaryCandidate, ...] = ()
@@ -51,6 +53,8 @@ class GuiTranscriptionContextState:
             dictionary_path=resolved.dictionary_path or "",
             dictionary_confirmed=resolved.dictionary_confirmed,
             web_dictionary_enabled=resolved.web_dictionary_enabled,
+            web_dictionary_url=resolved.web_dictionary_url,
+            web_dictionary_snippet=resolved.web_dictionary_snippet,
             web_dictionary_candidates=tuple(candidates),
             web_dictionary_terms=tuple(resolved.web_dictionary_terms),
             web_dictionary_candidate_metadata=tuple(metadata),
@@ -64,6 +68,8 @@ class GuiTranscriptionContextState:
             "dictionary_path": self.dictionary_path,
             "dictionary_confirmed": self.dictionary_confirmed,
             "web_dictionary_enabled": self.web_dictionary_enabled,
+            "web_dictionary_url": self.web_dictionary_url,
+            "web_dictionary_snippet": self.web_dictionary_snippet,
             "web_dictionary_candidates": list(self.web_dictionary_candidates),
             "web_dictionary_terms": list(self.web_dictionary_terms),
             "web_dictionary_candidate_metadata": [dict(item) for item in self.web_dictionary_candidate_metadata],
@@ -140,6 +146,8 @@ def gui_state_to_transcription_context(gui_state: Mapping[str, object] | None) -
         "dictionary_path": gui_state.get("dictionary_path") or None,
         "dictionary_confirmed": gui_state.get("dictionary_confirmed", False),
         "web_dictionary_enabled": gui_state.get("web_dictionary_enabled", False),
+        "web_dictionary_url": gui_state.get("web_dictionary_url", ""),
+        "web_dictionary_snippet": gui_state.get("web_dictionary_snippet", ""),
         "web_dictionary_candidates": _normalize_terms_text(
             gui_state.get("web_dictionary_candidates"), "web_dictionary_candidates"
         ),

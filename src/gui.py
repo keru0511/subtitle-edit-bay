@@ -59,7 +59,9 @@ from .application_logging import ApplicationLogger, ProcessDiagnosticSnapshot
 from .application_info import resolve_application_info
 from .realtime_audio_mixer import RealtimeAudioMixer
 from .color_config import normalize_rgb_color
-from .gui_base import APP_TITLE, LegacyEditBayBackend
+from .data_boundary import is_object_list
+from .gui_base import APP_TITLE, AlignmentResult, LegacyEditBayBackend
+from .gui_source_selection_controller import SourceSelectionUpdate
 from .gui_source_state import SourceSelection, build_speaker_entries_from_files
 from .media_probe import probe_media_duration
 from .subtitle_project import (
@@ -74,12 +76,21 @@ from .subtitle_project import (
 from .render_ass import style_name_for_speaker
 from .runtime_dependencies import runtime_diagnostic_info
 from .video_sequence import VideoSequence, VideoSequenceError
+from .video_timeline import VideoTimelineView
 
 from .gui_workspace_facade import WorkspaceFacade
+from .gui_workspace_controller import WorkspacePlayerPayload
 from .gui_subtitles_facade import SubtitleFacade
 from .gui_short_video_facade import ShortVideoFacade
 from .gui_audio_facade import AudioFacade
-from .gui_sequence_facade import SequenceDependencies, SequenceFacade
+from .gui_sequence_facade import (
+    MediaBinAssetView,
+    SequenceClipView,
+    SequenceDependencies,
+    SequenceFacade,
+    SequencePlayheadView,
+    SequenceViewPayload,
+)
 from .gui_workflow_facade import WorkflowFacade
 from .gui_ai_facade import AIChatFacade, AIServices
 from .gui_updates_facade import UpdateFacade
@@ -439,7 +450,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._loading_project_sources = False
         self._relinking_project_sources = False
         self._relink_source_selection: SourceSelection | None = None
-        self._relink_alignment_result: dict[str, Any] | None = None
+        self._relink_alignment_result: AlignmentResult | None = None
         self._relink_project_was_dirty: bool | None = None
         self._relink_project_revision = 0
         self._relink_output_changes = 0
@@ -560,8 +571,8 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self.autosaveCompleted.connect(self._finish_autosave)
 
         self.updateCheckFinished.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
-        self._codex_proposal: dict[str, Any] | None = None
-        self._audio_mix_proposal: dict[str, Any] | None = None
+        self._codex_proposal: dict[str, object] | None = None
+        self._audio_mix_proposal: dict[str, object] | None = None
         self._codex_current_time: float | None = None
         self.codexCallbackRequested.connect(
             self._run_codex_callback,
@@ -652,11 +663,11 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._workspace_facade.currentWorkspace
 
     @Property("QVariantMap", notify=workspacePlayerStateChanged)
-    def workspacePlayerState(self) -> dict[str, Any]:
+    def workspacePlayerState(self) -> WorkspacePlayerPayload:
         return self._workspace_facade.workspacePlayerState
 
     @Property("QVariantMap", notify=workspacePlayerStateChanged)
-    def workspacePlayerStates(self) -> dict[str, dict[str, Any]]:
+    def workspacePlayerStates(self) -> dict[str, WorkspacePlayerPayload]:
         return self._workspace_facade.workspacePlayerStates
 
     @Property(str, notify=editorModeChanged)
@@ -672,7 +683,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._workspace_facade.editorPlayhead
 
     @Property("QVariantMap", notify=cutTimelineChanged)
-    def cutTimeline(self) -> dict[str, Any]:
+    def cutTimeline(self) -> VideoTimelineView:
         return self._workspace_facade.cutTimeline
 
     @Property(float, notify=cutTimelineChanged)
@@ -712,11 +723,11 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._ai_facade.codexError
 
     @Property("QVariantMap", notify=codexProposalChanged)
-    def codexProposal(self) -> dict[str, Any]:
+    def codexProposal(self) -> dict[str, object]:
         return self._ai_facade.codexProposal
 
     @Property("QVariantMap", notify=audioMixProposalChanged)
-    def audioMixProposal(self) -> dict[str, Any]:
+    def audioMixProposal(self) -> dict[str, object]:
         return self._audio_facade.audioMixProposal
 
     @Property(str, notify=audioMixProposalChanged)
@@ -756,7 +767,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._ai_facade.codexChatError
 
     @Property("QVariantList", notify=codexChatChanged)
-    def codexModels(self) -> list[dict[str, Any]]:
+    def codexModels(self) -> list[dict[str, object]]:
         return self._ai_facade.codexModels
 
     @Property(str, notify=codexChatChanged)
@@ -768,7 +779,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._ai_facade.codexModelError
 
     @Property("QVariantList", notify=codexChatChanged)
-    def codexChatMessages(self) -> list[dict[str, Any]]:
+    def codexChatMessages(self) -> list[dict[str, object]]:
         return self._ai_facade.codexChatMessages
 
     @Property(str, notify=aiChatChanged)
@@ -780,7 +791,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._ai_facade.aiChatProviderName
 
     @Property("QVariantList", notify=aiChatChanged)
-    def aiChatProviders(self) -> list[dict[str, Any]]:
+    def aiChatProviders(self) -> list[dict[str, object]]:
         return self._ai_facade.aiChatProviders
 
     @Property(bool, notify=aiChatChanged)
@@ -915,7 +926,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._audio_facade.audioPreviewClockUrl
 
     @Property("QVariantList", notify=projectDataChanged)
-    def audioMixerChannels(self) -> list[dict[str, Any]]:
+    def audioMixerChannels(self) -> list[dict[str, object]]:
         return self._audio_facade.audioMixerChannels
 
     @Property(bool, notify=projectDataChanged)
@@ -931,11 +942,11 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._audio_facade.audioMixerIntentionalSilence
 
     @Property("QVariantList", notify=projectDataChanged)
-    def audioMixerSequenceChannels(self) -> list[dict[str, Any]]:
+    def audioMixerSequenceChannels(self) -> list[dict[str, object]]:
         return self._audio_facade.audioMixerSequenceChannels
 
     @Property("QVariantList", notify=audioMixerPreviewChannelsChanged)
-    def audioMixerPreviewChannels(self) -> list[dict[str, Any]]:
+    def audioMixerPreviewChannels(self) -> list[dict[str, object]]:
         return self._audio_facade.audioMixerPreviewChannels
 
     @Property("QVariantMap", notify=audioMixerPreviewGainsChanged)
@@ -967,15 +978,15 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return max(video_duration, segment_duration)
 
     @Property("QVariantMap", notify=sequenceChanged)
-    def sequenceView(self) -> dict[str, Any]:
+    def sequenceView(self) -> SequenceViewPayload:
         return self._sequence_facade.sequenceView
 
     @Property("QVariantList", notify=sequenceChanged)
-    def mediaBinAssets(self) -> list[dict[str, Any]]:
+    def mediaBinAssets(self) -> list[MediaBinAssetView]:
         return self._sequence_facade.mediaBinAssets
 
     @Property("QVariantList", notify=sequenceChanged)
-    def sequenceClips(self) -> list[dict[str, Any]]:
+    def sequenceClips(self) -> list[SequenceClipView]:
         return self._sequence_facade.sequenceClips
 
     @Property(float, notify=sequenceChanged)
@@ -983,7 +994,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         return self._sequence_facade.sequenceOutputDuration
 
     @Property("QVariantMap", notify=sequenceChanged)
-    def sequencePlayhead(self) -> dict[str, Any]:
+    def sequencePlayhead(self) -> SequencePlayheadView:
         return self._sequence_facade.sequencePlayhead
 
     @Property(str, notify=sequenceChanged)
@@ -1034,7 +1045,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
     def assPath(self) -> str:
         return self._workflow_facade.assPath
 
-    def _source_selection_updated(self, update: Any, previous_alignment: dict[str, Any]) -> None:
+    def _source_selection_updated(self, update: SourceSelectionUpdate, previous_alignment: AlignmentResult) -> None:
         previous = update.previous
         selection = update.current
         if previous is None or selection is None:
@@ -1057,7 +1068,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             self.projectDataChanged.emit()
 
     def _restore_source_selection_after_failed_save(
-        self, selection: SourceSelection, alignment_result: dict[str, Any]
+        self, selection: SourceSelection, alignment_result: AlignmentResult
     ) -> None:
         error_status = self.status
         was_loading_project_sources = self._loading_project_sources
@@ -1078,7 +1089,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
             return ""
         return str(Path(value).resolve()).casefold()
 
-    def _project_source_selection_matches(self, selection: Any) -> bool:
+    def _project_source_selection_matches(self, selection: SourceSelection) -> bool:
         if self._project is None:
             return False
         project_video = self._normalized_source_path(str(self._project.get("video", {}).get("path", "")))
@@ -1468,7 +1479,7 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
         self._load_project_path(candidate, update_sources=True)
 
     @Slot(str, "QVariantMap", result=bool)
-    def loadProjectWithSelectedSources(self, path: str, source_selection: dict[str, Any]) -> bool:
+    def loadProjectWithSelectedSources(self, path: str, source_selection: dict[str, object]) -> bool:
         """Load an existing project while keeping the sources chosen for the next transcription."""
         if self._running:
             self._set_status("処理中は編集プロジェクトを変更できません", "BUSY")
@@ -1478,10 +1489,14 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 return False
 
         candidate = self._local_path(path)
+        audio_files = source_selection.get("audio_files", [])
+        if not is_object_list(audio_files):
+            self._set_status("音声ファイルの選択を確認してください", "CHECK")
+            return False
         selected_sources = SourceSelection(
             video=str(source_selection.get("video", "")),
             output_dir=str(source_selection.get("output_dir", "")),
-            audio_files=tuple(str(item) for item in source_selection.get("audio_files", [])),
+            audio_files=tuple(str(item) for item in audio_files),
         )
         if not self._load_project_path(candidate, update_sources=True):
             return False

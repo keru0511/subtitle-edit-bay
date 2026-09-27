@@ -185,7 +185,7 @@ def _parse_gemini_version(value: str, candidate: str) -> tuple[int, int, int] | 
         r"gemini(?:\.exe|\.cmd)?", Path(candidate).name.casefold()
     ):
         return None
-    return tuple(int(group or 0) for group in match.groups())  # type: ignore[return-value]
+    return (int(match.group(1) or 0), int(match.group(2) or 0), int(match.group(3) or 0))
 
 
 def _is_supported_gemini_version(version: tuple[int, int, int]) -> bool:

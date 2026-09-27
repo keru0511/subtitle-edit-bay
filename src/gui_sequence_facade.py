@@ -7,7 +7,7 @@ import subprocess
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable, TypedDict
 
 from PySide6.QtWidgets import QFileDialog
 
@@ -16,7 +16,7 @@ from .media_probe import probe_media_duration
 from .subtitle_project import (
     SubtitleProjectError,
 )
-from .video_sequence import VideoSequence, VideoSequenceError
+from .video_sequence import SequenceTimelineClipView, VideoSequence, VideoSequenceError
 
 from .gui_feature_facade import FeatureFacade
 
@@ -32,6 +32,38 @@ class SequenceDependencies:
     validate_media_file: Callable[[Path, set[str], str], tuple[bool, str]]
     normalize_source_path: Callable[[str], str]
     set_status: Callable[[str, str], None]
+
+
+class MediaBinAssetView(TypedDict):
+    id: str
+    path: str
+    name: str
+    duration: float
+    clipCount: int
+
+
+class SequenceClipView(SequenceTimelineClipView):
+    assetPath: str
+    assetName: str
+    audioLinked: bool
+    volume: float
+    audioOffset: float
+    muted: bool
+
+
+class SequenceViewPayload(TypedDict):
+    schemaVersion: int
+    assets: list[MediaBinAssetView]
+    clips: list[SequenceClipView]
+    outputDuration: float
+    isLegacySingleVideo: bool
+
+
+class SequencePlayheadView(TypedDict):
+    outputMs: int
+    outputSeconds: float
+    clipId: str
+    sourceTime: float
 
 
 class SequenceFacade(FeatureFacade):
@@ -61,7 +93,7 @@ class SequenceFacade(FeatureFacade):
         except SubtitleProjectError:
             return None
 
-    def _sequence_view_payload(self) -> dict[str, Any]:
+    def _sequence_view_payload(self) -> SequenceViewPayload:
         model = self._sequence_model_for_facade()
         if model is None:
             return {
@@ -73,7 +105,7 @@ class SequenceFacade(FeatureFacade):
             }
 
         asset_clip_counts = {asset.id: sum(clip.asset_id == asset.id for clip in model.clips) for asset in model.assets}
-        assets = [
+        assets: list[MediaBinAssetView] = [
             {
                 "id": asset.id,
                 "path": asset.path,
@@ -86,21 +118,19 @@ class SequenceFacade(FeatureFacade):
         timeline = model.timeline if model.clips else None
         timeline_clips = timeline.clips if timeline is not None else ()
         assets_by_id = {asset.id: asset for asset in model.assets}
-        clips: list[dict[str, Any]] = []
+        clips: list[SequenceClipView] = []
         for entry in timeline_clips:
             clip = entry.clip
             asset = assets_by_id[clip.asset_id]
-            view = entry.as_view()
-            view.update(
-                {
-                    "assetPath": asset.path,
-                    "assetName": Path(asset.path).name,
-                    "audioLinked": clip.audio_linked,
-                    "volume": clip.volume,
-                    "audioOffset": clip.audio_offset_seconds,
-                    "muted": clip.muted,
-                }
-            )
+            view: SequenceClipView = {
+                **entry.as_view(),
+                "assetPath": asset.path,
+                "assetName": Path(asset.path).name,
+                "audioLinked": clip.audio_linked,
+                "volume": clip.volume,
+                "audioOffset": clip.audio_offset_seconds,
+                "muted": clip.muted,
+            }
             clips.append(view)
         return {
             "schemaVersion": model.schema_version,
@@ -138,15 +168,15 @@ class SequenceFacade(FeatureFacade):
         return True
 
     @Property("QVariantMap", notify=sequenceChanged)
-    def sequenceView(self) -> dict[str, Any]:
+    def sequenceView(self) -> SequenceViewPayload:
         return deepcopy(self._sequence_view_payload())
 
     @Property("QVariantList", notify=sequenceChanged)
-    def mediaBinAssets(self) -> list[dict[str, Any]]:
+    def mediaBinAssets(self) -> list[MediaBinAssetView]:
         return deepcopy(self._sequence_view_payload()["assets"])
 
     @Property("QVariantList", notify=sequenceChanged)
-    def sequenceClips(self) -> list[dict[str, Any]]:
+    def sequenceClips(self) -> list[SequenceClipView]:
         return deepcopy(self._sequence_view_payload()["clips"])
 
     @Property(float, notify=sequenceChanged)
@@ -154,7 +184,7 @@ class SequenceFacade(FeatureFacade):
         return float(self._sequence_view_payload()["outputDuration"])
 
     @Property("QVariantMap", notify=sequenceChanged)
-    def sequencePlayhead(self) -> dict[str, Any]:
+    def sequencePlayhead(self) -> SequencePlayheadView:
         model = self._sequence_model_for_facade()
         if model is None or not model.clips:
             return {
@@ -208,7 +238,7 @@ class SequenceFacade(FeatureFacade):
         if any(self._dependencies.normalize_source_path(asset.path) == normalized for asset in model.assets):
             return self._sequence_failure("同じ動画素材は既にmedia binにあります")
         try:
-            duration = float(probe_media_duration(candidate))
+            duration = float(probe_media_duration(str(candidate)))
         except (OSError, ValueError, TypeError, subprocess.CalledProcessError) as error:
             return self._sequence_failure(f"動画の長さを確認できません: {error}")
         if not math.isfinite(duration) or duration <= 0.0:
@@ -219,10 +249,10 @@ class SequenceFacade(FeatureFacade):
         )
 
     @Slot("QVariantList", result=int)
-    def addSequenceAssets(self, paths: list[Any]) -> int:
+    def addSequenceAssets(self, paths: list[object]) -> int:
         added = 0
         for path in paths or []:
-            if self.addSequenceAsset(path):
+            if isinstance(path, str) and self.addSequenceAsset(path):
                 added += 1
         return added
 

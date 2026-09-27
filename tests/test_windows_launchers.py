@@ -11,14 +11,27 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
-from tests.typed_case import TypedTestCase
+from src.data_boundary import decode_json
+from tests.typed_case import TypedTestCase, typed_skip_unless_method
+from tests.typed_data import is_string_list, object_dict, object_list, required_string
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _decoded_object(text: str) -> dict[str, object]:
+    return object_dict(decode_json(text))
+
+
+def _decoded_string_list(text: str) -> list[str]:
+    value = decode_json(text)
+    if not is_string_list(value):
+        raise AssertionError("expected an array of strings")
+    return value
+
+
 class WindowsLauncherTests(TypedTestCase):
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_native_launcher_build_verifies_x64_gui_and_static_crt(self) -> None:
         powershell = self._require_windows_powershell()
         version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -80,7 +93,7 @@ class WindowsLauncherTests(TypedTestCase):
             )
             self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout + mismatch.stderr)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_signing_uses_verifier_exceptions_not_stale_last_exit_code(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -156,7 +169,7 @@ class WindowsLauncherTests(TypedTestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_signer_subject_identity_rejects_a_containing_subject(self) -> None:
         powershell = self._require_windows_powershell()
         helper = ROOT / "scripts" / "windows_signing_identity.ps1"
@@ -407,7 +420,7 @@ class WindowsLauncherTests(TypedTestCase):
         self._run_git(git, "push", "origin", "main", cwd=source)
         return self._run_git(git, "rev-parse", "HEAD", cwd=source)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_start_batch_runs_launch_script_from_distribution_root(self) -> None:
         command_prompt = os.environ.get("COMSPEC") or shutil.which("cmd.exe")
         self.assertTrue(command_prompt, "Windows command prompt is required")
@@ -445,9 +458,9 @@ class WindowsLauncherTests(TypedTestCase):
 
             self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
             self.assertTrue(marker.is_file(), result.stdout + result.stderr)
-            payload = json.loads(marker.read_text(encoding="utf-8"))
-            self.assertEqual(Path(payload["working_directory"]).resolve(), distribution.resolve())
-            self.assertEqual(Path(payload["script_root"]).resolve(), scripts.resolve())
+            payload = _decoded_object(marker.read_text(encoding="utf-8"))
+            self.assertEqual(Path(required_string(payload["working_directory"])).resolve(), distribution.resolve())
+            self.assertEqual(Path(required_string(payload["script_root"])).resolve(), scripts.resolve())
 
     def test_setup_uses_module_pip_and_winget_fallbacks(self) -> None:
         launcher = (ROOT / "setup.bat").read_text(encoding="utf-8")
@@ -492,7 +505,7 @@ class WindowsLauncherTests(TypedTestCase):
         self.assertIn("Show-SetupFailure", launch)
         self.assertEqual(launch.count("Show-SetupFailure; exit $exitCode"), 2)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_cpu_install_arguments_allow_missing_optional_extra_index_without_test_hook(self) -> None:
         powershell = self._require_windows_powershell()
         environment = os.environ.copy()
@@ -518,13 +531,13 @@ class WindowsLauncherTests(TypedTestCase):
             timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        arguments = json.loads(result.stdout.strip().splitlines()[-1])
+        arguments = _decoded_string_list(result.stdout.strip().splitlines()[-1])
         self.assertIn("--require-hashes", arguments)
         self.assertIn("--index-url", arguments)
         self.assertIn("-r", arguments)
         self.assertNotIn("--extra-index-url", arguments)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_launcher_requests_repair_for_cpu_only_torch_when_cuda_is_selected(self) -> None:
         powershell = self._require_windows_powershell()
         launch_script = ROOT / "installer" / "launch.ps1"
@@ -533,7 +546,7 @@ class WindowsLauncherTests(TypedTestCase):
             root = Path(temp_dir)
             config_path = root / ".gui" / "runtime_config.json"
             config_path.parent.mkdir(parents=True)
-            config_path.write_text(json.dumps({"shared": {"device": "cuda"}}), encoding="utf-8")
+            config_path.write_text(json.dumps(dict[str, object]({"shared": {"device": "cuda"}})), encoding="utf-8")
 
             unavailable_python = root / "cuda-unavailable.cmd"
             unavailable_python.write_text("@exit /b 1\r\n", encoding="ascii")
@@ -569,10 +582,10 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertEqual(probe(unavailable_python), "true")
             self.assertEqual(probe(available_python), "false")
 
-            config_path.write_text(json.dumps({"shared": {"device": "cpu"}}), encoding="utf-8")
+            config_path.write_text(json.dumps(dict[str, object]({"shared": {"device": "cpu"}})), encoding="utf-8")
             self.assertEqual(probe(unavailable_python), "false")
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installed_launcher_resolves_root_and_routes_setup_or_gui_exclusively(self) -> None:
         powershell = self._require_windows_powershell()
 
@@ -590,7 +603,7 @@ class WindowsLauncherTests(TypedTestCase):
             (root / "VERSION").write_text("1.2.3\n", encoding="ascii")
             (root / ".local").mkdir()
             (root / ".local" / "setup-status.json").write_text(
-                json.dumps({"schema_version": 1, "status": "success", "app_version": "1.2.3"}),
+                json.dumps(dict[str, object]({"schema_version": 1, "status": "success", "app_version": "1.2.3"})),
                 encoding="utf-8",
             )
             (root / "assets").mkdir()
@@ -628,11 +641,11 @@ class WindowsLauncherTests(TypedTestCase):
                 if use_default_config:
                     config_path.unlink(missing_ok=True)
                     (root / "assets" / "runtime_config.json").write_text(
-                        json.dumps({"shared": {"device": device}}),
+                        json.dumps(dict[str, object]({"shared": {"device": device}})),
                         encoding="utf-8",
                     )
                 else:
-                    config_path.write_text(json.dumps({"shared": {"device": device}}), encoding="utf-8")
+                    config_path.write_text(json.dumps(dict[str, object]({"shared": {"device": device}})), encoding="utf-8")
 
                 result = subprocess.run(
                     [
@@ -718,7 +731,7 @@ class WindowsLauncherTests(TypedTestCase):
                 (logs / "latest-launch-error.log").read_text(encoding="utf-8", errors="replace"),
             )
 
-    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    @typed_skip_unless_method(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
     def test_setup_gpu_probe_searches_sysnative_and_system32_paths(self) -> None:
         powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
         setup_script = ROOT / "scripts" / "setup.ps1"
@@ -762,7 +775,7 @@ class WindowsLauncherTests(TypedTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(Path(result.stdout.strip()), candidate.resolve())
 
-    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
+    @typed_skip_unless_method(os.name == "nt" and shutil.which("powershell.exe"), "Windows PowerShell is required")
     def test_setup_gpu_probe_distinguishes_driver_failure_from_missing_gpu(self) -> None:
         powershell = str(Path(shutil.which("powershell.exe") or "").resolve())
         setup_script = ROOT / "scripts" / "setup.ps1"
@@ -799,10 +812,10 @@ class WindowsLauncherTests(TypedTestCase):
             )
 
             self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
-            failure_probe = json.loads(failed.stdout.strip().splitlines()[-1])
+            failure_probe = _decoded_object(failed.stdout.strip().splitlines()[-1])
             self.assertEqual(failure_probe["State"], "execution_failed")
             self.assertEqual(failure_probe["ExitCode"], 17)
-            self.assertIn("synthetic NVIDIA driver failure", failure_probe["Output"])
+            self.assertIn("synthetic NVIDIA driver failure", required_string(failure_probe["Output"]))
 
             environment = os.environ.copy()
             environment["PATH"] = ""
@@ -830,11 +843,11 @@ class WindowsLauncherTests(TypedTestCase):
             )
 
             self.assertEqual(missing.returncode, 0, missing.stdout + missing.stderr)
-            missing_probe = json.loads(missing.stdout.strip().splitlines()[-1])
+            missing_probe = _decoded_object(missing.stdout.strip().splitlines()[-1])
             self.assertEqual(missing_probe["State"], "not_found")
             self.assertIsNone(missing_probe["ExitCode"])
 
-    @unittest.skipUnless(os.name == "nt", "Windows architecture paths are required")
+    @typed_skip_unless_method(os.name == "nt", "Windows architecture paths are required")
     def test_setup_batch_upgrades_32_bit_parent_to_64_bit_powershell(self) -> None:
         system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
         powershell_32 = system_root / "SysWOW64" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
@@ -883,7 +896,7 @@ class WindowsLauncherTests(TypedTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout.strip().splitlines()[-1], "64")
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_update_batch_runs_update_script_from_distribution_root(self) -> None:
         command_prompt = os.environ.get("COMSPEC") or shutil.which("cmd.exe")
         self.assertTrue(command_prompt, "Windows command prompt is required")
@@ -923,11 +936,11 @@ class WindowsLauncherTests(TypedTestCase):
 
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertTrue(marker.is_file(), result.stdout + result.stderr)
-            payload = json.loads(marker.read_text(encoding="utf-8"))
-            self.assertEqual(Path(payload["working_directory"]).resolve(), distribution.resolve())
-            self.assertEqual(Path(payload["script_root"]).resolve(), scripts.resolve())
+            payload = _decoded_object(marker.read_text(encoding="utf-8"))
+            self.assertEqual(Path(required_string(payload["working_directory"])).resolve(), distribution.resolve())
+            self.assertEqual(Path(required_string(payload["script_root"])).resolve(), scripts.resolve())
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_git_update_fast_forwards_and_preserves_untracked_data(self) -> None:
         powershell = self._require_windows_powershell()
         git = self._require_windows_git()
@@ -959,7 +972,7 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertEqual((distribution / "video_import" / "source.mkv").read_bytes(), b"local video")
             self.assertEqual((distribution / "project-state.json").read_text(encoding="utf-8"), "local project")
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_git_update_rejects_tracked_worktree_changes(self) -> None:
         powershell = self._require_windows_powershell()
         git = self._require_windows_git()
@@ -978,7 +991,7 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "local edit")
             self.assertFalse((distribution / "setup-ran.txt").exists())
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_git_update_rejects_non_fast_forward_history(self) -> None:
         powershell = self._require_windows_powershell()
         git = self._require_windows_git()
@@ -1009,7 +1022,7 @@ class WindowsLauncherTests(TypedTestCase):
 
         self.assertNotIn("reset --hard", updater)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_zip_release_update_downloads_and_preserves_local_data(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1070,7 +1083,7 @@ class WindowsLauncherTests(TypedTestCase):
                 def do_GET(self) -> None:
                     requested_paths.append(self.path)
                     if self.path == "/releases/latest":
-                        payload = json.dumps({"tag_name": "v0.2.0"}).encode("utf-8")
+                        payload = json.dumps(dict[str, object]({"tag_name": "v0.2.0"})).encode("utf-8")
                         content_type = "application/json"
                     elif self.path == "/archive/refs/tags/v0.2.0.zip":
                         payload = archive_bytes
@@ -1132,7 +1145,7 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertEqual((distribution / "out" / "marker.txt").read_text(encoding="utf-8"), "old output")
             self.assertEqual((distribution / "setup-ran.txt").read_text(encoding="utf-8"), "ok")
 
-            installed_manifest = json.loads(
+            installed_manifest = _decoded_string_list(
                 (distribution / ".local" / "update-manifest.json").read_text(encoding="utf-8")
             )
             self.assertIn("README.md", installed_manifest)
@@ -1144,7 +1157,7 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "old readme")
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_zip_update_rolls_back_when_setup_fails(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1252,7 +1265,7 @@ class WindowsLauncherTests(TypedTestCase):
         self.assertNotIn("\npython -m src.gui", readme)
         self.assertNotIn("\npython -m src.gui", usage)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_applies_update_writes_result_and_restarts(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1285,7 +1298,7 @@ class WindowsLauncherTests(TypedTestCase):
             deadline = time.monotonic() + 5
             while not restart_marker.exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9")
             self.assertIn("WriteAllText", (install / "scripts" / "launch.ps1").read_text(encoding="utf-8"))
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "new app")
@@ -1300,13 +1313,13 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertIn("/DIR=", installer_arguments)
             self.assertIn(str(install), installer_arguments)
             self.assertIn("/LOG=", installer_arguments)
-            self.assertTrue(Path(update_result["log"]).is_file())
-            self.assertTrue(Path(update_result["setup_log"]).is_file())
-            self.assertNotEqual(Path(update_result["log"]).resolve(), result_path.resolve())
+            self.assertTrue(Path(required_string(update_result["log"])).is_file())
+            self.assertTrue(Path(required_string(update_result["setup_log"])).is_file())
+            self.assertNotEqual(Path(required_string(update_result["log"])).resolve(), result_path.resolve())
             self.assertTrue((install / ".venv" / "new-runtime.txt").is_file())
             self.assertFalse((install / ".venv" / "old-runtime.txt").exists())
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_rejects_checksum_before_starting_installer(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1332,16 +1345,16 @@ class WindowsLauncherTests(TypedTestCase):
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self.assertFalse(installer_marker.exists(), update_result)
             self._wait_for_path(restart_marker)
             self.assertTrue(restart_marker.exists(), update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertNotEqual(update_result["status"], "success", update_result)
-            self.assertIn("checksum does not match", update_result["message"])
+            self.assertIn("checksum does not match", required_string(update_result["message"]))
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_rolls_back_when_installed_version_mismatches(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1369,7 +1382,7 @@ class WindowsLauncherTests(TypedTestCase):
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self._wait_for_path(restart_marker)
             self.assertTrue(restart_marker.exists(), update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
@@ -1382,9 +1395,9 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertTrue(update_result["rollback_restarted"])
             self.assertTrue((install / ".venv" / "old-runtime.txt").is_file())
             self.assertFalse((install / ".venv" / "new-runtime.txt").exists())
-            self.assertIn("does not match v9.9.9", update_result["message"])
+            self.assertIn("does not match v9.9.9", required_string(update_result["message"]))
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_restores_snapshot_after_partial_failure(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1412,7 +1425,7 @@ class WindowsLauncherTests(TypedTestCase):
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self._wait_for_path(restart_marker)
             self.assertTrue(restart_marker.exists(), update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
@@ -1424,9 +1437,9 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertTrue(update_result["rollback_restored"])
             self.assertTrue(update_result["rollback_restarted"])
             self.assertTrue((install / ".venv" / "old-runtime.txt").is_file())
-            self.assertIn("Installer exited with code 1", update_result["message"])
+            self.assertIn("Installer exited with code 1", required_string(update_result["message"]))
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_waits_for_parent_and_runtime_file_lock(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1491,14 +1504,14 @@ class WindowsLauncherTests(TypedTestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertGreaterEqual(elapsed, 0.8)
-            update_result = json.loads((base / "update-result.json").read_text(encoding="utf-8"))
-            self.assertIn(parent.pid, update_result["process_ids"])
+            update_result = _decoded_object((base / "update-result.json").read_text(encoding="utf-8"))
+            self.assertIn(parent.pid, object_list(update_result["process_ids"]))
             self.assertTrue((install / ".venv" / "new-runtime.txt").is_file())
             self._wait_for_path(restart_marker)
             self.assertTrue(restart_marker.is_file(), update_result)
             time.sleep(0.5)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_rolls_back_runtime_validation_failure_and_restarts_old_version(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1524,7 +1537,7 @@ class WindowsLauncherTests(TypedTestCase):
             )
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self._wait_for_path(restart_marker)
             self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertTrue(update_result["rollback_restarted"], update_result)
@@ -1533,10 +1546,10 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
             self.assertTrue((install / ".venv" / "old-runtime.txt").is_file())
             self.assertFalse((install / ".venv" / "new-runtime.txt").exists())
-            self.assertTrue(Path(update_result["log"]).is_file())
-            self.assertTrue(Path(update_result["setup_log"]).is_file())
+            self.assertTrue(Path(required_string(update_result["log"])).is_file())
+            self.assertTrue(Path(required_string(update_result["setup_log"])).is_file())
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_generation_runtime_rollback_restores_old_generation_and_manifest(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1551,12 +1564,12 @@ class WindowsLauncherTests(TypedTestCase):
             (old_runtime / "Scripts" / "python.exe").write_bytes(b"old python")
             active_manifest = install / ".local" / "runtime-manifest.json"
             active_manifest.write_text(
-                json.dumps({"runtime_directory": ".local/runtimes/gen-old"}) + "\n",
+                json.dumps(dict[str, object]({"runtime_directory": ".local/runtimes/gen-old"})) + "\n",
                 encoding="utf-8",
             )
             setup_status = install / ".local" / "setup-status.json"
             setup_status.write_text(
-                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                json.dumps(dict[str, object]({"status": "success", "app_version": "v0.1.0"})) + "\n",
                 encoding="utf-8",
             )
             shutil.rmtree(install / ".venv")
@@ -1589,20 +1602,20 @@ class WindowsLauncherTests(TypedTestCase):
 
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self._wait_for_path(restart_marker)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self.assertEqual(update_result["status"], "rollback", update_result)
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "old app")
-            restored_manifest = json.loads(active_manifest.read_text(encoding="utf-8"))
+            restored_manifest = _decoded_object(active_manifest.read_text(encoding="utf-8"))
             self.assertEqual(restored_manifest["runtime_directory"], ".local/runtimes/gen-old")
-            restored_status = json.loads(setup_status.read_text(encoding="utf-8"))
+            restored_status = _decoded_object(setup_status.read_text(encoding="utf-8"))
             self.assertEqual(restored_status["app_version"], "v0.1.0")
             self.assertTrue((install / ".venv" / "old-marker.txt").is_file())
             self.assertFalse((install / ".local" / "runtimes" / "gen-new").exists())
             self.assertTrue(restart_marker.is_file(), update_result)
             time.sleep(0.5)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_launch_script_gui_process_exit_does_not_wait_for_child_update_helper(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1613,7 +1626,7 @@ class WindowsLauncherTests(TypedTestCase):
             (install / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
             (install / ".local").mkdir()
             (install / ".local" / "setup-status.json").write_text(
-                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                json.dumps(dict[str, object]({"status": "success", "app_version": "v0.1.0"})) + "\n",
                 encoding="utf-8",
             )
             pid_marker = base / "helper.pid"
@@ -1697,7 +1710,7 @@ class WindowsLauncherTests(TypedTestCase):
             self.assertIn("large-stderr-end", stderr_text)
             self.assertGreater(len(stderr_text), 262144)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_snapshot_and_evacuation_failures_preserve_old_runtime(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1710,7 +1723,7 @@ class WindowsLauncherTests(TypedTestCase):
             setup_status = install / ".local" / "setup-status.json"
             setup_status.parent.mkdir()
             setup_status.write_text(
-                json.dumps({"status": "success", "app_version": "v0.1.0"}) + "\n",
+                json.dumps(dict[str, object]({"status": "success", "app_version": "v0.1.0"})) + "\n",
                 encoding="utf-8",
             )
 
@@ -1732,10 +1745,10 @@ class WindowsLauncherTests(TypedTestCase):
 
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(marker.read_text(encoding="utf-8"), fault_point)
-                    update_result = json.loads(result_path.read_text(encoding="utf-8"))
+                    update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
                     self.assertEqual(update_result["status"], "rollback", update_result)
                     self.assertTrue(update_result["rollback_restored"], update_result)
-                    self.assertIn(f"Injected update test fault: {fault_point}", update_result["message"])
+                    self.assertIn(f"Injected update test fault: {fault_point}", required_string(update_result["message"]))
                     self._wait_for_path(restart_marker)
                     self.assertTrue((runtime / "intact-marker.txt").is_file())
                     self.assertEqual(
@@ -1744,12 +1757,12 @@ class WindowsLauncherTests(TypedTestCase):
                     )
                     self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v0.1.0\n")
                     self.assertEqual(
-                        json.loads(setup_status.read_text(encoding="utf-8"))["app_version"],
+                        _decoded_object(setup_status.read_text(encoding="utf-8"))["app_version"],
                         "v0.1.0",
                     )
                     time.sleep(0.2)
 
-    @unittest.skipUnless(os.name == "nt", "Windows is required")
+    @typed_skip_unless_method(os.name == "nt", "Windows is required")
     def test_installer_helper_post_commit_cleanup_failure_preserves_new_version(self) -> None:
         powershell = self._require_windows_powershell()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1779,12 +1792,12 @@ class WindowsLauncherTests(TypedTestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self._wait_for_path(restart_marker)
-            update_result = json.loads(result_path.read_text(encoding="utf-8"))
+            update_result = _decoded_object(result_path.read_text(encoding="utf-8"))
             self.assertEqual(update_result["status"], "success", update_result)
             self.assertEqual(fault_marker.read_text(encoding="utf-8"), "post-commit-cleanup")
             self.assertEqual((install / "VERSION").read_text(encoding="utf-8"), "v9.9.9")
             self.assertEqual((install / "src" / "app.py").read_text(encoding="utf-8"), "new app")
-            helper_log = Path(update_result["log"]).read_text(encoding="utf-8", errors="replace")
+            helper_log = Path(required_string(update_result["log"])).read_text(encoding="utf-8", errors="replace")
             self.assertIn("post-commit cleanup warning", helper_log)
             recovery_points = list((install / ".local" / "update-recovery").iterdir())
             self.assertEqual(len(recovery_points), 1, recovery_points)

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_string_object_dict, is_string_object_dict_list
 from src.gui_project_editor_controller import ProjectEditorController
 from src.subtitle_project import create_project, load_project
 from src.video_sequence import SequenceTransition, VideoSequence
@@ -132,14 +133,26 @@ class ProductionIntegrationContractTests(TypedTestCase):
                 )
             )
             self.assertIsNotNone(updated)
-            controller.project["short_video"]["clips"].append(
+            active = controller.project
+            if active is None:
+                self.fail("project should be loaded")
+            short_video = active.get("short_video")
+            if not is_string_object_dict(short_video):
+                self.fail("short_video should be an object")
+            clips = short_video.get("clips")
+            if not is_string_object_dict_list(clips):
+                self.fail("clips should be an array")
+            clips.append(
                 {"segment_id": "short-b", "start": 3.0, "end": 4.0}
             )
             controller.mark_dirty()
             controller.autosave()
             revision = controller.autosave_revision
             autosave_path = controller.autosave_path
-            controller.autosave_future.result(timeout=5)
+            future = controller.autosave_future
+            if future is None:
+                self.fail("autosave should be running")
+            future.result(timeout=5)
             controller.finish_autosave(revision, autosave_path, "")
 
             persisted = load_project(project_path)
@@ -156,8 +169,11 @@ class ProductionIntegrationContractTests(TypedTestCase):
                 persisted_sequence.clips[1].transition,
                 SequenceTransition(type="crossfade", duration=0.25),
             )
+            persisted_short = persisted.get("short_video")
+            if not is_string_object_dict(persisted_short):
+                self.fail("persisted short_video should be an object")
             self.assertEqual(
-                persisted["short_video"]["clips"],
+                persisted_short.get("clips"),
                 [
                     {"segment_id": "short-a", "start": 1.0, "end": 2.0},
                     {"segment_id": "short-b", "start": 3.0, "end": 4.0},
@@ -172,8 +188,14 @@ class ProductionIntegrationContractTests(TypedTestCase):
                 [clip.id for clip in reloaded_sequence.clips],
                 ["clip-video", "clip-2"],
             )
-            self.assertEqual(reloaded["short_video"]["time_basis"], "source")
-            self.assertEqual(len(reloaded["short_video"]["clips"]), 2)
+            reloaded_short = reloaded.get("short_video")
+            if not is_string_object_dict(reloaded_short):
+                self.fail("reloaded short_video should be an object")
+            reloaded_clips = reloaded_short.get("clips")
+            if not is_string_object_dict_list(reloaded_clips):
+                self.fail("reloaded clips should be an array")
+            self.assertEqual(reloaded_short.get("time_basis"), "source")
+            self.assertEqual(len(reloaded_clips), 2)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import tempfile
 from threading import Event
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Mapping
 from unittest.mock import patch
 
 from src.audio_preview_cache import (
@@ -13,11 +13,12 @@ from src.audio_preview_cache import (
     audio_preview_cache_entries,
 )
 from src.gui_audio_preview_controller import AudioPreviewController
+from src.data_boundary import is_object_list, is_string_object_dict
 from tests.typed_case import TypedTestCase
 
 
 class AudioPreviewControllerTests(TypedTestCase):
-    def _project(self, root: Path) -> dict[str, Any]:
+    def _project(self, root: Path) -> dict[str, object]:
         video = root / "capture.mkv"
         external = root / "speaker.aac"
         video.write_bytes(b"video-source")
@@ -50,7 +51,7 @@ class AudioPreviewControllerTests(TypedTestCase):
         }
 
     @staticmethod
-    def _write_cache(project: dict[str, Any], cache_root: Path) -> dict[str, str]:
+    def _write_cache(project: Mapping[str, object], cache_root: Path) -> dict[str, str]:
         entries = audio_preview_cache_entries(project, cache_root)
         paths: dict[str, str] = {}
         for entry in entries:
@@ -80,7 +81,13 @@ class AudioPreviewControllerTests(TypedTestCase):
                 ["video:0:a:0"],
             )
 
-            project["audio_mix"]["channels"][1]["enabled"] = True
+            audio_mix = project["audio_mix"]
+            assert is_string_object_dict(audio_mix)
+            channel_entries = audio_mix["channels"]
+            assert is_object_list(channel_entries)
+            external_channel = channel_entries[1]
+            assert is_string_object_dict(external_channel)
+            external_channel["enabled"] = True
             controller.notify_preview(structure_changed=True)
             self.assertEqual(
                 controller.preview_gains,
@@ -116,7 +123,7 @@ class AudioPreviewControllerTests(TypedTestCase):
             calls: list[Path] = []
 
             def prepare(
-                _project: dict[str, Any],
+                _project: Mapping[str, object],
                 cache_root: Path,
                 *,
                 protected_paths: list[Path],
@@ -189,7 +196,7 @@ class AudioPreviewControllerTests(TypedTestCase):
             generation = 0
 
             def prepare(
-                _project: dict[str, Any],
+                _project: Mapping[str, object],
                 _cache_root: Path,
                 *,
                 protected_paths: list[Path],

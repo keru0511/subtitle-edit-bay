@@ -7,7 +7,6 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 
 from .qt_decorators import Property, Signal, Slot
@@ -139,8 +138,11 @@ class UpdateFacade(FeatureFacade):
         except Exception as error:
             backend.updateCheckFinished.emit(None, f"更新確認に失敗しました: {error}")
 
-    def _on_update_check_finished(self, info: Any, error: str) -> None:
+    def _on_update_check_finished(self, info: object, error: str) -> None:
         backend = self._backend
+        if info is not None and not isinstance(info, updater.UpdateInfo):
+            info = None
+            error = error or "更新情報の形式が不正です"
         self._state.info = info
         self._state.error = error
         self._state.busy = False

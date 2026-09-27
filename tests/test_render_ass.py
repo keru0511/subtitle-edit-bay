@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import coerce_float, coerce_int, is_object_list
 from src.assemble_video import build_concat_command, build_loudnorm_filter, build_normalize_command, optional_clip, write_concat_manifest
 from src.batch import derive_export_paths, derive_merged_export_paths, iter_video_files
 from src.burn_subs import (
@@ -16,7 +17,7 @@ from src.burn_subs import (
     run_ffmpeg_burn,
     temporary_ass_path,
 )
-from src.merge_transcripts import assign_bottom_rows, merge_transcripts, refine_segments, speaker_for_track, split_segment
+from src.merge_transcripts import Segment, assign_bottom_rows, merge_transcripts, refine_segments, speaker_for_track, split_segment
 from src.pipeline import build_ass_from_transcript, derive_pipeline_paths, normalize_diarize_tracks, run_media_to_ass_many
 from src.color_config import load_speaker_color_map
 from src.render_ass import (
@@ -49,18 +50,24 @@ from src.transcribe import (
     validate_hf_token,
 )
 from src.youtube_text import derive_youtube_text_paths, write_youtube_texts
-from tests.typed_case import TypedTestCase
+from tests.typed_case import TypedTestCase, typed_skip_unless_method
+
+
+class _FakeProcess:
+    def __init__(self, stdout_lines: list[str] | tuple[str, ...] = (), *, return_code: int = 0) -> None:
+        self.stdout = list(stdout_lines)
+        self.return_code = return_code
+
+    def wait(self) -> int:
+        return self.return_code
 
 
 def _fake_process(
     stdout_lines: list[str] | tuple[str, ...] = (),
     *,
     return_code: int = 0,
-) -> mock.MagicMock:
-    process = mock.MagicMock()
-    process.stdout = list(stdout_lines)
-    process.wait.return_value = return_code
-    return process
+) -> _FakeProcess:
+    return _FakeProcess(stdout_lines, return_code=return_code)
 
 
 class RenderAssTests(TypedTestCase):
@@ -80,7 +87,8 @@ class RenderAssTests(TypedTestCase):
     def test_boundary_and_width_helpers_reuse_bounded_caches(self) -> None:
         budoux_boundaries.cache_clear()
         text_width.cache_clear()
-        with mock.patch("src.subtitle_packer.parse_budoux_chunks", return_value=["abc", "def"]) as parse:
+        chunks: list[str] = ["abc", "def"]
+        with mock.patch("src.subtitle_packer.parse_budoux_chunks", return_value=chunks) as parse:
             self.assertEqual(budoux_boundaries("abcdef"), {3})
             self.assertEqual(budoux_boundaries("abcdef"), {3})
         budoux_boundaries.cache_clear()
@@ -155,8 +163,13 @@ class RenderAssTests(TypedTestCase):
 
     def test_normalize_text_prefers_balanced_break_for_short_duration(self) -> None:
         text = "ABCDEFGHIJKLMN"
-        with mock.patch("src.subtitle_packer.break_candidates", return_value=[6, 7]):
-            with mock.patch("src.subtitle_packer.candidate_kind_bonus", side_effect=lambda text, idx: -50 if idx == 6 else 0):
+        candidates: list[int] = [6, 7]
+
+        def kind_bonus(_text: str, idx: int) -> int:
+            return -50 if idx == 6 else 0
+
+        with mock.patch("src.subtitle_packer.break_candidates", return_value=candidates):
+            with mock.patch("src.subtitle_packer.candidate_kind_bonus", side_effect=kind_bonus):
                 long_wrapped = normalize_text(text, max_width=8, max_lines=2, display_duration=3.0)
                 short_wrapped = normalize_text(text, max_width=8, max_lines=2, display_duration=0.4)
 
@@ -208,7 +221,7 @@ class RenderAssTests(TypedTestCase):
         pages = pack_segment_pages({"start": 0.0, "end": 5.0, "speaker": "Oz", "text": text, "max_width": 18})
 
         self.assertGreaterEqual(len(pages), 2)
-        self.assertLess(float(pages[0]["end"]) - float(pages[0]["start"]), 5.0)
+        self.assertLess(coerce_float(pages[0]["end"]) - coerce_float(pages[0]["start"]), 5.0)
 
     def test_pack_segments_uses_page_split_before_rendering(self) -> None:
         data = {
@@ -217,10 +230,11 @@ class RenderAssTests(TypedTestCase):
             ]
         }
 
-        with mock.patch("src.subtitle_packer.pack_segment_pages", return_value=[
+        pages: list[dict[object, object]] = [
             {"start": 0.0, "end": 1.5, "speaker": "Oz", "text": "first page", "max_width": 12},
             {"start": 1.5, "end": 3.0, "speaker": "Oz", "text": "second page", "max_width": 12},
-        ]):
+        ]
+        with mock.patch("src.subtitle_packer.pack_segment_pages", return_value=pages):
             events = pack_segments(data)
 
         self.assertEqual(len(events), 2)
@@ -254,9 +268,10 @@ class RenderAssTests(TypedTestCase):
             ]
         }
 
-        with mock.patch("src.subtitle_packer.pack_segment_pages", return_value=[
+        pages: list[dict[object, object]] = [
             {"start": 0.0, "end": 1.0, "speaker": "Oz", "text": text, "max_width": 18}
-        ]):
+        ]
+        with mock.patch("src.subtitle_packer.pack_segment_pages", return_value=pages):
             events = pack_segments(data)
 
         self.assertEqual(len(events), 1)
@@ -312,17 +327,10 @@ class RenderAssTests(TypedTestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "speaker_colors.json"
-            config_path.write_text(
-                json.dumps(
-                    {
-                        "speakers": {
-                            "speaker-d": {"color": "#2244FF", "aliases": ["guest-d"]}
-                        }
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
+            color_config: dict[str, object] = {
+                "speakers": {"speaker-d": {"color": "#2244FF", "aliases": ["guest-d"]}}
+            }
+            config_path.write_text(json.dumps(color_config, ensure_ascii=False), encoding="utf-8")
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
         self.assertIn(f"Style: {speaker_style}", output)
@@ -342,20 +350,11 @@ class RenderAssTests(TypedTestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "speaker_colors.json"
-            config_path.write_text(
-                json.dumps(
-                    {
-                        "files": {
-                            "1-speaker-a.aac": {"color": "#123456"}
-                        },
-                        "speakers": {
-                            "speaker-a": {"color": "#abcdef"}
-                        }
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
+            color_config: dict[str, object] = {
+                "files": {"1-speaker-a.aac": {"color": "#123456"}},
+                "speakers": {"speaker-a": {"color": "#abcdef"}},
+            }
+            config_path.write_text(json.dumps(color_config, ensure_ascii=False), encoding="utf-8")
             output = render_ass(data, speaker_color_map=load_speaker_color_map(config_path))
 
         self.assertIn(f"Style: {file_style}", output)
@@ -612,7 +611,7 @@ class RenderAssTests(TypedTestCase):
         self.assertIn(r"regex: \\n", dialogue_lines[0])
         self.assertIn(r'printf("\\\\n")', dialogue_lines[0])
 
-    @unittest.skipUnless(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
+    @typed_skip_unless_method(os.environ.get("RUN_FFMPEG_SMOKE") == "1", "set RUN_FFMPEG_SMOKE=1 to exercise FFmpeg/libass")
     def test_ffmpeg_libass_renders_reserved_characters(self) -> None:
         if shutil.which("ffmpeg") is None:
             self.skipTest("ffmpeg is required for ASS rendering smoke tests")
@@ -716,6 +715,7 @@ class RenderAssTests(TypedTestCase):
             self.assertNotIn("quote's.ass", safe_filter)
             self.assertNotEqual(Path(safe_filter).name, raw_path.name)
             self.assertNotEqual(cleanup, str(raw_path))
+            assert cleanup is not None
             Path(cleanup).unlink(missing_ok=True)
 
     def test_run_ffmpeg_burn_preserves_existing_output_on_failure(self) -> None:
@@ -728,7 +728,7 @@ class RenderAssTests(TypedTestCase):
             output.write_bytes(b"previous output")
             video.write_bytes(b"")
 
-            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
+            def fake_popen(command: list[str], **_kwargs: object) -> _FakeProcess:
                 Path(command[-1]).write_bytes(b"")
                 return _fake_process(["ffmpeg failed\n"], return_code=1)
 
@@ -752,7 +752,7 @@ class RenderAssTests(TypedTestCase):
             output.write_bytes(b"previous output")
             video.write_bytes(b"")
 
-            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
+            def fake_popen(command: list[str], **_kwargs: object) -> _FakeProcess:
                 Path(command[-1]).write_bytes(b"new output")
                 return _fake_process()
 
@@ -769,7 +769,7 @@ class RenderAssTests(TypedTestCase):
             output.parent.mkdir(parents=True, exist_ok=True)
             calls: list[list[str]] = []
 
-            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
+            def fake_popen(command: list[str], **_kwargs: object) -> _FakeProcess:
                 calls.append(command)
                 if len(calls) == 1:
                     return _fake_process(
@@ -798,7 +798,7 @@ class RenderAssTests(TypedTestCase):
             output.parent.mkdir(parents=True, exist_ok=True)
             calls: list[list[str]] = []
 
-            def fake_popen(command: list[str], **_kwargs: object) -> mock.MagicMock:
+            def fake_popen(command: list[str], **_kwargs: object) -> _FakeProcess:
                 calls.append(command)
                 return _fake_process(
                     ["unexpected media error\n"],
@@ -928,7 +928,8 @@ class RenderAssTests(TypedTestCase):
         self.assertIn("pcm_s16le", command)
 
     def test_whisperx_command_uses_environment_token_without_exposing_it(self) -> None:
-        with mock.patch.dict("os.environ", {"HF_TOKEN": "secret-token"}, clear=False):
+        environment: dict[str, str] = {"HF_TOKEN": "secret-token"}
+        with mock.patch.dict("os.environ", environment, clear=False):
             command = build_whisperx_command(
                 "out/audio.wav",
                 "out",
@@ -950,7 +951,8 @@ class RenderAssTests(TypedTestCase):
         self.assertIn("--vad_offset", command)
 
     def test_validate_hf_token_requires_environment_variable(self) -> None:
-        with mock.patch.dict("os.environ", {}, clear=True):
+        empty_environment: dict[str, str] = {}
+        with mock.patch.dict("os.environ", empty_environment, clear=True):
             with self.assertRaises(SystemExit):
                 validate_hf_token(diarize=True)
 
@@ -1008,21 +1010,19 @@ class RenderAssTests(TypedTestCase):
 
         import src.pipeline as pipeline
 
-        original = pipeline.run_media_to_ass
-        pipeline.run_media_to_ass = fake_run_media_to_ass
-        try:
+        with mock.patch.object(pipeline, "run_media_to_ass", fake_run_media_to_ass):
             results = run_media_to_ass_many("input.mkv", ["0:a:1", "0:a:3"], "out")
-        finally:
-            pipeline.run_media_to_ass = original
 
         self.assertEqual(calls, ["0:a:1", "0:a:3"])
         self.assertEqual([str(path).replace("\\", "/") for path in results], ["out/input.0_a_1.ass", "out/input.0_a_3.ass"])
 
     def test_normalize_diarize_tracks_requires_environment_token(self) -> None:
-        with mock.patch.dict("os.environ", {}, clear=True):
+        empty_environment: dict[str, str] = {}
+        with mock.patch.dict("os.environ", empty_environment, clear=True):
             with self.assertRaises(SystemExit):
                 normalize_diarize_tracks({"0:a:3"})
-        with mock.patch.dict("os.environ", {"HF_TOKEN": "secret-token"}, clear=False):
+        environment: dict[str, str] = {"HF_TOKEN": "secret-token"}
+        with mock.patch.dict("os.environ", environment, clear=False):
             self.assertEqual(normalize_diarize_tracks({"0:a:3"}), {"0:a:3"})
 
     def test_speaker_for_track_defaults_guest_without_diarization(self) -> None:
@@ -1033,7 +1033,7 @@ class RenderAssTests(TypedTestCase):
         segment = {"start": 0.0, "end": 8.0, "text": "あの怪物でかいぞ!怪物にも個体差がある。だが対処法は同じだ。撃て!", "speaker": "Oz", "source_track": "0:a:1", "max_width": 22}
         parts = split_segment(segment)
         self.assertGreater(len(parts), 3)
-        self.assertTrue(all((part["end"] - part["start"]) <= 3.6 for part in parts))
+        self.assertTrue(all(coerce_float(part["end"]) - coerce_float(part["start"]) <= 3.6 for part in parts))
 
     def test_refine_segments_reattaches_period_with_real_layout(self) -> None:
         segments = [
@@ -1079,8 +1079,8 @@ class RenderAssTests(TypedTestCase):
         }
         parts = split_segment(segment)
         self.assertGreaterEqual(len(parts), 2)
-        self.assertGreaterEqual(parts[0]["start"], 0.2)
-        self.assertAlmostEqual(parts[-1]["end"], 1.88, places=2)
+        self.assertGreaterEqual(coerce_float(parts[0]["start"]), 0.2)
+        self.assertAlmostEqual(coerce_float(parts[-1]["end"]), 1.88, places=2)
 
     def test_pack_segment_pages_uses_two_line_page_capacity(self) -> None:
         segment = {
@@ -1141,7 +1141,7 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.1)
 
         self.assertEqual([part["text"] for part in parts], ["abcde", "UVWXY"])
-        self.assertLess(parts[0]["end"], parts[1]["start"])
+        self.assertLess(coerce_float(parts[0]["end"]), coerce_float(parts[1]["start"]))
 
     def test_pack_segment_pages_keeps_trailing_conjunction_with_previous_text(self) -> None:
         segment = {
@@ -1166,7 +1166,10 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.1)
 
         self.assertEqual(len(parts), 1)
-        self.assertTrue(parts[0]["text"].endswith(r"\u304b\u3089".encode("ascii").decode("unicode_escape")))
+        text = parts[0]["text"]
+        self.assertIsInstance(text, str)
+        assert isinstance(text, str)
+        self.assertTrue(text.endswith(r"\u304b\u3089".encode("ascii").decode("unicode_escape")))
 
     def test_pack_segment_pages_rejoins_single_characters_into_short_utterance(self) -> None:
         prefix = r"\u304a\u3081\u3048".encode("ascii").decode("unicode_escape")
@@ -1225,7 +1228,7 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.32)
 
         self.assertEqual(len(parts), 2)
-        self.assertLess(parts[0]["end"], parts[1]["start"] + 0.01)
+        self.assertLess(coerce_float(parts[0]["end"]), coerce_float(parts[1]["start"]) + 0.01)
 
     def test_pack_segment_pages_splits_on_large_word_gap(self) -> None:
         segment = {
@@ -1249,7 +1252,7 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_max_gap_seconds=0.32)
 
         self.assertEqual(len(parts), 2)
-        self.assertLess(parts[0]["end"], parts[1]["start"] + 0.01)
+        self.assertLess(coerce_float(parts[0]["end"]), coerce_float(parts[1]["start"]) + 0.01)
 
     def test_pack_segment_pages_keeps_small_word_gap_together(self) -> None:
         segment = {
@@ -1295,7 +1298,7 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_end_padding_seconds=0.08)
 
         self.assertEqual(len(parts), 1)
-        self.assertAlmostEqual(parts[0]["end"], 0.78, places=2)
+        self.assertAlmostEqual(coerce_float(parts[0]["end"]), 0.78, places=2)
 
     def test_pack_segment_pages_respects_min_duration_after_trim(self) -> None:
         segment = {
@@ -1318,7 +1321,7 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_end_padding_seconds=0.08, subtitle_min_duration_seconds=0.35)
 
         self.assertEqual(len(parts), 1)
-        self.assertAlmostEqual(parts[0]["end"] - parts[0]["start"], 0.35, places=2)
+        self.assertAlmostEqual(coerce_float(parts[0]["end"]) - coerce_float(parts[0]["start"]), 0.35, places=2)
 
     def test_pack_segment_pages_caps_single_long_word_duration(self) -> None:
         segment = {
@@ -1341,7 +1344,7 @@ class RenderAssTests(TypedTestCase):
             parts = pack_segment_pages(segment, subtitle_end_padding_seconds=0.08)
 
         self.assertEqual(len(parts), 1)
-        self.assertAlmostEqual(parts[0]["end"] - parts[0]["start"], 2.8, places=2)
+        self.assertAlmostEqual(coerce_float(parts[0]["end"]) - coerce_float(parts[0]["start"]), 2.8, places=2)
 
     def test_split_segment_keeps_short_sentence_together(self) -> None:
         segment = {
@@ -1370,7 +1373,7 @@ class RenderAssTests(TypedTestCase):
         self.assertEqual(parts[0]["text"], "行くぞ。準備して。")
 
     def test_assign_bottom_rows_drops_shortest_without_shifting_time(self) -> None:
-        segments = [
+        segments: list[Segment] = [
             {"start": 0.0, "end": 2.0, "speaker": "Guest", "text": "longer line", "layout_row": 0, "filter_reasons": []},
             {"start": 0.2, "end": 1.6, "speaker": "Guest", "text": "mid line", "layout_row": 0, "filter_reasons": []},
             {"start": 0.3, "end": 1.4, "speaker": "Oz", "text": "short", "layout_row": 0, "filter_reasons": []},
@@ -1380,11 +1383,13 @@ class RenderAssTests(TypedTestCase):
         self.assertEqual(len(assigned), 3)
         self.assertEqual(len(overflow), 1)
         self.assertEqual(overflow[0]["text"], "tiny")
-        self.assertIn("overflow_dropped", overflow[0]["filter_reasons"])
-        self.assertEqual(sorted(set(segment["layout_row"] for segment in assigned)), [0, 1, 2])
+        reasons = overflow[0]["filter_reasons"]
+        assert is_object_list(reasons)
+        self.assertIn("overflow_dropped", reasons)
+        self.assertEqual(sorted({coerce_int(segment["layout_row"]) for segment in assigned}), [0, 1, 2])
 
     def test_assign_bottom_rows_reserves_two_rows_for_two_line_caption(self) -> None:
-        segments = [
+        segments: list[Segment] = [
             {"start": 0.0, "end": 2.0, "speaker": "A", "text": "abcdefghijklmno", "layout_row": 0, "max_width": 12, "filter_reasons": []},
             {"start": 0.2, "end": 1.0, "speaker": "Oz", "text": "short", "layout_row": 0, "max_width": 28, "filter_reasons": []},
         ]
@@ -1402,35 +1407,43 @@ class RenderAssTests(TypedTestCase):
             base = Path(temp_dir)
             track1 = base / "track1.json"
             track3 = base / "track3.json"
-            track1.write_text(json.dumps({"segments": [{"start": 2.0, "end": 3.0, "text": "oz line"}]}), encoding="utf-8")
-            track3.write_text(json.dumps({"segments": [
-                {"start": 1.0, "end": 2.0, "text": "guest line"},
-                {"start": 4.0, "end": 9.0, "text": "ガンマ型のアッシュはかなりの大型です 戦闘車両やコンバットフレームの天敵か"}
-            ]}), encoding="utf-8")
+            track1_payload: dict[str, object] = {
+                "segments": [{"start": 2.0, "end": 3.0, "text": "oz line"}]
+            }
+            track3_payload: dict[str, object] = {
+                "segments": [
+                    {"start": 1.0, "end": 2.0, "text": "guest line"},
+                    {"start": 4.0, "end": 9.0, "text": "ガンマ型のアッシュはかなりの大型です 戦闘車両やコンバットフレームの天敵か"},
+                ]
+            }
+            track1.write_text(json.dumps(track1_payload), encoding="utf-8")
+            track3.write_text(json.dumps(track3_payload), encoding="utf-8")
 
             merged, filtered = merge_transcripts({"0:a:1": str(track1), "0:a:3": str(track3)})
 
             self.assertTrue(all(segment["layout_row"] in {0, 1, 2} for segment in merged["segments"]))
             self.assertTrue(any(segment["speaker"] == "Guest" for segment in merged["segments"]))
             self.assertGreater(len(filtered["segments"]), 0)
-            self.assertTrue(any("game_terms" in ",".join(segment["filter_reasons"]) for segment in filtered["segments"]))
+
+            def has_game_term_reason(segment: Segment) -> bool:
+                reasons = segment["filter_reasons"]
+                return is_object_list(reasons) and any(
+                    isinstance(reason, str) and "game_terms" in reason for reason in reasons
+                )
+
+            self.assertTrue(any(has_game_term_reason(segment) for segment in filtered["segments"]))
 
     def test_write_youtube_texts_creates_title_and_description_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             merged_path = Path(temp_dir) / "sample.merged.json"
-            merged_path.write_text(
-                json.dumps(
-                    {
-                        "segments": [
-                            {"start": 12.0, "end": 13.8, "speaker": "Oz", "text": "うわ! ボス来た!"},
-                            {"start": 26.0, "end": 28.0, "speaker": "Guest", "text": "ここで突っ込むの危ないって!"},
-                            {"start": 45.0, "end": 47.5, "speaker": "Guest", "text": "最後に逆転できそう!"},
-                        ]
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
+            merged_payload: dict[str, object] = {
+                "segments": [
+                    {"start": 12.0, "end": 13.8, "speaker": "Oz", "text": "うわ! ボス来た!"},
+                    {"start": 26.0, "end": 28.0, "speaker": "Guest", "text": "ここで突っ込むの危ないって!"},
+                    {"start": 45.0, "end": 47.5, "speaker": "Guest", "text": "最後に逆転できそう!"},
+                ]
+            }
+            merged_path.write_text(json.dumps(merged_payload, ensure_ascii=False), encoding="utf-8")
 
             title_path, description_path = write_youtube_texts(
                 str(merged_path),
@@ -1460,7 +1473,7 @@ class RenderAssTests(TypedTestCase):
             self.assertIn("partial output", log_text)
             self.assertIn("failure detail", log_text)
             self.assertIn("code 7", log_text)
-            streamed_text = "".join(str(call.args[0]) for call in streamed.call_args_list)
+            streamed_text = str(streamed.call_args_list)
             self.assertIn("partial output", streamed_text)
 
     def test_derive_youtube_text_paths_uses_merged_stem(self) -> None:

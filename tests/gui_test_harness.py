@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, TypeVar
+from typing import Callable, Iterable, Mapping, Protocol, TypeVar, cast, overload
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -15,22 +15,39 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 from PySide6.QtCore import (
     QCoreApplication,
     QEvent,
+    QMessageLogContext,
     QObject,
     QPoint,
     QPointF,
-    Slot,
     QTimer,
     Qt,
     QtMsgType,
     QUrl,
     qInstallMessageHandler,
 )
+from PySide6.QtGui import QWindow
 from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtQuick import QQuickItem
+from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
+
+from src.data_boundary import coerce_float, coerce_int
+from src.qt_decorators import Slot
+from tests.qt_property_value import qt_property_value
 
 
 TObject = TypeVar("TObject", bound=QObject)
+
+
+class _SignalEmitter(Protocol):
+    def emit(self, *arguments: object) -> object: ...
+
+
+def _signal_method(source: QObject, signal_name: str, method_name: str) -> Callable[[object], object]:
+    signal = cast(object, getattr(source, signal_name, None))
+    method = cast(object, getattr(signal, method_name, None))
+    if not callable(method):
+        raise AssertionError(f"{signal_name}.{method_name} is unavailable")
+    return cast(Callable[[object], object], method)
 
 
 @dataclass(frozen=True)
@@ -99,7 +116,7 @@ class EventLoopLatencyProbe(QObject):
 
 
 def _enum_name(value: object) -> str:
-    name = getattr(value, "name", None)
+    name = cast(object, getattr(value, "name", None))
     return str(name if name is not None else value).rsplit(".", 1)[-1]
 
 
@@ -114,28 +131,29 @@ class MediaPlayerSignalProbe(QObject):
         super().__init__(player)
         self.player = player
         self.video_sink: QObject | None = None
-        player.sourceChanged.connect(self._source_changed)
-        player.mediaStatusChanged.connect(self._media_status_changed)
-        player.playbackStateChanged.connect(self._playback_state_changed)
-        player.positionChanged.connect(self._position_changed)
+        _signal_method(player, "sourceChanged", "connect")(self._source_changed)
+        _signal_method(player, "mediaStatusChanged", "connect")(self._media_status_changed)
+        _signal_method(player, "playbackStateChanged", "connect")(self._playback_state_changed)
+        _signal_method(player, "positionChanged", "connect")(self._position_changed)
         self.refresh_video_sink()
         self.reset()
 
     def refresh_video_sink(self) -> None:
         """Follow the player's current output after QML reassigns videoOutput."""
 
-        video_sink = getattr(self.player, "videoSink", None)
-        next_sink = video_sink() if callable(video_sink) else None
+        video_sink = cast(object, getattr(self.player, "videoSink", None))
+        candidate = cast(Callable[[], object], video_sink)() if callable(video_sink) else None
+        next_sink = candidate if isinstance(candidate, QObject) else None
         if next_sink is self.video_sink:
             return
         if self.video_sink is not None:
             try:
-                self.video_sink.videoFrameChanged.disconnect(self._video_frame_changed)
+                _signal_method(self.video_sink, "videoFrameChanged", "disconnect")(self._video_frame_changed)
             except (AttributeError, RuntimeError, TypeError):
                 pass
         self.video_sink = next_sink
         if self.video_sink is not None:
-            self.video_sink.videoFrameChanged.connect(self._video_frame_changed)
+            _signal_method(self.video_sink, "videoFrameChanged", "connect")(self._video_frame_changed)
 
     def reset(self) -> None:
         self._started_at = time.perf_counter()
@@ -147,8 +165,9 @@ class MediaPlayerSignalProbe(QObject):
         self.first_video_frame_ms: float | None = None
 
     def _source_changed(self, source: object) -> None:
-        to_string = getattr(source, "toString", None)
-        self.sources.append(str(to_string() if callable(to_string) else source))
+        to_string = cast(object, getattr(source, "toString", None))
+        value = cast(Callable[[], object], to_string)() if callable(to_string) else source
+        self.sources.append(str(value))
 
     def _media_status_changed(self, status: object) -> None:
         self.media_statuses.append(_enum_name(status))
@@ -228,13 +247,13 @@ class QmlMessageCapture:
         self._previous_handler = None
         self._started = False
 
-    def _capture(self, message_type: QtMsgType, context: object, text: str) -> None:
+    def _capture(self, message_type: QtMsgType, context: QMessageLogContext, text: str) -> None:
         self.messages.append(
             QmlRuntimeMessage(
                 message_type=message_type,
-                category=str(getattr(context, "category", "") or ""),
-                file=str(getattr(context, "file", "") or ""),
-                line=int(getattr(context, "line", 0) or 0),
+                category=str(cast(object, getattr(context, "category", "")) or ""),
+                file=str(cast(object, getattr(context, "file", "")) or ""),
+                line=coerce_int(cast(object, getattr(context, "line", 0)) or 0),
                 text=str(text),
             )
         )
@@ -316,7 +335,7 @@ class GuiTestHarness:
         *,
         width: int = 1_220,
         height: int = 760,
-    ) -> tuple[QQmlApplicationEngine, QObject]:
+    ) -> tuple[QQmlApplicationEngine, QQuickWindow]:
         if self._closed:
             raise RuntimeError("GUI test harness is already closed")
         qml_path = qml_path.resolve()
@@ -335,15 +354,23 @@ class GuiTestHarness:
             raise AssertionError(f"QML did not create a root object: {qml_path}{suffix}")
 
         window = roots[0]
+        if not isinstance(window, QQuickWindow):
+            raise AssertionError(f"QML root is not a window: {qml_path}")
         self.resize(window, width, height)
         return engine, window
+
+    @overload
+    def find_object(self, root: QObject, name: str) -> QObject: ...
+
+    @overload
+    def find_object(self, root: QObject, name: str, object_type: type[TObject]) -> TObject: ...
 
     def find_object(
         self,
         root: QObject,
         name: str,
-        object_type: type[TObject] = QObject,
-    ) -> TObject:
+        object_type: type[QObject] = QObject,
+    ) -> QObject:
         item = root.findChild(object_type, name)
         if item is None:
             available = sorted(child.objectName() for child in root.findChildren(QObject) if child.objectName())
@@ -379,9 +406,11 @@ class GuiTestHarness:
 
         if isinstance(root, QQuickItem):
             pending = [root]
+        elif isinstance(root, QQuickWindow):
+            content_item = root.contentItem()
+            pending = [content_item] if content_item is not None else []
         else:
-            content_item = getattr(root, "contentItem", None)
-            pending = [content_item()] if callable(content_item) else []
+            pending = []
         found: list[QQuickItem] = []
         seen: set[int] = set()
         while pending:
@@ -421,7 +450,7 @@ class GuiTestHarness:
         for item in self.visual_items(root):
             if not self._has_qml_properties(item, property_names):
                 continue
-            if all(item.property(name) == value for name, value in expected.items()):
+            if all(qt_property_value(item, name) == value for name, value in expected.items()):
                 return item
         formatted = ", ".join(f"{name}={value!r}" for name, value in expected.items())
         raise AssertionError(f"Could not find visual item with QML properties: {formatted}")
@@ -429,11 +458,11 @@ class GuiTestHarness:
     def emit_signal(self, item: QObject, signal_name: str, *arguments: object) -> None:
         """Emit a control signal so its real QML handler performs the operation."""
 
-        signal = getattr(item, signal_name, None)
-        emit = getattr(signal, "emit", None)
+        signal = cast(object, getattr(item, signal_name, None))
+        emit = cast(object, getattr(signal, "emit", None))
         if not callable(emit):
             raise AssertionError(f"Could not emit signal {signal_name!r} on {item.objectName() or type(item).__name__}")
-        emit(*arguments)
+        cast(_SignalEmitter, signal).emit(*arguments)
         self.process_events()
 
     def wait(self, milliseconds: int) -> None:
@@ -442,14 +471,14 @@ class GuiTestHarness:
         QTest.qWait(milliseconds)
         self.process_events()
 
-    def click(self, window: QObject, item: QQuickItem) -> None:
+    def click(self, window: QWindow, item: QQuickItem) -> None:
         self.click_at(window, item, item.width() / 2, item.height() / 2)
 
-    def click_at(self, window: QObject, item: QQuickItem, x: float, y: float) -> None:
+    def click_at(self, window: QWindow, item: QQuickItem, x: float, y: float) -> None:
         name = item.objectName() or type(item).__name__
         if not item.isVisible():
             raise AssertionError(f"Cannot click hidden item: {name}")
-        if item.property("enabled") is False:
+        if qt_property_value(item, "enabled") is False:
             raise AssertionError(f"Cannot click disabled item: {name}")
         if item.width() <= 0 or item.height() <= 0:
             raise AssertionError(f"Cannot click zero-sized item: {name} ({item.width()} x {item.height()})")
@@ -465,7 +494,7 @@ class GuiTestHarness:
 
     def key_click(
         self,
-        window: QObject,
+        window: QWindow,
         key: Qt.Key,
         modifier: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
     ) -> None:
@@ -477,15 +506,16 @@ class GuiTestHarness:
         self.process_events()
 
     def resize(self, window: QObject, width: int, height: int) -> None:
-        resize = getattr(window, "resize", None)
+        resize = cast(object, getattr(window, "resize", None))
         if callable(resize):
-            resize(width, height)
+            cast(Callable[[int, int], object], resize)(width, height)
         else:
             window.setProperty("width", width)
             window.setProperty("height", height)
         self.wait_until(
             lambda: (
-                round(float(window.property("width"))) == width and round(float(window.property("height"))) == height
+                round(coerce_float(qt_property_value(window, "width"))) == width
+                and round(coerce_float(qt_property_value(window, "height"))) == height
             ),
             description=f"window resize to {width}x{height}",
         )
@@ -590,9 +620,9 @@ class GuiTestHarness:
         try:
             for engine in reversed(self.engines):
                 for root in engine.rootObjects():
-                    close = getattr(root, "close", None)
+                    close = cast(object, getattr(root, "close", None))
                     if callable(close):
-                        close()
+                        cast(Callable[[], object], close)()
                     root.deleteLater()
                 engine.clearComponentCache()
                 engine.deleteLater()

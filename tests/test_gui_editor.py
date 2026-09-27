@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -12,7 +11,10 @@ import time
 import unittest
 import wave
 from copy import deepcopy
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Protocol, cast
+from unittest.mock import Mock
 from unittest.mock import patch
 from tests.typed_case import TypedTestCase, typed_skip_unless_method
 
@@ -21,9 +23,9 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QCoreApplication, QMetaObject, QMimeData, QObject, QPoint, QPointF, QProcess, Qt, QUrl
-from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QInputMethodEvent, QKeySequence
+from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QInputMethodEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QJSValue, QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem, QQuickWindow
 from PySide6.QtTest import QTest
 
@@ -31,7 +33,16 @@ from tests.qt_property_value import qt_property_value
 from tests.qt_signal_spy import QSignalSpy
 
 from scripts.generate_large_gui_fixture import generate_segments
-from src.data_boundary import coerce_float, coerce_int
+from src.data_boundary import (
+    coerce_float,
+    coerce_int,
+    decode_json,
+    is_object_dict,
+    is_object_sequence,
+    is_string_object_dict,
+    is_string_object_dict_list,
+    is_string_object_mapping,
+)
 from src.audio_mix_proposal import audio_mix_state_revision, build_audio_mix_proposal
 from src.audio_preview_cache import (
     AudioPreviewCacheResult,
@@ -39,7 +50,7 @@ from src.audio_preview_cache import (
     cached_audio_preview_paths,
 )
 from src import updater
-from src.codex_actions import ActionResult, ActionStatus
+from src.codex_actions import ActionResult, ActionScope, ActionStatus
 from src.codex_runtime import CodexRuntimeInfo
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
@@ -60,11 +71,182 @@ from tests.gui_test_harness import GuiTestHarness, MediaPlayerSignalProbe
 from tests.windows_native_input import WindowsNativeInput
 
 
+def _value_at(value: object, *path: str | int) -> object:
+    """テスト用 JSON の経路を実際のコンテナ型を確認して読む。"""
+
+    for key in path:
+        if isinstance(key, str) and isinstance(value, Mapping):
+            value = value[key]
+        elif isinstance(key, int) and isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            value = value[key]
+        else:
+            raise AssertionError(f"想定外の JSON 経路: {path!r}")
+    return value
+
+
+def _string_at(value: object, *path: str | int) -> str:
+    result = _value_at(value, *path)
+    if not isinstance(result, str):
+        raise AssertionError(f"文字列ではありません: {path!r}")
+    return result
+
+
+def _path_at(value: object, *path: str | int) -> Path:
+    result = _value_at(value, *path)
+    if not isinstance(result, (str, Path)):
+        raise AssertionError(f"パスではありません: {path!r}")
+    return Path(result)
+
+
+def _list_at(value: object, *path: str | int) -> list[object]:
+    result = _value_at(value, *path)
+    if not isinstance(result, list):
+        raise AssertionError(f"リストではありません: {path!r}")
+    return result
+
+
+def _string_list_at(value: object, *path: str | int) -> list[str]:
+    result = _list_at(value, *path)
+    if not all(isinstance(item, str) for item in result):
+        raise AssertionError(f"文字列配列ではありません: {path!r}")
+    return [item for item in result if isinstance(item, str)]
+
+
+def _dict_at(value: object, *path: str | int) -> dict[object, object]:
+    result = _value_at(value, *path)
+    if not is_object_dict(result):
+        raise AssertionError(f"辞書ではありません: {path!r}")
+    return result
+
+
+def _dict_list_at(value: object, *path: str | int) -> list[dict[str, object]]:
+    result = _value_at(value, *path)
+    if not is_string_object_dict_list(result):
+        raise AssertionError(f"辞書配列ではありません: {path!r}")
+    return result
+
+
+def _string_project(value: object) -> dict[str, object]:
+    if not is_string_object_dict(value):
+        raise AssertionError("プロジェクトのキーが文字列ではありません")
+    return value
+
+
+def _object_project(value: object) -> dict[object, object]:
+    if not is_object_dict(value):
+        raise AssertionError("プロジェクトが辞書ではありません")
+    return value
+
+
+def _mock_args(mock: Mock) -> tuple[object, ...]:
+    """mock の動的な記録をテストで検証できる引数列へ変換する。"""
+
+    arguments = cast(object, mock.call_args.args)
+    if not is_object_sequence(arguments):
+        raise AssertionError("呼び出し引数がありません")
+    return tuple(arguments)
+
+
+def _mock_kwargs(mock: Mock) -> Mapping[str, object]:
+    """mock のキーワード引数を文字列キーと確認して返す。"""
+
+    arguments = cast(object, mock.call_args.kwargs)
+    if not is_string_object_mapping(arguments):
+        raise AssertionError("キーワード引数がありません")
+    return arguments
+
+
+def _mock_command(mock: Mock) -> list[str]:
+    """外部コマンド起動 mock の第1引数を文字列配列と確認する。"""
+
+    command = _value_at(_mock_args(mock), 0)
+    if not is_object_sequence(command) or not all(isinstance(item, str) for item in command):
+        raise AssertionError("コマンド引数が文字列配列ではありません")
+    return [item for item in command if isinstance(item, str)]
+
+
+def _mock_url(mock: Mock) -> QUrl:
+    url = _value_at(_mock_args(mock), 0)
+    if not isinstance(url, QUrl):
+        raise AssertionError("呼び出し引数が URL ではありません")
+    return url
+
+
+def _required_qobject(item: QObject | None) -> QObject:
+    if item is None:
+        raise AssertionError("QObject が見つかりません")
+    return item
+
+
+def _qt_string(item: QObject | None, name: str) -> str:
+    value = qt_property_value(_required_qobject(item), name)
+    if not isinstance(value, str):
+        raise AssertionError(f"{name} は文字列ではありません")
+    return value
+
+
+def _qt_bool(item: QObject | None, name: str) -> bool:
+    value = qt_property_value(_required_qobject(item), name)
+    if not isinstance(value, bool):
+        raise AssertionError(f"{name} は真偽値ではありません")
+    return value
+
+
+def _qt_number(item: QObject | None, name: str) -> float:
+    return coerce_float(qt_property_value(_required_qobject(item), name))
+
+
+def _qt_item(item: QObject | None, name: str) -> QQuickItem:
+    value = qt_property_value(_required_qobject(item), name)
+    if not isinstance(value, QQuickItem):
+        raise AssertionError(f"{name} は QQuickItem ではありません")
+    return value
+
+
+def _qt_color(item: QObject | None, name: str) -> QColor:
+    value = qt_property_value(_required_qobject(item), name)
+    if type(value).__name__ != "QColor":
+        raise AssertionError(f"{name} は QColor ではありません")
+    return cast(QColor, value)
+
+
+def _qt_font(item: QObject | None, name: str) -> QFont:
+    value = qt_property_value(_required_qobject(item), name)
+    if not isinstance(value, QFont):
+        raise AssertionError(f"{name} は QFont ではありません")
+    return value
+
+
+class _QmlMethod(Protocol):
+    def __call__(self, *arguments: object) -> object: ...
+
+
+def _qml_call(item: QObject, name: str, *arguments: object) -> object:
+    """QML で定義したメソッドを存在確認して呼び出す。"""
+
+    method = cast(object, getattr(item, name, None))
+    if not callable(method):
+        raise AssertionError(f"QML メソッドが見つかりません: {name}")
+    return cast(_QmlMethod, method)(*arguments)
+
+
+def _qml_settings(item: QObject) -> dict[str, object]:
+    settings = _qml_call(item, "currentSettings")
+    if isinstance(settings, QJSValue):
+        settings = cast(object, settings.toVariant())
+    if not is_string_object_dict(settings):
+        raise AssertionError("設定が辞書ではありません")
+    return settings
+
+
 class GuiEditorRegressionTests(TypedTestCase):
     _session: EditBayGuiTestSession
     app: EditBayBackend
     _codex_chat_connect_calls: int
     _startup_log_text: str
+
+    def assertNotEqual(self, first: object, second: object, msg: object = None) -> None:
+        super().assertNotEqual(first, second, str(msg) if msg is not None else None)
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -125,6 +307,7 @@ Window {
         for name in ("subtitles", "audio", "ai", "workflow", "workspace", "sequence", "shortVideo", "updates"):
             with self.subTest(feature=name):
                 facade = qt_property_value(self.app, name)
+                assert isinstance(facade, QObject)
                 self.assertIs(facade.parent(), self.app)
                 self.assertIs(facade, qt_property_value(self.app, name))
         original = qt_property_value(window, "subtitleText")
@@ -246,8 +429,18 @@ Window {
         save_project(path, project)
         return path, video, audio
 
-    def _load_project(self, **kwargs: object) -> Path:
-        path, _, _ = self._make_project(**kwargs)
+    def _load_project(
+        self,
+        *,
+        segments: list[dict[str, object]] | None = None,
+        include_missing_audio: bool = False,
+        duration_seconds: float = 30.0,
+    ) -> Path:
+        path, _, _ = self._make_project(
+            segments=segments,
+            include_missing_audio=include_missing_audio,
+            duration_seconds=duration_seconds,
+        )
         if not any(str(item.get("selector", "")).strip() for item in self.app._audio_tracks):
             self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
@@ -255,11 +448,17 @@ Window {
         self.app.autosave_timer.stop()
         return path
 
+    def _project_data(self) -> dict[str, object]:
+        project = self.app._project
+        if project is None:
+            raise AssertionError("プロジェクトが読み込まれていません")
+        return project
+
     def _load_large_project(self, segment_count: int = 3_000) -> Path:
         segments = generate_segments(segment_count)
         return self._load_project(
             segments=segments,
-            duration_seconds=float(segments[-1]["end"]) + 1.0,
+            duration_seconds=coerce_float(segments[-1]["end"]) + 1.0,
         )
 
     def _prime_audio_preview_cache(self) -> None:
@@ -288,9 +487,9 @@ Window {
     def _save_default_project_for_selected_sources(self) -> Path:
         project_path = Path(self.app.projectSavePath)
         project = create_project(
-            video_path=self.app.sourceSelection["video"],
-            output_dir=self.app.sourceSelection["output_dir"],
-            audio_sources=[{"path": path} for path in self.app.sourceSelection["audio_files"]],
+            video_path=_string_at(self.app.sourceSelection, "video"),
+            output_dir=_string_at(self.app.sourceSelection, "output_dir"),
+            audio_sources=[{"path": path} for path in _list_at(self.app.sourceSelection, "audio_files")],
             speakers=self.app.speakers,
             segments=[
                 {
@@ -313,7 +512,7 @@ Window {
     @staticmethod
     def _qml_value(item: QObject, name: str) -> object:
         value = qt_property_value(item, name)
-        return value.toVariant() if hasattr(value, "toVariant") else value
+        return cast(object, value.toVariant()) if isinstance(value, QJSValue) else value
 
     def _quick_item(self, window: QObject, name: str) -> QQuickItem:
         return self.gui.find_item(window, name)
@@ -322,9 +521,10 @@ Window {
         return self.gui.find_visual_item(root, name)
 
     def _click(self, window: QObject, item: QQuickItem) -> None:
+        assert isinstance(window, QQuickWindow)
         self.gui.click(window, item)
 
-    def _drag_slider(self, window: QObject, slider: QQuickItem, target_fraction: float) -> None:
+    def _drag_slider(self, window: QQuickWindow, slider: QQuickItem, target_fraction: float) -> None:
         start_fraction = coerce_float(qt_property_value(slider, "visualPosition"))
         start = slider.mapToScene(
             QPointF(slider.width() * (0.05 + 0.9 * start_fraction), slider.height() / 2)
@@ -339,7 +539,7 @@ Window {
         QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=finish)
         self.gui.process_events()
 
-    def _click_disabled(self, window: QObject, item: QQuickItem) -> None:
+    def _click_disabled(self, window: QQuickWindow, item: QQuickItem) -> None:
         self.gui.wait_until(
             lambda: not item.isEnabled(),
             description=f"{item.objectName()} の無効化",
@@ -352,7 +552,7 @@ Window {
         )
         self.app.processEvents()
 
-    def _click_short_clip_control(self, window: QObject, clip_list: QQuickItem, name: str) -> QQuickItem:
+    def _click_short_clip_control(self, window: QQuickWindow, clip_list: QQuickItem, name: str) -> QQuickItem:
         for _ in range(4):
             control = self._quick_visual_item(clip_list, name)
             top = control.mapToScene(QPointF(0, 0)).y()
@@ -370,30 +570,34 @@ Window {
                 "contentY",
                 min(
                     max(0.0, coerce_float(qt_property_value(clip_list, "contentY")) + delta),
-                    max(0.0, coerce_float(qt_property_value(clip_list, "contentHeight")) - clip_list.height()),
+                    max(0.0, coerce_float(_qt_number(clip_list, "contentHeight")) - clip_list.height()),
                 ),
             )
         self.fail(
             f"{name} を画面内に表示できません: control={top:.1f}-{bottom:.1f}, "
             f"view={visible_top:.1f}-{visible_bottom:.1f}, "
             f"contentY={qt_property_value(clip_list, 'contentY')}, "
-            f"contentHeight={qt_property_value(clip_list, 'contentHeight')}, height={clip_list.height()}"
+            f"contentHeight={_qt_number(clip_list, 'contentHeight')}, height={clip_list.height()}"
         )
 
-    def _replace_focused_time(self, window: QObject, field: QQuickItem, value: str) -> None:
+    def _replace_focused_time(self, window: QQuickWindow, field: QQuickItem, value: str) -> None:
         self.assertTrue(field.hasActiveFocus(), field.objectName())
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         for char in value:
             QTest.keyClick(window, Qt.Key.Key_Period if char == "." else Qt.Key(ord(char)))
-        self.assertEqual(qt_property_value(field, "text"), value)
+        self.assertEqual(_qt_string(field, "text"), value)
 
     def _assert_quick_item_within(self, container: QQuickItem, item: QQuickItem) -> None:
         self.gui.assert_item_within(container, item)
 
+    def _item_is_within(self, container: QQuickItem, item: QQuickItem) -> bool:
+        self.gui.assert_item_within(container, item)
+        return True
+
     def _assert_button_content_fits(self, button: QQuickItem) -> None:
-        content = qt_property_value(button, "contentItem")
+        content = _qt_item(button, "contentItem")
         self.assertIsNotNone(content, button.objectName())
-        self.assertLessEqual(qt_property_value(content, "implicitWidth"), button.width() + 1, button.objectName())
+        self.assertLessEqual(_qt_number(content, "implicitWidth"), button.width() + 1, button.objectName())
 
     def test_shared_backend_session_resets_state_before_each_test(self) -> None:
         first_root = self.root
@@ -410,7 +614,7 @@ Window {
                 }
             ]
         }
-        self.app._subtitle_model.set_segments(self.app._project["segments"])
+        self.app._subtitle_model.set_segments(_dict_list_at(self._project_data(), "segments"))
         self.app._source_selection = SourceSelection(video="leaked-video.mkv")
         self.app._active_job = "leaked-job"
         self.app.shortVideo._highlight_state.candidates = [{"id": "leaked-highlight"}]
@@ -484,7 +688,7 @@ Window {
         self._click(window, self._quick_item(window, "addCaptionButton"))
         self.assertEqual(self.app.segmentCount, 1)
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(len(load_project(video.with_suffix(".subtitle-project.json"))["segments"]), 1)
+        self.assertEqual(len(_dict_list_at(load_project(video.with_suffix(".subtitle-project.json")), "segments")), 1)
 
     def test_project_start_screen_works_without_main_workflow_context(self) -> None:
         self.app._set_status("素材を確認してください", "CHECK")
@@ -523,9 +727,9 @@ Window {
         _, window = self.gui.load_qml(qml)
         start_screen = self._quick_item(window, "projectStartScreen")
         self.assertTrue(start_screen.isVisible())
-        self.assertEqual(qt_property_value(self._quick_item(window, "startScreenStatusText"), "text"), "素材を確認してください")
+        self.assertEqual(_qt_string(self._quick_item(window, "startScreenStatusText"), "text"), "素材を確認してください")
         self.assertEqual(
-            qt_property_value(self._quick_item(window, "startScreenTranscriptionBlockReason"), "text"),
+            _qt_string(self._quick_item(window, "startScreenTranscriptionBlockReason"), "text"),
             "文字起こしを確認してください",
         )
         for button_name, request_name in (
@@ -541,7 +745,7 @@ Window {
                 self.assertEqual(qt_property_value(window, request_name), 1)
         self.app._set_status("読み込みに失敗しました", "ERROR")
         self.gui.wait_until(
-            lambda: qt_property_value(self._quick_item(window, "startScreenStatusText"), "text") == "読み込みに失敗しました",
+            lambda: _qt_string(self._quick_item(window, "startScreenStatusText"), "text") == "読み込みに失敗しました",
             description="開始画面のエラー表示",
         )
 
@@ -581,10 +785,10 @@ Window {
         self.assertTrue(QMetaObject.invokeMethod(window, "startTranscription"))
         request = self._qml_value(window, "pendingRequest")
         self.assertEqual(qt_property_value(window, "sourceSettingsRequests"), 1)
-        self.assertEqual(request["settings"], {"device": "cpu", "model": "small"})
-        self.assertEqual(request["sources"]["video"], str(video.resolve()))
-        self.assertEqual(request["sources"]["audio_files"], [str(audio.resolve())])
-        self.assertEqual(request["projectPath"], str(project_path))
+        self.assertEqual(_value_at(request, 'settings'), {"device": "cpu", "model": "small"})
+        self.assertEqual(_value_at(request, 'sources', 'video'), str(video.resolve()))
+        self.assertEqual(_value_at(request, 'sources', 'audio_files'), [str(audio.resolve())])
+        self.assertEqual(_value_at(request, 'projectPath'), str(project_path))
         self.assertFalse(self.app.projectLoaded)
 
     def test_project_start_screen_prioritizes_new_edit_and_existing_project(self) -> None:
@@ -613,7 +817,7 @@ Window {
         browse.assert_called_once()
 
         self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
-        self.assertTrue(qt_property_value(window.findChild(QObject, "sourcePopup"), "visible"))
+        self.assertTrue(_qt_bool(window.findChild(QObject, "sourcePopup"), "visible"))
         self._click(window, self._quick_item(window, "sourceDoneButton"))
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
         self.assertTrue(qt_property_value(window, "dictionaryMode"))
@@ -695,10 +899,10 @@ Window {
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
 
         start.assert_called_once()
-        execution_settings = start.call_args.args[0]
-        self.assertEqual(execution_settings["device"], "cpu")
-        self.assertEqual(execution_settings["model"], "small")
-        self.assertTrue(start.call_args.args[1])
+        execution_settings = _value_at(_mock_args(start), 0)
+        self.assertEqual(_value_at(execution_settings, 'device'), "cpu")
+        self.assertEqual(_value_at(execution_settings, 'model'), "small")
+        self.assertTrue(_mock_args(start)[1])
         self.assertTrue(self.app.projectLoaded)
 
     def test_start_screen_explains_unavailable_transcription_device(self) -> None:
@@ -709,7 +913,7 @@ Window {
 
         reason = self._quick_item(window, "startScreenTranscriptionBlockReason")
         self.assertTrue(reason.isVisible())
-        self.assertIn("CPU", qt_property_value(reason, "text"))
+        self.assertIn("CPU", _qt_string(reason, "text"))
         with patch.object(self.app.workflow, "startTranscription") as start:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
@@ -762,7 +966,7 @@ Window {
         popup = window.findChild(QObject, "advancedSettingsPopup")
         self.assertIsNotNone(popup)
         self.assertTrue(QMetaObject.invokeMethod(window, "openSettings"))
-        self.gui.wait_until(lambda: qt_property_value(popup, "visible"), description="処理設定を開く")
+        self.gui.wait_until(lambda: _qt_bool(popup, "visible"), description="処理設定を開く")
         self.assertTrue(QMetaObject.invokeMethod(window, "applySettings"))
         self.assertEqual(qt_property_value(popup, "selectedDevice"), "cpu")
         self.assertEqual(qt_property_value(popup, "selectedFontSize"), 150)
@@ -771,22 +975,22 @@ Window {
         self.assertEqual(qt_property_value(popup, "outlineThickness"), 6)
         self.assertTrue(QMetaObject.invokeMethod(window, "captureSettings"))
         values = self._qml_value(window, "settingsSnapshot")
-        self.assertEqual(values["model"], "small")
-        self.assertEqual(values["device"], "cpu")
-        self.assertEqual(values["compute_type"], "int8")
-        self.assertEqual(values["subtitle_font_size"], 150)
-        self.assertEqual(values["subtitle_outline_color"], "#123456")
-        self.assertEqual(values["subtitle_outline_thickness"], 6)
-        self.assertEqual(values["subtitle_volume_scale_percent"], 35)
-        self.assertEqual(values["speech_threshold_db"], "-35dB")
-        self.assertFalse(values["audio_normalize"])
-        self.assertTrue(values["cut_no_speech"])
+        self.assertEqual(_value_at(values, 'model'), "small")
+        self.assertEqual(_value_at(values, 'device'), "cpu")
+        self.assertEqual(_value_at(values, 'compute_type'), "int8")
+        self.assertEqual(_value_at(values, 'subtitle_font_size'), 150)
+        self.assertEqual(_value_at(values, 'subtitle_outline_color'), "#123456")
+        self.assertEqual(_value_at(values, 'subtitle_outline_thickness'), 6)
+        self.assertEqual(_value_at(values, 'subtitle_volume_scale_percent'), 35)
+        self.assertEqual(_value_at(values, 'speech_threshold_db'), "-35dB")
+        self.assertFalse(_value_at(values, 'audio_normalize'))
+        self.assertTrue(_value_at(values, 'cut_no_speech'))
         self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "outlineColorButton"), "clicked"))
         self.assertEqual(qt_property_value(window, "requestedOutlineColor"), "#123456")
         self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "settingsPopupSaveButton"), "clicked"))
         self.assertEqual(qt_property_value(window, "saveRequests"), 1)
         self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "settingsPopupCloseButton"), "clicked"))
-        self.gui.wait_until(lambda: not qt_property_value(popup, "visible"), description="処理設定を閉じる")
+        self.gui.wait_until(lambda: not _qt_bool(popup, "visible"), description="処理設定を閉じる")
 
     def test_workspace_inspector_works_without_main_workflow_context(self) -> None:
         components = Path(__file__).resolve().parents[1] / "src" / "ui" / "components"
@@ -893,15 +1097,18 @@ Window {
         slider = self._quick_item(window, "mainPreviewSeekSlider")
         player = window.findChild(QMediaPlayer)
         self.assertIsNotNone(player)
-        self.assertIs(player.videoOutput().parentItem(), panel)
+        assert player is not None
+        video_output = player.videoOutput()
+        assert isinstance(video_output, QQuickItem)
+        self.assertIs(video_output.parentItem(), panel)
         self.assertTrue(QMetaObject.invokeMethod(window, "updateSeek"))
         self.assertEqual(qt_property_value(slider, "to"), 6000)
         self.assertEqual(qt_property_value(slider, "value"), 2500)
         self._drag_slider(window, slider, 0.5)
-        self.assertGreater(qt_property_value(window, "requestedSeekMs"), 2_000)
-        self.assertLess(qt_property_value(window, "requestedSeekMs"), 4_000)
+        self.assertGreater(_qt_number(window, "requestedSeekMs"), 2_000)
+        self.assertLess(_qt_number(window, "requestedSeekMs"), 4_000)
         time_label = self._quick_item(window, "mainPreviewTimeLabel")
-        self.assertEqual(qt_property_value(time_label, "text"), "0.0 / 0.0")
+        self.assertEqual(_qt_string(time_label, "text"), "0.0 / 0.0")
 
     def test_source_settings_popup_works_without_main_workflow_context(self) -> None:
         path, _, _ = self._make_project()
@@ -944,7 +1151,7 @@ Window {
         for _ in range(2):
             self.assertTrue(QMetaObject.invokeMethod(window, "openSourceSettings"))
             self.gui.wait_until(
-                lambda: qt_property_value(popup, "visible") and self.app._relinking_project_sources,
+                lambda: _qt_bool(popup, "visible") and self.app._relinking_project_sources,
                 description="素材設定の再指定開始",
             )
             self.assertEqual(qt_property_value(popup, "manualOffsetText"), "0.000")
@@ -953,16 +1160,16 @@ Window {
             self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "projectSaveAsButton"), "clicked"))
             self.assertEqual(qt_property_value(window, "saveAsRequests"), _ + 1)
             scroll_view = self._quick_item(window, "sourceSettingsScrollView")
-            qt_property_value(scroll_view, "contentItem").setProperty("contentY", 180.0)
+            _qt_item(scroll_view, "contentItem").setProperty("contentY", 180.0)
             audio_list = self._quick_item(window, "sourceAudioList")
-            self.assertEqual(qt_property_value(audio_list, "count"), 1)
+            self.assertEqual(_qt_number(audio_list, "count"), 1)
             color_button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
             self.assertTrue(QMetaObject.invokeMethod(color_button, "clicked"))
             self.assertEqual(qt_property_value(window, "pickedSpeakerIndex"), 0)
             self.assertEqual(qt_property_value(window, "pickedSpeakerColor"), self.app.speakers[0]["color"])
             self.assertTrue(QMetaObject.invokeMethod(self._quick_item(window, "sourceDoneButton"), "clicked"))
             self.gui.wait_until(
-                lambda: not qt_property_value(popup, "visible") and not self.app._relinking_project_sources,
+                lambda: not _qt_bool(popup, "visible") and not self.app._relinking_project_sources,
                 description="素材設定の再指定終了",
             )
         self.assertTrue(self.app.projectLoaded)
@@ -975,7 +1182,7 @@ Window {
         self.gui.resize(window, 1220, 760)
         self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
         audio_list = self._quick_item(window, "sourceAudioList")
-        self.assertEqual(qt_property_value(audio_list, "count"), 1)
+        self.assertEqual(_qt_number(audio_list, "count"), 1)
 
         with patch(
             "src.gui_base.QFileDialog.getOpenFileNames",
@@ -984,25 +1191,25 @@ Window {
             self._click(window, self._quick_item(window, "sourceAudioAddButton"))
         choose_audio.assert_called_once()
         self.gui.wait_until(
-            lambda: qt_property_value(audio_list, "count") == 2
+            lambda: _qt_number(audio_list, "count") == 2
             and self.app.sourceSelection["audio_files"] == [str(original_audio.resolve()), str(added_audio.resolve())],
             description="話者音声の追加と一覧反映",
         )
         remove_button = self._quick_visual_item(audio_list, "sourceAudioRemoveButton-1")
         self.gui.wait_until(
-            lambda: self.gui.assert_item_within(audio_list, remove_button) is None,
+            lambda: self._item_is_within(audio_list, remove_button),
             description="２件目の削除ボタンの表示範囲",
         )
         self._click(window, remove_button)
         self.gui.wait_until(
-            lambda: qt_property_value(audio_list, "count") == 1
+            lambda: _qt_number(audio_list, "count") == 1
             and self.app.sourceSelection["audio_files"] == [str(original_audio.resolve())],
             description="２件目の話者音声の削除と一覧反映",
         )
 
         self._click(window, self._quick_item(window, "sourceAudioClearButton"))
         self.gui.wait_until(
-            lambda: qt_property_value(audio_list, "count") == 0 and self.app.sourceSelection["audio_files"] == [],
+            lambda: _qt_number(audio_list, "count") == 0 and self.app.sourceSelection["audio_files"] == [],
             description="話者音声の全消去と一覧反映",
         )
 
@@ -1012,7 +1219,7 @@ Window {
         ):
             self._click(window, self._quick_item(window, "sourceAudioAddButton"))
         self.gui.wait_until(
-            lambda: qt_property_value(audio_list, "count") == 1
+            lambda: _qt_number(audio_list, "count") == 1
             and self.app.sourceSelection["audio_files"] == [str(added_audio.resolve())],
             description="話者音声の再追加と一覧反映",
         )
@@ -1023,7 +1230,7 @@ Window {
         self.assertTrue(self.app.projectLoaded)
         saved = load_project(Path(self.app.projectPath))
         self.assertEqual(
-            [item["path"] for item in saved["audio_sources"]],
+            [item["path"] for item in _dict_list_at(saved, "audio_sources")],
             [str(added_audio.resolve())],
         )
 
@@ -1053,16 +1260,16 @@ Window {
             alternate_output = self.root / "alternate-output"
             alternate_output.mkdir()
             output_button = self._quick_item(window, "videoOutputDirectoryButton")
-            viewport = qt_property_value(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
+            viewport = _qt_item(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
             button_top = output_button.mapToItem(viewport, QPointF()).y()
             viewport.setProperty("contentY", max(0.0, coerce_float(qt_property_value(viewport, "contentY")) + button_top - 20.0))
             self.gui.wait_until(
-                lambda: self.gui.assert_item_within(viewport, output_button) is None,
+                lambda: self._item_is_within(viewport, output_button),
                 description="素材設定の出力先ボタンの表示範囲",
             )
             with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
                 self._click(window, output_button)
-            self.assertTrue(Path(self.app.sourceSelection["output_dir"]).samefile(alternate_output))
+            self.assertTrue(Path(_string_at(self.app.sourceSelection, "output_dir")).samefile(alternate_output))
 
             with patch("src.gui.save_project", side_effect=OSError("保存先を使用できません")):
                 self._click(window, self._quick_item(window, "sourceDoneButton"))
@@ -1078,7 +1285,7 @@ Window {
 
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
             self.assertFalse(self.app.projectDirty)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "保存待ちの字幕")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "保存待ちの字幕")
             self.assertEqual(load_project(path)["output_dir"], original_selection["output_dir"])
 
     def test_source_reset_and_direct_change_keep_unsaved_project_on_save_failure(self) -> None:
@@ -1099,10 +1306,11 @@ Window {
             edited_project = deepcopy(self.app._project)
             edited_history = deepcopy(self.app._undo_stack)
 
-            for change in (
+            changes: tuple[Callable[[], object], ...] = (
                 lambda: self.app.setAudioFiles([str(other_audio)], False),
                 self.app.resetSources,
-            ):
+            )
+            for change in changes:
                 with self.subTest(change=change):
                     with patch("src.gui.save_project", side_effect=OSError("保存を拒否")):
                         change()
@@ -1130,11 +1338,11 @@ Window {
         alternate_output = self.root / "alternate-output"
         alternate_output.mkdir()
         output_button = self._quick_item(window, "videoOutputDirectoryButton")
-        viewport = qt_property_value(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
+        viewport = _qt_item(self._quick_item(window, "sourceSettingsScrollView"), "contentItem")
         button_top = output_button.mapToItem(viewport, QPointF()).y()
         viewport.setProperty("contentY", max(0.0, coerce_float(qt_property_value(viewport, "contentY")) + button_top - 20.0))
         self.gui.wait_until(
-            lambda: self.gui.assert_item_within(viewport, output_button) is None,
+            lambda: self._item_is_within(viewport, output_button),
             description="保存済みプロジェクトの出力先ボタンの表示範囲",
         )
         with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(alternate_output)):
@@ -1186,7 +1394,7 @@ Window {
         ):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
 
-        command = start.call_args.args[0]
+        command = _mock_command(start)
         self.assertEqual(command[command.index("--video-audio-track") + 1], "0:a:1")
         self.assertEqual(command[command.index("--reference-track") + 1], "0:a:1")
         self.assertEqual(command[command.index("--alignment-offset-adjustment") + 1], "1.25")
@@ -1206,7 +1414,7 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
         reference_audio = self._quick_item(window, "referenceAudioCombo")
-        self.assertEqual(qt_property_value(reference_audio, "count"), 2)
+        self.assertEqual(_qt_number(reference_audio, "count"), 2)
         self._click(window, reference_audio)
         QTest.keyClick(window, Qt.Key.Key_Down)
         QTest.keyClick(window, Qt.Key.Key_Return)
@@ -1250,22 +1458,23 @@ Window {
         self.app.dependenciesChanged.emit()
         self.assertTrue(self.app.transcriptionProjectExists())
         _, window = self._load_qml()
-        self.assertTrue(self._qml_value(window, "workflowCapabilities")["canTranscribe"])
+        self.assertTrue(_value_at(self._qml_value(window, "workflowCapabilities"), 'canTranscribe'))
 
         with patch.object(self.app, "_start_process") as start_process:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
             dialog = window.findChild(QObject, "overwriteProjectDialog")
             self.assertTrue(
-                qt_property_value(dialog, "visible"),
+                _qt_bool(dialog, "visible"),
                 f"stage={self.app.stage} status={self.app.status} loaded={self.app.projectLoaded}",
             )
             self.assertFalse(self.app.projectLoaded)
             self.assertFalse(self.app.projectDirty)
             self.assertEqual(project_path.read_bytes(), saved_project)
-            dialog.accept()
+            assert dialog is not None
+            self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
             self.app.processEvents()
 
-        command = start_process.call_args.args[0]
+        command = _mock_command(start_process)
         audio_arguments = [command[index + 1] for index, value in enumerate(command) if value == "--audio-file"]
         self.assertEqual(audio_arguments, [str(selected_audio.resolve())])
         self.assertNotIn(str(saved_audio.resolve()), audio_arguments)
@@ -1281,7 +1490,7 @@ Window {
 
         status = self._quick_item(window, "startScreenStatusText")
         self.assertTrue(status.isVisible())
-        self.assertIn("プロジェクトを開けません", qt_property_value(status, "text"))
+        self.assertIn("プロジェクトを開けません", _qt_string(status, "text"))
         self.assertFalse(self.app.projectLoaded)
 
     def test_start_screen_displays_empty_project_save_error(self) -> None:
@@ -1296,8 +1505,8 @@ Window {
 
         status = self._quick_item(window, "startScreenStatusText")
         self.assertTrue(status.isVisible())
-        self.assertIn("空の編集プロジェクトを保存できません", qt_property_value(status, "text"))
-        self.assertIn("permission denied", qt_property_value(status, "text"))
+        self.assertIn("空の編集プロジェクトを保存できません", _qt_string(status, "text"))
+        self.assertIn("permission denied", _qt_string(status, "text"))
         self.assertFalse(self.app.projectLoaded)
 
     def test_start_screen_transcription_reuses_shared_action_and_keeps_empty_project_on_cancel(self) -> None:
@@ -1314,7 +1523,8 @@ Window {
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
 
         start.assert_called_once()
-        command, job, _status = start.call_args.args
+        command = _mock_command(start)
+        _, job, _status = _mock_args(start)
         self.assertEqual(job, "transcribe")
         self.assertIn("--overwrite-project", command)
         self.assertEqual(Path(command[command.index("--project-path") + 1]), Path(self.app.projectPath))
@@ -1334,7 +1544,7 @@ Window {
         with patch.object(self.app.workflow, "startTranscription") as start:
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
         start.assert_not_called()
-        self.assertTrue(qt_property_value(window.findChild(QObject, "sourcePopup"), "visible"))
+        self.assertTrue(_qt_bool(window.findChild(QObject, "sourcePopup"), "visible"))
 
     def test_start_screen_transcription_accepts_video_embedded_audio(self) -> None:
         video = self.root / "video-with-audio.mkv"
@@ -1352,7 +1562,7 @@ Window {
             patch.object(self.app.workflow, "_start_command") as start,
         ):
             self._click(window, self._quick_item(window, "startWithTranscriptionButton"))
-        command = start.call_args.args[0]
+        command = _mock_command(start)
         self.assertEqual(command[command.index("--video-audio-track") + 1], "0:a:0")
         self.assertTrue(self.app.projectLoaded)
 
@@ -1360,7 +1570,7 @@ Window {
         _video, _audio, output = self._set_ready_sources()
         project_path = Path(self.app.projectSavePath)
         sentinel = create_project(
-            video_path=self.app.sourceSelection["video"],
+            video_path=_string_at(self.app.sourceSelection, "video"),
             output_dir=output,
             segments=[{"start": 0, "end": 1, "text": "keep", "speaker": "Oz"}],
         )
@@ -1368,7 +1578,7 @@ Window {
 
         with patch("src.gui.probe_media_duration", return_value=30.0):
             self.assertFalse(self.app.createEmptyProject())
-        self.assertEqual(load_project(project_path)["segments"][0]["text"], "keep")
+        self.assertEqual(_value_at(load_project(project_path), 'segments', 0, 'text'), "keep")
 
     def test_project_without_export_directory_supports_editing_and_transcription(self) -> None:
         video, _audio, _output = self._set_ready_sources()
@@ -1385,17 +1595,17 @@ Window {
         self.app.initializeShortVideoClips()
         self.assertTrue(self.app.saveProject())
         saved = load_project(path)
-        self.assertEqual(saved["segments"][0]["text"], "手動字幕")
-        self.assertTrue(saved["timeline"]["cuts"])
-        self.assertTrue(saved["audio_mix"]["customized"])
-        self.assertTrue(saved["short_video"]["clips"])
+        self.assertEqual(_value_at(saved, 'segments', 0, 'text'), "手動字幕")
+        self.assertTrue(_dict_list_at(saved, 'timeline', 'cuts'))
+        self.assertTrue(_value_at(saved, 'audio_mix', 'customized'))
+        self.assertTrue(_dict_list_at(saved, 'short_video', 'clips'))
         self.assertEqual(saved["output_dir"], "")
-        self.assertEqual(saved["transcription"]["context_base_dir"], str(path.parent))
+        self.assertEqual(_value_at(saved, 'transcription', 'context_base_dir'), str(path.parent))
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
         self.assertTrue(self.app.actionCapabilities["canTranscribe"])
         with patch.object(self.app, "refreshDependencies"), patch.object(self.app.workflow, "_start_command") as start:
             self.app.transcribeProject(self.app.settings, "merge")
-        command = start.call_args.args[0]
+        command = _mock_command(start)
         self.assertEqual(command[command.index("--render-output-dir") + 1], "")
         work = path.parent / ".game.work"
         self.assertEqual(Path(command[command.index("--output-dir") + 1]), work)
@@ -1409,7 +1619,7 @@ Window {
         self.app.updateAudioMixChannel(1, {"volume_percent": 75})
         self.app.initializeShortVideoClips()
         self.app.setEditorPlayhead(12_000, "source")
-        project = self.app._project
+        project = self._project_data()
         preserved = deepcopy(project)
         history = deepcopy(self.app._undo_stack)
         selection = self.app.selectedSegmentIndex
@@ -1430,7 +1640,7 @@ Window {
         self.app._wait_for_autosave()
         self.app.processEvents()
         self.assertEqual(load_project(path)["output_dir"], str(export))
-        self.assertEqual(load_project(path)["segments"][0]["text"], "unsaved edit")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "unsaved edit")
         self.assertEqual(list(export.iterdir()), [])
 
     def test_export_change_is_visible_and_saved_before_source_popup_closes(self) -> None:
@@ -1440,16 +1650,16 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "sourceSetupButton"))
         scroll_view = self._quick_item(window, "sourceSettingsScrollView")
-        flickable = qt_property_value(scroll_view, "contentItem")
+        flickable = _qt_item(scroll_view, "contentItem")
         max_content_y = max(
             0.0,
-            coerce_float(qt_property_value(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height")),
+            coerce_float(_qt_number(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height")),
         )
         flickable.setProperty("contentY", max_content_y)
         self.app.processEvents()
         with patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)):
             self._click(window, self._quick_item(window, "videoOutputDirectoryButton"))
-        self.assertEqual(qt_property_value(self._quick_item(window, "videoOutputDirectoryText"), "text"), str(export))
+        self.assertEqual(_qt_string(self._quick_item(window, "videoOutputDirectoryText"), "text"), str(export))
         target = self.root / "copy.subtitle-project.json"
         with patch("src.gui.QFileDialog.getSaveFileName", return_value=(str(target), "")):
             self._click(window, self._quick_item(window, "projectSaveAsButton"))
@@ -1486,7 +1696,7 @@ Window {
         self.app._dependencies = RuntimeDependencyStatus(True, True, True, cuda=True)
         with patch.object(self.app.workflow, "_start_command") as start:
             self.app.transcribeProject({**self.app.settings, "transcription_context": context}, "merge")
-        command = start.call_args.args[0]
+        command = _mock_command(start)
         self.assertIn("--context-base-dir", command)
         self.assertEqual(Path(command[command.index("--context-base-dir") + 1]), legacy_base)
 
@@ -1504,12 +1714,12 @@ Window {
         self.assertEqual(Path(self.app.projectPath), target)
         self.assertEqual(self.app.videoOutputDirectory, export)
         self.assertEqual(self.app._undo_stack, history)
-        self.assertEqual(load_project(target)["segments"][0]["text"], "latest")
-        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self.assertEqual(_value_at(load_project(target), 'segments', 0, 'text'), "latest")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "first")
         self.app.updateSegment(0, {"text": "after save as"})
         self.assertTrue(self.app.saveProject())
-        self.assertEqual(load_project(target)["segments"][0]["text"], "after save as")
-        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self.assertEqual(_value_at(load_project(target), 'segments', 0, 'text'), "after save as")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "first")
         with patch("src.gui.save_project", side_effect=OSError("read only")):
             self.assertFalse(self.app.saveProjectAs(str(self.root / "failed.json")))
         self.assertEqual(Path(self.app.projectPath), target)
@@ -1534,7 +1744,7 @@ Window {
                 export.mkdir()
                 with patch.object(self.app, "refreshDependencies"), patch("src.gui_base.QFileDialog.getExistingDirectory", return_value=str(export)), patch.object(self.app.workflow, "_start_command") as start:
                     action()
-                command = start.call_args.args[0]
+                command = _mock_command(start)
                 self.assertEqual(Path(command[command.index("--output") + 1]).parent, export)
                 self.assertEqual(Path(self.app.projectPath), path)
                 self.assertEqual(load_project(path)["output_dir"], str(export))
@@ -1549,7 +1759,7 @@ Window {
         render_button = self._quick_item(window, "workspaceHeaderRenderButton")
         output_button = self._quick_item(window, "workspaceHeaderOutputButton")
         self.assertTrue(render_button.isEnabled())
-        self.assertIn("出力先を選択", qt_property_value(render_button, "text"))
+        self.assertIn("出力先を選択", _qt_string(render_button, "text"))
         self.assertFalse(output_button.isEnabled())
 
         with (
@@ -1576,15 +1786,15 @@ Window {
             self._click(window, render_button)
         choose.assert_called_once()
         start.assert_called_once()
-        command = start.call_args.args[0]
+        command = _mock_command(start)
         self.assertTrue(Path(command[command.index("--output") + 1]).parent.samefile(export))
         self.assertTrue(Path(self.app.projectPath).samefile(path))
-        self.assertTrue(Path(load_project(path)["output_dir"]).samefile(export))
+        self.assertTrue(Path(_string_at(load_project(path), "output_dir")).samefile(export))
         self.assertTrue(output_button.isEnabled())
         with patch("src.gui_base.QDesktopServices.openUrl", return_value=True) as open_url:
             self._click(window, output_button)
         open_url.assert_called_once()
-        self.assertTrue(Path(open_url.call_args.args[0].toLocalFile()).samefile(export))
+        self.assertTrue(Path(_mock_url(open_url).toLocalFile()).samefile(export))
 
     def test_output_unset_qml_offers_export_and_distinct_save_locations(self) -> None:
         path = self._load_project()
@@ -1595,7 +1805,7 @@ Window {
         self.assertFalse(self.app.actionCapabilities["canRenderNormal"])
         self.assertTrue(self.app.actionCapabilities["normalRenderNeedsOutput"])
         self.assertTrue(self._quick_item(window, "workspaceHeaderRenderButton").isEnabled())
-        self.assertIn("出力先を選択", qt_property_value(self._quick_item(window, "workspaceHeaderRenderButton"), "text"))
+        self.assertIn("出力先を選択", _qt_string(self._quick_item(window, "workspaceHeaderRenderButton"), "text"))
 
         for dependencies, warning_visible in (
             (RuntimeDependencyStatus(True, True, False, cuda=False), True),
@@ -1606,19 +1816,19 @@ Window {
                 self.app.dependenciesChanged.emit()
                 self._click(window, self._quick_item(window, "sourceSetupButton"))
                 popup = window.findChild(QObject, "sourcePopup")
-                content = qt_property_value(popup, "contentItem")
+                content = _qt_item(popup, "contentItem")
                 scroll_view = self._quick_item(window, "sourceSettingsScrollView")
                 scroll_content = self._quick_item(window, "sourceSettingsContent")
                 scroll_bar = self._quick_item(window, "sourceSettingsVerticalScrollBar")
                 footer = self._quick_item(window, "sourcePopupFooter")
                 done_button = self._quick_item(window, "sourceDoneButton")
                 warning = self._quick_item(window, "sourceDependencyWarning")
-                flickable = qt_property_value(scroll_view, "contentItem")
+                flickable = _qt_item(scroll_view, "contentItem")
                 self.assertIsNotNone(flickable)
                 self.assertEqual(warning.isVisible(), warning_visible)
                 self._assert_quick_item_within(content, footer)
                 self._assert_quick_item_within(content, done_button)
-                self.assertGreater(qt_property_value(scroll_content, "implicitHeight"), scroll_view.height())
+                self.assertGreater(_qt_number(scroll_content, "implicitHeight"), scroll_view.height())
                 self.assertTrue(scroll_bar.isVisible())
                 self.assertLess(coerce_float(qt_property_value(scroll_bar, "size")), 1.0)
 
@@ -1629,7 +1839,7 @@ Window {
                 def scroll_bottom_is_visible() -> bool:
                     max_content_y = max(
                         0.0,
-                        coerce_float(qt_property_value(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height")),
+                        coerce_float(_qt_number(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height")),
                     )
                     flickable.setProperty("contentY", max_content_y)
                     return all(
@@ -1646,8 +1856,8 @@ Window {
                     self._assert_quick_item_within(scroll_view, button)
                 self._assert_quick_item_within(content, footer)
                 self._assert_quick_item_within(content, done_button)
-                self.assertEqual(qt_property_value(self._quick_item(window, "projectSavePathText"), "text"), str(path))
-                self.assertIn("書き出すとき", qt_property_value(self._quick_item(window, "videoOutputDirectoryText"), "text"))
+                self.assertEqual(_qt_string(self._quick_item(window, "projectSavePathText"), "text"), str(path))
+                self.assertIn("書き出すとき", _qt_string(self._quick_item(window, "videoOutputDirectoryText"), "text"))
                 flickable.setProperty("contentY", 0)
                 self._click(window, done_button)
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
@@ -1671,11 +1881,11 @@ Window {
         self.assertFalse(self.app.audioMixerAvailable)
         _, window = self._load_qml()
         mixer_button = self._quick_item(window, "audioMixerOpenButton")
-        self.assertFalse(qt_property_value(mixer_button, "enabled"))
-        self.assertEqual(qt_property_value(mixer_button, "text"), "音声トラックなし")
+        self.assertFalse(_qt_bool(mixer_button, "enabled"))
+        self.assertEqual(_qt_string(mixer_button, "text"), "音声トラックなし")
 
         self.app.updateAudioMixChannel(0, {"volume_percent": 150})
-        self.assertFalse(self.app._project["audio_mix"]["customized"])
+        self.assertFalse(_value_at(self.app._project, 'audio_mix', 'customized'))
 
         with (
             patch.object(self.app, "refreshDependencies"),
@@ -1684,7 +1894,7 @@ Window {
         ):
             self.app.renderVideo(self.app.settings)
 
-        self.assertEqual(start_command.call_args.args[1], "render")
+        self.assertEqual(_mock_args(start_command)[1], "render")
 
     def test_action_capabilities_keep_editing_and_export_independent_of_asr(self) -> None:
         self._set_ready_sources()
@@ -1752,7 +1962,7 @@ Window {
     def test_followup_transcription_restores_mode_and_mapped_playhead(self) -> None:
         self._set_ready_sources()
         project_path = self._load_project()
-        self.app._project["timeline"] = {"cuts": [{"id": "cut", "source_start": 1, "source_end": 2}]}
+        self._project_data()["timeline"] = {"cuts": [{"id": "cut", "source_start": 1, "source_end": 2}]}
         self.app._sync_project_timeline()
         for integration in ("merge", "replace"):
             self.app.selectEditMode("cut")
@@ -1762,7 +1972,7 @@ Window {
                 self.app.transcribeProject(self.app.settings, integration)
             generated_path = Path(self.app.workflow._state.transcription_generated_project_path)
             generated = create_project(
-                video_path=self.app._project["video"]["path"], output_dir=generated_path.parent,
+                video_path=_string_at(self.app._project, 'video', 'path'), output_dir=generated_path.parent,
                 segments=[{"start": 4, "end": 5, "text": "generated"}], duration_seconds=30,
             )
             save_project(generated_path, generated)
@@ -1771,7 +1981,7 @@ Window {
             self.assertEqual(self.app.currentEditMode, "cut")
             self.assertEqual(self.app.editorPlayhead, before)
             self.assertEqual(self.app.projectPath, str(project_path))
-            self.assertEqual(len(self.app._project["timeline"]["cuts"]), 1)
+            self.assertEqual(len(_list_at(self.app._project, 'timeline', 'cuts')), 1)
             self.assertFalse(generated_path.exists())
 
     def test_font_choices_are_sorted_deduplicated_and_include_default(self) -> None:
@@ -1851,13 +2061,13 @@ Window {
         )
         self._click(window, self._quick_item(window, "saveProjectButton"))
 
-        saved_segment = load_project(project_path)["segments"][0]
-        self.assertEqual(saved_segment["text"], "saved across restart")
-        self.assertEqual(saved_segment["start"], 1.25)
-        self.assertEqual(saved_segment["end"], 3.5)
-        self.assertEqual(saved_segment["speaker"], "Speaker_Bob")
-        self.assertEqual(saved_segment["subtitle_font_scale"], 1.45)
-        self.assertEqual(saved_segment["subtitle_font_family"], "Yu Mincho")
+        saved_segment = _value_at(load_project(project_path), 'segments', 0)
+        self.assertEqual(_value_at(saved_segment, 'text'), "saved across restart")
+        self.assertEqual(_value_at(saved_segment, 'start'), 1.25)
+        self.assertEqual(_value_at(saved_segment, 'end'), 3.5)
+        self.assertEqual(_value_at(saved_segment, 'speaker'), "Speaker_Bob")
+        self.assertEqual(_value_at(saved_segment, 'subtitle_font_scale'), 1.45)
+        self.assertEqual(_value_at(saved_segment, 'subtitle_font_family'), "Yu Mincho")
 
         result_path = self.root / "reloaded-project.json"
         process_python = sys.executable
@@ -1882,22 +2092,22 @@ Window {
             timeout=30,
         )
         self.assertEqual(probe.returncode, 0, probe.stderr)
-        reloaded = json.loads(result_path.read_text(encoding="utf-8"))
-        self.assertTrue(reloaded["project_loaded"])
-        self.assertTrue(reloaded["qml_loaded"])
-        self.assertTrue(reloaded["edit_button_enabled"])
-        self.assertFalse(reloaded["project_dirty"])
-        self.assertEqual(Path(reloaded["project_path"]).resolve(), project_path.resolve())
-        self.assertEqual(reloaded["segments"][0]["text"], "saved across restart")
-        self.assertEqual(reloaded["segments"][0]["start"], 1.25)
-        self.assertEqual(reloaded["segments"][0]["end"], 3.5)
-        self.assertEqual(reloaded["segments"][0]["speaker"], "Speaker_Bob")
-        self.assertEqual(reloaded["segments"][0]["subtitle_font_scale"], 1.45)
-        self.assertEqual(reloaded["segments"][0]["subtitle_font_family"], "Yu Mincho")
+        reloaded = decode_json(result_path.read_text(encoding="utf-8"))
+        self.assertTrue(_value_at(reloaded, 'project_loaded'))
+        self.assertTrue(_value_at(reloaded, 'qml_loaded'))
+        self.assertTrue(_value_at(reloaded, 'edit_button_enabled'))
+        self.assertFalse(_value_at(reloaded, 'project_dirty'))
+        self.assertEqual(Path(_string_at(reloaded, 'project_path')).resolve(), project_path.resolve())
+        self.assertEqual(_value_at(reloaded, 'segments', 0, 'text'), "saved across restart")
+        self.assertEqual(_value_at(reloaded, 'segments', 0, 'start'), 1.25)
+        self.assertEqual(_value_at(reloaded, 'segments', 0, 'end'), 3.5)
+        self.assertEqual(_value_at(reloaded, 'segments', 0, 'speaker'), "Speaker_Bob")
+        self.assertEqual(_value_at(reloaded, 'segments', 0, 'subtitle_font_scale'), 1.45)
+        self.assertEqual(_value_at(reloaded, 'segments', 0, 'subtitle_font_family'), "Yu Mincho")
 
         other_project = deepcopy(load_project(project_path))
-        other_project["segments"][0] = {
-            **other_project["segments"][0],
+        _dict_list_at(other_project, "segments")[0] = {
+            **_dict_list_at(other_project, "segments")[0],
             "id": "other-project-segment",
             "text": "other project",
         }
@@ -1910,7 +2120,7 @@ Window {
         self.app.autosave_timer.stop()
 
         self.assertEqual(
-            load_project(project_path)["segments"][0]["text"],
+            _value_at(load_project(project_path), 'segments', 0, 'text'),
             "saved before project switch",
         )
         self.assertEqual(Path(self.app.projectPath).resolve(), other_path.resolve())
@@ -2023,7 +2233,7 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
         popup = window.findChild(QObject, "sourcePopup")
-        self.assertTrue(qt_property_value(popup, "visible"))
+        self.assertTrue(_qt_bool(popup, "visible"))
         target = self._quick_item(window, "sourcePopupDropArea")
         self.assertTrue(target.isVisible())
         self.assertTrue(target.isEnabled())
@@ -2088,9 +2298,9 @@ Window {
         self.app.updateSpeakerColor(0, "#12abef")
 
         self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
-        payload = json.loads(self.app.color_config_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["files"][audio.name]["color"], "#12ABEF")
-        self.assertEqual(payload["speakers"]["alice"]["color"], "#12ABEF")
+        payload = decode_json(self.app.color_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(_value_at(payload, "files", audio.name, "color"), "#12ABEF")
+        self.assertEqual(_value_at(payload, 'speakers', 'alice', 'color'), "#12ABEF")
 
         self.app.setAudioFiles([str(audio)], False)
         self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
@@ -2100,22 +2310,22 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenSourceSetupButton"))
         popup = window.findChild(QObject, "sourcePopup")
-        self.gui.wait_until(lambda: qt_property_value(popup, "visible"), description="素材設定を開く")
+        self.gui.wait_until(lambda: _qt_bool(popup, "visible"), description="素材設定を開く")
         scroll_view = self._quick_item(window, "sourceSettingsScrollView")
-        viewport = qt_property_value(scroll_view, "contentItem")
+        viewport = _qt_item(scroll_view, "contentItem")
         audio_list = self._quick_item(window, "sourceAudioList")
         self.assertTrue(audio_list.isVisible())
         button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
         button_top = button.mapToItem(viewport, QPointF()).y()
         viewport.setProperty("contentY", max(0.0, coerce_float(qt_property_value(viewport, "contentY")) + button_top - 20.0))
         self.gui.wait_until(
-            lambda: self.gui.assert_item_within(viewport, button) is None,
+            lambda: self._item_is_within(viewport, button),
             description="素材話者の色ボタンの表示範囲",
         )
         self._click(window, button)
-        dialog = window.findChild(QObject, "speakerColorDialog")
+        dialog = self.gui.find_object(window, "speakerColorDialog")
         self.assertIsNotNone(dialog)
-        self.assertTrue(qt_property_value(dialog, "visible"))
+        self.assertTrue(_qt_bool(dialog, "visible"))
         self.assertEqual(qt_property_value(window, "colorTarget"), "source")
         dialog.setProperty("selectedColor", QColor("#12ABEF"))
         self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
@@ -2124,11 +2334,11 @@ Window {
 
         button = self._quick_visual_item(audio_list, "sourceSpeakerColorButton")
         self.gui.wait_until(
-            lambda: self.gui.assert_item_within(viewport, button) is None,
+            lambda: self._item_is_within(viewport, button),
             description="色変更後の素材話者ボタンの表示範囲",
         )
         self._click(window, button)
-        self.assertTrue(qt_property_value(dialog, "visible"))
+        self.assertTrue(_qt_bool(dialog, "visible"))
         dialog.setProperty("selectedColor", QColor("#FEDCBA"))
         self.assertTrue(QMetaObject.invokeMethod(dialog, "reject"))
         self.assertEqual(self.app.speakers[0]["color"], "#12ABEF")
@@ -2145,7 +2355,7 @@ Window {
 
     def test_project_speaker_color_updates_preview_waveform_and_project(self) -> None:
         self._load_project()
-        self.app._project["waveforms"] = [
+        self._project_data()["waveforms"] = [
             {"style": "Speaker_Alice", "speaker": "Alice", "color": "#7FD957"}
         ]
 
@@ -2155,8 +2365,8 @@ Window {
         self.assertEqual(self.app.projectSpeakers[0]["color"], "#445566")
         self.assertEqual(self.app.subtitleWaveforms[0]["color"], "#445566")
         self.assertTrue(self.app.projectDirty)
-        payload = json.loads(self.app.color_config_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["speakers"]["Alice"]["color"], "#445566")
+        payload = decode_json(self.app.color_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(_value_at(payload, 'speakers', 'Alice', 'color'), "#445566")
 
     def test_project_speaker_color_dialog_applies_and_cancel_preserves_color(self) -> None:
         self._load_project()
@@ -2165,9 +2375,9 @@ Window {
         button = self._quick_item(window, "workspaceSubtitleSpeakerColorButton")
         self.assertTrue(button.isEnabled())
         self._click(window, button)
-        dialog = window.findChild(QObject, "speakerColorDialog")
+        dialog = self.gui.find_object(window, "speakerColorDialog")
         self.assertIsNotNone(dialog)
-        self.assertTrue(qt_property_value(dialog, "visible"))
+        self.assertTrue(_qt_bool(dialog, "visible"))
         self.assertEqual(qt_property_value(window, "colorTarget"), "project")
         dialog.setProperty("selectedColor", QColor("#445566"))
         self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
@@ -2186,7 +2396,7 @@ Window {
         self.assertTrue(self.app.audioMixerPreviewComplete)
         self.assertFalse(self.app.audioMixerIntentionalSilence)
         self.assertEqual(channels[0]["preview_audio_track_index"], 0)
-        self.assertTrue(channels[0]["preview_url"].startswith("file:"))
+        self.assertTrue(_string_at(channels[0], "preview_url").startswith("file:"))
         self.assertEqual(channels[1]["preview_offset_seconds"], 0.0)
 
         preview = self.app.audioMixerPreviewChannels
@@ -2197,7 +2407,7 @@ Window {
         gain_changes = QSignalSpy(self.app.audioMixerPreviewGainsChanged)
 
         self.app.updateAudioMixChannel(0, {"volume_percent": 56})
-        self.assertAlmostEqual(self.app.audioMixerPreviewGains[preview[0]["id"]], 0.56)
+        self.assertAlmostEqual(self.app.audioMixerPreviewGains[_string_at(preview[0], "id")], 0.56)
         self.assertEqual(structure_changes.count(), 0)
         self.assertEqual(gain_changes.count(), 1)
 
@@ -2225,12 +2435,12 @@ Window {
         audio_format = QAudioFormat()
         audio_format.setSampleRate(48_000)
         audio_format.setChannelCount(2)
-        audio_format.setSampleFormat(QAudioFormat.Int16)
+        audio_format.setSampleFormat(QAudioFormat.SampleFormat.Int16)
         buffer = QAudioBuffer(
             struct.pack("<hhhh", 0, 16_384, -32_768, 8_192),
             audio_format,
         )
-        channel_id = preview[1]["id"]
+        channel_id = _string_at(preview[1], "id")
         self.assertEqual(self.app._audio_buffer_peak(buffer), 1.0)
         self.app._receive_audio_preview_buffer(channel_id, buffer)
         self.app._publish_audio_preview_levels()
@@ -2241,7 +2451,7 @@ Window {
     def test_audio_mixer_preview_requires_every_enabled_channel_cache(self) -> None:
         self._load_project()
         external_channel = self.app.audioMixerChannels[1]
-        self.app._audio_preview_cache_paths.pop(external_channel["id"])
+        self.app._audio_preview_cache_paths.pop(_string_at(external_channel, "id"))
 
         self.app.updateAudioMixChannel(1, {"enabled": True})
 
@@ -2261,8 +2471,8 @@ Window {
 
     def test_audio_preview_gain_is_independent_of_active_channel_count(self) -> None:
         self._load_project()
-        video_id = self.app.audioMixerChannels[0]["id"]
-        external_id = self.app.audioMixerChannels[1]["id"]
+        video_id = _string_at(self.app.audioMixerChannels[0], "id")
+        external_id = _string_at(self.app.audioMixerChannels[1], "id")
 
         self.assertEqual(self.app.audioMixerPreviewGains[video_id], 1.0)
 
@@ -2351,7 +2561,11 @@ Window {
             entry.output_path.unlink()
         self.app._audio_preview_cache_paths.clear()
 
-        def fake_prepare(_project, _cache_root, protected_paths=None):
+        def fake_prepare(
+            _project: Mapping[str, object],
+            _cache_root: str | Path,
+            protected_paths: Iterable[Path] | None = None,
+        ) -> AudioPreviewCacheResult:
             paths: dict[str, str] = {}
             for entry in entries:
                 entry.output_path.write_bytes(b"prepared-audio")
@@ -2370,7 +2584,7 @@ Window {
         self.assertTrue(self.app.audioPreviewClockUrl.endswith(".mka"))
         self.assertEqual(set(self.app._audio_preview_cache_paths), {entry.channel_id for entry in entries})
         self.assertTrue(all(
-            channel["preview_url"].endswith(".mka")
+            _string_at(channel, "preview_url").endswith(".mka")
             for channel in self.app.audioMixerChannels
         ))
         self.assertFalse(self.app.projectDirty)
@@ -2386,7 +2600,11 @@ Window {
         self.app._audio_preview_cache_paths = cached_audio_preview_paths(entries)
         entries[0].output_path.unlink()
 
-        def fake_prepare(_project, _cache_root, protected_paths):
+        def fake_prepare(
+            _project: Mapping[str, object],
+            _cache_root: str | Path,
+            protected_paths: Iterable[Path],
+        ) -> AudioPreviewCacheResult:
             expected_paths = {Path(path) for path in self.app._audio_preview_cache_paths.values()}
             self.assertGreater(len(expected_paths), 0)
             self.assertTrue(expected_paths.issuperset({Path(path) for path in protected_paths}))
@@ -2432,13 +2650,13 @@ Window {
         self.assertTrue(channel["enabled"])
         self.assertEqual(channel["volume_percent"], 135)
         self.assertTrue(channel["solo"])
-        self.assertTrue(self.app._project["audio_mix"]["customized"])
+        self.assertTrue(_value_at(self.app._project, 'audio_mix', 'customized'))
         self.assertTrue(self.app.saveProject())
-        self.assertTrue(json.loads(path.read_text(encoding="utf-8"))["audio_mix"]["customized"])
+        self.assertTrue(_value_at(decode_json(path.read_text(encoding="utf-8")), 'audio_mix', 'customized'))
 
         self.app.resetAudioMixer()
         self.app.autosave_timer.stop()
-        self.assertFalse(self.app._project["audio_mix"]["customized"])
+        self.assertFalse(_value_at(self.app._project, 'audio_mix', 'customized'))
         self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
 
     def test_ai_subtitle_edit_uses_shared_history_without_replacing_project(self) -> None:
@@ -2456,7 +2674,7 @@ Window {
         self.assertIs(self.app._project, project)
         self.assertEqual(self.app._project_revision, revision + 1)
         self.assertEqual(self.app.subtitleSegments[0]["text"], "修正後")
-        self.assertEqual([item["id"] for item in self.app._undo_stack[-1]["before"]], ["first"])
+        self.assertEqual([item["id"] for item in _dict_list_at(self.app._undo_stack[-1], "before")], ["first"])
         self.app.undoEdit()
         self.assertEqual(self.app.subtitleSegments[0]["text"], "修正前")
         self.app.redoEdit()
@@ -2483,10 +2701,10 @@ Window {
         apply_button = self._quick_item(window, "codexApplyButton")
         allow_silence_button = self._quick_item(window, "codexAudioAllowSilenceButton")
         proposal_card = self._quick_item(window, "codexChatProposalCard")
-        self.assertTrue(qt_property_value(apply_button, "enabled"))
+        self.assertTrue(_qt_bool(apply_button, "enabled"))
 
         def audio_proposal_layout_ready() -> bool:
-            if not qt_property_value(proposal_card, "audioProposal") or not allow_silence_button.isVisible():
+            if not _qt_bool(proposal_card, "audioProposal") or not allow_silence_button.isVisible():
                 return False
             apply_bottom = apply_button.mapToItem(
                 proposal_card, QPointF(0, apply_button.height()),
@@ -2521,7 +2739,7 @@ Window {
         self.app.runningChanged.emit()
         try:
             self.app.processEvents()
-            self.assertFalse(qt_property_value(apply_button, "enabled"))
+            self.assertFalse(_qt_bool(apply_button, "enabled"))
             self.app.applyCodexProposal()
             self.assertIsNotNone(self.app._codex_proposal)
 
@@ -2531,8 +2749,8 @@ Window {
                 audio_proposal_layout_ready,
                 description="処理中に音量案が画面へ表示される",
             )
-            self.assertFalse(qt_property_value(apply_button, "enabled"))
-            self.assertFalse(qt_property_value(allow_silence_button, "enabled"))
+            self.assertFalse(_qt_bool(apply_button, "enabled"))
+            self.assertFalse(_qt_bool(allow_silence_button, "enabled"))
             self.assertFalse(self.app.applyAudioMixProposal())
             self.assertIsNotNone(self.app._audio_mix_proposal)
             self.assertEqual(
@@ -2546,7 +2764,7 @@ Window {
 
         self.gui.wait_until(
             lambda: audio_proposal_layout_ready()
-            and qt_property_value(apply_button, "enabled") and qt_property_value(allow_silence_button, "enabled"),
+            and _qt_bool(apply_button, "enabled") and _qt_bool(allow_silence_button, "enabled"),
             description="処理終了後に音量案の操作が戻る",
         )
         for control in (apply_button, allow_silence_button, self._quick_item(window, "codexDiscardButton")):
@@ -2558,18 +2776,18 @@ Window {
                 self._quick_item(window, "codexProposalList"), "codexOperationCheck",
             )
 
-        self.assertTrue(qt_property_value(operation_check(), "checked"))
+        self.assertTrue(_qt_bool(operation_check(), "checked"))
         self._assert_quick_item_within(self._quick_item(window, "codexProposalList"), operation_check())
         self._click(window, operation_check())
         self.gui.wait_until(
-            lambda: not qt_property_value(operation_check(), "checked")
-            and not qt_property_value(apply_button, "enabled"),
+            lambda: not _qt_bool(operation_check(), "checked")
+            and not _qt_bool(apply_button, "enabled"),
             description="音量案の選択解除",
         )
         self._click(window, operation_check())
         self.gui.wait_until(
-            lambda: qt_property_value(operation_check(), "checked")
-            and qt_property_value(apply_button, "enabled"),
+            lambda: _qt_bool(operation_check(), "checked")
+            and _qt_bool(apply_button, "enabled"),
             description="音量案の再選択",
         )
         self._click(window, apply_button)
@@ -2584,8 +2802,8 @@ Window {
         self.assertIsNotNone(self.app._codex_proposal)
         self.gui.wait_until(
             lambda: proposal_card.isVisible()
-            and not qt_property_value(proposal_card, "audioProposal")
-            and discard_button.isVisible() and qt_property_value(discard_button, "enabled"),
+            and not _qt_bool(proposal_card, "audioProposal")
+            and discard_button.isVisible() and _qt_bool(discard_button, "enabled"),
             description="subtitle proposal card after audio apply",
         )
         self._click(window, discard_button)
@@ -2607,11 +2825,11 @@ Window {
         self.app.audioMixProposalChanged.emit()
         self.gui.wait_until(
             lambda: proposal_card.isVisible()
-            and qt_property_value(proposal_card, "audioProposal")
-            and discard_button.isVisible() and qt_property_value(discard_button, "enabled"),
+            and _qt_bool(proposal_card, "audioProposal")
+            and discard_button.isVisible() and _qt_bool(discard_button, "enabled"),
             description="audio proposal card restored",
         )
-        self.assertTrue(qt_property_value(discard_button, "enabled"))
+        self.assertTrue(_qt_bool(discard_button, "enabled"))
         self._click(window, discard_button)
         self.gui.wait_until(
             lambda: self.app._audio_mix_proposal is None,
@@ -2625,26 +2843,26 @@ Window {
 
     def test_manual_audio_edits_and_reset_share_undo_redo_and_save(self) -> None:
         path = self._load_project()
-        before = deepcopy(self.app._project["audio_mix"])
+        before = deepcopy(_value_at(self.app._project, 'audio_mix'))
         revision = self.app._project_revision
         self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
-        edited = deepcopy(self.app._project["audio_mix"])
+        edited = deepcopy(_value_at(self.app._project, 'audio_mix'))
         self.assertEqual(self.app._project_revision, revision + 1)
         self.assertEqual(len(self.app._undo_stack), 1)
         self.app.undoEdit()
-        self.assertEqual(self.app._project["audio_mix"], before)
+        self.assertEqual(_value_at(self.app._project, 'audio_mix'), before)
         self.app.redoEdit()
-        self.assertEqual(self.app._project["audio_mix"], edited)
+        self.assertEqual(_value_at(self.app._project, 'audio_mix'), edited)
         self.app.resetAudioMixer()
         self.app.undoEdit()
-        self.assertEqual(self.app._project["audio_mix"], edited)
+        self.assertEqual(_value_at(self.app._project, 'audio_mix'), edited)
         self.assertTrue(self.app.saveProject())
-        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["audio_mix"], edited)
+        self.assertEqual(_value_at(decode_json(path.read_text(encoding="utf-8")), 'audio_mix'), edited)
 
     def test_audio_undo_redo_preserves_relinked_source_paths(self) -> None:
         path = self._load_project()
-        old_source = Path(self.app._project["audio_sources"][0]["path"])
-        self.app._project["audio_sources"][0]["file_name"] = old_source.name
+        old_source = Path(_string_at(self.app._project, 'audio_sources', 0, 'path'))
+        _dict_list_at(self._project_data(), "audio_sources")[0]["file_name"] = old_source.name
         self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
         relocated = self.root / "relocated"
         relocated.mkdir()
@@ -2652,9 +2870,9 @@ Window {
         new_source.write_bytes(b"audio")
         self.app.beginSourceRelink()
         with patch.object(self.app, "_probe_audio_tracks"):
-            self.app.setVideoFile(self.app._project["video"]["path"])
+            self.app.setVideoFile(_string_at(self.app._project, 'video', 'path'))
             self.app.setAudioFiles([str(new_source)], False)
-            self.app.setOutputDirectory(self.app._project["output_dir"])
+            self.app.setOutputDirectory(_string_at(self.app._project, 'output_dir'))
         self.app.relinkProjectSources()
         self.app.finishSourceRelink()
         for action, volume in ((self.app.undoEdit, 100), (self.app.redoEdit, 135)):
@@ -2662,10 +2880,10 @@ Window {
             channel = next(item for item in self.app.audioMixerChannels if item["kind"] == "external")
             self.assertEqual(channel["path"], str(new_source.resolve()))
             self.assertEqual(channel["volume_percent"], volume)
-            self.assertEqual(self.app._project["audio_sources"][0]["path"], str(new_source.resolve()))
+            self.assertEqual(_value_at(self.app._project, 'audio_sources', 0, 'path'), str(new_source.resolve()))
         self.assertTrue(self.app.saveProject())
-        saved = json.loads(path.read_text(encoding="utf-8"))
-        channel = next(item for item in saved["audio_mix"]["channels"] if item["kind"] == "external")
+        saved = decode_json(path.read_text(encoding="utf-8"))
+        channel = next(item for item in _dict_list_at(saved, 'audio_mix', 'channels') if item.get('kind') == "external")
         self.assertEqual(channel["path"], str(new_source.resolve()))
 
     def test_short_edit_undo_redo_updates_clip_model_and_saved_project(self) -> None:
@@ -2683,9 +2901,9 @@ Window {
         self.app.redoEdit()
         self.assertEqual(self.app._short_video_clip_model.rowCount(), original_count + 1)
         self.assertTrue(self.app.saveProject())
-        clips = json.loads(path.read_text(encoding="utf-8"))["short_video"]["clips"]
-        self.assertEqual(clips[-1]["start"], 1)
-        self.assertEqual(clips[-1]["end"], 2)
+        clips = _dict_list_at(decode_json(path.read_text(encoding="utf-8")), 'short_video', 'clips')
+        self.assertEqual(_value_at(clips[-1], 'start'), 1)
+        self.assertEqual(_value_at(clips[-1], 'end'), 2)
 
     def test_segment_field_edits_set_manual_metadata_and_clamp_values(self) -> None:
         self._load_project()
@@ -2732,7 +2950,7 @@ Window {
         )
 
         automatic = self.app.activeSubtitleSegments(1.0)[0]
-        self.assertIn("\n", automatic["preview_text"])
+        self.assertIn("\n", _string_at(automatic, "preview_text"))
         self.assertEqual(
             self.app.formatSubtitlePreview(0, "manual first\nmanual second"),
             "manual f\nirst\nmanual\nsecond",
@@ -2780,7 +2998,7 @@ Window {
         self.assertEqual(len(segments), 2)
         self.assertEqual(segments[0]["end"], 2.0)
         self.assertEqual(segments[1]["start"], 2.0)
-        self.assertEqual(segments[0]["text"] + segments[1]["text"], "abcdefgh")
+        self.assertEqual(_string_at(segments[0], "text") + _string_at(segments[1], "text"), "abcdefgh")
         self.assertEqual(self.app.selectedSegmentIndex, 1)
 
         self.app.selectSegment(0)
@@ -2823,7 +3041,7 @@ Window {
         self.app.redoSubtitleEdit()
         self.assertEqual(self.app.subtitleSegments[0]["text"], "after")
         self.assertTrue(self.app.saveProject())
-        self.assertEqual(load_project(path)["segments"][0]["text"], "after")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "after")
 
         self.app.updateSegment(0, {"text": "unsaved"})
         with patch("src.gui.save_project", side_effect=OSError("disk full")):
@@ -2857,22 +3075,22 @@ Window {
             for index in range(500)
         ]
         self._load_project(segments=segments)
-        untouched = self.app._project["segments"][250]
+        untouched = _value_at(self.app._project, 'segments', 250)
 
         self.app.updateSegment(0, {"text": "changed"})
 
         self.assertEqual(len(self.app._undo_stack), 1)
         entry = self.app._undo_stack[0]
-        self.assertEqual([item["id"] for item in entry["before"]], ["segment-0"])
-        self.assertEqual([item["id"] for item in entry["after"]], ["segment-0"])
-        current_untouched = next(item for item in self.app._project["segments"] if item["id"] == "segment-250")
+        self.assertEqual([item["id"] for item in _dict_list_at(entry, "before")], ["segment-0"])
+        self.assertEqual([item["id"] for item in _dict_list_at(entry, "after")], ["segment-0"])
+        current_untouched = next(item for item in _dict_list_at(self.app._project, 'segments') if item.get('id') == "segment-250")
         self.assertIs(current_untouched, untouched)
 
     def test_nondestructive_cut_backend_maps_persists_and_undoes_ranges(self) -> None:
         path = self._load_project(duration_seconds=30.0)
         assert self.app._project is not None
-        original_segments = deepcopy(self.app._project["segments"])
-        original_short_video = deepcopy(self.app._project["short_video"])
+        original_segments = deepcopy(self._project_data()["segments"])
+        original_short_video = deepcopy(self._project_data()["short_video"])
         self.app._dependencies = RuntimeDependencyStatus(
             ffmpeg=False,
             ffprobe=False,
@@ -2921,12 +3139,12 @@ Window {
         )
         self.assertEqual(self.app.cutOutputDuration, 28.0)
         self.assertTrue(self.app.saveProject())
-        self.assertEqual(load_project(path)["timeline"], self.app._project["timeline"])
+        self.assertEqual(load_project(path)["timeline"], self._project_data()["timeline"])
 
         self.assertTrue(self.app._load_project_path(path, update_sources=False))
         self.assertEqual(self.app.cutOutputDuration, 28.0)
-        self.assertEqual(self.app._project["segments"], original_segments)
-        self.assertEqual(self.app._project["short_video"], original_short_video)
+        self.assertEqual(self._project_data()["segments"], original_segments)
+        self.assertEqual(self._project_data()["short_video"], original_short_video)
         saved_timeline = deepcopy(self.app.cutTimeline)
         self.assertFalse(self.app.addCut(0.0, 30.0))
         self.assertEqual(self.app.stage, "CHECK")
@@ -2974,7 +3192,7 @@ Window {
         self.assertEqual(self.app.subtitleSegments, deleted)
 
         self.app.selectSegment(0)
-        self.app.splitSelectedSegment((deleted[0]["start"] + deleted[0]["end"]) / 2)
+        self.app.splitSelectedSegment((coerce_float(deleted[0]["start"]) + coerce_float(deleted[0]["end"])) / 2)
         split = self.app.subtitleSegments
         self.app.undoSubtitleEdit()
         self.assertEqual(self.app.subtitleSegments, deleted)
@@ -3182,11 +3400,11 @@ Window {
         release = threading.Event()
         saved_texts: list[str] = []
 
-        def fake_save(path, project, **_kwargs):
+        def fake_save(path: str | Path, project: dict[object, object], **_kwargs: object) -> Path:
             if not started.is_set():
                 started.set()
                 release.wait(timeout=2)
-            saved_texts.append(project["segments"][0]["text"])
+            saved_texts.append(_string_at(project, "segments", 0, "text"))
             return Path(path)
 
         with patch("src.gui.save_project", side_effect=fake_save):
@@ -3267,18 +3485,18 @@ Window {
         self.assertEqual(qt_property_value(self._quick_item(window, "outlineThicknessSpin"), "value"), 6)
         self.assertEqual(qt_property_value(self._quick_item(window, "volumeScaleSpin"), "value"), 35)
         self.assertEqual(qt_property_value(self._quick_item(window, "qualitySpin"), "value"), 22)
-        self.assertFalse(qt_property_value(self._quick_item(window, "normalizeSwitch"), "checked"))
-        self.assertTrue(qt_property_value(self._quick_item(window, "silenceSwitch"), "checked"))
-        self.assertEqual(qt_property_value(self._quick_item(window, "silenceField"), "text"), "1.7")
-        self.assertEqual(qt_property_value(self._quick_item(window, "speechPaddingField"), "text"), "0.25")
-        self.assertEqual(qt_property_value(self._quick_item(window, "speechThresholdField"), "text"), "-35")
-        self.assertEqual(qt_property_value(self._quick_item(window, "lufsField"), "text"), "-20")
+        self.assertFalse(_qt_bool(self._quick_item(window, "normalizeSwitch"), "checked"))
+        self.assertTrue(_qt_bool(self._quick_item(window, "silenceSwitch"), "checked"))
+        self.assertEqual(_qt_string(self._quick_item(window, "silenceField"), "text"), "1.7")
+        self.assertEqual(_qt_string(self._quick_item(window, "speechPaddingField"), "text"), "0.25")
+        self.assertEqual(_qt_string(self._quick_item(window, "speechThresholdField"), "text"), "-35")
+        self.assertEqual(_qt_string(self._quick_item(window, "lufsField"), "text"), "-20")
         self.assertEqual(qt_property_value(window, "selectedSubtitleFontSize"), 100)
         caption = self._quick_visual_item(
             window.contentItem(),
             "mainSubtitleOverlayCaption-0",
         )
-        self.assertEqual(qt_property_value(caption, "font").pixelSize(), 44)
+        self.assertEqual(_qt_font(caption, "font").pixelSize(), 44)
 
     def test_preview_updates_project_settings_and_ass_path(self) -> None:
         path = self._load_project()
@@ -3298,11 +3516,11 @@ Window {
             self.app.buildSubtitlePreview(settings)
 
         subtitle = load_project(path)["subtitle_settings"]
-        self.assertEqual(subtitle["font_size"], 72)
-        self.assertEqual(subtitle["outline_color"], "#345678")
-        self.assertEqual(subtitle["outline_thickness"], 8)
-        self.assertEqual(subtitle["volume_scale_percent"], 35)
-        self.assertEqual(subtitle["max_gap_seconds"], 0.2)
+        self.assertEqual(_value_at(subtitle, 'font_size'), 72)
+        self.assertEqual(_value_at(subtitle, 'outline_color'), "#345678")
+        self.assertEqual(_value_at(subtitle, 'outline_thickness'), 8)
+        self.assertEqual(_value_at(subtitle, 'volume_scale_percent'), 35)
+        self.assertEqual(_value_at(subtitle, 'max_gap_seconds'), 0.2)
         self.assertEqual(self.app.assPath, str(ass_path.resolve()))
         self.assertEqual(self.app.stage, "ASS")
 
@@ -3338,7 +3556,8 @@ Window {
         ):
             self.app.startTranscription(self.app.settings)
 
-        transcribe_command, transcribe_job, _ = start.call_args.args
+        transcribe_command = _mock_command(start)
+        _, transcribe_job, _ = _mock_args(start)
         self.assertEqual(transcribe_job, "transcribe")
         self.assertIn("transcribe", transcribe_command)
         self.assertNotIn("--audio-file", transcribe_command)
@@ -3375,7 +3594,8 @@ Window {
         ):
             self.app.startTranscription(settings)
 
-        transcribe_command, transcribe_job, _ = start.call_args.args
+        transcribe_command = _mock_command(start)
+        _, transcribe_job, _ = _mock_args(start)
         self.assertEqual(transcribe_job, "transcribe")
         self.assertIn("transcribe", transcribe_command)
         self.assertNotIn("render", transcribe_command)
@@ -3389,7 +3609,8 @@ Window {
         ):
             self.app.renderVideo(settings)
 
-        render_command, render_job, _ = start.call_args.args
+        render_command = _mock_command(start)
+        _, render_job, _ = _mock_args(start)
         self.assertEqual(render_job, "render")
         self.assertIn("render", render_command)
         self.assertNotIn("--audio-file", render_command)
@@ -3445,9 +3666,10 @@ Window {
                 ):
                     self.app.renderVideo(self.app.settings)
 
-                effective_settings = save_settings.call_args.args[0]
-                self.assertEqual(effective_settings["video_codec"], expected_codec)
-                _, render_job, status = start.call_args.args
+                effective_settings = _value_at(_mock_args(save_settings), 0)
+                self.assertEqual(_value_at(effective_settings, 'video_codec'), expected_codec)
+                _, render_job, _ = _mock_args(start)
+                status = _string_at(_mock_args(start), 2)
                 self.assertEqual(render_job, "render")
                 self.assertIn(expected_mode, status)
 
@@ -3610,7 +3832,7 @@ Window {
         )
         self.assertEqual(self.app.workflow._state.ffmpeg_duration_seconds, 30.0)
         encode_step = next(step for step in self.app.progressSteps if step["id"] == "encode")
-        self.assertAlmostEqual(encode_step["progress"], 0.5)
+        self.assertAlmostEqual(coerce_float(encode_step["progress"]), coerce_float(0.5))
 
     def test_processing_progress_ignores_legacy_encode_marker_and_refreshes_cut_duration(self) -> None:
         self.app.workflow._state.processing_machine_event_seen = False
@@ -3711,9 +3933,9 @@ Window {
         _, window = self._load_qml()
 
         text_area = self._quick_item(window, "applicationLogTextArea")
-        self.assertIn("起動時システムログを表示", qt_property_value(text_area, "text"))
+        self.assertIn("起動時システムログを表示", _qt_string(text_area, "text"))
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
-        self.assertTrue(qt_property_value(self._quick_item(window, "applicationLogPanel"), "expanded"))
+        self.assertTrue(_qt_bool(self._quick_item(window, "applicationLogPanel"), "expanded"))
 
     def test_log_actions_fit_and_work_at_minimum_window_width(self) -> None:
         self._load_project()
@@ -3731,7 +3953,7 @@ Window {
             self._assert_quick_item_within(window.contentItem(), button)
             self._assert_button_content_fits(button)
 
-        with patch("src.gui.runtime_diagnostic_info", return_value={}):
+        with patch("src.gui.runtime_diagnostic_info", return_value=dict[str, object]()):
             self._click(window, copy_logs)
         self.assertIn("画面からコピーする診断記録", self.app.clipboard().text())
 
@@ -3744,7 +3966,7 @@ Window {
             self._click(window, open_folder)
             open_url.assert_called_once()
         self.assertEqual(
-            Path(open_url.call_args.args[0].toLocalFile()),
+            Path(_mock_url(open_url).toLocalFile()),
             self.app._application_logger.log_directory,
         )
         with patch("src.gui.QDesktopServices.openUrl", return_value=False):
@@ -3766,11 +3988,11 @@ Window {
         scroll_view = self._quick_item(window, "applicationLogScrollView")
         scroll_bar = self._quick_item(window, "applicationLogVerticalScrollBar")
         text_area = self._quick_item(window, "applicationLogTextArea")
-        flickable = qt_property_value(scroll_view, "contentItem")
+        flickable = _qt_item(scroll_view, "contentItem")
         self.assertIsNotNone(flickable)
-        self.assertIn("system-log-249", qt_property_value(text_area, "text"))
+        self.assertIn("system-log-249", _qt_string(text_area, "text"))
 
-        content_height = coerce_float(qt_property_value(flickable, "contentHeight"))
+        content_height = coerce_float(_qt_number(flickable, "contentHeight"))
         viewport_height = coerce_float(qt_property_value(flickable, "height"))
         self.assertGreater(content_height, viewport_height)
         self.assertTrue(scroll_bar.isVisible())
@@ -3781,7 +4003,7 @@ Window {
         self.app.processEvents()
         self.assertAlmostEqual(coerce_float(qt_property_value(flickable, "contentY")), max_content_y, delta=1.0)
         self.assertLessEqual(
-            coerce_float(qt_property_value(text_area, "contentHeight")) - coerce_float(qt_property_value(flickable, "contentY")),
+            coerce_float(_qt_number(text_area, "contentHeight")) - coerce_float(qt_property_value(flickable, "contentY")),
             viewport_height + 2.0,
         )
 
@@ -3853,7 +4075,7 @@ Window {
         self.gui.resize(window, 1220, 760)
 
         with (
-            patch("src.gui.runtime_diagnostic_info", return_value={"pytorch": "2.8.0+cu128"}),
+            patch("src.gui.runtime_diagnostic_info", return_value=dict[str, object](pytorch="2.8.0+cu128")),
             patch.object(
                 self.app.process,
                 "readAllStandardOutput",
@@ -3883,7 +4105,7 @@ Window {
         self.assertIn("WhisperX traceback: CUDA out of memory", error_diagnostic)
         self.assertNotIn("工程: SAVED", error_diagnostic)
 
-        with patch("src.gui.runtime_diagnostic_info", return_value={}):
+        with patch("src.gui.runtime_diagnostic_info", return_value=dict[str, object]()):
             self._click(window, self._quick_item(window, "copyLogsButton"))
         current_diagnostic = self.app.clipboard().text()
         self.assertIn("工程: SAVED", current_diagnostic)
@@ -3897,7 +4119,7 @@ Window {
         _, window = self._load_qml()
 
         with (
-            patch("src.gui.runtime_diagnostic_info", return_value={}),
+            patch("src.gui.runtime_diagnostic_info", return_value=dict[str, object]()),
             patch.object(self.app.process, "readAllStandardOutput", return_value=b""),
         ):
             self.app._process_finished(1, QProcess.ExitStatus.NormalExit)
@@ -3923,7 +4145,7 @@ Window {
         self.app.workflow._state.transcription_generated_project_path = str(generated_path)
 
         with (
-            patch("src.gui.runtime_diagnostic_info", return_value={}),
+            patch("src.gui.runtime_diagnostic_info", return_value=dict[str, object]()),
             patch.object(self.app.process, "readAllStandardOutput", return_value=b"launcher stderr\n"),
             patch.object(self.app.process, "errorString", return_value="プロセスを開始できません"),
             patch.object(
@@ -3951,7 +4173,7 @@ Window {
         self.app._active_job = "render"
         self.app._running = True
         with (
-            patch("src.gui.runtime_diagnostic_info", return_value={}),
+            patch("src.gui.runtime_diagnostic_info", return_value=dict[str, object]()),
             patch.object(self.app.process, "readAllStandardOutput", return_value=b"failed\n"),
         ):
             self.app._process_finished(9, QProcess.ExitStatus.NormalExit)
@@ -4007,8 +4229,8 @@ Window {
         relocated = self.root / "relinked"
         relocated.mkdir()
         original_project = load_project(path)
-        old_video = Path(original_project["video"]["path"])
-        old_audio = Path(original_project["audio_sources"][0]["path"])
+        old_video = Path(_string_at(original_project, 'video', 'path'))
+        old_audio = Path(_string_at(original_project, 'audio_sources', 0, 'path'))
         new_video = relocated / old_video.name
         new_audio = relocated / old_audio.name
         new_output = relocated / "output"
@@ -4025,23 +4247,23 @@ Window {
 
         self.assertTrue(self.app.projectLoaded)
         self.assertTrue(self.app.projectDirty)
-        self.assertEqual(self.app._project["segments"], original_project["segments"])
+        self.assertEqual(_dict_list_at(self.app._project, 'segments'), _dict_list_at(original_project, 'segments'))
         self.assertEqual(self.app.sourceSelection["video"], str(new_video.resolve()))
         self.assertEqual(self.app.sourceSelection["output_dir"], str(new_output.resolve()))
-        self.assertEqual(self.app._project["video"]["path"], str(new_video.resolve()))
+        self.assertEqual(_value_at(self.app._project, 'video', 'path'), str(new_video.resolve()))
         self.assertEqual(
-            self.app._project["sequence"]["assets"][0]["path"],
+            _value_at(self.app._project, 'sequence', 'assets', 0, 'path'),
             str(new_video.resolve()),
         )
-        self.assertEqual(self.app._project["output_dir"], str(new_output.resolve()))
+        self.assertEqual(_value_at(self.app._project, 'output_dir'), str(new_output.resolve()))
         self.assertEqual(
-            [item["path"] for item in self.app._project["audio_sources"]],
+            [_value_at(item, 'path') for item in _dict_list_at(self.app._project, 'audio_sources')],
             [str(new_audio.resolve())],
         )
         self.assertEqual(self.app.projectSpeakers[0]["path"], str(new_audio.resolve()))
-        self.assertEqual(self.app.projectSpeakers[0]["style"], original_project["speakers"][0]["style"])
-        self.assertEqual(self.app.projectSpeakers[0]["color"], original_project["speakers"][0]["color"])
-        self.assertEqual(self.app.projectSpeakers[0]["track_key"], original_project["speakers"][0]["track_key"])
+        self.assertEqual(_value_at(self.app.projectSpeakers, 0, 'style'), _value_at(original_project, 'speakers', 0, 'style'))
+        self.assertEqual(_value_at(self.app.projectSpeakers, 0, 'color'), _value_at(original_project, 'speakers', 0, 'color'))
+        self.assertEqual(_value_at(self.app.projectSpeakers, 0, 'track_key'), _value_at(original_project, 'speakers', 0, 'track_key'))
         self.app.finishSourceRelink()
 
         self.assertTrue(self.app.projectLoaded)
@@ -4052,7 +4274,7 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
         popup = window.findChild(QObject, "sourcePopup")
-        self.assertTrue(qt_property_value(popup, "visible"))
+        self.assertTrue(_qt_bool(popup, "visible"))
         button = self._quick_item(window, "sourceRelinkButton")
         done_button = self._quick_item(window, "sourceDoneButton")
         self.assertTrue(button.isEnabled())
@@ -4062,8 +4284,8 @@ Window {
         relocated.mkdir()
         project = deepcopy(self.app._project)
         assert project is not None
-        video = relocated / Path(project["video"]["path"]).name
-        audio = relocated / Path(project["audio_sources"][0]["path"]).name
+        video = relocated / Path(_string_at(project, 'video', 'path')).name
+        audio = relocated / Path(_string_at(project, 'audio_sources', 0, 'path')).name
         video.write_bytes(b"video")
         audio.write_bytes(b"audio")
         with patch.object(self.app, "_probe_audio_tracks"):
@@ -4080,7 +4302,7 @@ Window {
             self.assertFalse(button.isEnabled())
             self.assertFalse(done_button.isEnabled())
             QTest.keyClick(window, Qt.Key.Key_Escape)
-            self.assertTrue(qt_property_value(popup, "visible"))
+            self.assertTrue(_qt_bool(popup, "visible"))
             self.app.relinkProjectSources()
             self.app.finishSourceRelink()
             self.assertTrue(self.app._relinking_project_sources)
@@ -4096,8 +4318,8 @@ Window {
         self.assertTrue(button.isEnabled())
         self.assertTrue(done_button.isEnabled())
         self._click(window, button)
-        self.assertEqual(self.app._project["video"]["path"], str(video.resolve()))
-        self.assertEqual(self.app._project["audio_sources"][0]["path"], str(audio.resolve()))
+        self.assertEqual(_value_at(self.app._project, 'video', 'path'), str(video.resolve()))
+        self.assertEqual(_value_at(self.app._project, 'audio_sources', 0, 'path'), str(audio.resolve()))
         self._click(window, done_button)
         self.assertFalse(self.app._relinking_project_sources)
 
@@ -4143,11 +4365,11 @@ Window {
         self.app.processEvents()
         self.assertFalse(start_screen.isVisible())
         self.assertTrue(transcribe.isVisible())
-        self.assertEqual(qt_property_value(transcribe, "text"), "文字起こし")
+        self.assertEqual(_qt_string(transcribe, "text"), "文字起こし")
         self.assertFalse(transcribe.isEnabled())
         self.assertTrue(edit.isVisible())
         self.assertTrue(render.isVisible())
-        self.assertEqual(qt_property_value(render, "text"), "動画を書き出す")
+        self.assertEqual(_qt_string(render, "text"), "動画を書き出す")
         self.assertTrue(edit.isEnabled())
         self.assertTrue(render.isEnabled())
 
@@ -4178,20 +4400,20 @@ Window {
             window.contentItem(),
             "mainSubtitleOverlayCaption-0",
         )
-        self.assertEqual(qt_property_value(main_caption, "font").pixelSize(), 33)
+        self.assertEqual(_qt_font(main_caption, "font").pixelSize(), 33)
 
         self._quick_item(window, "fontSizeSpin").setProperty("value", 200)
         self.app.processEvents()
 
         self.assertEqual(qt_property_value(window, "selectedSubtitleFontSize"), 100)
-        self.assertEqual(qt_property_value(main_caption, "font").pixelSize(), 66)
+        self.assertEqual(_qt_font(main_caption, "font").pixelSize(), 66)
 
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
         editor_caption = self._quick_visual_item(
             window.contentItem(),
             "editorSubtitleOverlayCaption-0",
         )
-        self.assertEqual(qt_property_value(editor_caption, "font").pixelSize(), 66)
+        self.assertEqual(_qt_font(editor_caption, "font").pixelSize(), 66)
 
     def test_qml_multiline_editor_live_previews_and_saves_manual_break(self) -> None:
         self._load_project(
@@ -4213,14 +4435,14 @@ Window {
             window.contentItem(),
             "editorSubtitleOverlayCaption-0",
         )
-        self.assertIn("\n", qt_property_value(caption, "text"))
+        self.assertIn("\n", _qt_string(caption, "text"))
 
         text_area = self._quick_visual_item(window.contentItem(), "captionTextArea")
-        self.assertIn("\n", qt_property_value(text_area, "text"))
+        self.assertIn("\n", _qt_string(text_area, "text"))
         text_area.forceActiveFocus()
         text_area.setProperty("text", "manual first\nmanual second")
         self.app.processEvents()
-        self.assertEqual(qt_property_value(caption, "text"), "manual f\nirst\nmanual\nsecond")
+        self.assertEqual(_qt_string(caption, "text"), "manual f\nirst\nmanual\nsecond")
 
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "manual first\nmanual second")
@@ -4264,15 +4486,15 @@ Window {
         self.assertEqual(qt_property_value(window, "selectedSubtitleFontSize"), 450)
         outline_button = self._quick_item(window, "outlineColorButton")
         self._click(window, outline_button)
-        outline_dialog = window.findChild(QObject, "outlineColorDialog")
+        outline_dialog = self.gui.find_object(window, "outlineColorDialog")
         self.assertIsNotNone(outline_dialog)
-        self.assertTrue(qt_property_value(outline_dialog, "visible"))
+        self.assertTrue(_qt_bool(outline_dialog, "visible"))
         outline_dialog.setProperty("selectedColor", QColor("#456789"))
         self.assertTrue(QMetaObject.invokeMethod(outline_dialog, "accept"))
         self.assertEqual(qt_property_value(outline_button, "colorValue"), "#456789")
         self._quick_item(window, "outlineThicknessSpin").setProperty("value", 9)
         self._quick_item(window, "volumeScaleSpin").setProperty("value", 30)
-        self.assertEqual(window.currentSettings().toVariant()["subtitle_font_size"], 450)
+        self.assertEqual(_qml_settings(window)["subtitle_font_size"], 450)
         self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
         self.assertEqual(self.app.settings["subtitle_font_size"], 450)
         self.assertEqual(self.app.settings["subtitle_outline_color"], "#456789")
@@ -4288,11 +4510,11 @@ Window {
         self.gui.resize(window, 1520, 940)
         self._click(window, self._quick_item(window, "settingsToggleButton"))
         scroll_view = self._quick_item(window, "advancedSettingsScrollView")
-        flickable = qt_property_value(scroll_view, "contentItem")
+        flickable = _qt_item(scroll_view, "contentItem")
         self.assertIsNotNone(flickable)
         self.gui.set_property(
             flickable, "contentY",
-            max(0.0, coerce_float(qt_property_value(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height"))),
+            max(0.0, coerce_float(_qt_number(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height"))),
         )
         quality = self._quick_item(window, "qualitySpin")
         self._assert_quick_item_within(scroll_view, quality)
@@ -4304,7 +4526,7 @@ Window {
         normalize = self._quick_item(window, "normalizeSwitch")
         self._assert_quick_item_within(scroll_view, normalize)
         self._click(window, normalize)
-        self.assertFalse(qt_property_value(normalize, "checked"))
+        self.assertFalse(_qt_bool(normalize, "checked"))
 
         lufs = self._quick_item(window, "lufsField")
         self._assert_quick_item_within(scroll_view, lufs)
@@ -4312,17 +4534,17 @@ Window {
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         for key in (Qt.Key.Key_Minus, Qt.Key.Key_1, Qt.Key.Key_8):
             QTest.keyClick(window, key)
-        self.assertEqual(qt_property_value(lufs, "text"), "-18")
+        self.assertEqual(_qt_string(lufs, "text"), "-18")
         self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
 
         self.assertEqual(self.app.settings["nvenc_cq"], initial_quality + 1)
         self.assertEqual(self.app.settings["x264_crf"], initial_quality + 1)
         self.assertFalse(self.app.settings["audio_normalize"])
         self.assertEqual(self.app.settings["audio_target_lufs"], -18)
-        config = json.loads(Path(self.app.gui_config_path).read_text(encoding="utf-8"))
-        self.assertEqual(config["shared"]["nvenc_cq"], initial_quality + 1)
-        self.assertFalse(config["craig_pipeline"]["audio_normalize"])
-        self.assertEqual(config["craig_pipeline"]["audio_target_lufs"], -18)
+        config = decode_json(Path(self.app.gui_config_path).read_text(encoding="utf-8"))
+        self.assertEqual(_value_at(config, 'shared', 'nvenc_cq'), initial_quality + 1)
+        self.assertFalse(_value_at(config, 'craig_pipeline', 'audio_normalize'))
+        self.assertEqual(_value_at(config, 'craig_pipeline', 'audio_target_lufs'), -18)
 
     def test_subtitle_visual_settings_buttons_save_from_settings_screen(self) -> None:
         self._load_project()
@@ -4361,16 +4583,16 @@ Window {
             ),
         )
         self.assertNotEqual(expected_font_size, self.app.settings["subtitle_font_size"])
-        self.assertEqual(window.currentSettings().toVariant()["subtitle_font_size"], expected_font_size)
+        self.assertEqual(_qml_settings(window)["subtitle_font_size"], expected_font_size)
         self._click(window, self._quick_item(window, "settingsPopupSaveButton"))
-        config = json.loads(Path(self.app.gui_config_path).read_text(encoding="utf-8"))
+        config = decode_json(Path(self.app.gui_config_path).read_text(encoding="utf-8"))
         self.assertEqual(self.app.settings["subtitle_font_size"], expected_font_size)
         self.assertEqual(self.app.settings["subtitle_outline_thickness"], updated["outlineThicknessSpin"])
         self.assertEqual(self.app.settings["subtitle_volume_scale_percent"], updated["volumeScaleSpin"])
-        self.assertEqual(config["shared"]["subtitle_font_size"], expected_font_size)
-        self.assertEqual(config["shared"]["subtitle_outline_thickness"], updated["outlineThicknessSpin"])
+        self.assertEqual(_value_at(config, 'shared', 'subtitle_font_size'), expected_font_size)
+        self.assertEqual(_value_at(config, 'shared', 'subtitle_outline_thickness'), _value_at(updated, 'outlineThicknessSpin'))
         self.assertEqual(
-            config["craig_pipeline"]["subtitle_volume_scale_percent"],
+            _value_at(config, 'craig_pipeline', 'subtitle_volume_scale_percent'),
             updated["volumeScaleSpin"],
         )
 
@@ -4380,7 +4602,7 @@ Window {
         self._click(window, self._quick_item(window, "settingsToggleButton"))
 
         scroll_view = self._quick_item(window, "advancedSettingsScrollView")
-        flickable = qt_property_value(scroll_view, "contentItem")
+        flickable = _qt_item(scroll_view, "contentItem")
         self.assertIsNotNone(flickable)
         self.gui.wait_until(
             lambda: scroll_view.height() > 0,
@@ -4388,7 +4610,7 @@ Window {
         )
         flickable.setProperty(
             "contentY",
-            max(0.0, coerce_float(qt_property_value(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height"))),
+            max(0.0, coerce_float(_qt_number(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height"))),
         )
         self.app.processEvents()
         threshold_field = self._quick_item(window, "speechThresholdField")
@@ -4402,15 +4624,15 @@ Window {
 
         self._click(window, threshold_field)
         threshold_field.forceActiveFocus()
-        threshold_field.setProperty("cursorPosition", len(str(qt_property_value(threshold_field, "text"))))
+        threshold_field.setProperty("cursorPosition", len(str(_qt_string(threshold_field, "text"))))
         for _ in range(3):
             QTest.keyClick(window, Qt.Key.Key_Backspace)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(threshold_field, "text"), "")
+        self.assertEqual(_qt_string(threshold_field, "text"), "")
         self.assertFalse(save_button.isEnabled())
         self.assertTrue(self._quick_item(window, "settingsNumericValidationMessage").isVisible())
-        self.assertFalse(self.app.saveSettings(window.currentSettings().toVariant()))
-        self.assertFalse(self.app.saveSettings({**window.currentSettings().toVariant(), "speech_threshold_db": None}))
+        self.assertFalse(self.app.saveSettings(_qml_settings(window)))
+        self.assertFalse(self.app.saveSettings({**_qml_settings(window), "speech_threshold_db": None}))
         self.assertEqual(self.app.settings, original_settings)
         self.assertEqual(config_path.read_bytes() if config_path.exists() else None, original_config)
 
@@ -4421,7 +4643,7 @@ Window {
         self._click(window, save_button)
         self.assertEqual(self.app.settings["speech_threshold_db"], "-35dB")
         self.assertEqual(
-            json.loads(config_path.read_text(encoding="utf-8"))["craig_pipeline"]["speech_threshold_db"],
+            _value_at(decode_json(config_path.read_text(encoding="utf-8")), 'craig_pipeline', 'speech_threshold_db'),
             "-35dB",
         )
 
@@ -4430,7 +4652,7 @@ Window {
         _, window = self._load_qml()
         action_bar = self._quick_item(window, "contextActionBar")
         self.assertTrue(qt_property_value(action_bar, "compact"))
-        self.assertEqual(qt_property_value(action_bar, "implicitHeight"), 36)
+        self.assertEqual(_qt_number(action_bar, "implicitHeight"), 36)
         self.assertEqual(int(action_bar.height()), 36)
 
         group = self._quick_item(window, "transcriptionToolActions")
@@ -4458,7 +4680,7 @@ Window {
         self.assertFalse(stop_btn.isVisible())
         action_bar.setProperty("running", True)
         self.assertTrue(stop_btn.isVisible())
-        self.assertEqual(qt_property_value(stop_btn, "text"), "停止")
+        self.assertEqual(_qt_string(stop_btn, "text"), "停止")
         self._assert_quick_item_within(group, stop_btn)
         self._assert_quick_item_within(action_bar, stop_btn)
 
@@ -4466,14 +4688,14 @@ Window {
         self.assertFalse(stop_btn.isVisible())
 
         # verify unified mock palette contracts
-        self.assertEqual(qt_property_value(window, "panel").name().lower(), "#131a26")
-        self.assertEqual(qt_property_value(window, "border").name().lower(), "#243044")
-        self.assertEqual(qt_property_value(window, "raised").name().lower(), "#1a2332")
-        self.assertEqual(qt_property_value(action_bar, "color").name().lower(), "#131a26")
+        self.assertEqual(_qt_color(window, "panel").name().lower(), "#131a26")
+        self.assertEqual(_qt_color(window, "border").name().lower(), "#243044")
+        self.assertEqual(_qt_color(window, "raised").name().lower(), "#1a2332")
+        self.assertEqual(_qt_color(action_bar, "color").name().lower(), "#131a26")
         codex_sidebar = self._quick_item(window, "commonCodexSidebar")
-        self.assertEqual(qt_property_value(codex_sidebar, "color").name().lower(), "#131a26")
+        self.assertEqual(_qt_color(codex_sidebar, "color").name().lower(), "#131a26")
         media_bin = self._quick_item(window, "workspaceMediaBin")
-        self.assertEqual(qt_property_value(media_bin, "color").name().lower(), "#131a26")
+        self.assertEqual(_qt_color(media_bin, "color").name().lower(), "#131a26")
 
     def test_qml_settings_popup_keeps_actions_visible_and_bottom_settings_scrollable(self) -> None:
         _, window = self._load_qml()
@@ -4487,7 +4709,7 @@ Window {
         save_button = self._quick_item(window, "settingsPopupSaveButton")
         close_button = self._quick_item(window, "settingsPopupCloseButton")
         bottom_field = self._quick_item(window, "speechThresholdField")
-        flickable = qt_property_value(scroll_view, "contentItem")
+        flickable = _qt_item(scroll_view, "contentItem")
         self.assertIsNotNone(flickable)
 
         for width, height in ((1220, 760), (1520, 940)):
@@ -4501,13 +4723,13 @@ Window {
             self._assert_quick_item_within(panel, save_button)
             self._assert_quick_item_within(panel, close_button)
             self.assertGreater(scroll_view.height(), 0)
-            self.assertGreater(qt_property_value(scroll_content, "implicitHeight"), scroll_view.height())
+            self.assertGreater(_qt_number(scroll_content, "implicitHeight"), scroll_view.height())
             self.assertTrue(scroll_bar.isVisible())
             self.assertLess(coerce_float(qt_property_value(scroll_bar, "size")), 1.0)
 
             max_content_y = max(
                 0.0,
-                coerce_float(qt_property_value(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height")),
+                coerce_float(_qt_number(flickable, "contentHeight")) - coerce_float(qt_property_value(flickable, "height")),
             )
             flickable.setProperty("contentY", max_content_y)
             self.app.processEvents()
@@ -4579,7 +4801,7 @@ Window {
         self._click(window, log_toggle)
         self.gui.wait_until(
             lambda: (
-                bool(qt_property_value(log_panel, "expanded"))
+                bool(_qt_bool(log_panel, "expanded"))
                 and video_panel.height() > 0
                 and log_panel.mapToItem(
                     central_column, QPointF(0, log_panel.height())
@@ -4588,7 +4810,7 @@ Window {
             description="expanded application log layout",
         )
 
-        self.assertTrue(qt_property_value(log_panel, "expanded"))
+        self.assertTrue(_qt_bool(log_panel, "expanded"))
         self.assertGreater(log_panel.height(), 0)
         self.assertGreater(video_panel.height(), 0)
         self.assertLessEqual(
@@ -4603,20 +4825,20 @@ Window {
 
         self._click(window, log_toggle)
         self.gui.wait_until(
-            lambda: not bool(qt_property_value(log_panel, "expanded")),
+            lambda: not bool(_qt_bool(log_panel, "expanded")),
             description="collapsed application log",
         )
         self.app._set_status("GUI layout error", "ERROR")
         self.gui.wait_until(
             lambda: (
-                bool(qt_property_value(log_panel, "expanded"))
+                bool(_qt_bool(log_panel, "expanded"))
                 and video_panel.height() > 0
                 and log_panel.y() + log_panel.height() <= central_column.height() + 1
             ),
             description="application log automatically expanded for an error",
         )
 
-        self.assertTrue(qt_property_value(log_panel, "expanded"))
+        self.assertTrue(_qt_bool(log_panel, "expanded"))
         self.assertGreater(log_panel.height(), 0)
         self.assertGreater(video_panel.height(), 0)
         self.assertLessEqual(log_panel.y() + log_panel.height(), central_column.height() + 1)
@@ -4687,7 +4909,7 @@ Window {
                 return position_ms + 1_000
 
         self.app.set_editor_time_mapping(OffsetTimeMapping())
-        window.seekSharedPlayer(12_345, "output")
+        _qml_call(window, "seekSharedPlayer", 12_345, "output")
         self.app.processEvents()
         self.assertEqual(
             self.app.editorPlayhead,
@@ -4758,7 +4980,7 @@ Window {
             window.findChild(QObject, f"workspaceAudioPreviewPlayer-{preview_channel_id}"),
             preview_player,
         )
-        active_channel_id = self.app.audioMixerChannels[0]["id"]
+        active_channel_id = _string_at(self.app.audioMixerChannels[0], "id")
         self.app._audio_preview_cache_paths.pop(active_channel_id)
         self.app._notify_audio_mixer_preview(structure_changed=True)
         self.app.projectDataChanged.emit()
@@ -4799,7 +5021,7 @@ Window {
         self.assertLessEqual(rail.x() + rail.width(), video.parentItem().x() + 1)
         self.assertLessEqual(video.parentItem().x() + video.parentItem().width(), settings_slot.x() + 1)
 
-        self.app._project["audio_mix"]["channels"] = []
+        _dict_at(self._project_data(), "audio_mix")["channels"] = []
         self.app.projectDataChanged.emit()
         self.app.processEvents()
         self.assertFalse(self.app.editorModeCapabilities["canMixAudio"])
@@ -4823,12 +5045,12 @@ Window {
         self.assertTrue(settings.isVisible())
         self.assertEqual(len(window.findChildren(QMediaPlayer)), initial_player_count)
 
-        window.setCutSelection("", 5_000, 7_000)
+        _qml_call(window, "setCutSelection", "", 5_000, 7_000)
         self.gui.wait(10)
         start_field = self._quick_visual_item(settings, "cutRangeStartField")
         end_field = self._quick_visual_item(settings, "cutRangeEndField")
-        self.assertEqual(qt_property_value(start_field, "text"), "5.000")
-        self.assertEqual(qt_property_value(end_field, "text"), "7.000")
+        self.assertEqual(_qt_string(start_field, "text"), "5.000")
+        self.assertEqual(_qt_string(end_field, "text"), "7.000")
         add_button = self._quick_visual_item(settings, "addCutButton")
         self.assertTrue(add_button.isEnabled())
         self._click(window, add_button)
@@ -4860,23 +5082,23 @@ Window {
         self.gui.resize(window, 1220, 760)
         self._click(window, self._quick_item(window, "editorModeButton-cut"))
         settings = self._quick_item(window, "workspaceCutSettings")
-        window.setCutSelection(cut_id, 5_000, 7_000)
+        _qml_call(window, "setCutSelection", cut_id, 5_000, 7_000)
         end_field = self._quick_visual_item(settings, "cutRangeEndField")
         start_field = self._quick_visual_item(settings, "cutRangeStartField")
-        self.gui.wait_until(lambda: qt_property_value(end_field, "text") == "7.000", description="selected cut end")
+        self.gui.wait_until(lambda: _qt_string(end_field, "text") == "7.000", description="selected cut end")
         end_field.forceActiveFocus()
         end_field.setProperty("text", "9.000")
         self._click(window, self._quick_visual_item(settings, "addCutButton"))
         self.assertEqual(self.app.cutTimeline["cuts"][0]["source_end"], 9.0)
 
         self._click(window, self._quick_visual_item(settings, "undoCutButton"))
-        self.gui.wait_until(lambda: qt_property_value(end_field, "text") == "7.000", description="undone cut end")
+        self.gui.wait_until(lambda: _qt_string(end_field, "text") == "7.000", description="undone cut end")
         self.assertEqual(qt_property_value(window, "cutSelectionEndMs"), 7_000)
         self._click(window, self._quick_visual_item(settings, "redoCutButton"))
-        self.gui.wait_until(lambda: qt_property_value(end_field, "text") == "9.000", description="redone cut end")
+        self.gui.wait_until(lambda: _qt_string(end_field, "text") == "9.000", description="redone cut end")
 
         self.app.addCut(4.0, 6.0)
-        self.gui.wait_until(lambda: qt_property_value(start_field, "text") == "4.000", description="merged cut start")
+        self.gui.wait_until(lambda: _qt_string(start_field, "text") == "4.000", description="merged cut start")
         self.assertEqual(qt_property_value(window, "cutSelectionStartMs"), 4_000)
         self.assertEqual(self.app.cutTimeline["cuts"][0]["id"], cut_id)
 
@@ -4885,7 +5107,7 @@ Window {
         self._click(window, self._quick_item(window, "editorModeButton-cut"))
         settings = self._quick_item(window, "workspaceCutSettings")
         start_field = self._quick_visual_item(settings, "cutRangeStartField")
-        self.gui.wait_until(lambda: qt_property_value(start_field, "text") == "5.000", description="cut settings reopened after undo")
+        self.gui.wait_until(lambda: _qt_string(start_field, "text") == "5.000", description="cut settings reopened after undo")
 
     def test_cut_restore_and_clear_buttons_update_history_and_saved_project(self) -> None:
         path = self._load_project(duration_seconds=30.0)
@@ -4907,7 +5129,7 @@ Window {
             self.assertEqual(
                 [cut["id"] for cut in self.app.cutTimeline["cuts"]], cut_ids[1:],
             )
-            self.assertEqual(len(load_project(path)["timeline"]["cuts"]), 2)
+            self.assertEqual(len(_list_at(load_project(path), 'timeline', 'cuts')), 2)
 
             self._click(window, self._quick_visual_item(settings, "undoCutButton"))
             self.assertEqual(
@@ -4926,12 +5148,12 @@ Window {
             self._click(window, end_field)
             self._replace_focused_time(window, end_field, "6.500")
             self.gui.wait_until(
-                lambda: qt_property_value(start_field, "text") == "5.500"
-                and qt_property_value(end_field, "text") == "6.500",
+                lambda: _qt_string(start_field, "text") == "5.500"
+                and _qt_string(end_field, "text") == "6.500",
                 description="range restore fields",
             )
             self.assertEqual(
-                qt_property_value(self._quick_visual_item(settings, "restoreCutRangeButton"), "text"),
+                _qt_string(self._quick_visual_item(settings, "restoreCutRangeButton"), "text"),
                 "選択範囲を復元",
             )
             self._click(window, self._quick_visual_item(settings, "restoreCutRangeButton"))
@@ -4954,10 +5176,10 @@ Window {
             )
             self._click(window, self._quick_visual_item(settings, "redoCutButton"))
             self.assertEqual(self.app.cutTimeline["cuts"], [])
-            self.assertEqual(len(load_project(path)["timeline"]["cuts"]), 2)
+            self.assertEqual(len(_list_at(load_project(path), 'timeline', 'cuts')), 2)
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["timeline"]["cuts"], [])
+        self.assertEqual(_dict_list_at(load_project(path), 'timeline', 'cuts'), [])
         self.assertFalse(self.app.projectDirty)
 
     def test_loading_legacy_project_resolves_duration_for_cut_editor(self) -> None:
@@ -4968,13 +5190,13 @@ Window {
         self.assertTrue(self.app.addCut(1.0, 2.0))
         self.assertEqual(self.app.cutOutputDuration, 29.0)
         self.assertTrue(self.app.saveProject())
-        self.assertEqual(load_project(path)["video"]["duration_seconds"], 30.0)
+        self.assertEqual(_value_at(load_project(path), 'video', 'duration_seconds'), 30.0)
 
     def test_workspace_subtitle_mode_adds_first_caption_at_shared_playhead(self) -> None:
         path, _, _ = self._make_project()
         self.assertTrue(self.app._load_project_path(path, update_sources=True))
         assert self.app._project is not None
-        self.app._project["segments"] = []
+        self._project_data()["segments"] = []
         self.app._selected_segment_index = -1
         self.app._sync_subtitle_model()
         self.app.segmentsChanged.emit()
@@ -5016,13 +5238,13 @@ Window {
                 QTest.keyClick(window, Qt.Key(ord(char.upper())))
             self.app.processEvents()
             expected = "edited caption\nsecond line"
-            self.assertEqual(qt_property_value(caption, "text"), expected)
+            self.assertEqual(_qt_string(caption, "text"), expected)
             self.assertTrue(caption.hasActiveFocus())
             if action == "render":
                 captured_texts = []
 
                 def capture_render(*_args: object, **_kwargs: object) -> None:
-                    captured_texts.append(load_project(path)["segments"][0]["text"])
+                    captured_texts.append(_value_at(load_project(path), 'segments', 0, 'text'))
 
                 button_name = "editorRenderButton" if expanded else "workspaceHeaderRenderButton"
                 with patch.object(self.app.workflow, "_start_command", side_effect=capture_render) as start:
@@ -5041,7 +5263,7 @@ Window {
                 with patch("src.gui.save_project", side_effect=OSError("保存失敗の再現")):
                     self._click(window, self._quick_item(window, button_name))
                 self.assertEqual(self.app.stage, "ERROR")
-                self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+                self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
                 self.assertEqual(self.app.segmentAt(0)["text"], expected)
                 self.assertTrue(self.app.projectDirty)
                 self._click(window, self._quick_item(window, button_name))
@@ -5053,7 +5275,7 @@ Window {
                 if action == "header_save":
                     button_name = "workspaceHeaderSaveButton"
                 self._click(window, self._quick_item(window, button_name))
-            self.assertEqual(load_project(path)["segments"][0]["text"], expected)
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), expected)
             self.assertEqual(self.app.segmentAt(0)["text"], expected)
             self.assertFalse(self.app.projectDirty)
 
@@ -5091,18 +5313,18 @@ Window {
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(qt_property_value(caption, "preeditText"), "日本")
-            self.assertEqual(qt_property_value(caption, "text"), "a")
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_qt_string(caption, "text"), "a")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
             QCoreApplication.sendEvent(caption, commit)
             self.app.processEvents()
             self.assertFalse(qt_property_value(caption, "inputMethodComposing"))
-            self.assertEqual(qt_property_value(caption, "text"), "a日本語")
+            self.assertEqual(_qt_string(caption, "text"), "a日本語")
             self._click(window, save_button)
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_workspace_ime_committed_text_is_saved(self) -> None:
         self._assert_committed_ime_text_is_saved(expanded=False)
@@ -5138,14 +5360,14 @@ Window {
             )
             native.key(WindowsNativeInput.VK_SPACE)
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             # OSの実クリックはフォーカス移動時にIMEを自動確定する場合もある。
             # その場合も変換結果を失わず保存できることを確認する。
             native.click(save_button)
             if qt_property_value(caption, "inputMethodComposing"):
                 print("実IMEの保存クリック後も変換中: 保存を保留", flush=True)
-                self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+                self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
                 self.assertIn("確定してから", self.app.status)
                 self.assertTrue(caption.hasActiveFocus())
                 native.key(WindowsNativeInput.VK_RETURN)
@@ -5157,16 +5379,16 @@ Window {
             else:
                 print("実IMEの保存クリック時にOSが変換を確定", flush=True)
 
-            committed_text = str(qt_property_value(caption, "text"))
+            committed_text = str(_qt_string(caption, "text"))
             self.assertRegex(committed_text, r"[\u3040-\u30ff\u4e00-\u9fff]")
             native.click(save_button)
             self.gui.wait_until(
-                lambda: load_project(path)["segments"][0]["text"] == committed_text,
+                lambda: _value_at(load_project(path), 'segments', 0, 'text') == committed_text,
                 description="実IMEで確定した字幕の保存",
                 timeout_ms=5_000,
             )
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], committed_text)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), committed_text)
 
     @typed_skip_unless_method(
         sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
@@ -5231,7 +5453,7 @@ Window {
             if action != "shortcut":
                 self.assertEqual(self.app.stage, "CHECK")
                 self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
             self.assertEqual(self.app.segmentAt(0)["text"], "abcdefgh")
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
@@ -5258,7 +5480,7 @@ Window {
                 self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
                 self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_workspace_save_waits_for_uncommitted_ime_text(self) -> None:
         self._assert_uncommitted_ime_text_blocks_action(expanded=False, action="save")
@@ -5305,7 +5527,7 @@ Window {
             self.assertEqual(self.app.stage, "CHECK")
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5317,7 +5539,7 @@ Window {
             self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_source_settings_waits_for_uncommitted_ime_text(self) -> None:
         path = self._load_project()
@@ -5334,28 +5556,28 @@ Window {
             self.app.processEvents()
 
             self._click(window, self._quick_item(window, "mediaBinSourceSettingsButton"))
-            self.assertFalse(qt_property_value(popup, "visible"))
+            self.assertFalse(_qt_bool(popup, "visible"))
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self._click(window, self._quick_item(window, "sourceSetupButton"))
-            self.assertFalse(qt_property_value(popup, "visible"))
+            self.assertFalse(_qt_bool(popup, "visible"))
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
             QCoreApplication.sendEvent(caption, commit)
             self.app.processEvents()
             self._click(window, self._quick_item(window, "sourceSetupButton"))
-            self.assertTrue(qt_property_value(popup, "visible"))
+            self.assertTrue(_qt_bool(popup, "visible"))
             self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
             self._click(window, self._quick_item(window, "sourceDoneButton"))
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_advanced_settings_waits_for_uncommitted_ime_text(self) -> None:
         path = self._load_project()
@@ -5377,7 +5599,7 @@ Window {
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5389,7 +5611,7 @@ Window {
             self._click(window, self._quick_item(window, "settingsToggleButton"))
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_inspector_tab_waits_for_uncommitted_ime_text(self) -> None:
         path = self._load_project()
@@ -5410,7 +5632,7 @@ Window {
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5422,7 +5644,7 @@ Window {
             self._click(window, self._quick_item(window, "inspectorSettingsTabButton"))
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_speaker_color_waits_for_uncommitted_ime_text(self) -> None:
         path = self._load_project()
@@ -5430,7 +5652,7 @@ Window {
         caption = self._quick_visual_item(
             self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
         )
-        dialog = window.findChild(QObject, "speakerColorDialog")
+        dialog = self.gui.find_object(window, "speakerColorDialog")
         with patch.object(self.app.autosave_timer, "start"):
             self._click(window, caption)
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
@@ -5439,24 +5661,24 @@ Window {
             self.app.processEvents()
 
             self._click(window, self._quick_item(window, "workspaceSubtitleSpeakerColorButton"))
-            self.assertFalse(qt_property_value(dialog, "visible"))
+            self.assertFalse(_qt_bool(dialog, "visible"))
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
             QCoreApplication.sendEvent(caption, commit)
             self.app.processEvents()
             self._click(window, self._quick_item(window, "workspaceSubtitleSpeakerColorButton"))
-            self.assertTrue(qt_property_value(dialog, "visible"))
+            self.assertTrue(_qt_bool(dialog, "visible"))
             self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
             self.assertTrue(QMetaObject.invokeMethod(dialog, "reject"))
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_auth_completion_waits_for_uncommitted_ime_text(self) -> None:
         path = self._load_project()
@@ -5480,7 +5702,7 @@ Window {
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5491,7 +5713,7 @@ Window {
             self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_speaker_selection_keeps_uncommitted_ime_text(self) -> None:
         path = self._load_project()
@@ -5517,7 +5739,7 @@ Window {
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.segmentAt(0)["text"], "abcdefgh")
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5531,8 +5753,8 @@ Window {
             self.assertEqual(self.app.segmentAt(0)["speaker"], "Speaker_Bob")
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
-        self.assertEqual(load_project(path)["segments"][0]["speaker"], "Speaker_Bob")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'speaker'), "Speaker_Bob")
 
     def _assert_workspace_navigation_waits_for_ime(self, button_name: str, destination: str) -> None:
         path = self._load_project()
@@ -5556,7 +5778,7 @@ Window {
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
             self.assertEqual(self.app.stage, "CHECK")
             self.assertIn("確定してから", self.app.status)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5572,7 +5794,7 @@ Window {
             self.assertEqual(self.app.segmentAt(0)["text"], "a日本語")
             self.assertTrue(self.app.saveProject())
 
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_mode_switch_waits_for_uncommitted_ime_text(self) -> None:
         self._assert_workspace_navigation_waits_for_ime("editorModeButton-cut", "cut")
@@ -5610,7 +5832,7 @@ Window {
             self.assertEqual(self.app.stage, "CHECK")
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
 
             commit = QInputMethodEvent("", [])
             commit.setCommitString("日本語")
@@ -5620,7 +5842,7 @@ Window {
             self.app.processEvents()
 
         self.assertFalse(window.isVisible())
-        self.assertEqual(load_project(path)["segments"][0]["text"], "a日本語")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a日本語")
 
     def test_workspace_caption_key_input_is_committed_before_render(self) -> None:
         self._assert_caption_input_committed_before_action(expanded=False, action="render")
@@ -5653,15 +5875,15 @@ Window {
             self.assertNotEqual(*selection)
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
             self.app.processEvents()
-            self.assertEqual(load_project(path)["segments"][0]["text"], "ab")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "ab")
             self.assertTrue(caption.hasActiveFocus())
             self.assertEqual((qt_property_value(caption, "selectionStart"), qt_property_value(caption, "selectionEnd")), selection)
             QTest.keyClick(window, Qt.Key.Key_C)
             self.app.processEvents()
-            self.assertEqual(qt_property_value(caption, "text"), "ac")
+            self.assertEqual(_qt_string(caption, "text"), "ac")
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
             self.app.processEvents()
-            self.assertEqual(load_project(path)["segments"][0]["text"], "ac")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "ac")
 
     def test_save_shortcut_failure_preserves_focus_for_retry(self) -> None:
         path = self._load_project()
@@ -5678,11 +5900,11 @@ Window {
             self.assertEqual(self.app.stage, "ERROR")
             self.assertTrue(caption.hasActiveFocus())
             self.assertTrue(self.app.projectDirty)
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
             QTest.keyClick(window, Qt.Key.Key_B)
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
             self.app.processEvents()
-            self.assertEqual(load_project(path)["segments"][0]["text"], "ab")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "ab")
             self.assertFalse(self.app.projectDirty)
 
     def test_close_rejects_failed_draft_save_and_allows_retry(self) -> None:
@@ -5702,10 +5924,10 @@ Window {
             self.assertTrue(self.app.projectDirty)
             self.assertEqual(self.app.stage, "ERROR")
             self.assertEqual(self.app.segmentAt(0)["text"], "a")
-            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "abcdefgh")
             self.assertTrue(window.close())
             self.assertFalse(window.isVisible())
-            self.assertEqual(load_project(path)["segments"][0]["text"], "a")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "a")
             self.assertFalse(self.app.projectDirty)
 
     def test_close_without_project_does_not_require_save(self) -> None:
@@ -5723,13 +5945,13 @@ Window {
 
         self.assertFalse(window.close())
         self.assertTrue(window.isVisible())
-        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "first")
 
         self.app._running = False
         self.app.runningChanged.emit()
         self.app.processEvents()
         self.assertTrue(window.close())
-        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "edited")
 
     def test_close_during_processing_without_pending_edits_still_works(self) -> None:
         self._load_project()
@@ -5759,7 +5981,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self.assertTrue(window.close())
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.25)
 
     def test_close_during_processing_keeps_existing_unsaved_edit(self) -> None:
         path = self._load_project()
@@ -5779,7 +6001,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self.assertTrue(window.close())
-        self.assertEqual(load_project(path)["segments"][0]["text"], "未保存の字幕")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "未保存の字幕")
 
     def test_transcription_merge_append_commits_pending_time_and_preserves_subtitles(self) -> None:
         self._set_ready_sources()
@@ -5812,7 +6034,7 @@ Window {
         self.assertTrue(QMetaObject.invokeMethod(window, "requestTranscription"))
         self.app.processEvents()
         self.assertEqual(self.app.segmentAt(0)["start"], 1.25)
-        self.assertTrue(qt_property_value(window.findChild(QObject, "transcriptionMergeDialog"), "visible"))
+        self.assertTrue(_qt_bool(window.findChild(QObject, "transcriptionMergeDialog"), "visible"))
 
         helper_path = Path(__file__).with_name("fake_processing_process.py").resolve()
         process_python = shutil.which("python.exe" if os.name == "nt" else "python3") or sys.executable
@@ -5833,24 +6055,24 @@ Window {
         with patch("src.gui_workflow_facade.build_gui_transcribe_command", side_effect=build_append_command) as build:
             finished = QSignalSpy(self.app.process.finished)
             self._click(window, self._quick_item(window, "transcriptionMergeAppendButton"))
-            self.assertFalse(qt_property_value(window.findChild(QObject, "transcriptionMergeDialog"), "visible"))
-            self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+            self.assertFalse(_qt_bool(window.findChild(QObject, "transcriptionMergeDialog"), "visible"))
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.25)
             if finished.count() == 0:
                 self.assertTrue(finished.wait(10_000), self.app.process.errorString())
             self.app.processEvents()
 
         build.assert_called_once()
-        generated_path = Path(build.call_args.kwargs["project_path"])
+        generated_path = Path(_string_at(_mock_kwargs(build), "project_path"))
         self.assertNotEqual(generated_path.resolve(), path.resolve())
-        self.assertTrue(build.call_args.kwargs["overwrite_project"])
+        self.assertTrue(_value_at(_mock_kwargs(build), "overwrite_project"))
         self.assertFalse(generated_path.exists())
         self.assertFalse(self.app.running)
         self.assertEqual(self.app.stage, "EDIT", self.app.status)
         self.assertTrue(Path(self.app.projectPath).samefile(path))
         saved = load_project(path)
-        self.assertEqual([item["id"] for item in saved["segments"]], ["segment-a", "transcribed-new"])
-        self.assertEqual(saved["segments"][0]["start"], 1.25)
-        self.assertEqual(saved["segments"][1]["text"], "追加された字幕")
+        self.assertEqual([item["id"] for item in _dict_list_at(saved, "segments")], ["segment-a", "transcribed-new"])
+        self.assertEqual(_value_at(saved, 'segments', 0, 'start'), 1.25)
+        self.assertEqual(_value_at(saved, 'segments', 1, 'text'), "追加された字幕")
 
     def test_transcription_merge_cancel_preserves_existing_project(self) -> None:
         self._set_ready_sources()
@@ -5860,16 +6082,16 @@ Window {
         dialog = window.findChild(QObject, "transcriptionMergeDialog")
         with patch.object(self.app.workflow, "_start_command") as start:
             self._click(window, self._quick_item(window, "transcribeButton"))
-            self.assertTrue(qt_property_value(dialog, "visible"))
+            self.assertTrue(_qt_bool(dialog, "visible"))
             self._click(window, self._quick_item(window, "transcriptionMergeCancelButton"))
-            self.assertFalse(qt_property_value(dialog, "visible"))
+            self.assertFalse(_qt_bool(dialog, "visible"))
         start.assert_not_called()
         self.assertFalse(self.app.running)
         self.assertEqual(self.app.workflow._state.transcription_merge_mode, "")
         self.assertEqual(path.read_bytes(), before)
         self.assertTrue(Path(self.app.projectPath).samefile(path))
 
-    def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QObject]:
+    def _prepare_pending_subtitle_text(self, *, expanded: bool = False) -> tuple[Path, QQuickWindow]:
         path = self._load_project(segments=[
             {"id": "first", "start": 0, "end": 4, "text": "first", "speaker": "Speaker_Alice"},
             {"id": "second", "start": 5, "end": 8, "text": "second", "speaker": "Speaker_Alice"},
@@ -5890,7 +6112,7 @@ Window {
         for char in "edited":
             QTest.keyClick(window, Qt.Key(ord(char.upper())))
         self.app.processEvents()
-        self.assertEqual(qt_property_value(field, "text"), "edited")
+        self.assertEqual(_qt_string(field, "text"), "edited")
         self.assertTrue(field.hasActiveFocus())
         return path, window
 
@@ -5915,7 +6137,7 @@ Window {
                     self.assertEqual(self.app.segmentAt(0)["speaker"], expected)
                     self.assertEqual(qt_property_value(combo, "currentValue"), expected)
                     self._click(window, self._quick_item(window, "saveProjectButton"))
-                    self.assertEqual(load_project(path)["segments"][0]["speaker"], expected)
+                    self.assertEqual(_value_at(load_project(path), 'segments', 0, 'speaker'), expected)
 
     def test_expanded_speaker_selection_tracks_speaker_list_replacement(self) -> None:
         self._load_project()
@@ -5925,7 +6147,7 @@ Window {
         combo = self._quick_visual_item(row, "captionSpeakerCombo")
         expected = self.app.segmentAt(0)["speaker"]
         initial_index = qt_property_value(combo, "currentIndex")
-        self.app._project["speakers"].reverse()
+        _dict_list_at(self.app._project, 'speakers').reverse()
         self.app.projectDataChanged.emit()
         self.app.processEvents()
         self.assertNotEqual(qt_property_value(combo, "currentIndex"), initial_index)
@@ -5938,7 +6160,7 @@ Window {
         self.app.processEvents()
         self._click(window, self._quick_item(window, "saveProjectButton"))
         self.assertEqual(
-            [(segment["id"], segment["text"]) for segment in load_project(path)["segments"]],
+            [(segment["id"], segment["text"]) for segment in _dict_list_at(load_project(path), "segments")],
             [("second", "second"), ("first", "edited")],
         )
         self.assertEqual(self.app.selectedSegmentIndex, 1)
@@ -5978,14 +6200,14 @@ Window {
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
             QTest.keyClick(window, Qt.Key.Key_X)
             self.assertTrue(field.hasActiveFocus())
-            self.assertEqual(qt_property_value(field, "text"), "x")
+            self.assertEqual(_qt_string(field, "text"), "x")
             self.assertEqual(self.app.selectedSegmentIndex, 1_500)
             time_fields = [
                 item for item in self.gui.visual_items(row)
                 if item.objectName() in ("captionStartTimeField", "captionEndTimeField")
             ]
             time_fields.sort(key=lambda item: item.x())
-            start = float(self.app.segmentAt(1_500)["start"]) + 0.01
+            start = coerce_float(self.app.segmentAt(1_500)["start"]) + 0.01
             self._click(window, time_fields[0])
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
             for char in f"{start:.3f}":
@@ -5997,7 +6219,7 @@ Window {
             self.app.processEvents()
         updated = self.app.segmentAt(1_500)
         self.assertEqual(updated["text"], "x")
-        self.assertAlmostEqual(updated["start"], start, places=3)
+        self.assertAlmostEqual(coerce_float(updated["start"]), coerce_float(start), places=3)
         self.assertEqual(updated["subtitle_font_scale"], 1.25)
         self.assertEqual(self.app.selectedSegmentIndex, 1_500)
 
@@ -6008,7 +6230,7 @@ Window {
         )
         self._click(window, self._quick_item(window, names[0]))
         self._click(window, self._quick_item(window, names[1]))
-        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]], [("second", "second")])
+        self.assertEqual([(s["id"], s["text"]) for s in _dict_list_at(load_project(path), "segments")], [("second", "second")])
         self._click(window, self._quick_item(window, names[2]))
         self.assertEqual(self.app.segmentAt(0)["text"], "edited")
         self.assertEqual(self.app.segmentAt(1)["text"], "second")
@@ -6027,7 +6249,7 @@ Window {
         if expanded:
             QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.Save))
             self.app.processEvents()
-            self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "first")
 
         self.app._running = False
         self.app.runningChanged.emit()
@@ -6035,7 +6257,7 @@ Window {
         save_button = "saveProjectButton" if expanded else "workspaceSubtitleSaveButton"
         self._click(window, self._quick_item(window, save_button))
         self.assertEqual(self.app.segmentAt(0)["text"], "edited")
-        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "edited")
 
     def test_pending_text_survives_processing_state_change_in_workspace(self) -> None:
         self._assert_pending_text_survives_processing_state_change(expanded=False)
@@ -6061,12 +6283,12 @@ Window {
         field = self._quick_visual_item(
             self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
         )
-        self.assertEqual(qt_property_value(field, "text"), "edited")
+        self.assertEqual(_qt_string(field, "text"), "edited")
         self.app._running = False
         self.app.runningChanged.emit()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "edited")
 
     def test_pending_text_is_restored_after_closing_expanded_editor_during_processing(self) -> None:
         path, window = self._prepare_pending_subtitle_text(expanded=True)
@@ -6082,9 +6304,9 @@ Window {
         self.app.processEvents()
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
         field = self._quick_visual_item(self._quick_item(window, "captionTable"), "captionTextArea")
-        self.assertEqual(qt_property_value(field, "text"), "edited")
+        self.assertEqual(_qt_string(field, "text"), "edited")
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "edited")
 
     def test_pending_start_time_survives_processing_state_change(self) -> None:
         path = self._load_project()
@@ -6107,7 +6329,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.25)
 
     def test_pending_start_time_survives_processing_state_change_in_expanded_editor(self) -> None:
         path = self._load_project()
@@ -6128,7 +6350,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.25)
 
     def test_pending_end_time_survives_processing_and_selection_change(self) -> None:
         path = self._load_project(segments=[
@@ -6143,7 +6365,7 @@ Window {
         for char in "3.500":
             QTest.keyClick(window, Qt.Key(ord(char)))
         self.app.processEvents()
-        self.assertEqual(qt_property_value(field, "text"), "3.500")
+        self.assertEqual(_qt_string(field, "text"), "3.500")
 
         self.app._running = True
         self.app.runningChanged.emit()
@@ -6155,7 +6377,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(load_project(path)["segments"][0]["end"], 3.5)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'end'), 3.5)
         self.assertEqual(self.app.selectedSegmentIndex, 1)
 
     def test_incomplete_time_input_can_be_finished_after_processing(self) -> None:
@@ -6168,7 +6390,7 @@ Window {
         QTest.keyClick(window, Qt.Key.Key_1)
         QTest.keyClick(window, Qt.Key.Key_E)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(field, "text"), "1e")
+        self.assertEqual(_qt_string(field, "text"), "1e")
         self.assertFalse(qt_property_value(field, "acceptableInput"))
 
         self.app._running = True
@@ -6179,14 +6401,14 @@ Window {
         self.app._running = False
         self.app.runningChanged.emit()
         self.app.processEvents()
-        self.assertEqual(qt_property_value(field, "text"), "1e")
+        self.assertEqual(_qt_string(field, "text"), "1e")
         self._click(window, field)
         QTest.keyClick(window, Qt.Key.Key_End)
         QTest.keyClick(window, Qt.Key.Key_0)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(field, "text"), "1e0")
+        self.assertEqual(_qt_string(field, "text"), "1e0")
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.0)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.0)
 
     def test_incomplete_subtitle_time_blocks_save_until_completed(self) -> None:
         path = self._load_project()
@@ -6203,22 +6425,22 @@ Window {
             QTest.keyClick(window, Qt.Key.Key_1)
             QTest.keyClick(window, Qt.Key.Key_E)
             self.app.processEvents()
-            self.assertEqual(qt_property_value(field, "text"), "1e")
+            self.assertEqual(_qt_string(field, "text"), "1e")
             self.assertFalse(qt_property_value(field, "acceptableInput"))
-            self.assertFalse(qt_property_value(end_field, "enabled"))
+            self.assertFalse(_qt_bool(end_field, "enabled"))
 
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-            self.assertEqual(qt_property_value(field, "text"), "1e")
+            self.assertEqual(_qt_string(field, "text"), "1e")
             self.assertEqual(self.app.stage, "CHECK")
-            self.assertEqual(load_project(path)["segments"][0]["start"], 0.0)
+            self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 0.0)
 
             self._click(window, field)
             QTest.keyClick(window, Qt.Key.Key_End)
             QTest.keyClick(window, Qt.Key.Key_0)
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.0)
-        self.assertTrue(qt_property_value(end_field, "enabled"))
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.0)
+        self.assertTrue(_qt_bool(end_field, "enabled"))
 
     def test_pending_start_time_survives_mode_and_selection_changes_during_processing(self) -> None:
         path = self._load_project(segments=[
@@ -6253,7 +6475,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.25)
         self.assertEqual(self.app.selectedSegmentIndex, 1)
 
     def test_pending_start_time_survives_row_recycling_during_processing(self) -> None:
@@ -6271,7 +6493,7 @@ Window {
         for char in "1.250":
             QTest.keyClick(window, Qt.Key(ord(char)))
         self.app.processEvents()
-        self.assertEqual(qt_property_value(field, "text"), "1.250")
+        self.assertEqual(_qt_string(field, "text"), "1.250")
 
         self.app._running = True
         self.app.runningChanged.emit()
@@ -6295,7 +6517,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        self.assertEqual(load_project(path)["segments"][0]["start"], 1.25)
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'start'), 1.25)
 
     def test_expanded_editor_saves_both_pending_time_fields(self) -> None:
         path = self._load_project()
@@ -6311,8 +6533,8 @@ Window {
         end_field.setProperty("text", "3.500")
         self.app.processEvents()
         self._click(window, self._quick_item(window, "saveProjectButton"))
-        saved = load_project(path)["segments"][0]
-        self.assertEqual((saved["start"], saved["end"]), (1.25, 3.5))
+        saved = _value_at(load_project(path), 'segments', 0)
+        self.assertEqual((_value_at(saved, 'start'), _value_at(saved, 'end')), (1.25, 3.5))
 
     def test_pending_text_delete_preserves_neighbor_in_expanded_editor(self) -> None:
         self._assert_pending_text_delete_preserves_neighbor(expanded=True)
@@ -6322,9 +6544,9 @@ Window {
         self.app.setEditorPlayhead(2_000, "source")
         self._click(window, self._quick_item(window, "workspaceSubtitleSplitButton"))
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        segments = load_project(path)["segments"]
+        segments = _dict_list_at(load_project(path), "segments")
         self.assertEqual([s["text"] for s in segments], ["edi", "ted", "second"])
-        self.assertEqual([(s["start"], s["end"]) for s in segments[:2]], [(0.0, 2.0), (2.0, 4.0)])
+        self.assertEqual([(_value_at(s, 'start'), _value_at(s, 'end')) for s in segments[:2]], [(0.0, 2.0), (2.0, 4.0)])
         self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
         self.assertEqual(self.app.segmentCount, 2)
         self.assertEqual(self.app.segmentAt(0)["text"], "edited")
@@ -6335,20 +6557,20 @@ Window {
         self.assertTrue(undo.isEnabled(), "未確定の本文編集も取り消せる")
         self._click(window, undo)
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual(load_project(path)["segments"][0]["text"], "first")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "first")
         self._click(window, self._quick_item(window, "workspaceSubtitleRedoButton"))
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "edited")
 
     def test_pending_text_add_commits_original_caption_before_new_row(self) -> None:
         path, window = self._prepare_pending_subtitle_text()
         self.app.setEditorPlayhead(9_000, "source")
         self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        segments = load_project(path)["segments"]
-        self.assertEqual([s["text"] for s in segments[:2]], ["edited", "second"])
+        segments = _dict_list_at(load_project(path), "segments")
+        self.assertEqual([_value_at(s, 'text') for s in segments[:2]], ["edited", "second"])
         self.assertEqual(len(segments), 3)
-        self.assertEqual(segments[2]["start"], 9.0)
+        self.assertEqual(_value_at(segments, 2, 'start'), 9.0)
         self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
         self.assertEqual(self.app.segmentCount, 2)
         self.assertEqual(self.app.segmentAt(0)["text"], "edited")
@@ -6358,7 +6580,7 @@ Window {
         self.app.updateSegment(0, {"start": 9.0, "end": 12.0})
         self.app.processEvents()
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]],
+        self.assertEqual([(s["id"], s["text"]) for s in _dict_list_at(load_project(path), "segments")],
                          [("second", "second"), ("first", "edited")])
 
     def test_pending_text_is_discarded_if_edited_caption_was_removed(self) -> None:
@@ -6367,29 +6589,29 @@ Window {
         self.app.deleteSelectedSegment()
         self.app.processEvents()
         self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
-        self.assertEqual([(s["id"], s["text"]) for s in load_project(path)["segments"]], [("second", "second")])
+        self.assertEqual([(s["id"], s["text"]) for s in _dict_list_at(load_project(path), "segments")], [("second", "second")])
 
     def test_pending_text_is_not_applied_to_another_project_with_same_id(self) -> None:
         path, window = self._prepare_pending_subtitle_text()
         other = load_project(path)
-        other["segments"][0]["text"] = "other project"
+        _dict_list_at(other, "segments")[0]["text"] = "other project"
         target = self.root / "other.subtitle-project.json"
         save_project(target, other)
         self.app.loadProject(str(target))
         self.app.processEvents()
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(target)["segments"][0]["text"], "other project")
+        self.assertEqual(_value_at(load_project(target), 'segments', 0, 'text'), "other project")
 
     def test_project_open_commits_pending_text_to_original_project(self) -> None:
         path, window = self._prepare_pending_subtitle_text()
         other = load_project(path)
-        other["segments"][0]["text"] = "other project"
+        _dict_list_at(other, "segments")[0]["text"] = "other project"
         target = self.root / "other.subtitle-project.json"
         save_project(target, other)
         with patch("src.gui.QFileDialog.getOpenFileName", return_value=(str(target), "")):
             self._click(window, self._quick_item(window, "projectOpenButton"))
         self.assertEqual(Path(self.app.projectPath), target)
-        self.assertEqual(load_project(path)["segments"][0]["text"], "edited")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "edited")
         self.assertEqual(self.app.segmentAt(0)["text"], "other project")
 
     def test_workspace_subtitle_delete_undo_redo_and_save_round_trip(self) -> None:
@@ -6420,7 +6642,7 @@ Window {
 
         self._click(window, button("Save"))
         self.assertFalse(self.app.projectDirty)
-        self.assertEqual(load_project(path)["segments"], [])
+        self.assertEqual(_dict_list_at(load_project(path), "segments"), [])
         self.app.loadProject(str(path))
         self.assertEqual(self.app.segmentCount, 0)
         self.assertFalse(button("Delete").isEnabled())
@@ -6465,7 +6687,7 @@ Window {
 
             self._click(window, save_button)
             self.assertFalse(self.app.projectDirty)
-            self.assertEqual(load_project(path)["segments"], [])
+            self.assertEqual(_dict_list_at(load_project(path), "segments"), [])
 
     def test_workspace_subtitle_split_uses_playhead_and_rejects_boundaries(self) -> None:
         """分割ボタンの有効条件と、分割・取り消し後の字幕内容を検証する。"""
@@ -6488,7 +6710,7 @@ Window {
         first, second = self.app.subtitleSegments
         self.assertEqual((first["start"], first["end"]), (0.0, 2.0))
         self.assertEqual((second["start"], second["end"]), (2.0, 4.0))
-        self.assertEqual(first["text"] + second["text"], original[0]["text"])
+        self.assertEqual(_string_at(first, "text") + _string_at(second, "text"), original[0]["text"])
         self.assertFalse(split.isEnabled())
         self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
         self.assertEqual(self.app.subtitleSegments, original)
@@ -6496,7 +6718,7 @@ Window {
     def test_workspace_subtitle_time_speaker_font_and_size_are_saved(self) -> None:
         path = self._load_project()
         original_font_choices = self.app._font_choices
-        self.addCleanup(setattr, self.app, "_font_choices", original_font_choices)
+        self.addCleanup(lambda: setattr(self.app, "_font_choices", original_font_choices))
         self.app._font_choices = build_font_choices(["Test Font A", "Test Font B"])
         _, window = self._load_qml()
         self.gui.resize(window, 1520, 940)
@@ -6517,7 +6739,7 @@ Window {
             )
 
             font = self._quick_visual_item(settings, "workspaceSubtitleFontCombo")
-            self.assertEqual(qt_property_value(font, "count"), 3)
+            self.assertEqual(_qt_number(font, "count"), 3)
             self._click(window, font)
             QTest.keyClick(window, Qt.Key.Key_Down)
             QTest.keyClick(window, Qt.Key.Key_Return)
@@ -6533,17 +6755,17 @@ Window {
             increase = size.mapToScene(QPointF(size.width() - 8, size.height() / 2)).toPoint()
             QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
             self.gui.wait_until(
-                lambda: self.app.segmentAt(0)["subtitle_font_scale"] > 1.0,
+                lambda: coerce_float(self.app.segmentAt(0)["subtitle_font_scale"]) > 1.0,
                 description="通常画面の文字サイズ",
             )
             expected_scale = self.app.segmentAt(0)["subtitle_font_scale"]
             self._click(window, self._quick_item(window, "workspaceSubtitleSaveButton"))
 
-        saved = load_project(path)["segments"][0]
-        self.assertEqual(saved["end"], 3.5)
-        self.assertEqual(saved["speaker"], "Speaker_Bob")
-        self.assertEqual(saved["subtitle_font_family"], expected_font)
-        self.assertAlmostEqual(saved["subtitle_font_scale"], expected_scale)
+        saved = _value_at(load_project(path), 'segments', 0)
+        self.assertEqual(_value_at(saved, 'end'), 3.5)
+        self.assertEqual(_value_at(saved, 'speaker'), "Speaker_Bob")
+        self.assertEqual(_value_at(saved, 'subtitle_font_family'), expected_font)
+        self.assertAlmostEqual(coerce_float(_value_at(saved, 'subtitle_font_scale')), coerce_float(expected_scale))
         self.assertFalse(self.app.projectDirty)
 
     def test_subtitle_edit_controls_follow_processing_state(self) -> None:
@@ -6649,8 +6871,8 @@ Window {
         self._generate_black_test_video_with_audio(self.root / "game.mkv", self.root / "1-alice.flac")
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
-        player = window.findChild(QObject, "mainWorkspacePlayer")
-        self.gui.wait_until(lambda: qt_property_value(player, "duration") >= 1_000, timeout_ms=5_000, description="動画の読み込み")
+        player = self.gui.find_object(window, "mainWorkspacePlayer")
+        self.gui.wait_until(lambda: _qt_number(player, "duration") >= 1_000, timeout_ms=5_000, description="動画の読み込み")
         player.setProperty("position", 500)
         self.app.processEvents()
         split_button = self._quick_item(window, "splitCaptionButton")
@@ -6698,7 +6920,7 @@ Window {
         self.app.processEvents()
         self.assertTrue(qt_property_value(timeline, "editable"))
         drag_caption(48)
-        self.assertGreater(self.app.segmentAt(0)["start"], 0.0)
+        self.assertGreater(coerce_float(self.app.segmentAt(0)["start"]), coerce_float(0.0))
 
     def test_subtitle_timeline_resize_is_locked_during_processing_and_recovers(self) -> None:
         self._load_project()
@@ -6735,13 +6957,13 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         drag_handle(handle_point("timelineCaptionEndHandle"), 48)
-        self.assertGreater(self.app.segmentAt(0)["end"], original_end)
+        self.assertGreater(coerce_float(self.app.segmentAt(0)["end"]), coerce_float(original_end))
         drag_handle(handle_point("timelineCaptionStartHandle"), 48)
-        self.assertGreater(self.app.segmentAt(0)["start"], original_start)
+        self.assertGreater(coerce_float(self.app.segmentAt(0)["start"]), coerce_float(original_start))
 
     def test_subtitle_backend_rejects_mutations_during_processing(self) -> None:
         """画面以外の字幕編集入口も処理中のprojectと履歴を変えない。"""
-        actions = (
+        actions: tuple[tuple[str, Callable[[], object]], ...] = (
             ("本文", lambda: self.app.subtitles.updateSegment(0, {"text": "処理中の編集"})),
             ("移動", lambda: self.app.subtitles.moveSegment(0, 1.0, 5.0, 0.0)),
             ("開始時刻", lambda: self.app.subtitles.resizeSegmentStart(0, 0.5, 0.0)),
@@ -6806,7 +7028,7 @@ Window {
 
         self.assertTrue(self.app.saveProject())
         self.assertFalse(self.app.projectDirty)
-        self.assertEqual(load_project(path)["segments"][0]["text"], "未保存の字幕")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "未保存の字幕")
 
     def test_autosave_waits_until_processing_finishes(self) -> None:
         path = self._load_project()
@@ -6831,7 +7053,7 @@ Window {
         self.app.autosave_timer.stop()
         self.app._autosave_project()
         self.app._wait_for_autosave()
-        self.assertEqual(load_project(path)["segments"][0]["text"], "処理中は保存しない字幕")
+        self.assertEqual(_value_at(load_project(path), 'segments', 0, 'text'), "処理中は保存しない字幕")
         self.assertFalse(self.app.projectDirty)
 
     def test_cut_editing_is_locked_during_processing_and_recovers(self) -> None:
@@ -6843,7 +7065,7 @@ Window {
         cut_id = str(self.app.cutTimeline["cuts"][0]["id"])
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "editorModeButton-cut"))
-        window.setCutSelection("", 12_000, 13_000)
+        _qml_call(window, "setCutSelection", "", 12_000, 13_000)
         self.gui.wait_until(
             lambda: self._quick_item(window, "addCutButton").isEnabled(),
             description="カット範囲の編集準備",
@@ -6903,8 +7125,8 @@ Window {
         self.assertEqual(self.app.currentEditMode, "audio")
         self.assertGreater(len(self.app.audioMixerChannels), 0)
         channel_list = self._quick_item(window, "workspaceAudioChannelList")
-        self.assertGreater(qt_property_value(channel_list, "count"), 0)
-        self.assertGreater(channel_list.height(), 0, (channel_list.width(), qt_property_value(channel_list, "contentHeight")))
+        self.assertGreater(_qt_number(channel_list, "count"), 0)
+        self.assertGreater(channel_list.height(), 0, (channel_list.width(), _qt_number(channel_list, "contentHeight")))
         channel_controls = (
             "workspaceAudioEnabledCheck", "workspaceAudioVolumeSlider",
             "workspaceAudioMuteButton", "workspaceAudioSoloButton",
@@ -6968,7 +7190,7 @@ Window {
             self._click(window, self._quick_visual_item(channel_list, "workspaceAudioEnabledCheck"))
             self.assertFalse(self.app.audioMixerChannels[0]["enabled"])
             self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
-            self.assertFalse(load_project(path)["audio_mix"]["channels"][0]["enabled"])
+            self.assertFalse(_value_at(load_project(path), 'audio_mix', 'channels', 0, 'enabled'))
 
             self._click(window, self._quick_visual_item(channel_list, "workspaceAudioEnabledCheck"))
             self.assertTrue(self.app.audioMixerChannels[0]["enabled"])
@@ -6976,7 +7198,7 @@ Window {
             self.assertTrue(volume_slider.isEnabled())
             self._drag_slider(window, volume_slider, 0.7)
             self.assertGreater(
-                self.app.audioMixerChannels[0]["volume_percent"], 120,
+                coerce_float(self.app.audioMixerChannels[0]["volume_percent"]), coerce_float(120),
                 self.app.audioMixerChannels[0],
             )
             dragged_volume = self.app.audioMixerChannels[0]["volume_percent"]
@@ -6984,7 +7206,7 @@ Window {
             volume_slider.forceActiveFocus()
             QTest.keyClick(window, Qt.Key.Key_Left)
             self.gui.wait_until(
-                lambda: self.app.audioMixerChannels[0]["volume_percent"] < dragged_volume,
+                lambda: coerce_float(self.app.audioMixerChannels[0]["volume_percent"]) < coerce_float(dragged_volume),
                 description="音量スライダーのキー操作",
             )
             expected_volume = self.app.audioMixerChannels[0]["volume_percent"]
@@ -6992,10 +7214,10 @@ Window {
             self.assertTrue(self.app.audioMixerChannels[0]["solo"])
             self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
 
-        saved_channel = load_project(path)["audio_mix"]["channels"][0]
-        self.assertTrue(saved_channel["enabled"])
-        self.assertAlmostEqual(saved_channel["volume_percent"], expected_volume, places=2)
-        self.assertTrue(saved_channel["solo"])
+        saved_channel = _value_at(load_project(path), 'audio_mix', 'channels', 0)
+        self.assertTrue(_value_at(saved_channel, 'enabled'))
+        self.assertAlmostEqual(coerce_float(_value_at(saved_channel, 'volume_percent')), coerce_float(expected_volume), places=2)
+        self.assertTrue(_value_at(saved_channel, 'solo'))
         self.assertFalse(self.app.projectDirty)
 
     @typed_skip_unless_method(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe required")
@@ -7020,11 +7242,11 @@ Window {
             self._click(window, self._quick_visual_item(channel_list, "workspaceAudioMuteButton"))
             self.assertTrue(self.app.audioMixerChannels[0]["muted"])
             self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
-            self.assertTrue(load_project(path)["audio_mix"]["channels"][0]["muted"])
+            self.assertTrue(_value_at(load_project(path), 'audio_mix', 'channels', 0, 'muted'))
 
             self._click(window, self._quick_item(window, "workspaceAudioResetButton"))
             self.assertFalse(self.app.audioMixerChannels[0]["muted"])
-            expected = deepcopy(self.app._project["audio_mix"])
+            expected = deepcopy(_value_at(self.app._project, 'audio_mix'))
             self._click(window, self._quick_item(window, "workspaceAudioSaveButton"))
 
         self.assertEqual(load_project(path)["audio_mix"], expected)
@@ -7173,25 +7395,25 @@ Window {
         _, window = self.gui.load_qml(qml)
         timeline = self._quick_item(window, "workspaceAudioTimeline")
         status = self._quick_item(window, "workspaceAudioPreviewStatus")
-        self.assertEqual(qt_property_value(timeline, "pixelsPerSecond"), 96)
+        self.assertEqual(_qt_number(timeline, "pixelsPerSecond"), 96)
         self.gui.wait_until(
             lambda: abs(coerce_float(qt_property_value(timeline, "viewportX")) - 180) <= 1,
             description="独立した音声タイムラインの開始位置",
         )
-        self.assertEqual(qt_property_value(status, "text"), "ミックスを準備できないため元の音声を再生します")
-        preview_state = window.findChild(QObject, "independentAudioPreviewState")
+        self.assertEqual(_qt_string(status, "text"), "ミックスを準備できないため元の音声を再生します")
+        preview_state = self.gui.find_object(window, "independentAudioPreviewState")
         preview_state.setProperty("previewReady", True)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(status, "text"), "共通プレビューへ接続済み")
+        self.assertEqual(_qt_string(status, "text"), "共通プレビューへ接続済み")
         preview_state.setProperty("previewReady", False)
         preview_state.setProperty("intentionalSilence", True)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(status, "text"), "すべての音声トラックが無効です")
+        self.assertEqual(_qt_string(status, "text"), "すべての音声トラックが無効です")
         self.gui.click_at(window, timeline, 180, 12)
-        self.assertGreater(qt_property_value(window, "requestedSeekPosition"), 0)
+        self.assertGreater(_qt_number(window, "requestedSeekPosition"), 0)
         timeline.setProperty("viewportX", 260.0)
         self.app.processEvents()
-        self.assertAlmostEqual(qt_property_value(window, "savedScrollX"), 260.0, delta=1)
+        self.assertAlmostEqual(_qt_number(window, "savedScrollX"), 260.0, delta=1)
         window.setProperty("editorOpen", False)
         self.gui.wait_until(lambda: window.findChild(QQuickItem, "workspaceAudioTimeline") is None,
                             description="独立した音声タイムラインの破棄")
@@ -7219,7 +7441,7 @@ Window {
         audio_settings = self._quick_item(window, "workspaceAudioSettings")
         channel_list = self._quick_item(window, "workspaceAudioChannelList")
         self.gui.wait_until(
-            lambda: qt_property_value(channel_list, "contentHeight") > channel_list.height(),
+            lambda: _qt_number(channel_list, "contentHeight") > channel_list.height(),
             description="workspace audio channel list layout",
         )
         channel_list.setProperty("contentY", 300.0)
@@ -7228,7 +7450,7 @@ Window {
         self.assertGreater(original_y, 0)
         muted_before = self.app.audioMixerChannels[5]["muted"]
 
-        audio_settings.updateChannel(5, {"muted": not muted_before})
+        _qml_call(audio_settings, "updateChannel", 5, {"muted": not muted_before})
         self.gui.wait_until(
             lambda: (
                 self.app.audioMixerChannels[5]["muted"] != muted_before
@@ -7279,7 +7501,7 @@ Window {
 
         self._click(window, self._quick_item(window, "applicationLogToggleButton"))
         self.gui.wait_until(
-            lambda: bool(qt_property_value(log_panel, "expanded"))
+            lambda: bool(_qt_bool(log_panel, "expanded"))
             and all(
                 item.mapToItem(central_column, QPointF(0, item.height())).y()
                 <= central_column.height() + 1
@@ -7287,7 +7509,7 @@ Window {
             ),
             description="expanded application log below processing progress",
         )
-        self.assertTrue(qt_property_value(log_panel, "expanded"))
+        self.assertTrue(_qt_bool(log_panel, "expanded"))
         self.assertGreater(log_panel.height(), 0)
         for item in layout_items:
             self.assertLessEqual(
@@ -7478,10 +7700,10 @@ Window {
             encoding="utf-8",
         )
         _, window = self.gui.load_qml(qml)
-        player = window.findChild(QObject, "independentPlayer")
+        player = self.gui.find_object(window, "independentPlayer")
         self.assertIsNotNone(player)
         player.setProperty("source", QUrl.fromLocalFile(str(seek_source)))
-        self.gui.wait_until(lambda: qt_property_value(player, "duration") >= 4000,
+        self.gui.wait_until(lambda: _qt_number(player, "duration") >= 4000,
                             description="独立した字幕編集画面のシーク可能な素材")
         original_count = self.app.segmentCount
         self._click(window, self._quick_item(window, "workspaceSubtitleAddButton"))
@@ -7491,7 +7713,7 @@ Window {
         self.assertTrue(QMetaObject.invokeMethod(window, "prepareDraft"))
         self.assertEqual(qt_property_value(window, "draftIndex"), 0)
         self.assertEqual(qt_property_value(window, "draftPreview"), self.app.formatSubtitlePreview(0, "編集中の字幕"))
-        editor_state = window.findChild(QObject, "independentEditorState")
+        editor_state = self.gui.find_object(window, "independentEditorState")
         self.assertIsNotNone(editor_state)
         editor_state.setProperty("pixelsPerSecond", 96)
         editor_state.setProperty("snapMilliseconds", 250)
@@ -7502,15 +7724,15 @@ Window {
             self.gui.wait_until(lambda: qt_property_value(window, "attachments") == expected_attachment_count,
                                 description="独立編集画面の生成")
             timeline = self._quick_item(window, "editorTimeline")
-            self.assertAlmostEqual(qt_property_value(timeline, "pixelsPerSecond"), expected_zoom)
-            self.assertAlmostEqual(qt_property_value(timeline, "snapSeconds"), expected_snap)
+            self.assertAlmostEqual(_qt_number(timeline, "pixelsPerSecond"), expected_zoom)
+            self.assertAlmostEqual(_qt_number(timeline, "snapSeconds"), expected_snap)
             if expected_attachment_count == 1:
                 seek_slider = self._quick_item(window, "editorSeekSlider")
                 self.assertEqual(qt_property_value(seek_slider, "to"), 4000)
                 self._drag_slider(window, seek_slider, 0.7)
-                self.assertGreater(qt_property_value(player, "position"), 2500)
-                self.assertLess(qt_property_value(player, "position"), 3200)
-                self.assertEqual(qt_property_value(editor_state, "positionMs"), qt_property_value(player, "position"))
+                self.assertGreater(_qt_number(player, "position"), 2500)
+                self.assertLess(_qt_number(player, "position"), 3200)
+                self.assertEqual(qt_property_value(editor_state, "positionMs"), _qt_number(player, "position"))
 
                 playback_button = self._quick_item(window, "editorPlaybackButton")
                 self._click(window, playback_button)
@@ -7526,16 +7748,16 @@ Window {
 
                 zoom_slider = self._quick_item(window, "editorTimelineZoomSlider")
                 self._drag_slider(window, zoom_slider, 0.7)
-                expected_zoom = coerce_float(qt_property_value(editor_state, "pixelsPerSecond"))
+                expected_zoom = coerce_float(_qt_number(editor_state, "pixelsPerSecond"))
                 self.assertGreater(expected_zoom, 110)
-                self.assertAlmostEqual(qt_property_value(timeline, "pixelsPerSecond"), expected_zoom)
+                self.assertAlmostEqual(_qt_number(timeline, "pixelsPerSecond"), expected_zoom)
 
                 snap_spin = self._quick_item(window, "editorSnapSpin")
                 self._click(window, snap_spin)
                 QTest.keyClick(window, Qt.Key.Key_Up)
                 expected_snap = 0.26
                 self.assertEqual(qt_property_value(editor_state, "snapMilliseconds"), 260)
-                self.assertAlmostEqual(qt_property_value(timeline, "snapSeconds"), expected_snap)
+                self.assertAlmostEqual(_qt_number(timeline, "snapSeconds"), expected_snap)
             self._click(window, self._quick_item(window, "buildAssButton"))
             self.assertEqual(qt_property_value(window, "previews"), expected_attachment_count)
             self._click(window, self._quick_item(window, "editorRenderButton"))
@@ -7544,7 +7766,7 @@ Window {
             self.gui.wait_until(lambda: qt_property_value(window, "detachments") == expected_attachment_count,
                                 description="共有プレイヤーの表示先を復元")
             self.gui.wait_until(
-                lambda: abs(coerce_float(qt_property_value(self._quick_item(window, "workspaceSubtitleTimeline"), "pixelsPerSecond")) - expected_zoom) < 0.001,
+                lambda: abs(coerce_float(_qt_number(self._quick_item(window, "workspaceSubtitleTimeline"), "pixelsPerSecond")) - expected_zoom) < 0.001,
                 description="通常画面へ戻った後の字幕タイムライン倍率",
             )
         self.assertTrue(QMetaObject.invokeMethod(window, "clearDraft"))
@@ -7645,12 +7867,12 @@ Window {
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
         timeline = self._quick_item(window, "editorTimeline")
         visible = qt_property_value(timeline, "visibleSegments")
-        if hasattr(visible, "toVariant"):
-            visible = visible.toVariant()
+        if isinstance(visible, QJSValue):
+            visible = cast(object, visible.toVariant())
 
-        self.assertGreater(len(visible), 0)
-        self.assertLess(len(visible), len(segments))
-        self.assertEqual(visible[0]["sourceIndex"], 0)
+        self.assertGreater(len(_list_at(visible)), 0)
+        self.assertLess(len(_list_at(visible)), len(segments))
+        self.assertEqual(_value_at(visible, 0, 'sourceIndex'), 0)
         first_caption = self.gui.find_visual_item_by_properties(
             timeline,
             {"sourceIndex": 0},
@@ -7690,7 +7912,7 @@ Window {
         original = load_project(path)["audio_mix"]
         with patch.object(self.app.autosave_timer, "start"):
             self.app.updateAudioMixChannel(1, {"enabled": True, "volume_percent": 135})
-            expected = deepcopy(self.app._project["audio_mix"])
+            expected = deepcopy(_value_at(self.app._project, 'audio_mix'))
             self.assertNotEqual(original, expected)
             _, window = self._load_qml()
             self._click(window, self._quick_item(window, "audioMixerOpenButton"))
@@ -7709,7 +7931,7 @@ Window {
             self._click(window, self._quick_visual_item(external_strip, "mixerChannelEnabledCheck"))
             self.assertTrue(self.app.audioMixerChannels[1]["enabled"])
             self._click(window, self._quick_item(window, "mixerSaveButton"))
-            self.assertTrue(load_project(path)["audio_mix"]["customized"])
+            self.assertTrue(_value_at(load_project(path), 'audio_mix', 'customized'))
 
             reset_button = self._quick_item(window, "mixerResetButton")
             self.app._running = True
@@ -7717,7 +7939,7 @@ Window {
             try:
                 self._click_disabled(window, reset_button)
                 self.assertTrue(self.app.audioMixerChannels[1]["enabled"])
-                self.assertTrue(load_project(path)["audio_mix"]["customized"])
+                self.assertTrue(_value_at(load_project(path), 'audio_mix', 'customized'))
             finally:
                 self.app._running = False
                 self.app.runningChanged.emit()
@@ -7725,9 +7947,9 @@ Window {
             self.gui.wait_until(lambda: reset_button.isEnabled(), description="ミキサーのリセット再開")
             self._click(window, reset_button)
             self.assertFalse(self.app.audioMixerChannels[1]["enabled"])
-            self.assertFalse(self.app._project["audio_mix"]["customized"])
+            self.assertFalse(_value_at(self.app._project, 'audio_mix', 'customized'))
             self.assertTrue(self.app.projectDirty)
-            expected = deepcopy(self.app._project["audio_mix"])
+            expected = deepcopy(_value_at(self.app._project, 'audio_mix'))
             self._click(window, self._quick_item(window, "mixerSaveButton"))
 
         self.assertEqual(load_project(path)["audio_mix"], expected)
@@ -7858,7 +8080,7 @@ Window {
             encoding="utf-8",
         )
         _, window = self.gui.load_qml(qml, width=1600, height=1000)
-        self.assertEqual(qt_property_value(self._quick_item(window, "mixerSequence"), "pixelsPerSecond"), 96)
+        self.assertEqual(_qt_number(self._quick_item(window, "mixerSequence"), "pixelsPerSecond"), 96)
         self.assertEqual(qt_property_value(self._quick_item(window, "mixerContent"), "initialPosition"), 1250)
         channel_list = self._quick_item(window, "mixerChannelList")
         strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
@@ -7869,7 +8091,7 @@ Window {
         fader = self._quick_visual_item(strip, "mixerChannelFader")
         fader.setProperty("value", -6)
         self.assertTrue(QMetaObject.invokeMethod(fader, "moved"))
-        self.assertAlmostEqual(self.app.audioMixerChannels[0]["volume_percent"], 50.1187, places=2)
+        self.assertAlmostEqual(coerce_float(self.app.audioMixerChannels[0]["volume_percent"]), coerce_float(50.1187), places=2)
         render_button = self._quick_item(window, "mixerRenderButton")
         self.assertFalse(render_button.isEnabled())
         window.setProperty("renderAllowed", True)
@@ -7883,8 +8105,8 @@ Window {
         window.setProperty("mixerOpen", True)
         self.gui.wait_until(lambda: window.findChild(QObject, "mixerContent") is not None,
                             description="独立ミキサーの再生成")
-        self.assertAlmostEqual(self.app.audioMixerChannels[0]["volume_percent"], 50.1187, places=2)
-        self.assertEqual(qt_property_value(self._quick_item(window, "mixerSequence"), "pixelsPerSecond"), 96)
+        self.assertAlmostEqual(coerce_float(self.app.audioMixerChannels[0]["volume_percent"]), coerce_float(50.1187), places=2)
+        self.assertEqual(_qt_number(self._quick_item(window, "mixerSequence"), "pixelsPerSecond"), 96)
 
     def test_qml_mixer_close_does_not_run_callbacks_in_destroyed_context(self) -> None:
         self._load_project()
@@ -7922,7 +8144,7 @@ Window {
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "audioMixerOpenButton"))
         channel_list = self._quick_item(window, "mixerChannelList")
-        self.assertGreater(qt_property_value(channel_list, "contentWidth"), channel_list.width())
+        self.assertGreater(_qt_number(channel_list, "contentWidth"), channel_list.width())
         self.assertEqual(
             self._quick_visual_item(channel_list, "mixerChannelStrip-0").width(),
             170,
@@ -7931,7 +8153,7 @@ Window {
         sequence = self._quick_item(window, "mixerSequence")
         sequence.setProperty("viewportY", 60.0)
         self.app.processEvents()
-        self.assertGreater(qt_property_value(sequence, "viewportY"), 0)
+        self.assertGreater(_qt_number(sequence, "viewportY"), 0)
         lane_body = self._quick_visual_item(sequence, "timelineLaneBody-0")
         lane_label = self._quick_visual_item(sequence, "timelineLaneLabel-0")
         self.assertAlmostEqual(
@@ -7958,7 +8180,7 @@ Window {
             if list_left <= center_x <= list_right:
                 visible_fader = item
                 break
-        self.assertIsNotNone(visible_fader)
+        assert visible_fader is not None
 
         self._click(window, visible_fader)
         QTest.qWait(20)
@@ -7974,7 +8196,7 @@ Window {
         channel_id = str(self.app.audioMixerChannels[0]["id"])
         self.app.updateAudioMixChannel(0, {"enabled": True})
         self.assertTrue(self.app.audioMixerChannels[0]["enabled"])
-        initial_volume = float(self.app.audioMixerChannels[0]["volume_percent"])
+        initial_volume = coerce_float(self.app.audioMixerChannels[0]["volume_percent"])
         self.app.autosave_timer.stop()
         _, window = self._load_qml()
         self.gui.resize(window, 1520, 940)
@@ -7984,7 +8206,7 @@ Window {
         fader = self._quick_visual_item(strip, "mixerChannelFader")
         self.gui.wait_until(lambda: fader.height() >= 180, description="mixer fader layout")
         handle = qt_property_value(fader, "handle")
-        self.assertIsInstance(handle, QQuickItem)
+        assert isinstance(handle, QQuickItem)
         start = handle.mapToScene(QPointF(handle.width() / 2, handle.height() / 2)).toPoint()
         finish = fader.mapToScene(QPointF(fader.width() / 2, fader.height() * 0.75)).toPoint()
         QTest.mousePress(window, Qt.MouseButton.LeftButton, pos=start)
@@ -7992,12 +8214,12 @@ Window {
         for fraction in (0.25, 0.5, 0.75, 1.0):
             QTest.mouseMove(window, start + (finish - start) * fraction, 30)
             self.assertTrue(bool(qt_property_value(fader, "pressed")), f"drag fraction={fraction}")
-            self.assertEqual(float(self.app.audioMixerChannels[0]["volume_percent"]), initial_volume)
+            self.assertEqual(coerce_float(self.app.audioMixerChannels[0]["volume_percent"]), initial_volume)
         QTest.mouseRelease(window, Qt.MouseButton.LeftButton, pos=finish)
         self.gui.process_events()
 
         volume = next(
-            float(channel["volume_percent"])
+            coerce_float(channel["volume_percent"])
             for channel in self.app.audioMixerChannels
             if str(channel["id"]) == channel_id
         )
@@ -8006,10 +8228,10 @@ Window {
         self._click(window, self._quick_item(window, "mixerSaveButton"))
         saved = next(
             channel
-            for channel in load_project(path)["audio_mix"]["channels"]
+            for channel in _dict_list_at(load_project(path), 'audio_mix', 'channels')
             if str(channel["id"]) == channel_id
         )
-        self.assertAlmostEqual(float(saved["volume_percent"]), volume, delta=0.1)
+        self.assertAlmostEqual(coerce_float(saved["volume_percent"]), volume, delta=0.1)
 
     def test_editor_render_action_returns_to_main_and_starts_render(self) -> None:
         self._load_project()
@@ -8019,7 +8241,7 @@ Window {
 
         self._click(window, self._quick_item(window, "editSubtitlesButton"))
         render = self._quick_item(window, "editorRenderButton")
-        self.assertIn("焼き付け", qt_property_value(render, "text"))
+        self.assertIn("焼き付け", _qt_string(render, "text"))
 
         with (
             patch.object(self.app, "saveSettings"),
@@ -8030,7 +8252,8 @@ Window {
 
         self.assertTrue(main.isVisible())
         self.assertFalse(editor.isVisible())
-        render_command, render_job, _ = start.call_args.args
+        render_command = _mock_command(start)
+        _, render_job, _ = _mock_args(start)
         self.assertEqual(render_job, "render")
         self.assertIn("render", render_command)
 
@@ -8070,11 +8293,12 @@ Window {
 
         plain_chat.assert_not_called()
         dispatch.assert_called_once()
-        payload = dispatch.call_args.args[0]
-        trusted_scope = dispatch.call_args.kwargs["trusted_scope"]
-        self.assertEqual(payload["kind"], "propose")
-        self.assertEqual(payload["type"], "propose_subtitle_edit")
-        self.assertEqual(payload["args"]["selection_scope"], "selected")
+        payload = _value_at(_mock_args(dispatch), 0)
+        trusted_scope = _value_at(_mock_kwargs(dispatch), "trusted_scope")
+        assert isinstance(trusted_scope, ActionScope)
+        self.assertEqual(_value_at(payload, 'kind'), "propose")
+        self.assertEqual(_value_at(payload, 'type'), "propose_subtitle_edit")
+        self.assertEqual(_value_at(payload, 'args', 'selection_scope'), "selected")
         self.assertEqual(trusted_scope.allowed_actions, frozenset({"propose_subtitle_edit"}))
         self.assertEqual(
             self.app._codex_chat.snapshot.messages[-1]["content_type"],
@@ -8108,9 +8332,9 @@ Window {
             channels,
             project_revision=revision,
         )
-        before = deepcopy(self.app._project["audio_mix"])
+        before = deepcopy(_value_at(self.app._project, 'audio_mix'))
         self.assertFalse(self.app.applyAudioMixProposal([], False))
-        self.assertEqual(self.app._project["audio_mix"], before)
+        self.assertEqual(_value_at(self.app._project, 'audio_mix'), before)
 
     def test_audio_chat_natural_language_uses_typed_audio_proposal_path(self) -> None:
         self._load_project()
@@ -8132,11 +8356,12 @@ Window {
 
         plain_chat.assert_not_called()
         dispatch.assert_called_once()
-        payload = dispatch.call_args.args[0]
-        trusted_scope = dispatch.call_args.kwargs["trusted_scope"]
-        self.assertEqual(payload["kind"], "propose")
-        self.assertEqual(payload["type"], "propose_audio_mix")
-        self.assertEqual(payload["args"]["intent"], "声を聞きやすくして")
+        payload = _value_at(_mock_args(dispatch), 0)
+        trusted_scope = _value_at(_mock_kwargs(dispatch), "trusted_scope")
+        assert isinstance(trusted_scope, ActionScope)
+        self.assertEqual(_value_at(payload, 'kind'), "propose")
+        self.assertEqual(_value_at(payload, 'type'), "propose_audio_mix")
+        self.assertEqual(_value_at(payload, 'args', 'intent'), "声を聞きやすくして")
         self.assertEqual(trusted_scope.allowed_actions, frozenset({"propose_audio_mix"}))
         self.assertEqual(
             self.app._codex_chat.snapshot.messages[-1]["content_type"],
@@ -8160,7 +8385,7 @@ Window {
         self.app._codex_chat._snapshot = authenticated
         original_gemini = self.app._gemini_chat.snapshot
         self.addCleanup(self.app._ai_chat.select_provider, "codex")
-        self.addCleanup(setattr, self.app._gemini_chat, "_snapshot", original_gemini)
+        self.addCleanup(lambda: setattr(self.app._gemini_chat, "_snapshot", original_gemini))
         self.app._gemini_chat._snapshot = CodexChatSnapshot(
             provider_id="gemini",
             provider_name="Gemini",
@@ -8187,7 +8412,7 @@ Window {
         )
 
         provider_combo = self._quick_item(window, "aiProviderHeaderCombo")
-        self.assertEqual(qt_property_value(provider_combo, "count"), 2)
+        self.assertEqual(_qt_number(provider_combo, "count"), 2)
         self._assert_quick_item_within(window.contentItem(), provider_combo)
         self._click(window, provider_combo)
         QTest.keyClick(window, Qt.Key.Key_Down)
@@ -8261,14 +8486,14 @@ Window {
             self.app._project_revision, self.app.projectDirty, path.read_bytes(),
         )
 
-        self.assertTrue(qt_property_value(panel, "expanded"))
+        self.assertTrue(_qt_bool(panel, "expanded"))
         self.assertTrue(toggle.isVisible())
         self._assert_quick_item_within(window.contentItem(), toggle)
         self._click(window, toggle)
-        self.assertFalse(qt_property_value(panel, "expanded"))
+        self.assertFalse(_qt_bool(panel, "expanded"))
         self._click(window, toggle)
         self.gui.wait_until(
-            lambda: qt_property_value(panel, "expanded") and panel.height() > 170,
+            lambda: _qt_bool(panel, "expanded") and panel.height() > 170,
             description="AIチャットの再展開後にレイアウトが確定",
         )
 
@@ -8283,12 +8508,12 @@ Window {
         with patch.object(self.app._codex_chat, "login") as login:
             self._click(window, relogin)
         login.assert_called_once_with(relogin=True)
-        self.assertTrue(qt_property_value(panel, "expanded"))
+        self.assertTrue(_qt_bool(panel, "expanded"))
 
         with patch.object(self.app._codex_chat, "logout") as disconnect:
             self._click(window, logout)
         disconnect.assert_called_once_with()
-        self.assertFalse(qt_property_value(panel, "expanded"))
+        self.assertFalse(_qt_bool(panel, "expanded"))
         self.assertEqual(
             (self.app._project, self.app._undo_stack, self.app._project_revision,
              self.app.projectDirty, path.read_bytes()),
@@ -8320,7 +8545,7 @@ Window {
             self.app._on_codex_chat_state(snapshot)
             self.app.processEvents()
             self.assertTrue(button.isVisible())
-            self.assertEqual(qt_property_value(button, "text"), label)
+            self.assertEqual(_qt_string(button, "text"), label)
             self._assert_quick_item_within(window.contentItem(), button)
             if label == "Codexログイン":
                 with patch.object(self.app._ai_chat, "login") as login:
@@ -8334,7 +8559,7 @@ Window {
                 with patch("src.gui_ai_facade.QDesktopServices.openUrl", return_value=True) as open_url:
                     self._click(window, button)
                 open_url.assert_called_once()
-                self.assertEqual(open_url.call_args.args[0].toString(), snapshot.login_url)
+                self.assertEqual(_mock_url(open_url).toString(), snapshot.login_url)
         self.assertEqual(
             (self.app._project, self.app._undo_stack, self.app._project_revision,
              self.app.projectDirty, path.read_bytes()),
@@ -8432,8 +8657,8 @@ Window {
         self.assertFalse(login_route.isVisible())
         self._click(window, self._quick_item(window, "inspectorCodexTabButton"))
         self.assertTrue(login_route.isVisible())
-        self.assertTrue(qt_property_value(login_route, "enabled"))
-        self.assertEqual(qt_property_value(login_route, "text"), "Geminiログイン")
+        self.assertTrue(_qt_bool(login_route, "enabled"))
+        self.assertEqual(_qt_string(login_route, "text"), "Geminiログイン")
 
         with patch.object(self.app._gemini_chat, "login") as gemini_login:
             self._click(window, login_route)
@@ -8554,8 +8779,8 @@ Window {
 
         self.assertEqual(self.app.status, "文字起こしを実行しています")
         self.assertEqual(self.app.stage, "TRANSCRIBE")
-        payload = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["shared"]["codex_model"], "gpt-default")
+        payload = decode_json(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(_value_at(payload, 'shared', 'codex_model'), "gpt-default")
 
     def test_codex_chat_connects_during_backend_startup(self) -> None:
         self.assertEqual(self._codex_chat_connect_calls, 2)
@@ -8580,15 +8805,15 @@ Window {
         self.assertFalse(editor.isVisible())
         self.assertTrue(mixer.isVisible())
         channel_list = self._quick_item(window, "mixerChannelList")
-        self.assertEqual(qt_property_value(channel_list, "count"), 2)
+        self.assertEqual(_qt_number(channel_list, "count"), 2)
         preview_players = window.findChild(QObject, "mixerPreviewPlayers")
         self.assertIsNotNone(preview_players)
-        self.assertEqual(qt_property_value(preview_players, "count"), 1)
+        self.assertEqual(_qt_number(preview_players, "count"), 1)
         preview_player = window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0")
         self.assertIsNotNone(preview_player)
         for name in ("mixerPlayButton", "mixerRewindButton", "mixerSeek", "mixerForwardButton"):
             self.assertFalse(self._quick_item(window, name).isEnabled(), name)
-        video_channel_id = self.app.audioMixerChannels[0]["id"]
+        video_channel_id = _string_at(self.app.audioMixerChannels[0], "id")
         video_channel_strip = self._quick_visual_item(channel_list, "mixerChannelStrip-0")
         video_mute_button = self._quick_visual_item(video_channel_strip, "mixerMuteButton")
         self._assert_quick_item_within(window.contentItem(), video_mute_button)
@@ -8596,7 +8821,7 @@ Window {
 
         self._click(window, video_mute_button)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(preview_players, "count"), 1)
+        self.assertEqual(_qt_number(preview_players, "count"), 1)
         self.assertIs(
             window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
             preview_player,
@@ -8607,7 +8832,7 @@ Window {
 
         self._click(window, video_mute_button)
         self.app.processEvents()
-        self.assertEqual(qt_property_value(preview_players, "count"), 1)
+        self.assertEqual(_qt_number(preview_players, "count"), 1)
         self.assertIs(
             window.findChild(QObject, "mixerPreviewPlayer-video:0:a:0"),
             preview_player,
@@ -8615,7 +8840,7 @@ Window {
         self.assertEqual(self.app.audioMixerPreviewGains[video_channel_id], 1.0)
         cache_summary = self._quick_item(window, "mixerAudioPreviewCacheSummary")
         cache_clear = self._quick_item(window, "mixerClearAudioPreviewCacheButton")
-        self.assertIn("プレビュー", qt_property_value(cache_summary, "text"))
+        self.assertIn("プレビュー", _qt_string(cache_summary, "text"))
         self.assertGreater(cache_clear.width(), 0)
 
         mixer_items = [
@@ -8720,20 +8945,20 @@ Window {
             commit = QInputMethodEvent("", [])
             commit.setCommitString(value)
             QCoreApplication.sendEvent(field, commit)
-            self.assertEqual(qt_property_value(field, "text"), value)
+            self.assertEqual(_qt_string(field, "text"), value)
 
         self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
-        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
-        saved = config["craig_pipeline"]["transcription_context"]
+        config = decode_json(self.app.gui_config_path.read_text(encoding="utf-8"))
+        saved = _value_at(config, 'craig_pipeline', 'transcription_context')
         for _name, _value, key, expected in values:
             self.assertEqual(self.app.transcriptionContext[key], expected)
-        self.assertEqual(saved["creator_terms"], ["AlphaTerm", "BetaTerm"])
-        self.assertEqual(saved["game_notes"], "Boss appears after stage two")
+        self.assertEqual(_value_at(saved, 'creator_terms'), ["AlphaTerm", "BetaTerm"])
+        self.assertEqual(_value_at(saved, 'game_notes'), "Boss appears after stage two")
 
         self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
         for name, _value, _key, expected in values:
-            self.assertEqual(qt_property_value(self._quick_visual_item(page, name), "text"), expected)
+            self.assertEqual(_qt_string(self._quick_visual_item(page, name), "text"), expected)
 
     def test_dictionary_confirmation_switch_saves_and_reopens_from_screen(self) -> None:
         _, window = self._load_qml()
@@ -8744,27 +8969,27 @@ Window {
         path_field = self._quick_visual_item(page, "transcriptionDictionaryPathField")
         path_field.setProperty("text", str(dictionary_path))
         confirmation = self._quick_item(window, "transcriptionDictionaryConfirmedSwitch")
-        self.assertFalse(qt_property_value(confirmation, "checked"))
+        self.assertFalse(_qt_bool(confirmation, "checked"))
         self.assertTrue(confirmation.isEnabled())
         self._assert_quick_item_within(page, confirmation)
 
         self._click(window, confirmation)
-        self.assertTrue(qt_property_value(confirmation, "checked"))
+        self.assertTrue(_qt_bool(confirmation, "checked"))
         self.assertEqual(self.app.transcriptionContext["dictionary_path"], str(dictionary_path))
         self.assertTrue(self.app.transcriptionContext["dictionary_confirmed"])
         self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
-        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
-        self.assertTrue(config["craig_pipeline"]["transcription_context"]["dictionary_confirmed"])
+        config = decode_json(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertTrue(_value_at(config, 'craig_pipeline', 'transcription_context', 'dictionary_confirmed'))
 
         self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
         self.assertFalse(page.isVisible())
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
-        self.assertTrue(qt_property_value(confirmation, "checked"))
+        self.assertTrue(_qt_bool(confirmation, "checked"))
         self._click(window, confirmation)
         self.assertFalse(self.app.transcriptionContext["dictionary_confirmed"])
         self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
-        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
-        self.assertFalse(config["craig_pipeline"]["transcription_context"]["dictionary_confirmed"])
+        config = decode_json(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertFalse(_value_at(config, 'craig_pipeline', 'transcription_context', 'dictionary_confirmed'))
 
     def test_web_dictionary_candidate_actions_save_and_reload_from_screen(self) -> None:
         _, window = self._load_qml()
@@ -8777,7 +9002,7 @@ Window {
             "text", "Bomba and Ink"
         )
         self._click(window, self._quick_item(window, "transcriptionWebDictionaryRefreshButton"))
-        candidates = self.app.transcriptionContext["web_dictionary_candidates"]
+        candidates = _string_list_at(self.app.transcriptionContext, "web_dictionary_candidates")
         self.assertIn("Splatoon 3", candidates)
         self.assertIn("Bomba", candidates)
         self.assertIn("Ink", candidates)
@@ -8795,8 +9020,8 @@ Window {
         manual_field = self._quick_visual_item(panel, "transcriptionWebDictionaryManualTermField")
         manual_field.setProperty("text", "CustomTerm")
         self._click(window, self._quick_item(window, "transcriptionWebDictionaryAddButton"))
-        self.assertIn("CustomTerm", self.app.transcriptionContext["web_dictionary_candidates"])
-        self.assertEqual(qt_property_value(manual_field, "text"), "")
+        self.assertIn("CustomTerm", _string_list_at(self.app.transcriptionContext, "web_dictionary_candidates"))
+        self.assertEqual(_qt_string(manual_field, "text"), "")
 
         self._click(window, self._quick_item(window, "transcriptionWebDictionarySelectAllButton"))
         self.assertEqual(
@@ -8807,24 +9032,24 @@ Window {
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [])
 
         candidate_list = self._quick_item(window, "transcriptionWebDictionaryCandidateList")
-        scroll_content = qt_property_value(candidate_list, "contentItem")
-        self.assertGreater(qt_property_value(scroll_content, "contentHeight"), scroll_content.height())
+        scroll_content = _qt_item(candidate_list, "contentItem")
+        self.assertGreater(_qt_number(scroll_content, "contentHeight"), scroll_content.height())
         def scroll_to_last_candidate() -> None:
             def last_row_bottom() -> float:
                 rows = [
                     item.parentItem() for item in self.gui.visual_items(candidate_list)
                     if item.objectName() == "transcriptionWebDictionaryCandidateItem"
                     and qt_property_value(item.parentItem(), "term") == "CustomTerm"
-                    and qt_property_value(item.parentItem(), "index") >= 0
+                    and _qt_number(item.parentItem(), "index") >= 0
                 ]
                 return rows[0].y() + rows[0].height() if rows else float("inf")
 
             self.gui.wait_until(
-                lambda: coerce_float(qt_property_value(scroll_content, "contentHeight")) >= last_row_bottom(),
+                lambda: coerce_float(_qt_number(scroll_content, "contentHeight")) >= last_row_bottom(),
                 description="候補一覧のスクロール範囲",
             )
             scroll_content.setProperty(
-                "contentY", qt_property_value(scroll_content, "contentHeight") - scroll_content.height()
+                "contentY", _qt_number(scroll_content, "contentHeight") - scroll_content.height()
             )
             self.app.processEvents()
 
@@ -8836,28 +9061,33 @@ Window {
                     item for item in self.gui.visual_items(candidate_list)
                     if item.objectName() == name and item.isVisible()
                     and qt_property_value(item.parentItem(), "term") == term
-                    and qt_property_value(item.parentItem(), "index") >= 0
+                    and _qt_number(item.parentItem(), "index") >= 0
                     and 0 <= item.mapToItem(candidate_list, QPointF(item.width() / 2, item.height() / 2)).y()
                     <= candidate_list.height()
                 ]
             self.gui.wait_until(lambda: bool(matches()), description=f"{term} の{name}")
-            return min(matches(), key=lambda item: qt_property_value(item.parentItem(), "index"))
+            found = matches()
+            selected = found[0]
+            for candidate in found[1:]:
+                if _qt_number(candidate.parentItem(), "index") < _qt_number(selected.parentItem(), "index"):
+                    selected = candidate
+            return selected
 
         self._click(window, active_candidate("transcriptionWebDictionaryCandidateItem", "CustomTerm"))
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], ["CustomTerm"])
         scroll_to_last_candidate()
         self._click(window, active_candidate("transcriptionWebDictionaryRemoveButton", "CustomTerm"))
-        self.assertNotIn("CustomTerm", self.app.transcriptionContext["web_dictionary_candidates"])
+        self.assertNotIn("CustomTerm", _string_list_at(self.app.transcriptionContext, "web_dictionary_candidates"))
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], [])
         self._click(window, self._quick_item(window, "transcriptionWebDictionarySelectAllButton"))
 
         expected = deepcopy(self.app.transcriptionContext)
         self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
-        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
-        saved = config["craig_pipeline"]["transcription_context"]
-        self.assertEqual(saved["web_dictionary_candidates"], expected["web_dictionary_candidates"])
-        self.assertEqual(saved["web_dictionary_terms"], expected["web_dictionary_terms"])
-        self.assertTrue(saved["web_dictionary_enabled"])
+        config = decode_json(self.app.gui_config_path.read_text(encoding="utf-8"))
+        saved = _value_at(config, 'craig_pipeline', 'transcription_context')
+        self.assertEqual(_value_at(saved, 'web_dictionary_candidates'), _value_at(expected, 'web_dictionary_candidates'))
+        self.assertEqual(_value_at(saved, 'web_dictionary_terms'), _value_at(expected, 'web_dictionary_terms'))
+        self.assertTrue(_value_at(saved, 'web_dictionary_enabled'))
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
         self.assertEqual(self.app.transcriptionContext["web_dictionary_candidates"], expected["web_dictionary_candidates"])
         self.assertEqual(self.app.transcriptionContext["web_dictionary_terms"], expected["web_dictionary_terms"])
@@ -8872,16 +9102,16 @@ Window {
         commit = QInputMethodEvent("", [])
         commit.setCommitString(url)
         QCoreApplication.sendEvent(field, commit)
-        self.assertEqual(qt_property_value(field, "text"), url)
+        self.assertEqual(_qt_string(field, "text"), url)
 
         with patch("src.gui_base.fetch_web_dictionary_source", return_value="Bomba and Ink") as fetch:
             self._click(window, self._quick_item(window, "transcriptionWebDictionaryRefreshButton"))
 
         fetch.assert_called_once_with(url)
-        self.assertIn("Bomba", self.app.transcriptionContext["web_dictionary_candidates"])
+        self.assertIn("Bomba", _string_list_at(self.app.transcriptionContext, "web_dictionary_candidates"))
         self.assertTrue(any(
             item["source"] == url
-            for item in self.app.transcriptionContext["web_dictionary_candidate_metadata"]
+            for item in _dict_list_at(self.app.transcriptionContext, "web_dictionary_candidate_metadata")
         ))
 
     def test_dictionary_shortcuts_preserve_pending_input_during_processing(self) -> None:
@@ -8900,12 +9130,12 @@ Window {
         title_field = self._quick_visual_item(page, "transcriptionGameTitleField")
         save_shortcut = window.findChild(QObject, "transcriptionDictionarySaveShortcut")
         self.assertIsNotNone(save_shortcut)
-        self.assertTrue(qt_property_value(save_shortcut, "enabled"))
+        self.assertTrue(_qt_bool(save_shortcut, "enabled"))
         title_field.forceActiveFocus()
         for char in "pending game":
             QTest.keyClick(window, Qt.Key(ord(char.upper())))
         self.app.processEvents()
-        self.assertEqual(qt_property_value(title_field, "text"), "pending game")
+        self.assertEqual(_qt_string(title_field, "text"), "pending game")
 
         config_path = self.app.gui_config_path
         before_config = config_path.read_bytes() if config_path.is_file() else None
@@ -8916,7 +9146,7 @@ Window {
             self.app.processEvents()
             self.assertFalse(self._quick_item(window, "transcriptionDictionarySaveButton").isEnabled())
             self.assertFalse(self._quick_item(window, "transcriptionDictionaryBackButton").isEnabled())
-            self.assertFalse(qt_property_value(save_shortcut, "enabled"))
+            self.assertFalse(_qt_bool(save_shortcut, "enabled"))
             for name in (
                 "transcriptionDictionaryConfirmedSwitch",
                 "transcriptionWebDictionarySwitch",
@@ -8938,7 +9168,7 @@ Window {
             self.assertTrue(page.isVisible())
             self.assertFalse(window.close())
             self.assertTrue(window.isVisible())
-            self.assertEqual(qt_property_value(title_field, "text"), "pending game")
+            self.assertEqual(_qt_string(title_field, "text"), "pending game")
             self.assertEqual(self.app.transcriptionContext, before_context)
             self.assertEqual(
                 config_path.read_bytes() if config_path.is_file() else None,
@@ -8950,7 +9180,7 @@ Window {
 
         self.app.processEvents()
         self.assertTrue(self._quick_item(window, "transcriptionDictionarySaveButton").isEnabled())
-        self.assertTrue(qt_property_value(save_shortcut, "enabled"))
+        self.assertTrue(_qt_bool(save_shortcut, "enabled"))
         self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
         self.assertFalse(page.isVisible())
         self.assertEqual(self.app.transcriptionContext["game_title"], "pending game")
@@ -8965,12 +9195,12 @@ Window {
         for char in "closing draft":
             QTest.keyClick(window, Qt.Key(ord(char.upper())))
         self.app.processEvents()
-        self.assertEqual(qt_property_value(title_field, "text"), "closing draft")
+        self.assertEqual(_qt_string(title_field, "text"), "closing draft")
 
         self.assertTrue(window.close())
         self.assertEqual(self.app.transcriptionContext["game_title"], "closing draft")
-        config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
-        self.assertEqual(config["craig_pipeline"]["transcription_context"]["game_title"], "closing draft")
+        config = decode_json(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(_value_at(config, 'craig_pipeline', 'transcription_context', 'game_title'), "closing draft")
 
     def test_dictionary_save_failure_keeps_window_open_for_retry(self) -> None:
         _, window = self._load_qml()
@@ -8988,7 +9218,7 @@ Window {
             self.assertFalse(window.close())
         self.assertTrue(page.isVisible())
         self.assertTrue(window.isVisible())
-        self.assertEqual(qt_property_value(title_field, "text"), "retry draft")
+        self.assertEqual(_qt_string(title_field, "text"), "retry draft")
         self.assertEqual(
             config_path.read_bytes() if config_path.is_file() else None,
             before_config,
@@ -8996,8 +9226,8 @@ Window {
 
         self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
         self.assertFalse(page.isVisible())
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        self.assertEqual(config["craig_pipeline"]["transcription_context"]["game_title"], "retry draft")
+        config = decode_json(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(_value_at(config, 'craig_pipeline', 'transcription_context', 'game_title'), "retry draft")
 
     def test_large_lists_stay_virtualized_and_editor_reuses_main_player(self) -> None:
         self._load_large_project()
@@ -9026,7 +9256,7 @@ Window {
             window,
             object_name_prefix="timelineCaption-",
         )
-        self.assertEqual(qt_property_value(caption_table, "count"), 3_000)
+        self.assertEqual(_qt_number(caption_table, "count"), 3_000)
         self.assertGreater(caption_delegates, 0)
         self.assertLess(caption_delegates, 100)
         self.assertGreater(timeline_delegates, 0)
@@ -9082,7 +9312,7 @@ Window {
             object_name_prefix="shortModeClipItem",
         )
 
-        self.assertEqual(qt_property_value(clip_list, "count"), 3_000)
+        self.assertEqual(_qt_number(clip_list, "count"), 3_000)
         self.assertGreater(delegates, 0)
         self.assertLess(delegates, 100)
 
@@ -9217,8 +9447,8 @@ Window {
             capture_output=True,
             text=True,
         )
-        payload = json.loads(result.stdout)
-        return float(payload["format"]["duration"]), str(payload["streams"][0]["pix_fmt"])
+        payload = decode_json(result.stdout)
+        return coerce_float(_value_at(payload, 'format', 'duration')), str(_value_at(payload, 'streams', 0, 'pix_fmt'))
 
     def _measure_audio_mean_volume(self, media: Path, audio_filter: str = "") -> float:
         filters = f"{audio_filter},volumedetect" if audio_filter else "volumedetect"
@@ -9231,7 +9461,8 @@ Window {
             capture_output=True,
             text=True,
         )
-        matches = re.findall(r"mean_volume:\s*(-?[0-9]+(?:\.[0-9]+)?) dB", result.stderr)
+        pattern: re.Pattern[str] = re.compile(r"mean_volume:\s*(-?[0-9]+(?:\.[0-9]+)?) dB")
+        matches = [match.group(1) for match in pattern.finditer(result.stderr)]
         self.assertTrue(matches, result.stderr)
         return float(matches[-1])
 
@@ -9292,7 +9523,7 @@ Window {
         for char in "0.100":
             QTest.keyClick(window, Qt.Key(ord(char)))
         self.app.processEvents()
-        self.assertEqual(qt_property_value(start_field, "text"), "0.100")
+        self.assertEqual(_qt_string(start_field, "text"), "0.100")
 
         progress_changes = QSignalSpy(self.app.progressChanged)
         finished = QSignalSpy(self.app.process.finished)
@@ -9302,8 +9533,8 @@ Window {
                 self.assertTrue(finished.wait(30_000), self.app.process.errorString())
             self.app.processEvents()
 
-        self.assertEqual(Path(captured_options["config_path"]).resolve(), self.app.gui_config_path.resolve())
-        self.assertEqual(Path(captured_options["project_path"]).resolve(), project_path.resolve())
+        self.assertEqual(_path_at(captured_options, "config_path").resolve(), self.app.gui_config_path.resolve())
+        self.assertEqual(_path_at(captured_options, "project_path").resolve(), project_path.resolve())
         self.assertFalse(editor.isVisible())
         self.assertTrue(self._quick_item(window, "mainWorkspace").isVisible())
         self.assertEqual(
@@ -9318,11 +9549,11 @@ Window {
         self.assertIn("Render complete", self.app._log)
 
         saved_project = load_project(project_path)
-        self.assertEqual(saved_project["segments"][0]["start"], 0.1)
-        self.assertEqual(saved_project["segments"][0]["text"], "E2E BURNED CAPTION")
-        self.assertTrue(saved_project["segments"][0]["manual_text"])
-        self.assertGreater(saved_project["subtitle_settings"]["font_size"], 0)
-        output = Path(saved_project["render_settings"]["last_output"])
+        self.assertEqual(_value_at(saved_project, 'segments', 0, 'start'), 0.1)
+        self.assertEqual(_value_at(saved_project, 'segments', 0, 'text'), "E2E BURNED CAPTION")
+        self.assertTrue(_value_at(saved_project, 'segments', 0, 'manual_text'))
+        self.assertGreater(coerce_float(_value_at(saved_project, 'subtitle_settings', 'font_size')), coerce_float(0))
+        output = Path(_string_at(saved_project, 'render_settings', 'last_output'))
         self.assertTrue(output.is_file())
         self.assertGreater(output.stat().st_size, 0)
 
@@ -9359,8 +9590,8 @@ Window {
         video = self.root / "game.mkv"
         audio = self.root / "1-alice.flac"
         self._generate_silence_cut_test_media(video, audio)
-        self.app._project["video"]["duration_seconds"] = 3.0
-        save_project(project_path, self.app._project)
+        _dict_at(self._project_data(), "video")["duration_seconds"] = 3.0
+        save_project(project_path, _object_project(self.app._project))
         process_python = sys.executable
         self.app.workspace_root = Path(__file__).resolve().parents[1]
 
@@ -9393,12 +9624,12 @@ Window {
 
         saved_project = load_project(project_path)
         render_settings = saved_project["render_settings"]
-        self.assertTrue(render_settings["cut_no_speech"])
-        self.assertEqual(render_settings["no_speech_min_seconds"], 0.5)
-        self.assertEqual(render_settings["speech_padding_seconds"], 0.0)
-        self.assertEqual(render_settings["speech_threshold_db"], "-35dB")
-        cut_output = Path(render_settings["last_cut_output"])
-        output = Path(render_settings["last_output"])
+        self.assertTrue(_value_at(render_settings, 'cut_no_speech'))
+        self.assertEqual(_value_at(render_settings, 'no_speech_min_seconds'), 0.5)
+        self.assertEqual(_value_at(render_settings, 'speech_padding_seconds'), 0.0)
+        self.assertEqual(_value_at(render_settings, 'speech_threshold_db'), "-35dB")
+        cut_output = Path(_string_at(render_settings, 'last_cut_output'))
+        output = Path(_string_at(render_settings, 'last_output'))
         self.assertTrue(cut_output.is_file())
         self.assertTrue(output.is_file())
 
@@ -9471,9 +9702,9 @@ Window {
         self.assertTrue(updated_video["muted"])
         self.assertTrue(updated_external["enabled"])
         self.assertTrue(updated_external["solo"])
-        self.assertGreater(float(updated_external["volume_percent"]), 35.0)
-        self.assertLess(float(updated_external["volume_percent"]), 65.0)
-        configured_volume = float(updated_external["volume_percent"])
+        self.assertGreater(coerce_float(updated_external["volume_percent"]), 35.0)
+        self.assertLess(coerce_float(updated_external["volume_percent"]), 65.0)
+        configured_volume = coerce_float(updated_external["volume_percent"])
 
         self._quick_item(window, "normalizeSwitch").setProperty("checked", False)
         finished = QSignalSpy(self.app.process.finished)
@@ -9487,19 +9718,19 @@ Window {
         self.assertIn("Rendering edited subtitles", self.app._log)
         self.assertIn("Render complete", self.app._log)
         saved_project = load_project(project_path)
-        self.assertTrue(saved_project["audio_mix"]["customized"])
+        self.assertTrue(_value_at(saved_project, 'audio_mix', 'customized'))
         saved_video = next(
-            channel for channel in saved_project["audio_mix"]["channels"] if str(channel["id"]) == video_id
+            channel for channel in _dict_list_at(saved_project, 'audio_mix', 'channels') if str(_value_at(channel, 'id')) == video_id
         )
         saved_external = next(
-            channel for channel in saved_project["audio_mix"]["channels"] if str(channel["id"]) == external_id
+            channel for channel in _dict_list_at(saved_project, 'audio_mix', 'channels') if str(_value_at(channel, 'id')) == external_id
         )
         self.assertTrue(saved_video["muted"])
         self.assertTrue(saved_external["enabled"])
         self.assertTrue(saved_external["solo"])
-        self.assertAlmostEqual(float(saved_external["volume_percent"]), configured_volume, delta=0.1)
+        self.assertAlmostEqual(coerce_float(saved_external["volume_percent"]), configured_volume, delta=0.1)
 
-        output = Path(saved_project["render_settings"]["last_output"])
+        output = Path(_string_at(saved_project, 'render_settings', 'last_output'))
         self.assertTrue(output.is_file())
         output_mean_volume = self._measure_audio_mean_volume(output)
         reference_mean_volume = self._measure_audio_mean_volume(
@@ -9528,13 +9759,13 @@ Window {
         self.app.processEvents()
 
         video_label = self._quick_item(window, "sourceVideoPathText")
-        self.assertEqual(qt_property_value(video_label, "text"), "未選択")
+        self.assertEqual(_qt_string(video_label, "text"), "未選択")
 
         self.app.setVideoFile(str(video))
         self.app.processEvents()
 
         self.assertEqual(self.app.sourceSelection["video"], str(video.resolve()))
-        self.assertIn(video.name, qt_property_value(video_label, "text"))
+        self.assertIn(video.name, _qt_string(video_label, "text"))
         self.assertEqual(self.app.stage, "INPUT")
         self.assertIn("話者音声", self.app.status)
 
@@ -9553,13 +9784,13 @@ Window {
         self.app.processEvents()
 
         video_label = self._quick_item(window, "sourceVideoPathText")
-        self.assertEqual(qt_property_value(video_label, "text"), "未選択")
+        self.assertEqual(_qt_string(video_label, "text"), "未選択")
 
         self.app.setVideoFile(str(bad_video))
         self.app.processEvents()
 
         self.assertEqual(self.app.sourceSelection["video"], "")
-        self.assertEqual(qt_property_value(video_label, "text"), "未選択")
+        self.assertEqual(_qt_string(video_label, "text"), "未選択")
         self.assertEqual(self.app.stage, "CHECK")
         self.assertIn("検証に失敗", self.app.status)
 
@@ -9568,16 +9799,16 @@ Window {
         _, window = self._load_qml()
 
         open_button = self._quick_item(window, "workspaceHeaderShortButton")
-        self.assertTrue(qt_property_value(open_button, "visible"))
-        self.assertTrue(qt_property_value(open_button, "enabled"))
+        self.assertTrue(_qt_bool(open_button, "visible"))
+        self.assertTrue(_qt_bool(open_button, "enabled"))
 
         self._click(window, open_button)
         short_page = self._quick_item(window, "shortModePage")
-        self.assertTrue(qt_property_value(short_page, "visible"))
+        self.assertTrue(_qt_bool(short_page, "visible"))
 
         back_button = self._quick_item(window, "shortModeBackButton")
         self._click(window, back_button)
-        self.assertFalse(qt_property_value(short_page, "visible"))
+        self.assertFalse(_qt_bool(short_page, "visible"))
 
     def test_new_shell_short_workspace_restores_normal_player_and_isolates_preview(self) -> None:
         self._load_project()
@@ -9588,7 +9819,7 @@ Window {
 
         header_open = self._quick_item(window, "workspaceHeaderShortButton")
         self.assertTrue(header_open.isVisible())
-        self.assertTrue(qt_property_value(header_open, "enabled"))
+        self.assertTrue(_qt_bool(header_open, "enabled"))
         self._click(window, header_open)
 
         short_page = self._quick_item(window, "shortModePage")
@@ -9631,7 +9862,7 @@ Window {
         self.assertTrue(provider_combo.isVisible())
         self.assertEqual(qt_property_value(provider_combo, "currentValue"), "gemini")
         self.assertTrue(login_route.isVisible())
-        self.assertEqual(qt_property_value(login_route, "text"), "Geminiログイン")
+        self.assertEqual(_qt_string(login_route, "text"), "Geminiログイン")
 
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         self.assertTrue(self._quick_item(window, "shortModePage").isVisible())
@@ -9656,7 +9887,7 @@ Window {
 
         short_page = self._quick_item(window, "shortModePage")
         short_player = self.gui.find_object(window, "shortPreviewPlayer", QMediaPlayer)
-        self.assertTrue(qt_property_value(short_page, "visible"))
+        self.assertTrue(_qt_bool(short_page, "visible"))
         self.assertEqual(qt_property_value(short_page, "workspaceKind"), "short-artifact")
         self.assertEqual(self.app.currentWorkspace, "short-artifact")
         self.assertEqual(self.app.currentEditMode, "audio")
@@ -9674,22 +9905,22 @@ Window {
         self._load_project()
         self.app.initializeShortVideoClips()
         self.assertTrue(self.app.setShortVideoTransition("fade", 3.0))
-        before = deepcopy(self.app._project["short_video"])
+        before = deepcopy(_value_at(self.app._project, 'short_video'))
         revision = self.app._project_revision
         history_count = len(self.app._undo_stack)
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
-        self.assertEqual(self.app._project["short_video"], before)
+        self.assertEqual(_value_at(self.app._project, 'short_video'), before)
         self.assertEqual(self.app._project_revision, revision)
         self.assertEqual(len(self.app._undo_stack), history_count)
         self.assertTrue(self.app.setShortVideoTransition("fade", 0.5))
         self.app.undoEdit()
         self.app.processEvents()
-        self.assertEqual(self.app._project["short_video"], before)
+        self.assertEqual(_value_at(self.app._project, 'short_video'), before)
         self.assertTrue(self.app.canRedo)
         self.app.redoEdit()
         self.app.processEvents()
-        self.assertEqual(self.app.shortVideoSettings["transition"]["duration"], 0.5)
+        self.assertEqual(_value_at(self.app.shortVideoSettings, 'transition', 'duration'), 0.5)
 
     def test_short_mode_transition_duration_uses_internal_values(self) -> None:
         self._load_project()
@@ -9707,9 +9938,9 @@ Window {
             self.app.processEvents()
 
             transition = self.app.shortVideoSettings["transition"]
-            self.assertEqual(transition["type"], transition_type)
-            self.assertAlmostEqual(float(transition["duration"]), duration, delta=0.1)
-            self.assertAlmostEqual(coerce_float(qt_property_value(duration_slider, "value")), float(transition["duration"]))
+            self.assertEqual(_value_at(transition, 'type'), transition_type)
+            self.assertAlmostEqual(coerce_float(_value_at(transition, 'duration')), duration, delta=0.1)
+            self.assertAlmostEqual(coerce_float(qt_property_value(duration_slider, "value")), coerce_float(_value_at(transition, 'duration')))
 
     def test_short_mode_settings_controls_save_round_trip(self) -> None:
         project_path = self._load_project()
@@ -9728,11 +9959,11 @@ Window {
         self._click(window, transition_combo)
         QTest.keyClick(window, Qt.Key.Key_Down)
         QTest.keyClick(window, Qt.Key.Key_Return)
-        self.assertEqual(self.app.shortVideoSettings["transition"]["type"], "fade")
+        self.assertEqual(_value_at(self.app.shortVideoSettings, 'transition', 'type'), "fade")
 
         duration_slider = self._quick_item(window, "shortModeTransitionDurationSlider")
         self.gui.click_at(window, duration_slider, duration_slider.width() * 0.65, duration_slider.height() / 2)
-        duration = float(self.app.shortVideoSettings["transition"]["duration"])
+        duration = coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration'))
         self.assertGreater(duration, 0.5)
 
         scale_spin = self._quick_item(window, "shortModeSubtitleScaleSpin")
@@ -9748,7 +9979,7 @@ Window {
         ) as choose_bgm:
             self._click(window, self._quick_item(window, "shortModeBgmBrowseButton"))
         choose_bgm.assert_called_once()
-        self.assertEqual(self.app.shortVideoSettings["bgm"]["path"], str(bgm_path))
+        self.assertEqual(_value_at(self.app.shortVideoSettings, 'bgm', 'path'), str(bgm_path))
 
         for name, value, field in (
             ("shortModeBgmInField", "0.500", "in"),
@@ -9759,66 +9990,66 @@ Window {
             self._click(window, time_field)
             self._replace_focused_time(window, time_field, value)
             QTest.keyClick(window, Qt.Key.Key_Return)
-            self.assertAlmostEqual(self.app.shortVideoSettings["bgm"][field], float(value))
+            self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, "bgm", field)), float(value))
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
-        volume = float(self.app.shortVideoSettings["bgm"]["volume"])
+        volume = coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume'))
         self.assertGreater(volume, 0.4)
 
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
         saved = load_project(project_path)["short_video"]
-        self.assertEqual(saved["global_fit"], "contain")
-        self.assertEqual(saved["transition"], {"type": "fade", "duration": duration})
-        self.assertEqual(saved["subtitle_scale_percent"], 151)
-        self.assertEqual(saved["bgm"]["path"], str(bgm_path))
+        self.assertEqual(_value_at(saved, 'global_fit'), "contain")
+        self.assertEqual(_value_at(saved, 'transition'), {"type": "fade", "duration": duration})
+        self.assertEqual(_value_at(saved, 'subtitle_scale_percent'), 151)
+        self.assertEqual(_value_at(saved, 'bgm', 'path'), str(bgm_path))
         for field, expected in (("in", 0.5), ("out", 2.0), ("start", 1.0), ("volume", volume)):
-            self.assertAlmostEqual(saved["bgm"][field], expected)
+            self.assertAlmostEqual(coerce_float(_value_at(saved, "bgm", field)), expected)
 
     def test_short_mode_sliders_follow_full_drag_and_save(self) -> None:
         project_path = self._load_project()
         _, window = self._load_qml()
         self.gui.resize(window, 1220, 760)
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
-        original_transition_duration = float(self.app.shortVideoSettings["transition"]["duration"])
-        original_bgm_volume = float(self.app.shortVideoSettings["bgm"]["volume"])
+        original_transition_duration = coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration'))
+        original_bgm_volume = coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume'))
 
         transition_slider = self._quick_item(window, "shortModeTransitionDurationSlider")
         self._drag_slider(window, transition_slider, 0.9)
-        transition_duration = float(self.app.shortVideoSettings["transition"]["duration"])
+        transition_duration = coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration'))
         self.assertGreaterEqual(transition_duration, 1.7)
         self.assertLessEqual(transition_duration, 1.9)
         self.app.undoEdit()
-        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], original_transition_duration)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration')), coerce_float(original_transition_duration))
         self.app.redoEdit()
-        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration')), coerce_float(transition_duration))
         transition_slider.forceActiveFocus()
         QTest.keyClick(window, Qt.Key.Key_Left)
-        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration - 0.1)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration')), coerce_float(transition_duration - 0.1))
         self.app.undoEdit()
-        self.assertAlmostEqual(self.app.shortVideoSettings["transition"]["duration"], transition_duration)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'transition', 'duration')), coerce_float(transition_duration))
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self._drag_slider(window, volume_slider, 0.9)
-        bgm_volume = float(self.app.shortVideoSettings["bgm"]["volume"])
+        bgm_volume = coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume'))
         self.assertGreaterEqual(bgm_volume, 0.85)
         self.assertLessEqual(bgm_volume, 0.951)
         self.app.undoEdit()
-        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], original_bgm_volume)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(original_bgm_volume))
         self.app.redoEdit()
-        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(bgm_volume))
         volume_slider.forceActiveFocus()
         QTest.keyClick(window, Qt.Key.Key_Left)
-        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume - 0.05)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(bgm_volume - 0.05))
         self.app.undoEdit()
-        self.assertAlmostEqual(self.app.shortVideoSettings["bgm"]["volume"], bgm_volume)
+        self.assertAlmostEqual(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(bgm_volume))
 
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
         saved = load_project(project_path)["short_video"]
-        self.assertAlmostEqual(saved["transition"]["duration"], transition_duration)
-        self.assertAlmostEqual(saved["bgm"]["volume"], bgm_volume)
+        self.assertAlmostEqual(coerce_float(_value_at(saved, 'transition', 'duration')), coerce_float(transition_duration))
+        self.assertAlmostEqual(coerce_float(_value_at(saved, 'bgm', 'volume')), coerce_float(bgm_volume))
 
     def test_short_mode_clip_model_materializes_only_requested_rows(self) -> None:
         segment_count = 3_000
@@ -9858,8 +10089,8 @@ Window {
                 model.index(segment_count - 1, 0),
                 model.ClipDataRole,
             )
-            self.assertEqual(last_clip["segment_id"], "segment-2999")
-            self.assertEqual(last_clip["preview_text"], "caption-2999")
+            self.assertEqual(_value_at(last_clip, 'segment_id'), "segment-2999")
+            self.assertEqual(_value_at(last_clip, 'preview_text'), "caption-2999")
             self.assertEqual(build_clip_view.call_count, 1)
             self.assertEqual(format_preview.call_count, 1)
 
@@ -9895,14 +10126,14 @@ Window {
 
         self.gui.set_property(short_screen, "currentClipIndex", 1)
         self.assertEqual(qt_property_value(clip_list, "selectedIndex"), 1)
-        self.assertEqual(self._qml_value(preview, "clipData").get("segment_id"), "second")
+        self.assertEqual(_dict_at(self._qml_value(preview, "clipData")).get("segment_id"), "second")
 
         self.assertTrue(self.app.removeShortVideoClip(1))
         self.gui.process_events()
 
         self.assertEqual(qt_property_value(short_screen, "currentClipIndex"), 0)
         self.assertEqual(qt_property_value(clip_list, "selectedIndex"), 0)
-        self.assertEqual(self._qml_value(preview, "clipData").get("segment_id"), "first")
+        self.assertEqual(_dict_at(self._qml_value(preview, "clipData")).get("segment_id"), "first")
 
     def test_short_mode_clip_list_and_preview(self) -> None:
         segments = [
@@ -9931,20 +10162,20 @@ Window {
         QTest.qWait(100)
 
         short_page = self._quick_item(window, "shortModePage")
-        self.assertTrue(qt_property_value(short_page, "visible"))
+        self.assertTrue(_qt_bool(short_page, "visible"))
 
         preview = self._quick_item(window, "shortModePreview")
         clip_list = self._quick_item(window, "shortModeClipList")
         settings_panel = self._quick_item(window, "shortModeSettingsPanel")
-        self.assertTrue(qt_property_value(preview, "visible"))
-        self.assertTrue(qt_property_value(clip_list, "visible"))
-        self.assertTrue(qt_property_value(settings_panel, "visible"))
+        self.assertTrue(_qt_bool(preview, "visible"))
+        self.assertTrue(_qt_bool(clip_list, "visible"))
+        self.assertTrue(_qt_bool(settings_panel, "visible"))
 
         clip_view = self._quick_item(window, "shortModeClipListView")
-        self.assertEqual(qt_property_value(clip_view, "count"), 2)
+        self.assertEqual(_qt_number(clip_view, "count"), 2)
 
         self.assertIsNotNone(qt_property_value(preview, "clipData"))
-        self.assertEqual(self._qml_value(preview, "clipData").get("segment_id"), "seg-1")
+        self.assertEqual(_dict_at(self._qml_value(preview, "clipData")).get("segment_id"), "seg-1")
 
         self.assertEqual(len(self.app.shortVideoClips), 2)
         self.assertEqual(self.app.shortVideoClips[1]["segment_id"], "seg-2")
@@ -9958,7 +10189,7 @@ Window {
 
         back_button = self._quick_item(window, "shortModeBackButton")
         self._click(window, back_button)
-        self.assertFalse(qt_property_value(short_page, "visible"))
+        self.assertFalse(_qt_bool(short_page, "visible"))
 
     def test_short_mode_clip_trimming_is_limited_to_source_segment(self) -> None:
         self._load_project(
@@ -9996,7 +10227,7 @@ Window {
             ]
         )
         self.app.initializeShortVideoClips()
-        self.app._project["short_video"]["clips"][0]["segment_id"] = "missing-segment"
+        _dict_list_at(self._project_data(), "short_video", "clips")[0]["segment_id"] = "missing-segment"
 
         self.assertTrue(self.app.updateShortVideoClip(0, {"fit": "blur"}))
         self.assertEqual(self.app.shortVideoClips[0]["fit"], "blur")
@@ -10047,7 +10278,7 @@ Window {
         self._replace_focused_time(window, end_field, "0.750")
 
         add_button = self._quick_item(window, "shortModeAddClipButton")
-        self.assertTrue(qt_property_value(add_button, "enabled"))
+        self.assertTrue(_qt_bool(add_button, "enabled"))
         self._click(window, add_button)
 
         clip = self.app.shortVideoClips[-1]
@@ -10087,7 +10318,7 @@ Window {
         QTest.keyClick(window, Qt.Key.Key_Return)
         self.assertEqual(qt_property_value(segment_combo, "currentValue"), "second-subtitle-segment")
         self.assertEqual(qt_property_value(segment_combo, "displayText"), "選択する字幕")
-        self.assertTrue(qt_property_value(add_button, "enabled"))
+        self.assertTrue(_qt_bool(add_button, "enabled"))
         self._click(window, add_button)
 
         self.assertEqual(len(self.app.shortVideoClips), 3)
@@ -10122,15 +10353,15 @@ Window {
         QTest.keyClick(window, Qt.Key.Key_Down)
         QTest.keyClick(window, Qt.Key.Key_Return)
 
-        clips = self.app._project["short_video"]["clips"]
-        self.assertNotEqual(clips[1].get("fit"), "contain")
-        self.assertEqual(clips[3]["fit"], "contain")
+        clips = _dict_list_at(self.app._project, 'short_video', 'clips')
+        self.assertNotEqual(_dict_at(clips, 1).get("fit"), "contain")
+        self.assertEqual(_value_at(clips, 3, 'fit'), "contain")
 
     def test_video_only_project_explains_disabled_transcription(self) -> None:
         self._set_ready_sources()
         self._load_project(segments=[])
-        self.app._project["speakers"] = []
-        self.app._project["audio_sources"] = []
+        self._project_data()["speakers"] = []
+        self._project_data()["audio_sources"] = []
         self.app._speakers = []
         self.app._audio_tracks = []
         self.app.speakersChanged.emit()
@@ -10140,7 +10371,7 @@ Window {
         transcribe_button = self._quick_item(window, "transcribeButton")
         reason = self._quick_item(window, "workflowBlockReason")
         self.assertFalse(transcribe_button.isEnabled())
-        self.assertIn("動画内に音声トラックが見つかりません", qt_property_value(reason, "text"))
+        self.assertIn("動画内に音声トラックが見つかりません", _qt_string(reason, "text"))
 
     def test_empty_short_mode_gui_adds_range_clip_and_enables_export(self) -> None:
         _video, _audio, _output = self._set_ready_sources()
@@ -10156,7 +10387,7 @@ Window {
         self._click(window, end_field)
         self._replace_focused_time(window, end_field, "1.500")
         add_button = self._quick_item(window, "shortModeAddClipButton")
-        self.assertTrue(qt_property_value(add_button, "enabled"))
+        self.assertTrue(_qt_bool(add_button, "enabled"))
         self._click(window, add_button)
         self.assertEqual(len(self.app.shortVideoClips), 1)
 
@@ -10166,7 +10397,7 @@ Window {
             patch.object(self.app.workflow, "_start_command") as start_command,
         ):
             self._click(window, self._quick_item(window, "shortModeExportButton"))
-        self.assertEqual(start_command.call_args.args[1], "render_short")
+        self.assertEqual(_mock_args(start_command)[1], "render_short")
 
     def test_short_export_saves_clip_time_typed_without_return(self) -> None:
         path = self._load_project()
@@ -10184,7 +10415,7 @@ Window {
         captured_starts = []
 
         def capture_render(*_args: object, **_kwargs: object) -> None:
-            captured_starts.append(load_project(path)["short_video"]["clips"][0]["start"])
+            captured_starts.append(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'))
 
         with (
             patch.object(self.app.autosave_timer, "start"),
@@ -10211,7 +10442,7 @@ Window {
         with patch.object(self.app.autosave_timer, "start"):
             self._click(window, self._quick_item(window, "shortModeBackButton"))
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'), 0.5)
 
     def test_short_clip_time_stays_with_clip_when_reordered_before_return(self) -> None:
         path = self._load_project(
@@ -10245,10 +10476,10 @@ Window {
         )
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        saved = load_project(path)["short_video"]["clips"]
+        saved = _dict_list_at(load_project(path), 'short_video', 'clips')
         self.assertEqual([clip["segment_id"] for clip in saved], ["reorder-draft-1", "reorder-draft-0"])
-        self.assertEqual(saved[0]["start"], 2.0)
-        self.assertEqual(saved[1]["start"], 0.25)
+        self.assertEqual(_value_at(saved, 0, 'start'), 2.0)
+        self.assertEqual(_value_at(saved, 1, 'start'), 0.25)
 
     def test_short_clip_time_is_saved_before_deleting_another_clip(self) -> None:
         path = self._load_project(
@@ -10278,7 +10509,7 @@ Window {
         self.gui.set_property(
             clip_list,
             "contentY",
-            max(0.0, coerce_float(qt_property_value(clip_list, "contentHeight")) - clip_list.height()),
+            max(0.0, coerce_float(_qt_number(clip_list, "contentHeight")) - clip_list.height()),
         )
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeDeleteButton1") is not None,
@@ -10288,9 +10519,9 @@ Window {
         self.assertEqual([clip["segment_id"] for clip in self.app.shortVideoClips], ["delete-other-0"])
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        saved = load_project(path)["short_video"]["clips"]
+        saved = _dict_list_at(load_project(path), 'short_video', 'clips')
         self.assertEqual([clip["segment_id"] for clip in saved], ["delete-other-0"])
-        self.assertEqual(saved[0]["start"], 0.25)
+        self.assertEqual(_value_at(saved, 0, 'start'), 0.25)
 
     def test_short_clip_reorder_waits_for_incomplete_time(self) -> None:
         path = self._load_project(
@@ -10316,24 +10547,24 @@ Window {
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         QTest.keyClick(window, Qt.Key.Key_Backspace)
-        self.assertEqual(qt_property_value(start_field, "text"), "")
+        self.assertEqual(_qt_string(start_field, "text"), "")
         self.assertFalse(qt_property_value(start_field, "acceptableInput"))
 
         move_button = self._quick_visual_item(clip_list, "shortModeMoveDownButton0")
-        self.assertFalse(qt_property_value(move_button, "enabled"))
+        self.assertFalse(_qt_bool(move_button, "enabled"))
         self._click_disabled(window, move_button)
-        self.assertEqual(qt_property_value(start_field, "text"), "")
+        self.assertEqual(_qt_string(start_field, "text"), "")
         self.assertTrue(start_field.hasActiveFocus())
         self.assertEqual([clip["segment_id"] for clip in self.app.shortVideoClips], ["invalid-reorder-0", "invalid-reorder-1"])
 
         self._replace_focused_time(window, start_field, "0.250")
-        self.assertTrue(qt_property_value(move_button, "enabled"))
+        self.assertTrue(_qt_bool(move_button, "enabled"))
         self._click_short_clip_control(window, clip_list, "shortModeMoveDownButton0")
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        saved = load_project(path)["short_video"]["clips"]
+        saved = _dict_list_at(load_project(path), 'short_video', 'clips')
         self.assertEqual([clip["segment_id"] for clip in saved], ["invalid-reorder-1", "invalid-reorder-0"])
-        self.assertEqual(saved[1]["start"], 0.25)
+        self.assertEqual(_value_at(saved, 1, 'start'), 0.25)
 
     def test_short_incomplete_clip_time_stays_visible_after_settings_change(self) -> None:
         path = self._load_project()
@@ -10348,22 +10579,22 @@ Window {
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         QTest.keyClick(window, Qt.Key.Key_Backspace)
-        self.assertEqual(qt_property_value(start_field, "text"), "")
+        self.assertEqual(_qt_string(start_field, "text"), "")
         self.assertFalse(qt_property_value(start_field, "acceptableInput"))
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
-        self.assertGreater(self.app.shortVideoSettings["bgm"]["volume"], 0.4)
+        self.assertGreater(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(0.4))
         start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
-        self.assertEqual(qt_property_value(start_field, "text"), "")
-        self.assertFalse(qt_property_value(self._quick_item(window, "shortModeExportButton"), "enabled"))
-        self.assertFalse(qt_property_value(self._quick_item(window, "shortModeBackButton"), "enabled"))
+        self.assertEqual(_qt_string(start_field, "text"), "")
+        self.assertFalse(_qt_bool(self._quick_item(window, "shortModeExportButton"), "enabled"))
+        self.assertFalse(_qt_bool(self._quick_item(window, "shortModeBackButton"), "enabled"))
 
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         self._replace_focused_time(window, start_field, "0.500")
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'), 0.5)
 
     def test_short_incomplete_clip_time_blocks_export_after_focus_moves(self) -> None:
         path = self._load_project()
@@ -10384,15 +10615,15 @@ Window {
         self._click(window, bgm_start)
         self.assertTrue(bgm_start.hasActiveFocus())
         start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
-        self.assertEqual(qt_property_value(start_field, "text"), "")
-        self.assertFalse(qt_property_value(self._quick_item(window, "shortModeExportButton"), "enabled"))
-        self.assertFalse(qt_property_value(self._quick_item(window, "shortModeBackButton"), "enabled"))
+        self.assertEqual(_qt_string(start_field, "text"), "")
+        self.assertFalse(_qt_bool(self._quick_item(window, "shortModeExportButton"), "enabled"))
+        self.assertFalse(_qt_bool(self._quick_item(window, "shortModeBackButton"), "enabled"))
 
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         self._replace_focused_time(window, start_field, "0.500")
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'), 0.5)
 
     def test_short_incomplete_clip_time_survives_list_scroll(self) -> None:
         path = self._load_project(
@@ -10419,7 +10650,7 @@ Window {
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         QTest.keyClick(window, Qt.Key.Key_Backspace)
-        self.assertEqual(qt_property_value(start_field, "text"), "")
+        self.assertEqual(_qt_string(start_field, "text"), "")
         bgm_start = self._quick_item(window, "shortModeBgmStartField")
         self._click(window, bgm_start)
         self.assertTrue(bgm_start.hasActiveFocus())
@@ -10427,15 +10658,15 @@ Window {
         self.gui.set_property(
             clip_list,
             "contentY",
-            max(0.0, coerce_float(qt_property_value(clip_list, "contentHeight")) - clip_list.height()),
+            max(0.0, coerce_float(_qt_number(clip_list, "contentHeight")) - clip_list.height()),
         )
         self.assertGreater(coerce_float(qt_property_value(clip_list, "contentY")), 0)
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeStartTimeField19") is not None,
             description="末尾のショートクリップ",
         )
-        self.assertFalse(qt_property_value(self._quick_item(window, "shortModeExportButton"), "enabled"))
-        self.assertFalse(qt_property_value(self._quick_item(window, "shortModeBackButton"), "enabled"))
+        self.assertFalse(_qt_bool(self._quick_item(window, "shortModeExportButton"), "enabled"))
+        self.assertFalse(_qt_bool(self._quick_item(window, "shortModeBackButton"), "enabled"))
 
         self.gui.set_property(clip_list, "contentY", 0)
         self.gui.wait_until(
@@ -10443,12 +10674,12 @@ Window {
             description="先頭クリップの再表示",
         )
         start_field = self._quick_visual_item(clip_list, "shortModeStartTimeField0")
-        self.assertEqual(qt_property_value(start_field, "text"), "")
+        self.assertEqual(_qt_string(start_field, "text"), "")
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         self._replace_focused_time(window, start_field, "0.500")
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'), 0.5)
 
     def test_short_clip_time_survives_settings_change_before_return(self) -> None:
         path = self._load_project()
@@ -10466,10 +10697,10 @@ Window {
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
-        self.assertGreater(self.app.shortVideoSettings["bgm"]["volume"], 0.4)
+        self.assertGreater(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(0.4))
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'), 0.5)
 
     def test_short_export_saves_bgm_time_typed_without_return(self) -> None:
         path = self._load_project()
@@ -10483,7 +10714,7 @@ Window {
         captured_starts = []
 
         def capture_render(*_args: object, **_kwargs: object) -> None:
-            captured_starts.append(load_project(path)["short_video"]["bgm"]["start"])
+            captured_starts.append(_value_at(load_project(path), 'short_video', 'bgm', 'start'))
 
         with (
             patch.object(self.app.autosave_timer, "start"),
@@ -10506,10 +10737,10 @@ Window {
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
-        self.assertGreater(self.app.shortVideoSettings["bgm"]["volume"], 0.4)
+        self.assertGreater(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(0.4))
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["bgm"]["start"], 1.25)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'bgm', 'start'), 1.25)
 
     def test_short_background_color_survives_volume_change_before_return(self) -> None:
         path = self._load_project()
@@ -10521,16 +10752,16 @@ Window {
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         for char in "112233":
             QTest.keyClick(window, Qt.Key(ord(char)))
-        self.assertEqual(qt_property_value(color_field, "text"), "112233")
+        self.assertEqual(_qt_string(color_field, "text"), "112233")
         self.assertTrue(color_field.hasActiveFocus())
 
         volume_slider = self._quick_item(window, "shortModeBgmVolumeSlider")
         self.gui.click_at(window, volume_slider, volume_slider.width() * 0.7, volume_slider.height() / 2)
-        self.assertGreater(self.app.shortVideoSettings["bgm"]["volume"], 0.4)
-        self.assertIn(qt_property_value(color_field, "text"), ("112233", "#112233"))
+        self.assertGreater(coerce_float(_value_at(self.app.shortVideoSettings, 'bgm', 'volume')), coerce_float(0.4))
+        self.assertIn(_qt_string(color_field, "text"), ("112233", "#112233"))
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        self.assertEqual(load_project(path)["short_video"]["global_background_color"], "#112233")
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'global_background_color'), "#112233")
 
     def test_short_export_waits_for_incomplete_clip_time_and_retries(self) -> None:
         path = self._load_project()
@@ -10545,7 +10776,7 @@ Window {
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         QTest.keyClick(window, Qt.Key.Key_Backspace)
-        self.assertEqual(qt_property_value(start_field, "text"), "")
+        self.assertEqual(_qt_string(start_field, "text"), "")
         self.assertFalse(qt_property_value(start_field, "acceptableInput"))
 
         with patch.object(self.app.workflow, "_start_command") as start:
@@ -10554,12 +10785,12 @@ Window {
         self.assertTrue(start_field.hasActiveFocus())
         validation_message = self._quick_item(window, "shortModeInputValidationMessage")
         self.assertTrue(validation_message.isVisible())
-        self.assertIn("入力途中", qt_property_value(validation_message, "text"))
+        self.assertIn("入力途中", _qt_string(validation_message, "text"))
         self._click_disabled(window, self._quick_item(window, "shortModeBackButton"))
         self.assertTrue(self._quick_item(window, "shortModeScreen").isVisible())
         self.assertTrue(start_field.hasActiveFocus())
         self.assertEqual(self.app.shortVideoClips[0]["start"], 0.0)
-        self.assertEqual(load_project(path)["short_video"]["clips"], [])
+        self.assertEqual(_dict_list_at(load_project(path), 'short_video', 'clips'), [])
 
         self._replace_focused_time(window, start_field, "0.500")
         with (
@@ -10568,7 +10799,7 @@ Window {
         ):
             self._click(window, self._quick_item(window, "shortModeExportButton"))
         start.assert_called_once()
-        self.assertEqual(load_project(path)["short_video"]["clips"][0]["start"], 0.5)
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'clips', 0, 'start'), 0.5)
         self.assertFalse(validation_message.isVisible())
 
     def test_short_export_waits_for_incomplete_background_color(self) -> None:
@@ -10580,7 +10811,7 @@ Window {
         self._click(window, color_field)
         QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
         QTest.keyClick(window, Qt.Key.Key_Backspace)
-        self.assertEqual(qt_property_value(color_field, "text"), "")
+        self.assertEqual(_qt_string(color_field, "text"), "")
         self.assertFalse(qt_property_value(color_field, "acceptableInput"))
 
         with patch.object(self.app.workflow, "_start_command") as start:
@@ -10589,18 +10820,18 @@ Window {
         self.assertTrue(color_field.hasActiveFocus())
         validation_message = self._quick_item(window, "shortModeInputValidationMessage")
         self.assertTrue(validation_message.isVisible())
-        self.assertEqual(load_project(path)["short_video"]["clips"], [])
+        self.assertEqual(_dict_list_at(load_project(path), 'short_video', 'clips'), [])
 
         for char in "112233":
             QTest.keyClick(window, Qt.Key(ord(char)))
-        self.assertEqual(qt_property_value(color_field, "text"), "112233")
+        self.assertEqual(_qt_string(color_field, "text"), "112233")
         with (
             patch.object(self.app, "refreshDependencies"),
             patch.object(self.app.workflow, "_start_command") as start,
         ):
             self._click(window, self._quick_item(window, "shortModeExportButton"))
         start.assert_called_once()
-        self.assertEqual(load_project(path)["short_video"]["global_background_color"], "#112233")
+        self.assertEqual(_value_at(load_project(path), 'short_video', 'global_background_color'), "#112233")
         self.assertFalse(validation_message.isVisible())
 
     def test_short_export_rejects_incomplete_color_after_focus_moves(self) -> None:
@@ -10615,7 +10846,7 @@ Window {
         self.assertFalse(qt_property_value(color_field, "acceptableInput"))
         QTest.keyClick(window, Qt.Key.Key_Tab)
         self.assertFalse(color_field.hasActiveFocus())
-        self.assertEqual(qt_property_value(color_field, "text"), "")
+        self.assertEqual(_qt_string(color_field, "text"), "")
 
         with patch.object(self.app.workflow, "_start_command") as start:
             self._click_disabled(window, self._quick_item(window, "shortModeExportButton"))
@@ -10650,9 +10881,9 @@ Window {
         self.assertIsNotNone(self.app._project)
         project = self.app._project
         assert project is not None
-        video = Path(str(project["video"]["path"]))
+        video = Path(str(_value_at(project, 'video', 'path')))
         self._generate_short_mode_test_video(video)
-        project["video"]["duration_seconds"] = 3.0
+        _dict_at(project, "video")["duration_seconds"] = 3.0
         project["short_video"] = {
             "enabled": True,
             "output": {"width": 180, "height": 320, "fps": 15},
@@ -10673,7 +10904,7 @@ Window {
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         self.app.processEvents()
         export_button = self._quick_item(window, "shortModeExportButton")
-        self.assertTrue(qt_property_value(export_button, "enabled"))
+        self.assertTrue(_qt_bool(export_button, "enabled"))
         self.app.workspace_root = Path(__file__).resolve().parents[1]
         self._click(window, export_button)
 
@@ -10685,7 +10916,7 @@ Window {
         self.assertEqual(self.app.stage, "COMPLETE", self.app._log)
 
         saved_project = load_project(project_path)
-        output = Path(saved_project["render_settings"]["short_last_output"])
+        output = Path(_string_at(saved_project, 'render_settings', 'short_last_output'))
         self.assertTrue(output.is_file())
         probe = subprocess.run(
             [
@@ -10697,12 +10928,12 @@ Window {
             capture_output=True,
             text=True,
         )
-        media = json.loads(probe.stdout)
-        video_stream = next(item for item in media["streams"] if item["codec_type"] == "video")
+        media = decode_json(probe.stdout)
+        video_stream = next(item for item in _dict_list_at(media, 'streams') if _value_at(item, 'codec_type') == "video")
         self.assertEqual((video_stream["width"], video_stream["height"]), (180, 320))
         self.assertEqual(video_stream["pix_fmt"], "yuv420p")
-        self.assertTrue(any(item["codec_type"] == "audio" for item in media["streams"]))
-        self.assertAlmostEqual(float(media["format"]["duration"]), 1.6, delta=0.25)
+        self.assertTrue(any(_value_at(item, 'codec_type') == "audio" for item in _dict_list_at(media, 'streams')))
+        self.assertAlmostEqual(coerce_float(_value_at(media, 'format', 'duration')), 1.6, delta=0.25)
 
         first_subtitle_frame = self._extract_gray_frame(output, 0.4)
         second_subtitle_frame = self._extract_gray_frame(output, 1.2)
@@ -10722,11 +10953,11 @@ Window {
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
             if dialog is not None:
-                self.assertFalse(qt_property_value(dialog, "visible"))
+                self.assertFalse(_qt_bool(dialog, "visible"))
 
             start_command.assert_called_once()
-            command = start_command.call_args[0][0]
-            self.assertEqual(start_command.call_args[0][1], "transcribe")
+            command = _mock_command(start_command)
+            self.assertEqual(_mock_args(start_command)[1], "transcribe")
             self.assertIn("--overwrite-project", command)
 
     def test_transcription_gui_process_creates_and_loads_project(self) -> None:
@@ -10786,7 +11017,7 @@ Window {
                 self.assertTrue(finished.wait(10_000), self.app.process.errorString())
             self.app.processEvents()
 
-        self.assertEqual(Path(captured_options["config_path"]).resolve(), self.app.gui_config_path.resolve())
+        self.assertEqual(_path_at(captured_options, "config_path").resolve(), self.app.gui_config_path.resolve())
         self.assertEqual(captured_options["video"], str(video.resolve()))
         self.assertEqual(captured_options["audio_files"], [str(audio.resolve())])
         self.assertEqual(captured_options["output_dir"], str(project_path.parent / ".game.work"))
@@ -10867,10 +11098,10 @@ Window {
             for mode in ("merge", "replace"):
                 with self.subTest(mode=mode):
                     save_project(project_path, preserved)
-                    self.app._project = deepcopy(generated)
+                    self.app._project = _string_project(deepcopy(generated))
                     self.app._project_path = str(project_path)
                     self.app.workflow._state.transcription_merge_mode = mode
-                    self.app.workflow._state.transcription_preserved_project = deepcopy(preserved)
+                    self.app.workflow._state.transcription_preserved_project = _string_project(deepcopy(preserved))
                     self.app.workflow._state.transcription_preserved_project_path = str(custom_project_path)
 
                     self.assertTrue(self.app._merge_preserved_transcription_segments())
@@ -10881,8 +11112,8 @@ Window {
                     self.assertEqual(saved["short_video"], preserved["short_video"])
                     self.assertEqual(saved["transcription"], {"engine": "new-engine"})
                     expected_ids = {"segment-a", "transcribed-new"} if mode == "merge" else {"transcribed-new"}
-                    self.assertEqual({item["id"] for item in saved["segments"]}, expected_ids)
-                    self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
+                    self.assertEqual({item["id"] for item in _dict_list_at(saved, "segments")}, expected_ids)
+                    self.assertEqual(_dict_list_at(load_project(project_path), "segments"), preserved["segments"])
         finally:
             self.app.workflow._state.transcription_merge_mode = ""
             self.app.workflow._state.transcription_preserved_project = None
@@ -10901,10 +11132,10 @@ Window {
             duration_seconds=2.0,
         )
         sentinel = deepcopy(preserved)
-        sentinel["segments"][0]["text"] = "default sentinel"
+        _dict_list_at(sentinel, "segments")[0]["text"] = "default sentinel"
         save_project(custom_path, preserved)
         save_project(default_path, sentinel)
-        self.app._project = deepcopy(preserved)
+        self.app._project = _string_project(deepcopy(preserved))
         self.app._project_path = str(custom_path)
         self.app._source_selection = SourceSelection(
             video=str(video.resolve()),
@@ -10915,11 +11146,11 @@ Window {
         with patch.object(self.app.workflow, "startTranscription") as start_transcription:
             self.app.transcribeProject(self.app.settings, "merge")
 
-        generated_path = Path(start_transcription.call_args.args[2])
+        generated_path = Path(_string_at(_mock_args(start_transcription), 2))
         self.assertNotEqual(generated_path.resolve(), default_path.resolve())
         self.assertEqual(generated_path.parent.resolve(), output.resolve() / ".custom-edit.work")
         self.assertTrue(generated_path.name.startswith(".custom-edit.subtitle-project."))
-        self.assertEqual(load_project(default_path)["segments"], sentinel["segments"])
+        self.assertEqual(_dict_list_at(load_project(default_path), "segments"), sentinel["segments"])
 
     def test_transcription_merge_failure_restores_project_and_keeps_error_status(self) -> None:
         project_path = self._load_project()
@@ -10943,11 +11174,11 @@ Window {
                 side_effect=ValueError("merge failed"),
             ),
         ):
-            self.app._process_finished(0, None)
+            self.app._process_finished(0, QProcess.ExitStatus.NormalExit)
 
         self.assertEqual(self.app.stage, "ERROR")
         self.assertIn("統合に失敗しました", self.app.status)
-        self.assertEqual(load_project(project_path)["segments"], preserved["segments"])
+        self.assertEqual(_dict_list_at(load_project(project_path), "segments"), preserved["segments"])
 
     def test_processing_cancel_e2e_stops_process_and_restores_gui(self) -> None:
         self._set_ready_sources()
@@ -10976,7 +11207,7 @@ Window {
             self.assertTrue(self.app.running)
             self.assertEqual(self.app.stage, "WHISPERX")
             stop_button = self._quick_item(window, "saveSettingsButton")
-            self.assertEqual(qt_property_value(stop_button, "text"), "停止")
+            self.assertEqual(_qt_string(stop_button, "text"), "停止")
             self._click(window, stop_button)
             if finished.count() == 0:
                 self.assertTrue(finished.wait(10_000), self.app.process.errorString())
@@ -10987,7 +11218,7 @@ Window {
         self.assertEqual(self.app.stage, "CANCELLED")
         self.assertIn("停止", self.app.status)
         self.assertEqual(self.app.activeJob, "")
-        self.assertEqual(qt_property_value(self._quick_item(window, "saveSettingsButton"), "text"), "設定を保存")
+        self.assertEqual(_qt_string(self._quick_item(window, "saveSettingsButton"), "text"), "設定を保存")
         self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
 
     def test_cancelled_followup_transcription_cannot_merge_into_next_project(self) -> None:
@@ -10995,7 +11226,7 @@ Window {
         project_a = deepcopy(self.app._project)
         assert project_a is not None
         generated_a_path = self.root / ".project-a.transcribing.subtitle-project.json"
-        save_project(generated_a_path, project_a)
+        save_project(generated_a_path, _object_project(project_a))
         self.app.workflow._state.transcription_merge_mode = "merge"
         self.app.workflow._state.transcription_preserved_project = deepcopy(project_a)
         self.app.workflow._state.transcription_preserved_project_path = str(project_a_path)
@@ -11046,7 +11277,7 @@ Window {
 
         self.assertTrue(Path(self.app.projectPath).samefile(project_b_path))
         self.assertEqual(self.app.subtitleSegments[0]["text"], "project B")
-        self.assertEqual(load_project(project_a_path)["segments"], project_a["segments"])
+        self.assertEqual(_dict_list_at(load_project(project_a_path), "segments"), project_a["segments"])
 
     def test_processing_failure_retry_e2e_recovers_and_loads_project(self) -> None:
         video, audio, output = self._set_ready_sources()
@@ -11118,7 +11349,7 @@ Window {
             self.assertIn("input audio became unavailable", self.app.status)
             self.assertIn(
                 "input audio became unavailable",
-                qt_property_value(self._quick_item(window, "workflowStatusText"), "text"),
+                _qt_string(self._quick_item(window, "workflowStatusText"), "text"),
             )
             self.assertTrue(self._quick_item(window, "transcribeButton").isEnabled())
 
@@ -11149,7 +11380,7 @@ Window {
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
             self.assertIsNotNone(dialog)
-            self.assertTrue(qt_property_value(dialog, "visible"))
+            self.assertTrue(_qt_bool(dialog, "visible"))
             self.assertEqual(qt_property_value(dialog, "title"), "既存プロジェクトの上書き")
             self.assertFalse(self.app.projectLoaded)
             self.assertFalse(self.app.projectDirty)
@@ -11175,11 +11406,11 @@ Window {
             self.assertFalse(self.app.projectLoaded)
             self.assertFalse(self.app.projectDirty)
             self.assertEqual(project_path.read_bytes(), saved_project_bytes)
-            dialog.reject()
+            _qml_call(_required_qobject(dialog), "reject")
             self.app.processEvents()
 
             start_command.assert_not_called()
-            self.assertFalse(qt_property_value(dialog, "visible"))
+            self.assertFalse(_qt_bool(dialog, "visible"))
             self.assertFalse(self.app.projectLoaded)
             self.assertFalse(self.app.projectDirty)
             self.assertEqual(self.app.sourceSelection["audio_files"], [str(selected_audio.resolve())])
@@ -11192,7 +11423,7 @@ Window {
             self.assertEqual(project_after_rejection["audio_sources"], saved_project["audio_sources"])
             self.assertEqual(project_after_rejection["speakers"], saved_project["speakers"])
             self.assertEqual(
-                [item["path"] for item in project_after_rejection["audio_sources"]],
+                [item["path"] for item in _dict_list_at(project_after_rejection, "audio_sources")],
                 [str(saved_audio.resolve())],
             )
 
@@ -11207,11 +11438,11 @@ Window {
 
             dialog = window.findChild(QObject, "overwriteProjectDialog")
             self.assertIsNotNone(dialog)
-            dialog.accept()
+            _qml_call(_required_qobject(dialog), "accept")
             self.app.processEvents()
 
             start_process.assert_called_once()
-            command = start_process.call_args.args[0]
+            command = _mock_command(start_process)
             self.assertEqual(self.app.activeJob, "transcribe")
             self.assertIn("--overwrite-project", command)
             self.app._process_started()
@@ -11220,7 +11451,7 @@ Window {
             self.assertTrue(self._quick_item(window, "processingProgressOverlay").isVisible())
             stop_button = self._quick_item(window, "saveSettingsButton")
             self.assertTrue(stop_button.isVisible())
-            self.assertEqual(qt_property_value(stop_button, "text"), "停止")
+            self.assertEqual(_qt_string(stop_button, "text"), "停止")
 
         self.app._cancel_requested = True
         with patch.object(self.app.workflow, "_read_process_output"):
@@ -11263,7 +11494,8 @@ Window {
         ):
             self.app.applyUpdate()
             start.assert_called_once()
-            program, args = start.call_args[0]
+            program, _ = _mock_args(start)
+            args = _string_list_at(_mock_args(start), 1)
             if sys.platform == "win32" and shutil.which("powershell.exe"):
                 self.assertEqual(program, "powershell.exe")
                 self.assertIn("-File", args)
@@ -11330,7 +11562,7 @@ Window {
         check_button = self._quick_item(window, "checkForUpdatesButton")
         dialog = window.findChild(QObject, "updateDialog")
         self.assertIsNotNone(dialog)
-        self.assertFalse(qt_property_value(dialog, "visible"))
+        self.assertFalse(_qt_bool(dialog, "visible"))
 
         with patch.object(updater, "fetch_latest_release", return_value=self._fake_update_info()):
             self._click(window, check_button)
@@ -11339,9 +11571,9 @@ Window {
                 description="update check completion",
             )
 
-        self.assertTrue(qt_property_value(dialog, "visible"))
+        self.assertTrue(_qt_bool(dialog, "visible"))
         apply_button = self._quick_item(window, "applyUpdateButton")
-        self.assertTrue(qt_property_value(apply_button, "visible"))
+        self.assertTrue(_qt_bool(apply_button, "visible"))
 
         self.app.updates._state.download_active = True
         self.app.updates._state.busy = True
@@ -11376,7 +11608,7 @@ Window {
             lambda: (
                 apply_button.isVisible()
                 and apply_button.isEnabled()
-                and qt_property_value(apply_button, "text") == "再起動して更新"
+                and _qt_string(apply_button, "text") == "再起動して更新"
             ),
             description="verified update package action",
         )
@@ -11391,7 +11623,8 @@ Window {
         ):
             self._click(window, apply_button)
             start.assert_called_once()
-            program, args = start.call_args[0]
+            program, _ = _mock_args(start)
+            args = _string_list_at(_mock_args(start), 1)
             self.assertEqual(program, "powershell.exe")
             self.assertIn("-File", args)
             self.assertTrue(args[args.index("-File") + 1].endswith("update.ps1"))
@@ -11402,9 +11635,9 @@ Window {
         self.app.process.finished.emit(0, QProcess.ExitStatus.NormalExit)
         self.app.processEvents()
         restart_button = self._quick_item(window, "restartApplicationButton")
-        self.assertTrue(qt_property_value(restart_button, "visible"))
+        self.assertTrue(_qt_bool(restart_button, "visible"))
         self._click(window, self._quick_item(window, "dismissUpdateDialogButton"))
-        self.assertFalse(qt_property_value(dialog, "visible"))
+        self.assertFalse(_qt_bool(dialog, "visible"))
 
     def _make_sequence_project(self) -> tuple[Path, Path, Path]:
         first_video = self.root / "first.mp4"
@@ -11485,7 +11718,7 @@ Window {
         self.assertTrue(self.app.saveProject())
         saved = load_project(project_path)
         self.assertEqual(
-            [clip["id"] for clip in saved["sequence"]["clips"]],
+            [_value_at(clip, 'id') for clip in _dict_list_at(saved, 'sequence', 'clips')],
             [second_clip_id, legacy_clip_id],
         )
 
@@ -11594,7 +11827,7 @@ Window {
         media_list = self._quick_item(window, "mediaBinList")
         media_list.setProperty(
             "contentY",
-            max(0.0, coerce_float(qt_property_value(media_list, "contentHeight")) - media_list.height()),
+            max(0.0, coerce_float(_qt_number(media_list, "contentHeight")) - media_list.height()),
         )
         self.gui.process_events()
         self.gui.wait_until(
@@ -11603,7 +11836,7 @@ Window {
         )
         target = self.gui.find_visual_item(window.contentItem(), "sequenceTimelineDropArea")
         self.assertTrue(target.isVisible())
-        self.assertTrue(bool(qt_property_value(target, "enabled")))
+        self.assertTrue(bool(_qt_bool(target, "enabled")))
         self.assertGreater(target.width(), 100)
         self.assertGreater(target.height(), 20)
         start = card.mapToScene(QPointF(25, 25)).toPoint()
@@ -11657,7 +11890,7 @@ Window {
                 )
             ):
                 checked_controls.add(control_name)
-                self.assertFalse(bool(qt_property_value(item, "enabled")), control_name)
+                self.assertFalse(bool(_qt_bool(item, "enabled")), control_name)
         self.assertIn("sequenceClipStartField", checked_controls)
         self.assertIn("sequenceClipEndField", checked_controls)
         self.assertIn("sequenceAudioLinkedCheck", checked_controls)
@@ -11679,7 +11912,7 @@ Window {
         media_list = self._quick_item(window, "mediaBinList")
         media_list.setProperty(
             "contentY",
-            max(0.0, coerce_float(qt_property_value(media_list, "contentHeight")) - media_list.height()),
+            max(0.0, coerce_float(_qt_number(media_list, "contentHeight")) - media_list.height()),
         )
         self.gui.process_events()
         card = self.gui.find_visual_item_by_properties(
@@ -11708,11 +11941,11 @@ Window {
         timeline = self._quick_item(window, "sequenceTimelineList")
         timeline.setProperty(
             "contentX",
-            max(0.0, coerce_float(qt_property_value(timeline, "contentWidth")) - timeline.width()),
+            max(0.0, coerce_float(_qt_number(timeline, "contentWidth")) - timeline.width()),
         )
         media_list.setProperty(
             "contentY",
-            max(0.0, coerce_float(qt_property_value(media_list, "contentHeight")) - media_list.height()),
+            max(0.0, coerce_float(_qt_number(media_list, "contentHeight")) - media_list.height()),
         )
         self.gui.process_events()
         card = self.gui.find_visual_item_by_properties(
@@ -11746,7 +11979,7 @@ Window {
         media_list = self._quick_item(window, "mediaBinList")
         media_list.setProperty(
             "contentY",
-            max(0.0, coerce_float(qt_property_value(media_list, "contentHeight")) - media_list.height()),
+            max(0.0, coerce_float(_qt_number(media_list, "contentHeight")) - media_list.height()),
         )
         self.gui.process_events()
         card = self.gui.find_visual_item_by_properties(
@@ -11991,7 +12224,7 @@ Window {
             description="sequence playhead moved by slider drag",
         )
         initial_width = timeline_clip.width()
-        self.assertEqual(qt_property_value(zoom_label, "text"), "100%")
+        self.assertEqual(_qt_string(zoom_label, "text"), "100%")
 
         self._drag_slider(window, zoom_slider, 0.75)
         self.gui.wait_until(
@@ -11999,14 +12232,14 @@ Window {
             description="timeline zoom in",
         )
         zoomed_width = timeline_clip.width()
-        self.assertGreater(int(str(qt_property_value(zoom_label, "text")).rstrip("%")), 100)
+        self.assertGreater(int(str(_qt_string(zoom_label, "text")).rstrip("%")), 100)
 
         self._drag_slider(window, zoom_slider, 0.05)
         self.gui.wait_until(
             lambda: timeline_clip.width() < zoomed_width * 0.5,
             description="timeline zoom out",
         )
-        self.assertLess(int(str(qt_property_value(zoom_label, "text")).rstrip("%")), 100)
+        self.assertLess(int(str(_qt_string(zoom_label, "text")).rstrip("%")), 100)
 
     def test_short_workspace_places_settings_left_and_clips_right(self) -> None:
         self._load_project()
@@ -12044,13 +12277,13 @@ Window {
         button = self._quick_item(window, "shortModeBackgroundColorButton")
         self.assertTrue(button.isEnabled())
         self._click(window, button)
-        dialog = window.findChild(QObject, "shortModeBackgroundColorDialog")
+        dialog = self.gui.find_object(window, "shortModeBackgroundColorDialog")
         self.assertIsNotNone(dialog)
-        self.assertTrue(qt_property_value(dialog, "visible"))
+        self.assertTrue(_qt_bool(dialog, "visible"))
         dialog.setProperty("selectedColor", QColor("#123456"))
         self.assertTrue(QMetaObject.invokeMethod(dialog, "accept"))
         self.assertEqual(self.app.shortVideo.shortVideoSettings["global_background_color"], "#123456")
-        self.assertEqual(qt_property_value(self._quick_item(window, "shortModeBackgroundColorField"), "text"), "#123456")
+        self.assertEqual(_qt_string(self._quick_item(window, "shortModeBackgroundColorField"), "text"), "#123456")
 
     def test_main_workflow_sequence_panel_reuses_gui_session_and_dispatches_actions(self) -> None:
         self.app._audio_tracks = [{"selector": "0:a:0", "label": "0:a:0  game / 2ch"}]
@@ -12178,12 +12411,12 @@ Window {
             self._click(window, add_button)
             choose.assert_called_once()
             self.assertEqual(len(self.app.mediaBinAssets), 2)
-            self.assertEqual(len(load_project(path)["sequence"]["assets"]), 1)
+            self.assertEqual(len(_list_at(load_project(path), 'sequence', 'assets')), 1)
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        saved_assets = load_project(path)["sequence"]["assets"]
+        saved_assets = _dict_list_at(load_project(path), 'sequence', 'assets')
         self.assertEqual(len(saved_assets), 2)
-        self.assertEqual(Path(saved_assets[-1]["path"]), second_video.resolve())
+        self.assertEqual(Path(_string_at(saved_assets[-1], 'path')), second_video.resolve())
         self.assertFalse(self.app.projectDirty)
 
     def test_sequence_remove_button_undo_redo_and_save_from_screen(self) -> None:
@@ -12199,7 +12432,7 @@ Window {
         panel = self._quick_item(window, "workspaceSequenceEditor")
         clip_list = self._quick_item(window, "sequenceClipList")
         self.gui.wait_until(
-            lambda: panel.isVisible() and qt_property_value(clip_list, "count") == 2
+            lambda: panel.isVisible() and _qt_number(clip_list, "count") == 2
             and any(
                 qt_property_value(item, "clipId") == clip_ids[0]
                 for item in self.gui.visual_items_with_properties(clip_list, "clipId")
@@ -12213,7 +12446,7 @@ Window {
         with patch.object(self.app.autosave_timer, "start"):
             self._click(window, self._quick_visual_item(clip_card, "removeSequenceClipButton"))
             self.assertEqual([clip["clipId"] for clip in self.app.sequenceClips], clip_ids[1:])
-            self.assertEqual(len(load_project(path)["sequence"]["clips"]), 2)
+            self.assertEqual(len(_list_at(load_project(path), 'sequence', 'clips')), 2)
 
             self._click(window, self._quick_item(window, "sequenceUndoButton"))
             self.assertEqual([clip["clipId"] for clip in self.app.sequenceClips], clip_ids)
@@ -12222,7 +12455,7 @@ Window {
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
         self.assertEqual(
-            [clip["id"] for clip in load_project(path)["sequence"]["clips"]],
+            [_value_at(clip, 'id') for clip in _dict_list_at(load_project(path), 'sequence', 'clips')],
             clip_ids[1:],
         )
         self.assertFalse(self.app.projectDirty)
@@ -12248,7 +12481,7 @@ Window {
 
         self.assertEqual(self.app.sequenceClips[0]["clipId"], clip_id)
         self.assertAlmostEqual(self.app.sequenceClips[0]["sourceStart"], 1.25)
-        self.assertAlmostEqual(load_project(path)["sequence"]["clips"][0]["source_start"], 1.25)
+        self.assertAlmostEqual(coerce_float(_value_at(load_project(path), 'sequence', 'clips', 0, 'source_start')), coerce_float(1.25))
         self.assertFalse(self.app.projectDirty)
 
         end_field = self._quick_visual_item(clip_list, "sequenceClipEndField")
@@ -12258,7 +12491,7 @@ Window {
         with patch.object(self.app.autosave_timer, "start"):
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
         self.assertAlmostEqual(self.app.sequenceClips[0]["sourceEnd"], 8.5)
-        self.assertAlmostEqual(load_project(path)["sequence"]["clips"][0]["source_end"], 8.5)
+        self.assertAlmostEqual(coerce_float(_value_at(load_project(path), 'sequence', 'clips', 0, 'source_end')), coerce_float(8.5))
         self.assertFalse(self.app.projectDirty)
 
     def test_sequence_audio_controls_from_card_are_saved(self) -> None:
@@ -12309,11 +12542,11 @@ Window {
             expected_offset = self.app.sequenceClips[0]["audioOffset"]
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        saved_clip = load_project(path)["sequence"]["clips"][0]
-        self.assertFalse(saved_clip["audio_linked"])
-        self.assertTrue(saved_clip["muted"])
-        self.assertAlmostEqual(saved_clip["volume"], expected_volume, places=2)
-        self.assertAlmostEqual(saved_clip["audio_offset_seconds"], expected_offset, places=3)
+        saved_clip = _value_at(load_project(path), 'sequence', 'clips', 0)
+        self.assertFalse(_value_at(saved_clip, 'audio_linked'))
+        self.assertTrue(_value_at(saved_clip, 'muted'))
+        self.assertAlmostEqual(coerce_float(_value_at(saved_clip, 'volume')), coerce_float(expected_volume), places=2)
+        self.assertAlmostEqual(coerce_float(_value_at(saved_clip, 'audio_offset_seconds')), coerce_float(expected_offset), places=3)
         self.assertFalse(self.app.projectDirty)
 
     def test_sequence_transition_controls_from_card_are_saved(self) -> None:
@@ -12329,13 +12562,13 @@ Window {
         self._click(window, self._quick_item(window, "sequenceToolButton"))
         clip_list = self._quick_item(window, "sequenceClipList")
         self.gui.wait_until(
-            lambda: qt_property_value(clip_list, "count") == 2
-            and coerce_float(qt_property_value(clip_list, "contentHeight")) > clip_list.height(),
+            lambda: _qt_number(clip_list, "count") == 2
+            and coerce_float(_qt_number(clip_list, "contentHeight")) > clip_list.height(),
             description="切り替え設定の一覧配置",
         )
         self.gui.set_property(
             clip_list, "contentY",
-            max(0.0, coerce_float(qt_property_value(clip_list, "contentHeight")) - clip_list.height()),
+            max(0.0, coerce_float(_qt_number(clip_list, "contentHeight")) - clip_list.height()),
         )
         self.gui.wait_until(
             lambda: any(
@@ -12360,13 +12593,13 @@ Window {
                 lambda: self.app.sequenceClips[1]["transition"]["type"] == "fade",
                 description="シーケンスの切り替え方法",
             )
-            self.assertAlmostEqual(self.app.sequenceClips[1]["transition"]["duration"], 0.5)
+            self.assertAlmostEqual(coerce_float(self.app.sequenceClips[1]["transition"]["duration"]), coerce_float(0.5))
             clip_card = self.gui.find_visual_item_by_properties(
                 clip_list, {"clipId": clip_id}, required_properties=("clipId",),
             )
             self.gui.set_property(
                 clip_list, "contentY",
-                max(0.0, coerce_float(qt_property_value(clip_list, "contentHeight")) - clip_list.height()),
+                max(0.0, coerce_float(_qt_number(clip_list, "contentHeight")) - clip_list.height()),
             )
             duration = self._quick_visual_item(clip_card, "sequenceTransitionDuration")
             self.assertEqual(qt_property_value(duration, "value"), 500)
@@ -12376,15 +12609,15 @@ Window {
             ).toPoint()
             QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=increase)
             self.gui.wait_until(
-                lambda: self.app.sequenceClips[1]["transition"]["duration"] > 0.5,
+                lambda: coerce_float(_value_at(self.app.sequenceClips, 1, "transition", "duration")) > 0.5,
                 description="シーケンスの切り替え時間",
             )
             expected_duration = self.app.sequenceClips[1]["transition"]["duration"]
             self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
 
-        saved_transition = load_project(path)["sequence"]["clips"][1]["transition"]
-        self.assertEqual(saved_transition["type"], "fade")
-        self.assertAlmostEqual(saved_transition["duration"], expected_duration)
+        saved_transition = _value_at(load_project(path), 'sequence', 'clips', 1, 'transition')
+        self.assertEqual(_value_at(saved_transition, 'type'), "fade")
+        self.assertAlmostEqual(coerce_float(_value_at(saved_transition, 'duration')), coerce_float(expected_duration))
         self.assertFalse(self.app.projectDirty)
 
     def test_highlight_candidates_are_preserved_during_processing(self) -> None:
@@ -12419,7 +12652,7 @@ Window {
             "reject": self._quick_visual_item(candidate_list, "highlightRejectButton"),
         }
         for name, control in controls.items():
-            self.assertTrue(qt_property_value(control, "enabled"), name)
+            self.assertTrue(_qt_bool(control, "enabled"), name)
 
         before_project = deepcopy(self.app._project)
         before_file = project_path.read_bytes()
@@ -12427,7 +12660,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         for name, control in controls.items():
-            self.assertFalse(qt_property_value(control, "enabled"), name)
+            self.assertFalse(_qt_bool(control, "enabled"), name)
 
         retry_button = controls["retry"]
         point = retry_button.mapToScene(QPointF(retry_button.width() / 2, retry_button.height() / 2))
@@ -12446,7 +12679,7 @@ Window {
         self.app.runningChanged.emit()
         self.app.processEvents()
         for name, control in controls.items():
-            self.assertTrue(qt_property_value(control, "enabled"), name)
+            self.assertTrue(_qt_bool(control, "enabled"), name)
         self._click(window, controls["reject"])
         self.gui.wait_until(
             lambda: self.app.shortVideo._highlight_state.candidates == []
@@ -12489,11 +12722,11 @@ Window {
         self.assertEqual(qt_property_value(sort_combo, "currentIndex"), 1)
 
         candidate_list = self._quick_item(window, "highlightCandidateListView")
-        self.gui.wait_until(lambda: qt_property_value(candidate_list, "count") == 2, description="sorted candidate count")
+        self.gui.wait_until(lambda: _qt_number(candidate_list, "count") == 2, description="sorted candidate count")
         self._click(window, self._quick_visual_item(candidate_list, "highlightAddButton"))
         self.assertEqual(len(self.app.shortVideoClips), 1)
-        clip = self.app._project["short_video"]["clips"][0]
-        self.assertEqual((clip["highlight_candidate_id"], clip["start"], clip["end"]),
+        clip = _value_at(self.app._project, 'short_video', 'clips', 0)
+        self.assertEqual((_value_at(clip, 'highlight_candidate_id'), _value_at(clip, 'start'), _value_at(clip, 'end')),
                          ("candidate-earlier", 0.5, 1.0))
 
         category_combo = self._quick_item(window, "highlightCategoryCombo")
@@ -12501,24 +12734,24 @@ Window {
         QTest.keyClick(window, Qt.Key.Key_Down)
         QTest.keyClick(window, Qt.Key.Key_Return)
         self.assertEqual(qt_property_value(category_combo, "currentValue"), "conversation")
-        self.gui.wait_until(lambda: qt_property_value(candidate_list, "count") == 1, description="filtered candidate count")
+        self.gui.wait_until(lambda: _qt_number(candidate_list, "count") == 1, description="filtered candidate count")
 
         self._click(window, self._quick_visual_item(candidate_list, "highlightRejectButton"))
         self.assertEqual(self.app.shortVideo._highlight_state.candidates, [later])
         self.assertEqual(self.app.shortVideo._highlight_state.rejected, [earlier])
-        self.assertEqual(qt_property_value(candidate_list, "count"), 0)
+        self.assertEqual(_qt_number(candidate_list, "count"), 0)
 
         undo_button = self._quick_item(window, "highlightUndoRejectButton")
         self._click(window, undo_button)
         self.assertEqual(self.app.shortVideo._highlight_state.candidates, [later, earlier])
         self.assertEqual(self.app.shortVideo._highlight_state.rejected, [])
-        self.assertEqual(qt_property_value(candidate_list, "count"), 1)
+        self.assertEqual(_qt_number(candidate_list, "count"), 1)
 
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        saved = load_project(project_path)["short_video"]["clips"]
+        saved = _dict_list_at(load_project(project_path), 'short_video', 'clips')
         self.assertEqual(len(saved), 1)
-        self.assertEqual((saved[0]["segment_id"], saved[0]["start"], saved[0]["end"]),
+        self.assertEqual((_value_at(saved, 0, 'segment_id'), _value_at(saved, 0, 'start'), _value_at(saved, 0, 'end')),
                          ("segment-a", 0.5, 1.0))
 
     def test_highlight_analysis_can_start_and_cancel_from_screen(self) -> None:
@@ -12577,7 +12810,7 @@ Window {
 
         self.assertTrue(self.app.rejectHighlightCandidate(0))
         self.gui.wait_until(
-            lambda: bool(qt_property_value(undo_button, "enabled")),
+            lambda: bool(_qt_bool(undo_button, "enabled")),
             description="undo enabled after candidate rejection",
         )
 
@@ -12602,7 +12835,7 @@ Window {
                 )
                 self.gui.wait_until(
                     lambda: self.app.shortVideo._highlight_state.rejected == []
-                    and not bool(qt_property_value(undo_button, "enabled")),
+                    and not bool(_qt_bool(undo_button, "enabled")),
                     description="undo disabled while retry worker is blocked",
                 )
         finally:
@@ -12613,7 +12846,7 @@ Window {
             description="highlight retry completion",
         )
         self.assertEqual(self.app.shortVideo._highlight_state.rejected, [])
-        self.assertFalse(qt_property_value(undo_button, "enabled"))
+        self.assertFalse(_qt_bool(undo_button, "enabled"))
 
     def test_codex_header_ai_button_switches_inspector_tabs(self) -> None:
         self._load_project()
@@ -12677,20 +12910,20 @@ Window {
                 },
             ]
         )
-        video = Path(str(self.app._project["video"]["path"]))
+        video = Path(str(_value_at(self.app._project, 'video', 'path')))
         self._generate_test_video(video, duration=8.0)
         project = self.app._project
         assert project is not None
         self.app._source_selection = SourceSelection(
             video=str(video.resolve()),
             output_dir=str(project["output_dir"]),
-            audio_files=tuple(str(item["path"]) for item in project["audio_sources"]),
+            audio_files=tuple(_string_at(item, "path") for item in _dict_list_at(project, "audio_sources")),
         )
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
         preview = self._quick_item(window, "shortModePreview")
-        self.assertEqual(self._qml_value(preview, "clipData").get("start"), 0.0)
-        self.assertEqual(self._qml_value(preview, "clipData").get("end"), 2.0)
+        self.assertEqual(_dict_at(self._qml_value(preview, "clipData")).get("start"), 0.0)
+        self.assertEqual(_dict_at(self._qml_value(preview, "clipData")).get("end"), 2.0)
 
         self.app.shortVideo._highlight_state.candidates = [
             {
@@ -12773,18 +13006,18 @@ Window {
         ]
         controls = [self._quick_item(window, name) for name in control_names]
         for name, control in zip(control_names, controls):
-            self.assertTrue(qt_property_value(control, "enabled"), name)
+            self.assertTrue(_qt_bool(control, "enabled"), name)
         self.app._running = True
         self.app.runningChanged.emit()
         self.app.processEvents()
         for name, control in zip(control_names, controls):
-            self.assertFalse(qt_property_value(control, "enabled"), name)
+            self.assertFalse(_qt_bool(control, "enabled"), name)
 
         self.app._running = False
         self.app.runningChanged.emit()
         self.app.processEvents()
         for name, control in zip(control_names, controls):
-            self.assertTrue(qt_property_value(control, "enabled"), name)
+            self.assertTrue(_qt_bool(control, "enabled"), name)
 
     def test_short_clip_initialization_is_locked_during_processing(self) -> None:
         path = self._load_project()
@@ -12850,19 +13083,19 @@ Window {
         ]
         clip_controls = [self._quick_visual_item(clip_list, name) for name in clip_control_names]
         for name, control in zip(clip_control_names, clip_controls):
-            self.assertTrue(qt_property_value(control, "enabled"), name)
+            self.assertTrue(_qt_bool(control, "enabled"), name)
 
         self.app._running = True
         self.app.runningChanged.emit()
         self.app.processEvents()
         for name, control in zip(clip_control_names, clip_controls):
-            self.assertFalse(qt_property_value(control, "enabled"), name)
+            self.assertFalse(_qt_bool(control, "enabled"), name)
 
         self.app._running = False
         self.app.runningChanged.emit()
         self.app.processEvents()
         for name, control in zip(clip_control_names, clip_controls):
-            self.assertTrue(qt_property_value(control, "enabled"), name)
+            self.assertTrue(_qt_bool(control, "enabled"), name)
 
         self.gui.set_property(clip_list, "contentY", 130)
         self.gui.wait_until(
@@ -12870,17 +13103,17 @@ Window {
             description="second short clip delegate creation",
         )
         move_up_button = self._quick_visual_item(clip_list, "shortModeMoveUpButton1")
-        self.assertTrue(qt_property_value(move_up_button, "enabled"), "shortModeMoveUpButton1")
+        self.assertTrue(_qt_bool(move_up_button, "enabled"), "shortModeMoveUpButton1")
 
         self.app._running = True
         self.app.runningChanged.emit()
         self.app.processEvents()
-        self.assertFalse(qt_property_value(move_up_button, "enabled"), "shortModeMoveUpButton1")
+        self.assertFalse(_qt_bool(move_up_button, "enabled"), "shortModeMoveUpButton1")
 
         self.app._running = False
         self.app.runningChanged.emit()
         self.app.processEvents()
-        self.assertTrue(qt_property_value(move_up_button, "enabled"), "shortModeMoveUpButton1")
+        self.assertTrue(_qt_bool(move_up_button, "enabled"), "shortModeMoveUpButton1")
 
         self.gui.set_property(clip_list, "contentY", 0)
         self.gui.wait_until(
@@ -12891,12 +13124,12 @@ Window {
         start_field = self._click_short_clip_control(window, clip_list, "shortModeStartTimeField0")
         self._replace_focused_time(window, start_field, "0.250")
         QTest.keyClick(window, Qt.Key.Key_Return)
-        self.assertAlmostEqual(self.app.shortVideoClips[0]["start"], 0.25)
+        self.assertAlmostEqual(coerce_float(self.app.shortVideoClips[0]["start"]), coerce_float(0.25))
 
         end_field = self._click_short_clip_control(window, clip_list, "shortModeEndTimeField0")
         self._replace_focused_time(window, end_field, "0.750")
         QTest.keyClick(window, Qt.Key.Key_Return)
-        self.assertAlmostEqual(self.app.shortVideoClips[0]["end"], 0.75)
+        self.assertAlmostEqual(coerce_float(self.app.shortVideoClips[0]["end"]), coerce_float(0.75))
 
         self._click_short_clip_control(window, clip_list, "shortModeFitCombo0")
         QTest.keyClick(window, Qt.Key.Key_Down)
@@ -12924,7 +13157,7 @@ Window {
 
         self.gui.set_property(
             clip_list, "contentY",
-            max(0.0, coerce_float(qt_property_value(clip_list, "contentHeight")) - clip_list.height()),
+            max(0.0, coerce_float(_qt_number(clip_list, "contentHeight")) - clip_list.height()),
         )
         self.gui.wait_until(
             lambda: self.gui.find_visual_item(clip_list, "shortModeDeleteButton2") is not None,
@@ -12938,9 +13171,9 @@ Window {
         )
         self._click(window, self._quick_item(window, "shortModeBackButton"))
         self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
-        saved_clips = load_project(project_path)["short_video"]["clips"]
+        saved_clips = _dict_list_at(load_project(project_path), 'short_video', 'clips')
         self.assertEqual([clip["segment_id"] for clip in saved_clips], ["runtime-clip-0", "runtime-clip-1"])
-        self.assertEqual((saved_clips[0]["start"], saved_clips[0]["end"], saved_clips[0]["fit"]), (0.25, 0.75, "contain"))
+        self.assertEqual((_value_at(saved_clips, 0, 'start'), _value_at(saved_clips, 0, 'end'), _value_at(saved_clips, 0, 'fit')), (0.25, 0.75, "contain"))
 
 
 if __name__ == "__main__":

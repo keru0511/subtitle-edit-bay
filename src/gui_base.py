@@ -621,13 +621,57 @@ class LegacyEditBayBackend(QApplication):
                 for item in metadata:
                     if item.get("source", "").startswith("snippet:"):
                         item["source"] = source_url
-            candidates = [str(item["term"]) for item in metadata]
+            previous_metadata = {
+                str(item.get("term", "")).casefold(): item
+                for item in self._transcription_context.get("web_dictionary_candidate_metadata", [])
+                if isinstance(item, dict)
+            }
+            selected_keys = {
+                str(term).casefold()
+                for term in self._transcription_context.get("web_dictionary_terms", [])
+            }
+            generated_metadata = {str(item["term"]).casefold(): item for item in metadata}
+            refreshed_metadata = []
+            seen_keys: set[str] = set()
+            previous_candidates = [
+                *self._transcription_context.get("web_dictionary_candidates", []),
+                *self._transcription_context.get("web_dictionary_terms", []),
+            ]
+            for term in previous_candidates:
+                key = str(term).casefold()
+                previous_item = previous_metadata.get(key, {})
+                is_manual = str(previous_item.get("source", "")).casefold() == "manual"
+                if key in seen_keys or not (
+                    key in selected_keys or is_manual
+                ):
+                    continue
+                refreshed_metadata.append(
+                    (previous_item if is_manual else generated_metadata.get(key))
+                    or {
+                        "term": str(term),
+                        "source": str(previous_item.get("source") or "saved"),
+                        "score": str(previous_item.get("score") or "0.00"),
+                    }
+                )
+                seen_keys.add(key)
+            for item in metadata:
+                key = str(item["term"]).casefold()
+                if key not in seen_keys:
+                    refreshed_metadata.append(item)
+                    seen_keys.add(key)
+            # 保存形式の候補上限に合わせ、選択済み・手動追加を先に残す。
+            refreshed_metadata = refreshed_metadata[:256]
+            candidates = [str(item["term"]) for item in refreshed_metadata]
             self.setTranscriptionContext(
                 {
                     **self._transcription_context,
                     "web_dictionary_candidates": candidates,
-                    "web_dictionary_terms": [],
-                    "web_dictionary_candidate_metadata": metadata,
+                    "web_dictionary_terms": [
+                        term for term in candidates if term.casefold() in selected_keys
+                    ],
+                    "web_dictionary_candidate_metadata": refreshed_metadata,
+                    "web_dictionary_url": source_url,
+                    "web_dictionary_snippet": str(snippet or "").strip(),
                 }
             )
         except (TypeError, ValueError) as error:

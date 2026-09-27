@@ -26,6 +26,8 @@ class TranscriptionContextConfigTests(TypedTestCase):
             "dictionary_path": None,
             "dictionary_confirmed": False,
             "web_dictionary_enabled": False,
+            "web_dictionary_url": "",
+            "web_dictionary_snippet": "",
             "web_dictionary_candidates": [],
             "web_dictionary_terms": [],
             "web_dictionary_candidate_metadata": [],

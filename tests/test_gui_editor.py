@@ -43,6 +43,7 @@ from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
+from src.gui_transcription_context_state import gui_transcription_context_state_from_config
 from src.runtime_dependencies import RuntimeDependencyStatus
 from src.subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
@@ -4976,6 +4977,28 @@ Window {
         self.assertEqual(load_project(path)["timeline"]["cuts"], [])
         self.assertFalse(self.app.projectDirty)
 
+    def test_cut_restore_button_requires_an_overlapping_range(self) -> None:
+        """Windows GUI CI必須: 復元可能なカット範囲がない場合は操作できない。"""
+        self._load_project(duration_seconds=30.0)
+        self.assertTrue(self.app.addCut(5.0, 7.0))
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "editorModeButton-cut"))
+        button = self._quick_item(window, "restoreCutRangeButton")
+
+        self.assertEqual(button.property("text"), "選択範囲を復元")
+        self.assertFalse(button.isEnabled())
+        window.setCutSelection("", 1_000, 2_000)
+        self.app.processEvents()
+        self.assertFalse(button.isEnabled())
+
+        window.setCutSelection("", 5_500, 6_500)
+        self.gui.wait_until(button.isEnabled, description="復元できる範囲の選択")
+        self._click(window, button)
+        self.assertEqual(
+            [(cut["source_start"], cut["source_end"]) for cut in self.app.cutTimeline["cuts"]],
+            [(5.0, 5.5), (6.5, 7.0)],
+        )
+
     def test_loading_legacy_project_resolves_duration_for_cut_editor(self) -> None:
         path, _, _ = self._make_project(duration_seconds=0.0)
         with patch("src.subtitle_project.probe_media_duration", return_value=30.0):
@@ -6917,7 +6940,12 @@ Window {
 
         self.app.processEvents()
         for name in controls:
-            self.assertTrue(self._quick_item(window, name).isEnabled(), name)
+            # 12〜13秒は既存カットと重ならないため、復元は処理後も無効。
+            self.assertEqual(
+                self._quick_item(window, name).isEnabled(),
+                name != "restoreCutRangeButton",
+                name,
+            )
         self._click(window, self._quick_item(window, "addCutButton"))
         self.assertEqual(
             [(cut["source_start"], cut["source_end"]) for cut in self.app.cutTimeline["cuts"]],
@@ -8887,6 +8915,32 @@ Window {
         config = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
         self.assertFalse(config["craig_pipeline"]["transcription_context"]["dictionary_confirmed"])
 
+    def test_dictionary_confirmation_requires_a_path_and_clears_with_it(self) -> None:
+        """Windows GUI CI必須: 辞書パス未設定では使用を確定できない。"""
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        path_field = self._quick_visual_item(page, "transcriptionDictionaryPathField")
+        confirmation = self._quick_item(window, "transcriptionDictionaryConfirmedSwitch")
+        self.assertFalse(confirmation.isEnabled())
+
+        dictionary_path = self.root / "game-terms.json"
+        dictionary_path.write_text("{}", encoding="utf-8")
+        path_field.setProperty("text", str(dictionary_path))
+        self.gui.wait_until(confirmation.isEnabled, description="辞書パス入力後の使用スイッチ")
+        self._click(window, confirmation)
+        self.assertTrue(self.app.transcriptionContext["dictionary_confirmed"])
+
+        path_field.setProperty("text", "")
+        self.app.processEvents()
+        self.assertFalse(confirmation.isEnabled())
+        self.assertFalse(confirmation.property("checked"))
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+        saved = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        context = saved["craig_pipeline"]["transcription_context"]
+        self.assertIsNone(context["dictionary_path"])
+        self.assertFalse(context["dictionary_confirmed"])
+
     def test_web_dictionary_candidate_actions_save_and_reload_from_screen(self) -> None:
         _, window = self._load_qml()
         self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
@@ -9004,6 +9058,97 @@ Window {
             item["source"] == url
             for item in self.app.transcriptionContext["web_dictionary_candidate_metadata"]
         ))
+
+    def test_web_dictionary_refresh_preserves_selected_and_manual_candidates(self) -> None:
+        """Windows GUI CI必須: 候補更新後も選択済みと手動追加の候補を保持する。"""
+        self.app.setTranscriptionContext({
+            **self.app.transcriptionContext,
+            "game_title": "Bomba Ink",
+            "web_dictionary_enabled": True,
+            "web_dictionary_snippet": "ManualTerm",
+            "web_dictionary_candidates": ["Bomba", "ManualTerm", "OldUnselected"],
+            "web_dictionary_terms": ["Bomba"],
+            "web_dictionary_candidate_metadata": [
+                {"term": "Bomba", "source": "title", "score": "1.00"},
+                {"term": "ManualTerm", "source": "manual", "score": "0.00"},
+                {"term": "OldUnselected", "source": "title", "score": "1.00"},
+            ],
+        })
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        self._click(window, self._quick_item(window, "transcriptionWebDictionaryRefreshButton"))
+
+        context = self.app.transcriptionContext
+        self.assertEqual(context["web_dictionary_terms"], ["Bomba"])
+        self.assertIn("ManualTerm", context["web_dictionary_candidates"])
+        self.assertIn("Ink", context["web_dictionary_candidates"])
+        self.assertNotIn("OldUnselected", context["web_dictionary_candidates"])
+        panel = self._quick_item(window, "mainTranscriptionContextPanel")
+        self._quick_visual_item(panel, "transcriptionWebDictionarySnippetField").setProperty("text", "")
+        self._click(window, self._quick_item(window, "transcriptionWebDictionaryRefreshButton"))
+        self.assertIn("ManualTerm", self.app.transcriptionContext["web_dictionary_candidates"])
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+        saved = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            saved["craig_pipeline"]["transcription_context"]["web_dictionary_terms"],
+            ["Bomba"],
+        )
+
+    def test_dictionary_web_source_inputs_are_saved_and_reloaded(self) -> None:
+        """Windows GUI CI必須: Web 辞書の URL と補足を保存して再読込できる。"""
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        page = self._quick_item(window, "transcriptionDictionaryPage")
+        url = "https://example.test/terms"
+        snippet = "固有名詞の補足"
+        self._quick_visual_item(page, "transcriptionWebDictionaryUrlField").setProperty("text", url)
+        self._quick_visual_item(page, "transcriptionWebDictionarySnippetField").setProperty("text", snippet)
+        self._click(window, self._quick_item(window, "transcriptionDictionarySaveButton"))
+
+        saved = json.loads(self.app.gui_config_path.read_text(encoding="utf-8"))
+        context = saved["craig_pipeline"]["transcription_context"]
+        self.assertEqual(context["web_dictionary_url"], url)
+        self.assertEqual(context["web_dictionary_snippet"], snippet)
+        self._click(window, self._quick_item(window, "transcriptionDictionaryBackButton"))
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        self.assertEqual(
+            self._quick_visual_item(page, "transcriptionWebDictionaryUrlField").property("text"), url
+        )
+        self.assertEqual(
+            self._quick_visual_item(page, "transcriptionWebDictionarySnippetField").property("text"), snippet
+        )
+        reloaded = gui_transcription_context_state_from_config(saved)
+        self.assertEqual(reloaded["web_dictionary_url"], url)
+        self.assertEqual(reloaded["web_dictionary_snippet"], snippet)
+
+    def test_dictionary_candidate_buttons_require_an_actionable_state(self) -> None:
+        """Windows GUI CI必須: 候補操作ボタンは実行できる場合だけ有効にする。"""
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "startScreenDictionaryButton"))
+        add = self._quick_item(window, "transcriptionWebDictionaryAddButton")
+        select_all = self._quick_item(window, "transcriptionWebDictionarySelectAllButton")
+        clear_all = self._quick_item(window, "transcriptionWebDictionaryClearAllButton")
+        manual = self._quick_item(window, "transcriptionWebDictionaryManualTermField")
+        self.assertFalse(add.isEnabled())
+        self.assertFalse(select_all.isEnabled())
+        self.assertFalse(clear_all.isEnabled())
+
+        manual.setProperty("text", "ManualTerm")
+        self.gui.wait_until(add.isEnabled, description="手動候補を追加できる状態")
+        self._click(window, add)
+        self.assertFalse(add.isEnabled())
+        self.assertTrue(select_all.isEnabled())
+        self.assertFalse(clear_all.isEnabled())
+
+        manual.setProperty("text", "manualterm")
+        self.app.processEvents()
+        self.assertFalse(add.isEnabled())
+        self._click(window, select_all)
+        self.assertFalse(select_all.isEnabled())
+        self.assertTrue(clear_all.isEnabled())
+        self._click(window, clear_all)
+        self.assertTrue(select_all.isEnabled())
+        self.assertFalse(clear_all.isEnabled())
 
     def test_dictionary_shortcuts_preserve_pending_input_during_processing(self) -> None:
         self.app.setTranscriptionContext({

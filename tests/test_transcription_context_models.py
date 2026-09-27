@@ -22,6 +22,8 @@ class TranscriptionContextModelTests(TypedTestCase):
             "dictionary_path": None,
             "dictionary_confirmed": False,
             "web_dictionary_enabled": False,
+            "web_dictionary_url": "",
+            "web_dictionary_snippet": "",
             "web_dictionary_candidates": [],
             "web_dictionary_terms": [],
             "web_dictionary_candidate_metadata": [],
@@ -40,6 +42,8 @@ class TranscriptionContextModelTests(TypedTestCase):
                 "dictionary_path": " dictionaries/splatoon.json ",
                 "dictionary_confirmed": True,
                 "web_dictionary_enabled": True,
+                "web_dictionary_url": " https://example.test/terms ",
+                "web_dictionary_snippet": " Game terms ",
                 "web_dictionary_candidates": ["候補A", "候補A", "候補B", ""],
                 "web_dictionary_terms": ["web語", "web語", " "],
             }
@@ -51,6 +55,8 @@ class TranscriptionContextModelTests(TypedTestCase):
         self.assertEqual(context.dictionary_path, "dictionaries/splatoon.json")
         self.assertTrue(context.dictionary_confirmed)
         self.assertTrue(context.web_dictionary_enabled)
+        self.assertEqual(context.web_dictionary_url, "https://example.test/terms")
+        self.assertEqual(context.web_dictionary_snippet, "Game terms")
         self.assertEqual(context.web_dictionary_candidates, ("候補A", "候補B"))
         self.assertEqual(context.web_dictionary_terms, ("web語",))
 

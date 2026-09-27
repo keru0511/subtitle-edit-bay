@@ -15,6 +15,7 @@ Rectangle {
     property color textPrimaryColor: "#F0F6FC"
     property color textMutedColor: "#8B949E"
     property color accentColor: "#6366F1"
+    property int selectedCandidateCount: 0
 
     signal transcriptionContextEdited(var context)
     signal webDictionaryRefreshRequested(string url, string snippet)
@@ -49,6 +50,26 @@ Rectangle {
         return terms
     }
 
+    function canAddManualCandidate(term) {
+        var key = String(term || "").trim().toLocaleLowerCase()
+        if (!key)
+            return false
+        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
+            if (String(webDictionaryCandidateModel.get(index).term).toLocaleLowerCase() === key)
+                return false
+        }
+        return true
+    }
+
+    function updateSelectedCandidateCount() {
+        var count = 0
+        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
+            if (webDictionaryCandidateModel.get(index).selected)
+                count += 1
+        }
+        selectedCandidateCount = count
+    }
+
     function applyContext(value) {
         var current = value || ({})
         gameTitleField.text = valueOrEmpty(current.game_title)
@@ -56,13 +77,10 @@ Rectangle {
         creatorTermsField.text = valueOrEmpty(current.creator_terms_text)
         dictionaryPathField.text = valueOrEmpty(current.dictionary_path)
         dictionaryConfirmedSwitch.checked = Boolean(current.dictionary_confirmed)
+            && dictionaryPathField.text.trim().length > 0
         webDictionarySwitch.checked = Boolean(current.web_dictionary_enabled)
-        if (current.web_dictionary_url !== undefined) {
-            webDictionaryUrlField.text = valueOrEmpty(current.web_dictionary_url)
-        }
-        if (current.web_dictionary_snippet !== undefined) {
-            webDictionarySnippetField.text = valueOrEmpty(current.web_dictionary_snippet)
-        }
+        webDictionaryUrlField.text = valueOrEmpty(current.web_dictionary_url)
+        webDictionarySnippetField.text = valueOrEmpty(current.web_dictionary_snippet)
 
         webDictionaryCandidateModel.clear()
         var candidates = _toStringList(current.web_dictionary_candidates)
@@ -88,6 +106,7 @@ Rectangle {
                 "selected": Boolean(selectedLookup[candidate]),
             })
         }
+        updateSelectedCandidateCount()
     }
 
     function contextPayload() {
@@ -116,7 +135,8 @@ Rectangle {
             "game_notes": gameNotesField.text,
             "creator_terms_text": creatorTermsField.text,
             "dictionary_path": dictionaryPathField.text,
-            "dictionary_confirmed": dictionaryConfirmedSwitch.checked,
+            "dictionary_confirmed": dictionaryConfirmedSwitch.checked
+                && dictionaryPathField.text.trim().length > 0,
             "web_dictionary_enabled": webDictionarySwitch.checked,
             "web_dictionary_candidates": candidateTerms,
             "web_dictionary_terms": selectedTerms,
@@ -128,14 +148,8 @@ Rectangle {
 
     function addManualCandidate() {
         var term = webDictionaryManualTermField.text.trim()
-        if (term.length === 0) {
+        if (!canAddManualCandidate(term))
             return
-        }
-        for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
-            if (webDictionaryCandidateModel.get(index).term === term) {
-                return
-            }
-        }
         webDictionaryCandidateModel.append({"term": term, "source": "manual", "score": "0.00", "selected": false})
         webDictionaryManualTermField.clear()
         panelRoot.commitContext()
@@ -143,13 +157,19 @@ Rectangle {
 
     function removeCandidate(index) {
         webDictionaryCandidateModel.remove(index)
+        updateSelectedCandidateCount()
         panelRoot.commitContext()
     }
 
     function setAllCandidates(selected) {
+        if (selected && selectedCandidateCount === webDictionaryCandidateModel.count)
+            return
+        if (!selected && selectedCandidateCount === 0)
+            return
         for (var index = 0; index < webDictionaryCandidateModel.count; index += 1) {
             webDictionaryCandidateModel.setProperty(index, "selected", selected)
         }
+        updateSelectedCandidateCount()
         panelRoot.commitContext()
     }
 
@@ -287,6 +307,10 @@ Rectangle {
             Layout.fillWidth: true
             enabled: !panelRoot.running
             placeholderText: "辞書ファイルの場所（任意）"
+            onTextChanged: {
+                if (text.trim().length === 0)
+                    dictionaryConfirmedSwitch.checked = false
+            }
             color: panelRoot.textPrimaryColor
             selectionColor: panelRoot.accentColor
             selectedTextColor: "#10140F"
@@ -307,7 +331,7 @@ Rectangle {
             Switch {
                 id: dictionaryConfirmedSwitch
                 objectName: "transcriptionDictionaryConfirmedSwitch"
-                enabled: !panelRoot.running
+                enabled: !panelRoot.running && dictionaryPathField.text.trim().length > 0
                 checked: false
                 onClicked: panelRoot.commitContext()
             }
@@ -388,18 +412,20 @@ Rectangle {
             Button {
                 objectName: "transcriptionWebDictionaryAddButton"
                 enabled: !panelRoot.running
+                    && panelRoot.canAddManualCandidate(webDictionaryManualTermField.text)
                 text: "候補を追加"
                 onClicked: panelRoot.addManualCandidate()
             }
             Button {
                 objectName: "transcriptionWebDictionarySelectAllButton"
                 enabled: !panelRoot.running
+                    && panelRoot.selectedCandidateCount < webDictionaryCandidateModel.count
                 text: "すべて選択"
                 onClicked: panelRoot.setAllCandidates(true)
             }
             Button {
                 objectName: "transcriptionWebDictionaryClearAllButton"
-                enabled: !panelRoot.running
+                enabled: !panelRoot.running && panelRoot.selectedCandidateCount > 0
                 text: "選択解除"
                 onClicked: panelRoot.setAllCandidates(false)
             }
@@ -434,6 +460,7 @@ Rectangle {
                                     || webDictionaryCandidateModel.get(candidateRow.index).term !== candidateRow.term)
                                 return
                             webDictionaryCandidateModel.setProperty(candidateRow.index, "selected", checked)
+                            panelRoot.updateSelectedCandidateCount()
                             panelRoot.commitContext()
                         }
                     }

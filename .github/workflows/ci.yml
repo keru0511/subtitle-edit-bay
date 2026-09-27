@@ -255,18 +255,6 @@ jobs:
           python -c "from src.runtime_dependencies import check_runtime_dependencies; print(check_runtime_dependencies().to_dict())"
           python -c "import src.gui_state; import src.gui_state_base; import src.subtitle_project; import src.subtitle_packer"
 
-      - name: Inspect native Japanese IME test environment
-        shell: pwsh
-        run: |
-          Write-Host "Session ID: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
-          Get-WinUserLanguageList | Select-Object LanguageTag, InputMethodTips | Format-List | Out-String | Write-Host
-          @'
-          import ctypes
-          user32 = ctypes.windll.user32
-          print(f"Foreground window: {user32.GetForegroundWindow()}")
-          print(f"Input desktop: {user32.OpenInputDesktop(0, False, 1)}")
-          '@ | python -
-
       - name: Start GUI on Windows
         shell: pwsh
         run: |
@@ -426,6 +414,35 @@ jobs:
       - name: Run Windows FFmpeg and Qt media tests
         shell: pwsh
         run: python scripts/run_ci_tests.py --group windows-ffmpeg-runtime
+
+      - name: Prepare native Japanese IME test environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "Session ID: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
+          $capabilityName = 'Language.Basic~~~ja-JP~0.0.1.0'
+          $capability = Get-WindowsCapability -Online -Name $capabilityName
+          Write-Host "Japanese typing capability before: $($capability.State)"
+          if ($capability.State -ne 'Installed') {
+            $installed = Add-WindowsCapability -Online -Name $capabilityName
+            Write-Host "Japanese typing capability after: $($installed.State)"
+            Write-Host "Restart needed: $($installed.RestartNeeded)"
+          }
+          $languages = Get-WinUserLanguageList
+          if ($languages.LanguageTag -notcontains 'ja-JP') {
+            $languages.Add('ja-JP')
+            Set-WinUserLanguageList -LanguageList $languages -Force
+          }
+          foreach ($language in (Get-WinUserLanguageList)) {
+            Write-Host "Language: $($language.LanguageTag); input methods: $($language.InputMethodTips -join ', ')"
+          }
+
+      - name: Run Windows native Japanese IME regression
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+          RUN_NATIVE_IME_SMOKE: "1"
+        run: python -m unittest -v tests.test_gui_editor.GuiEditorRegressionTests.test_windows_native_ime_save_preserves_composition
 
   windows-launcher-tests:
     name: Windows launcher tests

@@ -52,6 +52,7 @@ from src.subtitle_project import (
 from src.subtitle_line_count import segment_preview_text as original_segment_preview_text
 from tests.edit_bay_gui_test_session import EditBayGuiTestSession
 from tests.gui_test_harness import GuiTestHarness, MediaPlayerSignalProbe
+from tests.windows_native_input import WindowsNativeInput
 
 
 class GuiEditorRegressionTests(unittest.TestCase):
@@ -5095,6 +5096,63 @@ Window {
 
     def test_workspace_ime_committed_text_is_saved(self) -> None:
         self._assert_committed_ime_text_is_saved(expanded=False)
+
+    @unittest.skipUnless(
+        sys.platform == "win32" and os.environ.get("RUN_NATIVE_IME_SMOKE") == "1",
+        "Windowsの対話デスクトップで実IMEを使う専用テスト",
+    )
+    def test_windows_native_ime_save_preserves_composition(self) -> None:
+        path = self._load_project()
+        _, window = self._load_qml()
+        caption = self._quick_visual_item(
+            self._quick_item(window, "workspaceSubtitleSettings"), "workspaceSubtitleTextArea"
+        )
+        save_button = self._quick_item(window, "workspaceHeaderSaveButton")
+        window.setPosition(0, 0)
+        window.raise_()
+        window.requestActivate()
+        QTest.qWait(300)
+        native = WindowsNativeInput(window)
+
+        with patch.object(self.app.autosave_timer, "start"):
+            native.click(caption)
+            self.assertTrue(caption.hasActiveFocus())
+            QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+            native.activate_japanese_ime()
+            native.type_roman("nihongo")
+            self.gui.wait_until(
+                lambda: bool(caption.property("inputMethodComposing")),
+                description="実IMEによる字幕の変換開始",
+                timeout_ms=5_000,
+            )
+            native.key(WindowsNativeInput.VK_SPACE)
+            self.assertTrue(caption.property("inputMethodComposing"))
+            self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+
+            # OSの実クリックはフォーカス移動時にIMEを自動確定する場合もある。
+            # その場合も変換結果を失わず保存できることを確認する。
+            native.click(save_button)
+            if caption.property("inputMethodComposing"):
+                self.assertEqual(load_project(path)["segments"][0]["text"], "abcdefgh")
+                self.assertIn("確定してから", self.app.status)
+                self.assertTrue(caption.hasActiveFocus())
+                native.key(WindowsNativeInput.VK_RETURN)
+                self.gui.wait_until(
+                    lambda: not caption.property("inputMethodComposing"),
+                    description="実IMEの変換確定",
+                    timeout_ms=5_000,
+                )
+
+            committed_text = str(caption.property("text"))
+            self.assertRegex(committed_text, r"[\u3040-\u30ff\u4e00-\u9fff]")
+            native.click(save_button)
+            self.gui.wait_until(
+                lambda: load_project(path)["segments"][0]["text"] == committed_text,
+                description="実IMEで確定した字幕の保存",
+                timeout_ms=5_000,
+            )
+
+        self.assertEqual(load_project(path)["segments"][0]["text"], committed_text)
 
     def test_expanded_ime_committed_text_is_saved(self) -> None:
         self._assert_committed_ime_text_is_saved(expanded=True)

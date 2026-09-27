@@ -102,6 +102,12 @@ jobs:
             python scripts/check_quality.py --type-only --type-platform "$platform"
           done
 
+      - name: Reject Any in every tracked Python file
+        run: |
+          for platform in linux win32 darwin; do
+            python scripts/check_no_any.py --platform "$platform"
+          done
+
   portable-tests:
     name: Portable, Qt, and FFmpeg tests
     needs: classify-validation

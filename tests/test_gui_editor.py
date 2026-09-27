@@ -57,6 +57,8 @@ from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
 from src.runtime_dependencies import RuntimeDependencyStatus
+from src.short_video_schema import ShortVideo
+from src.short_video_timeline import build_short_video_timeline
 from src.subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     assign_project_layout_rows,
@@ -13126,6 +13128,157 @@ Window {
         self.assertEqual(len(saved), 1)
         self.assertEqual((_value_at(saved, 0, 'segment_id'), _value_at(saved, 0, 'start'), _value_at(saved, 0, 'end')),
                          ("segment-a", 0.5, 1.0))
+        self.assertEqual(saved[0]["highlight_candidate_id"], "candidate-earlier")
+
+    @typed_skip_unless_method(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "ffmpeg and ffprobe required",
+    )
+    def test_highlight_candidate_replaces_auto_clips_and_renders_once(self) -> None:
+        """Windows GUI CI必須: 自動クリップと重なる見どころを一度だけ書き出す。"""
+        project_path = self._load_project(
+            segments=[
+                {"id": "first", "start": 0.0, "end": 1.0, "text": "前半", "speaker": "Speaker_Alice"},
+                {"id": "second", "start": 1.0, "end": 3.0, "text": "後半", "speaker": "Speaker_Alice"},
+            ],
+            duration_seconds=3.0,
+        )
+        self._generate_short_mode_test_video(self.root / "game.mkv")
+        self.app.workspace_root = Path(__file__).resolve().parents[1]
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(len(self.app.shortVideoClips), 2)
+        self.assertTrue(all(clip["auto_generated"] for clip in _dict_list_at(self.app._project, "short_video", "clips")))
+
+        self.app.shortVideo._highlight_state.status = "completed"
+        self.app.shortVideo._highlight_state.candidates = [
+            {
+                "id": "both-segments",
+                "start": 0.0,
+                "end": 3.0,
+                "score": 0.9,
+                "category": "emphasis",
+                "source_segment_ids": ["first", "second"],
+            }
+        ]
+        self.app.highlightAnalysisChanged.emit()
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+        add_button = self._quick_visual_item(candidate_list, "highlightAddButton")
+        self.assertTrue(_qt_bool(add_button, "enabled"))
+        self._click(window, add_button)
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+        self.assertEqual(self.app.shortVideo.addedHighlightCandidateIds, ["both-segments"])
+        self.gui.wait_until(lambda: not _qt_bool(add_button, "enabled"), description="追加済み候補のボタン無効化")
+        self.assertFalse(self.app.shortVideo.addHighlightCandidate(0))
+
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self.gui.wait_until(
+            lambda: self.gui.find_visual_item(clip_list, "shortModeEndTimeField0") is not None,
+            description="見どころクリップの時間欄",
+        )
+        end_field = self._click_short_clip_control(window, clip_list, "shortModeEndTimeField0")
+        self._replace_focused_time(window, end_field, "2.500")
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.assertEqual(self.app.shortVideoClips[0]["end"], 2.5)
+        self.assertTrue(self.app.shortVideo.setShortVideoOutput(180, 320, 15))
+        self.assertTrue(self.app.shortVideo.setShortVideoTransition("cut", 0.0))
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved_short_video = ShortVideo.from_json(load_project(project_path)["short_video"])
+        timeline = build_short_video_timeline(saved_short_video)
+        self.assertEqual(len(timeline.clips), 1)
+        self.assertEqual(timeline.total_duration, 2.5)
+        self.assertEqual((timeline.clips[0].clip.start, timeline.clips[0].clip.end), (0.0, 2.5))
+        self.assertEqual(timeline.clips[0].clip.highlight_candidate_id, "both-segments")
+
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self._click(window, self._quick_item(window, "shortModeExportButton"))
+        for _ in range(600):
+            self.app.processEvents()
+            QTest.qWait(50)
+            if not self.app.running and self.app.stage in {"COMPLETE", "ERROR"}:
+                break
+        self.assertEqual(self.app.stage, "COMPLETE", self.app._log)
+        output = _path_at(load_project(project_path), "render_settings", "short_last_output")
+        self.assertTrue(output.is_file())
+        duration, pixel_format = self._probe_video_output(output)
+        self.assertAlmostEqual(duration, 2.5, delta=0.25)
+        self.assertEqual(pixel_format, "yuv420p")
+
+    def test_highlight_candidate_preserves_uncovered_and_manual_clips(self) -> None:
+        """Windows GUI CI必須: 候補外の自動区間と手編集・出自不明のクリップを残す。"""
+        project_path = self._load_project(
+            segments=[
+                {"id": "first", "start": 0.0, "end": 1.0, "text": "前半", "speaker": "Speaker_Alice"},
+                {"id": "second", "start": 1.0, "end": 3.0, "text": "中盤", "speaker": "Speaker_Alice"},
+                {"id": "third", "start": 3.0, "end": 4.0, "text": "後半", "speaker": "Speaker_Alice"},
+            ],
+            duration_seconds=4.0,
+        )
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertTrue(self.app.shortVideo.updateShortVideoClip(2, {"fit": "contain"}))
+        # 手追加の重複は意図した編集の可能性があるので、候補追加でも削らない。
+        self.assertTrue(self.app.shortVideo.addShortVideoClipByRange(0.75, 0.9))
+        self.assertTrue(self.app.shortVideo.setShortVideoTransition("cut", 0.0))
+
+        self.app.shortVideo._highlight_state.status = "completed"
+        self.app.shortVideo._highlight_state.candidates = [
+            {
+                "id": "partial-overlap",
+                "start": 0.5,
+                "end": 1.5,
+                "score": 0.9,
+                "category": "emphasis",
+                "source_segment_ids": ["first", "second"],
+            }
+        ]
+        self.app.highlightAnalysisChanged.emit()
+        self.app.highlightCandidatesChanged.emit()
+        self.app.processEvents()
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+        self._click(window, self._quick_visual_item(candidate_list, "highlightAddButton"))
+
+        clips = _dict_list_at(self.app._project, "short_video", "clips")
+        self.assertEqual(
+            [(clip["start"], clip["end"]) for clip in clips],
+            [(0.0, 0.5), (0.5, 1.5), (1.5, 3.0), (3.0, 4.0), (0.75, 0.9)],
+        )
+        self.assertEqual([clip.get("auto_generated", False) for clip in clips], [True, False, True, False, False])
+        self.assertEqual(clips[3]["fit"], "contain")
+        self.assertEqual(clips[4]["segment_id"], "")
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        saved = ShortVideo.from_json(load_project(project_path)["short_video"])
+        self.assertEqual(len(saved.clips), 5)
+        self.assertEqual([(clip.start, clip.end) for clip in saved.clips[:3]],
+                         [(0.0, 0.5), (0.5, 1.5), (1.5, 3.0)])
+        self.assertEqual(saved.clips[3].fit, "contain")
+        self.assertFalse(saved.clips[3].auto_generated)
+        self.assertFalse(saved.clips[4].auto_generated)
+        self.assertEqual(build_short_video_timeline(saved).total_duration, 4.15)
+
+    def test_short_mode_keeps_intentionally_empty_clip_list_on_reopen(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(len(self.app.shortVideoClips), 1)
+
+        clip_list = self._quick_item(window, "shortModeClipListView")
+        self._click_short_clip_control(window, clip_list, "shortModeDeleteButton0")
+        self.assertEqual(self.app.shortVideoClips, [])
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        self.assertEqual(self.app.shortVideoClips, [])
+
+        self._click(window, self._quick_item(window, "shortModeBackButton"))
+        self._click(window, self._quick_item(window, "workspaceHeaderSaveButton"))
+        self.assertEqual(_dict_list_at(load_project(project_path), "short_video", "clips"), [])
 
     def test_highlight_analysis_can_start_and_cancel_from_screen(self) -> None:
         project_path = self._load_project()

@@ -64,6 +64,24 @@ class ShortVideoSchemaTests(TypedTestCase):
         self.assertIsNone(restored.clips[0].fit)
         self.assertIsNone(restored.clips[0].background_color)
 
+    def test_auto_generated_origin_survives_round_trip_without_marking_manual_clips(self) -> None:
+        short_video = ShortVideo.from_json(
+            {
+                "clips": [
+                    {"segment_id": "automatic", "start": 0.0, "end": 1.0, "auto_generated": True},
+                    {"segment_id": "manual", "start": 1.0, "end": 2.0},
+                ]
+            }
+        )
+
+        restored = ShortVideo.from_json(short_video.to_json())
+        self.assertTrue(restored.clips[0].auto_generated)
+        self.assertFalse(restored.clips[1].auto_generated)
+        self.assertNotIn("auto_generated", restored.to_json()["clips"][1])
+
+        with self.assertRaisesRegex(ShortVideoError, "auto_generated"):
+            ShortVideoClip.from_json({"segment_id": "bad", "auto_generated": "true"})
+
     def test_legacy_clip_values_preserve_existing_rendering_by_default(self) -> None:
         legacy_payload = {
             "enabled": True,

@@ -124,7 +124,15 @@ ColumnLayout {
                     Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
                 Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0), Number(modelData.end || modelData.start || 0)) }
-                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightAddButton"; text: "ショートに追加"; enabled: appBackend && !appBackend.running; onClicked: appBackend.shortVideo.addHighlightCandidate(modelData.source_index) }
+                Button {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    objectName: "highlightAddButton"
+                    text: "ショートに追加"
+                    enabled: appBackend && !appBackend.running
+                        && (!modelData.id || appBackend.shortVideo.addedHighlightCandidateIds.indexOf(String(modelData.id)) < 0)
+                    onClicked: appBackend.shortVideo.addHighlightCandidate(modelData.source_index)
+                }
                 Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightRejectButton"; text: "候補から外す"; enabled: appBackend && !appBackend.running; onClicked: appBackend.shortVideo.rejectHighlightCandidate(modelData.source_index) }
             }
         }

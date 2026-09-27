@@ -270,7 +270,7 @@ class AIChatFacade(FeatureFacade):
             return False
         if route.scope == "unavailable":
             self.services.codex_chat.fail_proposal("字幕を編集するには、先に編集プロジェクトを開いてください。")
-            return True
+            return False
         if route.scope == "current":
             backend._codex_current_time = float(backend.workspace.editorPlayhead.get("sourcePositionMs", 0)) / 1000.0
         scope_id = f"chat-subtitle-{uuid4().hex}"
@@ -297,6 +297,7 @@ class AIChatFacade(FeatureFacade):
         )
         if result.status.value != "success":
             self.services.chat_router.fail_proposal(result.message or "字幕の変更案を開始できませんでした。")
+            return False
         return True
 
     @staticmethod
@@ -388,6 +389,7 @@ class AIChatFacade(FeatureFacade):
         )
         if result.status.value != "success":
             self.services.chat_router.fail_proposal(result.message or "音量ミキサーの変更案を開始できませんでした。")
+            return False
         return True
 
     @Slot()

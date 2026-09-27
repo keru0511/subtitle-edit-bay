@@ -8464,6 +8464,37 @@ Window {
             "audio_mix_proposal",
         )
 
+    def test_ai_rejected_typed_actions_keep_draft(self) -> None:
+        self._load_project()
+        authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        _, window = self._load_qml()
+        chat_input = self._quick_item(window, "codexChatInput")
+        send_button = self._quick_item(window, "codexChatSendButton")
+        for message in ("声を聞きやすくして", "字幕を編集して"):
+            with self.subTest(message=message):
+                chat_input.setProperty("text", message)
+                self.app.processEvents()
+                with patch.object(
+                    self.app.ai, "dispatch_codex_action",
+                    return_value=ActionResult(
+                        status=ActionStatus.REJECTED,
+                        message="提案を開始できませんでした",
+                    ),
+                ) as dispatch:
+                    self._click(window, send_button)
+                dispatch.assert_called_once()
+                self.assertEqual(chat_input.property("text"), message)
+                self.assertIn("提案を開始できませんでした", self.app.codexChatError)
+
+    def test_ai_subtitle_request_without_project_is_not_accepted(self) -> None:
+        authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")
+        self.app._codex_chat._snapshot = authenticated
+        self.app._on_codex_chat_state(authenticated)
+        self.assertFalse(self.app.ai.sendCodexChatMessage("字幕を編集して", "auto", 0.0, 0.0))
+        self.assertIn("編集プロジェクトを開いて", self.app.codexChatError)
+
     def test_new_codex_proposal_reselects_reused_operation_id(self) -> None:
         self._load_project()
         authenticated = CodexChatSnapshot(connection_state="ready", auth_state="authenticated")

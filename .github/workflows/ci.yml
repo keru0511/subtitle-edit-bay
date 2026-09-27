@@ -297,6 +297,8 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_ai_proposals_are_locked_during_processing_and_recover
           tests.test_gui_editor.GuiEditorRegressionTests.test_ai_send_keeps_draft_until_a_model_is_selected
           tests.test_gui_editor.GuiEditorRegressionTests.test_ai_typed_audio_proposal_works_without_chat_model
+          tests.test_gui_editor.GuiEditorRegressionTests.test_ai_rejected_typed_actions_keep_draft
+          tests.test_gui_editor.GuiEditorRegressionTests.test_ai_subtitle_request_without_project_is_not_accepted
           tests.test_gui_editor.GuiEditorRegressionTests.test_audio_proposal_requires_explicit_click_to_mute_every_output
           tests.test_gui_editor.GuiEditorRegressionTests.test_audio_editing_is_locked_during_processing_and_recovers
           tests.test_gui_editor.GuiEditorRegressionTests.test_audio_mixer_gui_settings_are_saved_and_applied_to_rendered_output

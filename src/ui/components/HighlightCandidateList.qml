@@ -89,7 +89,7 @@ ColumnLayout {
         Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.shortVideo.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
         Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0; onClicked: appBackend.shortVideo.retryHighlightAnalysis() }
-        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.shortVideo.highlightUndoAvailable && !appBackend.running; onClicked: appBackend.shortVideo.undoHighlightRejection() }
+        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.shortVideo.highlightUndoAvailable && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0; onClicked: appBackend.shortVideo.undoHighlightRejection() }
     }
 
     ListView {
@@ -130,10 +130,11 @@ ColumnLayout {
                     objectName: "highlightAddButton"
                     text: "ショートに追加"
                     enabled: appBackend && !appBackend.running
+                        && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0
                         && (!modelData.id || appBackend.shortVideo.addedHighlightCandidateIds.indexOf(String(modelData.id)) < 0)
                     onClicked: appBackend.shortVideo.addHighlightCandidate(modelData.source_index)
                 }
-                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightRejectButton"; text: "候補から外す"; enabled: appBackend && !appBackend.running; onClicked: appBackend.shortVideo.rejectHighlightCandidate(modelData.source_index) }
+                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightRejectButton"; text: "候補から外す"; enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0; onClicked: appBackend.shortVideo.rejectHighlightCandidate(modelData.source_index) }
             }
         }
     }

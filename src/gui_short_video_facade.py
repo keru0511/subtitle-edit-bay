@@ -543,7 +543,6 @@ class ShortVideoFacade(FeatureFacade):
         backend = self._backend
         if self.project_editor.project is None or backend._running or self._highlight_state.status in {"running", "cancelling"}:
             return False
-        self._highlight_state.candidates = []
         backend.highlightCandidatesChanged.emit()
         return self.startHighlightAnalysis()
 
@@ -553,6 +552,7 @@ class ShortVideoFacade(FeatureFacade):
         if (
             self.project_editor.project is None
             or backend._running
+            or self._highlight_state.status in {"running", "cancelling"}
             or not 0 <= index < len(self._highlight_state.candidates)
         ):
             return False
@@ -600,7 +600,11 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:
         backend = self._backend
-        if backend._running or not 0 <= index < len(self._highlight_state.candidates):
+        if (
+            backend._running
+            or self._highlight_state.status in {"running", "cancelling"}
+            or not 0 <= index < len(self._highlight_state.candidates)
+        ):
             return False
         self._highlight_state.rejected.append(self._highlight_state.candidates.pop(index))
         backend.highlightCandidatesChanged.emit()
@@ -609,7 +613,11 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(result=bool)
     def undoHighlightRejection(self) -> bool:
         backend = self._backend
-        if backend._running or not self._highlight_state.rejected:
+        if (
+            backend._running
+            or self._highlight_state.status in {"running", "cancelling"}
+            or not self._highlight_state.rejected
+        ):
             return False
         self._highlight_state.candidates.append(self._highlight_state.rejected.pop())
         backend.highlightCandidatesChanged.emit()

@@ -13969,6 +13969,124 @@ Window {
         self.assertEqual(self.app.shortVideo._highlight_state.rejected, [])
         self.assertFalse(_qt_bool(undo_button, "enabled"))
 
+    def test_highlight_mutations_are_blocked_until_retry_finishes(self) -> None:
+        project_path = self._load_project()
+        _, window = self._load_qml()
+        self._click(window, self._quick_item(window, "workspaceHeaderShortButton"))
+        candidate = {
+            "id": "old-generation",
+            "start": 1.0,
+            "end": 2.0,
+            "score": 0.8,
+            "source_segment_ids": ["segment-a"],
+        }
+        rejected = {"id": "previously-rejected", "start": 2.0, "end": 3.0, "score": 0.7}
+        state = self.app.shortVideo._highlight_state
+        state.candidates = [candidate]
+        state.rejected = [rejected]
+        state.status = "completed"
+        self.app.highlightCandidatesChanged.emit()
+        self.app.highlightAnalysisChanged.emit()
+        self.app.processEvents()
+
+        candidate_list = self._quick_item(window, "highlightCandidateListView")
+
+        def candidate_buttons() -> tuple[QObject, QObject]:
+            return (
+                self._quick_visual_item(candidate_list, "highlightAddButton"),
+                self._quick_visual_item(candidate_list, "highlightRejectButton"),
+            )
+
+        add, reject = candidate_buttons()
+        undo = self._quick_item(window, "highlightUndoRejectButton")
+        before_project = deepcopy(self.app._project)
+        before_file = project_path.read_bytes()
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocked_generate(*_args: object, **_kwargs: object) -> list[object]:
+            worker_started.set()
+            release_worker.wait()
+            return []
+
+        try:
+            with patch("src.highlight_candidates.generate_highlight_candidates", side_effect=blocked_generate):
+                self._click(window, self._quick_item(window, "highlightRetryButton"))
+                self.gui.wait_until(
+                    lambda: worker_started.is_set() and self.app.highlightAnalysisState == "running",
+                    description="retry analysis blocks old candidate generation",
+                )
+                self.assertEqual(self.app.shortVideo.highlightCandidates, [candidate])
+                add, reject = candidate_buttons()
+                for control in (add, reject, undo):
+                    self.assertFalse(_qt_bool(control, "enabled"))
+                self.assertFalse(self.app.addHighlightCandidate(0))
+                self.assertFalse(self.app.rejectHighlightCandidate(0))
+                self.assertFalse(self.app.undoHighlightRejection())
+                self.assertEqual(state.candidates, [candidate])
+                self.assertEqual(state.rejected, [])
+                self.assertEqual(self.app._project, before_project)
+                self.assertEqual(project_path.read_bytes(), before_file)
+
+                self._click(window, self._quick_item(window, "highlightCancelButton"))
+                self.assertEqual(self.app.highlightAnalysisState, "cancelling")
+                self.assertFalse(self.app.addHighlightCandidate(0))
+                self.assertFalse(self.app.rejectHighlightCandidate(0))
+                self.assertFalse(self.app.undoHighlightRejection())
+                for control in (add, reject, undo):
+                    self.assertFalse(_qt_bool(control, "enabled"))
+        finally:
+            release_worker.set()
+
+        self.gui.wait_until(
+            lambda: self.app.highlightAnalysisState == "cancelled",
+            description="retry cancellation restores highlight controls",
+        )
+        add, reject = candidate_buttons()
+        self.gui.wait_until(lambda: _qt_bool(add, "enabled"), description="cancelled retry restores candidate action")
+        self.assertTrue(_qt_bool(reject, "enabled"))
+        self.assertFalse(_qt_bool(undo, "enabled"))
+        self.assertEqual(state.candidates, [candidate])
+
+        with patch(
+            "src.highlight_candidates.generate_highlight_candidates",
+            side_effect=RuntimeError("expected failure"),
+        ):
+            self.assertTrue(self.app.retryHighlightAnalysis())
+        self.gui.wait_until(
+            lambda: self.app.highlightAnalysisState == "error",
+            description="failed retry restores highlight controls",
+        )
+        add, reject = candidate_buttons()
+        self.assertEqual(state.candidates, [candidate])
+        self.gui.wait_until(lambda: _qt_bool(add, "enabled"), description="failed retry restores candidate action")
+        self.assertTrue(_qt_bool(reject, "enabled"))
+
+        replacement = {
+            "id": "new-generation",
+            "start": 1.0,
+            "end": 2.0,
+            "score": 0.9,
+            "source_segment_ids": ["segment-a"],
+        }
+        generated = type("Candidate", (), {"to_json": lambda _self: replacement})()
+        with patch(
+            "src.highlight_candidates.generate_highlight_candidates",
+            return_value=[generated],
+        ):
+            self.assertTrue(self.app.retryHighlightAnalysis())
+        self.gui.wait_until(
+            lambda: self.app.highlightAnalysisState == "completed"
+            and state.candidates == [replacement],
+            description="successful retry replaces the prior generation",
+        )
+        add, reject = candidate_buttons()
+        self.assertTrue(_qt_bool(add, "enabled"))
+        self.assertTrue(self.app.rejectHighlightCandidate(0))
+        self.assertEqual(state.candidates, [])
+        self.assertTrue(self.app.undoHighlightRejection())
+        self.assertEqual(state.candidates, [replacement])
+
     def test_codex_header_ai_button_switches_inspector_tabs(self) -> None:
         self._load_project()
         _, window = self._load_qml()

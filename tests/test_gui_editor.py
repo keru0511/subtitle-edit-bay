@@ -14087,9 +14087,10 @@ Window {
             score_breakdown={},
         )
         replacement = generated.to_json()
+        generated_candidates: list[HighlightCandidate] = [generated]
         with patch(
             "src.highlight_candidates.generate_highlight_candidates",
-            return_value=[generated],
+            return_value=generated_candidates,
         ):
             self.assertTrue(self.app.retryHighlightAnalysis())
         self.gui.wait_until(
